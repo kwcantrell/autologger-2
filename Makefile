@@ -1,7 +1,7 @@
 # AutoLogger container environments (containerized-dev-env, task 7.2; design D1, D14).
 #   make            list targets
 # Compose flags come from docker/scripts/compose-env.sh (seam S2, shared with check-envs.sh), always
-# run through docker/scripts/compose-run.mjs, which fetches the stack's Infisical environment;
+# run through docker/scripts/compose-run.mjs, which reads the stack's OpenBao KV secret;
 # secret-free guard logic lives in docker/scripts/make-guards.sh. Dev and stage targets always act on the
 # WHOLE project. No target prunes; the only `down -v` are the guarded *-reset targets.
 SHELL := /bin/sh
@@ -9,7 +9,7 @@ SHELL := /bin/sh
 
 BUILDER ?= autologger-multi
 G       := sh docker/scripts/make-guards.sh
-# Secrets come from Infisical through docker/scripts/compose-run.mjs (infisical-secrets D1). It is
+# Secrets come from OpenBao through docker/scripts/compose-run.mjs (openbao-secrets D1). It is
 # started under `env -i` so none of the operator's NODE_*, proxy or TLS variables reach it (H1);
 # the node binary itself is resolved from the operator's PATH first (nvm installs live there).
 NODE    := $(shell command -v node 2>/dev/null)
@@ -90,14 +90,14 @@ prod-push: ## Clean main only: multi-arch bake + push, tagged with the 12-char H
 	@$(G) prod-builder "$(BUILDER)"
 	@GIT_SHA=$$(git rev-parse --short=12 HEAD) docker buildx bake -f docker-bake.hcl --builder "$(BUILDER)" --push
 
-prod-check: ## Dry run (any branch): Infisical prod login + guards + compose config; starts nothing
+prod-check: ## Dry run (any branch): OpenBao prod login + guards + compose config; starts nothing
 	$(RUN) prod resolved prod-tags 'compose config --quiet'
 
-prod-pull: ## Clean main only: pull the tags pinned in Infisical prod
+prod-pull: ## Clean main only: pull the tags pinned in the OpenBao prod secret
 	@$(G) prod-git
 	$(RUN) prod prod-tags 'compose pull'
 
-prod-up: ## Clean main only: start prod with the tags pinned in Infisical prod
+prod-up: ## Clean main only: start prod with the tags pinned in the OpenBao prod secret
 	@$(G) prod-git
 	$(RUN) prod prod-tags resolved 'compose up -d'
 

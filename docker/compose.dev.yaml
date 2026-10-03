@@ -3,13 +3,13 @@
 #
 # Always invoked from the repo root through the Makefile (docker/scripts/compose-run.mjs), as:
 #   docker compose --project-directory . --env-file /dev/null -f docker/compose.dev.yaml ...
-# with the Infisical `dev` environment injected, so every relative path below is
+# with the OpenBao `dev` secret injected, so every relative path below is
 # repo-root-relative. Secrets reach `app` only through docker/secrets-env.yaml, except the catalog's
 # PGPASSWORD (APP_DB_PASSWORD), a literal reference in `app`'s own environment (catalog-pg-schema D5).
 #
 # Invariants a future reader must not "helpfully" undo:
 #   * The posture keys under `environment:` are LITERALS. They win over the allowlist, so no
-#     Infisical value can flip the loopback bind or the anonymous/no-proxy posture. The only
+#     OpenBao value can flip the loopback bind or the anonymous/no-proxy posture. The only
 #     permitted variable is PUBLIC_BASE_URL (built from DEV_PORT).
 #   * The source mounts are a per-subtree allowlist (the data-and-secret fence). NEVER replace
 #     them with a whole-repo mount: that would expose server/data and server/.env. Every

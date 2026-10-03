@@ -872,8 +872,8 @@ tight loop.
 
 The deployment / auth / network knobs, consolidated. `server/.env.example` is the
 authoritative, fully-commented list (including the config-gate keys below). It is a reference
-only: nothing reads `server/.env`. The stacks take values from Infisical
-([docs/infisical-secrets.md](docs/infisical-secrets.md)).
+only: nothing reads `server/.env`. The stacks take values from OpenBao
+([docs/openbao-secrets.md](docs/openbao-secrets.md)).
 
 | Var | Default | What it does |
 |-----|---------|--------------|
@@ -920,7 +920,7 @@ These are accepted operational tradeoffs, not bugs to "fix" with a cross-DB tran
 npm install
 npm run typecheck                  # server + web + companion + packages (runs on the host)
 npm test                           # unit + integration tests (runs on the host)
-make dev-up                        # the app runs only in the dev stack (docs/infisical-secrets.md first)
+make dev-up                        # the app runs only in the dev stack (docs/openbao-secrets.md first)
 ```
 
 The server refuses to boot outside a compose stack (`AUTOLOGGER_STACK`), needs an absolute
@@ -935,8 +935,8 @@ repo builds **two independent images from one multistage `docker/Dockerfile`** a
 behind a small internal router (OpenSpec change `containerize-split-images`; specs
 `container-deployment` and `api-contract-freeze`). Everything is driven from the repo root by
 `compose.yaml`, `docker-bake.hcl`, `docker/Dockerfile`, `docker/Caddyfile` and
-`docker/secrets-env.yaml`, with secrets from Infisical (see
-[docs/infisical-secrets.md](docs/infisical-secrets.md)). For a hot-reload dev environment, a locally built stage, and
+`docker/secrets-env.yaml`, with secrets from OpenBao (see
+[docs/openbao-secrets.md](docs/openbao-secrets.md)). For a hot-reload dev environment, a locally built stage, and
 `make` entry points for all three, see [Local container environments](#local-container-environments).
 
 ### Topology
@@ -1035,12 +1035,12 @@ GIT_SHA=$(git rev-parse --short=12 HEAD) docker buildx bake -f docker-bake.hcl -
 
 ### Configuration
 
-Secrets and settings live in the Infisical `prod` environment; `make prod-up` fetches them
+Secrets and settings live in the OpenBao `kv/autologger/prod` secret; `make prod-up` reads them
 (`docker/scripts/compose-run.mjs`) and passes `api` only the keys listed in
-`docker/secrets-env.yaml`. Setup: [docs/infisical-secrets.md](docs/infisical-secrets.md). A
+`docker/secrets-env.yaml`. Setup: [docs/openbao-secrets.md](docs/openbao-secrets.md). A
 hand-typed `docker compose up` fails on purpose. Nothing reads `server/.env`.
 
-| Infisical `prod` key | Required | Why |
+| OpenBao `prod` key | Required | Why |
 |-----|----------|-----|
 | `WEB_TAG`, `API_TAG` | yes | Git-SHA image tags (see above). Compose refuses to start without them. |
 | `PUBLIC_BASE_URL` | yes | The public HTTPS origin (e.g. `https://autologger.nrvo.ai`). Builds the OAuth redirect `${PUBLIC_BASE_URL}/auth/google/callback`. |
@@ -1124,7 +1124,7 @@ In Google Cloud Console → *APIs & Services* → *Credentials* → *Create cred
 client ID* → application type **Web application**. Add the **authorized redirect URI**
 `${PUBLIC_BASE_URL}/auth/google/callback` (e.g. `https://autologger.nrvo.ai/auth/google/callback`).
 If the OAuth consent screen is in **Testing** mode, add every intended user's Google account
-under *Test users* — anyone else is refused by Google. Put the client ID/secret in Infisical `prod`. The OAuth client must exist and be ready *before* cutover.
+under *Test users* — anyone else is refused by Google. Put the client ID/secret in OpenBao `prod`. The OAuth client must exist and be ready *before* cutover.
 Note that the redirect URI is always `${PUBLIC_BASE_URL}/auth/google/callback`: a sign-in
 started on the loopback pre-flight port is sent back to the **public** origin by Google, so the
 full round trip (and the `Secure` session cookie) can only be proven end to end once Pangolin
@@ -1343,7 +1343,7 @@ no-op, a given `role` is re-applied (re-POSTed, so it **overrides a role changed
 since the last run; omit `role` for members whose role should be left alone).
 
 ```bash
-ADMIN_TOKEN=<from Infisical prod> npx tsx server/scripts/bootstrapMemberships.example.ts memberships.json \
+ADMIN_TOKEN=<from OpenBao prod> npx tsx server/scripts/bootstrapMemberships.example.ts memberships.json \
     [--base-url http://127.0.0.1:8080] [--dry-run]
 ```
 
@@ -1354,7 +1354,7 @@ Because the cutover replaces `catalog.db`, run it again in the window (step 3f).
 
 ### Update order and rollback
 
-- **Update order: `api` first, then `web`.** Set the new `API_TAG` in Infisical `prod`, then
+- **Update order: `api` first, then `web`.** Set the new `API_TAG` in OpenBao `prod`, then
   `make prod-pull prod-up`, wait for `healthy`; then the same for `WEB_TAG`/`web`. The HTTP/WS contract is frozen, so a new `api` under an old `web` is
   safe. Volumes carry state across recreation.
 - **Rollback is forward-only for data.** Re-pinning an older tag is safe only if no database
@@ -1380,8 +1380,8 @@ amd64 image's behaviour under QEMU.
 
 Three container environments, driven by a root `Makefile` (OpenSpec change
 `containerized-dev-env`; spec `local-container-environments`). Run `make` (or `make help`) for
-the target list. Each environment is its own compose project, and every target fetches its own
-Infisical environment (`dev`, `stage` or `prod`) through `docker/scripts/compose-run.mjs` and
+the target list. Each environment is its own compose project, and every target reads its own
+OpenBao KV secret (`kv/autologger/dev`, `stage` or `prod`) through `docker/scripts/compose-run.mjs` and
 passes `--env-file /dev/null`, so no env file is ever read. Prod is the stack
 documented under [Container deployment](#container-deployment); this section adds a hot-reload
 **dev** and a locally built **stage**. No HTTP/WS contract changes: the environments only set
@@ -1407,8 +1407,8 @@ existing configuration.
 | `make stage-reset CONFIRM=yes` | **Destroy** the stage volumes, including Postgres and Supabase storage |
 | `make prod-build` | Native-arch build of both images, tagged `:local` only (no SHA tag, no push) |
 | `make prod-push` | Clean `main` only: multi-arch bake and push, tagged with the 12-char HEAD SHA |
-| `make prod-check` | Any branch: Infisical `prod` login, guards and compose config; starts nothing |
-| `make prod-pull` / `make prod-up` | Clean `main` only: pull / start prod with the tags pinned in Infisical `prod` |
+| `make prod-check` | Any branch: OpenBao `prod` login, guards and compose config; starts nothing |
+| `make prod-pull` / `make prod-up` | Clean `main` only: pull / start prod with the tags pinned in OpenBao `prod` |
 | `make prod-down` / `make prod-logs` | Stop and remove prod containers (volumes kept) / follow logs |
 
 ### Dev, stage and prod compared
@@ -1417,7 +1417,7 @@ existing configuration.
 |---|---|---|---|
 | Compose project | `autologger-dev` | `autologger-stage` | `autologger` |
 | Files | `docker/compose.dev.yaml` | `compose.yaml` + `docker/compose.stage.yaml` | `compose.yaml` |
-| Secrets | Infisical `dev` | Infisical `stage` | Infisical `prod` |
+| Secrets | OpenBao `kv/autologger/dev` | OpenBao `kv/autologger/stage` | OpenBao `kv/autologger/prod` |
 | Shape | single-process hot-reload (`npm run dev`), plus Companion | split `web`/`api`/`router`, built locally | split, pinned registry images |
 | Login | always required: Google sign-in (own dev client) | always required: Google sign-in | always required: Google sign-in |
 | Host port (`127.0.0.1`) | app gate `DEV_PORT` (8787), Companion gate `DEV_COMPANION_PORT` (8000) | router `STAGE_PORT` (8788) | router `ROUTER_PORT` (8080) |
@@ -1433,15 +1433,15 @@ another compose project that lands in that range will clash.
 
 ### Setup
 
-Create `.env.infisical.dev` / `.env.infisical.stage` from `docker/infisical-credentials.example`
-(`chmod 600`) and fill the Infisical environments; see
-[docs/infisical-secrets.md](docs/infisical-secrets.md). Then `make dev-up` (or `make stage-up`).
+Create `.env.openbao.dev` / `.env.openbao.stage` from `docker/openbao-credentials.example`
+(`chmod 600`; Ansible renders them on the VMs) and fill `kv/autologger/<env>` in OpenBao; see
+[docs/openbao-secrets.md](docs/openbao-secrets.md). Then `make dev-up` (or `make stage-up`).
 **Never put production secrets in dev or stage**: use separate, low-limit keys and a separate dev
 OAuth client. A compromised dependency inside a dev container can read the mounted Claude login
 and the dev secrets, and egress is unrestricted. Only the keys in `docker/secrets-env.yaml` reach
 a container; the security-relevant ones (`HOST`, `TRUST_PROXY`, `IP_ALLOWLIST`,
 `DATA_DIR`, `PUBLIC_BASE_URL`, ...) are pinned in compose. Ports (`DEV_PORT`, `STAGE_PORT`) are
-set in Infisical; `DEV_PORT=9000 make dev-up` no longer overrides them.
+set in OpenBao; `DEV_PORT=9000 make dev-up` no longer overrides them.
 
 `make dev-up` and `make stage-up` first run `make check` for that environment; `dev-up` also
 requires the host `~/.claude/.credentials.json` to exist.
@@ -1449,8 +1449,8 @@ requires the host `~/.claude/.credentials.json` to exist.
 **Resolved-config guard.** Before touching an environment, `compose-run.mjs` validates the *resolved*
 compose config, not just the file: the project name must be `autologger-dev`/`autologger-stage`,
 every published port must be on `127.0.0.1`, a plain number 1-65535, and not 8080 (prod's router
-port). Port values come from Infisical and must be plain numbers (no quotes, ranges or leading
-zeros); an Infisical key outside `docker/secrets-env.yaml` plus the environment's compose keys
+port). Port values come from OpenBao and must be plain numbers (no quotes, ranges or leading
+zeros); a KV key outside `docker/secrets-env.yaml` plus the environment's compose keys
 (for example any `COMPOSE_*` or `LD_*` name) is refused before anything runs. Dev additionally
 refuses ports 80 and 443 (browsers omit the default port from `Host`/`Origin`, so the dev gate
 would reject every request); stage has no Host allowlist, so `STAGE_PORT=80` is accepted. The
@@ -1525,7 +1525,7 @@ loopback. The connection is entered once by hand (not provisioned):
    module path; it is not in the registry).
 3. Set the server URL to **`http://app:8787`** (Companion reaches the dev app through the app's
    gate on the dev network). Set the API token to `API_TOKEN` from
-   Infisical `dev`; without it every Companion request gets `401`.
+   OpenBao `dev`; without it every Companion request gets `401`.
 
 Notes:
 - The log-event action needs an **active session with live presence**: open a session in a
@@ -1541,20 +1541,20 @@ Notes:
 
 ### Dev sign-in
 
-Dev requires sign-in. Set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` in Infisical `dev` (a dev-only OAuth client,
+Dev requires sign-in. Set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` in OpenBao `dev` (a dev-only OAuth client,
 never production's) and register the redirect URI
 `http://localhost:8787/auth/google/callback` (your `DEV_PORT`). Open dev at
 `http://localhost:<DEV_PORT>/` and sign in. Without both values `compose-run` refuses to start dev
 (and the server refuses to boot). Also set `API_TOKEN` for the dev Companion.
 
-Other integrations are off unless set in Infisical `dev`: `DEEPGRAM_API_KEY` (transcripts; sends audio
+Other integrations are off unless set in OpenBao `dev`: `DEEPGRAM_API_KEY` (transcripts; sends audio
 to DeepGram), `SHEETS_LOG_IMPORT_ENABLED=1`, `AI_V2_ENABLED=1`. YouTube import works from the
 `yt-dlp` baked into the dev image.
 
 ### Stage
 
 Stage is an overlay on `compose.yaml`, built locally for your native architecture, behaving as
-prod: login required, real Google sign-in. Fill Infisical `stage` (`STAGE_PORT`, OAuth client,
+prod: login required, real Google sign-in. Fill OpenBao `stage` (`STAGE_PORT`, OAuth client,
 `API_TOKEN`, `ADMIN_TOKEN`, optional keys), then `make stage-up`, then `make stage-claude-login`
 for AI chat.
 
@@ -1590,7 +1590,7 @@ for AI chat.
   `linux/amd64` and `linux/arm64` (a one-time privileged binfmt setup; the target prints the
   commands) and tags the **local** `main` HEAD, so push `main` first. `make prod-build` only
   tags `:local`, so it never overwrites a pulled release. `prod-up` also needs `WEB_TAG` and
-  `API_TAG` pinned in Infisical `prod`.
+  `API_TAG` pinned in OpenBao `prod`.
 
 ## Frontend (web/ workspace)
 
@@ -1799,7 +1799,7 @@ WebSocket, so HTTPS works with no extra setup).
    - **Poll interval (ms)** — default `1000` (clamped to 250–10000).
 3. **Authenticate (every server)** — the module authenticates by
    sending `Authorization: Bearer <token>`, which the server accepts only when it equals its
-   **`API_TOKEN`** env var. So set `API_TOKEN=<a-long-random-secret>` in the stack's Infisical
+   **`API_TOKEN`** env var. So set `API_TOKEN=<a-long-random-secret>` in the stack's OpenBao KV
    environment, run `make <env>-up`, and paste the **same** secret into the connection's **API token**
    field; without it every request gets `401`. If the server is behind a proxy and uses `IP_ALLOWLIST`, set `TRUST_PROXY=1`
    so the client IP is read from the forwarded header.

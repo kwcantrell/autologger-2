@@ -34,21 +34,21 @@ export function checkBootEnv(env: Record<string, string | undefined>): string | 
   // require-login D1: login is always required, so the removed switch must not linger, and a
   // server no one can sign in to never boots (the same trimmed rule as `oauthConfigured()`).
   if (env.REQUIRE_LOGIN !== undefined) {
-    return 'REQUIRE_LOGIN was removed: login is always required. Unset it (compose and Infisical must not set it).';
+    return 'REQUIRE_LOGIN was removed: login is always required. Unset it (compose and OpenBao must not set it).';
   }
   const signIn = SIGN_IN_VARS.filter((k) => !(env[k] ?? '').trim());
   if (signIn.length) {
-    return `sign-in settings missing or blank: ${signIn.join(', ')} (login is always required; set the Google client in Infisical, see docs/infisical-secrets.md).`;
+    return `sign-in settings missing or blank: ${signIn.join(', ')} (login is always required; set the Google client in OpenBao, see docs/openbao-secrets.md).`;
   }
   // owner-bootstrap D8, D16: the bootstrap owner is required, and only as ASCII (the claim's match
   // is exact ASCII, so a non-ASCII value could never match). Kept out of SIGN_IN_VARS, which
   // mirrors `oauthConfigured()`.
   const owner = env.BOOTSTRAP_OWNER_EMAIL ?? '';
   if (!owner.trim()) {
-    return 'BOOTSTRAP_OWNER_EMAIL is missing or blank (the bootstrap owner claims teams that have no owner; set it in Infisical, see docs/infisical-secrets.md).';
+    return 'BOOTSTRAP_OWNER_EMAIL is missing or blank (the bootstrap owner claims teams that have no owner; set it in OpenBao, see docs/openbao-secrets.md).';
   }
   if ([...owner].some((ch) => (ch.codePointAt(0) ?? 0) > 0x7f)) {
-    return 'BOOTSTRAP_OWNER_EMAIL has a non-ASCII character (the bootstrap owner match is exact ASCII; fix it in Infisical, see docs/infisical-secrets.md).';
+    return 'BOOTSTRAP_OWNER_EMAIL has a non-ASCII character (the bootstrap owner match is exact ASCII; fix it in OpenBao, see docs/openbao-secrets.md).';
   }
   return null;
 }

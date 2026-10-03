@@ -57,7 +57,7 @@ gets the definitions only. Its keys and first start wait for the cutover.
 
   The public-facing API services never hold the superuser password. Realtime does, because
   upstream requires it. The keys and their allowed services are listed in
-  [infisical-secrets.md](infisical-secrets.md).
+  [openbao-secrets.md](openbao-secrets.md).
 
 ## The gateway
 
@@ -143,7 +143,7 @@ migration. `postgres` is a member of `pg_read_all_data`, so anything holding `PO
 **The app's password.** After the migrations, `migrate.sh` gives `autologger_app` `LOGIN` and
 sets its password from `APP_DB_PASSWORD`, with statement logging and `pg_stat_statements` off for
 that transaction (both would otherwise record the plaintext). To rotate: change the key in
-Infisical, then run `make dev-up` (or `make stage-up`). That applies `migrate` first, which sets the
+OpenBao, then run `make dev-up` (or `make stage-up`). That applies `migrate` first, which sets the
 new password, and then recreates the app with the new value, because its env changed. There is no
 window in which both passwords work: between those two steps (a few seconds), any new or replaced
 catalog connection fails with `28P01` and its request gets a 500. Connections already open keep
@@ -203,11 +203,11 @@ docker rm -f $(docker ps -qf label=autologger-test-pg.pid)
 
 ## Rotation and recovery
 
-Infisical holds the values, but the database keeps the passwords it was given. Changing a value
-in Infisical alone breaks the services that use it.
+OpenBao holds the values, but the database keeps the passwords it was given. Changing a value
+in OpenBao alone breaks the services that use it.
 
 - **`POSTGRES_PASSWORD`** (tested on dev, 2026-09-30):
-  1. Set the new value (`openssl rand -hex 16`) in Infisical.
+  1. Set the new value (`openssl rand -hex 16`) in OpenBao.
   2. In the running database, run `make dev-psql`, then `\c postgres supabase_admin`, then
      `\password postgres` and `\password supabase_admin`, entering the new value. Stage uses
      `docker exec -it autologger-stage-db-1 psql -U supabase_admin`. Prod, at the owner's hand,
@@ -215,19 +215,28 @@ in Infisical alone breaks the services that use it.
   3. `make dev-up` (or `make stage-up`) recreates the services with the new value.
 - **`SUPABASE_ROLES_PASSWORD`:** the same steps, with `\password authenticator`,
   `\password supabase_auth_admin` and `\password supabase_storage_admin` as `supabase_admin`.
-- **`JWT_SECRET`, `ANON_KEY`, `SERVICE_ROLE_KEY`** change together. Delete all three in
-  Infisical, run `node docker/scripts/supabase-keys.mjs <env> --writer <file>` (it creates the
-  three), then `make <env>-up`. Old user sessions become invalid. The wrapper warns 90 days
+- **`JWT_SECRET`, `ANON_KEY`, `SERVICE_ROLE_KEY`** change together. Remove all three
+  from `kv/autologger/<env>` (a KV v2 merge patch with `null` values removes keys, for example
+  `PATCH /v1/kv/data/autologger/<env>` with body
+  `{"data":{"JWT_SECRET":null,"ANON_KEY":null,"SERVICE_ROLE_KEY":null}}`, or the OpenBao UI), run
+  `node docker/scripts/supabase-keys.mjs <env> --writer ~/.vault-token` (it creates the three), then `make <env>-up`. Old user sessions become invalid. The wrapper warns 90 days
   before the API keys' 5-year expiry.
-- **`SECRET_KEY_BASE`:** change it in Infisical, then `make <env>-up`.
+- **`SECRET_KEY_BASE`:** change it in OpenBao, then `make <env>-up`.
 - **`REALTIME_DB_ENC_KEY`** encrypts realtime's stored tenant settings. After changing it,
   re-initialise Postgres (above) on dev or stage.
 - **A failed generator run** creates nothing, because each run is one all-or-nothing request.
   If the JWT trio is incomplete for some other reason, the generator refuses. Delete whichever
-  of the three exist in Infisical and run it again.
+  of the three exist in OpenBao and run it again.
+- **A deleted current version:** if `kv/autologger/<env>` was deleted with `bao kv delete` (or
+  destroyed), the generator refuses and writes nothing, because a fresh set would replace every
+  database and JWT secret. Restore a deleted version with
+  `bao kv undelete -versions=<n> kv/autologger/<env>` (or `bao kv rollback -version=<n>`); a
+  destroyed one only with `bao kv rollback -version=<older n>`. Then run it again. The compose
+  targets refuse it too. A `deletion_time` in the future (`delete_version_after`) is a live
+  version and is not refused.
 - **If you lose a password:** inside the `db` container, `supabase_admin` can still log in over
-  the local socket without one, so `\password` still works. Infisical's version history also
-  keeps old values.
+  the local socket without one, so `\password` still works. KV v2's version history also
+  keeps old values (`bao kv get -version=<n> kv/autologger/<env>`).
 
 ## Residual risks
 
