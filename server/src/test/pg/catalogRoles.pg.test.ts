@@ -130,6 +130,19 @@ describe('catalog.app_user_id() and the per-transaction role (catalog-roles D1, 
     const fns = await sql`select p.oid::regprocedure::text as f from pg_proc p
                           where p.pronamespace = 'catalog'::regnamespace`;
     expect(fns.map((r) => r.f)).toContain('catalog.app_user_id()');
+    // catalog-policies D1: the seven policy helpers (executable by catalog_user only; see
+    // catalogPolicyHelpers.pg.test.ts).
+    expect(fns.map((r) => r.f)).toEqual(
+      expect.arrayContaining([
+        'catalog.member_studios(text)',
+        'catalog.manager_studios(text)',
+        'catalog.accessible_shows(text)',
+        'catalog.member_shows(text)',
+        'catalog.co_members(text)',
+        'catalog.studio_exists(text)',
+        'catalog.show_exists(text)',
+      ]),
+    );
     for (const { f } of fns) {
       const r = await sql`select has_function_privilege('public', ${f}, 'execute') as x`;
       expect(r[0]?.x, f).toBe(false);
