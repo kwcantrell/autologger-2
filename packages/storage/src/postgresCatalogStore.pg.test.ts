@@ -28,7 +28,9 @@ const TABLES = `
 interface Env {
   tdb: TestDatabase;
   admin: postgres.Sql;
-  db: PostgresCatalogDb;
+  root: PostgresCatalogDb;
+  /** A `system:test` handle on `root` (catalog-roles D12). */
+  db: CatalogDb;
 }
 
 /** A fresh database with the fixture tables, an admin client and an app-role adapter. */
@@ -36,8 +38,8 @@ async function env(opts: Partial<PostgresCatalogDbOptions> = {}): Promise<Env> {
   const tdb = await createTestDatabase();
   const admin = postgres({ ...tdb.admin, max: 2, onnotice: () => {} });
   await admin.unsafe(TABLES);
-  const db = new PostgresCatalogDb({ ...tdb.app, ...opts });
-  return { tdb, admin, db };
+  const root = new PostgresCatalogDb({ ...tdb.app, ...opts });
+  return { tdb, admin, root, db: root.bindSystem('test') };
 }
 
 async function count(admin: postgres.Sql, table: string, where?: [string, unknown]) {
@@ -55,10 +57,9 @@ async function appSessions(e: Env): Promise<number> {
   return (row as unknown as { n: number }).n;
 }
 
-// catalog-roles D12: the contract holds on the unbound adapter (until task 6.1) and on a user-bound
-// and a system-bound handle.
+// catalog-roles D12: the contract holds on a user-bound and a system-bound handle (the adapter has
+// no unbound methods since task 6.1).
 for (const [label, bind] of [
-  ['', (db: PostgresCatalogDb): CatalogDb => db],
   [' (bound to a user)', (db: PostgresCatalogDb): CatalogDb => db.bindUser('u-1')],
   [' (bound to the system)', (db: PostgresCatalogDb): CatalogDb => db.bindSystem('test')],
 ] as const) {
@@ -69,10 +70,10 @@ for (const [label, bind] of [
     async make(opts) {
       const e = await env(opts);
       return {
-        db: bind(e.db),
+        db: bind(e.root),
         count: (table, where) => count(e.admin, table, where),
         async close() {
-          await e.db.close();
+          await e.root.close();
           await e.admin.end();
         },
       };
@@ -89,7 +90,7 @@ describe('PostgresCatalogDb: Postgres-only cases', () => {
   };
   afterEach(async () => {
     for (const e of open.splice(0)) {
-      await e.db.close().catch(() => {});
+      await e.root.close().catch(() => {});
       await e.admin.end();
     }
   });
@@ -126,7 +127,7 @@ describe('PostgresCatalogDb: Postgres-only cases', () => {
     let runs = 0;
     let reads = 0;
     const both = gate();
-    const body = async (t: Parameters<Parameters<PostgresCatalogDb['tx']>[0]>[0]) => {
+    const body = async (t: CatalogDb) => {
       runs++;
       const row = await t.first<{ v: number }>('SELECT v FROM t WHERE k = ?', 'c');
       if (++reads === 2) both.open();
@@ -171,7 +172,7 @@ describe('PostgresCatalogDb: Postgres-only cases', () => {
   it('8 contending read-modify-write transactions all commit', async () => {
     const e = await make();
     await e.db.run(INSERT, 'w', 0);
-    const body = async (t: Parameters<Parameters<PostgresCatalogDb['tx']>[0]>[0]) => {
+    const body = async (t: CatalogDb) => {
       const row = await t.first<{ v: number }>('SELECT v FROM t WHERE k = ?', 'w');
       await t.first('SELECT count(*) FROM t');
       await t.first('SELECT count(*) FROM t');
@@ -296,7 +297,7 @@ describe('PostgresCatalogDb: Postgres-only cases', () => {
         () => 'resolved',
         (err: unknown) => err,
       );
-    const closing = e.db.close();
+    const closing = e.root.close();
     g.open();
     await expect(prompt(running, 3000)).resolves.toBeUndefined();
     expect(await prompt(queued, 3000)).toBeInstanceOf(CatalogAdapterBrokenError);
@@ -323,7 +324,7 @@ describe('PostgresCatalogDb: bindings (catalog-roles)', () => {
   };
   afterEach(async () => {
     for (const e of open.splice(0)) {
-      await e.db.close().catch(() => {});
+      await e.root.close().catch(() => {});
       await e.admin.end();
     }
   });
@@ -397,7 +398,7 @@ describe('PostgresCatalogDb: bindings (catalog-roles)', () => {
   };
 
   it('a user-bound and a system-bound handle run as their role, at the root and in a transaction', async () => {
-    const { db } = await make();
+    const { root: db } = await make();
     const user = db.bindUser('u-1');
     const sys = db.bindSystem('test');
     expect(await user.first(WHO)).toEqual({ u: 'catalog_user', id: 'u-1', iso: 'read committed' });
@@ -415,7 +416,7 @@ describe('PostgresCatalogDb: bindings (catalog-roles)', () => {
   });
 
   it('a retry after a serialization failure re-applies the role and user id', async () => {
-    const { db } = await make();
+    const { root: db } = await make();
     const seen: unknown[] = [];
     let runs = 0;
     await db.bindUser('u-1').tx(async (t) => {
@@ -432,7 +433,7 @@ describe('PostgresCatalogDb: bindings (catalog-roles)', () => {
 
   it('after a mixed workload every live client is autologger_app with no user id', async () => {
     const r = recording();
-    const { db } = await make({ connect: r.connect, rootMax: 2, txSlots: 2 });
+    const { root: db } = await make({ connect: r.connect, rootMax: 2, txSlots: 2 });
     const user = db.bindUser('u-1');
     const sys = db.bindSystem('test');
     await user.run(INSERT, 'a', 1);
@@ -457,7 +458,7 @@ describe('PostgresCatalogDb: bindings (catalog-roles)', () => {
     await Promise.all([
       user.first('SELECT 1 AS one'),
       sys.all('SELECT k FROM t'),
-      db.run(INSERT, 'f', 6),
+      sys.run(INSERT, 'f', 6),
     ]);
     const live = await r.inspect();
     expect(live.length).toBeGreaterThanOrEqual(4);
@@ -475,7 +476,7 @@ describe('PostgresCatalogDb: bindings (catalog-roles)', () => {
     try {
       const r = recording();
       const e = await make({ connect: r.connect, rootMax: 1 });
-      const user = e.db.bindUser('u-1');
+      const user = e.root.bindUser('u-1');
       await user.first('SELECT 1 AS warm');
       const doomed = user.run('INSERT INTO t (k, v) SELECT ?, 1 FROM pg_sleep(10)', 'killed');
       doomed.catch(() => {});
@@ -507,14 +508,14 @@ describe('PostgresCatalogDb: bindings (catalog-roles)', () => {
     const r = recording();
     const e = await make({ connect: r.connect, rootMax: 1 });
     await expect(
-      e.db.bindUser('u-1').run('INSERT INTO c (pid) VALUES (?)', 42),
+      e.root.bindUser('u-1').run('INSERT INTO c (pid) VALUES (?)', 42),
     ).rejects.toMatchObject({ code: '23503' });
     expect(r.clients[0]?.ended).toBe(true);
     expect(
       await e.db.first(
         "SELECT current_user AS u, current_setting('app.user_id', true) AS id, pg_current_xact_id_if_assigned() IS NULL AS fresh",
       ),
-    ).toMatchObject({ u: 'autologger_app', fresh: true });
+    ).toEqual({ u: 'catalog_system', id: '', fresh: true });
     expect(await count(e.admin, 'c')).toBe(0);
   });
 
@@ -531,7 +532,7 @@ describe('PostgresCatalogDb: bindings (catalog-roles)', () => {
       });
       held.catch(() => {});
       await new Promise((res) => setTimeout(res, 100));
-      const err = (await e.db
+      const err = (await e.root
         .bindUser('u-1')
         .run('INSERT INTO c (pid) VALUES (?)', 1)
         .catch((x: unknown) => x)) as CatalogRootTimeoutError;
@@ -547,7 +548,7 @@ describe('PostgresCatalogDb: bindings (catalog-roles)', () => {
             "SELECT current_user AS u, current_setting('app.user_id', true) AS id, pg_current_xact_id_if_assigned() IS NULL AS fresh",
           ),
         ),
-      ).toMatchObject({ u: 'autologger_app', fresh: true });
+      ).toEqual({ u: 'catalog_system', id: '', fresh: true });
       await gone(e, pid);
       await held;
     } finally {
@@ -559,14 +560,14 @@ describe('PostgresCatalogDb: bindings (catalog-roles)', () => {
   it('a bound statement on a table its role may not read is a CatalogForbiddenError', async () => {
     const e = await make();
     await e.admin.unsafe('revoke all on catalog.t from catalog_user');
-    const err = await e.db
+    const err = await e.root
       .bindUser('u-1')
       .first('SELECT k FROM t')
       .catch((x: unknown) => x);
     expect(err).toBeInstanceOf(CatalogForbiddenError);
     expect(err).toMatchObject({ code: '42501', table_name: 't', binding: 'user' });
     let runs = 0;
-    const inTx = await e.db
+    const inTx = await e.root
       .bindUser('u-1')
       .tx(async (t) => {
         runs++;
@@ -576,6 +577,6 @@ describe('PostgresCatalogDb: bindings (catalog-roles)', () => {
     expect(inTx).toBeInstanceOf(CatalogForbiddenError);
     expect(runs).toBe(1);
     // The system role keeps its grant.
-    expect(await e.db.bindSystem('test').first('SELECT count(*) AS n FROM t')).toEqual({ n: 0 });
+    expect(await e.root.bindSystem('test').first('SELECT count(*) AS n FROM t')).toEqual({ n: 0 });
   });
 });

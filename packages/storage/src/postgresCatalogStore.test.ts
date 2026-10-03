@@ -1,5 +1,6 @@
 // postgres-catalog-adapter tasks 2.1 (design D2-D7): placeholder translation, and the connection
 // handling that a real server can't be made to fail on demand, through the `connect` seam.
+import type { CatalogDb } from '@autologger/ports';
 import postgres from 'postgres';
 import { describe, expect, it, vi } from 'vitest';
 import {
@@ -85,9 +86,10 @@ const lost = (code: string) => Object.assign(new Error(`write ${code}`), { code 
 const serverError = (code: string) =>
   new postgres.PostgresError({ code, message: `server ${code}` } as never);
 
-/** One transaction slot, so every transaction runs on the slot's current client. */
+/** One transaction slot, so every transaction runs on the slot's current client. A `system:test`
+ * handle (the adapter has no unbound methods, catalog-roles 6.1), closing its adapter. */
 function adapter(f: ReturnType<typeof fakes>, txTimeoutMs = 2000) {
-  return new PostgresCatalogDb({
+  const root = new PostgresCatalogDb({
     host: 'h',
     port: 1,
     user: 'u',
@@ -98,6 +100,7 @@ function adapter(f: ReturnType<typeof fakes>, txTimeoutMs = 2000) {
     txTimeoutMs,
     connect: f.connect,
   });
+  return Object.assign(root.bindSystem('test'), { close: () => root.close() });
 }
 
 /** The transaction slot's clients: with `rootMax: 1` the first client is the root slot's. */
@@ -120,6 +123,7 @@ describe('PostgresCatalogDb: NUL text (catalog-on-postgres D5)', () => {
     await db.run('INSERT INTO t (k, v) VALUES (?, ?)', 'ab', 2);
     expect(f.clients[0]?.sent).toEqual([
       'BEGIN ISOLATION LEVEL READ COMMITTED',
+      PREAMBLE,
       'INSERT INTO t (k, v) VALUES ($1, $2)',
       'COMMIT',
     ]);
@@ -162,6 +166,7 @@ describe('PostgresCatalogDb: connection handling (fake clients)', () => {
     const second = slotClients(f)[1];
     expect(second?.sent).toEqual([
       'BEGIN ISOLATION LEVEL SERIALIZABLE',
+      PREAMBLE,
       'INSERT INTO t (k) VALUES ($1)',
       'COMMIT',
     ]);
@@ -268,8 +273,8 @@ describe('PostgresCatalogDb: retry backoff (catalog-retry-backoff D1-D3)', () =>
       text.startsWith('UPDATE') ? serverError(opts.code ?? '40001') : undefined,
     );
     const waits: number[] = [];
-    let db!: PostgresCatalogDb;
-    db = new PostgresCatalogDb({
+    let root!: PostgresCatalogDb;
+    root = new PostgresCatalogDb({
       host: 'h',
       port: 1,
       user: 'u',
@@ -282,11 +287,12 @@ describe('PostgresCatalogDb: retry backoff (catalog-retry-backoff D1-D3)', () =>
       random: () => 0.999,
       sleep: async (ms) => {
         waits.push(ms);
-        await opts.onSleep?.(ms, db);
+        await opts.onSleep?.(ms, root);
       },
     });
+    const db = Object.assign(root.bindSystem('test'), { close: () => root.close() });
     let runs = 0;
-    const body = async (t: Parameters<Parameters<PostgresCatalogDb['tx']>[0]>[0]) => {
+    const body = async (t: CatalogDb) => {
       runs++;
       await t.run('UPDATE t SET v = 1');
     };
@@ -309,7 +315,7 @@ describe('PostgresCatalogDb: retry backoff (catalog-retry-backoff D1-D3)', () =>
     let other: Promise<string> | undefined;
     const b = backoffDb({
       onSleep: async (_ms, db) => {
-        other ??= db.tx(async () => 'other');
+        other ??= db.bindSystem('test').tx(async () => 'other');
         expect(await other).toBe('other');
       },
     });
@@ -662,15 +668,11 @@ describe('PostgresCatalogDb: the short root transaction (catalog-roles D5)', () 
     await db.close();
   });
 
-  it('the old unbound methods keep working, with no preamble', async () => {
-    const f = held(() => undefined);
-    const db = rolesDb(f);
-    expect(await prompt(db.run('UPDATE t SET v = ?', 1))).toEqual({ changes: 1 });
-    expect(await prompt(db.tx(async (t) => t.run('UPDATE t SET v = ?', 2)))).toEqual({
-      changes: 1,
-    });
-    expect(f.texts(0)).toEqual(['BEGIN ISOLATION LEVEL READ COMMITTED', BODY, 'COMMIT']);
-    expect(f.texts(1)).toEqual(['BEGIN ISOLATION LEVEL SERIALIZABLE', BODY, 'COMMIT']);
+  it('the adapter has no unbound statement or transaction method (catalog-roles 6.1)', async () => {
+    const db = rolesDb(held(() => undefined));
+    // @ts-expect-error -- PostgresCatalogDb is a CatalogRoot only
+    expect(db.all).toBeUndefined();
+    for (const m of ['all', 'first', 'run', 'tx']) expect(m in db, m).toBe(false);
     await db.close();
   });
 });
@@ -765,7 +767,7 @@ describe('PostgresCatalogDb: forbidden error and misuse (catalog-roles D8)', () 
       .bindUser('u-1')
       .tx(async (t) => t.run(q('UPDATE t SET v = 99')))
       .catch(() => {});
-    await db.run(q('UPDATE t SET v = 3'));
+    await db.bindSystem('test').run(q('UPDATE t SET v = 3'));
     const own = f.calls.map((c) => c.text).filter((t) => !body.has(t));
     expect(own.length).toBeGreaterThan(0);
     for (const t of own) {

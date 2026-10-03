@@ -159,8 +159,7 @@ export function toPg(sql: string): string {
   return out;
 }
 
-/** Who a handle's statements run for (catalog-roles D4). `null` is the adapter's own unbound
- * methods, which send no preamble until task 6.1 removes them. */
+/** Who a handle's statements run for (catalog-roles D4). */
 type Binding = { kind: 'user'; userId: string } | { kind: 'system'; reason: string };
 
 const PREAMBLE = "select set_config('role', $1, true), set_config('app.user_id', $2, true)";
@@ -172,8 +171,7 @@ function preambleBinds(b: Binding): string[] {
 }
 
 /** What a forbidden error names: the kind and reason, never the user id (design D8). */
-function bindingLabel(b: Binding | null): string {
-  if (b === null) return 'unbound';
+function bindingLabel(b: Binding): string {
   return b.kind === 'user' ? 'user' : `system:${b.reason}`;
 }
 
@@ -280,7 +278,7 @@ type RootOutcome =
   | { ok: true; value: PgResult; confirmed: true }
   | { ok: false; error: unknown; confirmed: boolean };
 
-/** Reads a short root transaction's replies (BEGIN, [preamble,] statement, COMMIT). The client is
+/** Reads a short root transaction's replies (BEGIN, preamble, statement, COMMIT). The client is
  * reused only when the server confirmed the end: a COMMIT answered COMMIT, or ROLLBACK after an
  * earlier error. A failed COMMIT, a failed BEGIN or anything but a server reply retires it
  * (catalog-roles D5, D6). */
@@ -323,11 +321,13 @@ function rootOutcome(results: PromiseSettledResult<PgResult>[]): RootOutcome {
 
 /** What a bound handle calls on its adapter. */
 interface HandleOps {
-  root<T>(b: Binding | null, sql: string, binds: unknown[], map: (r: PgResult) => T): Promise<T>;
-  tx<T>(fn: (t: CatalogDb) => Promise<T>, b: Binding | null): Promise<T>;
+  root<T>(b: Binding, sql: string, binds: unknown[], map: (r: PgResult) => T): Promise<T>;
+  tx<T>(fn: (t: CatalogDb) => Promise<T>, b: Binding): Promise<T>;
 }
 
-export class PostgresCatalogDb implements CatalogDb, CatalogRoot {
+/** The adapter is a `CatalogRoot` only: it has no statement or transaction method of its own, so an
+ * unbound statement cannot be written against it (catalog-roles D4, task 6.1). */
+export class PostgresCatalogDb implements CatalogRoot {
   private readonly txPool: Pool;
   private readonly rootPool: Pool;
   private readonly retired = new WeakSet<PgClient>();
@@ -400,22 +400,6 @@ export class PostgresCatalogDb implements CatalogDb, CatalogRoot {
     return new BoundHandle(this.ops, { kind: 'system', reason });
   }
 
-  all<T = Record<string, unknown>>(sql: string, ...binds: unknown[]): Promise<T[]> {
-    return this.rootQuery(null, sql, binds, (r) => [...r] as T[]);
-  }
-
-  first<T = Record<string, unknown>>(sql: string, ...binds: unknown[]): Promise<T | null> {
-    return this.rootQuery(null, sql, binds, (r) => (r[0] as T | undefined) ?? null);
-  }
-
-  run(sql: string, ...binds: unknown[]): Promise<{ changes: number }> {
-    return this.rootQuery(null, sql, binds, (r) => ({ changes: r.count }));
-  }
-
-  tx<T>(fn: (t: CatalogDb) => Promise<T>): Promise<T> {
-    return this.runTx(fn, null);
-  }
-
   /** Rejects waiting and new calls, lets running calls settle on their own bounds, then ends every
    * connection (design D7). */
   async close(): Promise<void> {
@@ -443,7 +427,7 @@ export class PostgresCatalogDb implements CatalogDb, CatalogRoot {
     return pool;
   }
 
-  private async runTx<T>(fn: (t: CatalogDb) => Promise<T>, binding: Binding | null): Promise<T> {
+  private async runTx<T>(fn: (t: CatalogDb) => Promise<T>, binding: Binding): Promise<T> {
     this.guardRoot();
     if (this.closed) throw closedError();
     const deadlineAt = Date.now() + this.txTimeoutMs;
@@ -477,7 +461,7 @@ export class PostgresCatalogDb implements CatalogDb, CatalogRoot {
   }
 
   private async rootQuery<T>(
-    binding: Binding | null,
+    binding: Binding,
     sql: string,
     binds: unknown[],
     map: (r: PgResult) => T,
@@ -500,7 +484,7 @@ export class PostgresCatalogDb implements CatalogDb, CatalogRoot {
    * caller gets the may-still-apply timeout and the replies are awaited in the background; no
    * cancel and no retry. */
   private async rootCall(
-    binding: Binding | null,
+    binding: Binding,
     sql: string,
     binds: unknown[],
     deadlineAt: number,
@@ -510,9 +494,7 @@ export class PostgresCatalogDb implements CatalogDb, CatalogRoot {
     const qs: Promise<PgResult>[] = [
       handled(client.unsafe('BEGIN ISOLATION LEVEL READ COMMITTED')),
     ];
-    if (binding) {
-      qs.push(handled(client.unsafe(PREAMBLE, preambleBinds(binding), { prepare: true })));
-    }
+    qs.push(handled(client.unsafe(PREAMBLE, preambleBinds(binding), { prepare: true })));
     qs.push(handled(client.unsafe(toPg(sql), binds, { prepare: true })));
     qs.push(handled(client.unsafe('COMMIT')));
     let markLost!: () => void;
@@ -588,7 +570,7 @@ export class PostgresCatalogDb implements CatalogDb, CatalogRoot {
   private async attempt<T>(
     fn: (t: CatalogDb) => Promise<T>,
     deadlineAt: number,
-    binding: Binding | null,
+    binding: Binding,
   ): Promise<T> {
     const slot = await this.acquire(this.txPool, deadlineAt);
     const label = bindingLabel(binding);
@@ -612,9 +594,9 @@ export class PostgresCatalogDb implements CatalogDb, CatalogRoot {
         // BEGIN and the preamble go out together: one round trip, as BEGIN alone was
         // (catalog-roles D4). On a retry this runs again, so the role is re-applied.
         const begin = handled(slot.client.unsafe('BEGIN ISOLATION LEVEL SERIALIZABLE'));
-        const pre = binding
-          ? handled(slot.client.unsafe(PREAMBLE, preambleBinds(binding), { prepare: true }))
-          : null;
+        const pre = handled(
+          slot.client.unsafe(PREAMBLE, preambleBinds(binding), { prepare: true }),
+        );
         await bounded(Promise.all([begin, pre]), deadlineAt - Date.now());
       } catch (error) {
         if (!(error instanceof BoundExpired)) throw mapForbidden(error, label);

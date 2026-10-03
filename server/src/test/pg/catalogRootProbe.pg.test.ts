@@ -58,8 +58,11 @@ const ms = (n: number): number => Math.round(n * 100) / 100;
 describe.skipIf(process.env.CATALOG_ROOT_PROBE !== '1')('catalog root probe (design D14)', () => {
   it('runs 20 concurrent signed-in request mixes for 10 rounds and prints root-call latency', async () => {
     const { app } = await createTestDatabase();
-    const db = new PostgresCatalogDb(app);
-    open.push(db);
+    const adapter = new PostgresCatalogDb(app);
+    open.push(adapter);
+    // The adapter has no unbound methods since catalog-roles 6.1; task 8.3 moves the middleware
+    // calls to their system reasons and the route mix to `forUser` (design D14).
+    const db = adapter.bindSystem('test');
 
     // Seed through the real stores.
     const seed = new Catalog(db);
