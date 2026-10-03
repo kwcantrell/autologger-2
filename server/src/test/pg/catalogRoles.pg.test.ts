@@ -9,6 +9,7 @@ import { resolve } from 'node:path';
 import postgres from 'postgres';
 import { afterEach, describe, expect, it } from 'vitest';
 import { type ConnOptions, connOptions, createTestDatabase } from '../../../../test/pg/testDb';
+import { holdRoleGuardLock } from './roleGuardLock';
 
 const MIGRATIONS = resolve(import.meta.dirname, '../../../../supabase/migrations');
 const SCHEMA_4A = resolve(MIGRATIONS, '20261001000000_catalog_schema.sql');
@@ -23,7 +24,10 @@ function connect(o: ConnOptions): postgres.Sql {
   return sql;
 }
 const scratch: string[] = [];
+// Held from a test's first scratch role until its connections end, after the roles are dropped.
+let lockHeld = false;
 afterEach(async () => {
+  lockHeld = false;
   if (scratch.length) {
     const admin = connect(connOptions('postgres', 'postgres'));
     for (const r of scratch.splice(0)) await admin.unsafe(`drop role if exists ${r}`);
@@ -174,6 +178,10 @@ type Membership = { role: string; inherit?: boolean; admin?: boolean };
 
 /** A scratch role holding `memberships`, dropped after the test. */
 async function scratchRole(sql: postgres.Sql, memberships: Membership[]): Promise<string> {
+  if (!lockHeld) {
+    await holdRoleGuardLock(connect(connOptions('postgres', 'postgres')));
+    lockHeld = true;
+  }
   const name = `t_guard_${randomBytes(6).toString('hex')}`;
   scratch.push(name);
   await sql.unsafe(`create role ${name} nologin`);

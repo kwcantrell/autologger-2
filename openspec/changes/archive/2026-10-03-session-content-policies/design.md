@@ -535,6 +535,11 @@ Test plumbing found in group 7 (post-approval; no scope change, no expected valu
   of the interleave test. It asserts a serial-order outcome, not a latency: alone it takes about
   1 s, but under the full parallel suite it outlasted the 5 s default three times (groups 3 and 4,
   and the 7.3 gate run).
+- `roleGuardLock.ts` (after archive, from PR #45's CI): `catalogRoles.pg.test.ts`'s scratch roles
+  and `catalogSchema.pg.test.ts`'s session-tables migration replay hold one advisory lock. Roles are
+  cluster-wide, and the replay runs the `catalog_roles` guard, which failed in CI with "only
+  autologger_app and postgres may be members of the catalog roles" when the two files overlapped. This
+  race predates 7b-2: the replay test came in 7b-1.
 
 ## D13. Specs, README and ADR 0021
 

@@ -13,6 +13,7 @@ import {
   testPg,
 } from '../../../../test/pg/testDb';
 import { CONTENT_INSERT, seedPolicyFixture } from './policyFixture';
+import { holdRoleGuardLock } from './roleGuardLock';
 
 // session-tables D1: the session content tables (slice 7b-1).
 const SESSION_TABLES = [
@@ -785,6 +786,8 @@ describe('row-level security on every catalog table (catalog-roles D1, D2; catal
 describe('the session tables migration (session-tables D1)', () => {
   it("the migration resets every session's projection", async () => {
     const name = `t_st_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    // The replay runs the role guards, which a parallel scratch role would trip (roleGuardLock.ts).
+    await holdRoleGuardLock(connect(connOptions('postgres', 'postgres')));
     const root = connect(connOptions('postgres', 'postgres'));
     await root.unsafe(`create database ${name} template template0`);
     const sql = connect(connOptions('postgres', name));
