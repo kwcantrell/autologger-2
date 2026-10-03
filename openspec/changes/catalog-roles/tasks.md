@@ -49,6 +49,10 @@ gate reads only up to the first blank line.
 
 ## 4. Catalog facade (design D7)
 
+Groups 4 and 5 land together (owner, 2026-10-02): the unbound facade (4.2) breaks the server until
+the group 5 wiring binds it, so 4.1-5.4 are implemented as one step and every commit stays green
+(design D16). The tasks and their tests are unchanged.
+
 - [ ] 4.1 Test first, in `packages/catalog/src/catalog.test.ts` (a fake `CatalogRoot` recording each handle's binding and statements): `createCatalog(root)` rejects every store call, `tx` and `init()` with `CatalogUnboundError` and sends nothing; `forUser('u-1')` and `system('x')` run statements on `bindUser('u-1')` / `bindSystem('x')` handles; each derived catalog (including `unbound()`) carries the registry snapshot loaded by `init()` on the catalog it came from, with no extra query; `tx` on a bound catalog runs on that handle's `tx` and the body's catalog keeps the binding; a `Catalog` built without a root throws on `forUser`/`system`. Verify: red before 4.2.
 - [ ] 4.2 Implement in `packages/catalog/src/catalog.ts` and `index.ts` (`createCatalog(root: CatalogRoot)`, `forUser`, `system`, `unbound`, `UNBOUND_DB`, exported `CatalogUnboundError`, the facade members as property-style function types). The server's two `createCatalog` callers pass the adapter, which is still both a `CatalogDb` and a `CatalogRoot`. Verify: 4.1 green; the full suites green.
 

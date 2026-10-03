@@ -12,3 +12,8 @@ Reviewers report only critical and major findings (ADR 0024).
 - [x] [major] Task order left the adapter pg suites and the whole integration project red from 2.2 to 5.4, because the migration revoked `autologger_app`'s grants first. Evidence: tasks.md "from task 2.2 … until task 5.4 … fail". Resolved: 2.2 keeps the app role's grants; a final group adds the revoke and the bare-role-refused test, so every commit stays green.
 - [x] [major] ADR 0021's Decision text ("`set local role authenticated` with the caller's JWT claims") and `docs/supabase.md`'s root time-limit paragraph contradicted the change. Evidence: `docs/decisions/0021-…md:31-32`; `docs/supabase.md:152-155`. Resolved: task 6.1 edits both.
 - [x] [major] The ADDED scenario "A system handle inside a user transaction is refused" had no task or test. Evidence: tasks 3.1-4.1 had no cross-binding case. Resolved: a test was added (misuse error plus rollback).
+
+## Consistency read 2026-10-02
+Edits since approval: tasks.md (tasks 1.1–3.4 ticked with Evidence; a note under group 4 says groups 4 and 5 land together, owner 2026-10-02, because the unbound facade breaks the server until group 5's wiring binds it). Task text, proposal, design and spec deltas are unchanged.
+Scope change: no
+No findings.
