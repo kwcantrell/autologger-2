@@ -204,6 +204,10 @@ beforeEach(() => {
   rmSync(join(T, 'cred'), { recursive: true, force: true });
 });
 
+
+// git run from a test must not inherit GIT_* from a calling git hook (GIT_DIR, GIT_INDEX_FILE, ...),
+// or it reads or writes the repository that runs the hook instead of the one named with -C.
+const gitEnv = () => Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('GIT_')));
 describe('credentials file (H7, D1 step 1)', () => {
   it('missing file names the template', async () => {
     const r = await run(['dev', 'compose version']);
@@ -836,7 +840,7 @@ describe('stage public mode (stage-public-https)', () => {
   const SHA = 'a'.repeat(40);
   const URL1 = 'https://stage.example.com';
   // The tagged end-to-end runs need the tree to be the tagged commit (checkStageTree): use HEAD.
-  const HEAD = spawnSync('git', ['-C', ROOT, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout.trim();
+  const HEAD = spawnSync('git', ['-C', ROOT, 'rev-parse', 'HEAD'], { encoding: 'utf8', env: gitEnv() }).stdout.trim();
   const stageSecrets = () => [secret('GOOGLE_CLIENT_ID', 'gid'), secret('GOOGLE_CLIENT_SECRET', 'gsecret'), secret('BOOTSTRAP_OWNER_EMAIL', 'owner@example.com'), secret('STAGE_PORT', '18788'), ...sbSecrets()];
   it('STAGE_PUBLIC_BASE_URL accepts only a bare https DNS origin', async () => {
     const { parseStagePublicUrl } = await import('./compose-run.mjs');
@@ -961,7 +965,8 @@ describe('stage public mode (stage-public-https)', () => {
     assert.doesNotThrow(() => checkStageTree(join(T, 'no-such-tree'), '')); // untagged: no check
     const g = mkdtempSync(join(T, 'tree-git-'));
     const git = (...a) => {
-      const r = spawnSync('git', ['-C', g, '-c', 'user.name=t', '-c', 'user.email=t@example.invalid', '-c', 'commit.gpgsign=false', ...a], { encoding: 'utf8' });
+      // Scratch repo: no hooks, and no GIT_* inherited from a git hook (GIT_DIR etc. would aim at the real repo).
+      const r = spawnSync('git', ['-C', g, '-c', 'user.name=t', '-c', 'user.email=t@example.invalid', '-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=/dev/null', ...a], { encoding: 'utf8', env: gitEnv() });
       assert.equal(r.status, 0, r.stderr);
       return r.stdout.trim();
     };
