@@ -5,6 +5,7 @@
 // for a `40P01`, runs the body again). It wraps the real Postgres session storage, so the
 // transaction contract is the production one. Test infrastructure.
 
+import type { SessionCaller } from '@autologger/session-core/sessionCaller';
 import type {
   Row,
   SessionSql,
@@ -64,14 +65,14 @@ export function slowStorage(
 
   return {
     hooks,
-    async tx<T>(fn: (t: SessionSql) => Promise<T>): Promise<T> {
+    async tx<T>(caller: SessionCaller, fn: (t: SessionSql) => Promise<T>): Promise<T> {
       await yieldNow();
       await hooks.beforeTx?.(++txs);
       if (before.count > 0) {
         before = { ...before, count: before.count - 1 };
         throw before.error;
       }
-      return inner.tx(async (t) => {
+      return inner.tx(caller, async (t) => {
         const value = await fn(wrap(t));
         if (after.count > 0) {
           after = { ...after, count: after.count - 1 };
@@ -80,10 +81,10 @@ export function slowStorage(
         return value;
       });
     },
-    async snapshot<T>(fn: (t: SessionSql) => Promise<T>): Promise<T> {
+    async snapshot<T>(caller: SessionCaller, fn: (t: SessionSql) => Promise<T>): Promise<T> {
       await yieldNow();
       await hooks.beforeSnapshot?.(++snapshots);
-      return inner.snapshot((t) => fn(wrap(t)));
+      return inner.snapshot(caller, (t) => fn(wrap(t)));
     },
     failNextTx(count: number, error: Error = new Error('injected transaction failure')) {
       before = { count, error };

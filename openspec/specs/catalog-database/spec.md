@@ -351,11 +351,10 @@ rolls back or fails, the connection is back to `autologger_app` with no user id.
 
 ### Requirement: Row-level security is enabled on every catalog table
 Every table in schema `catalog` SHALL have row-level security enabled. Every catalog table SHALL
-have at least one policy for `catalog_system`. Every table except `kv` and the nine session tables
-SHALL also have at least one policy for `catalog_user`. The session tables SHALL have no
-`catalog_user` policy and `catalog_user` SHALL hold no privilege on them, so every statement a
-user binding sends to them is refused (ADR 0021 slice 7b-1; slice 7b-2 adds their user
-policies).
+have at least one policy for `catalog_system`. Every table except `kv` SHALL also have at least
+one policy for `catalog_user`, the nine session tables included (ADR 0021 slice 7b-2): a user
+binding reads and writes session content only as "User policies enforce the team permission
+model" allows.
 
 The `catalog_system` policies SHALL be permissive and allow every row for reading and writing.
 
@@ -370,9 +369,9 @@ A migration that creates a catalog table SHALL, in the same migration:
 #### Scenario: No catalog table is left without row-level security
 - **WHEN** the tables of schema `catalog` are listed with their row-level security flag and the
   roles their policies apply to
-- **THEN** every table has row-level security enabled and a policy for `catalog_system`, every
-  table other than `kv` and the session tables has at least one policy for `catalog_user`, and
-  the session tables have none
+- **THEN** every table has row-level security enabled and a policy for `catalog_system`, and
+  every table other than `kv` has at least one policy for `catalog_user`, each session table
+  exactly one
 
 #### Scenario: No user policy allows everything
 - **WHEN** the `catalog_user` policies of schema `catalog` are listed with their `USING` and
@@ -385,9 +384,12 @@ A migration that creates a catalog table SHALL, in the same migration:
 - **THEN** every statement affects the same rows it would without row-level security
 
 #### Scenario: A user binding is refused on the session tables
-- **WHEN** `autologger_app`, switched to `catalog_user` with a user id, selects from, inserts
-  into, updates or deletes from any session table
-- **THEN** each statement is refused with `42501`
+- **WHEN** `autologger_app`, switched to `catalog_user` with the id of a user who has no access
+  to session S's show (another team's owner, a member of S's team without a grant, or no user
+  id), selects from, inserts into, updates or deletes from each session table for S
+- **THEN** a user without access is refused: each select returns no row of S, each update and
+  delete affects no row, and each insert fails with `42501`; the same statements with the id of
+  the owner of S's team, or of a member with any grant on S's show, read and write S's rows
 
 ### Requirement: User policies enforce the team permission model
 For a statement run as `catalog_user`, the database SHALL decide row by row from the
@@ -413,7 +415,13 @@ In the table below:
 | `app_settings` | `studio_config:<id>` of member teams | `studio_config:<id>` of managed teams | `studio_config:<id>` of managed teams | `studio_config:<id>` of managed teams |
 | `team_invites` | invites of member teams | refused | invites of member teams | invites of member teams |
 | `show_grants` | grants on shows of member teams | grants on shows of member teams | grants on shows of member teams | grants on shows of member teams |
+| the nine session tables | rows of sessions of accessible shows | rows of sessions of accessible shows | rows of sessions of accessible shows | rows of sessions of accessible shows |
 | `kv` | refused | refused | refused | refused |
+
+A session row's content is reachable exactly where `requireSession` admits the user (team-management
+"Member content access"), whatever the grant's `can_write`; a member of the team without a grant
+reads the session's `sessions` row (its title) and none of its content. The cost of this rule for
+one statement SHALL NOT grow with the number of sessions the user can access.
 
 The rules work as follows:
 - An update SHALL require the rule both for the row as it was and for the row as written.
@@ -457,6 +465,18 @@ The following SHALL succeed under these rules, as each user-bound path performs 
 - **WHEN** a member of T without a grant on S1 selects the sessions of S1, then updates one of
   them
 - **THEN** the select returns them, and the update affects no row
+
+#### Scenario: A member without a grant sees no session content
+- **WHEN** a member of T without a grant on S1 selects the events, transport, transcript words
+  and meta of a session of S1, and inserts an event into it; and the member is then granted S1
+  and repeats both
+- **THEN** before the grant the selects return no row and the insert fails with `42501`; after
+  the grant the selects return the session's rows and the insert succeeds
+
+#### Scenario: Locking a session row needs show access
+- **WHEN** a session of S1 is selected `FOR UPDATE` by T's owner, by a granted member of S1, by a
+  member without a grant, and by the owner of another team
+- **THEN** the first two lock the row, and the last two get no row and no error
 
 #### Scenario: A non-member sees nothing of another team
 - **WHEN** the owner of team U, who has no membership in T, selects from `users`, `shows`,
@@ -503,7 +523,8 @@ function's own `WHERE` clause SHALL be its whole check. The functions SHALL be:
 - `co_members(uid)`: the ids of the users with a membership in one of the user's member teams,
   the user included;
 - `studio_exists(id)`: whether a team definition with that id exists;
-- `show_exists(id)`: whether a show with that id exists.
+- `show_exists(id)`: whether a show with that id exists;
+- `session_exists(id)`: whether a session with that id exists.
 
 A null or unknown `uid` SHALL give empty sets. The helpers SHALL be configured not to plan
 sequential scans (`enable_seqscan = off`), so that where an index applies, the predicate locks a

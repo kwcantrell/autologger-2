@@ -12,6 +12,8 @@ import {
   createTestDatabase,
   testPg,
 } from '../../../../test/pg/testDb';
+import { CONTENT_INSERT, seedPolicyFixture } from './policyFixture';
+import { holdRoleGuardLock } from './roleGuardLock';
 
 // session-tables D1: the session content tables (slice 7b-1).
 const SESSION_TABLES = [
@@ -643,37 +645,89 @@ describe('row-level security on every catalog table (catalog-roles D1, D2; catal
       // row: catalogPolicies.pg.test.ts), and kv has none. The 6b-1 allow-all `<table>_user_all`
       // policies are gone; the name now belongs only to the one `for all` rule of user_prefs and
       // show_grants (D2's naming).
-      expect(byName[`${t.relname}_user_all`] !== undefined, t.relname).toBe(
-        t.relname === 'user_prefs' || t.relname === 'show_grants',
-      );
-      // session-tables D1: the session tables have only the system policy, and catalog_user
-      // holds no privilege on them until slice 7b-2.
-      const userPolicies = policies.filter((p) => (p.roles as string[]).includes('catalog_user'));
+      // session-content-policies D1: so does each session table's.
       const session = SESSION_TABLES.includes(t.relname);
-      expect(userPolicies.length > 0, t.relname).toBe(t.relname !== 'kv' && !session);
+      expect(byName[`${t.relname}_user_all`] !== undefined, t.relname).toBe(
+        t.relname === 'user_prefs' || t.relname === 'show_grants' || session,
+      );
+      // session-content-policies D1 (inverting session-tables D1's 7b-1 rule): each session table
+      // has exactly the system policy and the one `_user_all` content policy, and catalog_user
+      // holds select, insert, update and delete on it.
+      const userPolicies = policies.filter((p) => (p.roles as string[]).includes('catalog_user'));
+      expect(userPolicies.length > 0, t.relname).toBe(t.relname !== 'kv');
       if (session) {
-        expect(policies.map((p) => p.policyname), t.relname).toEqual([`${t.relname}_system_all`]);
+        expect(policies.map((p) => p.policyname).sort(), t.relname).toEqual([
+          `${t.relname}_system_all`,
+          `${t.relname}_user_all`,
+        ]);
+        expect(byName[`${t.relname}_user_all`], t.relname).toEqual(['catalog_user']);
         for (const priv of ['select', 'insert', 'update', 'delete']) {
           const r =
             await sql`select has_table_privilege('catalog_user', ${`catalog.${t.relname}`}, ${priv}) as p`;
-          expect(r[0]?.p, `${t.relname} ${priv}`).toBe(false);
+          expect(r[0]?.p, `${t.relname} ${priv}`).toBe(true);
         }
       }
     }
   });
 
-  it('catalog_user is refused on every session table (session-tables D1)', async () => {
+  it('A user binding is refused on the session tables (catalog-database; session-content-policies D1)', async () => {
     const db = await createTestDatabase();
-    const sql = connect(db.user);
-    expect((await sql`select current_user as u`)[0]?.u).toBe('catalog_user');
-    for (const table of SESSION_TABLES) {
-      for (const stmt of [
-        `select count(*) from ${table}`,
-        `insert into ${table} (session_id) values ('x')`,
-        `update ${table} set session_id = session_id`,
-        `delete from ${table}`,
-      ]) {
-        await expect(sql.unsafe(stmt), stmt).rejects.toMatchObject({ code: '42501' });
+    await seedPolicyFixture(connect(db.system));
+    const sql = connect(db.app);
+    // Session S is `ss1` (show s1 of team T); each case runs in a transaction that rolls back.
+    class Rollback extends Error {}
+    const run = async (uid: string | null, ...stmts: string[]) => {
+      let out!: { count: number } | { code: string };
+      await sql
+        .begin(async (tx) => {
+          await tx`select set_config('role', 'catalog_user', true),
+                          set_config('app.user_id', ${uid ?? ''}, true)`;
+          for (const stmt of stmts) {
+            try {
+              out = { count: (await tx.unsafe(stmt)).length };
+            } catch (e) {
+              out = { code: String((e as { code?: unknown }).code) };
+              break;
+            }
+          }
+          throw new Rollback();
+        })
+        .catch((e) => {
+          if (!(e instanceof Rollback)) throw e;
+        });
+      return out;
+    };
+    // Another team's owner, a member of T without a grant, no user id; then T's owner and a
+    // member granted s1.
+    for (const [uid, access] of [
+      ['outsider', false],
+      ['ungranted', false],
+      [null, false],
+      ['owner', true],
+      ['granted', true],
+    ] as const) {
+      for (const table of SESSION_TABLES) {
+        const who = `${table} as ${uid ?? 'no user id'}`;
+        const insert = (CONTENT_INSERT[table] as (s: string, id: string) => string)('ss1', 'new');
+        // session_transport holds one row per session: the insert follows a delete of it.
+        const insertStmts =
+          table === 'session_transport'
+            ? [`delete from session_transport where session_id = 'ss1'`, `${insert} returning 1`]
+            : [`${insert} returning 1`];
+        expect(await run(uid, `select 1 from ${table} where session_id = 'ss1'`), `select ${who}`).toEqual({
+          count: access ? 1 : 0,
+        });
+        expect(
+          await run(uid, `update ${table} set session_id = session_id where session_id = 'ss1' returning 1`),
+          `update ${who}`,
+        ).toEqual({ count: access ? 1 : 0 });
+        expect(
+          await run(uid, `delete from ${table} where session_id = 'ss1' returning 1`),
+          `delete ${who}`,
+        ).toEqual({ count: access ? 1 : 0 });
+        expect(await run(uid, ...insertStmts), `insert ${who}`).toEqual(
+          access ? { count: 1 } : { code: '42501' },
+        );
       }
     }
   });
@@ -732,6 +786,8 @@ describe('row-level security on every catalog table (catalog-roles D1, D2; catal
 describe('the session tables migration (session-tables D1)', () => {
   it("the migration resets every session's projection", async () => {
     const name = `t_st_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    // The replay runs the role guards, which a parallel scratch role would trip (roleGuardLock.ts).
+    await holdRoleGuardLock(connect(connOptions('postgres', 'postgres')));
     const root = connect(connOptions('postgres', 'postgres'));
     await root.unsafe(`create database ${name} template template0`);
     const sql = connect(connOptions('postgres', name));

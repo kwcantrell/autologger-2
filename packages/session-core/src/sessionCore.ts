@@ -10,6 +10,7 @@
 
 import type { TransportFields } from '@autologger/domain';
 import type { Clock } from '@autologger/ports';
+import type { SessionCaller } from './sessionCaller';
 
 export type SqlValue = string | number | null;
 export type Row = Record<string, SqlValue>;
@@ -34,10 +35,12 @@ export interface SessionSql {
 /** One session's storage (session-tables design D3): every write is a transaction that holds the
  * session's row lock before its body runs (a missing session rejects before the body runs, and a
  * deadlock runs the body again, so a body has only database effects); every read is one read-only
- * snapshot. The composition root supplies it (the Postgres session adapter). */
+ * snapshot. Each call runs for its `caller` (session-content-policies design D3): a user caller
+ * under the database's content policies, refused before its body runs when the user has no access
+ * to the session's show. The composition root supplies it (the Postgres session adapter). */
 export interface SessionStorage {
-  tx<T>(fn: (t: SessionSql) => Promise<T>): Promise<T>;
-  snapshot<T>(fn: (t: SessionSql) => Promise<T>): Promise<T>;
+  tx<T>(caller: SessionCaller, fn: (t: SessionSql) => Promise<T>): Promise<T>;
+  snapshot<T>(caller: SessionCaller, fn: (t: SessionSql) => Promise<T>): Promise<T>;
 }
 
 /** Runtime substrate SessionCore runs on: the session's id, the hub's socket

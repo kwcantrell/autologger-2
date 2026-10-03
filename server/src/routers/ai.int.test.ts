@@ -390,7 +390,7 @@ describe('ai/chat — tool surface pinned explicitly (auto-generate-event-logs D
         await res.text();
         const call = spy.mock.calls.find(([sessionId]) => sessionId === s);
         expect(call).toBeDefined();
-        expect(call?.[1]).toEqual({ tools: AI_CHAT_ALLOWED_TOOLS });
+        expect(call?.[2]).toEqual({ tools: AI_CHAT_ALLOWED_TOOLS });
       } finally {
         spy.mockRestore();
       }

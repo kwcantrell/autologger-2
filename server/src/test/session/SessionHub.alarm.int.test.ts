@@ -9,7 +9,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { LeaseStore } from '@autologger/session-core/leaseStore';
 import { SessionHub } from '@autologger/session-core/SessionHub';
 import { type SlowStorage, slowStorage } from './slowStorage';
-import { createSessionRow, DRIVER_SAFE_FAKE_TIMERS, testStorage } from './sessionRows';
+import { createSessionRow, DRIVER_SAFE_FAKE_TIMERS, openTestHub, testStorage } from './sessionRows';
 
 const unhandled: unknown[] = [];
 const trap = (reason: unknown): void => {
@@ -45,14 +45,14 @@ describe('lease alarm on real timers', () => {
     const T = 1_750_000_000_000;
     const time = { now: T };
     const clock = { now: () => time.now };
-    const first = await SessionHub.open(sessionId, testStorage(sessionId), clock);
+    const first = await openTestHub(sessionId, testStorage(sessionId), clock);
     expect(await first.claimLease('client-a')).toBe(true);
     await first.close();
 
     // Reopen 10 ms before the lease goes stale: the open's expiry run re-arms the alarm about
     // 10 ms ahead, from inside its transaction body.
     time.now = T + STALE - 10;
-    const hub = await SessionHub.open(sessionId, testStorage(sessionId), clock);
+    const hub = await openTestHub(sessionId, testStorage(sessionId), clock);
     const frames: Record<string, unknown>[] = [];
     hub.attachSocket({ send: (d: string) => void frames.push(JSON.parse(d)) }, 'browser');
     expect(hub.hasArmedAlarm).toBe(true);
@@ -80,7 +80,7 @@ describe('lease alarm on real timers', () => {
   it('an expiry during an open transaction waits for it, ignores its rolled-back heartbeat, and still frees the lease', async () => {
     const T = 1_750_000_000_000;
     const time = { now: T };
-    const hub = await SessionHub.open(sessionId, testStorage(sessionId), { now: () => time.now });
+    const hub = await openTestHub(sessionId, testStorage(sessionId), { now: () => time.now });
     const frames: Record<string, unknown>[] = [];
     hub.attachSocket({ send: (d: string) => void frames.push(JSON.parse(d)) }, 'browser');
     expect(await hub.claimLease('client-a')).toBe(true);
@@ -145,7 +145,7 @@ describe('lease alarm backoff (fake timers)', () => {
 
   async function hubWithFailingSql() {
     const sql: SlowStorage = slowStorage(testStorage(sessionId), { delayMs: 0 });
-    const hub = await SessionHub.open(sessionId, sql, { now: () => Date.now() });
+    const hub = await openTestHub(sessionId, sql, { now: () => Date.now() });
     return { hub, sql };
   }
 

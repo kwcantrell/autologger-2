@@ -92,7 +92,9 @@ refactor of this one.
   session, so the Python `RLock` and `events_stream_revision` polling machinery disappear —
   the hub broadcasts instead. Its rows live in the session tables of schema `catalog`; every
   write locks the session's `catalog.sessions` row first, and a write that changes the events or
-  the transport updates the index's few live fields in the same transaction.
+  the transport updates the index's few live fields in the same transaction. Each hub call runs as
+  its caller: the signed-in user (under the session content policies), or a reviewed system task
+  for the hub's own open and lease alarm, token-only Companion calls and a request's undo steps.
 - **Filesystem blobs** = audio bytes under `DATA_DIR/blobs/audio/<session_id>/<ordinal>_<uuid>.<ext>`;
   the hub holds only metadata + relative keys. Download streams bytes back with HTTP range
   support (416 on unsatisfiable ranges).
@@ -837,7 +839,12 @@ reaches a show only with a grant (the routes above). Without access:
   **404** `Session not found`, and `state`, `categories`, `log`, `transport` and `command` answer as
   if there were no active session (token-only calls are unchanged);
 - a revoke, a removal, a leave or a demotion to member closes the user's open session sockets on
-  sessions they no longer reach with close code **4403**; the reconnect gets the masked 404.
+  sessions they no longer reach with close code **4403**; the reconnect gets the masked 404;
+- the database enforces the same rule on session content for signed-in callers (row-level
+  policies on the nine session tables): a request that passed the route's check and races a
+  revoke gets the same masked answer (404, or the Companion's no-active-session answers) and leaves
+  nothing it wrote. Token-only Companion calls are the exception until the slice 9 credential:
+  they run as a reviewed system task for any session id.
 
 **Auth callback failure redirects:** `GET /auth/google/callback` failure responses are `302` redirects to `/?login_error=<code>` where `<code>` is one of: `provider_error`, `oauth_not_configured`, `missing_params`, `state_invalid`, `exchange_failed`, `token_invalid`, `email_unverified`, `identity_unavailable`, `account_disabled`. The code set is additive-open. Success path unchanged: `302 /` with session cookie. Only Google accounts with a verified email sign in (`email_unverified` otherwise); the verified ID token is then exchanged with Supabase Auth, whose user id is the account id, and `identity_unavailable` means Supabase Auth was unreachable, refused it, or returned an identity that doesn't match the account (gotrue-sign-in).
 

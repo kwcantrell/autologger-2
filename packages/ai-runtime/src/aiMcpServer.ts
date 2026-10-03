@@ -19,8 +19,9 @@
 //   - Concurrent turns share the one listener via per-connection (per-request)
 //     transport instantiation, so two turns on distinct sessions never share
 //     transport state.
-//   - Tool bodies resolve the hub at CALL TIME (`await registry.get(sessionId)`)
-//     and use it only for that invocation's own hub calls, never keeping it
+//   - Tool bodies resolve the hub at CALL TIME, bound to the turn's caller
+//     (`(await registry.get(sessionId)).as(turn caller)`, session-content-policies
+//     D7), and use it only for that invocation's own hub calls, never keeping it
 //     across invocations or a turn, so the idle-eviction sweeper can't close it
 //     underneath a long turn (async-session-hub design D6).
 //
@@ -58,7 +59,7 @@ import {
   parseTimecodeString,
   toTotalFrames,
 } from '@autologger/domain';
-import type { SessionHubRegistryFacade } from '@autologger/session-core';
+import type { SessionCaller, SessionHubRegistryFacade } from '@autologger/session-core';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
@@ -265,6 +266,8 @@ interface CreatedEventsCounter {
 
 interface TurnRegistration {
   readonly sessionId: string;
+  /** Who the turn's tool bodies run for: the route's caller (session-content-policies D7). */
+  readonly caller: SessionCaller;
   /** Per-turn context (D6); undefined ⇒ default chat tool set, no snapshot. */
   readonly context: AiMcpTurnContext | undefined;
   /** The turn's mutable created-events counter (task 3.2). Lives on the
@@ -685,6 +688,8 @@ const generationTranscriptToolShape = {
 interface ToolBuildContext {
   readonly registry: SessionHubRegistryFacade;
   readonly sessionId: string;
+  /** The turn's caller; each tool body binds its hub with it at call time (D7). */
+  readonly caller: SessionCaller;
   readonly generation: AiGenerationRunContext | undefined;
   readonly createdEvents: CreatedEventsCounter;
   /** The topic one-shot's paged word snapshot (D1) — the OTHER key for the
@@ -707,7 +712,10 @@ interface ToolBuildContext {
  * run id, and cap.
  */
 const TOOL_BUILDERS: Record<AiMcpToolName, (server: McpServer, ctx: ToolBuildContext) => void> = {
-  get_transcript_words: (server, { registry, sessionId, generation, pagedWords, pageState }) => {
+  get_transcript_words: (
+    server,
+    { registry, sessionId, caller, generation, pagedWords, pageState },
+  ) => {
     // GENERATION-DENSITY turns: event generation (task 3.3, design D5 — keyed
     // by the run snapshot) and the topic one-shot (topic-generate-paged-
     // transcript D1 — keyed by the words-only `pagedWords` snapshot). Both get
@@ -745,7 +753,7 @@ const TOOL_BUILDERS: Record<AiMcpToolName, (server: McpServer, ctx: ToolBuildCon
             pageState.served.add(page);
             return { content: [{ type: 'text', text: res.text }] };
           }
-          const words = await (await registry.get(sessionId)).listTranscriptWords();
+          const words = await (await registry.get(sessionId)).as(caller).listTranscriptWords();
           const res = renderGenerationTranscriptPage(words, page);
           if (!res.ok) return toolError(res.error);
           return { content: [{ type: 'text', text: res.text }] };
@@ -760,7 +768,7 @@ const TOOL_BUILDERS: Record<AiMcpToolName, (server: McpServer, ctx: ToolBuildCon
       {},
       async () => {
         // Hub resolved at call time (D3), used for this invocation only.
-        const words = await (await registry.get(sessionId)).listTranscriptWords();
+        const words = await (await registry.get(sessionId)).as(caller).listTranscriptWords();
         // Return COMPACT, readable text — NOT the verbose per-word JSON. A real
         // transcript is thousands of 8-field word rows (~180 chars each); the
         // raw `JSON.stringify(words)` produced a single ~300KB line that
@@ -773,15 +781,15 @@ const TOOL_BUILDERS: Record<AiMcpToolName, (server: McpServer, ctx: ToolBuildCon
     );
   },
 
-  list_topics: (server, { registry, sessionId }) => {
+  list_topics: (server, { registry, sessionId, caller }) => {
     server.tool('list_topics', "Returns this session's topics.", {}, async () => {
       // Hub resolved at call time (D3), used for this invocation only.
-      const topics = await (await registry.get(sessionId)).listTopics();
+      const topics = await (await registry.get(sessionId)).as(caller).listTopics();
       return { content: [{ type: 'text', text: JSON.stringify(topics) }] };
     });
   },
 
-  create_topic: (server, { registry, sessionId }) => {
+  create_topic: (server, { registry, sessionId, caller }) => {
     server.tool(
       'create_topic',
       'Create one topic on this session. The ordinal is assigned by the server.',
@@ -807,13 +815,13 @@ const TOOL_BUILDERS: Record<AiMcpToolName, (server: McpServer, ctx: ToolBuildCon
         // Hub resolved at call time (D3). insertTopic is the transactional,
         // server-assigned-ordinal manual-insert path; topics have no WS emission,
         // and this path introduces none.
-        const topic = await (await registry.get(sessionId)).insertTopic(parsed.data);
+        const topic = await (await registry.get(sessionId)).as(caller).insertTopic(parsed.data);
         return { content: [{ type: 'text', text: JSON.stringify(topic) }] };
       },
     );
   },
 
-  create_event: (server, { registry, sessionId, generation, createdEvents }) => {
+  create_event: (server, { registry, sessionId, caller, generation, createdEvents }) => {
     server.tool(
       'create_event',
       'Create one log event on this session at a transcript timecode. Only ' +
@@ -900,7 +908,7 @@ const TOOL_BUILDERS: Record<AiMcpToolName, (server: McpServer, ctx: ToolBuildCon
             // themselves in timecode order), same event-generate-hardening D3
             // regenerate-snapshot exclusion, same one-insert-path (D4)
             // manual-insert semantics.
-            const hub = await registry.get(sessionId);
+            const hub = (await registry.get(sessionId)).as(caller);
             const { event } = await hub.createAnchoredEvent({
               category,
               message,
@@ -938,6 +946,7 @@ function buildSessionMcpServer(
   const ctx: ToolBuildContext = {
     registry,
     sessionId: reg.sessionId,
+    caller: reg.caller,
     generation: reg.context?.generation,
     createdEvents: reg.createdEvents,
     pagedWords: reg.context?.pagedWords,
@@ -1010,7 +1019,7 @@ export class AiMcpListener {
    * `ai/chat` and `topics/generate` pass explicit `{tools}` (D7, task 3.4);
    * omitted ⇒ the pinned default three chat tools.
    */
-  registerTurn(sessionId: string, context?: AiMcpTurnContext): AiMcpTurn {
+  registerTurn(sessionId: string, caller: SessionCaller, context?: AiMcpTurnContext): AiMcpTurn {
     if (this.httpServer === null) throw new Error('AiMcpListener not started');
     const token = randomBytes(TOKEN_BYTES).toString('hex');
     // One created-events counter PER REGISTRATION (task 3.2) — shared by the
@@ -1026,7 +1035,7 @@ export class AiMcpListener {
       pages: null,
       served: new Set<number>(),
     };
-    this.turns.set(token, { sessionId, context, createdEvents, pageState });
+    this.turns.set(token, { sessionId, caller, context, createdEvents, pageState });
     const url = `http://${LOOPBACK}:${this.port}${MCP_PATH}`;
     let disposed = false;
     return {

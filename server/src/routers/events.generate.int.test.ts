@@ -37,8 +37,14 @@ import type { Clock } from '@autologger/ports';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Bindings } from '../appEnv';
 import { app, defaultUser, env, envWith } from '../test/harness';
-import { catalogFor, seededSession as seedSessionChain, testDb } from '../test/helpers';
-import { testRegistry } from '../test/session/sessionRows';
+import {
+  catalogFor,
+  seedAccessMatrix,
+  seededSession as seedSessionChain,
+  testDb,
+} from '../test/helpers';
+import { sessionGate, systemCall } from '../test/session/sessionGate';
+import { harnessHub, testRegistry } from '../test/session/sessionRows';
 import { slowStorage } from '../test/session/slowStorage';
 
 const EVENTS_SUCCESS_FIXTURE = fileURLToPath(
@@ -204,7 +210,7 @@ function generateReq(sessionId: string, envOverride: ReturnType<typeof envWith>,
 /** Anchored transcript: words carrying session-time anchors around the
  * fixtures' create_event timecodes. */
 async function seedAnchoredTranscript(sessionId: string): Promise<void> {
-  const hub = await env.ports.sessions.get(sessionId);
+  const hub = await harnessHub(sessionId);
   await hub.replaceTranscriptWords([
     { session_time: '00:00:01:00', speaker: 'A', word: 'roll', start_sec: 1, end_sec: 2 },
     { session_time: '00:00:03:00', speaker: 'A', word: 'slate', start_sec: 3, end_sec: 4 },
@@ -214,7 +220,7 @@ async function seedAnchoredTranscript(sessionId: string): Promise<void> {
 
 /** Words that exist but carry NO session-time anchors. */
 async function seedAnchorlessTranscript(sessionId: string): Promise<void> {
-  await (await env.ports.sessions.get(sessionId)).replaceTranscriptWords([
+  await (await harnessHub(sessionId)).replaceTranscriptWords([
     { session_time: '', speaker: 'A', word: 'unanchored', start_sec: 1, end_sec: 2 },
   ]);
 }
@@ -222,7 +228,7 @@ async function seedAnchorlessTranscript(sessionId: string): Promise<void> {
 /** A pre-existing manual `slate` event at 00:00:01:00 — the dedup basis the
  * prompt must embed, and the run's one timecode↔wall anchor. */
 async function seedManualSlateEvent(sessionId: string): Promise<void> {
-  await (await env.ports.sessions.get(sessionId)).addEvent({
+  await (await harnessHub(sessionId)).addEvent({
     category: 'slate',
     message: 'Pre-existing slate',
     metadataJson: '{}',
@@ -236,7 +242,7 @@ async function seedAutoSlateEvent(
   sessionId: string,
   message = 'Old generated slate',
 ): Promise<void> {
-  await (await env.ports.sessions.get(sessionId)).addEvent({
+  await (await harnessHub(sessionId)).addEvent({
     category: 'slate',
     message,
     metadataJson: '{"auto_generated":true,"auto_generate_run_id":"old-run"}',
@@ -247,7 +253,7 @@ async function seedAutoSlateEvent(
 }
 
 async function listEvents(sessionId: string) {
-  return (await (await env.ports.sessions.get(sessionId)).listEvents({ limit: 1000, offset: 0 }))
+  return (await (await harnessHub(sessionId)).listEvents({ limit: 1000, offset: 0 }))
     .events;
 }
 
@@ -1194,4 +1200,46 @@ describe('events/generate — mid-run interleaving (real HTTP requests during a 
       expect(events.filter((e) => e.message === 'SLATE')).toHaveLength(3);
     },
   );
+});
+
+// session-content-policies D7, D8 (owner decision P1; task 5.1): a regenerate whose member loses
+// the grant after the turn created the replacements still deletes the snapshot it replaces: the
+// delete runs as the reviewed system task `session-undo`, so no doubled set of generated events
+// is left behind.
+describe('regenerate after a revoke (session-content-policies P1)', () => {
+  it('the snapshot delete runs as session-undo after the turn, leaving only the replacements', async () => {
+    const m = await seedAccessMatrix({ categoriesJson: GEN_CATEGORIES_JSON });
+    seededIds.push(m.sessionId);
+    await seedAnchoredTranscript(m.sessionId);
+    await seedAutoSlateEvent(m.sessionId);
+    const gate = sessionGate();
+    try {
+      await gate.registry.get(m.sessionId);
+      const held = gate.holdNext(systemCall('session-undo'));
+      const pending = Promise.resolve(
+        app.request(
+          `/api/sessions/${m.sessionId}/events/generate`,
+          {
+            method: 'POST',
+            headers: { 'content-type': 'application/json', cookie: m.granted.cookie },
+            body: JSON.stringify({ regenerate: true }),
+          },
+          configuredEnv(EVENTS_SUCCESS_FIXTURE, {}, { sessions: gate.registry }),
+        ),
+      );
+      await held.reached;
+      await catalogFor().auth.authRevokeShow(m.granted.id, m.showId);
+      held.release();
+      const res = await pending;
+      expect(res.status, await res.clone().text()).toBe(200);
+      const body = (await res.json()) as { created: number; deleted: number };
+      expect(body.created).toBeGreaterThan(0);
+      expect(body.deleted).toBe(1);
+      const events = await listEvents(m.sessionId);
+      expect(events.some((event) => event.message === 'Old generated slate')).toBe(false);
+      expect(events).toHaveLength(body.created);
+    } finally {
+      await gate.registry.closeAll();
+    }
+  });
 });

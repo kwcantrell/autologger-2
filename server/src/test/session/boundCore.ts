@@ -13,7 +13,7 @@ import { SessionCore } from '@autologger/session-core/sessionCore';
 import { TopicStore } from '@autologger/session-core/topicStore';
 import { TranscriptStore } from '@autologger/session-core/transcriptStore';
 import { TransportStore } from '@autologger/session-core/transportStore';
-import { createSessionRow, type TestStorage, testStorage } from './sessionRows';
+import { createSessionRow, TEST_CALLER, type TestStorage, testStorage } from './sessionRows';
 
 /** The stores over one bound core, as a hub body receives them. */
 export interface BoundStores {
@@ -88,7 +88,7 @@ export async function boundCoreOn(
   const run = async <T>(fn: (s: BoundStores) => Promise<T>): Promise<T> => {
     let bound: SessionCore | null = null;
     try {
-      const value = await storage.tx((t) => {
+      const value = await storage.tx(TEST_CALLER, (t) => {
         bound?.discardHeldBroadcasts();
         bound?.discardHeldAlarm();
         bound = core.forTransaction(t);
@@ -106,7 +106,7 @@ export async function boundCoreOn(
     }
   };
   const read = <T>(fn: (s: BoundStores) => Promise<T>): Promise<T> =>
-    storage.snapshot((t) => fn(storesOn(core.forSnapshot(t))));
+    storage.snapshot(TEST_CALLER, (t) => fn(storesOn(core.forSnapshot(t))));
   await run((s) => s.core.seed());
   return { core, storage, run, read, sent, broadcasts, alarms, sockets, time };
 }

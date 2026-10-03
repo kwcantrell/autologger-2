@@ -26,6 +26,7 @@ import {
   seedUser,
   testDb,
 } from '../test/helpers';
+import { harnessHub } from '../test/session/sessionRows';
 
 const J = { 'content-type': 'application/json' };
 
@@ -171,7 +172,7 @@ describe('topics/generate — configured behavior (topic-generation)', () => {
   }
 
   async function seedTranscript(sessionId: string): Promise<void> {
-    await (await env.ports.sessions.get(sessionId)).insertTranscriptWord({
+    await (await harnessHub(sessionId)).insertTranscriptWord({
       session_time: '00:00:01',
       speaker: 'Host',
       word: 'hello',
@@ -186,7 +187,7 @@ describe('topics/generate — configured behavior (topic-generation)', () => {
    * continuation-marker loop would never iterate and the route's 200 would
    * prove only the single-page case. */
   async function seedMultiPageTranscript(sessionId: string): Promise<void> {
-    const hub = await env.ports.sessions.get(sessionId);
+    const hub = await harnessHub(sessionId);
     for (let i = 0; i < 30; i += 1) {
       await hub.insertTranscriptWord({
         session_time: '00:00:01',
@@ -203,7 +204,7 @@ describe('topics/generate — configured behavior (topic-generation)', () => {
   }
 
   async function seedTopic(sessionId: string, summary: string) {
-    return await (await env.ports.sessions.get(sessionId)).insertTopic({
+    return await (await harnessHub(sessionId)).insertTopic({
       session_time: '00:00:00',
       duration_sec: 10,
       topic_level: 1,
@@ -212,7 +213,7 @@ describe('topics/generate — configured behavior (topic-generation)', () => {
   }
 
   async function currentTopics(sessionId: string) {
-    return await (await env.ports.sessions.get(sessionId)).listTopics();
+    return await (await harnessHub(sessionId)).listTopics();
   }
 
   /** Real proof no `claude` subprocess ran for `sessionId`: the fixtures all
@@ -478,7 +479,7 @@ describe('topics/generate — page-coverage gate on the crash-safe swap', () => 
       .spyOn(topicGenerateModule, 'generateTopicsTurn')
       .mockImplementation(async (opts: Parameters<typeof generateTopicsTurn>[0]) => {
         for (let i = 0; i < count; i += 1) {
-          await (await opts.registry.get(opts.sessionId)).insertTopic({
+          await (await opts.registry.get(opts.sessionId)).as(opts.caller).insertTopic({
             session_time: `00:00:0${i}`,
             duration_sec: 1,
             topic_level: 1,
@@ -491,7 +492,7 @@ describe('topics/generate — page-coverage gate on the crash-safe swap', () => 
 
   async function seedForGenerate(): Promise<{ sessionId: string; priorIds: string[] }> {
     const sessionId = (await seededSession()).sessionId;
-    const hub = await env.ports.sessions.get(sessionId);
+    const hub = await harnessHub(sessionId);
     await hub.insertTranscriptWord({ session_time: '00:00:01', speaker: 'Host', word: 'hello' });
     const priorIds: string[] = [];
     for (const summary of ['Old topic A', 'Old topic B']) {
@@ -529,7 +530,7 @@ describe('topics/generate — page-coverage gate on the crash-safe swap', () => 
   for (const [label, pageCoverage] of partials) {
     it(`${label}: 502 with the existing detail, prior topics byte-for-byte intact, fresh rows removed`, async () => {
       const { sessionId, priorIds } = await seedForGenerate();
-      const before = await (await env.ports.sessions.get(sessionId)).listTopics();
+      const before = await (await harnessHub(sessionId)).listTopics();
       stubTurn(pageCoverage);
 
       const res = await generateReq(sessionId);
@@ -537,7 +538,7 @@ describe('topics/generate — page-coverage gate on the crash-safe swap', () => 
       expect(await res.json()).toEqual({ detail: FAILURE_DETAIL });
 
       // The prior set is EXACTLY what it was — same ids, ordinals, timestamps.
-      const after = await (await env.ports.sessions.get(sessionId)).listTopics();
+      const after = await (await harnessHub(sessionId)).listTopics();
       expect(after).toEqual(before);
       expect(after.map((t) => t.id)).toEqual(priorIds);
       // …and the run's own rows are gone, not orphaned alongside them.
@@ -555,7 +556,7 @@ describe('topics/generate — page-coverage gate on the crash-safe swap', () => 
     const body = (await res.json()) as { topics: Array<{ id: string; summary: string }> };
     expect(body.topics.map((t) => t.summary)).toEqual(['Fresh stub topic 0', 'Fresh stub topic 1']);
     for (const id of priorIds) expect(body.topics.map((t) => t.id)).not.toContain(id);
-    expect(await (await env.ports.sessions.get(sessionId)).listTopics()).toEqual(body.topics);
+    expect(await (await harnessHub(sessionId)).listTopics()).toEqual(body.topics);
   });
 
   it('a turn with NO word snapshot (zero-of-zero) still replaces — chat/topic turns are unaffected', async () => {
@@ -574,13 +575,13 @@ describe('topics/generate — page-coverage gate on the crash-safe swap', () => 
 
   it('coverage complete but ZERO topics created: still the existing 502 + restore', async () => {
     const { sessionId } = await seedForGenerate();
-    const before = await (await env.ports.sessions.get(sessionId)).listTopics();
+    const before = await (await harnessHub(sessionId)).listTopics();
     stubTurn({ totalPages: 2, servedPages: 2 }, 0);
 
     const res = await generateReq(sessionId);
     expect(res.status).toBe(502);
     expect(await res.json()).toEqual({ detail: FAILURE_DETAIL });
-    expect(await (await env.ports.sessions.get(sessionId)).listTopics()).toEqual(before);
+    expect(await (await harnessHub(sessionId)).listTopics()).toEqual(before);
   });
 });
 
@@ -1139,7 +1140,7 @@ describe('transcript generation', () => {
     const res = await generate(s);
     expect(res.status).toBe(200);
 
-    const enrichment = await (await env.ports.sessions.get(s)).listTranscriptEnrichment();
+    const enrichment = await (await harnessHub(s)).listTranscriptEnrichment();
     expect(enrichment.paragraphs).toHaveLength(3);
     expect(enrichment.sentiment).toHaveLength(3);
     // Anchored (recording-start anchor resolved) — real timeline positions,
@@ -1173,7 +1174,7 @@ describe('transcript generation', () => {
     const res = await generate(s);
     expect(res.status).toBe(200);
 
-    const enrichment = await (await env.ports.sessions.get(s)).listTranscriptEnrichment();
+    const enrichment = await (await harnessHub(s)).listTranscriptEnrichment();
     expect(enrichment.paragraphs.length).toBeGreaterThan(0);
     expect(enrichment.sentiment.length).toBeGreaterThan(0);
     for (const p of enrichment.paragraphs) {
@@ -1188,7 +1189,7 @@ describe('transcript generation', () => {
 
   it('a never-generated session reads listTranscriptEnrichment as empty arrays', async () => {
     const s = (await seededSession()).sessionId;
-    expect(await (await env.ports.sessions.get(s)).listTranscriptEnrichment()).toEqual({
+    expect(await (await harnessHub(s)).listTranscriptEnrichment()).toEqual({
       paragraphs: [],
       sentiment: [],
     });

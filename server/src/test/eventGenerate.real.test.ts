@@ -40,9 +40,9 @@ import {
 } from '@autologger/ai-runtime/eventGeneratePrompt';
 import { parseTimecodeString, toTotalFrames } from '@autologger/domain';
 import type { Clock } from '@autologger/ports';
-import type { SessionHubRegistry } from '@autologger/session-core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { realSessionRegistry } from './realSessionStorage';
+import { TEST_CALLER, type TestRegistry } from './session/testHub';
 
 // ai-runtime-package (task 2.2) — a plain real-time clock literal, defined
 // locally rather than importing `server/src/node/systemClock` (composition-
@@ -188,7 +188,7 @@ const EVENT_GENERATE_ALLOWED_TOOLS = [
 
 describe.skipIf(!RUN)('REAL claude event generation (opt-in: RUN_REAL_AI_TESTS=1)', () => {
   let closeStorage: (() => Promise<void>) | undefined;
-  let registry: SessionHubRegistry;
+  let registry: TestRegistry;
   const sessionId = 'real-event-gen';
 
   /** Mirror the route's run-snapshot assembly (events.ts, task 4.3) with a
@@ -239,6 +239,7 @@ describe.skipIf(!RUN)('REAL claude event generation (opt-in: RUN_REAL_AI_TESTS=1
     return driveAiTurn({
       clock: systemClock,
       registry,
+      caller: TEST_CALLER,
       cliPath: cliPath as string,
       sessionId,
       message: buildEventGenerateMessage({

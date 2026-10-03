@@ -6,11 +6,10 @@
 
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { LeaseStore } from '@autologger/session-core/leaseStore';
-import { SessionHub } from '@autologger/session-core/SessionHub';
 import type { SessionStorage } from '@autologger/session-core/sessionCore';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { slowStorage } from './slowStorage';
-import { createSessionRow, testStorage } from './sessionRows';
+import { createSessionRow, openTestHub, testStorage } from './sessionRows';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -31,8 +30,9 @@ const probe = new AsyncLocalStorage<string>();
 /** `inner` with every transaction body and snapshot body run inside the probe's context. */
 function probed(inner: SessionStorage): SessionStorage {
   return {
-    tx: (fn) => inner.tx((t) => probe.run('inside the storage call', () => fn(t))),
-    snapshot: (fn) => inner.snapshot((t) => probe.run('inside the storage call', () => fn(t))),
+    tx: (caller, fn) => inner.tx(caller, (t) => probe.run('inside the storage call', () => fn(t))),
+    snapshot: (caller, fn) =>
+      inner.snapshot(caller, (t) => probe.run('inside the storage call', () => fn(t))),
   };
 }
 
@@ -40,7 +40,7 @@ describe('the lease alarm after commit', () => {
   it('a lease body that sets the alarm and then fails leaves no alarm armed', async () => {
     const id = await createSessionRow();
     const slow = slowStorage(testStorage(id));
-    const hub = await SessionHub.open(id, slow, { now: () => 1_750_000_000_000 });
+    const hub = await openTestHub(id, slow, { now: () => 1_750_000_000_000 });
     const frames: unknown[] = [];
     hub.attachSocket({ send: (d: string) => void frames.push(JSON.parse(d)) }, 'browser');
 
@@ -59,14 +59,14 @@ describe('the lease alarm after commit', () => {
     const time = { now: T };
     const clock = { now: () => time.now };
 
-    const first = await SessionHub.open(id, probed(testStorage(id)), clock);
+    const first = await openTestHub(id, probed(testStorage(id)), clock);
     expect(await first.claimLease('client-a')).toBe(true);
     await first.close();
 
     // Reopen 10 ms before the lease goes stale: the open's expiry run sets the alarm about 10 ms
     // ahead from inside its transaction body.
     time.now = T + STALE - 10;
-    const hub = await SessionHub.open(id, probed(testStorage(id)), clock);
+    const hub = await openTestHub(id, probed(testStorage(id)), clock);
     const frames: Record<string, unknown>[] = [];
     hub.attachSocket({ send: (d: string) => void frames.push(JSON.parse(d)) }, 'browser');
     expect(hub.hasArmedAlarm).toBe(true);

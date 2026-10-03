@@ -3,10 +3,9 @@
 // duplicate check and insert are one hub transaction (async-session-hub D7, S10), so a row a
 // concurrent import already stored is skipped and counted as skipped.
 import type { CategoryRecord } from '@autologger/domain';
-import { SessionHub } from '@autologger/session-core';
 import { describe, expect, it } from 'vitest';
 import { runSessionLogImport } from '@autologger/log-import/runSessionLogImport';
-import { createSessionRow, testStorage } from './sessionRows';
+import { createSessionRow, openTestHub, testStorage } from './sessionRows';
 
 describe('runSessionLogImport', () => {
   it('returns a promise that rejects on an untimed transcript', async () => {
@@ -36,7 +35,7 @@ describe('runSessionLogImport duplicate skip against a concurrent import', () =>
 
   async function setup() {
     const id = await createSessionRow();
-    const hub = await SessionHub.open(id, testStorage(id));
+    const hub = await openTestHub(id, testStorage(id));
     await hub.appendAudioSeamParts([{ duration_s: 600 }]);
     const run = () =>
       runSessionLogImport({

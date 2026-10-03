@@ -303,6 +303,9 @@ Slice order:
        statements about 0.4 ms against 0.03 ms raw): profile and optimise it; it also lengthens
        how long a session call holds a pool slot (the 7b-1 panel's saturation risk) (owner,
        2026-10-03);
+     - the 7b-2 user-bound session path (median `addEvent` 11.9-15.5 ms against 7b-1's 5.3-5.4 ms,
+       above the 10 ms stop rule, accepted by the owner 2026-10-03): investigate once database-side
+       observability exists (per-statement timings, plans), not before;
      - (5a) a foreign key from `catalog.users` to `auth.users`;
      - (5a) an egress allowlist for GoTrue: `auth-egress` reaches the internet, the LAN and the
        host's bridge address, while GoTrue holds `JWT_SECRET` and its database password;
@@ -738,8 +741,11 @@ Slice order:
        `session-hub` against allow-all system policies, so serial requests do not change.
        Implemented 2026-10-03 on `supabase-7b1-session-tables`; the after-measurements, merge and
        the live dev and stage checks are pending;
-     - 7b-2: the content policies (show access, as in 6a) and hub calls bound to the calling
-       user.
+     - 7b-2 `session-content-policies`: the content policies (show access, as in 6a) and every
+       hub call bound to its caller (the signed-in user, or a reviewed system task: the hub's open
+       and lease alarm, token-only Companion calls, undo steps, the merge script). Implemented
+       2026-10-03 on `supabase-7b2-session-content-policies`; the merge and the live dev and stage
+       checks are pending.
    - 7c: `sessions.revision`, per-row versions, opt-in version checks, `409` with the current row,
      the overwrite dialog and the audit. A contract delta; Companion routes stay unchecked.
 
@@ -873,6 +879,57 @@ Slice order:
    - background writers have no caller: the lease alarm, transcript generation, AI turns
      (`create_event`, `create_topic`, dashboards) and the log-import job need reviewed system
      bindings of their own, as 6b-1 gave detached catalog work.
+
+   **7b-2 `session-content-policies`** (owner decisions, 2026-10-03):
+   1. **full show access** (`accessible_shows`) for read, insert, update and delete on all nine
+      tables: the rule `requireSession` applies, whatever a grant's `can_write`; a member without
+      a grant keeps seeing session titles only;
+   2. **AI turns and the log-import job run as the user who started them**, so the database
+      applies that user's current access to every statement;
+   3. **no access is told from no session** by a definer helper, `catalog.session_exists(id)`;
+   4. **one change**, landed as reviewable commits.
+
+   After the adversarial panel (owner, 2026-10-03):
+   - **P1, undo steps run as the reviewed system task `session-undo`:** the imports' and the
+     upload's segment deletes and the regenerate's snapshot delete remove only what the same
+     request wrote or replaced, and cannot themselves be refused after a revoke. After the 5.1
+     stop the owner added that the YouTube import's undo after its blob put also deletes the
+     stored file, best-effort, as the local import's does (fixing an orphan file after any failed
+     YouTube import);
+   - **P2, disabled accounts are stated, unchanged:** access means a membership or a grant; a
+     running AI turn or log-import job of a disabled account finishes.
+
+   **7b-2's mechanism.** Migration `20261009000000_session_content_policies.sql` adds one
+   `<table>_user_all` policy per session table (a correlated `exists` on `catalog.sessions` by
+   primary key against `accessible_shows`, flat in the number of sessions), restores
+   `catalog_user`'s privileges, and adds `catalog.session_exists`. Session-core's branded
+   `SessionCaller` (`userCaller`, `systemCaller`) is passed per call through
+   `SessionStorage.tx`/`snapshot`; `PostgresSessionDb` holds the catalog root and binds each call.
+   The registry resolves a `SessionHubEntry` (socket members and `as(caller)`), so a hub call
+   without a caller does not compile. A refused user lock asks `session_exists` and raises
+   `SessionAccessDeniedError` (a neutral message, no id) or `SessionNotFoundError`; a user snapshot
+   pipelines one probe with `BEGIN`. `app.onError` answers the refusal `404 Session not found`, the
+   YouTube import lets it through its `502` wrapper, and the Companion routes answer their
+   no-active-session `409` or the masked `200` state. The reviewed-bindings scan covers
+   `systemCaller(`, `userCaller(` (two router files), `new PostgresSessionDb(` and caller literals;
+   the 7b-1 system task is retired for `session-open`, `session-lease-alarm`, `session-undo` and
+   `merge-audio-script`.
+
+   **The 7b-1 constraints, met:**
+   - the binding is passed per call through the seam, not per hub; views over one hub share its
+     lock, so callers interleave in one FIFO order;
+   - the row lock and the projection run under the caller's policy; missing access is told from a
+     missing session and answered as each route already answers missing access;
+   - writers with no caller of their own run as reviewed system tasks (the open, the lease alarm,
+     token-only Companion calls, undo steps, the merge script); AI turns and the log-import job
+     carry their starting user.
+
+   **Measurement** (dev stack, design D11, `spike/bench7b2.mts`, every hub call as a user, 3,000
+   calls x 3 runs): median `addEvent` 11.9 ms at about 300 accessible sessions and 15.5 ms at about
+   3,000 (7b-1 baseline 5.3-5.4 ms), `listEvents` 7.7 ms and 10.6 ms (baseline 5.0-5.2 ms), the
+   31,621-word replace 0.50 s and 0.49 s. This trips the 10 ms stop rule. The owner accepted it
+   without investigating (2026-10-03): performance work waits for database-side observability, so
+   it is measured rather than guessed. The cause is not yet known.
 8. Session leases.
 9. Realtime replaces the WebSocket protocol.
 10. Blobs to Supabase Storage.

@@ -493,7 +493,7 @@ describe('PostgresCatalogDb: bindings (catalog-roles)', () => {
         }),
       ),
       ...Array.from({ length: 6 }, () =>
-        e.root.bindSystem('session-hub').snapshot(async (t) => {
+        e.root.bindSystem('session-hub').snapshot('no-probe', async (t) => {
           await t.all('SELECT 1 AS one');
           await hold.wait;
         }),

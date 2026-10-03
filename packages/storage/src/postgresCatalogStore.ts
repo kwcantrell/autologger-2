@@ -23,6 +23,14 @@
 // READ ONLY, never retried), on a third set of slots, the session slots, so session work never
 // holds a connection the catalog needs. The deadline, statement rules and connection handling are
 // the catalog transaction's.
+//
+// Session content policies (session-content-policies D4, ADR 0021 slice 7b-2): a session call binds
+// its caller, so a user-bound session transaction's row lock and a user-bound snapshot run under the
+// content policies. A refused lock (no row) asks `catalog.session_exists` on the same connection,
+// inside the transaction, to tell no access (`SessionAccessDeniedError`) from no session
+// (`SessionNotFoundError`); a user snapshot pipelines one probe with BEGIN and the preamble, which
+// answers both. Either refusal rejects before the body runs and is never retried; system calls are
+// unchanged.
 
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { CatalogDb, CatalogRoot } from '@autologger/ports';
@@ -32,6 +40,7 @@ import {
   CatalogForbiddenError,
   CatalogTxMisuseError,
   CatalogTxTimeoutError,
+  SessionAccessDeniedError,
   SessionNotFoundError,
 } from './catalogErrors';
 
@@ -142,7 +151,10 @@ export function connectPostgres(opts: PgClientOptions): PgClient {
 const GRACE_MS = 1000;
 /** What a transaction run is: a catalog transaction, a session write transaction holding the
  * session's row lock, or a read-only snapshot (session-tables D2). */
-type TxMode = { kind: 'catalog' } | { kind: 'session'; sessionId: string } | { kind: 'snapshot' };
+type TxMode =
+  | { kind: 'catalog' }
+  | { kind: 'session'; sessionId: string }
+  | { kind: 'snapshot'; sessionId: string };
 const CATALOG: TxMode = { kind: 'catalog' };
 
 const RETRYABLE: Record<TxMode['kind'], ReadonlySet<string>> = {
@@ -159,6 +171,14 @@ const BEGIN: Record<TxMode['kind'], string> = {
 };
 
 const LOCK_SESSION = 'select 1 as locked from sessions where id = $1 for update';
+/** After a user-bound lock found no row: whether the session exists at all (session-content-policies
+ * D4); sent on the refusal path only. */
+const SESSION_EXISTS = 'select catalog.session_exists($1) as e';
+/** A user-bound snapshot's read check, pipelined with BEGIN and the preamble: `ok` when the session's
+ * show is accessible, and `e` whether the session exists (a read-only snapshot cannot lock, A3). */
+const SNAPSHOT_PROBE =
+  'select exists (select 1 from sessions s where s.id = $1 and s.show_id in ' +
+  '(select catalog.accessible_shows(catalog.app_user_id()))) as ok, catalog.session_exists($1) as e';
 
 const pgText = new Map<string, string>();
 
@@ -419,8 +439,10 @@ export class PostgresCatalogDb implements CatalogRoot {
     );
   }
 
-  /** A handle whose statements run as `catalog_user` with this user's id (catalog-roles D4). */
-  bindUser(userId: string): CatalogDb {
+  /** A handle whose statements run as `catalog_user` with this user's id (catalog-roles D4); it also
+   * runs session transactions and snapshots under the content policies (session-content-policies
+   * D4). */
+  bindUser(userId: string): PostgresBoundHandle {
     if (typeof userId !== 'string' || userId === '') {
       throw new TypeError('bindUser needs a non-empty user id');
     }
@@ -650,7 +672,9 @@ export class PostgresCatalogDb implements CatalogRoot {
     let timer: NodeJS.Timeout | undefined;
     let confirmed = false; // the server confirmed the transaction ended
     const sessionId = mode.kind === 'session' ? mode.sessionId : null;
-    let missing = false; // a session transaction found no session row
+    // A user snapshot probes its session's access with BEGIN (session-content-policies D4).
+    const probeId = mode.kind === 'snapshot' && binding.kind === 'user' ? mode.sessionId : null;
+    let refused: Error | null = null; // the lock or the probe refused the session
     try {
       try {
         // BEGIN and the preamble go out together: one round trip, as BEGIN alone was
@@ -661,22 +685,44 @@ export class PostgresCatalogDb implements CatalogRoot {
         const pre = handled(
           slot.client.unsafe(PREAMBLE, preambleBinds(binding), { prepare: true }),
         );
-        const lock =
-          sessionId === null
-            ? null
-            : handled(slot.client.unsafe(LOCK_SESSION, [sessionId], { prepare: true }));
+        const check =
+          sessionId !== null
+            ? handled(slot.client.unsafe(LOCK_SESSION, [sessionId], { prepare: true }))
+            : probeId !== null
+              ? handled(slot.client.unsafe(SNAPSHOT_PROBE, [probeId], { prepare: true }))
+              : null;
         const replies = await bounded(
-          Promise.all(lock ? [begin, pre, lock] : [begin, pre]),
+          Promise.all(check ? [begin, pre, check] : [begin, pre]),
           deadlineAt - Date.now(),
         );
-        missing = lock !== null && replies[2]?.length === 0;
+        if (sessionId !== null && replies[2]?.length === 0) {
+          // No row locked: under a system binding the session does not exist; under a user binding
+          // ask whether it does, on this connection, before the rollback (session-content-policies
+          // D4). The extra round trip is on the refusal path only.
+          let exists = false;
+          if (binding.kind === 'user') {
+            const r = await bounded(
+              handled(slot.client.unsafe(SESSION_EXISTS, [sessionId], { prepare: true })),
+              deadlineAt - Date.now(),
+            );
+            exists = r[0]?.e === true;
+          }
+          refused = exists
+            ? new SessionAccessDeniedError(sessionId)
+            : new SessionNotFoundError(sessionId);
+        } else if (probeId !== null && replies[2]?.[0]?.ok !== true) {
+          refused =
+            replies[2]?.[0]?.e === true
+              ? new SessionAccessDeniedError(probeId)
+              : new SessionNotFoundError(probeId);
+        }
       } catch (error) {
         if (!(error instanceof BoundExpired)) throw mapForbidden(error, label);
         throw new CatalogTxTimeoutError(`catalog transaction exceeded ${this.txTimeoutMs} ms`);
       }
-      if (missing) {
+      if (refused) {
         a.open = false;
-        fail(a, new SessionNotFoundError(sessionId ?? ''));
+        fail(a, refused);
       }
       const settle = () => {
         a.open = false;
@@ -689,7 +735,7 @@ export class PostgresCatalogDb implements CatalogRoot {
           );
         }
       };
-      const body = missing
+      const body = refused
         ? Promise.resolve(null)
         : current.run(a, async () => fn(new TxHandle(a))).then(
           async (value) => {
@@ -856,14 +902,18 @@ export class PostgresBoundHandle implements CatalogDb {
   }
 
   /** A session write transaction: the body runs once `catalog.sessions` row `sessionId` is locked,
-   * and a missing row rejects with `SessionNotFoundError` before it runs. Deadlocks re-run it. */
+   * and a missing row rejects with `SessionNotFoundError` before it runs (under a user binding, a
+   * row the policies refuse rejects with `SessionAccessDeniedError`). Deadlocks re-run it. */
   sessionTx<T>(sessionId: string, fn: (t: CatalogDb) => Promise<T>): Promise<T> {
     return this.ops.tx(fn, this.binding, { kind: 'session', sessionId });
   }
 
-  /** A read-only snapshot: every statement in the body sees one committed state. */
-  snapshot<T>(fn: (t: CatalogDb) => Promise<T>): Promise<T> {
-    return this.ops.tx(fn, this.binding, { kind: 'snapshot' });
+  /** A read-only snapshot of session `sessionId`: every statement in the body sees one committed
+   * state. Under a user binding a probe sent with BEGIN refuses a session the user cannot access
+   * (`SessionAccessDeniedError`) or that does not exist (`SessionNotFoundError`) before the body
+   * runs (session-content-policies D4); a system snapshot sends no probe. */
+  snapshot<T>(sessionId: string, fn: (t: CatalogDb) => Promise<T>): Promise<T> {
+    return this.ops.tx(fn, this.binding, { kind: 'snapshot', sessionId });
   }
 }
 

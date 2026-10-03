@@ -37,6 +37,7 @@ import {
   seedShow,
   setCompanionPresence,
 } from '../test/helpers';
+import { harnessHub } from '../test/session/sessionRows';
 
 const EVENTS_SUCCESS_FIXTURE = fileURLToPath(
   new URL('../test/fixtures/fake-claude-events-success.mjs', import.meta.url),
@@ -157,7 +158,7 @@ describe('session hub under a mixed concurrent load (design D10)', () => {
 
     // Seed: an anchored transcript and a manual slate event (the generate run's anchor), then 80
     // `cam` events through the route, one at a time.
-    const hub = await env.ports.sessions.get(sessionId);
+    const hub = await harnessHub(sessionId);
     await hub.replaceTranscriptWords([
       { session_time: '00:00:01:00', speaker: 'A', word: 'roll', start_sec: 1, end_sec: 2 },
       { session_time: '00:00:03:00', speaker: 'A', word: 'slate', start_sec: 3, end_sec: 4 },
@@ -534,7 +535,7 @@ describe('conflicting pairs fired together equal a serial order (design D10)', (
     });
     const session = await seedSession({ showId: show, title: 'EP 12' });
     expect((await localImport(session, 1800)).status).toBe(200);
-    await (await env.ports.sessions.get(session)).replaceTranscriptWords([
+    await (await harnessHub(session)).replaceTranscriptWords([
       { session_time: '00:08:47', speaker: '0', word: 'almost', start_sec: 527, end_sec: 527.2 },
       { session_time: '00:08:47', speaker: '0', word: 'called', start_sec: 527.3, end_sec: 527.4 },
       { session_time: '00:08:47', speaker: '0', word: 'a', start_sec: 527.5, end_sec: 527.6 },

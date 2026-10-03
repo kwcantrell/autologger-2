@@ -3046,5 +3046,10 @@ describe('SessionHubFacade membership is consumption-based', () => {
     const members = facadeMembers(hubSource, 'SessionHubFacade');
     expect(members.length).toBeGreaterThan(20);
     expect(unconsumedFacadeMembers(members, consumers)).toEqual([]);
+    // session-content-policies D3: the registry resolves a `SessionHubEntry` (the socket members
+    // and `as`), and every one of its members is consumed outside session-core too.
+    const entry = facadeMembers(hubSource, 'SessionHubEntry');
+    expect(entry).toContain('as');
+    expect(unconsumedFacadeMembers(entry, consumers)).toEqual([]);
   });
 });

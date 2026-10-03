@@ -15,6 +15,7 @@
 // via @autologger/transcription's audioMerge.ts. Read-only over server state; the merged files
 // are written outside the blob store.
 
+import { systemCaller } from '@autologger/session-core';
 import { PostgresCatalogDb, PostgresSessionDb } from '@autologger/storage';
 import { mergeAudioSegments } from '@autologger/transcription';
 import { existsSync } from 'node:fs';
@@ -59,10 +60,11 @@ const catalogDb = new PostgresCatalogDb({
 });
 let rows: Array<{ ordinal: number; r2_key: string }>;
 try {
-  // The session hub's system binding (session-tables D2): the script reads what the hub stores.
-  rows = await new PostgresSessionDb(catalogDb.bindSystem('session-hub'))
+  // A reviewed system caller (session-content-policies D7, D9): the operator's script reads what the
+  // hub stores, for any session.
+  rows = await new PostgresSessionDb(catalogDb)
     .forSession(sessionId)
-    .snapshot((t) =>
+    .snapshot(systemCaller('merge-audio-script'), (t) =>
       t.all<{ ordinal: number; r2_key: string }>(
         'SELECT ordinal, r2_key FROM session_audio_segments WHERE session_id = ? ORDER BY ordinal ASC, id ASC',
         sessionId,

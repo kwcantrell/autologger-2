@@ -6,6 +6,7 @@
 import { describe, expect, it } from 'vitest';
 import { app, defaultUser, env } from '../test/harness';
 import { catalogFor, SEED_CATEGORY_ID, seededSession } from '../test/helpers';
+import { harnessHub } from '../test/session/sessionRows';
 
 async function getEvents(
   sessionId: string,
@@ -30,7 +31,7 @@ describe('GET /api/sessions/:sessionId/events — has_auto_generated', () => {
 
   it('is false when events exist but none are auto-generated', async () => {
     const { sessionId } = await seededSession();
-    await (await env.ports.sessions.get(sessionId)).addEvent({
+    await (await harnessHub(sessionId)).addEvent({
       category: 'cam',
       message: 'manual hit',
       metadataJson: '{}',
@@ -43,7 +44,7 @@ describe('GET /api/sessions/:sessionId/events — has_auto_generated', () => {
 
   it('is true when the only auto-generated row lies outside the requested limit/offset window', async () => {
     const { sessionId } = await seededSession();
-    const hub = await env.ports.sessions.get(sessionId);
+    const hub = await harnessHub(sessionId);
     // Three manual rows first (earliest wall times), then one auto row last —
     // a limit=1/offset=0 page returns only the first manual row.
     for (let i = 0; i < 3; i += 1) {

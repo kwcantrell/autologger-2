@@ -4,18 +4,25 @@
 
 import { createCatalog } from '@autologger/catalog';
 import { CatalogForbiddenError } from '@autologger/storage';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { Bindings } from '../appEnv';
 import { GatedCatalog } from '../test/gatedCatalog';
 import { anonApp, env, envWith } from '../test/harness';
 import {
+  COMPANION_BEARER,
   loginCookie,
+  SEED_CATEGORY_ID,
   seedAccessMatrix,
   seedShow,
   seedStudio,
   seedUser,
+  setCompanionPresence,
   testDb,
 } from '../test/helpers';
 import { RewritingCatalog } from '../test/rewritingCatalog';
+import { type GateMatch, nthUserCall, sessionGate, systemCall } from '../test/session/sessionGate';
+import { harnessHub } from '../test/session/sessionRows';
+import type { TestRegistry } from '../test/session/testHub';
 
 const J = { 'content-type': 'application/json' };
 
@@ -421,6 +428,202 @@ describe('routes under the catalog_user policies (design D3, D5, D7, D8)', () =>
     expect(gated.bindings).toContainEqual({
       binding: `user:${userId}`,
       sql: 'SELECT catalog.studio_exists(?) AS e',
+    });
+  });
+});
+
+// -- session hub calls refused in a race (session-content-policies D8, task 5.1) ------------------
+// A session-storage gate holds the route's hub call after `requireSession`; the owner revokes the
+// granted member's grant in the gap. The refusal answers the status the route already gives for
+// missing access, writes nothing (or the route's undo, run as `session-undo`, removes what it
+// wrote) and sends no frame.
+
+describe('session hub calls refused in a race keep each route’s status (session-content-policies D8)', () => {
+  const NOT_FOUND = { detail: 'Session not found' };
+  const NO_ACTIVE = {
+    detail: 'No active session — open AutoLogger in a browser and open a session.',
+  };
+  const CTX = { frameRate: 24, startOffsetFrames: 0 };
+  const registries: TestRegistry[] = [];
+  afterEach(async () => {
+    for (const r of registries.splice(0)) await r.closeAll();
+  });
+
+  type Matrix = Awaited<ReturnType<typeof seedAccessMatrix>>;
+
+  /** Runs `request` against a gated registry, holding the call `match` accepts until the owner
+   * has revoked the granted member's grant. */
+  async function raced(
+    m: Matrix,
+    match: GateMatch,
+    request: (e: Bindings) => Response | Promise<Response>,
+    opts: { config?: Record<string, unknown>; ports?: Partial<Bindings['ports']> } = {},
+  ) {
+    const gate = sessionGate();
+    registries.push(gate.registry);
+    const hub = await gate.registry.get(m.sessionId);
+    const frames: { type: string }[] = [];
+    hub.attachSocket({ send: (d: string) => void frames.push(JSON.parse(d)) }, 'browser');
+    const held = gate.holdNext(match);
+    const pending = Promise.resolve(
+      request(envWith(opts.config ?? {}, { sessions: gate.registry, ...(opts.ports ?? {}) })),
+    );
+    await held.reached;
+    const revoke = await send(
+      'DELETE',
+      `/api/teams/${m.studioId}/shows/${m.showId}/grants/${m.granted.id}`,
+      m.owner.cookie,
+    );
+    expect(revoke.status).toBe(200);
+    held.release();
+    return { res: await pending, frames, hub };
+  }
+
+  it('a content write (event add, transport start, word edit, dashboard save) answers 404, writes nothing, sends no frame', async () => {
+    const VALID_DASHBOARD = {
+      widgets: [{ id: 'w1', type: 'session_duration', title: 'Duration', x: 0, y: 0, w: 4, h: 2 }],
+      interactions: [],
+    };
+    const cases: Array<[string, (m: Matrix, wordId: string, e: Bindings) => Promise<Response>, Record<string, unknown>]> = [
+      [
+        'POST events',
+        (m, _w, e) =>
+          send('POST', `/api/sessions/${m.sessionId}/events`, m.granted.cookie, { category: SEED_CATEGORY_ID, message: 'raced' }, e),
+        {},
+      ],
+      [
+        'transport start',
+        (m, _w, e) => send('POST', `/api/sessions/${m.sessionId}/transport/start`, m.granted.cookie, {}, e),
+        {},
+      ],
+      [
+        'word edit',
+        (m, w, e) =>
+          send('PATCH', `/api/sessions/${m.sessionId}/transcript-words/${w}`, m.granted.cookie, { word: 'edited' }, e),
+        {},
+      ],
+      [
+        'dashboard save',
+        (m, _w, e) => send('PUT', `/api/sessions/${m.sessionId}/ai/v2/dashboard`, m.granted.cookie, VALID_DASHBOARD, e),
+        { AI_V2_ENABLED: '1', HOST: '127.0.0.1', AI_V2_API_KEY: '' },
+      ],
+    ];
+    for (const [name, request, config] of cases) {
+      const m = await seedAccessMatrix();
+      const seedHub = await harnessHub(m.sessionId);
+      const word = await seedHub.insertTranscriptWord({ session_time: '00:00:01', speaker: '0', word: 'original' });
+      const before = await testDb().first('SELECT * FROM sessions WHERE id = ?', m.sessionId);
+      const { res, frames, hub } = await raced(m, nthUserCall(1), (e) => request(m, String(word.id), e), { config });
+      expect(`${name} ${res.status}`).toBe(`${name} 404`);
+      expect(await res.json(), name).toEqual(NOT_FOUND);
+      expect(frames, name).toEqual([]);
+      expect(await hub.exportEvents(), name).toEqual([]);
+      expect((await hub.transportSnapshot(CTX)).is_rolling, name).toBe(false);
+      expect((await hub.listTranscriptWords()).map((w) => w.word), name).toEqual(['original']);
+      expect(await hub.listDashboards(), name).toEqual([]);
+      expect(await testDb().first('SELECT * FROM sessions WHERE id = ?', m.sessionId), name).toEqual(before);
+    }
+  });
+
+  it('GET events racing a revoke answers 404, not an empty list', async () => {
+    const m = await seedAccessMatrix();
+    const { res } = await raced(m, nthUserCall(1, 'snapshot'), (e) =>
+      send('GET', `/api/sessions/${m.sessionId}/events`, m.granted.cookie, undefined, e),
+    );
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual(NOT_FOUND);
+  });
+
+  it('a local audio import refused at its anchor answers 404, and its segment and blob are undone', async () => {
+    const m = await seedAccessMatrix();
+    const { res, frames, hub } = await raced(m, nthUserCall(2, 'tx'), (e) =>
+      anonApp.request(
+        `/api/sessions/${m.sessionId}/local-audio-import?duration_s=10`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'audio/wav', Cookie: m.granted.cookie },
+          body: new Uint8Array([0x52, 0x49, 0x46, 0x46]),
+        },
+        e,
+      ),
+    );
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual(NOT_FOUND);
+    expect(await hub.listAudioSegments()).toEqual([]);
+    expect(await hub.exportEvents()).toEqual([]);
+    expect((await env.ports.audio.list({ prefix: `audio/${m.sessionId}/` })).objects).toEqual([]);
+    expect(frames.filter((f) => f.type === 'event.changed')).toEqual([]);
+  });
+
+  it('an audio upload whose blob write fails is undone as session-undo after a revoke: no segment row stays', async () => {
+    const m = await seedAccessMatrix();
+    const failingAudio = new Proxy(env.ports.audio, {
+      get(target, prop) {
+        if (prop === 'put') return async () => Promise.reject(new Error('injected: disk full'));
+        const value = Reflect.get(target, prop, target);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
+    const { res, hub } = await raced(
+      m,
+      systemCall('session-undo'),
+      (e) =>
+        anonApp.request(
+          `/api/sessions/${m.sessionId}/audio/segments`,
+          {
+            method: 'POST',
+            headers: { 'content-type': 'audio/webm', Cookie: m.granted.cookie },
+            body: new Uint8Array([1, 2, 3, 4]),
+          },
+          e,
+        ),
+      { ports: { audio: failingAudio } },
+    );
+    expect(res.status).toBe(500);
+    expect(await hub.listAudioSegments()).toEqual([]);
+  });
+
+  it('Companion with a cookie: log answers 409 and stores nothing; state answers 200 with the active session masked', async () => {
+    const m = await seedAccessMatrix();
+    await setCompanionPresence('tab-race', m.sessionId, { visible: true });
+    const cmd = await send('POST', '/api/companion/command', m.granted.cookie, { type: 'record-start' });
+    expect(cmd.status).toBe(200);
+    const companion = (cookie: string, path: string, body: unknown, e: Bindings) =>
+      // (anonApp.request may answer synchronously; `raced` takes either.)
+      anonApp.request(
+        path,
+        {
+          method: body === undefined ? 'GET' : 'POST',
+          headers: { ...J, cookie },
+          body: body === undefined ? undefined : JSON.stringify(body),
+        },
+        e,
+      );
+
+    const log = await raced(m, nthUserCall(1), (e) =>
+      companion(m.granted.cookie, '/api/companion/log', { category_id: SEED_CATEGORY_ID, message: 'raced' }, e),
+    );
+    expect(log.res.status).toBe(409);
+    expect(await log.res.json()).toEqual(NO_ACTIVE);
+    expect(await log.hub.exportEvents()).toEqual([]);
+    expect(log.frames).toEqual([]);
+
+    // A fresh grant for the state case (the first race revoked it).
+    await createCatalog(env.ports.catalog)
+      .system('test-seed')
+      .auth.authGrantShow(m.granted.id, m.showId, m.owner.id, new Date().toISOString());
+    const tokenState = (await (
+      await anonApp.request('/api/companion/state', { headers: COMPANION_BEARER }, { ...env })
+    ).json()) as { connected_clients: number };
+    const state = await raced(m, nthUserCall(1, 'snapshot'), (e) =>
+      companion(m.granted.cookie, '/api/companion/state', undefined, e),
+    );
+    expect(state.res.status).toBe(200);
+    expect(await state.res.json()).toMatchObject({
+      active_session_id: null,
+      session: null,
+      last_command: null,
+      connected_clients: tokenState.connected_clients,
     });
   });
 });

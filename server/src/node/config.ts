@@ -52,9 +52,9 @@ export function createBindings(procEnv: Record<string, string | undefined>): {
   // catalog-roles D9/D10: KV runs as system:kv.
   const kv = new KvStore(catalogDb.bindSystem('kv'), clock);
   // session-tables D2/D10: session content lives in the session tables, on the adapter's session
-  // connections, as system:session-hub until slice 7b-2 binds hub calls to their caller.
+  // connections. session-content-policies D4: the session adapter binds each call to its caller.
   // DATA_DIR/sessions is no longer created or written (legacy files stay for slice 11).
-  const sessions = new PostgresSessionDb(catalogDb.bindSystem('session-hub'));
+  const sessions = new PostgresSessionDb(catalogDb);
   const registry = new SessionHubRegistry({ storage: (id) => sessions.forSession(id), clock });
   const audioBlobStore = new BlobStore(join(dataDir, 'blobs'), join(dataDir, 'tmp'));
   // Startup hygiene (design D6, task 5.4): remove any youtube-import per-request

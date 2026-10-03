@@ -5,7 +5,7 @@
 import { AsyncResource } from 'node:async_hooks';
 import { describe, expect, it } from 'vitest';
 import { slowStorage } from './slowStorage';
-import { createSessionRow, testRegistry, testStorage } from './sessionRows';
+import { createSessionRow, TEST_CALLER, testRegistry, testStorage } from './sessionRows';
 
 const CTX = { frameRate: 24, startOffsetFrames: 0 };
 
@@ -29,7 +29,7 @@ describe('a hub read is one snapshot', () => {
               // After the page was read: another connection commits an event and its revision.
               armed = false;
               await outside.runInAsyncScope(() =>
-                elsewhere.tx(async (t) => {
+                elsewhere.tx(TEST_CALLER, async (t) => {
                   await t.run(
                     `INSERT INTO session_events (session_id, id, wall_time_utc, frame_rate, category, message)
                    VALUES (?, ?, ?, ?, ?, ?)`,

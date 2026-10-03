@@ -11,7 +11,7 @@ import {
   timedTranscriptTokens,
 } from '@autologger/log-import';
 import type { Config } from '@autologger/ports';
-import type { SessionHubFacade, TimecodeCtx } from '@autologger/session-core';
+import { type SessionHubFacade, type TimecodeCtx, userCaller } from '@autologger/session-core';
 import { generateTranscriptWords, TranscriptGenerateError } from '@autologger/transcription';
 import { Hono } from 'hono';
 import { z } from 'zod';
@@ -188,7 +188,10 @@ logImportRouter.post('/api/shows/:showId/log-import', async (c) => {
         const sessionId = String(session.id);
         appendLogImportLine(job.id, `Importing “${title}” → session ${sessionId.slice(0, 8)}…`);
         try {
-          const getHub = () => env.ports.sessions.get(sessionId);
+          // The job's hub calls run as its creator (session-content-policies D7, owner decision 2):
+          // the database applies the creator's current access to every statement.
+          const getHub = async () =>
+            (await env.ports.sessions.get(sessionId)).as(userCaller(job.createdByUserId));
           const row = await catalog.sessions.getSessionJoinedRow(sessionId, {
             includeHidden: true,
           });

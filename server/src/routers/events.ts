@@ -40,6 +40,8 @@ import {
   sessionDeckDisplayTitle,
   stripCategoryUiSnapshots,
 } from '@autologger/domain';
+import { type SessionHubFacade, systemCaller } from '@autologger/session-core';
+import type { Context } from 'hono';
 import { Hono } from 'hono';
 import type { AppEnv } from '../appEnv';
 import {
@@ -52,7 +54,21 @@ import {
   eventGenerateTimeoutSec,
 } from '../env';
 import { ApiError } from '../httpError';
-import { getSessionHub, parseOptionalMarkedAt, requireSession, timecodeCtx } from './_helpers';
+import {
+  getSessionHub,
+  parseOptionalMarkedAt,
+  requireSession,
+  sessionCaller,
+  timecodeCtx,
+} from './_helpers';
+
+/** An undo step's hub (session-content-policies D7, owner decision P1): a request whose later step
+ * failed, or was refused after a revoke, removes only what it wrote itself (the segment it just
+ * created, or the snapshot its regenerate replaced) as the reviewed system task `session-undo`, so
+ * the undo cannot itself be refused. */
+async function undoHub(c: Context<AppEnv>, sessionId: string): Promise<SessionHubFacade> {
+  return (await c.env.ports.sessions.get(sessionId)).as(systemCaller('session-undo'));
+}
 
 export const eventsRouter = new Hono<AppEnv>();
 
@@ -569,6 +585,7 @@ eventsRouter.post('/api/sessions/:sessionId/events/generate', async (c) => {
     const outcome = await driveAiTurn({
       clock: c.env.ports.clock,
       registry: c.env.ports.sessions,
+      caller: sessionCaller(c),
       cliPath: c.env.config.CLAUDE_CLI_PATH.trim(),
       sessionId,
       message,
@@ -594,7 +611,7 @@ eventsRouter.post('/api/sessions/:sessionId/events/generate', async (c) => {
       // (async-session-hub design D6).
       const deleted = regenerate
         ? outcome.createdEvents > 0
-          ? await (await getSessionHub(c, sessionId)).deleteEventsByIds(snapshotIds)
+          ? await (await undoHub(c, sessionId)).deleteEventsByIds(snapshotIds)
           : 0
         : undefined;
       return c.json({

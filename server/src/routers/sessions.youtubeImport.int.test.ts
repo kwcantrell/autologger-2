@@ -41,6 +41,7 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
+import { SessionHubView } from '@autologger/session-core';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { SessionIndexStore } from '@autologger/catalog';
@@ -59,7 +60,8 @@ import { createBindings } from '../node/config';
 import { anonApp, app, env, envWith } from '../test/harness';
 import { catalogFor, seedAccessMatrix, seededSession, testDb } from '../test/helpers';
 import { slowStorage } from '../test/session/slowStorage';
-import { testRegistry } from '../test/session/sessionRows';
+import { nthUserCall, sessionGate } from '../test/session/sessionGate';
+import { harnessHub, testRegistry } from '../test/session/sessionRows';
 
 const FIXTURE_PATH = join(MEDIA_IMPORT_FIXTURES_DIR, 'fake-ytdlp.mjs');
 
@@ -641,7 +643,7 @@ describe('task 9.5 — anchored success: exact timecodes, transport advance, WS 
     // Observe the SAME in-process hub the route resolves via getSessionHub
     // (env.ports.sessions IS c.env.ports.sessions — same registry instance) —
     // a real socket attach, not a mock of the broadcast call.
-    const hub = await env.ports.sessions.get(session);
+    const hub = await harnessHub(session);
     const wsMessages: Array<Record<string, unknown>> = [];
     hub.attachSocket({ send: (d: string) => void wsMessages.push(JSON.parse(d)) }, 'browser');
 
@@ -738,7 +740,7 @@ describe('task 9.5 — N-scan category guard: a non-internal "Recording 99 Start
     // 9.6 — no backfill" above), bypassing the /events route's category
     // whitelist so the seeded row's category is exactly 'cam' (not
     // 'internal').
-    const hub = await env.ports.sessions.get(session);
+    const hub = await harnessHub(session);
     await hub.addEvent({
       category: 'cam',
       message: 'Recording 99 Started',
@@ -816,7 +818,7 @@ describe('task 9.5 — refused while rolling (409): live roll untouched, no Reco
   // (after a successful `put`, right before the composite anchor RPC) — the
   // race where a recording starts DURING the download.
   //
-  // Hermetic seam: `env.ports.sessions.get(session)` returns the SAME
+  // Hermetic seam: `harnessHub(session)` returns the SAME
   // in-process hub instance `getSessionHub` resolves inside the route
   // (SessionHubRegistry caches by session id — see SessionHub.ts's `get()`).
   // A real live roll is started via the frozen `/transport/start` route
@@ -833,10 +835,10 @@ describe('task 9.5 — refused while rolling (409): live roll untouched, no Reco
     const { binaryPath, markerPath } = freshBinary();
     const testEnv = configuredEnv(binaryPath);
 
-    const hub = await env.ports.sessions.get(session);
+    const hub = await harnessHub(session);
     const originalStatusLive = hub.statusLive.bind(hub);
     let statusLiveCalls = 0;
-    const spy = vi.spyOn(hub, 'statusLive').mockImplementation((ctx) => {
+    const spy = vi.spyOn(SessionHubView.prototype, 'statusLive').mockImplementation((ctx) => {
       statusLiveCalls += 1;
       const real = originalStatusLive(ctx);
       // Only the FIRST read (the early guard) is faked as not-rolling; every
@@ -893,7 +895,7 @@ describe('task 9.5 — failed import: zero events, transport not advanced', () =
     const { binaryPath } = freshBinary({ mode: 'download-fail' });
     const testEnv = configuredEnv(binaryPath);
 
-    const hub = await env.ports.sessions.get(session);
+    const hub = await harnessHub(session);
     expect((await hub.transportSnapshot(CTX)).elapsed_frames).toBe(0);
 
     const res = await postImport(session, VALID_BODY, testEnv);
@@ -942,7 +944,7 @@ describe('session-tables 6.4 — an anchor transaction that fails answers 502 wi
       const listed = configuredEnv(binaryPath);
       expect((await listSegments(session, listed)).segments).toHaveLength(0);
       expect((await listEvents(session, listed)).total).toBe(0);
-      const hub = await env.ports.sessions.get(session);
+      const hub = await harnessHub(session);
       expect((await hub.transportSnapshot(CTX)).elapsed_frames).toBe(0);
       const row = await testDb().first<{ event_count: number }>(
         'SELECT event_count FROM sessions WHERE id = ?',
@@ -999,7 +1001,7 @@ describe('task 9.5 — anchor-resolution end-to-end (recordingStartAnchors)', ()
 describe('task 9.6 — no backfill: a pre-existing anchorless segment is untouched', () => {
   it("a session already holding an anchorless imported segment is byte-for-byte unchanged after the change's read/startup paths run", async () => {
     const session = (await seededSession()).sessionId;
-    const hub = await env.ports.sessions.get(session);
+    const hub = await harnessHub(session);
 
     // A pre-existing anchorless take: recording_ordinal/timestamps null, no
     // events — exactly what an import produced BEFORE task 9.4 wired
@@ -1242,5 +1244,67 @@ describe('a YouTube import re-checks the caller’s access after the download (s
       takeEvents: 2,
     });
     expect(scratchEntriesFor(m.sessionId)).toEqual([]);
+  });
+});
+
+// session-content-policies D8 (task 5.1): a grant revoked between the route's gate and its anchor
+// refuses the anchor; the import answers the route's missing-access 404, not its 502 wrapper, and
+// its undo (run as `session-undo`) removes the segment and the blob.
+describe('a YouTube import refused at its anchor in a race (session-content-policies D8)', () => {
+  it('answers 404 Session not found (not 502), and the segment and its blob are undone', async () => {
+    const m = await seedAccessMatrix();
+    const { binaryPath } = freshBinary();
+    const gate = sessionGate();
+    const hub = await gate.registry.get(m.sessionId);
+    try {
+      const held = gate.holdNext(nthUserCall(2, 'tx'));
+      const pending = Promise.resolve(
+        app.request(
+          `/api/sessions/${m.sessionId}/youtube-import`,
+          {
+            method: 'POST',
+            headers: { 'content-type': 'application/json', cookie: m.granted.cookie },
+            body: JSON.stringify(VALID_BODY),
+          },
+          envWith(
+            { YTDLP_RESOLVED_PATH: binaryPath, HOST: '127.0.0.1', IP_ALLOWLIST: '' },
+            { sessions: gate.registry },
+          ),
+        ),
+      );
+      await held.reached;
+      await catalogFor().auth.authRevokeShow(m.granted.id, m.showId);
+      held.release();
+      const res = await pending;
+      expect(res.status).toBe(404);
+      expect(await res.json()).toEqual({ detail: 'Session not found' });
+      expect(await hub.listAudioSegments()).toEqual([]);
+      expect(await hub.exportEvents()).toEqual([]);
+      expect((await env.ports.audio.list({ prefix: `audio/${m.sessionId}/` })).objects).toEqual([]);
+    } finally {
+      await gate.registry.closeAll();
+    }
+  });
+});
+
+// session-content-policies D7 (owner decision 2026-10-03): a failure after the blob put undoes the
+// segment row and the stored file, as the local import's undo does; the route still answers its
+// 502 wrapper.
+describe('a YouTube import failing at its anchor removes its stored file (session-content-policies D7)', () => {
+  it('answers 502, leaves no segment row and no audio file', async () => {
+    const session = (await seededSession()).sessionId;
+    const { binaryPath } = freshBinary();
+    const anchor = vi
+      .spyOn(SessionHubView.prototype, 'anchorImportedTake')
+      .mockRejectedValueOnce(new Error('simulated anchor failure'));
+    try {
+      const res = await postImport(session, VALID_BODY, configuredEnv(binaryPath));
+      expect(res.status).toBe(502);
+      expect(anchor).toHaveBeenCalledTimes(1);
+      expect(await (await harnessHub(session)).listAudioSegments()).toEqual([]);
+      expect((await env.ports.audio.list({ prefix: `audio/${session}/` })).objects).toEqual([]);
+    } finally {
+      anchor.mockRestore();
+    }
   });
 });

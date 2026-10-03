@@ -23,6 +23,7 @@ import {
   mockGoTrue,
   resetMockAgent,
 } from '../test/oauth';
+import { harnessHub } from '../test/session/sessionRows';
 
 const J = { 'content-type': 'application/json' };
 const NUL = '\u0000';
@@ -41,7 +42,7 @@ async function member(): Promise<{ studioId: string; cookie: string }> {
 describe('NUL in session content is a 400', () => {
   it('POST …/events with a NUL message: 400 with detail, no event, no frame', async () => {
     const { sessionId } = await seededSession();
-    const hub = await env.ports.sessions.get(sessionId);
+    const hub = await harnessHub(sessionId);
     const frames: string[] = [];
     const socket = { send: (d: string) => void frames.push(d) };
     hub.attachSocket(socket, 'browser');

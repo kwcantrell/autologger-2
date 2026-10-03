@@ -5,13 +5,26 @@
 
 import { audioSegmentWaveformBodySchema } from '@autologger/contract';
 import type { BlobRange } from '@autologger/ports';
-import type { AudioSegmentMeta } from '@autologger/session-core';
+import {
+  type AudioSegmentMeta,
+  type SessionHubFacade,
+  systemCaller,
+} from '@autologger/session-core';
 import { InvalidRangeError } from '@autologger/storage';
+import type { Context } from 'hono';
 import { Hono } from 'hono';
 import type { AppEnv } from '../appEnv';
 import { isCompressibleResponseType } from '../compressibleTypes';
 import { ApiError } from '../httpError';
 import { getSessionHub, parseOptionalMarkedAt, requireSession } from './_helpers';
+
+/** An undo step's hub (session-content-policies D7, owner decision P1): a request whose later step
+ * failed, or was refused after a revoke, removes only what it wrote itself (the segment it just
+ * created, or the snapshot its regenerate replaced) as the reviewed system task `session-undo`, so
+ * the undo cannot itself be refused. */
+async function undoHub(c: Context<AppEnv>, sessionId: string): Promise<SessionHubFacade> {
+  return (await c.env.ports.sessions.get(sessionId)).as(systemCaller('session-undo'));
+}
 
 export const audioRouter = new Hono<AppEnv>();
 
@@ -211,7 +224,7 @@ audioRouter.post('/api/sessions/:sessionId/audio/segments', async (c) => {
     await c.env.ports.audio.put(seg.r2_key, payload, { contentType: seg.mime_type });
   } catch (e) {
     // Roll back the dangling metadata row if the bytes never landed.
-    await (await getSessionHub(c, sessionId)).deleteAudioSegment(seg.id);
+    await (await undoHub(c, sessionId)).deleteAudioSegment(seg.id);
     throw e;
   }
   return c.json(segmentApiDict(sessionId, seg));

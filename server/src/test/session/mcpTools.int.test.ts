@@ -10,7 +10,6 @@
 // behavior a design turn would see.
 
 import type { DashboardConfig } from '@autologger/contract';
-import type { SessionHubRegistry } from '@autologger/session-core';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -19,9 +18,9 @@ import {
   type BuildAggregateMcpServerDeps,
   buildAggregateMcpServer,
 } from '@autologger/ai-runtime/mcpTools';
-import { testRegistry } from './sessionRows';
+import { TEST_CALLER, testRegistry, type TestRegistry } from './sessionRows';
 
-let registry: SessionHubRegistry;
+let registry: TestRegistry;
 
 beforeEach(() => {
   // The sessions these tests name get their catalog rows on first use (session-tables D12).
@@ -40,7 +39,7 @@ async function connectToTurn(
   sessionId: string,
   deps: BuildAggregateMcpServerDeps = {},
 ): Promise<{ client: Client; close: () => Promise<void> }> {
-  const { instance } = buildAggregateMcpServer(sessionId, registry, deps);
+  const { instance } = buildAggregateMcpServer(sessionId, registry, TEST_CALLER, deps);
   const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: 'test', version: '0.0.0' });
   await Promise.all([instance.connect(serverTransport), client.connect(clientTransport)]);

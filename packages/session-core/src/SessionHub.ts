@@ -44,6 +44,7 @@ import type {
   TimecodeCtx,
   TransportState,
 } from './sessionCore';
+import { type SessionCaller, systemCaller } from './sessionCaller';
 import { SessionCore } from './sessionCore';
 import type { Topic } from './topicStore';
 import { TopicStore } from './topicStore';
@@ -308,7 +309,7 @@ export interface SessionHubFacade {
  * scenario).
  */
 export interface SessionHubRegistryFacade {
-  get: (sessionId: string) => Promise<SessionHubFacade>;
+  get: (sessionId: string) => Promise<SessionHubEntry>;
   closeUserSockets: (
     userId: string,
     sessionIds: ReadonlySet<string> | 'all',
@@ -316,6 +317,19 @@ export interface SessionHubRegistryFacade {
   ) => number;
   evictIdle: (idleMs?: number) => void;
   startSweeper: () => void;
+}
+
+/**
+ * What the registry resolves (session-content-policies D3): the socket members and `as(caller)`,
+ * and no storage member, so a hub call without a caller does not compile. `as` returns the bound
+ * `SessionHubFacade`. `packageBoundaries.repo.test.ts` checks every member has an outside consumer.
+ */
+export interface SessionHubEntry {
+  attachSocket: (ws: HubSocketLike, role: 'browser' | 'companion', userId?: string) => void;
+  detachSocket: (ws: { send(data: string): void }) => void;
+  handleSocketMessage: (raw: string) => void;
+  broadcastCommand: (command: string) => void;
+  as: (caller: SessionCaller) => SessionHubFacade;
 }
 
 /** A socket as the hub receives it: it sends, and (a real WebSocket) can be closed with a code
@@ -420,7 +434,16 @@ async function nextRecordingOrdinal(s: HubStores): Promise<number> {
   return maxOrdinal + 1;
 }
 
-export class SessionHub implements SessionHubFacade {
+/** The hub's own calls (session-content-policies D6): the open seeds the session's rows and frees
+ * a lease that went stale while the process was down, and the alarm frees a stale lease; their
+ * effects are session-wide, not any caller's. Every other storage call runs as the caller of the
+ * view it came through (`as`). */
+const OPEN_CALLER = systemCaller('session-open');
+const ALARM_CALLER = systemCaller('session-lease-alarm');
+
+type HubCall = <T>(mode: 'read' | 'write', body: (s: HubStores) => Promise<T>) => Promise<T>;
+
+export class SessionHub implements SessionHubEntry {
   /** Marks the async context of an open transaction body (design D4); the lease alarm is armed
    * outside it (design D6, spike A11). */
   private static readonly txContext = new AsyncLocalStorage<TxContext>();
@@ -469,7 +492,7 @@ export class SessionHub implements SessionHubFacade {
     try {
       // A lease that went stale while the process was down: clean it up now and
       // re-arm the timer if it is still live (spec: expireIfStale on open).
-      await hub.inTxn(async (s) => {
+      await hub.call(OPEN_CALLER, 'write', async (s) => {
         await s.core.seed();
         await s.lease.expireIfStale();
       });
@@ -485,7 +508,11 @@ export class SessionHub implements SessionHubFacade {
    * transaction holds). Otherwise the call counts as in flight, touches the hub, and runs under
    * the lock: a write as one transaction whose held broadcasts flush after COMMIT and before the
    * lock is released, a read as one snapshot (session-tables design D6). */
-  private async call<T>(mode: 'read' | 'write', body: (s: HubStores) => Promise<T>): Promise<T> {
+  private async call<T>(
+    caller: SessionCaller,
+    mode: 'read' | 'write',
+    body: (s: HubStores) => Promise<T>,
+  ): Promise<T> {
     if (this.state !== 'open') throw new SessionHubClosedError('the session hub is closed');
     if (this.insideOwnTransaction()) {
       throw new SessionTxMisuseError(
@@ -499,8 +526,10 @@ export class SessionHub implements SessionHubFacade {
       const release = await this.lock.acquire();
       try {
         return mode === 'write'
-          ? await this.transaction(body)
-          : await this.storage.snapshot((t) => body(storesFor(this.core.forSnapshot(t))));
+          ? await this.transaction(caller, body)
+          : await this.storage.snapshot(caller, (t) =>
+              body(storesFor(this.core.forSnapshot(t))),
+            );
       } finally {
         release();
       }
@@ -509,11 +538,15 @@ export class SessionHub implements SessionHubFacade {
     }
   }
 
-  private read<T>(body: (s: HubStores) => Promise<T>): Promise<T> {
-    return this.call('read', body);
+  /** The bound view (session-content-policies D3): the storage members, each running as `caller`,
+   * and the socket members. Views are cheap; any number share this hub's lock, sockets and alarm,
+   * so calls of different callers interleave in one FIFO order. */
+  as(caller: SessionCaller): SessionHubFacade {
+    const call: HubCall = (mode, body) => this.call(caller, mode, body);
+    return new SessionHubView(this, call);
   }
 
-  /** Every mutating RPC runs through here. Broadcast atomicity
+  /** Every mutating RPC runs through `call(caller, 'write', …)`. Broadcast atomicity
    * (code-health-consolidation D1, async form per async-session-hub D3): the
    * body's stores sit on a core bound to the transaction, whose broadcasts are
    * held and flush — in enqueue order — only after the adapter commits; an
@@ -521,9 +554,6 @@ export class SessionHub implements SessionHubFacade {
    * write back AND discards the queue, so clients never see `*.changed` for a
    * rolled-back write. A nested `tx` on the body's stores joins the
    * transaction and flushes with it. */
-  private inTxn<T>(body: (s: HubStores) => Promise<T>): Promise<T> {
-    return this.call('write', body);
-  }
 
   /** The storage runs the body once per attempt (a deadlock runs it again, session-tables design
    * D2, D7): each attempt gets a fresh transaction-bound core, and the previous attempt's held
@@ -531,7 +561,10 @@ export class SessionHub implements SessionHubFacade {
    * The alarm is armed here, outside the storage call's async context. A body that changed the
    * events or the transport writes the catalog projection after it returns, before COMMIT
    * (session-tables design D8), so a failed projection fails the write. */
-  private async transaction<T>(body: (s: HubStores) => Promise<T>): Promise<T> {
+  private async transaction<T>(
+    caller: SessionCaller,
+    body: (s: HubStores) => Promise<T>,
+  ): Promise<T> {
     const parent = SessionHub.txContext.getStore();
     const bound: { core: SessionCore | null } = { core: null };
     const drop = () => {
@@ -539,7 +572,7 @@ export class SessionHub implements SessionHubFacade {
       bound.core?.discardHeldAlarm();
     };
     try {
-      const value = await this.storage.tx((t) => {
+      const value = await this.storage.tx(caller, (t) => {
         drop();
         const ctx: TxContext = { hub: this, open: true, parent };
         return SessionHub.txContext.run(ctx, async () => {
@@ -604,7 +637,7 @@ export class SessionHub implements SessionHubFacade {
   private async runAlarm(): Promise<void> {
     if (this.state !== 'open') return;
     try {
-      await this.inTxn((s) => s.lease.expireIfStale());
+      await this.call(ALARM_CALLER, 'write', (s) => s.lease.expireIfStale());
       this.alarmBackoffMs = 0;
     } catch (err) {
       if (this.state !== 'open') return;
@@ -706,6 +739,38 @@ export class SessionHub implements SessionHubFacade {
 
   broadcastCommand(command: string): void {
     this.core.broadcastCommand(command);
+  }
+
+}
+
+/** A hub bound to one caller (session-content-policies D3): every storage member runs as that
+ * caller through the hub's lock; the socket members are the hub's. */
+export class SessionHubView implements SessionHubFacade {
+  constructor(
+    private readonly hub: SessionHub,
+    private readonly call: HubCall,
+  ) {}
+
+  private read<T>(body: (s: HubStores) => Promise<T>): Promise<T> {
+    return this.call('read', body);
+  }
+
+  private inTxn<T>(body: (s: HubStores) => Promise<T>): Promise<T> {
+    return this.call('write', body);
+  }
+
+  // -- WebSocket fan-out (the hub's) -----------------------------------------
+  attachSocket(ws: HubSocketLike, role: 'browser' | 'companion', userId?: string): void {
+    this.hub.attachSocket(ws, role, userId);
+  }
+  detachSocket(ws: { send(data: string): void }): void {
+    this.hub.detachSocket(ws);
+  }
+  handleSocketMessage(raw: string): void {
+    this.hub.handleSocketMessage(raw);
+  }
+  broadcastCommand(command: string): void {
+    this.hub.broadcastCommand(command);
   }
 
   // -- RPC: lifecycle --------------------------------------------------------
