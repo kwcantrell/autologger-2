@@ -3,6 +3,7 @@
 // competing request, then lets the first go, and checks the outcome is the one a serial order
 // gives.
 
+import { defaultSettingsBlob, validateSettingsBlob } from '@autologger/domain';
 import { describe, expect, it } from 'vitest';
 import { GatedCatalog } from '../test/gatedCatalog';
 import { app, env, envWith } from '../test/harness';
@@ -233,6 +234,22 @@ async function settingsRow(team: string): Promise<string | null> {
   );
   return r?.value ?? null;
 }
+/** Whether the team's stored settings are the default settings (catalog-policies D7: creation
+ * stores them, replacing a leftover row). */
+async function isDefaultSettings(team: string): Promise<boolean> {
+  const raw = await settingsRow(team);
+  if (raw === null) return false;
+  const strip = (b: { categories: { id: string }[] }) => ({
+    ...b,
+    categories: b.categories.map(({ id: _, ...c }) => c),
+  });
+  const want = validateSettingsBlob(
+    defaultSettingsBlob(team) as unknown as Record<string, unknown>,
+    team,
+    () => true,
+  );
+  return JSON.stringify(strip(JSON.parse(raw))) === JSON.stringify(strip(want));
+}
 /** Rows a pre-4d race could have left under a deleted team's id. */
 async function leaveOrphans(team: string, strangerId: string): Promise<void> {
   await testDb().run(
@@ -305,7 +322,8 @@ describe('team creation (#9, #18)', () => {
     expect(res.status).toBe(200);
     expect(await members(team)).toEqual([creator]);
     expect(await invites(team)).toBe(0);
-    expect(await settingsRow(team)).toBeNull(); // the stale blob is gone; defaults come on first read
+    // catalog-policies D7: creation overwrites the stale blob with the default settings.
+    expect(await isDefaultSettings(team)).toBe(true);
   });
 
   it('an id that still has shows is refused', async () => {
@@ -346,7 +364,7 @@ describe('team creation (#9, #18)', () => {
     expect(create.status).toBe(200);
     expect(await members('admin-reused')).toEqual([]);
     expect(await invites('admin-reused')).toBe(0);
-    expect(await settingsRow('admin-reused')).toBeNull();
+    expect(await isDefaultSettings('admin-reused')).toBe(true);
 
     await testDb().run(
       "INSERT INTO shows (id, studio_id, name, show_code, created_at_utc) VALUES ('ghost-show-2', 'admin-ghost', 'G', 'G', '2026-01-01T00:00:00Z')",

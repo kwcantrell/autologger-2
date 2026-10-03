@@ -14,6 +14,7 @@ import type { AppEnv, Bindings } from '../appEnv';
 import { createLoginSession } from '../auth/identity';
 import { sessionCookieName } from '../env';
 import { createBindings } from '../node/config';
+import { RetryCountingRoot } from './retryCounter';
 
 let current: {
   bindings: Bindings;
@@ -83,6 +84,13 @@ export async function resetTestEnv(): Promise<void> {
     if (originalHome === undefined) delete process.env.HOME;
     else process.env.HOME = originalHome;
     rmSync(fakeHome, { recursive: true, force: true });
+  }
+  // catalog-policies D11: with CATALOG_RETRY_LOG set, count the retries of every transaction the
+  // routes and suites run on the catalog (KV and the mirror keep their own handles; their root
+  // statements never retry). A `GatedCatalog(env.ports.catalog)` then wraps the counting root.
+  const retryLog = process.env.CATALOG_RETRY_LOG;
+  if (retryLog) {
+    made.bindings.ports.catalog = new RetryCountingRoot(made.bindings.ports.catalog, retryLog);
   }
   current = { ...made, dir, defaultUser: null };
 }

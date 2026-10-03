@@ -295,12 +295,15 @@ export class SessionIndexStore implements SessionIndexStoreFacade {
           ? fields.startOffsetFrames
           : Number(row.start_offset_frames ?? 0);
       if (newOffset < 0) throw new ValidationError('start_offset_frames must be >= 0');
-      await t.run(
+      const res = await t.run(
         'UPDATE sessions SET title = ?, start_offset_frames = ? WHERE id = ?',
         newTitle,
         newOffset,
         sessionId,
       );
+      // catalog-policies D8: an UPDATE that changed no row (a policy refused it after access was
+      // revoked in flight) is reported as no session, so the route answers 404.
+      if (res.changes === 0) return null;
       return s.getSessionIndexRow(sessionId, { includeHidden: true });
     });
   }

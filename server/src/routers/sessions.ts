@@ -171,7 +171,14 @@ sessionsRouter.post('/api/sessions', async (c) => {
   if (active === null) throw new ApiError(403, 'No team access.');
 
   const showRow = await catalog.shows.getShowRow(body.show_id.trim());
-  if (showRow === null) throw new ApiError(400, 'Unknown show_id.');
+  if (showRow === null) {
+    // catalog-policies D6: a show the policy hides is in a team the caller is not a member of,
+    // so never in the active team; a missing show stays `Unknown show_id.`.
+    if (await catalog.shows.showExistsAnywhere(body.show_id.trim())) {
+      throw new ApiError(400, 'Show does not belong to the active team.');
+    }
+    throw new ApiError(400, 'Unknown show_id.');
+  }
   if (String(showRow.studio_id) !== active.id) {
     throw new ApiError(400, 'Show does not belong to the active team.');
   }

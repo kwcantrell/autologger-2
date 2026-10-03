@@ -7,12 +7,17 @@
 // asserts only that every request completed. Run before the bindings (task 1.2) and after (8.3):
 // the middleware's calls as `system('auth-resolve')` and `bindSystem('kv')`, the route mix on
 // `forUser(id)`, as the server binds them (catalog-roles D9).
+// catalog-policies D12 (test-only): `CATALOG_PROBE_ANALYZE=1` runs `ANALYZE` on the clone as
+// `postgres` after seeding, and the adapter is wrapped in a `RetryCountingRoot` (D11), so the line
+// also carries `retries`, `rate` (retries per transaction call) and `exhausted`.
 import { Catalog, createCatalog } from '@autologger/catalog';
 import type { CatalogDb, CatalogRoot } from '@autologger/ports';
 import { CatalogRootTimeoutError, KvStore, PostgresCatalogDb } from '@autologger/storage';
+import postgres from 'postgres';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createTestDatabase } from '../../../../test/pg/testDb';
 import { createLoginSession, resolveSessionUser } from '../../auth/identity';
+import { RetryCountingRoot } from '../retryCounter';
 
 const N = 20;
 const ROUNDS = 10;
@@ -68,7 +73,7 @@ const ms = (n: number): number => Math.round(n * 100) / 100;
 
 describe.skipIf(process.env.CATALOG_ROOT_PROBE !== '1')('catalog root probe (design D14)', () => {
   it('runs 20 concurrent signed-in request mixes for 10 rounds and prints root-call latency', async () => {
-    const { app } = await createTestDatabase();
+    const { app, admin } = await createTestDatabase();
     const adapter = new PostgresCatalogDb(app);
     open.push(adapter);
     const db = adapter.bindSystem('test-seed');
@@ -108,8 +113,18 @@ describe.skipIf(process.env.CATALOG_ROOT_PROBE !== '1')('catalog root probe (des
     });
     const cookie = await createLoginSession(kvSeed, userId, 1);
 
+    if (process.env.CATALOG_PROBE_ANALYZE === '1') {
+      const sql = postgres({ ...admin, max: 1, onnotice: () => {} });
+      try {
+        await sql.unsafe('analyze');
+      } finally {
+        await sql.end();
+      }
+    }
+
     const stats: Stats = { latencies: [], timeouts: 0, txs: 0 };
-    const root = timedRoot(adapter, stats);
+    const counting = new RetryCountingRoot(adapter);
+    const root = timedRoot(counting, stats);
     const kv = new KvStore(root.bindSystem('kv'), { now: () => Date.now() });
     const ctx = { oauthConfigured: false, adminMeta: {} };
 
@@ -144,6 +159,7 @@ describe.skipIf(process.env.CATALOG_ROOT_PROBE !== '1')('catalog root probe (des
     const wallMs = performance.now() - started;
 
     const sorted = [...stats.latencies].sort((a, b) => a - b);
+    const retries = counting.calls.reduce((sum, c) => sum + c.runs - 1, 0);
     // Written past vitest's console capture so the line lands in the run's log.
     process.stdout.write(
       `${JSON.stringify({
@@ -154,6 +170,10 @@ describe.skipIf(process.env.CATALOG_ROOT_PROBE !== '1')('catalog root probe (des
         timeouts: stats.timeouts,
         txs: stats.txs,
         wallMs: ms(wallMs),
+        analyze: process.env.CATALOG_PROBE_ANALYZE === '1',
+        retries,
+        rate: counting.calls.length === 0 ? 0 : retries / counting.calls.length,
+        exhausted: counting.calls.filter((c) => c.exhausted).length,
       })}\n`,
     );
     expect(n).toBe(N * ROUNDS);

@@ -539,12 +539,178 @@ Slice order:
        `BYPASSRLS`, reads every table through `pg_read_all_data`, and holds an automatic admin
        membership in `catalog_user` and `catalog_system` because it created them; that reach,
        held by `db`, `migrate` and realtime, is out of slice 6's scope.
-   - 6b-2 `catalog-policies`: the real policies on top of 6b-1. Outline: team-level reads and
-     access-level writes for `catalog_user` (owner decision 3), replacing the `_user_all`
-     policies; `SECURITY DEFINER` helpers (`member_studios`, `admin_studios`, `granted_shows`) with
-     `EXECUTE` revoked from `public`; an allow/deny matrix test; the `40001` retry measurement;
-     moving `team-create`, `team-invite`, `access-loss-check` and `log-import-job` back toward
-     user scope; mapping `CatalogForbiddenError` to the routes' masked `404`/`403`.
+   - 6b-2 `catalog-policies`: row-level security enforces the team permission model for
+     `catalog_user`, so the database is a backstop behind the 6a app gates. Implemented
+     2026-10-03 on `supabase-6b2-catalog-policies` (migration
+     `20261007000000_catalog_policies.sql`). Owner decisions (owner, 2026-10-02 and 2026-10-03):
+     1. **policy shape** (2026-10-03): reads are team-level; content writes are access-level (a
+        show, a session or a team's settings needs owner or admin, or a grant on that show); the
+        team-management tables (memberships, invites, grants, the team row) accept writes from
+        members of that team only, and the app's in-transaction role checks keep the owner/admin
+        precision;
+     2. **settings reads have no side effects** (2026-10-03): a missing or corrupt blob reads as
+        the default and nothing is written; team creation seeds the row, and saving writes it;
+     3. **the 12 system reasons stay system** (2026-10-03; table below);
+     4. **earlier decisions stand** (2026-10-02): `catalog_system` keeps its allow-all policies;
+        the helpers are `SECURITY DEFINER` with `EXECUTE` revoked from `PUBLIC`; an allow/deny
+        matrix test; the `40001` retry measurement; `CatalogForbiddenError` maps to each route's
+        existing status.
+
+     After the adversarial panel (owner, 2026-10-03):
+     - **A. cross-team contention: accept retries.** Policy reads add `SERIALIZABLE` predicate
+       locks, so a transaction in one team may abort with `40001` because of one in another team;
+       the adapter retries it, and no such abort reaches HTTP while the retry budget (5 runs)
+       holds. Stop rule: the retry rate (retries per transaction call) more than doubles against
+       6b-1, or any call exhausts its retries, in the integration runs, the contention test or the
+       probe;
+     - **B. team-management inserts are system-only:** `catalog_user` has no `INSERT` policy and
+       no `INSERT` privilege on `user_studio_memberships` and `team_invites`; only `team-create`,
+       `team-invite`, `oauth-callback`, `bootstrap-claim` and `support-plane` add them.
+
+     Approver confirmations (proposal "For the approver", confirmed at approval): seven helpers,
+     not three; `POST /api/shows` keeps its in-transaction existence read with a
+     `catalog.studio_exists` fallback (so a team deleted mid-create stays `400`); a one-time
+     migration backfill of team settings; the team delete removes memberships last; race-only
+     writes keep existing statuses (an `api-contract-freeze` delta records them); `kv` is closed
+     to `catalog_user`; `set enable_seqscan = off` on every helper.
+
+     What it does:
+     - **7 helpers** in schema `catalog`, owned by `postgres`, each `language sql stable security
+       definer set search_path = pg_catalog, pg_temp set enable_seqscan = off`, schema-qualified,
+       `EXECUTE` revoked from `PUBLIC` and granted to `catalog_user` only: `member_studios(uid)`,
+       `manager_studios(uid)`, `accessible_shows(uid)`, `member_shows(uid)`, `co_members(uid)`,
+       `studio_exists(id)`, `show_exists(id)`. **Why `enable_seqscan = off` is kept:** the
+       catalog's tables are small in prod too, so the planner prefers sequential scans, and under
+       `SERIALIZABLE` a sequential scan takes a relation-level predicate lock; inside the helper
+       the setting keeps the locks at page or tuple level (written as plain policy subqueries,
+       the `sessions`, `show_grants` and `users` reads locked all of `shows` and
+       `user_studio_memberships`). It holds for the call only and costs a GUC save and restore.
+       It narrows conflicts; it does not make teams independent (decision A).
+     - **23 `catalog_user` policies** replace the ten `<table>_user_all` allow-all policies:
+       `users` select (own row and co-members) and update (own row); memberships, invites and
+       definitions select/update/delete by member team; `user_prefs` one `for all` (own row);
+       `shows` select (member) and insert/update (managed); `sessions` select (shows of member
+       teams) and insert/update (accessible shows); `app_settings` select (member) and
+       insert/update/delete (managed), by full `studio_config:<id>` key; `show_grants` one
+       `for all` (shows of member teams). No policy, so nothing: definition inserts, show and
+       session deletes, and `kv`.
+     - **Narrowed privileges:** no privilege on `kv` (a user-bound statement fails with `42501`);
+       on `users`, `SELECT` and `UPDATE (given_name, family_name)` only; no `INSERT` on
+       memberships and invites. `catalog_system` keeps its allow-all policies and full DML.
+     - **Settings:** `getStudioSettingsBlob` is a pure read; `insertStudioDefinition` (both
+       planes) upserts the normalized default blob in place of the old settings delete, so a
+       reused id's leftover row is replaced; the migration backfills a default row (fresh
+       category ids, the server's default shape, pinned by a `pg` test) for every team without
+       one.
+     - **Route changes (status-preserving):** the team delete removes invites, the definition,
+       the settings, then the memberships (design D5), so each delete passes the member rules;
+       `PUT /api/profile` runs its settings and show writes in one transaction that first
+       re-reads the caller's role `FOR SHARE` (a demotion committed after the early check gets
+       `403 Admin role required.` with nothing written); `updateSessionIndex` returns `null` on a
+       zero-row update (`404 Session not found`); a transfer whose target row cannot be read is
+       `404 Member not found`; `POST /api/sessions` asks `catalog.show_exists` when the show is
+       hidden (`400 Show does not belong to the active team.` vs `Unknown show_id.`); the name
+       edit updates only the two name columns; where an in-transaction gate already decided, a
+       `42501` stays the generic `500` with the redacted log line.
+     - **Within-team escalations left to the app:** the policies hold the team boundary, not the
+       role inside a team. As far as the database is concerned, a member can raise their own role
+       to `admin`, and delete or update other members' memberships, grants and invites in a member
+       team. Raising oneself to `owner` while the team has one fails on
+       `idx_user_studio_memberships_one_owner` (`23505`). The app's in-transaction gates
+       (`requireTeamRoleIn` with `FOR SHARE`, the target re-checks) are the only check there.
+
+     Why each system reason stays system (owner decision 3): each needs rows outside the
+     caller's teams, or has no user at all.
+
+     | reason | why not user scope |
+     | --- | --- |
+     | `auth-resolve` | runs before a user is known; loads every team's name for the registry snapshot |
+     | `kv` | login sessions, OAuth state and the Companion's last command belong to no team; purges span all users |
+     | `session-mirror` | the hub's writer has no user; it projects any session |
+     | `boot-wait` | no user at boot |
+     | `log-import-job` | a detached job that outlives its request; it re-checks access per sheet itself |
+     | `oauth-callback` | looks up and creates users by Google subject, and consumes invites across teams, before a catalog user exists |
+     | `bootstrap-claim` | claims teams the user is not a member of |
+     | `support-plane` | `ADMIN_TOKEN` caller, no user, every team |
+     | `companion-token` | `API_TOKEN` caller, no user |
+     | `access-loss-check` | reads the access of another user (the target), after the caller may have left the team |
+     | `team-invite` | looks users up by email across the catalog, and adds memberships for non-co-members |
+     | `team-create` | inserts a team definition (no user insert rule), and purges other users' leftover rows under a reused id |
+
+     **Corrections to the 6b-1 outline of this slice:** it planned to move `team-create`,
+     `team-invite`, `access-loss-check` and `log-import-job` toward user scope (owner decision 3
+     keeps them system), and to map `CatalogForbiddenError` to masked `404`/`403` responses
+     (owner decision 4 keeps each route's existing status: where an in-transaction gate already
+     decided, a `42501` stays the generic `500`). Its helper names (`admin_studios`,
+     `granted_shows`) became `manager_studios` and `accessible_shows`.
+
+     **Rollback** (as in 6b-1's owner decision A). **Order:** deploy the previous image first,
+     then run the SQL right away: the new image calls `catalog.studio_exists`/`show_exists`,
+     which the SQL drops, so it must not run while the new image serves. During the short gap the
+     previous image meets the deploy-window effects (its self-healing settings read is refused for
+     plain members on a team with no row; its team delete removes memberships first and leaves the
+     definition and settings behind, which the support plane's delete removes; its four-column
+     name edit is refused). Run as `postgres` in one transaction
+     (`psql -X -v ON_ERROR_STOP=1 --single-transaction`):
+     ```sql
+     do $$
+       declare p record; t text;
+       begin
+         for p in select policyname, tablename from pg_policies
+                  where schemaname = 'catalog' and 'catalog_user' = any (roles) loop
+           execute format('drop policy %I on catalog.%I', p.policyname, p.tablename);
+         end loop;
+         for t in select tablename from pg_tables where schemaname = 'catalog' loop
+           execute format('create policy %I on catalog.%I for all to catalog_user using (true) with check (true)',
+                          t || '_user_all', t);
+         end loop;
+       end
+     $$;
+     revoke update (given_name, family_name) on catalog.users from catalog_user;
+     grant select, insert, update, delete
+       on catalog.kv, catalog.users, catalog.user_studio_memberships, catalog.team_invites
+       to catalog_user;
+     drop function if exists catalog.member_studios(text), catalog.manager_studios(text),
+       catalog.accessible_shows(text), catalog.member_shows(text), catalog.co_members(text),
+       catalog.studio_exists(text), catalog.show_exists(text);
+     delete from supabase_migrations.schema_migrations where version = '20261007000000';
+     ```
+     This restores 6b-1's state exactly; the backfilled settings rows stay (they are what the
+     6b-1 app's self-healing read would have written). Deleting the version row is the
+     roll-forward path: the migration uses `create or replace`, `drop policy if exists` before
+     each `create policy`, idempotent revokes and `on conflict do nothing`.
+
+     **Measurements** (test-only `RetryCountingRoot`, design D11; 5 runs each, before = this
+     branch with the 6b-1 policies, after = with the 6b-2 policies; medians):
+
+     | measurement | before | after | stop rule |
+     | --- | --- | --- | --- |
+     | integration + `pg` retry rate | 0.00984 (17 of 1728 calls) | 0.00951 (17 of 1787) | not met; 0 exhausted |
+     | contention test (analyzed clone) rate | 0.5 (one commit-time `40001` per run) | 0.5 | not met; 0 exhausted |
+     | probe, unanalyzed: root `p95` / timeouts / rate | 6.09 ms / 0 / 0.49 | 6.5 ms / 0 / 0.59 | not met (limit 11.7 ms; 6b-1 after-median 5.85 ms) |
+     | probe, `ANALYZE`d: root `p95` / timeouts / rate | 6.48 ms / 0 / 0.49 | 6.64 ms / 0 / 0.56 | not met; 0 exhausted |
+
+     The probe's rate is high in both columns because its 20 concurrent session updates hit one
+     row. The integration runs' one `42501` per run is a test's injected `CatalogForbiddenError`,
+     not a retry.
+
+     Implementation notes (2026-10-03):
+     - the single `for all` policies of `user_prefs` and `show_grants` are named
+       `<table>_user_all`, following design D2's `<table>_user_<select|insert|update|delete|all>`
+       naming over task 4.1's "no `_user_all`" wording; the tests assert no `catalog_user` policy
+       is the constant `true` and that `_user_all` exists only on those two tables;
+     - in `PUT /api/profile`, a `ValidationError` while building a show entry is returned from
+       the transaction as `400`, not thrown, so a serial request keeps today's outcome (earlier
+       entries saved, then the `400`);
+     - a `CatalogInvalidTextError` (`400`, text containing NUL) in a later show entry now rolls
+       back the request's earlier settings and show writes, because the error fails the
+       transaction; this conforms to api-contract-freeze "Text containing NUL is refused" ("a
+       catalog transaction it belongs to SHALL write nothing");
+     - test helpers: `server/src/test/retryCounter.ts` (`RetryCountingRoot`, wired by
+       `CATALOG_RETRY_LOG` in the integration harness and used by the probe and the contention
+       test), `server/src/test/rewritingCatalog.ts` (rewrites one user-bound statement's
+       outcome), and `server/src/test/pg/policyFixture.ts` (the design D10 fixture shared by the
+       helper and matrix tests); the probe gained `CATALOG_PROBE_ANALYZE=1`.
 7. Session tables, revision, version checks and the audited overwrite.
 8. Session leases.
 9. Realtime replaces the WebSocket protocol.

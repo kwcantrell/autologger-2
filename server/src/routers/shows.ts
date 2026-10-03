@@ -75,7 +75,11 @@ showsRouter.post('/api/shows', async (c) => {
   // team deleted or a caller demoted meanwhile never gets a show (catalog-concurrency-hazards D3;
   // show-grants D9: only owners and admins create shows).
   const created = await catalog.tx(async (cat) => {
-    if (!(await cat.studios.studioExists(body.studio_id))) return 400 as const;
+    if (!(await cat.studios.studioExists(body.studio_id))) {
+      // catalog-policies D6: the policy hides a foreign team's definition; the definer check
+      // tells it (404, as before) from a missing or concurrently deleted team (400).
+      return (await cat.studios.studioExistsAnywhere(body.studio_id)) ? (404 as const) : (400 as const);
+    }
     const role = await cat.auth.authGetMembershipRoleForShare(user.id, body.studio_id);
     if (role === null) return 404 as const;
     if (role !== 'owner' && role !== 'admin') return 403 as const;

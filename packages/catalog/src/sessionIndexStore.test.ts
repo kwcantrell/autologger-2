@@ -96,3 +96,20 @@ describe('studioProfileForSession without a known team (owner-bootstrap D10)', (
     expect(p.categories.map((c) => c.label)).toEqual(['Scene', 'Audio issue', 'Note']);
   });
 });
+
+// catalog-policies D8: a session update whose UPDATE changes no row (a policy refused it after a
+// revoke raced the route's gate) reports no session, which the route answers with 404.
+describe('updateSessionIndex with a zero-row UPDATE (catalog-policies D8)', () => {
+  it('returns null when the UPDATE reports 0 changes', async () => {
+    const db: CatalogDb = {
+      all: async () => [],
+      first: async <T>() => ({ id: 's1', title: 'Old', start_offset_frames: 0 }) as T,
+      run: async () => ({ changes: 0 }),
+      tx: async (fn) => fn(db),
+    };
+    const shows = { withDb: () => shows } as unknown as ShowsStore;
+    const studios = { withDb: () => studios } as unknown as StudioRegistry;
+    const store = new SessionIndexStore(db, studios, shows);
+    expect(await store.updateSessionIndex('s1', { title: 'New' })).toBeNull();
+  });
+});

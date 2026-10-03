@@ -186,8 +186,16 @@ export class AuthStore implements AuthStoreFacade {
     });
   }
 
+  /** The user path's name edit (catalog-policies D2, A29): only the two name columns, which is
+   * all `catalog_user` may update in `users`. False for a missing or disabled user. */
   async authUpdateUserNames(userId: string, givenName: string, familyName: string): Promise<boolean> {
-    return this.authUpdateUserProfile(userId, { givenName, familyName });
+    const r = await this.db.run(
+      'UPDATE users SET given_name = ?, family_name = ? WHERE id = ? AND disabled_at_utc IS NULL',
+      givenName,
+      familyName,
+      userId,
+    );
+    return r.changes > 0;
   }
 
   async authUserHasStudio(userId: string, studioId: string): Promise<boolean> {
