@@ -244,7 +244,7 @@ describe('ordering on async storage (async-session-callers D4/D5)', () => {
   it('/command stores last_command before broadcasting it', async () => {
     const s = (await seededSession()).sessionId;
     await setCompanionPresence('c1', s);
-    const hub = env.ports.sessions.get(s);
+    const hub = await env.ports.sessions.get(s);
     let storedAtBroadcast: Promise<string | null> | null = null;
     const spy = vi.spyOn(hub, 'broadcastCommand').mockImplementation(() => {
       storedAtBroadcast = env.ports.kv.get('companion:last_command');
@@ -338,7 +338,7 @@ describe('Companion routes check a signed-in caller’s session access (show-gra
     );
   }
   const counts = async (sessionId: string) => {
-    const hub = env.ports.sessions.get(sessionId).ensure();
+    const hub = await (await env.ports.sessions.get(sessionId)).ensure();
     return {
       events: hub.event_count,
       take: hub.current_take,

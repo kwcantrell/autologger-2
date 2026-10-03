@@ -639,12 +639,12 @@ describe('task 9.5 — anchored success: exact timecodes, transport advance, WS 
     // Observe the SAME in-process hub the route resolves via getSessionHub
     // (env.ports.sessions IS c.env.ports.sessions — same registry instance) —
     // a real socket attach, not a mock of the broadcast call.
-    const hub = env.ports.sessions.get(session);
+    const hub = await env.ports.sessions.get(session);
     const wsMessages: Array<Record<string, unknown>> = [];
     hub.attachSocket({ send: (d: string) => void wsMessages.push(JSON.parse(d)) }, 'browser');
 
     // Fresh session: transport position at import time is 0.
-    expect(hub.transportSnapshot(CTX).elapsed_frames).toBe(0);
+    expect((await hub.transportSnapshot(CTX)).elapsed_frames).toBe(0);
 
     const res = await postImport(session, VALID_BODY, testEnv);
     expect(res.status).toBe(200);
@@ -674,7 +674,7 @@ describe('task 9.5 — anchored success: exact timecodes, transport advance, WS 
 
     // Transport actually advanced by the same 3000 frames (not just the
     // Stopped event's own timecode — the live projection too).
-    expect(hub.transportSnapshot(CTX).elapsed_frames).toBe(3000);
+    expect((await hub.transportSnapshot(CTX)).elapsed_frames).toBe(3000);
 
     const types = wsMessages.map((m) => m.type);
     expect(types).toContain('audio.changed'); // addAudioSegment
@@ -736,8 +736,8 @@ describe('task 9.5 — N-scan category guard: a non-internal "Recording 99 Start
     // 9.6 — no backfill" above), bypassing the /events route's category
     // whitelist so the seeded row's category is exactly 'cam' (not
     // 'internal').
-    const hub = env.ports.sessions.get(session);
-    hub.addEvent({
+    const hub = await env.ports.sessions.get(session);
+    await hub.addEvent({
       category: 'cam',
       message: 'Recording 99 Started',
       metadataJson: '{}',
@@ -831,7 +831,7 @@ describe('task 9.5 — refused while rolling (409): live roll untouched, no Reco
     const { binaryPath, markerPath } = freshBinary();
     const testEnv = configuredEnv(binaryPath);
 
-    const hub = env.ports.sessions.get(session);
+    const hub = await env.ports.sessions.get(session);
     const originalStatusLive = hub.statusLive.bind(hub);
     let statusLiveCalls = 0;
     const spy = vi.spyOn(hub, 'statusLive').mockImplementation((ctx) => {
@@ -891,15 +891,15 @@ describe('task 9.5 — failed import: zero events, transport not advanced', () =
     const { binaryPath } = freshBinary({ mode: 'download-fail' });
     const testEnv = configuredEnv(binaryPath);
 
-    const hub = env.ports.sessions.get(session);
-    expect(hub.transportSnapshot(CTX).elapsed_frames).toBe(0);
+    const hub = await env.ports.sessions.get(session);
+    expect((await hub.transportSnapshot(CTX)).elapsed_frames).toBe(0);
 
     const res = await postImport(session, VALID_BODY, testEnv);
     expect(res.status).toBe(502);
 
     const { total } = await listEvents(session, testEnv);
     expect(total).toBe(0); // no Recording N Started/Stopped
-    expect(hub.transportSnapshot(CTX).elapsed_frames).toBe(0); // no advance
+    expect((await hub.transportSnapshot(CTX)).elapsed_frames).toBe(0); // no advance
     expect((await listSegments(session, testEnv)).segments).toHaveLength(0);
   });
 });
@@ -947,13 +947,13 @@ describe('task 9.5 — anchor-resolution end-to-end (recordingStartAnchors)', ()
 describe('task 9.6 — no backfill: a pre-existing anchorless segment is untouched', () => {
   it("a session already holding an anchorless imported segment is byte-for-byte unchanged after the change's read/startup paths run", async () => {
     const session = (await seededSession()).sessionId;
-    const hub = env.ports.sessions.get(session);
+    const hub = await env.ports.sessions.get(session);
 
     // A pre-existing anchorless take: recording_ordinal/timestamps null, no
     // events — exactly what an import produced BEFORE task 9.4 wired
     // anchoring in (the 9.1 characterization baseline this test now pins as
     // "never migrated").
-    const seg = hub.addAudioSegment({
+    const seg = await hub.addAudioSegment({
       sessionId: session,
       mimeType: 'audio/mp4',
       startedAtUtc: null,

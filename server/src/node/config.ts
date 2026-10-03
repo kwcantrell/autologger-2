@@ -51,7 +51,7 @@ export function createBindings(procEnv: Record<string, string | undefined>): {
   const registry = new SessionHubRegistry(join(dataDir, 'sessions'), clock);
   const sessionIndex = createCatalog(catalogDb).system('session-mirror').sessions;
   const mirror = new SessionMirror({
-    snapshot: (sid) => registry.get(sid).ensure(),
+    snapshot: async (sid) => (await registry.get(sid)).ensure(),
     project: (sid, projection) => sessionIndex.projectSessionLive(sid, projection),
   });
   const audioBlobStore = new BlobStore(join(dataDir, 'blobs'), join(dataDir, 'tmp'));
@@ -147,7 +147,7 @@ export function createBindings(procEnv: Record<string, string | undefined>): {
     close: async () => {
       // Before the hubs close, so no mirror write reopens one.
       await mirror.close();
-      registry.closeAll();
+      await registry.closeAll();
       try {
         await catalogDb.close();
       } finally {

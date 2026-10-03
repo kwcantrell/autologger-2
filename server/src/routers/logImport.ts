@@ -50,13 +50,14 @@ function categoriesFromShowRow(row: { categories_json?: unknown }): CategoryReco
 /** Ensure timed transcript words exist; generate via DeepGram when missing. */
 export async function ensureTimedTranscript(input: {
   sessionId: string;
-  getHub: () => SessionHubFacade;
+  /** Resolves the hub at the point of use; it is re-resolved after the generation's await. */
+  getHub: () => Promise<SessionHubFacade>;
   config: Config;
   audio: Bindings['ports']['audio'];
   ctx: TimecodeCtx;
   onProgress: (line: string) => void;
 }): Promise<TranscriptToken[]> {
-  let tokens = timedTranscriptTokens(input.getHub());
+  let tokens = await timedTranscriptTokens(await input.getHub());
   if (tokens.length > 0) {
     input.onProgress(`Transcript already present (${tokens.length} timed words).`);
     return tokens;
@@ -71,7 +72,7 @@ export async function ensureTimedTranscript(input: {
       ctx: input.ctx,
       sessionId: input.sessionId,
     });
-    const next = timedTranscriptTokens(input.getHub());
+    const next = await timedTranscriptTokens(await input.getHub());
     if (next.length === 0) {
       throw new Error(
         `Transcript generation finished (${words.length} words) but none have usable timing for sync.`,
@@ -203,7 +204,7 @@ logImportRouter.post('/api/shows/:showId/log-import', async (c) => {
             onProgress: (line) => appendLogImportLine(job.id, `  ${title}: ${line}`),
           });
           const result = await runSessionLogImport({
-            hub: getHub(),
+            hub: await getHub(),
             rows: sheet.rows,
             categories,
             ctx,

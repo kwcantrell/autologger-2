@@ -338,18 +338,18 @@ describe.skipIf(!RUN)('REAL claude topic generation (opt-in: RUN_REAL_AI_TESTS=1
   let registry: SessionHubRegistry;
   const sessionId = 'real-topic-gen';
 
-  beforeAll(() => {
+  beforeAll(async () => {
     dataDir = mkdtempSync(join(tmpdir(), 'real-topics-'));
     registry = new SessionHubRegistry(join(dataDir, 'sessions'));
     // One transaction for ~15k words (a per-word insert loop is the slow path).
-    registry.get(sessionId).replaceTranscriptWords(TRANSCRIPT);
+    await (await registry.get(sessionId)).replaceTranscriptWords(TRANSCRIPT);
   }, 120_000);
 
   afterAll(async () => {
     // `driveAiTurn` starts the process-wide MCP listener singleton — close it
     // here (the event real test's convention) rather than leaking the port.
     await __resetAiMcpListenerForTests();
-    registry?.closeAll();
+    await registry?.closeAll();
     if (dataDir) rmSync(dataDir, { recursive: true, force: true });
     rmSync(stableSessionCwd(sessionId), { recursive: true, force: true });
   });
@@ -357,8 +357,8 @@ describe.skipIf(!RUN)('REAL claude topic generation (opt-in: RUN_REAL_AI_TESTS=1
   it(
     'creates real topics from a real MULTI-PAGE transcript, reaching the last page',
     async () => {
-      const hub = registry.get(sessionId);
-      expect(hub.listTranscriptWords().length).toBe(TRANSCRIPT.length);
+      const hub = await registry.get(sessionId);
+      expect((await hub.listTranscriptWords()).length).toBe(TRANSCRIPT.length);
 
       // Fixture self-checks — cheap, and they run BEFORE any spend, so a fixture
       // that stopped being multi-page (or leaked the canary early) fails loudly
@@ -395,7 +395,7 @@ describe.skipIf(!RUN)('REAL claude topic generation (opt-in: RUN_REAL_AI_TESTS=1
       });
       const wallSec = ((Date.now() - startedAt) / 1000).toFixed(1);
 
-      const topics = registry.get(sessionId).listTopics();
+      const topics = await (await registry.get(sessionId)).listTopics();
       // Surface what actually happened so a 0-topics or partial-paging run is
       // diagnosable — operator-facing output, deliberate in this gated real test.
       console.log(

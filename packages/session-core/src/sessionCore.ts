@@ -1,5 +1,5 @@
 // SessionCore — the shared substrate every SessionHub domain store builds on:
-// the embedded-SQLite handle + helpers, the WebSocket fan-out, the
+// the session SQL handle + helpers, the WebSocket fan-out, the
 // events_stream_revision counter, the catalog projection, the transport row,
 // and meta key/value + alarm scheduling. Holds the two cross-domain reads
 // (transportRow, projection) so the domain stores never depend on each other.
@@ -19,14 +19,17 @@ export interface AttachedSocket {
   userId?: string;
 }
 
-/** The SQL seam the session domain programs against: reads return rows,
- * writes return an affected-row count, and a distinct void multi-statement
- * path serves schema init (zero binds only). */
+/** The asynchronous SQL seam the session domain programs against (async-session-hub design D2):
+ * reads resolve to rows, writes to an affected-row count, a distinct void multi-statement path
+ * serves schema init (zero binds only), and `tx` runs an all-or-nothing transaction whose body
+ * gets a handle scoped to it (`t.tx` joins it). `sqliteSessionSql` is the SQLite adapter. */
 export interface SessionSql {
-  all<T = Row>(sql: string, ...binds: SqlValue[]): T[];
-  run(sql: string, ...binds: SqlValue[]): { changes: number };
+  all<T = Row>(sql: string, ...binds: SqlValue[]): Promise<T[]>;
+  run(sql: string, ...binds: SqlValue[]): Promise<{ changes: number }>;
   /** Multi-statement DDL (initSchema); zero binds, no result. */
-  exec(multiStatementSql: string): void;
+  exec(multiStatementSql: string): Promise<void>;
+  /** All-or-nothing. `t` is scoped to this transaction; `t.tx` joins it. */
+  tx<T>(fn: (t: SessionSql) => Promise<T>): Promise<T>;
 }
 
 /** Runtime substrate SessionCore runs on: the embedded SQL seam, the hub's
@@ -73,13 +76,23 @@ export class SessionCore {
     return this.ctx.sql;
   }
 
+  /** A core bound to transaction handle `t` (async-session-hub design D3): the same runtime, with
+   * its own broadcast queue, held from the start. The hub flushes it after COMMIT
+   * (`flushHeldBroadcasts`) or discards it on failure (`discardHeldBroadcasts`). Broadcasts
+   * through the root core are never held by it, so a relayed Companion command is sent at once. */
+  forTransaction(t: SessionSql): SessionCore {
+    const bound = new SessionCore({ ...this.ctx, sql: t });
+    bound.broadcastHoldDepth = 1;
+    return bound;
+  }
+
   /** Current time from the injected Clock — never Date.now() in domain code. */
   now(): number {
     return this.ctx.clock.now();
   }
 
-  initSchema(): void {
-    this.db.exec(`
+  async initSchema(): Promise<void> {
+    await this.db.exec(`
       CREATE TABLE IF NOT EXISTS events (
         id TEXT PRIMARY KEY,
         wall_time_utc TEXT NOT NULL,
@@ -169,17 +182,17 @@ export class SessionCore {
 
   // -- small SQL helpers -------------------------------------------------------
 
-  all(query: string, ...binds: SqlValue[]): Row[] {
+  all(query: string, ...binds: SqlValue[]): Promise<Row[]> {
     return this.db.all<Row>(query, ...binds);
   }
 
-  first(query: string, ...binds: SqlValue[]): Row | null {
-    const rows = this.all(query, ...binds);
+  async first(query: string, ...binds: SqlValue[]): Promise<Row | null> {
+    const rows = await this.all(query, ...binds);
     return rows.length ? rows[0] : null;
   }
 
-  transportRow(): TransportFields & { current_take: number } {
-    const r = this.first('SELECT * FROM session_transport WHERE id = 1');
+  async transportRow(): Promise<TransportFields & { current_take: number }> {
+    const r = await this.first('SELECT * FROM session_transport WHERE id = 1');
     return {
       is_rolling: Boolean(Number(r?.is_rolling ?? 0)),
       current_take: Number(r?.current_take ?? 0),
@@ -194,29 +207,34 @@ export class SessionCore {
    * a tab-prefixed 'internal' still counts as logged; pinned in the store
    * tests). Lives on the core, not a store, so TransportStore.statusLive
    * never reads the events table across the store boundary. */
-  eventCounts(): { total: number; logged: number } {
-    const total = Number(this.first('SELECT COUNT(*) AS c FROM events')?.c ?? 0);
+  async eventCounts(): Promise<{ total: number; logged: number }> {
+    const total = Number((await this.first('SELECT COUNT(*) AS c FROM events'))?.c ?? 0);
     const logged = Number(
-      this.first("SELECT COUNT(*) AS c FROM events WHERE lower(trim(category)) != 'internal'")?.c ??
-        0,
+      (
+        await this.first(
+          "SELECT COUNT(*) AS c FROM events WHERE lower(trim(category)) != 'internal'",
+        )
+      )?.c ?? 0,
     );
     return { total, logged };
   }
 
-  bumpRevision(): void {
-    this.db.run(
+  async bumpRevision(): Promise<void> {
+    await this.db.run(
       "UPDATE meta SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT) WHERE key = 'events_stream_revision'",
     );
   }
 
-  revision(): number {
-    const r = this.first("SELECT value FROM meta WHERE key = 'events_stream_revision'");
+  async revision(): Promise<number> {
+    const r = await this.first("SELECT value FROM meta WHERE key = 'events_stream_revision'");
     return Number(r?.value ?? 0);
   }
 
-  projection(): SessionProjection {
-    const agg = this.first('SELECT COUNT(*) AS n, MAX(timecode_total_frames) AS mx FROM events');
-    const tr = this.transportRow();
+  async projection(): Promise<SessionProjection> {
+    const agg = await this.first(
+      'SELECT COUNT(*) AS n, MAX(timecode_total_frames) AS mx FROM events',
+    );
+    const tr = await this.transportRow();
     const mx = agg?.mx;
     return {
       event_count: Number(agg?.n ?? 0),
@@ -231,9 +249,9 @@ export class SessionCore {
   // -- WebSocket fan-out (hibernatable; replaces polling + CompanionHub) --------
 
   /** Post-commit broadcast queue (code-health-consolidation D1, delta
-   * "Broadcast atomicity with the owning transaction"): while a hold scope is
-   * open (SessionHub.inTxn wraps every mutating transaction in one),
-   * `broadcast` enqueues the already-serialized frame instead of sending, so a
+   * "Broadcast atomicity with the owning transaction"), owned by the
+   * transaction since async-session-hub D3: a core bound to a transaction
+   * (`forTransaction`) holds every `broadcast` from the start, so a
    * transaction that fails at or before commit never emits `*.changed` for a
    * rolled-back write. Serialization happens at enqueue time, so the flushed
    * bytes are exactly what an immediate send would have produced. */
@@ -241,10 +259,9 @@ export class SessionCore {
   private broadcastHoldDepth = 0;
 
   /** Send a JSON message to every attached socket (browser tabs + Companion).
-   * Inside a hold scope (i.e. inside a mutating transaction) the frame is
-   * queued and flushed only after the outermost scope commits; outside any
-   * scope it is sent immediately (composite post-commit pairs,
-   * broadcastCommand, presence-path callers are unchanged). */
+   * On a transaction-bound core (or inside a `withBroadcastsHeld` scope) the
+   * frame is queued and flushed only after the transaction commits; on the
+   * root core it is sent immediately (broadcastCommand, a relayed command). */
   broadcast(msg: Record<string, unknown>): void {
     const data = JSON.stringify(msg);
     if (this.broadcastHoldDepth > 0) {
@@ -254,19 +271,17 @@ export class SessionCore {
     this.sendToSockets(data);
   }
 
-  /** Run `fn` with broadcasts held (D1): flush the queue in enqueue order when
-   * the OUTERMOST scope exits successfully — the caller (SessionHub.inTxn)
-   * places the better-sqlite3 commit inside `fn`, so the flush runs strictly
-   * after commit — and discard the whole queue on an escaping throw (the
-   * transaction rolled back, so nothing may be announced). Nested scopes map
-   * to better-sqlite3 savepoints: flush at outermost commit only;
-   * inner-catch-and-continue (an inner savepoint rollback the outer
-   * transaction survives) is UNSUPPORTED and outside this contract.
-   * Synchronous throughout — zero awaits (SessionHub invariant). */
-  withBroadcastsHeld<T>(fn: () => T): T {
+  /** Run `fn` with broadcasts held (D1, the async form): flush the queue in
+   * enqueue order when the OUTERMOST scope settles successfully, discard it
+   * when a rejection escapes the outermost scope. On a transaction-bound core
+   * the transaction itself is the outermost scope, so nested scopes never
+   * flush; the hub flushes after COMMIT. A joined `t.tx` is one transaction,
+   * so its frames flush with the outer commit; inner-catch-and-continue is
+   * UNSUPPORTED (any error fails the whole transaction, design D2). */
+  async withBroadcastsHeld<T>(fn: () => Promise<T>): Promise<T> {
     this.broadcastHoldDepth += 1;
     try {
-      const result = fn();
+      const result = await fn();
       this.broadcastHoldDepth -= 1;
       if (this.broadcastHoldDepth === 0) this.flushPendingBroadcasts();
       return result;
@@ -275,6 +290,18 @@ export class SessionCore {
       if (this.broadcastHoldDepth === 0) this.pendingBroadcasts.length = 0;
       throw err;
     }
+  }
+
+  /** The hub, after this transaction-bound core's transaction committed:
+   * send the held frames in enqueue order. */
+  flushHeldBroadcasts(): void {
+    this.flushPendingBroadcasts();
+  }
+
+  /** The hub, after this transaction-bound core's transaction failed: drop
+   * the held frames, so nothing is announced for a rolled-back write. */
+  discardHeldBroadcasts(): void {
+    this.pendingBroadcasts.length = 0;
   }
 
   private flushPendingBroadcasts(): void {
@@ -314,21 +341,21 @@ export class SessionCore {
 
   // -- meta helpers ------------------------------------------------------------
 
-  metaGet(key: string): string | null {
-    const r = this.first('SELECT value FROM meta WHERE key = ?', key);
+  async metaGet(key: string): Promise<string | null> {
+    const r = await this.first('SELECT value FROM meta WHERE key = ?', key);
     return r ? String(r.value) : null;
   }
 
-  metaSet(key: string, value: string): void {
-    this.db.run(
+  async metaSet(key: string, value: string): Promise<void> {
+    await this.db.run(
       'INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
       key,
       value,
     );
   }
 
-  metaDelete(key: string): void {
-    this.db.run('DELETE FROM meta WHERE key = ?', key);
+  async metaDelete(key: string): Promise<void> {
+    await this.db.run('DELETE FROM meta WHERE key = ?', key);
   }
 
   /** Single alarm slot — setAlarm REPLACES any pending alarm. The recording

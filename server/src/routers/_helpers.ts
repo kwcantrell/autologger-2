@@ -16,8 +16,14 @@ export function timecodeCtx(row: Row): TimecodeCtx {
   };
 }
 
-/** Resolve the in-process per-session hub (addressed by session id). */
-export function getSessionHub(c: Context<AppEnv>, sessionId: string): SessionHubFacade {
+/** Resolve the in-process per-session hub (addressed by session id); the first `get` of a
+ * session opens it. A handler may use the hub across its own hub calls, and re-resolves it after
+ * a long non-hub `await` (an AI turn, a download), since an idle hub can be evicted meanwhile
+ * (async-session-hub design D6). */
+export async function getSessionHub(
+  c: Context<AppEnv>,
+  sessionId: string,
+): Promise<SessionHubFacade> {
   return c.env.ports.sessions.get(sessionId);
 }
 

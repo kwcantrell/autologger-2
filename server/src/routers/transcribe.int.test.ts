@@ -170,8 +170,8 @@ describe('topics/generate — configured behavior (topic-generation)', () => {
     );
   }
 
-  function seedTranscript(sessionId: string): void {
-    env.ports.sessions.get(sessionId).insertTranscriptWord({
+  async function seedTranscript(sessionId: string): Promise<void> {
+    await (await env.ports.sessions.get(sessionId)).insertTranscriptWord({
       session_time: '00:00:01',
       speaker: 'Host',
       word: 'hello',
@@ -185,10 +185,10 @@ describe('topics/generate — configured behavior (topic-generation)', () => {
    * must break after the second line. Without this the success fixture's
    * continuation-marker loop would never iterate and the route's 200 would
    * prove only the single-page case. */
-  function seedMultiPageTranscript(sessionId: string): void {
-    const hub = env.ports.sessions.get(sessionId);
+  async function seedMultiPageTranscript(sessionId: string): Promise<void> {
+    const hub = await env.ports.sessions.get(sessionId);
     for (let i = 0; i < 30; i += 1) {
-      hub.insertTranscriptWord({
+      await hub.insertTranscriptWord({
         session_time: '00:00:01',
         speaker: 'Host',
         word: `w${i}${'a'.repeat(2_000)}`,
@@ -202,8 +202,8 @@ describe('topics/generate — configured behavior (topic-generation)', () => {
     return Number(readFileSync(join(stableSessionCwd(sessionId), '.fixture-pages.txt'), 'utf8'));
   }
 
-  function seedTopic(sessionId: string, summary: string) {
-    return env.ports.sessions.get(sessionId).insertTopic({
+  async function seedTopic(sessionId: string, summary: string) {
+    return await (await env.ports.sessions.get(sessionId)).insertTopic({
       session_time: '00:00:00',
       duration_sec: 10,
       topic_level: 1,
@@ -211,8 +211,8 @@ describe('topics/generate — configured behavior (topic-generation)', () => {
     });
   }
 
-  function currentTopics(sessionId: string) {
-    return env.ports.sessions.get(sessionId).listTopics();
+  async function currentTopics(sessionId: string) {
+    return await (await env.ports.sessions.get(sessionId)).listTopics();
   }
 
   /** Real proof no `claude` subprocess ran for `sessionId`: the fixtures all
@@ -240,7 +240,7 @@ describe('topics/generate — configured behavior (topic-generation)', () => {
 
   it('configured + no transcript words: 400, no spawn', async () => {
     const s = await newSession();
-    // Deliberately no seedTranscript(s) call.
+    // Deliberately no await seedTranscript(s) call.
     const res = await generateReq(s, claudeConfiguredEnv(SUCCESS_STREAM_FIXTURE));
     expect(res.status).toBe(400);
     const detail = ((await res.json()) as { detail: string }).detail;
@@ -250,7 +250,7 @@ describe('topics/generate — configured behavior (topic-generation)', () => {
 
   it('configured + concurrency: a turn already holding the session slot → 409, no spawn', async () => {
     const s = await newSession();
-    seedTranscript(s);
+    await seedTranscript(s);
     const slot = aiChatTurns.tryAcquire(s, 2);
     expect(slot.ok).toBe(true);
     try {
@@ -269,14 +269,10 @@ describe('topics/generate — configured behavior (topic-generation)', () => {
       'fresh set (real create_topic calls) replaces them, and the shape matches GET …/topics',
     async () => {
       const s = await newSession();
-      seedMultiPageTranscript(s);
-      const oldA = seedTopic(s, 'Old topic A');
-      const oldB = seedTopic(s, 'Old topic B');
-      expect(
-        currentTopics(s)
-          .map((t) => t.id)
-          .sort(),
-      ).toEqual([oldA.id, oldB.id].sort());
+      await seedMultiPageTranscript(s);
+      const oldA = await seedTopic(s, 'Old topic A');
+      const oldB = await seedTopic(s, 'Old topic B');
+      expect((await currentTopics(s)).map((t) => t.id).sort()).toEqual([oldA.id, oldB.id].sort());
 
       const res = await generateReq(s, claudeConfiguredEnv(REAL_SUCCESS_FIXTURE));
       expect(res.status).toBe(200);
@@ -313,7 +309,7 @@ describe('topics/generate — configured behavior (topic-generation)', () => {
       }
 
       // Hub state matches the response exactly — no orphans, no stragglers.
-      expect(currentTopics(s)).toEqual(body.topics);
+      expect(await currentTopics(s)).toEqual(body.topics);
 
       // Full page coverage is part of what this 200 proves (topic-generate-
       // paged-transcript D6): the turn registers the run's word snapshot, so a
@@ -344,10 +340,10 @@ describe('topics/generate — configured behavior (topic-generation)', () => {
       'run created, proven against real create_topic calls made before the failure',
     async () => {
       const s = await newSession();
-      seedTranscript(s);
-      const oldA = seedTopic(s, 'Old topic A');
-      const oldB = seedTopic(s, 'Old topic B');
-      const preRunSnapshot = currentTopics(s);
+      await seedTranscript(s);
+      const oldA = await seedTopic(s, 'Old topic A');
+      const oldB = await seedTopic(s, 'Old topic B');
+      const preRunSnapshot = await currentTopics(s);
       expect(preRunSnapshot).toHaveLength(2);
 
       const res = await generateReq(s, claudeConfiguredEnv(REAL_PARTIAL_FAIL_FIXTURE));
@@ -359,7 +355,7 @@ describe('topics/generate — configured behavior (topic-generation)', () => {
 
       // The prior topics are EXACTLY what they were before the request — same
       // ids, ordinals, summaries, created_at_utc — never modified.
-      const after = currentTopics(s);
+      const after = await currentTopics(s);
       expect(after).toEqual(preRunSnapshot);
       expect(after.map((t) => t.id).sort()).toEqual([oldA.id, oldB.id].sort());
 
@@ -381,16 +377,16 @@ describe('topics/generate — configured behavior (topic-generation)', () => {
       'MCP call, so newIds.length === 0 even though outcome.ok is true',
     async () => {
       const s = await newSession();
-      seedTranscript(s);
-      const old = seedTopic(s, 'Only old topic');
-      const preRunSnapshot = currentTopics(s);
+      await seedTranscript(s);
+      const old = await seedTopic(s, 'Only old topic');
+      const preRunSnapshot = await currentTopics(s);
 
       const res = await generateReq(s, claudeConfiguredEnv(SUCCESS_STREAM_FIXTURE));
       expect(res.status).toBe(502);
       const body = (await res.json()) as { detail: string };
       expect(body.detail).toBe(TOPIC_GENERATE_FAILURE_DETAIL);
 
-      const after = currentTopics(s);
+      const after = await currentTopics(s);
       expect(after).toEqual(preRunSnapshot);
       expect(after.map((t) => t.id)).toEqual([old.id]);
     },
@@ -411,7 +407,7 @@ describe('topics/generate — configured behavior (topic-generation)', () => {
       const spy = vi.spyOn(topicGenerateModule, 'generateTopicsTurn');
       try {
         const s = await newSession();
-        seedTranscript(s);
+        await seedTranscript(s);
         // SUCCESS_STREAM_FIXTURE never makes a real MCP call (see the
         // zero-topics-created test above), so this always resolves 502 —
         // irrelevant here; the assertion is on what reached the spy.
@@ -482,7 +478,7 @@ describe('topics/generate — page-coverage gate on the crash-safe swap', () => 
       .spyOn(topicGenerateModule, 'generateTopicsTurn')
       .mockImplementation(async (opts: Parameters<typeof generateTopicsTurn>[0]) => {
         for (let i = 0; i < count; i += 1) {
-          opts.registry.get(opts.sessionId).insertTopic({
+          await (await opts.registry.get(opts.sessionId)).insertTopic({
             session_time: `00:00:0${i}`,
             duration_sec: 1,
             topic_level: 1,
@@ -495,12 +491,21 @@ describe('topics/generate — page-coverage gate on the crash-safe swap', () => 
 
   async function seedForGenerate(): Promise<{ sessionId: string; priorIds: string[] }> {
     const sessionId = (await seededSession()).sessionId;
-    const hub = env.ports.sessions.get(sessionId);
-    hub.insertTranscriptWord({ session_time: '00:00:01', speaker: 'Host', word: 'hello' });
-    const priorIds = ['Old topic A', 'Old topic B'].map(
-      (summary) =>
-        hub.insertTopic({ session_time: '00:00:00', duration_sec: 10, topic_level: 1, summary }).id,
-    );
+    const hub = await env.ports.sessions.get(sessionId);
+    await hub.insertTranscriptWord({ session_time: '00:00:01', speaker: 'Host', word: 'hello' });
+    const priorIds: string[] = [];
+    for (const summary of ['Old topic A', 'Old topic B']) {
+      priorIds.push(
+        (
+          await hub.insertTopic({
+            session_time: '00:00:00',
+            duration_sec: 10,
+            topic_level: 1,
+            summary,
+          })
+        ).id,
+      );
+    }
     return { sessionId, priorIds };
   }
 
@@ -524,7 +529,7 @@ describe('topics/generate — page-coverage gate on the crash-safe swap', () => 
   for (const [label, pageCoverage] of partials) {
     it(`${label}: 502 with the existing detail, prior topics byte-for-byte intact, fresh rows removed`, async () => {
       const { sessionId, priorIds } = await seedForGenerate();
-      const before = env.ports.sessions.get(sessionId).listTopics();
+      const before = await (await env.ports.sessions.get(sessionId)).listTopics();
       stubTurn(pageCoverage);
 
       const res = await generateReq(sessionId);
@@ -532,7 +537,7 @@ describe('topics/generate — page-coverage gate on the crash-safe swap', () => 
       expect(await res.json()).toEqual({ detail: FAILURE_DETAIL });
 
       // The prior set is EXACTLY what it was — same ids, ordinals, timestamps.
-      const after = env.ports.sessions.get(sessionId).listTopics();
+      const after = await (await env.ports.sessions.get(sessionId)).listTopics();
       expect(after).toEqual(before);
       expect(after.map((t) => t.id)).toEqual(priorIds);
       // …and the run's own rows are gone, not orphaned alongside them.
@@ -550,7 +555,7 @@ describe('topics/generate — page-coverage gate on the crash-safe swap', () => 
     const body = (await res.json()) as { topics: Array<{ id: string; summary: string }> };
     expect(body.topics.map((t) => t.summary)).toEqual(['Fresh stub topic 0', 'Fresh stub topic 1']);
     for (const id of priorIds) expect(body.topics.map((t) => t.id)).not.toContain(id);
-    expect(env.ports.sessions.get(sessionId).listTopics()).toEqual(body.topics);
+    expect(await (await env.ports.sessions.get(sessionId)).listTopics()).toEqual(body.topics);
   });
 
   it('a turn with NO word snapshot (zero-of-zero) still replaces — chat/topic turns are unaffected', async () => {
@@ -569,13 +574,13 @@ describe('topics/generate — page-coverage gate on the crash-safe swap', () => 
 
   it('coverage complete but ZERO topics created: still the existing 502 + restore', async () => {
     const { sessionId } = await seedForGenerate();
-    const before = env.ports.sessions.get(sessionId).listTopics();
+    const before = await (await env.ports.sessions.get(sessionId)).listTopics();
     stubTurn({ totalPages: 2, servedPages: 2 }, 0);
 
     const res = await generateReq(sessionId);
     expect(res.status).toBe(502);
     expect(await res.json()).toEqual({ detail: FAILURE_DETAIL });
-    expect(env.ports.sessions.get(sessionId).listTopics()).toEqual(before);
+    expect(await (await env.ports.sessions.get(sessionId)).listTopics()).toEqual(before);
   });
 });
 
@@ -1134,7 +1139,7 @@ describe('transcript generation', () => {
     const res = await generate(s);
     expect(res.status).toBe(200);
 
-    const enrichment = env.ports.sessions.get(s).listTranscriptEnrichment();
+    const enrichment = await (await env.ports.sessions.get(s)).listTranscriptEnrichment();
     expect(enrichment.paragraphs).toHaveLength(3);
     expect(enrichment.sentiment).toHaveLength(3);
     // Anchored (recording-start anchor resolved) — real timeline positions,
@@ -1168,7 +1173,7 @@ describe('transcript generation', () => {
     const res = await generate(s);
     expect(res.status).toBe(200);
 
-    const enrichment = env.ports.sessions.get(s).listTranscriptEnrichment();
+    const enrichment = await (await env.ports.sessions.get(s)).listTranscriptEnrichment();
     expect(enrichment.paragraphs.length).toBeGreaterThan(0);
     expect(enrichment.sentiment.length).toBeGreaterThan(0);
     for (const p of enrichment.paragraphs) {
@@ -1183,7 +1188,7 @@ describe('transcript generation', () => {
 
   it('a never-generated session reads listTranscriptEnrichment as empty arrays', async () => {
     const s = (await seededSession()).sessionId;
-    expect(env.ports.sessions.get(s).listTranscriptEnrichment()).toEqual({
+    expect(await (await env.ports.sessions.get(s)).listTranscriptEnrichment()).toEqual({
       paragraphs: [],
       sentiment: [],
     });

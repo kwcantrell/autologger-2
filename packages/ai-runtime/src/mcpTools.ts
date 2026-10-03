@@ -16,10 +16,11 @@
 // closures would cross and one turn's tools could read another session's
 // data.
 //
-// Each tool handler resolves the hub via `registry.get(sessionId)` AT CALL
-// TIME, inside the handler body, and never holds the handle across an
-// `await` — the idle-eviction sweeper can close a hub between calls on a
-// long-running turn. This mirrors the identical invariant already shipped
+// Each tool handler resolves the hub via `await registry.get(sessionId)` AT
+// CALL TIME, inside the handler body, and uses it only for that invocation's
+// own hub calls, never keeping it across invocations — the idle-eviction
+// sweeper can close a hub between calls on a long-running turn
+// (async-session-hub design D6). This mirrors the identical invariant already shipped
 // in `../ai-runtime/aiMcpServer.ts` (`buildSessionMcpServer`) for the AI chat's
 // loopback MCP tools; the SDK's in-process `createSdkMcpServer` is a
 // different transport (no HTTP hop, no bearer token) but the same hub-
@@ -27,7 +28,7 @@
 // fire underneath either one.
 //
 // Tools expose the Phase-1 aggregates (./aggregates.ts) computed over hub
-// rows read through SessionHub's SYNCHRONOUS read RPCs — never raw table
+// rows read through SessionHub's read RPCs — never raw table
 // dumps (design D4: "a designer agent needs shape ... not 12,000 word
 // rows"). `transcript_excerpt` is the one tool that still returns a list; it
 // is offset/limit-bounded, clamping any requested limit to the hard cap
@@ -120,8 +121,8 @@ export function buildAggregateMcpServer(
       'before reading `durationSec`/`bySpeaker`.',
     {},
     async () => {
-      // Hub resolved AT CALL TIME — never held across an await.
-      const words = registry.get(sessionId).listTranscriptWords();
+      // Hub resolved AT CALL TIME, used for this invocation only.
+      const words = await (await registry.get(sessionId)).listTranscriptWords();
       const duration = computeSessionDuration(words);
       const talkTime = computeTalkTimeBySpeaker(words);
       return {
@@ -151,9 +152,9 @@ export function buildAggregateMcpServer(
       'missing value as zero.',
     {},
     async () => {
-      const hub = registry.get(sessionId);
-      const words = hub.listTranscriptWords();
-      const { paragraphs } = hub.listTranscriptEnrichment();
+      const hub = await registry.get(sessionId);
+      const words = await hub.listTranscriptWords();
+      const { paragraphs } = await hub.listTranscriptEnrichment();
       const utterances = computeUtteranceStats(paragraphs);
       const fillers = computeFillerStats(words);
       return { content: [{ type: 'text', text: JSON.stringify({ utterances, fillers }) }] };
@@ -170,7 +171,7 @@ export function buildAggregateMcpServer(
       '— never treat the returned entries as the complete set.',
     {},
     async () => {
-      const topics = registry.get(sessionId).listTopics();
+      const topics = await (await registry.get(sessionId)).listTopics();
       const timeline = computeTopicTimeline(topics);
       const truncated = timeline.entries.length > MAX_TOPIC_ENTRIES;
       return {
@@ -196,9 +197,9 @@ export function buildAggregateMcpServer(
       '`density.available` before reading `density.eventsPerMinute`.',
     {},
     async () => {
-      const hub = registry.get(sessionId);
-      const words = hub.listTranscriptWords();
-      const events = hub.exportEvents();
+      const hub = await registry.get(sessionId);
+      const words = await hub.listTranscriptWords();
+      const events = await hub.exportEvents();
       const duration = computeSessionDuration(words);
       const counts = computeEventCounts(events);
       const density = computeEventDensity(events, duration.durationSec);
@@ -232,8 +233,8 @@ export function buildAggregateMcpServer(
         ),
     },
     async (args) => {
-      // Hub resolved AT CALL TIME — never held across an await.
-      const words = registry.get(sessionId).listTranscriptWords();
+      // Hub resolved AT CALL TIME, used for this invocation only.
+      const words = await (await registry.get(sessionId)).listTranscriptWords();
       const offset = Math.max(0, Math.trunc(args.offset ?? 0));
       const limit = Math.min(
         MAX_EXCERPT_WORDS,

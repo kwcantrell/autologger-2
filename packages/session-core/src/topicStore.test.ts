@@ -42,8 +42,8 @@ describe('topicRow', () => {
 // patch-builder moved into the shared store helpers. These must pass
 // unmodified across the extraction.
 describe('TopicStore over a real core (D12 pins)', () => {
-  function store(): TopicStore {
-    return new TopicStore(fakeRuntime().core);
+  async function store(): Promise<TopicStore> {
+    return new TopicStore((await fakeRuntime()).core);
   }
   const data = (summary: string) => ({
     session_time: '00:00:01',
@@ -52,31 +52,31 @@ describe('TopicStore over a real core (D12 pins)', () => {
     summary,
   });
 
-  it('insertTopic seeds ordinals 0,1,2… and reuses MAX+1 after the top row is deleted', () => {
-    const topics = store();
-    const a = topics.insertTopic(data('a'));
-    const b = topics.insertTopic(data('b'));
-    const c = topics.insertTopic(data('c'));
+  it('insertTopic seeds ordinals 0,1,2… and reuses MAX+1 after the top row is deleted', async () => {
+    const topics = await store();
+    const a = await topics.insertTopic(data('a'));
+    const b = await topics.insertTopic(data('b'));
+    const c = await topics.insertTopic(data('c'));
     expect([a.ordinal, b.ordinal, c.ordinal]).toEqual([0, 1, 2]);
     // COALESCE(MAX(ordinal), -1) + 1: deleting the max frees its ordinal.
-    topics.deleteTopic(c.id);
-    expect(topics.insertTopic(data('d')).ordinal).toBe(2);
+    await topics.deleteTopic(c.id);
+    expect((await topics.insertTopic(data('d'))).ordinal).toBe(2);
     // Deleting a NON-max row does not renumber; next insert continues past MAX.
-    topics.deleteTopic(a.id);
-    expect(topics.insertTopic(data('e')).ordinal).toBe(3);
+    await topics.deleteTopic(a.id);
+    expect((await topics.insertTopic(data('e'))).ordinal).toBe(3);
   });
 
-  it('updateTopic patches only the provided fields and returns the fresh row', () => {
-    const topics = store();
-    const t = topics.insertTopic(data('orig'));
-    const updated = topics.updateTopic(t.id, { summary: 'edited', duration_sec: 9 });
+  it('updateTopic patches only the provided fields and returns the fresh row', async () => {
+    const topics = await store();
+    const t = await topics.insertTopic(data('orig'));
+    const updated = await topics.updateTopic(t.id, { summary: 'edited', duration_sec: 9 });
     expect(updated).toEqual({ ...t, summary: 'edited', duration_sec: 9 });
   });
 
-  it('updateTopic with an empty patch is a no-op returning the row; unknown id returns null', () => {
-    const topics = store();
-    const t = topics.insertTopic(data('orig'));
-    expect(topics.updateTopic(t.id, {})).toEqual(t);
-    expect(topics.updateTopic('nope', { summary: 'x' })).toBeNull();
+  it('updateTopic with an empty patch is a no-op returning the row; unknown id returns null', async () => {
+    const topics = await store();
+    const t = await topics.insertTopic(data('orig'));
+    expect(await topics.updateTopic(t.id, {})).toEqual(t);
+    expect(await topics.updateTopic('nope', { summary: 'x' })).toBeNull();
   });
 });

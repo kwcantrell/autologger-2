@@ -226,7 +226,7 @@ sessionsRouter.post('/api/sessions', async (c) => {
   }
   if (created === null) throw new ApiError(403, 'No access to this show.');
   // Instantiate the hub so its transport row exists.
-  getSessionHub(c, created.id).ensure();
+  await (await getSessionHub(c, created.id)).ensure();
   return c.json({
     id: created.id,
     title: created.title,
@@ -323,39 +323,6 @@ const LOCAL_AUDIO_IMPORT_MISSING_CONTENT_TYPE_DETAIL =
 const LOCAL_AUDIO_IMPORT_ROLLING_DETAIL =
   'Local audio import is refused while this session is actively recording; stop the recording and try again.';
 
-// design D12: `Recording N Started`/`Stopped` internal-event message shape —
-// parsed back out to compute the next collision-proof recording ordinal.
-const RECORDING_EVENT_RE = /^Recording (\d+) (?:Started|Stopped)$/;
-
-/** design D12 — `N = max(existing recording_ordinal over segments, existing
- * "Recording k" event numbers) + 1`. Deliberately NOT `segments.length + 1`
- * (the client's convention): that collides after a segment deletion. Reads
- * the FULL unpaged event set (`exportEvents`) so an ordinal used by an event
- * whose segment was later deleted still can't be reused.
- * Phase-9 fix-wave (finding 3): the event-message scan is restricted to
- * `category === 'internal'` — the real anchors this composite RPC ever
- * writes (`SessionHub.anchorImportedTake`, always `category: 'internal'`,
- * mirroring `recordingStartAnchors`' own `'internal'` filter) — so a
- * logged/user-authored event that merely happens to match the
- * `Recording <n> Started/Stopped` message text can't inflate N. */
-function nextRecordingOrdinal(hub: ReturnType<typeof getSessionHub>): number {
-  let maxOrdinal = 0;
-  for (const seg of hub.listAudioSegments()) {
-    if (seg.recording_ordinal !== null && seg.recording_ordinal > maxOrdinal) {
-      maxOrdinal = seg.recording_ordinal;
-    }
-  }
-  for (const ev of hub.exportEvents()) {
-    if (String(ev.category).toLowerCase() !== 'internal') continue;
-    const m = RECORDING_EVENT_RE.exec(ev.message);
-    if (m) {
-      const n = Number(m[1]);
-      if (Number.isFinite(n) && n > maxOrdinal) maxOrdinal = n;
-    }
-  }
-  return maxOrdinal + 1;
-}
-
 /** batch-audio-import design D11 — positive finite `duration_s` query param. */
 function parseLocalAudioImportDurationS(raw: string | undefined): number {
   if (raw === undefined || raw === '') {
@@ -385,7 +352,7 @@ function requireLocalAudioImportContentType(raw: string | undefined): string {
  * MAX_LOCAL_AUDIO_IMPORT_BYTES on disk, and `sync-from-disk` would resurrect
  * the orphaned blob as a fresh segment row. Ordering mirrors the
  * youtube-import handler's D7 posture ("never leave a metadata row pointing
- * at a missing blob"): row first (synchronous, transactional), then the blob;
+ * at a missing blob"): row first (one hub transaction), then the blob;
  * the blob delete is best-effort (`.catch`) so rollback can never mask the
  * original failure — its residue is a plain orphan file, cleaned up by any
  * later successful rollback or operator sweep, never a dangling row. */
@@ -394,7 +361,7 @@ async function rollbackLocalAudioImportSegment(
   sessionId: string,
   seg: { id: string; r2_key: string },
 ): Promise<void> {
-  getSessionHub(c, sessionId).deleteAudioSegment(seg.id);
+  await (await getSessionHub(c, sessionId)).deleteAudioSegment(seg.id);
   await c.env.ports.audio.delete(seg.r2_key).catch(() => {});
 }
 
@@ -421,42 +388,43 @@ sessionsRouter.post('/api/sessions/:sessionId/local-audio-import', async (c) => 
   if (payload.byteLength === 0) throw new ApiError(400, 'Audio payload is empty.');
   enforceLocalAudioImportByteLimit(payload.byteLength);
 
-  if (getSessionHub(c, sessionId).statusLive(ctx).is_rolling) {
+  if ((await (await getSessionHub(c, sessionId)).statusLive(ctx)).is_rolling) {
     throw new ApiError(409, LOCAL_AUDIO_IMPORT_ROLLING_DETAIL);
   }
 
-  const hub = getSessionHub(c, sessionId);
-  const recordingOrdinal = nextRecordingOrdinal(hub);
+  // design D12's collision-proof recording ordinal and the segment that carries it are one hub
+  // transaction (async-session-hub design D7, S4), so concurrent imports never share an ordinal.
   const nowMs = c.env.ports.clock.now();
   const startedAtUtc = isoZ(new Date(nowMs));
   const endedAtUtc = isoZ(new Date(nowMs + durationS * 1000));
-  const seg = hub.addAudioSegment({
+  const { segment: seg, recordingOrdinal } = await (
+    await getSessionHub(c, sessionId)
+  ).addImportedAudioSegment({
     sessionId,
     mimeType,
     startedAtUtc,
     endedAtUtc,
-    recordingOrdinal,
   });
   try {
     await c.env.ports.audio.put(seg.r2_key, payload, { contentType: mimeType });
   } catch (err) {
-    await getSessionHub(c, sessionId).deleteAudioSegment(seg.id);
+    await (await getSessionHub(c, sessionId)).deleteAudioSegment(seg.id);
     throw err;
   }
 
-  if (getSessionHub(c, sessionId).statusLive(ctx).is_rolling) {
+  if ((await (await getSessionHub(c, sessionId)).statusLive(ctx)).is_rolling) {
     await rollbackLocalAudioImportSegment(c, sessionId, seg);
     throw new ApiError(409, LOCAL_AUDIO_IMPORT_ROLLING_DETAIL);
   }
 
   try {
-    getSessionHub(c, sessionId).anchorImportedTake({
+    await (await getSessionHub(c, sessionId)).anchorImportedTake({
       recordingOrdinal,
       durationS,
       ctx,
       startedAtUtc,
     });
-    getSessionHub(c, sessionId).appendAudioSeamParts(seamParts);
+    await (await getSessionHub(c, sessionId)).appendAudioSeamParts(seamParts);
   } catch (err) {
     await rollbackLocalAudioImportSegment(c, sessionId, seg);
     throw err;
@@ -512,7 +480,7 @@ sessionsRouter.post('/api/sessions/:sessionId/youtube-import', async (c) => {
     // point spending the download just to fail synthesis later. Re-checked
     // once more below, right before synthesis, to close the race where a
     // recording starts DURING the (multi-minute) download.
-    if (getSessionHub(c, sessionId).statusLive(ctx).is_rolling) {
+    if ((await (await getSessionHub(c, sessionId)).statusLive(ctx)).is_rolling) {
       throw new ApiError(409, YOUTUBE_IMPORT_ROLLING_DETAIL);
     }
 
@@ -520,10 +488,10 @@ sessionsRouter.post('/api/sessions/:sessionId/youtube-import', async (c) => {
       join(c.env.ports.audio.scratchRoot(), `${YOUTUBE_IMPORT_TMP_PREFIX}${sessionId}-`),
     );
 
-    // Long-running download — no hub reference is held across this await
-    // (design D1: the idle-hub sweeper may close the session DB during a
-    // multi-minute download); the hub is re-acquired via getSessionHub AFTER
-    // this resolves, below.
+    // Long-running download — the hub is re-resolved via getSessionHub AFTER
+    // this resolves, below, not held idle across it (design D1, async-session-hub
+    // design D6: the idle-hub sweeper may close the session DB during a
+    // multi-minute download).
     const fetched = await fetchYoutubeAudio({ url: urlCheck.href, tempDir, binaryPath });
     const bytes = await readFile(fetched.audioPath);
 
@@ -532,30 +500,29 @@ sessionsRouter.post('/api/sessions/:sessionId/youtube-import', async (c) => {
     // written; the finally below removes the temp dir.
     if (!(await canAccessSession(c, sessionId))) throw new ApiError(404, 'Session not found');
 
-    // Re-acquire the hub post-download (D1). N is computed before the
-    // segment is attached (design D12 — collision-proof, not
-    // `segments.length + 1`), then the segment carries the SAME ordinal +
-    // now/now+duration timestamps the composite anchor RPC below anchors to
-    // (design D10), via the SAME addAudioSegment → ports.audio.put →
+    // Re-acquire the hub post-download (D1). N (design D12 — collision-proof,
+    // not `segments.length + 1`) and the segment that carries it are one hub
+    // transaction (async-session-hub design D7, S4); the segment carries the
+    // SAME ordinal + now/now+duration timestamps the composite anchor RPC
+    // below anchors to (design D10), then the SAME ports.audio.put →
     // rollback-on-failure path the recorder (audio.ts) uses (D3/D7).
-    const hub = getSessionHub(c, sessionId);
-    const recordingOrdinal = nextRecordingOrdinal(hub);
     const nowMs = c.env.ports.clock.now();
     const startedAtUtc = isoZ(new Date(nowMs));
     const endedAtUtc = isoZ(new Date(nowMs + fetched.duration * 1000));
-    const seg = hub.addAudioSegment({
+    const { segment: seg, recordingOrdinal } = await (
+      await getSessionHub(c, sessionId)
+    ).addImportedAudioSegment({
       sessionId,
       mimeType: fetched.contentType,
       startedAtUtc,
       endedAtUtc,
-      recordingOrdinal,
     });
     try {
       await c.env.ports.audio.put(seg.r2_key, bytes, { contentType: fetched.contentType });
     } catch (err) {
       // Atomic rollback (D7): a put failure must never leave a metadata row
       // pointing at a missing blob — mirrors audio.ts's own rollback.
-      getSessionHub(c, sessionId).deleteAudioSegment(seg.id);
+      await (await getSessionHub(c, sessionId)).deleteAudioSegment(seg.id);
       throw err;
     }
 
@@ -564,8 +531,8 @@ sessionsRouter.post('/api/sessions/:sessionId/youtube-import', async (c) => {
     // clobbered by stopTakeWithDuration inside the composite RPC. Mirrors the
     // put-failure rollback shape above: the segment is already attached, so a
     // refusal here rolls it back rather than leaving an unanchored orphan.
-    if (getSessionHub(c, sessionId).statusLive(ctx).is_rolling) {
-      getSessionHub(c, sessionId).deleteAudioSegment(seg.id);
+    if ((await (await getSessionHub(c, sessionId)).statusLive(ctx)).is_rolling) {
+      await (await getSessionHub(c, sessionId)).deleteAudioSegment(seg.id);
       throw new ApiError(409, YOUTUBE_IMPORT_ROLLING_DETAIL);
     }
 
@@ -576,14 +543,14 @@ sessionsRouter.post('/api/sessions/:sessionId/youtube-import', async (c) => {
     // throw, roll back the just-attached segment so failure leaves the
     // session byte-for-byte unchanged.
     try {
-      getSessionHub(c, sessionId).anchorImportedTake({
+      await (await getSessionHub(c, sessionId)).anchorImportedTake({
         recordingOrdinal,
         durationS: fetched.duration,
         ctx,
         startedAtUtc,
       });
     } catch (err) {
-      getSessionHub(c, sessionId).deleteAudioSegment(seg.id);
+      await (await getSessionHub(c, sessionId)).deleteAudioSegment(seg.id);
       throw err;
     }
 

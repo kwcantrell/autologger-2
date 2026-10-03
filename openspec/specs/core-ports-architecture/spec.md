@@ -5,7 +5,7 @@
 The normative contract for the domain core and its adapter boundaries: the port ledger
 (the true ports SessionRuntime, Clock, IdentityVerifier; CatalogStore as a
 reshape-not-swap seam) and the concrete-only edges (BlobStore, KvStore,
-PresenceRegistry); a synchronous session hub (until ADR 0021 slice 7), with asynchronous
+PresenceRegistry); an asynchronous, per-session serialized session hub (ADR 0021 slice 7a), with asynchronous
 catalog, key/value and presence ports (ADR 0021 slice 3) and no Cloudflare-shaped APIs; the composition-root
 Ports/Config split; and the auth split (authentication in middleware, authorization
 consolidated behind `requireSession`). Established by the `de-cloudflare-strong-core`
@@ -40,37 +40,6 @@ a legacy name rather than changed.
 #### Scenario: Session directory renamed
 - **WHEN** the per-session spine is located
 - **THEN** it lives in `@autologger/session-core` (`packages/session-core/src/`, not a `durable/` directory) and the catalog facade is `catalog.ts` in `@autologger/catalog` (not `d1.ts`)
-
-### Requirement: Session runtime is a synchronous, substitutable port
-
-The session spine SHALL depend on a `SessionRuntime` port exposing SQL, socket fan-out,
-an alarm/scheduler, and a clock — as an **interface**, so a fake runtime can be supplied in
-tests without touching `SessionCore`. The port SHALL be synchronous so that `SessionHub`
-RPC bodies remain zero-`await`, and it SHALL abstract over embedded stores only. The
-port's normative home is `@autologger/session-core` (alongside `SessionCore`), not
-`@autologger/ports` — it is the session package's internal substitution seam, consumed
-by the package's stores and by test fakes, and moving it to L0 would drag
-session-internal types into the ports package for no consumer benefit.
-
-#### Scenario: Hub methods contain no awaits
-- **WHEN** any `SessionHub`/domain-store mutating or reading RPC body is inspected
-- **THEN** it contains zero `await` expressions and runs inside a single synchronous transaction
-
-#### Scenario: SQL seam exposes a domain shape, not the Durable Object cursor API
-- **WHEN** the session SQL seam is inspected
-- **THEN** it exposes `all(sql, ...binds)` returning rows and `run(sql, ...binds)` returning an affected-row count (`{ changes }`), and does not expose the `exec() → { toArray(), rowsWritten }` cursor shape
-
-#### Scenario: run() preserves change-detection for its readers
-- **WHEN** `setAudioSegmentWaveform`, `deleteTopic`, or `deleteTranscriptWord` runs against a non-existent id
-- **THEN** it observes zero affected rows and returns the "not found" result, so the routers still respond `404` and no `audio.changed` broadcast fires on a no-op write
-
-#### Scenario: Schema init retains a multi-statement path
-- **WHEN** `initSchema` executes multi-statement DDL
-- **THEN** a distinct `void`-returning multi-statement `exec` path serves it, separate from the `all`/`run` seam
-
-#### Scenario: SessionCore is testable with a fake runtime
-- **WHEN** a test constructs `SessionCore` with an in-memory SQL + fake sockets + fake clock
-- **THEN** it exercises the domain stores without a real database, socket, or wall-clock
 
 ### Requirement: Catalog persistence is asynchronous with no Cloudflare-shaped API
 
@@ -366,7 +335,9 @@ convenience: a public member is on a facade **iff** it is reached through
 `Ports.sessions` / `Variables.catalog` by at least one consumer outside the package
 (production call sites, plus the established integration-test paths — e.g. `evictIdle`
 via `env.ports.sessions`). The registry facade surface is exactly `get(sessionId)`
-(returning the hub facade), `evictIdle`, and `startSweeper`; coordination internals
+(returning a promise that resolves to the opened hub facade), `evictIdle`, and `startSweeper`,
+plus the synchronous `closeUserSockets`; the hub facade's storage members return promises and
+its socket members stay synchronous; coordination internals
 (`lastTouchedMs`, `close`, `hasArmedAlarm`, `socketCount` on the hub; `closeAll` and
 the hub map/sweeper internals on the registry) SHALL stay off the facades. Facade
 interface members SHALL be authored as **property-style function types**
@@ -536,8 +507,10 @@ close it or add it to this list.
 
 The AI runtime's MCP tool bodies SHALL obtain session data through
 `@autologger/session-core`'s exported `SessionHubRegistryFacade`, resolving the hub **at call
-time** rather than holding it across an `await`. No intermediate "session tool port" SHALL be
-interposed between the tool bodies and that facade.
+time**, inside the tool body, and never from a reference captured when the turn was registered.
+Within one tool invocation the body MAY use the hub it resolved across that hub's own awaited
+operations; it SHALL NOT keep the reference beyond the invocation. No intermediate "session tool
+port" SHALL be interposed between the tool bodies and that facade.
 
 This is a decision, not an omission. An earlier change deferred such a port so its surface
 could be cut against a real consumer rather than speculatively, and named the change that
@@ -561,7 +534,7 @@ machine-checked** and is verified by review.
 #### Scenario: Tool bodies resolve the hub at call time through the facade
 
 - **WHEN** the AI runtime's MCP tool bodies are inspected
-- **THEN** each obtains its hub by calling the injected registry facade's getter inside the tool body, and none holds a hub reference across an `await`
+- **THEN** each obtains its hub by awaiting the injected registry facade's getter inside the tool body, uses that reference only for the invocation's own hub operations, and none keeps a hub reference from the turn's registration or from an earlier invocation
 
 #### Scenario: The deferral is legible from the baseline alone
 
@@ -604,8 +577,9 @@ treat expired entries as absent.
 
 ### Requirement: Server code never drops or misuses a promise
 
-Production code under `server/src` and `packages/catalog/src` SHALL NOT leave a promise
-unconsumed. Every promise-returning
+Production code under `server/src`, `packages/catalog/src`, `packages/session-core/src`, and the
+hub-calling packages `packages/log-import/src`, `packages/transcription/src` and
+`packages/ai-runtime/src` SHALL NOT leave a promise unconsumed. Every promise-returning
 call SHALL be awaited, returned, or explicitly discarded with `void`.
 
 No code SHALL:
@@ -615,25 +589,28 @@ No code SHALL:
 - pass a promise-returning function where the parameter expects a function that returns no
   value. Such a callback's work would silently escape the caller's control, for example a write
   running after the transaction it was meant to be inside.
+- return a promise without `await` from inside a `try` block that has a `catch` or `finally`.
+  The `finally` (or the catch's protection) would run before the promise settles, for example
+  releasing a lock before the write it guards has committed.
 
-A server test SHALL NOT pass a promise to an assertion except through `.resolves` or `.rejects`,
-so a missed `await` cannot make an assertion pass vacuously.
+A server or session-core test SHALL NOT pass a promise to an assertion except through
+`.resolves` or `.rejects`, so a missed `await` cannot make an assertion pass vacuously.
 
 A documented await-free window (a section of a request handler that relies on no other request
 interleaving) SHALL contain no storage call. Data the window needs from storage SHALL be read
 before it opens.
 
 #### Scenario: A dropped or misused promise fails the build
-- **WHEN** server or catalog-package production code drops a promise-returning call, including one made through a port interface or a local alias, or uses a promise as a condition, a comparison operand or a response value
+- **WHEN** production code in any of the scanned roots drops a promise-returning call, including one made through a port interface, the session hub facade or a local alias, or uses a promise as a condition, a comparison operand or a response value
 - **THEN** a repository test fails and names the file and line
 
 #### Scenario: An async callback where no value is expected fails the build
-- **WHEN** server or catalog-package production code passes an async function to a parameter typed as a function returning no value, such as a mutation run inside a catalog transaction
+- **WHEN** production code in any of the scanned roots passes an async function to a parameter typed as a function returning no value, such as a mutation run inside a catalog transaction
 - **THEN** a repository test fails and names the file and line
 
 #### Scenario: Event-generation word snapshot stays await-free
 - **WHEN** `POST /api/sessions/{id}/events/generate` takes its transcript word snapshot
-- **THEN** no storage call or other `await` occurs between the snapshot and the AI turn registration, and the show's categories were read before the snapshot
+- **THEN** once the snapshot read has resolved, no storage call or other `await` occurs before the per-session AI slot is acquired, and the show's categories were read before the snapshot
 
 #### Scenario: Companion command is stored before it is broadcast
 - **WHEN** `POST /api/companion/command` is accepted
@@ -648,8 +625,16 @@ before it opens.
 - **THEN** they pass with no change to expected status codes, bodies, headers or frames
 
 #### Scenario: A test asserting on an unawaited promise fails the build
-- **WHEN** a server test passes a promise-typed value to `expect()` without `.resolves` or `.rejects`
+- **WHEN** a server or session-core test passes a promise-typed value to `expect()` without `.resolves` or `.rejects`
 - **THEN** a repository test fails and names the file and line
+
+#### Scenario: Every scanned root is actually scanned
+- **WHEN** the promise-hygiene repository test runs
+- **THEN** it fails unless its scanned files include the session hub, the session core, the log-import runner, the transcript generator and the AI runtime's MCP server
+
+#### Scenario: A promise returned from inside try without await fails the build
+- **WHEN** production code in any of the scanned roots writes `return somePromise` inside a `try` block that has a `catch` or `finally`
+- **THEN** a repository test fails and names the file and line, and `return await somePromise` passes
 
 ### Requirement: The catalog transaction contract
 
@@ -1066,3 +1051,113 @@ the caller is still a member, each of those deletes passes the member-team rules
   role was read `FOR SHARE`
 - **THEN** the response is `500` `{"detail": "Internal Server Error"}`, and the log line names
   `CatalogForbiddenError`, the table and the binding `user`, but not the user id
+
+### Requirement: Session runtime is an asynchronous, per-session serialized, substitutable port
+
+The session spine SHALL depend on a `SessionRuntime` port exposing SQL, socket fan-out, an
+alarm/scheduler, and a clock — as an **interface**, so a fake runtime can be supplied in tests
+without touching `SessionCore`. The port's normative home is `@autologger/session-core`
+(alongside `SessionCore`), not `@autologger/ports` — it is the session package's internal
+substitution seam, consumed by the package's stores and by test fakes, and moving it to L0 would
+drag session-internal types into the ports package for no consumer benefit.
+
+The SQL seam SHALL be asynchronous: `all()`, `run()` and `exec()` return promises, and `tx()`
+passes its body a handle scoped to the transaction, with the same interface. A `tx()` called on
+that handle SHALL join the enclosing transaction. A transaction SHALL be all-or-nothing: any
+error inside it — a statement error, a joined body's error, or the body's own error, even one the
+body catches — SHALL roll it back and reject with the first error. A handle used after its
+transaction ended SHALL reject. Only the adapter wraps a synchronous database call in a promise.
+
+The hub's storage operations SHALL return promises; its socket operations (attach, detach, relay a
+command, close a user's sockets) SHALL stay synchronous. Whatever the mechanism, the session hub
+SHALL guarantee these observables:
+- **No dirty or lost reads:** no read SHALL observe a write that is not yet committed or that
+  later rolls back.
+- **Atomic mutations:** every mutating operation SHALL run in one transaction, and every
+  read-then-write sequence whose outcome depends on what it read (an anchored insert, a recording
+  ordinal and the segment that uses it, a take toggle, an event update that merges the stored
+  metadata, a transcript replace remapped against the session's recording anchors, a
+  duplicate-checked imported event) SHALL be one hub operation, so concurrent requests produce a
+  result some serial order of them would produce.
+- **Broadcast order:** a session's `*.changed` broadcasts SHALL be sent only after the
+  transaction that issued them commits, in the order the session's transactions committed and,
+  within one transaction, in the order issued; a transaction that fails SHALL send none of them.
+  A broadcast issued outside the session's transaction (a relayed Companion command) SHALL be sent
+  at once and SHALL NOT be held or dropped by a transaction it does not belong to.
+- **No self-deadlock:** a storage operation called from inside an open transaction of the same
+  session's hub SHALL reject promptly instead of waiting for that transaction.
+- **No obscure failure on a closed hub:** an operation on a hub that has been closed SHALL reject
+  with an error naming the closed hub, which the routes answer with their existing generic server
+  error.
+
+#### Scenario: A read never sees an open or rolled-back write
+- **WHEN** a read on a session is called while a write on that session is open, and the write then commits or rolls back
+- **THEN** the read returns either the state before the write or its committed state, and never the write's uncommitted rows
+
+#### Scenario: Broadcasts follow commit order
+- **WHEN** two mutating operations on one session run concurrently and both commit
+- **THEN** every broadcast of the transaction that committed first is sent before any broadcast of the other
+
+#### Scenario: A failed write leaves no rows and no broadcasts
+- **WHEN** a mutating operation's body awaits a statement and then throws, or catches a failed statement and goes on writing
+- **THEN** none of its writes persist, none of its broadcasts are sent, and the caller receives the first error
+
+#### Scenario: A nested transaction joins the outer one
+- **WHEN** a hub transaction body runs a nested transaction on its transaction handle and the nested body fails
+- **THEN** the whole transaction rolls back, including writes made before the nested call
+
+#### Scenario: Calling the hub from inside its own transaction is refused
+- **WHEN** a hub transaction body calls a storage operation of the same session's hub
+- **THEN** that call rejects promptly, with no deadlock, and a call on another session's hub succeeds
+
+#### Scenario: A relayed command is not held by a transaction
+- **WHEN** a Companion command is relayed over a session's socket while a transaction on that session is open, and the transaction then rolls back
+- **THEN** the command frame is sent at once and is not withdrawn
+
+#### Scenario: Concurrent take toggles equal a serial order
+- **WHEN** two Companion transport toggles on one session run concurrently from a stopped transport
+- **THEN** the transport ends stopped after exactly one start and one stop, as two serial toggles leave it
+
+#### Scenario: Concurrent event edits keep both metadata merges serial
+- **WHEN** two updates of one event run concurrently, each merging the stored metadata with its own category snapshot
+- **THEN** the stored event equals the result of applying the two updates in some serial order
+
+#### Scenario: Concurrent imports never share a recording ordinal
+- **WHEN** two local audio imports into one session run concurrently
+- **THEN** their segments, and their `Recording N` events, carry two different consecutive ordinals
+
+#### Scenario: A transcript replace sees one set of recording anchors
+- **WHEN** a transcript generation's replace runs concurrently with an imported take that adds recording anchors
+- **THEN** the stored words are remapped against the anchors either before or after the take, never a mixture
+
+#### Scenario: Concurrent log imports skip duplicates
+- **WHEN** two sheet log imports of the same rows into one session run concurrently
+- **THEN** each row is stored once, and the two imports' created counts sum to the number of distinct rows
+
+#### Scenario: A closed hub rejects instead of failing obscurely
+- **WHEN** an operation is called on a hub that has been closed
+- **THEN** it rejects with an error naming the closed hub, and the route answers with its existing generic server error
+
+#### Scenario: Lease expiry is ordered with the session's operations
+- **WHEN** the recording lease alarm fires while an operation on that session is in flight
+- **THEN** the expiry neither observes nor interrupts that operation's open transaction, and still frees a stale lease and announces `lease.changed`
+
+#### Scenario: SQL seam exposes a domain shape, not the Durable Object cursor API
+- **WHEN** the session SQL seam is inspected
+- **THEN** it exposes promise-returning `all(sql, ...binds)` returning rows, `run(sql, ...binds)` returning an affected-row count (`{ changes }`) and `tx(fn)`, and does not expose the `exec() → { toArray(), rowsWritten }` cursor shape
+
+#### Scenario: run() preserves change-detection for its readers
+- **WHEN** `setAudioSegmentWaveform`, `deleteTopic`, or `deleteTranscriptWord` runs against a non-existent id
+- **THEN** it observes zero affected rows and returns the "not found" result, so the routers still respond `404` and no `audio.changed` broadcast fires on a no-op write
+
+#### Scenario: Schema init retains a multi-statement path
+- **WHEN** `initSchema` executes multi-statement DDL
+- **THEN** a distinct `void`-returning multi-statement `exec` path serves it, separate from the `all`/`run` seam
+
+#### Scenario: SessionCore is testable with a fake runtime
+- **WHEN** a test constructs `SessionCore` with an in-memory SQL + fake sockets + fake clock
+- **THEN** it exercises the domain stores without a real database, socket, or wall-clock
+
+#### Scenario: Responses and frames are unchanged for serial requests
+- **WHEN** the existing route, WebSocket and companion test suites run after the hub becomes asynchronous
+- **THEN** they pass with no change to expected status codes, bodies, headers or frames

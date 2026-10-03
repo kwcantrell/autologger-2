@@ -111,33 +111,33 @@ describe('sentimentRow', () => {
 // patch-builder moved into the shared store helpers. These must pass
 // unmodified across the extraction.
 describe('TranscriptStore over a real core (D12 pins)', () => {
-  function store(): TranscriptStore {
-    return new TranscriptStore(fakeRuntime().core);
+  async function store(): Promise<TranscriptStore> {
+    return new TranscriptStore((await fakeRuntime()).core);
   }
   const data = (word: string) => ({ session_time: '00:00:01', speaker: 'A', word });
 
-  it('insertTranscriptWord seeds ordinals 0,1,2… and reuses MAX+1 after the top row is deleted', () => {
-    const words = store();
-    const a = words.insertTranscriptWord(data('a'));
-    const b = words.insertTranscriptWord(data('b'));
-    const c = words.insertTranscriptWord(data('c'));
+  it('insertTranscriptWord seeds ordinals 0,1,2… and reuses MAX+1 after the top row is deleted', async () => {
+    const words = await store();
+    const a = await words.insertTranscriptWord(data('a'));
+    const b = await words.insertTranscriptWord(data('b'));
+    const c = await words.insertTranscriptWord(data('c'));
     expect([a.ordinal, b.ordinal, c.ordinal]).toEqual([0, 1, 2]);
     // COALESCE(MAX(ordinal), -1) + 1: deleting the max frees its ordinal.
-    words.deleteTranscriptWord(c.id);
-    expect(words.insertTranscriptWord(data('d')).ordinal).toBe(2);
+    await words.deleteTranscriptWord(c.id);
+    expect((await words.insertTranscriptWord(data('d'))).ordinal).toBe(2);
   });
 
-  it('updateTranscriptWord patches only the provided fields and returns the fresh row', () => {
-    const words = store();
-    const w = words.insertTranscriptWord(data('orig'));
-    const updated = words.updateTranscriptWord(w.id, { word: 'edited', speaker: 'B' });
+  it('updateTranscriptWord patches only the provided fields and returns the fresh row', async () => {
+    const words = await store();
+    const w = await words.insertTranscriptWord(data('orig'));
+    const updated = await words.updateTranscriptWord(w.id, { word: 'edited', speaker: 'B' });
     expect(updated).toEqual({ ...w, word: 'edited', speaker: 'B' });
   });
 
-  it('updateTranscriptWord with an empty patch is a no-op returning the row; unknown id returns null', () => {
-    const words = store();
-    const w = words.insertTranscriptWord(data('orig'));
-    expect(words.updateTranscriptWord(w.id, {})).toEqual(w);
-    expect(words.updateTranscriptWord('nope', { word: 'x' })).toBeNull();
+  it('updateTranscriptWord with an empty patch is a no-op returning the row; unknown id returns null', async () => {
+    const words = await store();
+    const w = await words.insertTranscriptWord(data('orig'));
+    expect(await words.updateTranscriptWord(w.id, {})).toEqual(w);
+    expect(await words.updateTranscriptWord('nope', { word: 'x' })).toBeNull();
   });
 });

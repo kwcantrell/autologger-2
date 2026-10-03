@@ -14,8 +14,8 @@ import type { SessionCore, SessionProjection, TimecodeCtx, TransportState } from
 export class TransportStore {
   constructor(private core: SessionCore) {}
 
-  private transportStateDict(ctx: TimecodeCtx): TransportState {
-    const tr = this.core.transportRow();
+  private async transportStateDict(ctx: TimecodeCtx): Promise<TransportState> {
+    const tr = await this.core.transportRow();
     const tc = transportTimecode(ctx.frameRate, ctx.startOffsetFrames, tr, this.core.now());
     return {
       is_rolling: tr.is_rolling,
@@ -27,35 +27,39 @@ export class TransportStore {
     };
   }
 
-  transportSnapshot(ctx: TimecodeCtx): TransportState {
+  transportSnapshot(ctx: TimecodeCtx): Promise<TransportState> {
     return this.transportStateDict(ctx);
   }
 
-  startTake(ctx: TimecodeCtx): { state: TransportState; projection: SessionProjection } {
-    const tr = this.core.transportRow();
+  async startTake(
+    ctx: TimecodeCtx,
+  ): Promise<{ state: TransportState; projection: SessionProjection }> {
+    const tr = await this.core.transportRow();
     if (tr.is_rolling) {
       return {
-        state: { ...this.transportStateDict(ctx), started: false },
-        projection: this.core.projection(),
+        state: { ...(await this.transportStateDict(ctx)), started: false },
+        projection: await this.core.projection(),
       };
     }
     const nextTake = tr.current_take + 1;
-    this.core.db.run(
+    await this.core.db.run(
       'UPDATE session_transport SET is_rolling = 1, current_take = ?, roll_started_at_utc = ? WHERE id = 1',
       nextTake,
       isoZ(new Date(this.core.now())),
     );
     this.core.broadcast({ type: 'transport.changed', is_rolling: true, current_take: nextTake });
-    const st = this.transportStateDict(ctx);
-    return { state: { ...st, started: true }, projection: this.core.projection() };
+    const st = await this.transportStateDict(ctx);
+    return { state: { ...st, started: true }, projection: await this.core.projection() };
   }
 
-  stopTake(ctx: TimecodeCtx): { state: TransportState; projection: SessionProjection } {
-    const tr = this.core.transportRow();
+  async stopTake(
+    ctx: TimecodeCtx,
+  ): Promise<{ state: TransportState; projection: SessionProjection }> {
+    const tr = await this.core.transportRow();
     if (!tr.is_rolling) {
       return {
-        state: { ...this.transportStateDict(ctx), stopped: false },
-        projection: this.core.projection(),
+        state: { ...(await this.transportStateDict(ctx)), stopped: false },
+        projection: await this.core.projection(),
       };
     }
     let extra = 0;
@@ -66,7 +70,7 @@ export class TransportStore {
       }
     }
     const totalElapsed = tr.elapsed_frames + extra;
-    this.core.db.run(
+    await this.core.db.run(
       'UPDATE session_transport SET is_rolling = 0, roll_started_at_utc = NULL, elapsed_frames = ? WHERE id = 1',
       totalElapsed,
     );
@@ -75,8 +79,8 @@ export class TransportStore {
       is_rolling: false,
       current_take: tr.current_take,
     });
-    const st = this.transportStateDict(ctx);
-    return { state: { ...st, stopped: true }, projection: this.core.projection() };
+    const st = await this.transportStateDict(ctx);
+    return { state: { ...st, stopped: true }, projection: await this.core.projection() };
   }
 
   /** Advance the transport by an exact duration and mark it stopped (YouTube
@@ -94,14 +98,14 @@ export class TransportStore {
    * alongside the composite's own manual pair; the composite broadcasts once
    * itself, after the transaction commits. Every other caller omits it
    * (default false), preserving the existing broadcast behavior. */
-  stopTakeWithDuration(input: {
+  async stopTakeWithDuration(input: {
     durationS: number;
     ctx: TimecodeCtx;
     suppressBroadcast?: boolean;
-  }): SessionProjection {
-    const tr = this.core.transportRow();
+  }): Promise<SessionProjection> {
+    const tr = await this.core.transportRow();
     const extra = Math.max(0, Math.trunc(input.durationS * input.ctx.frameRate));
-    this.core.db.run(
+    await this.core.db.run(
       'UPDATE session_transport SET is_rolling = 0, roll_started_at_utc = NULL, elapsed_frames = ? WHERE id = 1',
       tr.elapsed_frames + extra,
     );
@@ -118,7 +122,7 @@ export class TransportStore {
     return this.core.projection();
   }
 
-  statusLive(ctx: TimecodeCtx): {
+  async statusLive(ctx: TimecodeCtx): Promise<{
     is_rolling: boolean;
     current_take: number;
     event_count: number;
@@ -126,17 +130,17 @@ export class TransportStore {
     events_stream_revision: number;
     session_timecode: string;
     session_timecode_total_frames: number;
-  } {
-    const st = this.transportStateDict(ctx);
+  }> {
+    const st = await this.transportStateDict(ctx);
     // Counts come from the core's single owner of the event-count SQL (D10) —
     // this store never reads the events table itself.
-    const counts = this.core.eventCounts();
+    const counts = await this.core.eventCounts();
     return {
       is_rolling: st.is_rolling,
       current_take: st.current_take,
       event_count: counts.total,
       logged_event_count: counts.logged,
-      events_stream_revision: this.core.revision(),
+      events_stream_revision: await this.core.revision(),
       session_timecode: st.timecode,
       session_timecode_total_frames: st.timecode_total_frames,
     };

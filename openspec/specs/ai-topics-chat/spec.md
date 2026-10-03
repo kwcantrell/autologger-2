@@ -174,8 +174,11 @@ MCP server never exposes it:
 
 `create_topic` SHALL write through the existing `SessionHub.insertTopic` path so the
 insert is transactional and the ordinal is server-assigned — the identical code path a
-manual insert takes; the hub SHALL be resolved at call time (never held across an
-`await`). Topics have no WebSocket emission today (fact-check 2026-07-14) and the MCP
+manual insert takes; the hub SHALL be resolved at call time, inside the tool body, and
+never from a reference captured when the turn was registered; within one tool invocation the
+body MAY use the hub it resolved across that hub's own awaited operations, and SHALL NOT keep
+the reference beyond the invocation (core-ports-architecture "AI tool bodies consume the
+session facade directly"). Topics have no WebSocket emission today (fact-check 2026-07-14) and the MCP
 tools MUST NOT introduce one, alter any WS emission semantics, or add or alter any public
 HTTP surface. (`create_event`'s writes produce the existing `event.changed` emission a
 manual event insert already produces — governed by `auto-event-generation`; that is not

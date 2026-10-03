@@ -176,7 +176,7 @@ export async function readLocalAudioImportBody(
 audioRouter.get('/api/sessions/:sessionId/audio/segments', async (c) => {
   const sessionId = c.req.param('sessionId');
   await requireSession(c, sessionId);
-  const segs = getSessionHub(c, sessionId).listAudioSegments();
+  const segs = await (await getSessionHub(c, sessionId)).listAudioSegments();
   return c.json({
     segments: segs.map((s) => segmentApiDict(sessionId, s)),
     has_audio: segs.length > 0,
@@ -197,7 +197,7 @@ audioRouter.post('/api/sessions/:sessionId/audio/segments', async (c) => {
   const roRaw = c.req.query('recording_ordinal');
   const recordingOrdinal = roRaw !== undefined && /^\d+$/.test(roRaw) ? Number(roRaw) : null;
 
-  const seg = getSessionHub(c, sessionId).addAudioSegment({
+  const seg = await (await getSessionHub(c, sessionId)).addAudioSegment({
     sessionId,
     mimeType: mime,
     startedAtUtc: started,
@@ -208,7 +208,7 @@ audioRouter.post('/api/sessions/:sessionId/audio/segments', async (c) => {
     await c.env.ports.audio.put(seg.r2_key, payload, { contentType: seg.mime_type });
   } catch (e) {
     // Roll back the dangling metadata row if the bytes never landed.
-    getSessionHub(c, sessionId).deleteAudioSegment(seg.id);
+    await (await getSessionHub(c, sessionId)).deleteAudioSegment(seg.id);
     throw e;
   }
   return c.json(segmentApiDict(sessionId, seg));
@@ -229,13 +229,13 @@ audioRouter.post('/api/sessions/:sessionId/audio/segments/sync-from-disk', async
     cursor = listed.truncated ? listed.cursor : undefined;
   } while (cursor);
 
-  const hub = getSessionHub(c, sessionId);
-  const out = hub.syncAudioFromBlobs(known);
+  const hub = await getSessionHub(c, sessionId);
+  const out = await hub.syncAudioFromBlobs(known);
   return c.json({
     inserted: out.inserted,
     updated: 0,
     scanned: known.length,
-    has_audio: hub.listAudioSegments().length > 0,
+    has_audio: (await hub.listAudioSegments()).length > 0,
   });
 });
 
@@ -243,7 +243,7 @@ audioRouter.get('/api/sessions/:sessionId/audio/segments/:segmentId', async (c) 
   const sessionId = c.req.param('sessionId');
   const segmentId = c.req.param('segmentId');
   await requireSession(c, sessionId);
-  const got = getSessionHub(c, sessionId).getAudioSegmentKey(segmentId);
+  const got = await (await getSessionHub(c, sessionId)).getAudioSegmentKey(segmentId);
   if (got === null) throw new ApiError(404, 'Audio segment not found.');
   // Defense in depth for the "audio responses are never compressible"
   // invariant (see normalizeAudioMimeType): upload normalization covers rows
@@ -309,7 +309,7 @@ audioRouter.put('/api/sessions/:sessionId/audio/segments/:segmentId/waveform', a
       throw new ApiError(400, 'waveform peaks must be in [0, 1].');
     }
   }
-  const ok = getSessionHub(c, sessionId).setAudioSegmentWaveform({
+  const ok = await (await getSessionHub(c, sessionId)).setAudioSegmentWaveform({
     segmentId,
     peaks: body.peaks,
   });

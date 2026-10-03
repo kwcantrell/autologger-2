@@ -31,8 +31,8 @@ beforeEach(() => {
   registry = new SessionHubRegistry(join(dir, 'sessions'));
 });
 
-afterEach(() => {
-  registry.closeAll();
+afterEach(async () => {
+  await registry.closeAll();
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -85,29 +85,29 @@ describe('buildAggregateMcpServer — cross-session isolation (the required test
   it('two concurrent per-turn servers for different sessions never cross', async () => {
     // Seed distinct, easily-distinguished data per session through the real
     // hub — same seeding style as aiMcpServer.test.ts's cross-talk test.
-    registry.get('sessA').replaceTranscriptWords([
+    await (await registry.get('sessA')).replaceTranscriptWords([
       { session_time: '00:00:00', speaker: 'A0', word: 'alpha', start_sec: 0, end_sec: 1 },
       { session_time: '00:00:01', speaker: 'A0', word: 'bravo', start_sec: 1, end_sec: 2 },
     ]);
-    registry.get('sessA').insertTopic({
+    await (await registry.get('sessA')).insertTopic({
       session_time: '00:00:01',
       duration_sec: 5,
       topic_level: 1,
       summary: 'A-only topic',
     });
 
-    registry.get('sessB').replaceTranscriptWords([
+    await (await registry.get('sessB')).replaceTranscriptWords([
       { session_time: '00:00:00', speaker: 'B0', word: 'charlie', start_sec: 0, end_sec: 3 },
       { session_time: '00:00:03', speaker: 'B1', word: 'delta', start_sec: 3, end_sec: 4 },
       { session_time: '00:00:04', speaker: 'B1', word: 'echo', start_sec: 4, end_sec: 5 },
     ]);
-    registry.get('sessB').insertTopic({
+    await (await registry.get('sessB')).insertTopic({
       session_time: '00:00:02',
       duration_sec: 6,
       topic_level: 2,
       summary: 'B-first',
     });
-    registry.get('sessB').insertTopic({
+    await (await registry.get('sessB')).insertTopic({
       session_time: '00:00:03',
       duration_sec: 7,
       topic_level: 3,
@@ -167,11 +167,9 @@ describe('buildAggregateMcpServer — degraded data is never zeros-as-data', () 
     // Manual insert path never writes start_sec/end_sec — schema default 0.0
     // for every word (design D2a). speaker_stats must surface this as
     // `available: false`, never as a measured 0-second talk time.
-    registry
-      .get('manualSess')
-      .replaceTranscriptWords([
-        { session_time: '00:00:00', speaker: 'S1', word: 'hi', start_sec: 0, end_sec: 0 },
-      ]);
+    await (await registry.get('manualSess')).replaceTranscriptWords([
+      { session_time: '00:00:00', speaker: 'S1', word: 'hi', start_sec: 0, end_sec: 0 },
+    ]);
     const { client, close } = await connectToTurn('manualSess');
     try {
       const result = await callJson(client, 'speaker_stats');
@@ -185,11 +183,9 @@ describe('buildAggregateMcpServer — degraded data is never zeros-as-data', () 
   });
 
   it('utterance_stats/event_stats degrade independently without paragraphs/timings', async () => {
-    registry
-      .get('sessNoParagraphs')
-      .replaceTranscriptWords([
-        { session_time: '00:00:00', speaker: 'S1', word: 'um', start_sec: 0, end_sec: 0 },
-      ]);
+    await (await registry.get('sessNoParagraphs')).replaceTranscriptWords([
+      { session_time: '00:00:00', speaker: 'S1', word: 'um', start_sec: 0, end_sec: 0 },
+    ]);
     const { client, close } = await connectToTurn('sessNoParagraphs');
     try {
       const utterance = await callJson(client, 'utterance_stats');
@@ -224,7 +220,7 @@ describe('buildAggregateMcpServer — bounded lists state their own truncation',
       start_sec: i,
       end_sec: i + 1,
     }));
-    registry.get('bigSess').replaceTranscriptWords(words);
+    await (await registry.get('bigSess')).replaceTranscriptWords(words);
     const { client, close } = await connectToTurn('bigSess');
     try {
       const page = await callJson(client, 'transcript_excerpt', { offset: 0, limit: 10 });
@@ -241,7 +237,7 @@ describe('buildAggregateMcpServer — bounded lists state their own truncation',
   });
 
   it('topic_timeline is available/empty (not unavailable) for a session with no topics', async () => {
-    registry.get('noTopics'); // materialize, no topics inserted
+    await registry.get('noTopics'); // materialize, no topics inserted
     const { client, close } = await connectToTurn('noTopics');
     try {
       const timeline = await callJson(client, 'topic_timeline');

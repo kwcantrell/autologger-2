@@ -194,7 +194,7 @@ describe.skipIf(!RUN)('REAL claude event generation (opt-in: RUN_REAL_AI_TESTS=1
 
   /** Mirror the route's run-snapshot assembly (events.ts, task 4.3) with a
    * fresh runId per run — categories, cap, frame math, word snapshot. */
-  function buildGeneration(): AiGenerationRunContext {
+  async function buildGeneration(): Promise<AiGenerationRunContext> {
     return {
       runId: crypto.randomUUID(),
       frameRate: FRAME_RATE,
@@ -202,21 +202,18 @@ describe.skipIf(!RUN)('REAL claude event generation (opt-in: RUN_REAL_AI_TESTS=1
       startedAtUtc: SESSION_STARTED_AT,
       cap: 200, // D8 default
       categories: [SLATE_CATEGORY],
-      words: registry
-        .get(sessionId)
-        .listTranscriptWords()
-        .map((w) => ({
-          word: String(w.word ?? ''),
-          session_time: String(w.session_time ?? ''),
-          speaker: String(w.speaker ?? ''),
-        })),
+      words: (await (await registry.get(sessionId)).listTranscriptWords()).map((w) => ({
+        word: String(w.word ?? ''),
+        session_time: String(w.session_time ?? ''),
+        speaker: String(w.speaker ?? ''),
+      })),
     };
   }
 
   /** Mirror the route's dedup-basis projection: the category's COMPLETE
    * existing events in feed order (`wall_time_utc ASC, id ASC`). */
-  function existingSlateEvents(): EventGenerateExistingEvent[] {
-    return listFeed()
+  async function existingSlateEvents(): Promise<EventGenerateExistingEvent[]> {
+    return (await listFeed())
       .filter((e) => e.category === SLATE_CATEGORY.id)
       .map((e) => ({
         timecode: e.timecode ?? '',
@@ -225,16 +222,18 @@ describe.skipIf(!RUN)('REAL claude event generation (opt-in: RUN_REAL_AI_TESTS=1
       }));
   }
 
-  function listFeed() {
-    return registry.get(sessionId).listEvents({ limit: 1000, offset: 0 }).events;
+  async function listFeed() {
+    return (await (await registry.get(sessionId)).listEvents({ limit: 1000, offset: 0 })).events;
   }
 
   function parseMeta(metadataJson: string): Record<string, unknown> {
     return JSON.parse(metadataJson || '{}') as Record<string, unknown>;
   }
 
-  function generatedByRun(runId: string) {
-    return listFeed().filter((e) => parseMeta(e.metadata_json).auto_generate_run_id === runId);
+  async function generatedByRun(runId: string) {
+    return (await listFeed()).filter(
+      (e) => parseMeta(e.metadata_json).auto_generate_run_id === runId,
+    );
   }
 
   async function runGenerate(generation: AiGenerationRunContext) {
@@ -245,7 +244,7 @@ describe.skipIf(!RUN)('REAL claude event generation (opt-in: RUN_REAL_AI_TESTS=1
       sessionId,
       message: buildEventGenerateMessage({
         categories: generation.categories,
-        existingEventsByCategoryId: { [SLATE_CATEGORY.id]: existingSlateEvents() },
+        existingEventsByCategoryId: { [SLATE_CATEGORY.id]: await existingSlateEvents() },
       }),
       systemPrompt: EVENT_GENERATE_SYSTEM_PROMPT,
       allowedTools: EVENT_GENERATE_ALLOWED_TOOLS,
@@ -261,15 +260,15 @@ describe.skipIf(!RUN)('REAL claude event generation (opt-in: RUN_REAL_AI_TESTS=1
   let run1Seconds: number[] = [];
   let run1Snapshot: Array<{ id: string; timecode: string | null; message: string }> = [];
 
-  beforeAll(() => {
+  beforeAll(async () => {
     dataDir = mkdtempSync(join(tmpdir(), 'real-events-'));
     registry = new SessionHubRegistry(join(dataDir, 'sessions'));
-    const hub = registry.get(sessionId);
-    for (const w of TRANSCRIPT) hub.insertTranscriptWord(w);
+    const hub = await registry.get(sessionId);
+    for (const w of TRANSCRIPT) await hub.insertTranscriptWord(w);
     // The two timecode↔wall anchor rows interpolation brackets against —
     // a non-instruction-bearing category, so they never enter the prompt.
     const ctx = { frameRate: FRAME_RATE, startOffsetFrames: 0 };
-    hub.addEvent({
+    await hub.addEvent({
       category: 'cam',
       message: 'Recording start anchor',
       metadataJson: '{}',
@@ -277,7 +276,7 @@ describe.skipIf(!RUN)('REAL claude event generation (opt-in: RUN_REAL_AI_TESTS=1
       ctx,
       explicitAnchor: { timecodeTotalFrames: 0, wallTimeUtc: SESSION_STARTED_AT },
     });
-    hub.addEvent({
+    await hub.addEvent({
       category: 'cam',
       message: 'Recording end anchor',
       metadataJson: '{}',
@@ -289,17 +288,17 @@ describe.skipIf(!RUN)('REAL claude event generation (opt-in: RUN_REAL_AI_TESTS=1
 
   afterAll(async () => {
     await __resetAiMcpListenerForTests(); // driveAiTurn started the singleton
-    registry?.closeAll();
+    await registry?.closeAll();
     if (dataDir) rmSync(dataDir, { recursive: true, force: true });
     rmSync(stableSessionCwd(sessionId), { recursive: true, force: true });
   });
 
   it('run 1: creates SLATE events at bracketing-correct transcript timecodes with manual vocabulary + attribution', async () => {
-    const generation = buildGeneration();
+    const generation = await buildGeneration();
     run1RunId = generation.runId;
     const outcome = await runGenerate(generation);
 
-    const created = generatedByRun(run1RunId);
+    const created = await generatedByRun(run1RunId);
     // Operator-facing diagnostics — deliberate in this gated real test.
     console.log(
       `[real event gen run 1] outcome=${JSON.stringify(outcome)} created=${created.length}: ` +
@@ -340,7 +339,7 @@ describe.skipIf(!RUN)('REAL claude event generation (opt-in: RUN_REAL_AI_TESTS=1
     // timecodes"), asserted in FEED ORDER via listEvents: every generated
     // event sorts between the two anchor rows whose timecodes bracket it,
     // and generated events sort among themselves in timecode order.
-    const feed = listFeed();
+    const feed = await listFeed();
     const startIdx = feed.findIndex((e) => e.message === 'Recording start anchor');
     const endIdx = feed.findIndex((e) => e.message === 'Recording end anchor');
     expect(startIdx).toBeGreaterThanOrEqual(0);
@@ -367,13 +366,13 @@ describe.skipIf(!RUN)('REAL claude event generation (opt-in: RUN_REAL_AI_TESTS=1
     expect(run1Snapshot.length).toBeGreaterThan(0); // run 1 must have produced the dedup basis
 
     // The dedup basis run 2's message embeds — run 1's rows, marked (auto).
-    const basis = existingSlateEvents();
+    const basis = await existingSlateEvents();
     expect(basis.length).toBe(run1Snapshot.length);
     expect(basis.every((r) => r.isAuto)).toBe(true);
 
-    const generation = buildGeneration();
+    const generation = await buildGeneration();
     const outcome = await runGenerate(generation);
-    const created = generatedByRun(generation.runId);
+    const created = await generatedByRun(generation.runId);
     const distances = created.map((e) =>
       Math.min(...run1Seconds.map((s) => Math.abs(tcSeconds(e.timecode) - s))),
     );
@@ -397,7 +396,7 @@ describe.skipIf(!RUN)('REAL claude event generation (opt-in: RUN_REAL_AI_TESTS=1
     }
 
     // Append-only: run 1's rows are byte-untouched by the second run.
-    const after = listFeed();
+    const after = await listFeed();
     for (const prev of run1Snapshot) {
       const row = after.find((e) => e.event_id === prev.id);
       expect(row).toBeDefined();

@@ -19,9 +19,10 @@
 //   - Concurrent turns share the one listener via per-connection (per-request)
 //     transport instantiation, so two turns on distinct sessions never share
 //     transport state.
-//   - Tool bodies resolve the hub at CALL TIME (`registry.get(sessionId)`),
-//     never holding a handle across an await, so the idle-eviction sweeper can't
-//     close it underneath a long turn.
+//   - Tool bodies resolve the hub at CALL TIME (`await registry.get(sessionId)`)
+//     and use it only for that invocation's own hub calls, never keeping it
+//     across invocations or a turn, so the idle-eviction sweeper can't close it
+//     underneath a long turn (async-session-hub design D6).
 //
 // This listener is loopback-internal infrastructure — it adds NOTHING to the
 // public :8787 HTTP/WS contract.
@@ -254,13 +255,22 @@ interface TurnPageState {
   readonly served: Set<number>;
 }
 
+/** A run's created-events counter (async-session-hub D8): `count` is successful inserts only;
+ * `reserved` holds a slot for each insert still in flight, so concurrent calls cannot pass the
+ * cap check together. */
+interface CreatedEventsCounter {
+  count: number;
+  reserved: number;
+}
+
 interface TurnRegistration {
   readonly sessionId: string;
   /** Per-turn context (D6); undefined ⇒ default chat tool set, no snapshot. */
   readonly context: AiMcpTurnContext | undefined;
   /** The turn's mutable created-events counter (task 3.2). Lives on the
-   * REGISTRATION — per-request MCP servers share it across a turn's calls. */
-  readonly createdEvents: { count: number };
+   * REGISTRATION — per-request MCP servers share it across a turn's calls.
+   * `reserved` counts inserts in flight (async-session-hub D8). */
+  readonly createdEvents: CreatedEventsCounter;
   /** The turn's paged-transcript memo + coverage counter (D1/D6). */
   readonly pageState: TurnPageState;
 }
@@ -342,9 +352,9 @@ function toolError(text: string): {
  * Build the per-request McpServer bound to one autologger session, registering
  * ONLY the turn's tool set (auto-generate-event-logs D6; no context ⇒ the
  * default three chat tools). Every tool resolves the hub at call time via the
- * registry (never held across an await, so the idle-eviction sweeper can't
- * close it underneath a long turn) and can address ONLY `sessionId` — no tool
- * parameter names a session.
+ * registry and uses it only for that invocation's own hub calls (so the
+ * idle-eviction sweeper can't close it underneath a long turn) and can address
+ * ONLY `sessionId` — no tool parameter names a session.
  *
  * `get_transcript_words` / `list_topics` return the hub row fields verbatim;
  * `get_transcript_words` therefore OMITS the per-word `session_id` the HTTP read
@@ -676,7 +686,7 @@ interface ToolBuildContext {
   readonly registry: SessionHubRegistryFacade;
   readonly sessionId: string;
   readonly generation: AiGenerationRunContext | undefined;
-  readonly createdEvents: { count: number };
+  readonly createdEvents: CreatedEventsCounter;
   /** The topic one-shot's paged word snapshot (D1) — the OTHER key for the
    * paged `get_transcript_words` registration; carries no event-run fields. */
   readonly pagedWords: readonly AiGenerationSnapshotWord[] | undefined;
@@ -725,7 +735,7 @@ const TOOL_BUILDERS: Record<AiMcpToolName, (server: McpServer, ctx: ToolBuildCon
           // then never change this turn's page content or boundaries, and the
           // pagination is packed ONCE per registration. Snapshot-less
           // registrations keep 3.3's live hub read, resolved at call time
-          // (D3) — never held across an await, and never memoized (live is
+          // (D3) and used for this invocation only, never memoized (live is
           // live) nor counted as page coverage (no snapshot to cover).
           if (pageState.words !== undefined) {
             const res = selectGenerationTranscriptPage(snapshotPages(pageState), page);
@@ -735,7 +745,7 @@ const TOOL_BUILDERS: Record<AiMcpToolName, (server: McpServer, ctx: ToolBuildCon
             pageState.served.add(page);
             return { content: [{ type: 'text', text: res.text }] };
           }
-          const words = registry.get(sessionId).listTranscriptWords();
+          const words = await (await registry.get(sessionId)).listTranscriptWords();
           const res = renderGenerationTranscriptPage(words, page);
           if (!res.ok) return toolError(res.error);
           return { content: [{ type: 'text', text: res.text }] };
@@ -749,8 +759,8 @@ const TOOL_BUILDERS: Record<AiMcpToolName, (server: McpServer, ctx: ToolBuildCon
         'timecode-annotated), for reading and summarizing.',
       {},
       async () => {
-        // Hub resolved at call time (D3) — never held across an await.
-        const words = registry.get(sessionId).listTranscriptWords();
+        // Hub resolved at call time (D3), used for this invocation only.
+        const words = await (await registry.get(sessionId)).listTranscriptWords();
         // Return COMPACT, readable text — NOT the verbose per-word JSON. A real
         // transcript is thousands of 8-field word rows (~180 chars each); the
         // raw `JSON.stringify(words)` produced a single ~300KB line that
@@ -765,8 +775,8 @@ const TOOL_BUILDERS: Record<AiMcpToolName, (server: McpServer, ctx: ToolBuildCon
 
   list_topics: (server, { registry, sessionId }) => {
     server.tool('list_topics', "Returns this session's topics.", {}, async () => {
-      // Hub resolved at call time (D3) — never held across an await.
-      const topics = registry.get(sessionId).listTopics();
+      // Hub resolved at call time (D3), used for this invocation only.
+      const topics = await (await registry.get(sessionId)).listTopics();
       return { content: [{ type: 'text', text: JSON.stringify(topics) }] };
     });
   },
@@ -797,7 +807,7 @@ const TOOL_BUILDERS: Record<AiMcpToolName, (server: McpServer, ctx: ToolBuildCon
         // Hub resolved at call time (D3). insertTopic is the transactional,
         // server-assigned-ordinal manual-insert path; topics have no WS emission,
         // and this path introduces none.
-        const topic = registry.get(sessionId).insertTopic(parsed.data);
+        const topic = await (await registry.get(sessionId)).insertTopic(parsed.data);
         return { content: [{ type: 'text', text: JSON.stringify(topic) }] };
       },
     );
@@ -853,52 +863,59 @@ const TOOL_BUILDERS: Record<AiMcpToolName, (server: McpServer, ctx: ToolBuildCon
                 'or drop-frame HH:MM:SS;FF, below 24:00:00 with frames under the session rate.',
             );
           }
-          if (createdEvents.count >= generation.cap) {
+          // async-session-hub D8: the cap check and the reservation run before the first
+          // `await`, so concurrent calls cannot both pass it; the `finally` below releases the
+          // slot, and only a successful insert counts.
+          if (createdEvents.count + createdEvents.reserved >= generation.cap) {
             return toolError(
               `Per-run event cap reached (${generation.cap} events): no further events ` +
                 'can be created by this run.',
             );
           }
-          const totalFrames = toTotalFrames(tc);
-          // Metadata composition (spec "bounded and attributable"): attribution
-          // pair + the SAME category label/color UI snapshot keys the manual
-          // route writes, sourced from the RUN SNAPSHOT (never a catalog read).
-          const snapshotDef: CategoryDef = {
-            id: cat.id,
-            label: cat.name,
-            color: cat.color,
-            kind: cat.type,
-            dropdown_options: cat.dropdown_options.map((o) => o.label),
-            on_label: '',
-            off_label: '',
-          };
-          const metadata = mergeCategoryUiSnapshotsIntoMetadata(
-            { auto_generated: true, auto_generate_run_id: generation.runId },
-            snapshotDef,
-          );
-          // Hub resolved AT CALL TIME (D3) — the RPC call below is synchronous,
-          // no await introduced anywhere in this handler (package-split-
-          // foundation D6: the handler's cap-check→insert→counter-increment
-          // sequence stays uninterruptible). The read-filter-anchor-insert
-          // sequence itself now runs as ONE transactional hub RPC
-          // (`createAnchoredEvent`) instead of a comment-enforced inline
-          // block — same anchor math (anchors rebuilt fresh each call, so
-          // generated events keep sorting among themselves in timecode
-          // order), same event-generate-hardening D3 regenerate-snapshot
-          // exclusion, same one-insert-path (D4) manual-insert semantics.
-          const hub = registry.get(sessionId);
-          const { event } = hub.createAnchoredEvent({
-            category,
-            message,
-            metadataJson: JSON.stringify(metadata),
-            timecodeTotalFrames: totalFrames,
-            frameRate: generation.frameRate,
-            startOffsetFrames: generation.startOffsetFrames,
-            startedAtUtc: generation.startedAtUtc,
-            excludeEventIds: generation.regenerateSnapshotIds,
-          });
-          createdEvents.count += 1; // ONLY on successful insert
-          return { content: [{ type: 'text', text: JSON.stringify(event) }] };
+          createdEvents.reserved += 1;
+          try {
+            const totalFrames = toTotalFrames(tc);
+            // Metadata composition (spec "bounded and attributable"): attribution
+            // pair + the SAME category label/color UI snapshot keys the manual
+            // route writes, sourced from the RUN SNAPSHOT (never a catalog read).
+            const snapshotDef: CategoryDef = {
+              id: cat.id,
+              label: cat.name,
+              color: cat.color,
+              kind: cat.type,
+              dropdown_options: cat.dropdown_options.map((o) => o.label),
+              on_label: '',
+              off_label: '',
+            };
+            const metadata = mergeCategoryUiSnapshotsIntoMetadata(
+              { auto_generated: true, auto_generate_run_id: generation.runId },
+              snapshotDef,
+            );
+            // Hub resolved AT CALL TIME (D3), used for this invocation only.
+            // The cap slot is already reserved above, so the awaits below
+            // cannot let a concurrent call past the cap (async-session-hub D8).
+            // The read-filter-anchor-insert sequence runs as ONE transactional
+            // hub RPC (`createAnchoredEvent`) — same anchor math (anchors
+            // rebuilt fresh each call, so generated events keep sorting among
+            // themselves in timecode order), same event-generate-hardening D3
+            // regenerate-snapshot exclusion, same one-insert-path (D4)
+            // manual-insert semantics.
+            const hub = await registry.get(sessionId);
+            const { event } = await hub.createAnchoredEvent({
+              category,
+              message,
+              metadataJson: JSON.stringify(metadata),
+              timecodeTotalFrames: totalFrames,
+              frameRate: generation.frameRate,
+              startOffsetFrames: generation.startOffsetFrames,
+              startedAtUtc: generation.startedAtUtc,
+              excludeEventIds: generation.regenerateSnapshotIds,
+            });
+            createdEvents.count += 1; // ONLY on successful insert
+            return { content: [{ type: 'text', text: JSON.stringify(event) }] };
+          } finally {
+            createdEvents.reserved -= 1;
+          }
         } catch {
           // Never throw out of the handler (spec). Kept opaque — raw internal
           // errors are not surfaced to the model.
@@ -938,7 +955,9 @@ function buildSessionMcpServer(
  */
 export class AiMcpListener {
   private httpServer: http.Server | null = null;
-  private startPromise: Promise<void> | null = null;
+  /** The first `start()`'s promise, kept in a wrapper so the memo check tests an object, not a
+   * promise (promise hygiene, async-session-hub D9). */
+  private started: { promise: Promise<void> } | null = null;
   /** token → registration. The bearer allowlist: unknown token ⇒ 401. */
   private readonly turns = new Map<string, TurnRegistration>();
 
@@ -947,20 +966,23 @@ export class AiMcpListener {
   /** Start the listener (idempotent). Binds 127.0.0.1 on an ephemeral port —
    * NEVER a non-loopback address. Resolves once listening. */
   start(): Promise<void> {
-    if (this.startPromise) return this.startPromise;
+    if (this.started) return this.started.promise;
     const server = http.createServer((req, res) => {
       void this.handle(req, res);
     });
     this.httpServer = server;
-    this.startPromise = new Promise<void>((resolve, reject) => {
-      const onError = (err: Error): void => reject(err);
-      server.once('error', onError);
-      server.listen(0, LOOPBACK, () => {
-        server.removeListener('error', onError);
-        resolve();
-      });
-    });
-    return this.startPromise;
+    const started = {
+      promise: new Promise<void>((resolve, reject) => {
+        const onError = (err: Error): void => reject(err);
+        server.once('error', onError);
+        server.listen(0, LOOPBACK, () => {
+          server.removeListener('error', onError);
+          resolve();
+        });
+      }),
+    };
+    this.started = started;
+    return started.promise;
   }
 
   /** The bound address, or null before `start()` resolves. */
@@ -994,7 +1016,7 @@ export class AiMcpListener {
     // One created-events counter PER REGISTRATION (task 3.2) — shared by the
     // turn's per-request MCP servers, readable after the run via the returned
     // `createdEvents()` (the generate route's `{created, cap_hit}` source).
-    const createdEvents = { count: 0 };
+    const createdEvents: CreatedEventsCounter = { count: 0, reserved: 0 };
     // One paged-transcript memo + coverage counter PER REGISTRATION (D1/D6),
     // on the same terms. The snapshot is the event run's words when present,
     // else the topic one-shot's `pagedWords`; neither ⇒ no snapshot, no
@@ -1035,7 +1057,7 @@ export class AiMcpListener {
     this.turns.clear();
     const server = this.httpServer;
     this.httpServer = null;
-    this.startPromise = null;
+    this.started = null;
     if (server === null) return;
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
@@ -1096,7 +1118,9 @@ async function readBody(req: http.IncomingMessage): Promise<unknown> {
 
 // ── Process-wide singleton (the shared home task 3.2 consumes) ───────────────
 
-let singletonPromise: Promise<AiMcpListener> | null = null;
+/** The started listener's promise, in a wrapper so the memo checks test an object, not a
+ * promise (promise hygiene, async-session-hub D9). */
+let singleton: { promise: Promise<AiMcpListener> } | null = null;
 
 /**
  * Get the process-wide MCP listener, starting it on first use with the app's
@@ -1109,23 +1133,28 @@ let singletonPromise: Promise<AiMcpListener> | null = null;
  * call can retry.
  */
 export function getAiMcpListener(registry: SessionHubRegistryFacade): Promise<AiMcpListener> {
-  singletonPromise ??= (async () => {
-    const listener = new AiMcpListener(registry);
-    await listener.start();
-    return listener;
-  })().catch((err) => {
-    singletonPromise = null;
+  if (singleton !== null) return singleton.promise;
+  const wrapper: { promise: Promise<AiMcpListener> } = {
+    promise: (async () => {
+      const listener = new AiMcpListener(registry);
+      await listener.start();
+      return listener;
+    })(),
+  };
+  wrapper.promise = wrapper.promise.catch((err: unknown) => {
+    if (singleton === wrapper) singleton = null;
     throw err;
   });
-  return singletonPromise;
+  singleton = wrapper;
+  return wrapper.promise;
 }
 
 /** Test-only: close and clear the singleton so it doesn't leak across cases. */
 export async function __resetAiMcpListenerForTests(): Promise<void> {
-  const p = singletonPromise;
-  singletonPromise = null;
-  if (p !== null) {
-    const listener = await p.catch(() => null);
+  const current = singleton;
+  singleton = null;
+  if (current !== null) {
+    const listener = await current.promise.catch(() => null);
     if (listener !== null) await listener.close();
   }
 }

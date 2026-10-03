@@ -26,39 +26,39 @@ describe('lease expiry through the hub with a fake clock (task 5.3)', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it('claim → advance past stale threshold → alarm frees the lease, no real time', () => {
+  it('claim → advance past stale threshold → alarm frees the lease, no real time', async () => {
     const { clock, tick } = makeFakeClock();
-    const hub = new SessionHub(join(dir, 's1.db'), clock);
+    const hub = await SessionHub.open(join(dir, 's1.db'), clock);
 
-    expect(hub.claimLease('tab-a')).toBe(true);
-    expect(hub.leaseStatus().holder_client_id).toBe('tab-a');
+    expect(await hub.claimLease('tab-a')).toBe(true);
+    expect((await hub.leaseStatus()).holder_client_id).toBe('tab-a');
     expect(hub.hasArmedAlarm).toBe(true);
 
     // Just before the stale threshold: alarm may fire but must NOT free (and re-arms).
     tick(39_999);
-    expect(hub.leaseStatus().holder_client_id).toBe('tab-a');
+    expect((await hub.leaseStatus()).holder_client_id).toBe('tab-a');
 
     // Cross the threshold: the alarm fires once and frees the stale lease.
     tick(40_001);
-    expect(hub.leaseStatus().holder_client_id).toBeNull();
+    expect((await hub.leaseStatus()).holder_client_id).toBeNull();
     // Freed lease → no holder → the alarm must not busy-refire.
     expect(hub.hasArmedAlarm).toBe(false);
 
-    hub.close();
+    await hub.close();
   });
 
-  it('heartbeat keeps the lease alive across would-be expiry', () => {
+  it('heartbeat keeps the lease alive across would-be expiry', async () => {
     const { clock, tick } = makeFakeClock();
-    const hub = new SessionHub(join(dir, 's1.db'), clock);
+    const hub = await SessionHub.open(join(dir, 's1.db'), clock);
 
-    hub.claimLease('tab-a');
+    await hub.claimLease('tab-a');
     tick(30_000);
-    expect(hub.heartbeatLease('tab-a')).toBe(true);
+    expect(await hub.heartbeatLease('tab-a')).toBe(true);
     tick(30_000); // 60s after claim, but only 30s after heartbeat
-    expect(hub.leaseStatus().holder_client_id).toBe('tab-a');
+    expect((await hub.leaseStatus()).holder_client_id).toBe('tab-a');
     tick(45_000); // now stale relative to the heartbeat
-    expect(hub.leaseStatus().holder_client_id).toBeNull();
+    expect((await hub.leaseStatus()).holder_client_id).toBeNull();
 
-    hub.close();
+    await hub.close();
   });
 });

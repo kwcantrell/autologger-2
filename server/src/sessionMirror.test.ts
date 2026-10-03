@@ -72,9 +72,13 @@ describe('SessionMirror', () => {
     const t = setup();
     let settle!: () => void;
     const settled = new Promise<void>((r) => (settle = r));
-    t.setFail(Object.assign(new Error('root timeout'), { name: 'CatalogRootTimeoutError', settled }));
+    t.setFail(
+      Object.assign(new Error('root timeout'), { name: 'CatalogRootTimeoutError', settled }),
+    );
     const first = t.mirror.mirror('s1');
-    await Promise.resolve();
+    // The write awaits its snapshot before projecting (async-session-hub D7), so wait a macrotask
+    // for the first write to have failed.
+    await new Promise((r) => setTimeout(r, 0));
     t.setFail(null);
     t.state.set('s1', 5);
     const second = t.mirror.mirror('s1');

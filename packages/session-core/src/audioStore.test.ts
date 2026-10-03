@@ -58,8 +58,8 @@ describe('audioRowToMeta', () => {
 // (in-memory SQLite), written BEFORE the two mime↔ext mappings collapsed into
 // one bidirectional table. These must pass unmodified across the rewrite.
 describe('AudioStore mime↔ext over a real core (D12 pins)', () => {
-  function store(): AudioStore {
-    return new AudioStore(fakeRuntime().core);
+  async function store(): Promise<AudioStore> {
+    return new AudioStore((await fakeRuntime()).core);
   }
   const add = (audio: AudioStore, mimeType: string) =>
     audio.addAudioSegment({
@@ -70,8 +70,8 @@ describe('AudioStore mime↔ext over a real core (D12 pins)', () => {
       recordingOrdinal: null,
     });
 
-  it('addAudioSegment picks the blob-key extension by mime substring, webm as fallback', () => {
-    const audio = store();
+  it('addAudioSegment picks the blob-key extension by mime substring, webm as fallback', async () => {
+    const audio = await store();
     const cases: Array<[string, string]> = [
       ['audio/webm', 'webm'],
       ['audio/webm;codecs=opus', 'webm'],
@@ -88,16 +88,16 @@ describe('AudioStore mime↔ext over a real core (D12 pins)', () => {
       ['audio/flac', 'webm'], // unknown mime falls back to webm
     ];
     for (const [mime, ext] of cases) {
-      const seg = add(audio, mime);
+      const seg = await add(audio, mime);
       expect(seg.r2_key.endsWith(`.${ext}`), `${mime} → .${ext}, got ${seg.r2_key}`).toBe(true);
     }
     // Stored mime_type is the caller's string (or the audio/webm default), not the ext's canonical mime.
-    expect(add(audio, 'audio/x-m4a').mime_type).toBe('audio/x-m4a');
-    expect(add(audio, '').mime_type).toBe('audio/webm');
+    expect((await add(audio, 'audio/x-m4a')).mime_type).toBe('audio/x-m4a');
+    expect((await add(audio, '')).mime_type).toBe('audio/webm');
   });
 
-  it('syncAudioFromBlobs restores the canonical mime for each extension', () => {
-    const audio = store();
+  it('syncAudioFromBlobs restores the canonical mime for each extension', async () => {
+    const audio = await store();
     const id = () => crypto.randomUUID();
     const keys = [
       { r2_key: `audio/sess/0001_${id()}.webm`, ordinal: 1 },
@@ -105,8 +105,8 @@ describe('AudioStore mime↔ext over a real core (D12 pins)', () => {
       { r2_key: `audio/sess/0003_${id()}.wav`, ordinal: 3 },
       { r2_key: `audio/sess/0004_${id()}.m4a`, ordinal: 4 },
     ];
-    expect(audio.syncAudioFromBlobs(keys)).toEqual({ inserted: 4 });
-    expect(audio.listAudioSegments().map((s) => s.mime_type)).toEqual([
+    expect(await audio.syncAudioFromBlobs(keys)).toEqual({ inserted: 4 });
+    expect((await audio.listAudioSegments()).map((s) => s.mime_type)).toEqual([
       'audio/webm',
       'audio/ogg',
       'audio/wav',
@@ -114,13 +114,13 @@ describe('AudioStore mime↔ext over a real core (D12 pins)', () => {
     ]);
   });
 
-  it('round-trips a canonical mime: segment key ext → blob-scan backfill recovers the same mime', () => {
+  it('round-trips a canonical mime: segment key ext → blob-scan backfill recovers the same mime', async () => {
     for (const mime of ['audio/webm', 'audio/ogg', 'audio/wav', 'audio/mp4']) {
-      const writer = store();
-      const seg = add(writer, mime);
-      const reader = store(); // fresh DB: simulate metadata loss + blob rescan
-      reader.syncAudioFromBlobs([{ r2_key: seg.r2_key, ordinal: seg.ordinal }]);
-      expect(reader.listAudioSegments()[0]?.mime_type).toBe(mime);
+      const writer = await store();
+      const seg = await add(writer, mime);
+      const reader = await store(); // fresh DB: simulate metadata loss + blob rescan
+      await reader.syncAudioFromBlobs([{ r2_key: seg.r2_key, ordinal: seg.ordinal }]);
+      expect((await reader.listAudioSegments())[0]?.mime_type).toBe(mime);
     }
   });
 });

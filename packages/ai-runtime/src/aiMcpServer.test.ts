@@ -8,11 +8,13 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { SessionHub, SessionHubRegistry } from '@autologger/session-core';
+import { SessionHub, SessionHubRegistry, sqliteSessionSql } from '@autologger/session-core';
+import { slowSql } from '@autologger/session-core/test/slowSql';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  __resetAiMcpListenerForTests,
   type AiGenerationRunContext,
   type AiGenerationSnapshotWord,
   AiMcpListener,
@@ -20,6 +22,7 @@ import {
   allTranscriptPagesServed,
   GENERATION_LINE_MAX_WORDS,
   GENERATION_PAGE_SIZE_WORDS,
+  getAiMcpListener,
 } from './aiMcpServer';
 
 let dir: string;
@@ -35,7 +38,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await listener.close();
-  registry.closeAll();
+  await registry.closeAll();
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -71,6 +74,58 @@ describe('AiMcpListener — loopback bind', () => {
     expect(addr).not.toBeNull();
     expect(addr?.address).toBe('127.0.0.1');
     expect(addr?.port).toBeGreaterThan(0);
+  });
+});
+
+// async-session-hub D9 reshaped the start memo and the singleton into wrapper objects; these pin
+// that one start serves concurrent first callers and a failed start is retried.
+describe('AiMcpListener — start memo and the process-wide singleton', () => {
+  it('concurrent first start() calls share one start', async () => {
+    const fresh = new AiMcpListener(registry);
+    try {
+      const a = fresh.start();
+      const b = fresh.start();
+      expect(a).toBe(b);
+      await Promise.all([a, b]);
+      expect(fresh.address?.address).toBe('127.0.0.1');
+      expect(fresh.start()).toBe(a);
+    } finally {
+      await fresh.close();
+    }
+  });
+
+  it('concurrent first getAiMcpListener() callers get one started listener', async () => {
+    await __resetAiMcpListenerForTests();
+    const startSpy = vi.spyOn(AiMcpListener.prototype, 'start');
+    try {
+      const p1 = getAiMcpListener(registry);
+      const p2 = getAiMcpListener(registry);
+      expect(p1).toBe(p2);
+      const [l1, l2] = await Promise.all([p1, p2]);
+      expect(l1).toBe(l2);
+      expect(l1.address).not.toBeNull();
+      expect(startSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      startSpy.mockRestore();
+      await __resetAiMcpListenerForTests();
+    }
+  });
+
+  it('a failed start is retried by the next getAiMcpListener() call', async () => {
+    await __resetAiMcpListenerForTests();
+    const startSpy = vi
+      .spyOn(AiMcpListener.prototype, 'start')
+      .mockRejectedValueOnce(new Error('bind failed'));
+    try {
+      await expect(getAiMcpListener(registry)).rejects.toThrow('bind failed');
+      const listener = await getAiMcpListener(registry);
+      expect(listener.address).not.toBeNull();
+      expect(startSpy).toHaveBeenCalledTimes(2);
+      expect(await getAiMcpListener(registry)).toBe(listener);
+    } finally {
+      startSpy.mockRestore();
+      await __resetAiMcpListenerForTests();
+    }
   });
 });
 
@@ -147,19 +202,19 @@ describe('AiMcpListener — HTTP-layer bearer check', () => {
 describe('AiMcpListener — no cross-talk between concurrent turns', () => {
   it('two turns on distinct sessions each resolve to their own session', async () => {
     // Seed distinct topic data per session through the real hub.
-    registry.get('sessA').insertTopic({
+    await (await registry.get('sessA')).insertTopic({
       session_time: '00:00:01',
       duration_sec: 5,
       topic_level: 1,
       summary: 'A-only topic',
     });
-    registry.get('sessB').insertTopic({
+    await (await registry.get('sessB')).insertTopic({
       session_time: '00:00:02',
       duration_sec: 6,
       topic_level: 2,
       summary: 'B-first',
     });
-    registry.get('sessB').insertTopic({
+    await (await registry.get('sessB')).insertTopic({
       session_time: '00:00:03',
       duration_sec: 7,
       topic_level: 3,
@@ -192,7 +247,7 @@ describe('AiMcpListener — no cross-talk between concurrent turns', () => {
 
 describe('AiMcpListener — get_transcript_words returns COMPACT readable text', () => {
   it('renders speaker/timecode-prefixed text, NOT verbose per-word JSON', async () => {
-    registry.get('sessA').replaceTranscriptWords([
+    await (await registry.get('sessA')).replaceTranscriptWords([
       { session_time: '00:00:01', speaker: 'S1', word: 'hello', start_sec: 1, end_sec: 2 },
       { session_time: '00:00:02', speaker: 'S1', word: 'world', start_sec: 2, end_sec: 3 },
     ]);
@@ -219,7 +274,7 @@ describe('AiMcpListener — get_transcript_words returns COMPACT readable text',
   });
 
   it('handles an anchorless transcript (empty session_time) without a timecode prefix', async () => {
-    registry.get('sessB').replaceTranscriptWords([
+    await (await registry.get('sessB')).replaceTranscriptWords([
       { session_time: '', speaker: '0', word: 'rockets', start_sec: 0, end_sec: 0 },
       { session_time: '', speaker: '0', word: 'and', start_sec: 0, end_sec: 0 },
       { session_time: '', speaker: '0', word: 'coffee', start_sec: 0, end_sec: 0 },
@@ -255,7 +310,7 @@ describe('AiMcpListener — get_transcript_words returns COMPACT readable text',
   });
 
   it('keeps a speaker flip-back (A→B→A) as three separate segments, never merged', async () => {
-    registry.get('sessD').replaceTranscriptWords([
+    await (await registry.get('sessD')).replaceTranscriptWords([
       { session_time: '00:00:01', speaker: 'S1', word: 'hello', start_sec: 1, end_sec: 2 },
       { session_time: '00:00:02', speaker: 'S2', word: 'hi', start_sec: 2, end_sec: 3 },
       { session_time: '00:00:03', speaker: 'S1', word: 'bye', start_sec: 3, end_sec: 4 },
@@ -277,7 +332,7 @@ describe('AiMcpListener — get_transcript_words returns COMPACT readable text',
   });
 
   it('fills a segment timecode from a later word when the first word of the segment lacks one', async () => {
-    registry.get('sessE').replaceTranscriptWords([
+    await (await registry.get('sessE')).replaceTranscriptWords([
       { session_time: '', speaker: 'S1', word: 'foo', start_sec: 0, end_sec: 0 },
       { session_time: '00:00:05', speaker: 'S1', word: 'bar', start_sec: 5, end_sec: 6 },
     ]);
@@ -296,7 +351,7 @@ describe('AiMcpListener — get_transcript_words returns COMPACT readable text',
   });
 
   it('emits no "speaker" prefix when the speaker field is blank', async () => {
-    registry.get('sessF').replaceTranscriptWords([
+    await (await registry.get('sessF')).replaceTranscriptWords([
       { session_time: '00:00:09', speaker: '', word: 'alpha', start_sec: 9, end_sec: 10 },
       { session_time: '00:00:09', speaker: '', word: 'beta', start_sec: 10, end_sec: 11 },
     ]);
@@ -346,11 +401,9 @@ describe('AiMcpListener — per-turn tool registration (auto-generate-event-logs
   });
 
   it('a turn context naming only get_transcript_words registers exactly that one tool', async () => {
-    registry
-      .get('sessG')
-      .replaceTranscriptWords([
-        { session_time: '00:00:01', speaker: 'S1', word: 'solo', start_sec: 1, end_sec: 2 },
-      ]);
+    await (await registry.get('sessG')).replaceTranscriptWords([
+      { session_time: '00:00:01', speaker: 'S1', word: 'solo', start_sec: 1, end_sec: 2 },
+    ]);
     const turn = listener.registerTurn('sessG', { tools: ['get_transcript_words'] });
     const { client, close } = await connectMcp(turn.url, turn.token);
     try {
@@ -372,7 +425,7 @@ describe('AiMcpListener — per-turn tool registration (auto-generate-event-logs
       } else {
         expect(denied.isError).toBe(true);
       }
-      expect(registry.get('sessG').listTopics()).toHaveLength(0);
+      expect(await (await registry.get('sessG')).listTopics()).toHaveLength(0);
     } finally {
       await close();
       turn.dispose();
@@ -380,11 +433,9 @@ describe('AiMcpListener — per-turn tool registration (auto-generate-event-logs
   });
 
   it('carries a generation run snapshot on the registration (3.2/3.3 consume it)', async () => {
-    registry
-      .get('sessH')
-      .replaceTranscriptWords([
-        { session_time: '00:00:02', speaker: 'S1', word: 'gen', start_sec: 2, end_sec: 3 },
-      ]);
+    await (await registry.get('sessH')).replaceTranscriptWords([
+      { session_time: '00:00:02', speaker: 'S1', word: 'gen', start_sec: 2, end_sec: 3 },
+    ]);
     // A generation-shaped registration: tool set + full run snapshot, threaded
     // through registration to the tool builders. `get_transcript_words` now
     // renders at generation density under a snapshot (task 3.3) — for this
@@ -452,17 +503,17 @@ describe('AiMcpListener — create_topic writes through SessionHub.insertTopic',
 
   it('produces a row indistinguishable from a manual insert (server ordinal, no WS)', async () => {
     // Manual reference: two inserts straight through the hub.
-    const manualHub = registry.get('manual');
+    const manualHub = await registry.get('manual');
     const payloads = [
       { session_time: '00:00:01', duration_sec: 5, topic_level: 2, summary: 'first' },
       { session_time: '00:00:09', duration_sec: 8, topic_level: 3, summary: 'second' },
     ];
-    for (const p of payloads) manualHub.insertTopic(p);
+    for (const p of payloads) await manualHub.insertTopic(p);
 
     // AI path: same two payloads via the MCP create_topic tool on session 'ai'.
     // Attach a spy socket to prove create_topic emits NO WS message.
     const sent: string[] = [];
-    registry.get('ai').attachSocket({ send: (d) => sent.push(d) }, 'browser');
+    (await registry.get('ai')).attachSocket({ send: (d) => sent.push(d) }, 'browser');
     const turn = listener.registerTurn('ai');
     for (const p of payloads) {
       const res = await createTopicViaMcp(turn.url, turn.token, p);
@@ -480,8 +531,8 @@ describe('AiMcpListener — create_topic writes through SessionHub.insertTopic',
       const { id: _id, created_at_utc: _c, ...rest } = t;
       return rest;
     };
-    const manualRows = manualHub.listTopics().map(strip);
-    const aiRows = registry.get('ai').listTopics().map(strip);
+    const manualRows = (await manualHub.listTopics()).map(strip);
+    const aiRows = (await (await registry.get('ai')).listTopics()).map(strip);
     expect(aiRows).toEqual(manualRows);
     // Ordinals are server-assigned (0,1), not supplied by the tool caller.
     expect(aiRows.map((r) => r.ordinal)).toEqual([0, 1]);
@@ -497,7 +548,7 @@ describe('AiMcpListener — create_topic writes through SessionHub.insertTopic',
       summary: 'too deep',
     });
     expect(bad.isError).toBe(true);
-    expect(registry.get('ai').listTopics()).toHaveLength(0);
+    expect(await (await registry.get('ai')).listTopics()).toHaveLength(0);
 
     // The turn continues — a subsequent valid call still works.
     const ok = await createTopicViaMcp(turn.url, turn.token, {
@@ -507,7 +558,7 @@ describe('AiMcpListener — create_topic writes through SessionHub.insertTopic',
       summary: 'ok now',
     });
     expect(ok.isError).toBeFalsy();
-    expect(registry.get('ai').listTopics()).toHaveLength(1);
+    expect(await (await registry.get('ai')).listTopics()).toHaveLength(1);
     turn.dispose();
   });
 
@@ -533,8 +584,8 @@ describe('AiMcpListener — create_topic writes through SessionHub.insertTopic',
   });
 
   it('writes only the bound session, never a sibling (turn A cannot reach B)', async () => {
-    registry.get('sessA'); // materialize
-    registry.get('sessB');
+    await registry.get('sessA'); // materialize
+    await registry.get('sessB');
     const turnA = listener.registerTurn('sessA');
     const res = await createTopicViaMcp(turnA.url, turnA.token, {
       session_time: '00:00:01',
@@ -545,9 +596,9 @@ describe('AiMcpListener — create_topic writes through SessionHub.insertTopic',
     expect(res.isError).toBeFalsy();
     turnA.dispose();
 
-    expect(registry.get('sessA').listTopics()).toHaveLength(1);
+    expect(await (await registry.get('sessA')).listTopics()).toHaveLength(1);
     // Session B is untouched — the write is hard-bound to the registration.
-    expect(registry.get('sessB').listTopics()).toHaveLength(0);
+    expect(await (await registry.get('sessB')).listTopics()).toHaveLength(0);
   });
 });
 
@@ -614,16 +665,18 @@ async function createEventViaMcp(
   }
 }
 
-function listEventRows(sessionId: string): Array<{
-  event_id: string;
-  category: string;
-  message: string;
-  timecode: string | null;
-  frame_rate: number | null;
-  wall_time_utc: string;
-  metadata_json: string;
-}> {
-  return registry.get(sessionId).listEvents({ limit: 1000, offset: 0 }).events;
+async function listEventRows(sessionId: string): Promise<
+  Array<{
+    event_id: string;
+    category: string;
+    message: string;
+    timecode: string | null;
+    frame_rate: number | null;
+    wall_time_utc: string;
+    metadata_json: string;
+  }>
+> {
+  return (await (await registry.get(sessionId)).listEvents({ limit: 1000, offset: 0 })).events;
 }
 
 describe('create_event — registration surface (3.2)', () => {
@@ -664,7 +717,7 @@ describe('create_event — registration surface (3.2)', () => {
       session_time: '00:00:01:00',
     });
     expect(res.isError).toBe(true);
-    expect(listEventRows('gen-noctx')).toHaveLength(0);
+    expect(await listEventRows('gen-noctx')).toHaveLength(0);
     turn.dispose();
   });
 });
@@ -679,7 +732,7 @@ describe('create_event — category allowlist + internal denial (3.2)', () => {
     });
     expect(res.isError).toBe(true);
     expect(res.content[0].text).toMatch(/category/i);
-    expect(listEventRows('gen-cat')).toHaveLength(0);
+    expect(await listEventRows('gen-cat')).toHaveLength(0);
 
     // The turn continues — a valid call after the rejection still works.
     const ok = await createEventViaMcp(turn.url, turn.token, {
@@ -688,7 +741,7 @@ describe('create_event — category allowlist + internal denial (3.2)', () => {
       session_time: '00:00:01:00',
     });
     expect(ok.isError).toBeFalsy();
-    expect(listEventRows('gen-cat')).toHaveLength(1);
+    expect(await listEventRows('gen-cat')).toHaveLength(1);
     turn.dispose();
   });
 
@@ -717,7 +770,7 @@ describe('create_event — category allowlist + internal denial (3.2)', () => {
       expect(res.isError).toBe(true);
       expect(res.content[0].text).toMatch(/internal/i);
     }
-    expect(listEventRows('gen-internal')).toHaveLength(0);
+    expect(await listEventRows('gen-internal')).toHaveLength(0);
     turn.dispose();
   });
 });
@@ -739,7 +792,7 @@ describe('create_event — timecode grammar/bounds (3.2, trust boundary)', () =>
       session_time: sessionTime,
     });
     expect(res.isError).toBe(true);
-    expect(listEventRows('gen-tc')).toHaveLength(0);
+    expect(await listEventRows('gen-tc')).toHaveLength(0);
     turn.dispose();
   });
 
@@ -751,7 +804,7 @@ describe('create_event — timecode grammar/bounds (3.2, trust boundary)', () =>
       session_time: '00:14:03;12',
     });
     expect(res.isError).toBeFalsy();
-    const rows = listEventRows('gen-df');
+    const rows = await listEventRows('gen-df');
     expect(rows).toHaveLength(1);
     // formatSmpte round-trip: 29.97 renders with the `;` separator.
     expect(rows[0].timecode).toBe('00:14:03;12');
@@ -772,7 +825,7 @@ describe('create_event — message bounds mirror logBodySchema (3.2)', () => {
       session_time: '00:00:01:00',
     });
     expect(res.isError).toBe(true);
-    expect(listEventRows('gen-msg')).toHaveLength(0);
+    expect(await listEventRows('gen-msg')).toHaveLength(0);
     turn.dispose();
   });
 
@@ -784,7 +837,7 @@ describe('create_event — message bounds mirror logBodySchema (3.2)', () => {
       session_time: '00:00:01:00',
     });
     expect(res.isError).toBeFalsy();
-    expect(listEventRows('gen-msg8k')).toHaveLength(1);
+    expect(await listEventRows('gen-msg8k')).toHaveLength(1);
     turn.dispose();
   });
 });
@@ -807,7 +860,7 @@ describe('create_event — success path (3.2)', () => {
     // 1h of timecode at 24fps from 2026-01-01T00:00:00Z.
     expect(created.wall_time_utc).toBe('2026-01-01T01:00:00.000Z');
     // And it is the persisted row, via the one insert path.
-    const rows = listEventRows('gen-ok');
+    const rows = await listEventRows('gen-ok');
     expect(rows).toHaveLength(1);
     expect(rows[0].event_id).toBe(created.event_id);
     turn.dispose();
@@ -821,7 +874,7 @@ describe('create_event — success path (3.2)', () => {
       session_time: '00:00:05:00',
     });
     expect(res.isError).toBeFalsy();
-    const rows = listEventRows('gen-meta');
+    const rows = await listEventRows('gen-meta');
     const meta = JSON.parse(rows[0].metadata_json) as Record<string, unknown>;
     // Exact composition: attribution pair + the SAME snapshot keys the manual
     // route writes (label from the snapshot's name, hex color normalized).
@@ -836,7 +889,7 @@ describe('create_event — success path (3.2)', () => {
 
   it('emits one event.changed broadcast per insert (manual-insert semantics, not suppressed)', async () => {
     const sent: string[] = [];
-    registry.get('gen-ws').attachSocket({ send: (d) => sent.push(d) }, 'browser');
+    (await registry.get('gen-ws')).attachSocket({ send: (d) => sent.push(d) }, 'browser');
     const turn = listener.registerTurn('gen-ws', genContext());
     for (const t of ['00:00:01:00', '00:00:02:00']) {
       const res = await createEventViaMcp(turn.url, turn.token, {
@@ -871,7 +924,7 @@ describe('create_event — per-run cap (3.2)', () => {
     expect(denied.isError).toBe(true);
     expect(denied.content[0].text).toContain('2'); // names the cap value
     expect(denied.content[0].text).toMatch(/cap/i);
-    expect(listEventRows('gen-cap')).toHaveLength(2);
+    expect(await listEventRows('gen-cap')).toHaveLength(2);
     expect(turn.createdEvents()).toBe(2);
     turn.dispose();
   });
@@ -908,7 +961,7 @@ describe('create_event — per-run cap (3.2)', () => {
     });
     expect(denied.isError).toBe(true);
     expect(denied.content[0].text).toContain('1');
-    expect(listEventRows('gen-cap1')).toHaveLength(1);
+    expect(await listEventRows('gen-cap1')).toHaveLength(1);
     turn.dispose();
   });
 });
@@ -939,7 +992,7 @@ describe('create_event — counter reflects only successful inserts (3.2)', () =
         });
         expect(faulted.isError).toBe(true);
         expect(turn.createdEvents()).toBe(0);
-        expect(listEventRows('gen-fault')).toHaveLength(0);
+        expect(await listEventRows('gen-fault')).toHaveLength(0);
 
         // The mock only fires once — this call hits the real (transactional)
         // createAnchoredEvent and must succeed, reporting a count of 1, not
@@ -951,7 +1004,7 @@ describe('create_event — counter reflects only successful inserts (3.2)', () =
         });
         expect(ok.isError).toBeFalsy();
         expect(turn.createdEvents()).toBe(1);
-        expect(listEventRows('gen-fault')).toHaveLength(1);
+        expect(await listEventRows('gen-fault')).toHaveLength(1);
       } finally {
         spy.mockRestore();
         turn.dispose();
@@ -967,9 +1020,9 @@ describe('create_event — bracketing placement over a real store (3.2, spec inv
   /** Seed a paused/multi-take-shaped session: 10 minutes of timecode spread
    * across 60 minutes of wall clock (the shape that breaks naive
    * session-start arithmetic). Mirrors the eventAnchors.test.ts fixtures. */
-  function seedAnchors(sessionId: string): void {
-    const hub = registry.get(sessionId);
-    hub.addEvent({
+  async function seedAnchors(sessionId: string): Promise<void> {
+    const hub = await registry.get(sessionId);
+    await hub.addEvent({
       category: 'internal',
       message: 'Recording 1 Started',
       metadataJson: '{}',
@@ -980,7 +1033,7 @@ describe('create_event — bracketing placement over a real store (3.2, spec inv
         wallTimeUtc: '2026-01-01T10:00:00.000Z',
       },
     });
-    hub.addEvent({
+    await hub.addEvent({
       category: 'cat1',
       message: 'manual note',
       metadataJson: '{}',
@@ -994,7 +1047,7 @@ describe('create_event — bracketing placement over a real store (3.2, spec inv
   }
 
   it('a generated event at 00:15:00:00 sorts BETWEEN the bracketing anchor events', async () => {
-    seedAnchors('gen-brk');
+    await seedAnchors('gen-brk');
     const turn = listener.registerTurn('gen-brk', genContext());
     const res = await createEventViaMcp(turn.url, turn.token, {
       category: 'cat1',
@@ -1002,7 +1055,7 @@ describe('create_event — bracketing placement over a real store (3.2, spec inv
       session_time: '00:15:00:00',
     });
     expect(res.isError).toBeFalsy();
-    const rows = listEventRows('gen-brk'); // feed order: wall_time_utc ASC, id ASC
+    const rows = await listEventRows('gen-brk'); // feed order: wall_time_utc ASC, id ASC
     expect(rows.map((r) => r.message)).toEqual(['Recording 1 Started', 'SLATE', 'manual note']);
     // Midpoint of the tc span maps to the midpoint of the wall span.
     expect(rows[1].wall_time_utc).toBe('2026-01-01T10:30:00.000Z');
@@ -1010,7 +1063,7 @@ describe('create_event — bracketing placement over a real store (3.2, spec inv
   });
 
   it('anchors are rebuilt per call: out-of-order creates still sort among themselves in timecode order', async () => {
-    seedAnchors('gen-brk2');
+    await seedAnchors('gen-brk2');
     const turn = listener.registerTurn('gen-brk2', genContext());
     // Create at 00:15 first, THEN back at 00:12 — the second call re-reads the
     // store (now containing the 00:15 row as an anchor) and must still land
@@ -1023,7 +1076,7 @@ describe('create_event — bracketing placement over a real store (3.2, spec inv
       });
       expect(res.isError).toBeFalsy();
     }
-    const rows = listEventRows('gen-brk2');
+    const rows = await listEventRows('gen-brk2');
     expect(rows.map((r) => r.message)).toEqual([
       'Recording 1 Started',
       'gen@00:12:00:00',
@@ -1035,16 +1088,16 @@ describe('create_event — bracketing placement over a real store (3.2, spec inv
 
   // event-generate-hardening task 2.3 — design D3's anchor-basis exclusion:
   // a regenerate run's pre-spawn snapshot ids must be filtered out of
-  // `timecodeWallAnchors`'s live `hub.exportEvents()` read, or the doomed old
+  // `timecodeWallAnchors`'s live `await hub.exportEvents()` read, or the doomed old
   // rows would steer the replacement rows' persisted wall times right up
   // until the post-success delete removes them.
   it('regenerateSnapshotIds excludes a doomed old-auto row from the anchor basis (D3)', async () => {
-    seedAnchors('gen-brk3');
-    const hub = registry.get('gen-brk3');
+    await seedAnchors('gen-brk3');
+    const hub = await registry.get('gen-brk3');
     // A doomed old-auto anchor BETWEEN the two seeded anchors — left in,
     // it would steer the 00:15:00:00 placement toward its own wall time
     // instead of the clean two-anchor midpoint.
-    const { event: oldAuto } = hub.addEvent({
+    const { event: oldAuto } = await hub.addEvent({
       category: 'cat1',
       message: 'Old generated slate',
       metadataJson: '{"auto_generated":true,"auto_generate_run_id":"old-run"}',
@@ -1066,7 +1119,7 @@ describe('create_event — bracketing placement over a real store (3.2, spec inv
       session_time: '00:15:00:00',
     });
     expect(res.isError).toBeFalsy();
-    const rows = listEventRows('gen-brk3');
+    const rows = await listEventRows('gen-brk3');
     const generated = rows.find((r) => r.message === 'SLATE');
     // Same placement as the clean two-anchor bracketing test above —
     // 2026-01-01T10:30:00.000Z, the midpoint of the UN-doomed anchors — proof
@@ -1091,7 +1144,7 @@ describe('create_event — bracketing placement over a real store (3.2, spec inv
 describe('create_event — broadcast emission is per SUCCESSFUL insert only (delta spec: "exactly one event.changed per successful insert")', () => {
   it('failed calls (bad category, bad timecode) emit zero event.changed frames; only the two successful inserts do', async () => {
     const sent: string[] = [];
-    registry.get('gen-ws-fail').attachSocket({ send: (d) => sent.push(d) }, 'browser');
+    (await registry.get('gen-ws-fail')).attachSocket({ send: (d) => sent.push(d) }, 'browser');
     const turn = listener.registerTurn('gen-ws-fail', genContext());
 
     const badCat = await createEventViaMcp(turn.url, turn.token, {
@@ -1167,7 +1220,7 @@ describe('create_event — cap holds under concurrent calls (delta spec scenario
     expect(failures[0].content[0].text).toMatch(/cap/i);
     // {created} — surfaced here via the turn's counter — never exceeds cap.
     expect(turn.createdEvents()).toBe(2);
-    expect(listEventRows('gen-cap-race')).toHaveLength(2);
+    expect(await listEventRows('gen-cap-race')).toHaveLength(2);
     turn.dispose();
   });
 });
@@ -1177,9 +1230,9 @@ describe('create_event — anchor basis is clamped monotone before interpolation
     const FPS = 24;
     const CTX = { frameRate: FPS, startOffsetFrames: 0 };
     const sessionId = 'gen-clamp';
-    const hub = registry.get(sessionId);
+    const hub = await registry.get(sessionId);
     // Anchor A: 10min timecode, LATE wall (12:00).
-    hub.addEvent({
+    await hub.addEvent({
       category: 'internal',
       message: 'Recording 1 Started',
       metadataJson: '{}',
@@ -1193,7 +1246,7 @@ describe('create_event — anchor basis is clamped monotone before interpolation
     // Anchor B: 20min timecode, EARLIER wall (11:00) — inverted vs. A, so a
     // raw (un-clamped) interpolation would run wall time BACKWARD across the
     // segment.
-    hub.addEvent({
+    await hub.addEvent({
       category: 'cat1',
       message: 'manual note',
       metadataJson: '{}',
@@ -1212,7 +1265,7 @@ describe('create_event — anchor basis is clamped monotone before interpolation
       session_time: '00:15:00:00', // exact midpoint between the two anchors
     });
     expect(res.isError).toBeFalsy();
-    const rows = listEventRows(sessionId);
+    const rows = await listEventRows(sessionId);
     const generated = rows.find((r) => r.message === 'SLATE');
     // A raw (un-clamped) interpolation would land at 2026-01-01T11:30:00.000Z
     // (halfway from 12:00 down to 11:00). Clamped/monotone anchors raise B's
@@ -1239,17 +1292,17 @@ function stripComments(src: string): string {
   );
 }
 
-describe('create_event handler — zero-await invariant (package-split-foundation D6 / delta spec "Handler is uninterruptible")', () => {
+describe('create_event handler — the cap is reserved before the first await (async-session-hub D8 / delta spec "The create_event cap is reserved before any await")', () => {
   const AI_MCP_SERVER_SRC = join(dirname(fileURLToPath(import.meta.url)), 'aiMcpServer.ts');
 
-  it('stripComments removes a comment containing the word "await" (mutation check — proves the predicate is not vacuous)', () => {
+  it('stripComments removes a comment containing the word "await" (mutation check — proves the predicate is not vacuous)', async () => {
     const sample = 'const x = 1; // never held across an await\nconst y = 2;';
     const stripped = stripComments(sample);
     expect(stripped).not.toMatch(/await/);
     expect(stripped).toContain('const y = 2;');
   });
 
-  it('the create_event tool-builder registration contains zero `await` expressions', () => {
+  it("the handler's cap check and its reservation both precede its first `await`", async () => {
     const source = readFileSync(AI_MCP_SERVER_SRC, 'utf8');
     const startMarker =
       'create_event: (server, { registry, sessionId, generation, createdEvents }) => {';
@@ -1260,8 +1313,94 @@ describe('create_event handler — zero-await invariant (package-split-foundatio
     const endMarker = '\n  },\n};';
     const endIdx = source.indexOf(endMarker, startIdx);
     expect(endIdx).toBeGreaterThan(startIdx);
-    const handlerSource = source.slice(startIdx, endIdx);
-    expect(stripComments(handlerSource)).not.toMatch(/\bawait\b/);
+    const handler = stripComments(source.slice(startIdx, endIdx));
+    const capCheck = handler.indexOf(
+      'if (createdEvents.count + createdEvents.reserved >= generation.cap)',
+    );
+    const reserve = handler.indexOf('createdEvents.reserved += 1;');
+    expect(capCheck).toBeGreaterThanOrEqual(0);
+    expect(reserve).toBeGreaterThan(capCheck);
+    const firstAwait = handler.search(/\bawait\b/);
+    if (firstAwait >= 0) expect(reserve).toBeLessThan(firstAwait);
+  });
+
+  it('a failed insert at cap - 1 returns the internal-error result, leaves createdEvents() unchanged and frees its reservation for the next call', async () => {
+    const turn = listener.registerTurn('gen-reserve', genContext({ cap: 2 }));
+    const first = await createEventViaMcp(turn.url, turn.token, {
+      category: 'cat1',
+      message: 'SLATE',
+      session_time: '00:00:01:00',
+    });
+    expect(first.isError).toBeFalsy();
+    expect(turn.createdEvents()).toBe(1);
+    const spy = vi.spyOn(SessionHub.prototype, 'createAnchoredEvent').mockImplementationOnce(() => {
+      throw new Error('simulated insert fault');
+    });
+    try {
+      const faulted = await createEventViaMcp(turn.url, turn.token, {
+        category: 'cat1',
+        message: 'SLATE',
+        session_time: '00:00:02:00',
+      });
+      expect(faulted.isError).toBe(true);
+      expect(faulted.content[0].text).toBe(
+        'create_event failed: internal error; no event was created.',
+      );
+      expect(turn.createdEvents()).toBe(1);
+      const ok = await createEventViaMcp(turn.url, turn.token, {
+        category: 'cat1',
+        message: 'SLATE',
+        session_time: '00:00:03:00',
+      });
+      expect(ok.isError).toBeFalsy();
+      expect(turn.createdEvents()).toBe(2);
+      expect(await listEventRows('gen-reserve')).toHaveLength(2);
+    } finally {
+      spy.mockRestore();
+      turn.dispose();
+    }
+  });
+
+  it('Cap holds under concurrent calls: five calls at cap - 1 on a timer-yielding hub insert exactly one', async () => {
+    // A hub whose SQL yields to a timer before every statement, so the five inserts really
+    // overlap (async-session-hub D8, D12).
+    const slowRegistry = new SessionHubRegistry(join(dir, 'slow-sessions'), undefined, {
+      sql: (db) => slowSql(sqliteSessionSql(db)),
+    });
+    const slowListener = new AiMcpListener(slowRegistry);
+    await slowListener.start();
+    const turn = slowListener.registerTurn('gen-concurrent', genContext({ cap: 2 }));
+    try {
+      const first = await createEventViaMcp(turn.url, turn.token, {
+        category: 'cat1',
+        message: 'SLATE',
+        session_time: '00:00:01:00',
+      });
+      expect(first.isError).toBeFalsy();
+      expect(turn.createdEvents()).toBe(1);
+      const results = await Promise.all(
+        [2, 3, 4, 5, 6].map((s) =>
+          createEventViaMcp(turn.url, turn.token, {
+            category: 'cat1',
+            message: 'SLATE',
+            session_time: `00:00:0${s}:00`,
+          }),
+        ),
+      );
+      expect(results.filter((r) => !r.isError)).toHaveLength(1);
+      expect(results.filter((r) => r.isError).map((r) => r.content[0].text)).toEqual(
+        Array(4).fill(
+          'Per-run event cap reached (2 events): no further events can be created by this run.',
+        ),
+      );
+      expect(turn.createdEvents()).toBe(2);
+      const rows = await (await slowRegistry.get('gen-concurrent')).exportEvents();
+      expect(rows).toHaveLength(2);
+    } finally {
+      turn.dispose();
+      await slowListener.close();
+      await slowRegistry.closeAll();
+    }
   });
 });
 
@@ -1317,7 +1456,7 @@ describe('get_transcript_words — generation-density paged rendering (3.3)', ()
       start_sec: i,
       end_sec: i + 1,
     }));
-    registry.get('gen-density').replaceTranscriptWords(words);
+    await (await registry.get('gen-density')).replaceTranscriptWords(words);
 
     const genTurn = listener.registerTurn('gen-density', genContext());
     const chatTurn = listener.registerTurn('gen-density');
@@ -1361,7 +1500,7 @@ describe('get_transcript_words — generation-density paged rendering (3.3)', ()
       start_sec: i,
       end_sec: i + 1,
     }));
-    registry.get('gen-paged').replaceTranscriptWords(words);
+    await (await registry.get('gen-paged')).replaceTranscriptWords(words);
     const turn = listener.registerTurn('gen-paged', genContext());
     const { client, close } = await connectMcp(turn.url, turn.token);
     try {
@@ -1395,11 +1534,9 @@ describe('get_transcript_words — generation-density paged rendering (3.3)', ()
   });
 
   it('out-of-range page is a TOOL ERROR (isError), never empty text', async () => {
-    registry
-      .get('gen-oor')
-      .replaceTranscriptWords([
-        { session_time: '00:00:01', speaker: 'S1', word: 'solo', start_sec: 1, end_sec: 2 },
-      ]);
+    await (await registry.get('gen-oor')).replaceTranscriptWords([
+      { session_time: '00:00:01', speaker: 'S1', word: 'solo', start_sec: 1, end_sec: 2 },
+    ]);
     const turn = listener.registerTurn('gen-oor', genContext());
     const { client, close } = await connectMcp(turn.url, turn.token);
     try {
@@ -1455,11 +1592,9 @@ describe('get_transcript_words — run-start word snapshot (4.3, phase-3 carry)'
 
         // Mid-run transcript regeneration: an entirely different (single-word,
         // single-page) transcript lands in the hub.
-        registry
-          .get('gen-snap')
-          .replaceTranscriptWords([
-            { session_time: '00:59:59', speaker: 'Z', word: 'replaced', start_sec: 0, end_sec: 1 },
-          ]);
+        await (await registry.get('gen-snap')).replaceTranscriptWords([
+          { session_time: '00:59:59', speaker: 'Z', word: 'replaced', start_sec: 0, end_sec: 1 },
+        ]);
 
         // The registered turn's rendering is BYTE-IDENTICAL: same content,
         // same 2-page boundary — the run cannot see the mid-run replace.
@@ -1483,11 +1618,9 @@ describe('get_transcript_words — run-start word snapshot (4.3, phase-3 carry)'
   );
 
   it('a snapshot-less generation registration still reads the live hub (3.3 fallback intact)', async () => {
-    registry
-      .get('gen-snap-live')
-      .replaceTranscriptWords([
-        { session_time: '00:00:01', speaker: 'S1', word: 'live-word', start_sec: 1, end_sec: 2 },
-      ]);
+    await (await registry.get('gen-snap-live')).replaceTranscriptWords([
+      { session_time: '00:00:01', speaker: 'S1', word: 'live-word', start_sec: 1, end_sec: 2 },
+    ]);
     const turn = listener.registerTurn('gen-snap-live', genContext());
     const { client, close } = await connectMcp(turn.url, turn.token);
     try {
@@ -1497,11 +1630,9 @@ describe('get_transcript_words — run-start word snapshot (4.3, phase-3 carry)'
       })) as ToolResult;
       expect(res.content[0].text).toContain('live-word');
       // Live means live: a replace IS visible to a snapshot-less turn.
-      registry
-        .get('gen-snap-live')
-        .replaceTranscriptWords([
-          { session_time: '00:00:02', speaker: 'S1', word: 'swapped', start_sec: 2, end_sec: 3 },
-        ]);
+      await (await registry.get('gen-snap-live')).replaceTranscriptWords([
+        { session_time: '00:00:02', speaker: 'S1', word: 'swapped', start_sec: 2, end_sec: 3 },
+      ]);
       const res2 = (await client.callTool({
         name: 'get_transcript_words',
         arguments: {},
@@ -1564,7 +1695,7 @@ describe('get_transcript_words — pagedWords keying + page coverage (2.1)', () 
   it('a pagedWords registration exposes the `page` input and serves the SNAPSHOT, not the live hub', async () => {
     // The live hub holds something ELSE entirely: a snapshot-sourced read can
     // never show it (D1 — the pages come only from the captured list).
-    registry.get('paged-src').replaceTranscriptWords([
+    await (await registry.get('paged-src')).replaceTranscriptWords([
       {
         session_time: '00:00:01',
         speaker: 'S1',
@@ -1594,11 +1725,9 @@ describe('get_transcript_words — pagedWords keying + page coverage (2.1)', () 
       expect(res.content[0].text).not.toContain('live-hub-word');
 
       // A mid-run replacement cannot reach it either.
-      registry
-        .get('paged-src')
-        .replaceTranscriptWords([
-          { session_time: '00:59:59', speaker: 'Z', word: 'replaced', start_sec: 0, end_sec: 1 },
-        ]);
+      await (await registry.get('paged-src')).replaceTranscriptWords([
+        { session_time: '00:59:59', speaker: 'Z', word: 'replaced', start_sec: 0, end_sec: 1 },
+      ]);
       const again = (await client.callTool({
         name: 'get_transcript_words',
         arguments: { page: 0 },
@@ -1708,11 +1837,9 @@ describe('get_transcript_words — pagedWords keying + page coverage (2.1)', () 
   });
 
   it('a chat (context-less) registration reports zero pages and makes no coverage claim', async () => {
-    registry
-      .get('chat-cov')
-      .replaceTranscriptWords([
-        { session_time: '00:00:01', speaker: 'S1', word: 'hello', start_sec: 1, end_sec: 2 },
-      ]);
+    await (await registry.get('chat-cov')).replaceTranscriptWords([
+      { session_time: '00:00:01', speaker: 'S1', word: 'hello', start_sec: 1, end_sec: 2 },
+    ]);
     const turn = listener.registerTurn('chat-cov');
     try {
       expect(turn.pageCoverage()).toEqual({ totalPages: 0, servedPages: 0 });
@@ -1729,11 +1856,9 @@ describe('get_transcript_words — pagedWords keying + page coverage (2.1)', () 
   });
 
   it('a snapshot-less GENERATION registration (live hub) also makes no coverage claim', async () => {
-    registry
-      .get('gen-cov-live')
-      .replaceTranscriptWords([
-        { session_time: '00:00:01', speaker: 'S1', word: 'live', start_sec: 1, end_sec: 2 },
-      ]);
+    await (await registry.get('gen-cov-live')).replaceTranscriptWords([
+      { session_time: '00:00:01', speaker: 'S1', word: 'live', start_sec: 1, end_sec: 2 },
+    ]);
     const turn = listener.registerTurn('gen-cov-live', genContext());
     try {
       expect((await fetchPage(turn, 0)).content[0].text).toContain('live');

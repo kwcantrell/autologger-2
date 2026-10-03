@@ -34,7 +34,7 @@ describe('a failed mirror write after a saved session change', () => {
     );
     const res = await logEvent(sessionId, 'first');
     expect(res.status).toBe(200);
-    expect(env.ports.sessions.get(sessionId).ensure().event_count).toBe(1);
+    expect((await (await env.ports.sessions.get(sessionId)).ensure()).event_count).toBe(1);
     expect(warn.mock.calls.map((c) => String(c[0])).join('\n')).toMatch(
       new RegExp(`${sessionId}.*CONNECTION_CLOSED`),
     );
