@@ -17,3 +17,11 @@ Reviewers report only critical and major findings (ADR 0024).
 Edits since approval: tasks.md (tasks 1.1–3.4 ticked with Evidence; a note under group 4 says groups 4 and 5 land together, owner 2026-10-02, because the unbound facade breaks the server until group 5's wiring binds it). Task text, proposal, design and spec deltas are unchanged.
 Scope change: no
 No findings.
+
+## Consistency read 2026-10-02 (implementation)
+Edits since approval: tasks.md (1.1–6.3, 7.1 and 8.3 ticked with Evidence; the group 4/5 note, owner-approved). Proposal, design and spec deltas are unchanged.
+Scope change: no
+No findings. Minor notes, acted on or recorded:
+- The allowlist repo test exempted the two implementing modules file-wide, so a literal system binding there would have needed no review. The test now scans them; only the forwarded reason and the user binders are exempt, and a synthetic-tree test covers it (5.1 evidence).
+- The `gatedCatalog.int` expectation change (`'x'` to `null`) is correct: the preamble takes the SERIALIZABLE snapshot before the held insert (D4). The test also checks that no retry ran and that both rows committed.
+- The probe medians: p95 rose from 3.49 to 5.85 ms (1.68×) and p50 from 1.36 to 3.0 ms (2.2×), with 0 timeouts; under the owner's stop rule, reported to the owner.

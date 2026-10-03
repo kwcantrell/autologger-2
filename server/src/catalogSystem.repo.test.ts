@@ -126,14 +126,16 @@ function productionFiles(repoRoot: string): string[] {
 function scanCatalogBindings(repoRoot: string): ScanResult {
   const result: ScanResult = { system: [], nonLiteral: [], strayUser: [] };
   for (const file of productionFiles(repoRoot)) {
-    if (IMPLEMENTING.has(file)) continue;
+    // The implementing modules forward the caller's reason (a variable) and define the user
+    // binders, so only those two are exempt there; a literal system reason in them still counts.
+    const implementing = IMPLEMENTING.has(file);
     const text = fs.readFileSync(path.join(repoRoot, file), 'utf8');
     for (const m of text.matchAll(/\.(?:system|bindSystem)\(([^),]*)/g)) {
       const arg = (m[1] ?? '').trim();
       if (REASON_LITERAL.test(arg)) result.system.push({ file, reason: arg.slice(1, -1) });
-      else result.nonLiteral.push({ file, arg });
+      else if (!implementing) result.nonLiteral.push({ file, arg });
     }
-    if (/\.(?:forUser|bindUser)\(/.test(text) && !USER_BINDERS.has(file)) {
+    if (/\.(?:forUser|bindUser)\(/.test(text) && !USER_BINDERS.has(file) && !implementing) {
       result.strayUser.push(file);
     }
   }
@@ -204,6 +206,18 @@ describe('the scan is mutation-checked against synthetic trees (catalog-roles D1
       strayUser: [],
     });
     expect(compareWithAllowlist(r.system, allow)).toEqual({ unlisted: [], stale: [] });
+  });
+
+  it('a literal system reason inside an implementing module still counts', () => {
+    const root = tree({
+      'packages/catalog/src/catalog.ts':
+        "return root.bindSystem(reason);\nroot.bindSystem('hidden');\n",
+    });
+    expect(scanCatalogBindings(root)).toEqual({
+      system: [{ file: 'packages/catalog/src/catalog.ts', reason: 'hidden' }],
+      nonLiteral: [],
+      strayUser: [],
+    });
   });
 
   it('an unlisted reason fails, naming the file and the reason', () => {
