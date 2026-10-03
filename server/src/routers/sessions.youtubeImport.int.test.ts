@@ -60,6 +60,7 @@ import { createBindings } from '../node/config';
 import { anonApp, app, env, envWith } from '../test/harness';
 import { catalogFor, seedAccessMatrix, seededSession, testDb } from '../test/helpers';
 import { slowStorage } from '../test/session/slowStorage';
+import { nthUserCall, sessionGate } from '../test/session/sessionGate';
 import { harnessHub, testRegistry } from '../test/session/sessionRows';
 
 const FIXTURE_PATH = join(MEDIA_IMPORT_FIXTURES_DIR, 'fake-ytdlp.mjs');
@@ -1243,5 +1244,67 @@ describe('a YouTube import re-checks the caller’s access after the download (s
       takeEvents: 2,
     });
     expect(scratchEntriesFor(m.sessionId)).toEqual([]);
+  });
+});
+
+// session-content-policies D8 (task 5.1): a grant revoked between the route's gate and its anchor
+// refuses the anchor; the import answers the route's missing-access 404, not its 502 wrapper, and
+// its undo (run as `session-undo`) removes the segment and the blob.
+describe('a YouTube import refused at its anchor in a race (session-content-policies D8)', () => {
+  it('answers 404 Session not found (not 502), and the segment and its blob are undone', async () => {
+    const m = await seedAccessMatrix();
+    const { binaryPath } = freshBinary();
+    const gate = sessionGate();
+    const hub = await gate.registry.get(m.sessionId);
+    try {
+      const held = gate.holdNext(nthUserCall(2, 'tx'));
+      const pending = Promise.resolve(
+        app.request(
+          `/api/sessions/${m.sessionId}/youtube-import`,
+          {
+            method: 'POST',
+            headers: { 'content-type': 'application/json', cookie: m.granted.cookie },
+            body: JSON.stringify(VALID_BODY),
+          },
+          envWith(
+            { YTDLP_RESOLVED_PATH: binaryPath, HOST: '127.0.0.1', IP_ALLOWLIST: '' },
+            { sessions: gate.registry },
+          ),
+        ),
+      );
+      await held.reached;
+      await catalogFor().auth.authRevokeShow(m.granted.id, m.showId);
+      held.release();
+      const res = await pending;
+      expect(res.status).toBe(404);
+      expect(await res.json()).toEqual({ detail: 'Session not found' });
+      expect(await hub.listAudioSegments()).toEqual([]);
+      expect(await hub.exportEvents()).toEqual([]);
+      expect((await env.ports.audio.list({ prefix: `audio/${m.sessionId}/` })).objects).toEqual([]);
+    } finally {
+      await gate.registry.closeAll();
+    }
+  });
+});
+
+// session-content-policies D7 (owner decision 2026-10-03): a failure after the blob put undoes the
+// segment row and the stored file, as the local import's undo does; the route still answers its
+// 502 wrapper.
+describe('a YouTube import failing at its anchor removes its stored file (session-content-policies D7)', () => {
+  it('answers 502, leaves no segment row and no audio file', async () => {
+    const session = (await seededSession()).sessionId;
+    const { binaryPath } = freshBinary();
+    const anchor = vi
+      .spyOn(SessionHubView.prototype, 'anchorImportedTake')
+      .mockRejectedValueOnce(new Error('simulated anchor failure'));
+    try {
+      const res = await postImport(session, VALID_BODY, configuredEnv(binaryPath));
+      expect(res.status).toBe(502);
+      expect(anchor).toHaveBeenCalledTimes(1);
+      expect(await (await harnessHub(session)).listAudioSegments()).toEqual([]);
+      expect((await env.ports.audio.list({ prefix: `audio/${session}/` })).objects).toEqual([]);
+    } finally {
+      anchor.mockRestore();
+    }
   });
 });

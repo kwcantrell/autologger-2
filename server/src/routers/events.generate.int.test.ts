@@ -37,7 +37,13 @@ import type { Clock } from '@autologger/ports';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Bindings } from '../appEnv';
 import { app, defaultUser, env, envWith } from '../test/harness';
-import { catalogFor, seededSession as seedSessionChain, testDb } from '../test/helpers';
+import {
+  catalogFor,
+  seedAccessMatrix,
+  seededSession as seedSessionChain,
+  testDb,
+} from '../test/helpers';
+import { sessionGate, systemCall } from '../test/session/sessionGate';
 import { harnessHub, testRegistry } from '../test/session/sessionRows';
 import { slowStorage } from '../test/session/slowStorage';
 
@@ -1194,4 +1200,46 @@ describe('events/generate — mid-run interleaving (real HTTP requests during a 
       expect(events.filter((e) => e.message === 'SLATE')).toHaveLength(3);
     },
   );
+});
+
+// session-content-policies D7, D8 (owner decision P1; task 5.1): a regenerate whose member loses
+// the grant after the turn created the replacements still deletes the snapshot it replaces: the
+// delete runs as the reviewed system task `session-undo`, so no doubled set of generated events
+// is left behind.
+describe('regenerate after a revoke (session-content-policies P1)', () => {
+  it('the snapshot delete runs as session-undo after the turn, leaving only the replacements', async () => {
+    const m = await seedAccessMatrix({ categoriesJson: GEN_CATEGORIES_JSON });
+    seededIds.push(m.sessionId);
+    await seedAnchoredTranscript(m.sessionId);
+    await seedAutoSlateEvent(m.sessionId);
+    const gate = sessionGate();
+    try {
+      await gate.registry.get(m.sessionId);
+      const held = gate.holdNext(systemCall('session-undo'));
+      const pending = Promise.resolve(
+        app.request(
+          `/api/sessions/${m.sessionId}/events/generate`,
+          {
+            method: 'POST',
+            headers: { 'content-type': 'application/json', cookie: m.granted.cookie },
+            body: JSON.stringify({ regenerate: true }),
+          },
+          configuredEnv(EVENTS_SUCCESS_FIXTURE, {}, { sessions: gate.registry }),
+        ),
+      );
+      await held.reached;
+      await catalogFor().auth.authRevokeShow(m.granted.id, m.showId);
+      held.release();
+      const res = await pending;
+      expect(res.status, await res.clone().text()).toBe(200);
+      const body = (await res.json()) as { created: number; deleted: number };
+      expect(body.created).toBeGreaterThan(0);
+      expect(body.deleted).toBe(1);
+      const events = await listEvents(m.sessionId);
+      expect(events.some((event) => event.message === 'Old generated slate')).toBe(false);
+      expect(events).toHaveLength(body.created);
+    } finally {
+      await gate.registry.closeAll();
+    }
+  });
 });

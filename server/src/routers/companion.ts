@@ -21,6 +21,7 @@ import {
 } from '@autologger/domain';
 import type { PresenceMeta } from '@autologger/ports';
 import { type SessionHubFacade, systemCaller } from '@autologger/session-core';
+import { SessionAccessDeniedError } from '@autologger/storage';
 import { type Context, Hono } from 'hono';
 import type { AppEnv } from '../appEnv';
 import { ApiError } from '../httpError';
@@ -102,6 +103,20 @@ async function companionHub(c: Context<AppEnv>, sessionId: string): Promise<Sess
   return entry.as(c.get('user') === null ? systemCaller('companion-token') : sessionCaller(c));
 }
 
+const NO_ACTIVE_SESSION_DETAIL =
+  'No active session — open AutoLogger in a browser and open a session.';
+
+/** A signed-in caller's hub call refused for missing access after `requireActiveSession`
+ * (session-content-policies D8) answers the no-active-session `409`, as the check itself would. */
+async function activeSessionCall<T>(call: () => Promise<T>): Promise<T> {
+  try {
+    return await call();
+  } catch (err) {
+    if (err instanceof SessionAccessDeniedError) throw new ApiError(409, NO_ACTIVE_SESSION_DETAIL);
+    throw err;
+  }
+}
+
 async function callerMaySee(c: Context<AppEnv>, sessionId: string): Promise<boolean> {
   if (c.get('user') === null) return true;
   return canAccessSession(c, sessionId);
@@ -117,7 +132,7 @@ async function requireActiveSession(c: Context<AppEnv>): Promise<{ sid: string; 
     ? await companionCatalog(c).sessions.getSessionIndexRow(sid, { includeHidden: true })
     : null;
   if (!sid || row === null || !(await callerMaySee(c, sid))) {
-    throw new ApiError(409, 'No active session — open AutoLogger in a browser and open a session.');
+    throw new ApiError(409, NO_ACTIVE_SESSION_DETAIL);
   }
   return { sid, row };
 }
@@ -165,25 +180,40 @@ companionRouter.get('/api/companion/state', async (c) => {
       resolvedSid = null;
     } else {
       const hub = await companionHub(c, activeSid);
-      const live = await hub.statusLive(timecodeCtx(row));
-      const lease = await hub.leaseStatus();
-      const isPlaying = presences.some((p) => p.session_id === activeSid && p.is_playing);
-      sessionOut = {
-        id: activeSid,
-        title: String(row.title ?? ''),
-        deck_title: sessionDeckDisplayTitle({ storedTitle: String(row.title ?? '') }),
-        timecode: live.session_timecode,
-        frame_rate: Number(row.frame_rate ?? 24.0),
-        is_rolling: live.is_rolling,
-        current_take: live.current_take,
-        is_recording: lease.lease_alive,
-        is_playing: isPlaying,
-        logged_event_count: live.logged_event_count,
-        events_stream_revision: live.events_stream_revision,
-        show_id: (row.show_id as string | null) ?? null,
-        show_name: (row.show_name as string | null) ?? null,
-        show_code: (row.show_code as string | null) ?? null,
-      };
+      let status: [
+        Awaited<ReturnType<SessionHubFacade['statusLive']>>,
+        Awaited<ReturnType<SessionHubFacade['leaseStatus']>>,
+      ] | null;
+      try {
+        status = [await hub.statusLive(timecodeCtx(row)), await hub.leaseStatus()];
+      } catch (err) {
+        // A refusal for missing access (session-content-policies D8) is "cannot see the active
+        // session": the masked answer, not an error.
+        if (!(err instanceof SessionAccessDeniedError)) throw err;
+        status = null;
+      }
+      if (status === null) {
+        resolvedSid = null;
+      } else {
+        const [live, lease] = status;
+        const isPlaying = presences.some((p) => p.session_id === activeSid && p.is_playing);
+        sessionOut = {
+          id: activeSid,
+          title: String(row.title ?? ''),
+          deck_title: sessionDeckDisplayTitle({ storedTitle: String(row.title ?? '') }),
+          timecode: live.session_timecode,
+          frame_rate: Number(row.frame_rate ?? 24.0),
+          is_rolling: live.is_rolling,
+          current_take: live.current_take,
+          is_recording: lease.lease_alive,
+          is_playing: isPlaying,
+          logged_event_count: live.logged_event_count,
+          events_stream_revision: live.events_stream_revision,
+          show_id: (row.show_id as string | null) ?? null,
+          show_name: (row.show_name as string | null) ?? null,
+          show_code: (row.show_code as string | null) ?? null,
+        };
+      }
     }
   }
   const lastRaw = await c.env.ports.kv.get(LAST_COMMAND_KEY);
@@ -216,13 +246,15 @@ companionRouter.post('/api/companion/log', async (c) => {
     throw new ApiError(400, "Unknown category for the active session's show (by id or label).");
   }
   const meta = mergeCategoryUiSnapshotsIntoMetadata({}, cat);
-  const { event } = await (await companionHub(c, sid)).addEvent({
-    category: cat.id,
-    message: body.message,
-    metadataJson: JSON.stringify(meta),
-    markedAtUtc: null,
-    ctx: timecodeCtx(row),
-  });
+  const { event } = await activeSessionCall(async () =>
+    (await companionHub(c, sid)).addEvent({
+      category: cat.id,
+      message: body.message,
+      metadataJson: JSON.stringify(meta),
+      markedAtUtc: null,
+      ctx: timecodeCtx(row),
+    }),
+  );
   return c.json(enrichEventRpc(event, profile));
 });
 
@@ -233,12 +265,13 @@ companionRouter.post('/api/companion/transport', async (c) => {
   const hub = await companionHub(c, sid);
   // A toggle reads the transport and starts or stops the take in one hub transaction
   // (async-session-hub design D7, S6), so two concurrent toggles equal a serial order.
-  const { state } =
+  const { state } = await activeSessionCall(() =>
     body.action === 'toggle'
-      ? await hub.toggleTake(ctx)
+      ? hub.toggleTake(ctx)
       : body.action === 'start'
-        ? await hub.startTake(ctx)
-        : await hub.stopTake(ctx);
+        ? hub.startTake(ctx)
+        : hub.stopTake(ctx),
+  );
   return c.json({
     ok: true,
     is_rolling: Boolean(state.is_rolling),

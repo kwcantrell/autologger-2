@@ -598,7 +598,11 @@ describe('the log-import job re-checks its creator’s show access before each s
   /** Runs a two-sheet import as `creator`, calling `between` once after the first sheet's import
    * wrote its events (its insert, which commits the live projection with it, session-tables D8)
    * and before the second sheet. */
-  async function runTwoSheetImport(creator: string, between: () => Promise<void>) {
+  async function runTwoSheetImport(
+    creator: string,
+    between: () => Promise<void>,
+    opts: { beforeFirstCall?: boolean } = {},
+  ) {
     const studio = await seedMemberStudio();
     const show = await seedShow({ studioId: studio, categoriesJson: CATEGORIES });
     await catalogFor().auth.authAddMembershipWithRole(creator, studio, 'member');
@@ -616,6 +620,18 @@ describe('the log-import job re-checks its creator’s show access before each s
     const hookedHub = (hub: SessionHubFacade): SessionHubFacade =>
       new Proxy(hub, {
         get(target, prop) {
+          // session-content-policies task 5.1: `beforeFirstCall` runs `between` once before s1's
+          // first hub call instead, after the job's per-sheet access check.
+          const member = Reflect.get(target, prop, target);
+          if (opts.beforeFirstCall && typeof member === 'function') {
+            return async (...args: unknown[]) => {
+              if (!hooked) {
+                hooked = true;
+                await between();
+              }
+              return (member as (...a: unknown[]) => unknown).apply(target, args);
+            };
+          }
           if (prop === 'addEventAtTotalFramesIfAbsent') {
             return async (input: Parameters<SessionHubFacade['addEventAtTotalFramesIfAbsent']>[0]) => {
               const result = await target.addEventAtTotalFramesIfAbsent(input);
@@ -690,6 +706,34 @@ describe('the log-import job re-checks its creator’s show access before each s
     expect(body.lines[body.lines.length - 1]).toBe('Access revoked; stopping.');
     expect(body.lines.join('\n')).not.toContain('Done.');
     expect(await eventMessages(run.s1)).toContain(SHEET_ROW);
+    expect(await eventMessages(run.s2)).not.toContain(SHEET_ROW);
+  });
+
+  it('a creator revoked after the per-sheet check: the sheet fails with the neutral refusal, no event is stored, and the next sheet stops the job', async () => {
+    const member = await seedUser();
+    const cookie = await loginCookie(member);
+    let showId = '';
+    const run = await runTwoSheetImport(
+      member,
+      async () => {
+        await catalogFor().auth.authRevokeShow(member, showId);
+      },
+      { beforeFirstCall: true },
+    );
+    showId = run.show;
+    await grant(member, run.show);
+
+    const post = await postImport(run.show, run.bindings, { cookie });
+    expect(post.status).toBe(200);
+    const { job_id } = (await post.json()) as { job_id: string };
+    const body = await finished(job_id, cookie);
+
+    expect(run.hookedRef(), body.lines.join('\n')).toBe(true);
+    expect(body.lines).toContain('Failed “EP 1”: access to the session was refused');
+    expect(body.status, body.lines.join('\n')).toBe('failed');
+    expect(body.error).toBe('Access revoked.');
+    expect(body.lines[body.lines.length - 1]).toBe('Access revoked; stopping.');
+    expect(await eventMessages(run.s1)).not.toContain(SHEET_ROW);
     expect(await eventMessages(run.s2)).not.toContain(SHEET_ROW);
   });
 

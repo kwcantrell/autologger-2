@@ -33,3 +33,10 @@ Scope change: no (same assertion, already approved in 4.7, landing one commit ea
 - [x] [minor] D12's new bullet list was headed "no assertion changes" while its last bullet moves one. Resolved: the heading now says the last bullet moves one approved assertion change.
 - [x] [minor] Checked: D9 ("Commit 3a only moves `session-hub` to `SessionHub.ts`") and proposal "new `PostgresSessionDb(` only in the composition root and the merge script" agree with 3a's `config.ts` building `new PostgresSessionDb(catalogDb)` with no `session-hub` binding. No contradiction.
 - [x] [minor] Checked: every spec-delta requirement still maps to a task and test (tasks 2.1, 3.1, 4.1-4.2, 5.1); no task touches a proposal non-goal.
+
+## Consistency read 2026-10-03 (after the 5.1 stop)
+Edits since the previous read: design.md D7 (+ post-approval owner decision: the YouTube import's undo paths after its put also delete the stored file, best-effort as the local import's undo), design.md D12 (+ group 4 and group 5 test-plumbing bullets), tasks.md (5.2 adds the file delete and a non-race YouTube failure check to its Verify; evidence for 3.2-4.7)
+Scope change: no (the change brings the code to the approved scenario "An import refused in a race is undone and answers 404", which already says "the segment and its blob are removed"; no contract, status or body changes: the failed import's answer is unchanged, only an internal orphan file goes)
+- [x] [minor] Before the decision, design D7's undo sites (segment deletes only) and the spec scenario (segment and blob removed) disagreed for the YouTube import. Resolved: D7's owner-decision bullet and task 5.2 now include the file delete; the spec stands as written.
+- [x] [minor] Checked: D8 ("its undo already ran" before the 404), D7's seven `undoHub` sites and the D9 allowlist are unchanged by the file delete (the blob store is not a session caller). No contradiction.
+- [x] [minor] Checked: every spec-delta requirement still has a task and a test; no task touches a proposal non-goal.

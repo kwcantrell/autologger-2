@@ -3,7 +3,11 @@
 // upgradeWebSocket (from @hono/node-ws in main.ts; a 426 stub in HTTP tests).
 
 import { ValidationError } from '@autologger/domain';
-import { CatalogInvalidTextError, InvalidRangeError } from '@autologger/storage';
+import {
+  CatalogInvalidTextError,
+  InvalidRangeError,
+  SessionAccessDeniedError,
+} from '@autologger/storage';
 import { RESPONSE_ALREADY_SENT } from '@hono/node-server/utils/response';
 import type { Hono, MiddlewareHandler } from 'hono';
 import { compress } from 'hono/compress';
@@ -223,6 +227,11 @@ export function wireApp(
     if (err instanceof SyntaxError) return c.json({ detail: 'Invalid JSON body.' }, 400);
     // api-contract-freeze "Text containing NUL is refused" (catalog-on-postgres D5).
     if (err instanceof CatalogInvalidTextError) return c.json({ detail: err.message }, 400);
+    // core-ports-architecture "Session hub calls refused in a race" (session-content-policies D8):
+    // a hub call refused for missing access answers what `requireSession` answers for it.
+    if (err instanceof SessionAccessDeniedError) {
+      return c.json({ detail: 'Session not found' }, 404);
+    }
     console.error('unhandled error', ...redactDatabaseError(err));
     return c.json({ detail: 'Internal Server Error' }, 500);
   });

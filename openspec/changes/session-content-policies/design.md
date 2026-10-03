@@ -322,6 +322,12 @@ storage or ports' concrete handles, and a handle carries connections, not just a
   and is replacing with the events its turn created; the ids come from the request, never from the
   client. The literal sits in each of the three router files, so each file's use is an allowlist
   entry (D9).
+- **Post-approval (owner decision, 2026-10-03, after the 5.1 stop):** the YouTube import's undo
+  paths after its blob put (the final rolling guard and the anchor failure) also delete the stored
+  audio file, as the local import's `rollbackLocalAudioImportSegment` already does: row first, then
+  the file best-effort (`.catch(() => {})`, so a failed delete never masks the original error). The
+  approved scenario "An import refused in a race is undone and answers 404" stands as written. This
+  also fixes the pre-existing orphan file left after any failed YouTube import past its put.
 - The AI runtime receives a `SessionCaller`, never a user id, so `userCaller` is made only in two
   router files (`_helpers.ts`, `logImport.ts`), which the scan holds (D9). core-ports-architecture
   "AI tool bodies consume the session facade directly" still holds: bodies resolve the hub through
@@ -505,6 +511,16 @@ Test plumbing found in group 4 (post-approval; no scope change, no expected valu
   request), as `snapshot.int` does; inside it the adapter refuses the root handle.
 - `catalogSystem.repo.test.ts`'s session rules are a separate `scanSessionCallers`, so the existing
   fixtures' result shapes are unchanged.
+
+Test plumbing found in group 5 (post-approval; no scope change, no expected value changed):
+- `server/src/test/session/sessionGate.ts`: a registry whose storage holds one matching call
+  (`nthUserCall`, `systemCall`) before it starts, the session-storage counterpart of
+  `GatedCatalog`, for the 5.1 races.
+- `logImport.int`'s `runTwoSheetImport` takes `{ beforeFirstCall }`, which runs the hook before
+  the first sheet's first hub call instead of after its insert.
+- Placement: the YouTube and regenerate races sit in `sessions.youtubeImport.int` and
+  `events.generate.int`, which own the fake `yt-dlp` and the fake CLI; the other route races are
+  in `catalogPolicies.int` beside the precedent.
 
 ## D13. Specs, README and ADR 0021
 

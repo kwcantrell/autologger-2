@@ -18,12 +18,13 @@ import {
   getAiMcpListener,
 } from '@autologger/ai-runtime/aiMcpServer';
 import { AI_RUNTIME_FIXTURES_DIR } from '@autologger/ai-runtime/fixturesDir';
-import { SessionHubView } from '@autologger/session-core';
+import { SessionHubView, userCaller } from '@autologger/session-core';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { slowStorage } from './slowStorage';
 import { TEST_CALLER, type TestRegistry, testRegistry } from './sessionRows';
+import { catalogFor, seedAccessMatrix } from '../helpers';
 
 let registry: TestRegistry;
 let listener: AiMcpListener;
@@ -1864,6 +1865,43 @@ describe('get_transcript_words — pagedWords keying + page coverage (2.1)', () 
       expect((await fetchPage(turn, 0)).content[0].text).toContain('live');
       expect(turn.pageCoverage()).toEqual({ totalPages: 0, servedPages: 0 });
       expect(allTranscriptPagesServed(turn.pageCoverage())).toBe(true);
+    } finally {
+      turn.dispose();
+    }
+  });
+});
+
+// session-content-policies D8 (task 5.1): a turn's tool bodies run as the user who started it;
+// after that user loses access, a tool call is refused by the database and reports it through the
+// tool's own failure path, creating nothing. The text names neither the session nor the user.
+describe('tool calls after the turn’s user is revoked (session-content-policies D8)', () => {
+  it('create_event returns isError and list_topics a tool error with the neutral text; nothing is created', async () => {
+    const m = await seedAccessMatrix();
+    const turn = listener.registerTurn(m.sessionId, userCaller(m.granted.id), {
+      tools: ['list_topics', 'create_event'],
+      generation: genContext().generation,
+    });
+    try {
+      await catalogFor().auth.authRevokeShow(m.granted.id, m.showId);
+      const created = await createEventViaMcp(turn.url, turn.token, {
+        category: 'cat1',
+        message: 'SLATE',
+        session_time: '00:00:01:00',
+      });
+      expect(created.isError).toBe(true);
+      expect(turn.createdEvents()).toBe(0);
+      const { client, close } = await connectMcp(turn.url, turn.token);
+      let topics: ToolResult;
+      try {
+        topics = (await client.callTool({ name: 'list_topics', arguments: {} })) as ToolResult;
+      } finally {
+        await close();
+      }
+      expect(topics.isError).toBe(true);
+      expect(topics.content[0]?.text).toBe('access to the session was refused');
+      expect(JSON.stringify([created, topics])).not.toContain(m.sessionId);
+      expect(JSON.stringify([created, topics])).not.toContain(m.granted.id);
+      expect(await listEventRows(m.sessionId)).toEqual([]);
     } finally {
       turn.dispose();
     }

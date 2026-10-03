@@ -41,6 +41,7 @@ import {
   type SessionHubFacade,
   systemCaller,
 } from '@autologger/session-core';
+import { SessionAccessDeniedError } from '@autologger/storage';
 import type { Context } from 'hono';
 import { Hono } from 'hono';
 import type { AppEnv } from '../appEnv';
@@ -549,6 +550,8 @@ sessionsRouter.post('/api/sessions/:sessionId/youtube-import', async (c) => {
     // refusal here rolls it back rather than leaving an unanchored orphan.
     if ((await (await getSessionHub(c, sessionId)).statusLive(ctx)).is_rolling) {
       await (await undoHub(c, sessionId)).deleteAudioSegment(seg.id);
+      // The stored file too, best-effort, as the local import's undo (session-content-policies D7).
+      await c.env.ports.audio.delete(seg.r2_key).catch(() => {});
       throw new ApiError(409, YOUTUBE_IMPORT_ROLLING_DETAIL);
     }
 
@@ -567,6 +570,9 @@ sessionsRouter.post('/api/sessions/:sessionId/youtube-import', async (c) => {
       });
     } catch (err) {
       await (await undoHub(c, sessionId)).deleteAudioSegment(seg.id);
+      // The stored file too, best-effort so it never masks `err`, as the local import's undo
+      // (session-content-policies D7, owner decision 2026-10-03).
+      await c.env.ports.audio.delete(seg.r2_key).catch(() => {});
       // A take started after the final guard: the anchor refused it inside its transaction
       // (session-tables D7), so the request ends as that guard's refusal does, not as a 502.
       if (err instanceof ImportWhileRollingError) {
@@ -596,6 +602,9 @@ sessionsRouter.post('/api/sessions/:sessionId/youtube-import', async (c) => {
     return c.json({ ok: true });
   } catch (err) {
     if (err instanceof ApiError) throw err;
+    // A refusal for missing access keeps the session routes' 404 (session-content-policies D8); its
+    // undo already ran.
+    if (err instanceof SessionAccessDeniedError) throw err;
     // Every post-validation failure (download/extract, bound breach,
     // unsupported container, put failure) maps to a clean 502 {detail} — D7.
     // YtDlpError's `.message` is already a safe, non-sensitive summary; any
