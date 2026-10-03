@@ -472,6 +472,20 @@ facade check extended to `SessionHubEntry` (A16).
 tests, `sessionWs` tests, `sessionHub.interleave.int.test.ts` (same observables: frames 143,
 revisions 81 → 224, final events 104), and the full suites.
 
+Test plumbing found in group 3 (post-approval; no scope change; the last bullet moves one approved assertion change, the others change no assertion):
+- `packages/storage/src/postgresCatalogStore.pg.test.ts`'s pool-saturation case passes a session
+  id to `PostgresBoundHandle.snapshot`, which now takes one (D4); its system binding sends no
+  probe.
+- `postgresSessionSql.pg.test.ts`'s `connect` seam also records, per statement, its connection's
+  replies so far, which the round-trip case counts.
+- `sessionRows.ts` exports `TEST_CALLER` (`systemCaller('test-harness')`), which its raw helpers,
+  `boundCore.ts` and the direct storage calls in `alarmAfterCommit`, `poolIsolation` and `snapshot`
+  (`*.int.test.ts`) pass.
+- `catalogBinding.int.test.ts`'s composition-root case ("the composition root makes no
+  `session-hub` binding") changes in commit 3a (task 3.2), not 3b (task 4.7), by owner decision
+  (2026-10-03, after the 3.2 stop): commit 3a's `config.ts` already stops binding `session-hub`
+  at construction, so the old assertion cannot hold there. Same assertion, earlier commit.
+
 ## D13. Specs, README and ADR 0021
 
 - Specs: the deltas (catalog-database, core-ports-architecture). api-contract-freeze and

@@ -49,3 +49,14 @@ export class SessionNotFoundError extends Error {
     super(`session ${sessionId} does not exist`);
   }
 }
+
+/** A user-bound session transaction or snapshot was refused: the session exists, and the user has
+ * no access to its show (session-content-policies D4). It is raised before the body runs, never
+ * retried, and its message is neutral and names no id (it can reach an AI model or a job line); the
+ * id is the `sessionId` property. */
+export class SessionAccessDeniedError extends Error {
+  override name = 'SessionAccessDeniedError';
+  constructor(readonly sessionId: string) {
+    super('access to the session was refused');
+  }
+}

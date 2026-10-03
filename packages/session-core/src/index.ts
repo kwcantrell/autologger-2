@@ -24,6 +24,7 @@ export * from './eventStore';
 export * from './fifoLock';
 export * from './leaseStore';
 export * from './SessionHub';
+export * from './sessionCaller';
 export * from './sessionCore';
 export * from './storeHelpers';
 export * from './topicStore';

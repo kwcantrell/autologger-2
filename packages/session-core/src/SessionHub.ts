@@ -44,6 +44,7 @@ import type {
   TimecodeCtx,
   TransportState,
 } from './sessionCore';
+import { systemCaller } from './sessionCaller';
 import { SessionCore } from './sessionCore';
 import type { Topic } from './topicStore';
 import { TopicStore } from './topicStore';
@@ -420,6 +421,11 @@ async function nextRecordingOrdinal(s: HubStores): Promise<number> {
   return maxOrdinal + 1;
 }
 
+/** Every hub storage call runs as this one internal system caller (session-content-policies commit
+ * 3a: the caller passes through the seam with no behaviour change; commit 3b binds each call to its
+ * own caller). */
+const HUB_CALLER = systemCaller('session-hub');
+
 export class SessionHub implements SessionHubFacade {
   /** Marks the async context of an open transaction body (design D4); the lease alarm is armed
    * outside it (design D6, spike A11). */
@@ -500,7 +506,9 @@ export class SessionHub implements SessionHubFacade {
       try {
         return mode === 'write'
           ? await this.transaction(body)
-          : await this.storage.snapshot((t) => body(storesFor(this.core.forSnapshot(t))));
+          : await this.storage.snapshot(HUB_CALLER, (t) =>
+              body(storesFor(this.core.forSnapshot(t))),
+            );
       } finally {
         release();
       }
@@ -539,7 +547,7 @@ export class SessionHub implements SessionHubFacade {
       bound.core?.discardHeldAlarm();
     };
     try {
-      const value = await this.storage.tx((t) => {
+      const value = await this.storage.tx(HUB_CALLER, (t) => {
         drop();
         const ctx: TxContext = { hub: this, open: true, parent };
         return SessionHub.txContext.run(ctx, async () => {

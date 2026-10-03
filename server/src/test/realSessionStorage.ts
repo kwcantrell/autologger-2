@@ -19,7 +19,7 @@ export async function realSessionRegistry(
   await catalogDb
     .bindSystem('test-seed')
     .run('INSERT INTO sessions (id) VALUES (?) ON CONFLICT DO NOTHING', sessionId);
-  const sessions = new PostgresSessionDb(catalogDb.bindSystem('session-hub'));
+  const sessions = new PostgresSessionDb(catalogDb);
   const registry = new SessionHubRegistry({ storage: (id) => sessions.forSession(id) });
   return {
     registry,

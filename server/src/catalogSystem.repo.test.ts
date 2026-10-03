@@ -8,14 +8,17 @@ import { afterEach, describe, expect, it } from 'vitest';
 // (core-ports-architecture "Every catalog call is bound to a caller": "System reasons are
 // reviewed".)
 //
-// Every `.system('<reason>')` / `.bindSystem('<reason>')` call in production sources of
-// `server/src` and `packages/*/src` must name its reason as a single-quoted string literal, and
+// Every `.system('<reason>')` / `.bindSystem('<reason>')` / `systemCaller('<reason>')` call in
+// production sources of `server/src`, `server/scripts` and `packages/*/src` must name its reason as
+// a single-quoted string literal (session-content-policies D9: a system session caller is reviewed
+// like a system catalog binding), and
 // the set of `{ file, reason }` pairs must equal ALLOWLIST below in both directions: a new call
 // site, a new reason or a reason moved to another file fails as unlisted, and an entry no longer
 // used fails as stale. `.forUser(` / `.bindUser(` may appear only in the auth middleware.
 //
-// The implementing modules (the catalog facade, the Postgres adapter and the session storage over
-// it) are exempt: they define the bindings and forward the caller's reason or handle. Tests are
+// The implementing modules (the catalog facade, the Postgres adapter, the session storage over it
+// and session-core's caller constructors) are exempt: they define the bindings and forward the
+// caller's reason or handle. Tests are
 // exempt (`*.test.ts`, `**/test/**`).
 //
 // LIMITS (stated, not papered over): this is a textual scan. An alias (`const s = c.system;
@@ -35,9 +38,14 @@ const ALLOWLIST: readonly { file: string; reason: string; why: string }[] = [
     why: 'login sessions, OAuth state, the Companion last command and the expiry purges',
   },
   {
-    file: 'server/src/node/config.ts',
+    file: 'packages/session-core/src/SessionHub.ts',
     reason: 'session-hub',
-    why: 'every session hub statement, until slice 7b-2 binds hub calls to their caller',
+    why: 'every session hub storage call, until commit 3b binds each hub call to its caller',
+  },
+  {
+    file: 'server/scripts/merge-session-audio.ts',
+    reason: 'merge-audio-script',
+    why: "the operator's merge script reads a session's audio segments, for any session",
   },
   { file: 'server/src/main.ts', reason: 'boot-wait', why: 'the boot-time readiness wait' },
   {
@@ -84,6 +92,7 @@ const ALLOWLIST: readonly { file: string; reason: string; why: string }[] = [
 
 const IMPLEMENTING = new Set([
   'packages/catalog/src/catalog.ts',
+  'packages/session-core/src/sessionCaller.ts',
   'packages/storage/src/postgresCatalogStore.ts',
   'packages/storage/src/postgresSessionSql.ts',
 ]);
@@ -118,6 +127,7 @@ function productionFiles(repoRoot: string): string[] {
     }
   };
   walk(path.join(repoRoot, 'server/src'));
+  walk(path.join(repoRoot, 'server/scripts'));
   const pkgs = path.join(repoRoot, 'packages');
   if (fs.existsSync(pkgs)) {
     for (const p of fs.readdirSync(pkgs)) walk(path.join(pkgs, p, 'src'));
@@ -132,7 +142,7 @@ function scanCatalogBindings(repoRoot: string): ScanResult {
     // binders, so only those two are exempt there; a literal system reason in them still counts.
     const implementing = IMPLEMENTING.has(file);
     const text = fs.readFileSync(path.join(repoRoot, file), 'utf8');
-    for (const m of text.matchAll(/\.(?:system|bindSystem)\(([^),]*)/g)) {
+    for (const m of text.matchAll(/(?:\.(?:system|bindSystem)|\bsystemCaller)\(([^),]*)/g)) {
       const arg = (m[1] ?? '').trim();
       if (REASON_LITERAL.test(arg)) result.system.push({ file, reason: arg.slice(1, -1) });
       else if (!implementing) result.nonLiteral.push({ file, arg });
@@ -254,6 +264,35 @@ describe('the scan is mutation-checked against synthetic trees (catalog-roles D1
       unlisted: [],
       stale: ['server/src/a.ts job-a'],
     });
+  });
+
+  // session-content-policies design D9 (commit 3a): session callers are reviewed bindings too.
+  it("an unlisted systemCaller('x') fails, naming the file and the reason", () => {
+    const root = tree({
+      'packages/session-core/src/hub.ts': "cat.system('job-a');\nconst c = systemCaller('x');\n",
+    });
+    expect(compareWithAllowlist(scanCatalogBindings(root).system, allow)).toEqual({
+      unlisted: ['packages/session-core/src/hub.ts job-a', 'packages/session-core/src/hub.ts x'],
+      stale: ['server/src/a.ts job-a'],
+    });
+  });
+
+  it('a systemCaller(reason) with a variable is a violation', () => {
+    const root = tree({ 'server/src/a.ts': "cat.system('job-a');\nhub.as(systemCaller(reason));\n" });
+    expect(scanCatalogBindings(root).nonLiteral).toEqual([{ file: 'server/src/a.ts', arg: 'reason' }]);
+  });
+
+  it('a binding under server/scripts is scanned', () => {
+    const root = tree({
+      'server/scripts/tool.ts':
+        "root.bindSystem('script-job');\nsessions.snapshot(systemCaller('script-read'), fn);\nroot.bindSystem(r);\n",
+    });
+    const r = scanCatalogBindings(root);
+    expect(r.system).toEqual([
+      { file: 'server/scripts/tool.ts', reason: 'script-job' },
+      { file: 'server/scripts/tool.ts', reason: 'script-read' },
+    ]);
+    expect(r.nonLiteral).toEqual([{ file: 'server/scripts/tool.ts', arg: 'r' }]);
   });
 
   it('a stray forUser or bindUser fails', () => {

@@ -7,7 +7,7 @@
 import { describe, expect, it } from 'vitest';
 import { app, env } from '../harness';
 import { seededSession, testDb } from '../helpers';
-import { createSessionRow, sessionDb } from './sessionRows';
+import { createSessionRow, sessionDb, TEST_CALLER } from './sessionRows';
 
 /** Holds `n` session connections with open snapshots until `release`. */
 async function holdSessionSlots(n: number) {
@@ -20,7 +20,7 @@ async function holdSessionSlots(n: number) {
   const held = await Promise.all(Array.from({ length: n }, async () => createSessionRow())).then(
     (ids) =>
       ids.map((id) =>
-        db.forSession(id).snapshot(async (t) => {
+        db.forSession(id).snapshot(TEST_CALLER, async (t) => {
           await t.all('SELECT 1 AS x FROM session_meta WHERE session_id = ?', id);
           entered += 1;
           await released;
@@ -86,7 +86,7 @@ describe('saturated session connections', () => {
       const fifthId = await createSessionRow();
       const fifth = sessionDb()
         .forSession(fifthId)
-        .tx((t) =>
+        .tx(TEST_CALLER, (t) =>
           t.run("INSERT INTO session_meta (session_id, key, value) VALUES (?, 'k', 'v')", fifthId),
         )
         .finally(() => {

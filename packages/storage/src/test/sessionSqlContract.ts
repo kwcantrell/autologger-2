@@ -2,15 +2,19 @@
 // "The Postgres session adapter"): the session seam's transactions and snapshots, run against an
 // adapter over a database with the session tables and one seeded `catalog.sessions` row.
 // Statements use `session_meta` and `session_transcript_words`, scoped by `session_id`.
+// session-content-policies design D4, D12: every call names its caller. The 7b-1 cases run as a
+// system caller (assertions unchanged); the user cases run under the content policies, against a
+// fixture whose session belongs to a show with an owner, a granted and an ungranted member.
 import type { CatalogDb } from '@autologger/ports';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import {
   CatalogTxMisuseError,
   CatalogTxTimeoutError,
+  SessionAccessDeniedError,
   SessionNotFoundError,
 } from '../catalogErrors';
 import { CatalogInvalidTextError } from '../postgresCatalogStore';
-import type { SessionSqlHandle, SessionStorage } from '../postgresSessionSql';
+import type { SessionCallerShape, SessionSqlHandle, SessionStorage } from '../postgresSessionSql';
 import { gate, prompt } from './catalogDbContract';
 
 /** A failure the fixture injects through the adapter's `connect` seam, once. */
@@ -21,8 +25,14 @@ export type SessionFault =
   | { kind: 'rollback-unconfirmed' };
 
 export interface SessionContractFixture {
-  /** The seeded session. */
+  /** The seeded session (of a show of a team with an owner, a granted and an ungranted member). */
   sessionId: string;
+  /** User callers: the team's owner, a member granted the session's show, a member without a
+   * grant. */
+  users: { owner: SessionCallerShape; granted: SessionCallerShape; ungranted: SessionCallerShape };
+  /** The round trips `fn`'s adapter statements took: statements sent before any reply to the
+   * previous ones on their connection share one (counted through the adapter's `connect` seam). */
+  roundTrips(fn: () => Promise<unknown>): Promise<number>;
   storage(sessionId?: string): SessionStorage;
   /** A catalog binding on the same adapter. */
   catalog: CatalogDb;
@@ -46,6 +56,8 @@ const INSERT = 'INSERT INTO session_meta (session_id, key, value) VALUES (?, ?, 
 const KEYS = 'SELECT key FROM session_meta WHERE session_id = ? ORDER BY key';
 const keysOf = (rows: { key: string }[]) => rows.map((r) => r.key);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+/** The 7b-1 cases' caller: a system task (session-content-policies D12). */
+const SYS: SessionCallerShape = { kind: 'system', reason: 'test' };
 
 export function describeSessionSqlContract(name: string, target: SessionContractTarget): void {
   describe(`${name}: session storage contract`, () => {
@@ -73,7 +85,7 @@ export function describeSessionSqlContract(name: string, target: SessionContract
     it('commits: run returns the affected-row count, all returns rows, counts are numbers', async () => {
       const f = await make();
       const s = f.storage();
-      const changes = await s.tx(async (t) => {
+      const changes = await s.tx(SYS, async (t) => {
         const a = await t.run(INSERT, f.sessionId, 'a', '1');
         const b = await t.run(INSERT, f.sessionId, 'b', '2');
         const none = await t.run(
@@ -86,7 +98,7 @@ export function describeSessionSqlContract(name: string, target: SessionContract
       });
       expect(changes).toEqual([1, 1, 0]);
       expect(await f.keys()).toEqual(['a', 'b']);
-      const read = await s.snapshot(async (t) => ({
+      const read = await s.snapshot(SYS, async (t) => ({
         keys: keysOf(await t.all<{ key: string }>(KEYS, f.sessionId)),
         n: (
           await t.all<{ n: number }>(
@@ -102,14 +114,14 @@ export function describeSessionSqlContract(name: string, target: SessionContract
       const f = await make();
       const s = f.storage();
       await expect(
-        s.tx(async (t) => {
+        s.tx(SYS, async (t) => {
           await t.run(INSERT, f.sessionId, 'thrown', '1');
           throw new Error('boom');
         }),
       ).rejects.toThrow('boom');
-      await s.tx(async (t) => t.run(INSERT, f.sessionId, 'dup', '1'));
+      await s.tx(SYS, async (t) => t.run(INSERT, f.sessionId, 'dup', '1'));
       await expect(
-        s.tx(async (t) => {
+        s.tx(SYS, async (t) => {
           await t.run(INSERT, f.sessionId, 'before', '1');
           await t.run(INSERT, f.sessionId, 'dup', '2').catch(() => {});
           await t.run(INSERT, f.sessionId, 'after', '1').catch(() => {});
@@ -121,13 +133,13 @@ export function describeSessionSqlContract(name: string, target: SessionContract
     it('a joined t.tx commits with the outer transaction, and its failure rolls all of it back', async () => {
       const f = await make();
       const s = f.storage();
-      await s.tx(async (t) => {
+      await s.tx(SYS, async (t) => {
         await t.run(INSERT, f.sessionId, 'outer', '1');
         await t.tx(async (j) => j.run(INSERT, f.sessionId, 'inner', '1'));
       });
       expect(await f.keys()).toEqual(['inner', 'outer']);
       await expect(
-        s.tx(async (t) => {
+        s.tx(SYS, async (t) => {
           await t.run(INSERT, f.sessionId, 'outer2', '1');
           await t
             .tx(async (j) => {
@@ -144,7 +156,7 @@ export function describeSessionSqlContract(name: string, target: SessionContract
       const f = await make();
       const s = f.storage();
       let kept: SessionSqlHandle | undefined;
-      await s.tx(async (t) => {
+      await s.tx(SYS, async (t) => {
         kept = t;
       });
       await expect(kept?.run(INSERT, f.sessionId, 'late', '1')).rejects.toBeInstanceOf(
@@ -152,7 +164,7 @@ export function describeSessionSqlContract(name: string, target: SessionContract
       );
       const g = gate();
       await expect(
-        s.tx(async (t) => {
+        s.tx(SYS, async (t) => {
           void t.tx(async () => {
             await g.wait;
           });
@@ -160,15 +172,15 @@ export function describeSessionSqlContract(name: string, target: SessionContract
       ).rejects.toBeInstanceOf(CatalogTxMisuseError);
       g.open();
       for (const nested of [
-        () => s.tx(async () => 1),
-        () => s.snapshot(async () => 1),
-        () => f.storage('other-session').tx(async () => 1),
+        () => s.tx(SYS, async () => 1),
+        () => s.snapshot(SYS, async () => 1),
+        () => f.storage('other-session').tx(SYS, async () => 1),
         () => f.catalog.all('SELECT 1 AS one'),
       ]) {
         let inner: unknown;
         await expect(
           prompt(
-            s.tx(async (t) => {
+            s.tx(SYS, async (t) => {
               await t.run(INSERT, f.sessionId, 'nested', '1');
               inner = await nested().catch((e: unknown) => e);
             }),
@@ -186,7 +198,7 @@ export function describeSessionSqlContract(name: string, target: SessionContract
       // Inside a body, another connection's FOR UPDATE on the row waits for the commit.
       let other: ReturnType<SessionContractFixture['lockElsewhere']> | undefined;
       let otherLocked = false;
-      await s.tx(async (t) => {
+      await s.tx(SYS, async (t) => {
         await t.run(INSERT, f.sessionId, 'held', '1');
         other = f.lockElsewhere();
         void other.locked.then(() => {
@@ -201,7 +213,7 @@ export function describeSessionSqlContract(name: string, target: SessionContract
       const held = f.lockElsewhere();
       await prompt(held.locked, 3000);
       let ran = false;
-      const waiting = s.tx(async (t) => {
+      const waiting = s.tx(SYS, async (t) => {
         ran = true;
         await t.run(INSERT, f.sessionId, 'after-lock', '1');
       });
@@ -217,21 +229,21 @@ export function describeSessionSqlContract(name: string, target: SessionContract
       const f = await make();
       let ran = false;
       await expect(
-        f.storage('no-such-session').tx(async () => {
+        f.storage('no-such-session').tx(SYS, async () => {
           ran = true;
         }),
       ).rejects.toBeInstanceOf(SessionNotFoundError);
       expect(ran).toBe(false);
       // The adapter keeps working.
-      await f.storage().tx(async (t) => t.run(INSERT, f.sessionId, 'ok', '1'));
+      await f.storage().tx(SYS, async (t) => t.run(INSERT, f.sessionId, 'ok', '1'));
       expect(await f.keys()).toEqual(['ok']);
     });
 
     it("a snapshot's statements see one state while another connection commits between them", async () => {
       const f = await make();
       const s = f.storage();
-      await s.tx(async (t) => t.run(INSERT, f.sessionId, 'first', '1'));
-      const [before, after] = await s.snapshot(async (t) => {
+      await s.tx(SYS, async (t) => t.run(INSERT, f.sessionId, 'first', '1'));
+      const [before, after] = await s.snapshot(SYS, async (t) => {
         const a = keysOf(await t.all<{ key: string }>(KEYS, f.sessionId));
         await f.insertElsewhere('between');
         const b = await t.tx(async (j) => keysOf(await j.all<{ key: string }>(KEYS, f.sessionId)));
@@ -245,7 +257,7 @@ export function describeSessionSqlContract(name: string, target: SessionContract
     it('a write inside a snapshot fails with 25006 and writes nothing', async () => {
       const f = await make();
       await expect(
-        f.storage().snapshot(async (t) => t.run(INSERT, f.sessionId, 'ro', '1')),
+        f.storage().snapshot(SYS, async (t) => t.run(INSERT, f.sessionId, 'ro', '1')),
       ).rejects.toMatchObject({ code: '25006' });
       expect(await f.keys()).toEqual([]);
     });
@@ -256,7 +268,7 @@ export function describeSessionSqlContract(name: string, target: SessionContract
       const ended = f.endedClients();
       await expect(
         prompt(
-          s.tx(async (t) => {
+          s.tx(SYS, async (t) => {
             await t.run(INSERT, f.sessionId, 'doomed', '1');
             throw new Error('boom');
           }),
@@ -265,7 +277,7 @@ export function describeSessionSqlContract(name: string, target: SessionContract
       ).rejects.toThrow('boom');
       expect(f.endedClients()).toBeGreaterThan(ended);
       await prompt(
-        s.tx(async (t) => t.run(INSERT, f.sessionId, 'next', '1')),
+        s.tx(SYS, async (t) => t.run(INSERT, f.sessionId, 'next', '1')),
         5000,
       );
       expect(await f.keys()).toEqual(['next']);
@@ -274,7 +286,7 @@ export function describeSessionSqlContract(name: string, target: SessionContract
     it('a deadlock (40P01) re-runs the body once, and the caller sees one result', async () => {
       const f = await make({ fault: { kind: 'deadlock', bind: 'deadlocked' } });
       let runs = 0;
-      const result = await f.storage().tx(async (t) => {
+      const result = await f.storage().tx(SYS, async (t) => {
         runs++;
         await t.run(INSERT, f.sessionId, 'deadlocked', String(runs));
         return `run ${runs}`;
@@ -290,7 +302,7 @@ export function describeSessionSqlContract(name: string, target: SessionContract
       const started = Date.now();
       await expect(
         prompt(
-          s.tx(async (t) => {
+          s.tx(SYS, async (t) => {
             await t.run(INSERT, f.sessionId, 'hung-js', '1');
             await new Promise(() => {});
           }),
@@ -299,7 +311,7 @@ export function describeSessionSqlContract(name: string, target: SessionContract
       ).rejects.toBeInstanceOf(CatalogTxTimeoutError);
       await expect(
         prompt(
-          s.tx(async (t) => {
+          s.tx(SYS, async (t) => {
             await t.run(INSERT, f.sessionId, 'hung-sql', '1');
             await t.all('SELECT pg_sleep(60)');
           }),
@@ -308,7 +320,7 @@ export function describeSessionSqlContract(name: string, target: SessionContract
       ).rejects.toBeInstanceOf(CatalogTxTimeoutError);
       expect(Date.now() - started).toBeLessThan(4000);
       await prompt(
-        s.tx(async (t) => t.run(INSERT, f.sessionId, 'next', '1')),
+        s.tx(SYS, async (t) => t.run(INSERT, f.sessionId, 'next', '1')),
         3000,
       );
       expect(await f.keys()).toEqual(['next']);
@@ -318,13 +330,13 @@ export function describeSessionSqlContract(name: string, target: SessionContract
       const f = await make();
       const s = f.storage();
       await expect(
-        s.tx(async (t) => {
+        s.tx(SYS, async (t) => {
           await t.run(INSERT, f.sessionId, 'ok', '1');
           await t.run(INSERT, f.sessionId, 'bad', 'a\u0000b');
         }),
       ).rejects.toBeInstanceOf(CatalogInvalidTextError);
       await expect(
-        s.snapshot(async (t) => t.all(KEYS, 'a\u0000b')),
+        s.snapshot(SYS, async (t) => t.all(KEYS, 'a\u0000b')),
       ).rejects.toBeInstanceOf(CatalogInvalidTextError);
       expect(await f.keys()).toEqual([]);
     });
@@ -332,7 +344,7 @@ export function describeSessionSqlContract(name: string, target: SessionContract
     it('a double precision value reads back exactly', async () => {
       const f = await make();
       const s = f.storage();
-      await s.tx(async (t) =>
+      await s.tx(SYS, async (t) =>
         t.run(
           'INSERT INTO session_transcript_words (session_id, id, start_sec, end_sec, ordinal, created_at_utc) VALUES (?, ?, ?, ?, ?, ?)',
           f.sessionId,
@@ -343,7 +355,7 @@ export function describeSessionSqlContract(name: string, target: SessionContract
           '2026-10-08T00:00:00.000Z',
         ),
       );
-      const rows = await s.snapshot(async (t) =>
+      const rows = await s.snapshot(SYS, async (t) =>
         t.all(
           'SELECT start_sec, end_sec FROM session_transcript_words WHERE session_id = ? AND id = ?',
           f.sessionId,
@@ -356,7 +368,7 @@ export function describeSessionSqlContract(name: string, target: SessionContract
     it('a JSON array travels as one ?::text::json bind', async () => {
       const f = await make();
       const s = f.storage();
-      const inserted = await s.tx(async (t) =>
+      const inserted = await s.tx(SYS, async (t) =>
         t.run(
           'INSERT INTO session_meta (session_id, key, value) SELECT ?, r.key, r.value FROM json_to_recordset(?::text::json) AS r(key text, value text)',
           f.sessionId,
@@ -368,7 +380,7 @@ export function describeSessionSqlContract(name: string, target: SessionContract
         ),
       );
       expect(inserted).toEqual({ changes: 3 });
-      const deleted = await s.tx(async (t) =>
+      const deleted = await s.tx(SYS, async (t) =>
         t.run(
           'DELETE FROM session_meta WHERE session_id = ? AND key IN (SELECT json_array_elements_text(?::text::json))',
           f.sessionId,
@@ -386,7 +398,7 @@ export function describeSessionSqlContract(name: string, target: SessionContract
       let started = 0;
       const allStarted = gate();
       const held = Array.from({ length: 4 }, () =>
-        s.snapshot(async (t) => {
+        s.snapshot(SYS, async (t) => {
           await t.all(KEYS, f.sessionId);
           if (++started === 4) allStarted.open();
           await g.wait;
@@ -402,7 +414,7 @@ export function describeSessionSqlContract(name: string, target: SessionContract
       );
       expect(Date.now() - t0).toBeLessThan(1000);
       let fifth = false;
-      const waiting = s.tx(async (t) => {
+      const waiting = s.tx(SYS, async (t) => {
         fifth = true;
         await t.run(INSERT, f.sessionId, 'fifth', '1');
       });
@@ -412,6 +424,96 @@ export function describeSessionSqlContract(name: string, target: SessionContract
       await prompt(Promise.all([...held, waiting]), 3000);
       expect(fifth).toBe(true);
       expect(await f.keys()).toEqual(['fifth']);
+    });
+
+    // -- session-content-policies D4: user callers under the content policies --------------------
+
+    it('an ungranted user tx rejects with SessionAccessDeniedError, a missing session with SessionNotFoundError, and the body never runs', async () => {
+      const f = await make();
+      let ran = 0;
+      await expect(
+        f.storage().tx(f.users.ungranted, async (t) => {
+          ran++;
+          await t.run(INSERT, f.sessionId, 'denied', '1');
+        }),
+      ).rejects.toBeInstanceOf(SessionAccessDeniedError);
+      await expect(
+        f.storage('no-such-session').tx(f.users.ungranted, async () => {
+          ran++;
+        }),
+      ).rejects.toBeInstanceOf(SessionNotFoundError);
+      await expect(
+        f.storage('no-such-session').tx(f.users.owner, async () => {
+          ran++;
+        }),
+      ).rejects.toBeInstanceOf(SessionNotFoundError);
+      expect(ran).toBe(0);
+      expect(await f.keys()).toEqual([]);
+    });
+
+    it('an ungranted user snapshot rejects the same way without running its body', async () => {
+      const f = await make();
+      await f.storage().tx(SYS, async (t) => t.run(INSERT, f.sessionId, 'seen', '1'));
+      let ran = 0;
+      await expect(
+        f.storage().snapshot(f.users.ungranted, async (t) => {
+          ran++;
+          return t.all(KEYS, f.sessionId);
+        }),
+      ).rejects.toBeInstanceOf(SessionAccessDeniedError);
+      await expect(
+        f.storage('no-such-session').snapshot(f.users.ungranted, async () => {
+          ran++;
+        }),
+      ).rejects.toBeInstanceOf(SessionNotFoundError);
+      expect(ran).toBe(0);
+    });
+
+    it("a granted user's tx commits and snapshot sees the rows; so do the owner's", async () => {
+      const f = await make();
+      for (const [who, caller] of [
+        ['granted', f.users.granted],
+        ['owner', f.users.owner],
+      ] as const) {
+        await f.storage().tx(caller, async (t) => t.run(INSERT, f.sessionId, who, '1'));
+      }
+      expect(await f.keys()).toEqual(['granted', 'owner']);
+      for (const caller of [f.users.granted, f.users.owner]) {
+        const keys = await f
+          .storage()
+          .snapshot(caller, async (t) => keysOf(await t.all<{ key: string }>(KEYS, f.sessionId)));
+        expect(keys).toEqual(['granted', 'owner']);
+      }
+    });
+
+    it('a user tx and snapshot that succeed take no more round trips than a system one', async () => {
+      const f = await make();
+      const s = f.storage();
+      const write = (caller: SessionCallerShape, key: string) => () =>
+        s.tx(caller, async (t) => t.run(INSERT, f.sessionId, key, '1'));
+      const read = (caller: SessionCallerShape) => () =>
+        s.snapshot(caller, async (t) => t.all(KEYS, f.sessionId));
+      const sysWrite = await f.roundTrips(write(SYS, 'sys'));
+      const userWrite = await f.roundTrips(write(f.users.granted, 'user'));
+      const sysRead = await f.roundTrips(read(SYS));
+      const userRead = await f.roundTrips(read(f.users.granted));
+      expect({ userWrite, userRead }).toEqual({ userWrite: sysWrite, userRead: sysRead });
+      // BEGIN with the preamble (and the lock or probe), the body's statement, COMMIT.
+      expect(sysWrite).toBe(3);
+      expect(sysRead).toBe(3);
+    });
+
+    it("SessionAccessDeniedError's message is neutral and names no id; the id is a property", async () => {
+      const f = await make();
+      const err = await f
+        .storage()
+        .tx(f.users.ungranted, async () => undefined)
+        .catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(SessionAccessDeniedError);
+      expect((err as Error).message).toBe('access to the session was refused');
+      expect((err as Error).message).not.toContain(f.sessionId);
+      expect((err as SessionAccessDeniedError).sessionId).toBe(f.sessionId);
+      expect(new SessionAccessDeniedError('s-x').message).toBe('access to the session was refused');
     });
   });
 }

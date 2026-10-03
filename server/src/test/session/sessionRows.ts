@@ -3,6 +3,7 @@
 // over it, and raw reads and writes of the session tables with `session_id` filled in. Test
 // infrastructure.
 
+import { systemCaller } from '@autologger/session-core/sessionCaller';
 import type { Row, SessionStorage, SqlValue } from '@autologger/session-core/sessionCore';
 import { SessionHubRegistry } from '@autologger/session-core/SessionHub';
 import type { Clock } from '@autologger/ports';
@@ -23,8 +24,12 @@ export function catalogRoot(): PostgresCatalogDb {
 /** Session storage over `root` (the harness's adapter by default), as the composition root builds
  * it. */
 export function sessionDb(root: PostgresCatalogDb = catalogRoot()): PostgresSessionDb {
-  return new PostgresSessionDb(root.bindSystem('session-hub'));
+  return new PostgresSessionDb(root);
 }
+
+/** The caller of the harness's own storage calls (session-content-policies D12): a system task, so
+ * raw reads and writes see every row. */
+export const TEST_CALLER = systemCaller('test-harness');
 
 let made = 0;
 
@@ -41,7 +46,11 @@ export interface TestStorage extends SessionStorage {
 
 export function testStorage(sessionId: string, db: PostgresSessionDb = sessionDb()): TestStorage {
   const s = db.forSession(sessionId);
-  return { sessionId, tx: (fn) => s.tx(fn), snapshot: (fn) => s.snapshot(fn) };
+  return {
+    sessionId,
+    tx: (caller, fn) => s.tx(caller, fn),
+    snapshot: (caller, fn) => s.snapshot(caller, fn),
+  };
 }
 
 /** A registry over the harness's adapter, as the composition root builds it. `autoCreate` inserts
@@ -73,13 +82,13 @@ export function testRegistry(
     const inner = db.forSession(id);
     const base: SessionStorage = opts.autoCreate
       ? {
-          tx: async (fn) => {
+          tx: async (caller, fn) => {
             await ensureRow(id);
-            return inner.tx(fn);
+            return inner.tx(caller, fn);
           },
-          snapshot: async (fn) => {
+          snapshot: async (caller, fn) => {
             await ensureRow(id);
-            return inner.snapshot(fn);
+            return inner.snapshot(caller, fn);
           },
         }
       : inner;
@@ -96,7 +105,7 @@ export async function rawRows(
 ): Promise<Row[]> {
   const where = opts.where ? ` AND (${opts.where})` : '';
   const order = opts.orderBy ? ` ORDER BY ${opts.orderBy}` : '';
-  const rows = await storage.snapshot((t) =>
+  const rows = await storage.snapshot(TEST_CALLER, (t) =>
     t.all<Row>(
       `SELECT ${opts.columns ?? '*'} FROM ${table} WHERE session_id = ?${where}${order}`,
       storage.sessionId,
@@ -117,7 +126,7 @@ export async function insertRaw(
   if (all.length === 0) return;
   const cols = Object.keys(all[0]);
   const values = all.map(() => `(?, ${cols.map(() => '?').join(', ')})`).join(', ');
-  await storage.tx((t) =>
+  await storage.tx(TEST_CALLER, (t) =>
     t.run(
       `INSERT INTO ${table} (session_id, ${cols.join(', ')}) VALUES ${values}`,
       ...all.flatMap((row) => [storage.sessionId, ...cols.map((c) => row[c] as SqlValue)]),

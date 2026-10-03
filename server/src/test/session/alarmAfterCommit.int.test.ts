@@ -31,8 +31,9 @@ const probe = new AsyncLocalStorage<string>();
 /** `inner` with every transaction body and snapshot body run inside the probe's context. */
 function probed(inner: SessionStorage): SessionStorage {
   return {
-    tx: (fn) => inner.tx((t) => probe.run('inside the storage call', () => fn(t))),
-    snapshot: (fn) => inner.snapshot((t) => probe.run('inside the storage call', () => fn(t))),
+    tx: (caller, fn) => inner.tx(caller, (t) => probe.run('inside the storage call', () => fn(t))),
+    snapshot: (caller, fn) =>
+      inner.snapshot(caller, (t) => probe.run('inside the storage call', () => fn(t))),
   };
 }
 

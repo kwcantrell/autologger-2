@@ -156,15 +156,15 @@ describe('system call sites name their reason (catalog-roles D10)', () => {
     for (const s of lookups) expect(s.binding).toBe('system:team-invite');
   });
 
-  // session-tables D2/D8: the mirror and its `session-mirror` binding are retired; session hub
-  // statements run on system:session-hub (core-ports-architecture "Every catalog call is bound to
-  // a caller").
-  it('the composition root builds KV on system:kv and the session hub on system:session-hub', async () => {
+  // session-tables D2/D8: the mirror and its `session-mirror` binding are retired.
+  // session-content-policies D4 (task 3.2, owner 2026-10-03): the session adapter binds each call
+  // to its caller, so the composition root makes no `session-hub` binding.
+  it('the composition root builds KV on system:kv and makes no session-hub binding', async () => {
     const spy = vi.spyOn(PostgresCatalogDb.prototype, 'bindSystem');
     await resetTestEnv();
     const reasons = spy.mock.calls.map((c) => c[0]);
     expect(reasons).toContain('kv');
-    expect(reasons).toContain('session-hub');
+    expect(reasons).not.toContain('session-hub');
     expect(reasons).not.toContain('session-mirror');
   });
 });

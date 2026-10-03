@@ -26,3 +26,10 @@ Tier: 2 · Reviewers: assumption tester, failure and abuse, scope and simplicity
 ## Owner decisions (owner, 2026-10-03)
 - P1: undo steps run as the reviewed system task `session-undo` (finding 3).
 - P2: disabled accounts are stated and unchanged: access means a membership or a grant; a running AI turn or log-import job of a disabled account finishes (proposal Non-goals, design Risks).
+
+## Consistency read 2026-10-03
+Edits since approval (caa4669): design.md D12 (+ post-approval test-plumbing bullets from group 3; + the `catalogBinding.int.test.ts` "no `session-hub` binding" assertion moved from commit 3b to 3a, owner decision 2026-10-03), tasks.md (3.2 gains that assertion change and its Verify allows it; 4.7 drops it; evidence lines for 1.1-3.1)
+Scope change: no (same assertion, already approved in 4.7, landing one commit earlier; no contract, spec delta or accepted risk changed)
+- [x] [minor] D12's new bullet list was headed "no assertion changes" while its last bullet moves one. Resolved: the heading now says the last bullet moves one approved assertion change.
+- [x] [minor] Checked: D9 ("Commit 3a only moves `session-hub` to `SessionHub.ts`") and proposal "new `PostgresSessionDb(` only in the composition root and the merge script" agree with 3a's `config.ts` building `new PostgresSessionDb(catalogDb)` with no `session-hub` binding. No contradiction.
+- [x] [minor] Checked: every spec-delta requirement still maps to a task and test (tasks 2.1, 3.1, 4.1-4.2, 5.1); no task touches a proposal non-goal.
