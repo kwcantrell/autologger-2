@@ -89,8 +89,17 @@ the group 5 wiring binds it, so 4.1-5.4 are implemented as one step and every co
 
 ## 8. Verification
 
-- [ ] 8.1 Run `GITHUB_BASE_REF=supabase-migration scripts/check-change.sh --stage hook`. Verify: exit 0, every gate PASS (`6b1-8.1-hook.log`).
-- [ ] 8.2 Run the server `integration` and `pg` projects 5 times in a row (`cd server && npx vitest run --project integration --project pg`, `6b1-flake-{1..5}.log`). Verify: every run green; any flake is named with its test; report each run's `Tests` line and `Duration` beside the 6a logs (design A19) as information.
+- [x] 8.1 Run `GITHUB_BASE_REF=supabase-migration scripts/check-change.sh --stage hook`. Verify: exit 0, every gate PASS (`6b1-8.1-hook.log`).
+  Evidence: `GITHUB_BASE_REF=supabase-migration scripts/check-change.sh --stage hook` -> `exit 0`;
+  `PASS openspec`, `PASS change tier 2`, `PASS risk-floor 21 high-risk path(s) touched`, `PASS evidence`,
+  `PASS commands ran ['typecheck', 'test']`.
+- [x] 8.2 Run the server `integration` and `pg` projects 5 times in a row (`cd server && npx vitest run --project integration --project pg`, `6b1-flake-{1..5}.log`). Verify: every run green; any flake is named with its test; report each run's `Tests` line and `Duration` beside the 6a logs (design A19) as information.
+  Evidence: `cd server && npx vitest run --project integration --project pg` x5 -> each `exit 0  Tests
+  829 passed | 1 skipped (830)`, Duration 50.45-50.90 s (6a baseline 50.3-55.6 s); storage x3 -> `111
+  passed (111)`; no flake.
 - [x] 8.3 Update the probe to the bound API (design D14: the middleware calls on `system('auth-resolve')` and `bindSystem('kv')`, the route mix on `forUser(id)`) and run it 5 times (`CATALOG_ROOT_PROBE=1 …`, `6b1-probe-after-{1..5}.log`). Verify: record each JSON line and the medians beside 1.2's; if the median root `p95` is more than twice 1.2's, or any run shows `timeouts > 0`, stop and ask the owner before 8.4.
   Evidence: the probe now builds the request as the middleware does: `createCatalog(root).system('auth-resolve')` for `init()` and the user read, KV on `bindSystem('kv')`, the route mix on `forUser(user.id)`, every handle timed (seeding on `system:test-seed`). `cd server && CATALOG_ROOT_PROBE=1 npx vitest run --project pg src/test/pg/catalogRootProbe.pg.test.ts` x5, each `Tests  1 passed (1)`: run 1 (`6b1-probe-after-1.log`) `{"rootCalls":1062,"p50":3,"p95":5.3,"max":16.33,"timeouts":0,"txs":100,"wallMs":598.24}`; run 2 `{"rootCalls":1059,"p50":3.1,"p95":6.38,"max":16.71,"timeouts":0,"txs":100,"wallMs":675.88}`; run 3 `{"rootCalls":1056,"p50":2.74,"p95":5.85,"max":16.91,"timeouts":0,"txs":100,"wallMs":630.66}`; run 4 `{"rootCalls":1056,"p50":2.97,"p95":5.76,"max":15.66,"timeouts":0,"txs":100,"wallMs":603.71}`; run 5 `{"rootCalls":1053,"p50":3.18,"p95":6.11,"max":19.09,"timeouts":0,"txs":100,"wallMs":666.19}`. Medians after: root `p95` 5.85 ms, `timeouts` 0; before (1.2): 3.49 ms, 0. Ratio 1.68x, under the 2x stop line (6.98 ms), and no run had a root timeout, so the stop rule does not trigger.
-- [ ] 8.4 Consistency read (tier 2) after any post-approval artifact edit, logged in `panel.md`. Verify: `openspec validate catalog-roles --strict` → valid.
+- [x] 8.4 Consistency read (tier 2) after any post-approval artifact edit, logged in `panel.md`. Verify: `openspec validate catalog-roles --strict` → valid.
+  Evidence: fresh-context read logged in `panel.md` "Consistency read 2026-10-02 (implementation)" ->
+  `Scope change: no`, `No findings`; its minor allowlist note fixed in fae7f25; `openspec validate
+  catalog-roles --strict` -> `Change 'catalog-roles' is valid`.
