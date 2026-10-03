@@ -7,6 +7,17 @@
 //     STEP: resolved | prod-tags | urls | reset | 'compose ARGS...'
 //     e.g.  compose-run.mjs dev resolved 'compose up -d --build' urls
 //
+// Stage only (stage-public-https): the Makefile may also pass three non-secret operator values,
+// validated here and never read from OpenBao: STAGE_IMAGE_TAG (a full 40-hex git SHA; run the
+// pushed ghcr.io images instead of building :local; requires STAGE_PUBLIC_BASE_URL, and this tree
+// must be that commit: git HEAD, or a REVISION file where there is no .git), STAGE_PUBLIC_BASE_URL
+// (https://<host>, the public origin behind the HTTPS edge; COOKIE_SECURE becomes 1) and, with a
+// tag only, DOCKER_CONFIG (a directory you own that no one else can write). From DOCKER_CONFIG only
+// the inline `auths` of its config.json are read; compose gets a fresh 0700 temporary DOCKER_CONFIG
+// holding just those (removed on exit) and DOCKER_CONTEXT=default, never the caller's directory.
+// Without a tag DOCKER_CONFIG is ignored (as for dev and prod). A pinned tree (REVISION, no .git)
+// refuses untagged up/build/run.
+//
 // The Makefile starts this under `env -i` (H1). One process: read the per-host credentials file
 // (.env.openbao.<env>), log in to OpenBao with AppRole, read the stack's KV v2 secret, revoke the
 // token, validate every secret, then run each step with a child environment built from scratch
@@ -15,8 +26,9 @@
 
 import { spawn, spawnSync } from 'node:child_process';
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { lstatSync, readFileSync } from 'node:fs';
+import { lstatSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import https from 'node:https';
+import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -63,12 +75,27 @@ const KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/; // no `m` flag: `$` is end of input o
 const SEGMENT_RE = /^[A-Za-z0-9_-]+$/;
 const WORD_RE = /^[A-Za-z0-9@%+=:,./_-]+$/;
 const MAX_BODY = 1024 * 1024;
+const REGISTRY = 'ghcr.io/kwcantrell';
+// 40 hex only: prod-push tags the 12-char SHA (multi-arch); a stage push must never overwrite it.
+const STAGE_TAG_RE = /^[0-9a-f]{40}$/;
+const DNS_RE = /^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/;
+export const STAGE_LOCAL_IMAGES = { web: 'autologger-stage-web:local', api: 'autologger-stage-api:local' };
 const MAX_CA = 64 * 1024;
+const MAX_DOCKER_CFG = 1024 * 1024;
 
 /** A refusal whose message is safe to print (never holds a secret value). */
 export class Refusal extends Error {}
 const refuse = (msg) => {
   throw new Refusal(msg);
+};
+/** Whether a path exists (lstat: a dangling symlink counts). */
+const present = (f) => {
+  try {
+    lstatSync(f);
+    return true;
+  } catch {
+    return false;
+  }
 };
 
 // ------------------------------------------------------------------------ pure checks -----
@@ -236,6 +263,191 @@ export function checkProdTags(secrets) {
     if (!v) refuse(`${k} is unset or empty in the OpenBao prod secret (a git-SHA tag is required)`);
     if (v === 'latest') refuse(`${k}=latest is refused; pin a git-SHA tag`);
   }
+}
+
+// ------------------------------------------------------------------------ stage options ---
+
+/** STAGE_PUBLIC_BASE_URL: https://<dns name> (no port, path, query, fragment or user). Returns the
+ * origin; '' when unset (unset is the local stage, http://localhost:STAGE_PORT). */
+export function parseStagePublicUrl(s) {
+  if (s === undefined || s === '') return '';
+  let u;
+  try {
+    u = new URL(s);
+  } catch {
+    refuse('STAGE_PUBLIC_BASE_URL is not a URL');
+  }
+  if (u.username || u.password || u.search || u.hash || u.pathname !== '/' || (s !== u.origin && s !== `${u.origin}/`)) {
+    refuse('STAGE_PUBLIC_BASE_URL must be a bare origin (https://stage.example.com): no path, query, fragment, user or unusual spelling');
+  }
+  if (u.protocol !== 'https:') refuse('STAGE_PUBLIC_BASE_URL must be https://<host> (leave it unset for the local http://localhost:STAGE_PORT)');
+  if (u.port !== '' || !DNS_RE.test(u.hostname) || !/\.[a-z][a-z0-9-]*$/.test(u.hostname)) {
+    refuse('STAGE_PUBLIC_BASE_URL must be https://<dns name> with no port (the edge serves 443)');
+  }
+  return u.origin;
+}
+
+/** The stage operator values (see the header), validated. `own` is this process's environment. */
+export function parseStageOptions(own) {
+  const tag = own.STAGE_IMAGE_TAG ?? '';
+  if (tag !== '' && !STAGE_TAG_RE.test(tag)) refuse('STAGE_IMAGE_TAG must be a full 40-character lowercase hex git SHA (the tag make stage-push pushed)');
+  const url = parseStagePublicUrl(own.STAGE_PUBLIC_BASE_URL);
+  // A tagged run is a public run: on the host behind the edge, a run without the origin would
+  // recreate api with COOKIE_SECURE=0 and a localhost redirect while the tunnel serves it.
+  if (tag && !url) refuse('STAGE_IMAGE_TAG runs the public stage: also set STAGE_PUBLIC_BASE_URL=https://<host> (the origin the edge serves)');
+  // DOCKER_CONFIG is read only for a tagged run (`compose pull`); otherwise it is ignored, as for
+  // dev and prod, so an ambient value cannot change a local stage run.
+  const dc = tag ? (own.DOCKER_CONFIG ?? '') : '';
+  return {
+    tag,
+    images: tag ? { web: `${REGISTRY}/autologger-web:${tag}`, api: `${REGISTRY}/autologger-api:${tag}` } : { ...STAGE_LOCAL_IMAGES },
+    publicBaseUrl: url,
+    cookieSecure: url ? '1' : '0',
+    dockerAuths: dc !== '' ? readDockerAuths(dc) : null,
+  };
+}
+
+/** Owned by `uid`, not a symlink, writable by no one else (group/other write bits clear). */
+function checkOwnedNoWrite(f, what, uid, dir) {
+  let st;
+  try {
+    st = lstatSync(f);
+  } catch {
+    return refuse(`${what} does not exist`);
+  }
+  if (st.isSymbolicLink()) refuse(`${what} must not be a symlink`);
+  if (dir ? !st.isDirectory() : !st.isFile()) refuse(`${what} must be a ${dir ? 'directory' : 'regular file'}`);
+  if (st.uid !== uid) refuse(`${what} must be owned by you`);
+  if ((st.mode & 0o022) !== 0) refuse(`${what} is writable by group or others (mode ${(st.mode & 0o777).toString(8)})`);
+  return st;
+}
+
+/** The caller's DOCKER_CONFIG is only READ here (its config.json): a directory, and config.json,
+ * that you own and no one else can write. compose never sees this directory (readDockerAuths). */
+export function checkDockerConfig(dc, uid = process.getuid()) {
+  if (!isAbsolute(dc) || !/^[A-Za-z0-9@%+=:,./_-]+$/.test(dc)) refuse('DOCKER_CONFIG must be an absolute path of plain characters');
+  checkOwnedNoWrite(dc, 'DOCKER_CONFIG', uid, true);
+  const cfg = join(dc, 'config.json');
+  if (present(cfg)) checkOwnedNoWrite(cfg, 'DOCKER_CONFIG/config.json', uid, false);
+}
+
+/** The inline registry logins (`auths`) of DOCKER_CONFIG/config.json, and nothing else. A docker
+ * config directory can run code in the child that holds every stage secret (a `cli-plugins`
+ * entry, `cliPluginsExtraDirs`, `currentContext`, `proxies`), so the child gets a fresh directory
+ * with only these (makeDockerConfig). A credential helper keeps the secret outside config.json,
+ * so `credsStore`/`credHelpers` are refused rather than silently pulling without a login. */
+export function readDockerAuths(dc, uid = process.getuid()) {
+  checkDockerConfig(dc, uid);
+  const f = join(dc, 'config.json');
+  if (!present(f)) return {};
+  if (lstatSync(f).size > MAX_DOCKER_CFG) refuse('DOCKER_CONFIG/config.json is larger than 1 MiB');
+  let cfg;
+  try {
+    cfg = JSON.parse(readFileSync(f, 'utf8'));
+  } catch {
+    refuse('DOCKER_CONFIG/config.json is not valid JSON');
+  }
+  if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)) refuse('DOCKER_CONFIG/config.json is not a JSON object');
+  if (cfg.credsStore || (cfg.credHelpers && Object.keys(cfg.credHelpers).length)) {
+    refuse('DOCKER_CONFIG/config.json uses a credential helper (credsStore/credHelpers); only inline "auths" are passed to compose. ' +
+      'Log in with no docker-credential-* helper on PATH, or write {"auths":{"ghcr.io":{"auth":"<base64 user:token>"}}} yourself');
+  }
+  const auths = cfg.auths ?? {};
+  if (!auths || typeof auths !== 'object' || Array.isArray(auths)) refuse('DOCKER_CONFIG/config.json "auths" is not an object');
+  return JSON.parse(JSON.stringify(auths));
+}
+
+/** A fresh 0700 DOCKER_CONFIG holding only `{"auths": ...}` (0600). The caller removes it. */
+export function makeDockerConfig(auths, base = tmpdir()) {
+  const d = mkdtempSync(join(base, 'compose-run-docker-'));
+  writeFileSync(join(d, 'config.json'), JSON.stringify({ auths }), { mode: 0o600, flag: 'wx' });
+  return d;
+}
+
+/** A pinned deploy (REVISION, no .git) is the public stage: an untagged up/build/run there would
+ * build and serve the local posture (COOKIE_SECURE=0, a localhost redirect) through the edge. */
+export function checkPinnedUntagged(root, tag, plan) {
+  if (tag || present(join(root, '.git')) || !present(join(root, 'REVISION'))) return;
+  if (plan.some((p) => p.kind === 'compose' && p.args.some((w) => ['up', 'build', 'run', '--build'].includes(w)))) {
+    refuse('this tree was deployed pinned (a REVISION file and no .git), so it serves the public stage: up, build and run need ' +
+      'STAGE_IMAGE_TAG=<the REVISION sha> STAGE_PUBLIC_BASE_URL=https://<host> (for a local stage on this host, stop the edge and remove REVISION first)');
+  }
+}
+
+/** With a tag, the tree make runs in (migrations, migrate.sh, Caddyfiles, init SQL, compose files)
+ * must be the tagged commit: `git rev-parse HEAD` when `root/.git` exists, else the trimmed content
+ * of a regular file `root/REVISION` (written by the pinned deploy, which ships no .git). */
+export function checkStageTree(root, tag, home = '') {
+  if (!tag) return;
+  const where = 'the tree make runs in (migrations, Caddyfiles and compose files come from it)';
+  if (present(join(root, '.git'))) {
+    // A .git next to a REVISION file is most likely left over from an earlier git checkout.
+    const stale = present(join(root, 'REVISION'))
+      ? '; this tree also has a REVISION file, so its .git is probably left over from an earlier checkout: remove the .git (the pinned deploy does) and REVISION is checked instead'
+      : `; run make from a checkout of ${tag}`;
+    const r = spawnSync('git', ['-C', root, 'rev-parse', '--verify', '--quiet', 'HEAD'], {
+      env: { PATH: FIXED_PATH, ...(home ? { HOME: home } : {}) },
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    const head = r.status === 0 ? r.stdout.trim() : '';
+    if (!STAGE_TAG_RE.test(head)) refuse(`could not read git HEAD of ${where}${stale}`);
+    if (head !== tag) refuse(`STAGE_IMAGE_TAG is not HEAD (${head}) of ${where}${stale}`);
+    return;
+  }
+  const f = join(root, 'REVISION');
+  let st;
+  try {
+    st = lstatSync(f);
+  } catch {
+    refuse(`${where} has no .git and no REVISION file, so it cannot be tied to STAGE_IMAGE_TAG`);
+  }
+  if (st.isSymbolicLink() || !st.isFile() || st.size > 128) refuse('REVISION must be a small regular file, not a symlink');
+  const rev = readFileSync(f, 'utf8').trim();
+  if (rev !== tag) refuse(`STAGE_IMAGE_TAG is not the REVISION of ${where} (${STAGE_TAG_RE.test(rev) ? rev : 'not a 40-hex SHA'})`);
+}
+
+/** The compose variables docker/compose.stage.yaml reads for these options (none when unset);
+ * `dockerDir` is the temporary DOCKER_CONFIG from makeDockerConfig, if any. */
+export function stageComposeEnv(opts, dockerDir = '') {
+  const out = {};
+  if (opts.tag) {
+    out.STAGE_WEB_IMAGE = opts.images.web;
+    out.STAGE_API_IMAGE = opts.images.api;
+  }
+  if (opts.publicBaseUrl) {
+    out.STAGE_PUBLIC_BASE_URL = opts.publicBaseUrl;
+    out.STAGE_COOKIE_SECURE = opts.cookieSecure;
+  }
+  if (dockerDir) {
+    out.DOCKER_CONFIG = dockerDir;
+    out.DOCKER_CONTEXT = 'default'; // belt and braces: the temporary config.json has no currentContext
+  }
+  return out;
+}
+
+/** With a registry tag, nothing may build: every `up` says --no-build and no step builds. */
+export function checkStagePlan(opts, plan) {
+  if (!opts.tag) return;
+  for (const p of plan) {
+    if (p.kind !== 'compose') continue;
+    if (p.args.includes('build') || p.args.includes('--build')) refuse('STAGE_IMAGE_TAG runs the pushed registry images; building is refused (make stage-build builds :local without it)');
+    if (p.args.includes('up') && !p.args.includes('--no-build')) refuse("with STAGE_IMAGE_TAG every 'compose up' must pass --no-build");
+  }
+}
+
+/** The resolved stage config runs exactly the expected images, origin and cookie posture. */
+export function checkStageResolved(cfg, opts) {
+  const s = cfg?.services ?? {};
+  if (s.web?.image !== opts.images.web || s.api?.image !== opts.images.api) {
+    refuse(`refusing: the resolved stage web/api images are not ${opts.images.web} and ${opts.images.api}`);
+  }
+  const e = s.api?.environment ?? {};
+  const port = s.router?.ports?.[0]?.published;
+  const url = opts.publicBaseUrl || `http://localhost:${port}`;
+  if (e.PUBLIC_BASE_URL !== url) refuse(`refusing: the resolved stage PUBLIC_BASE_URL is not ${url}`);
+  if (e.COOKIE_SECURE !== opts.cookieSecure) refuse(`refusing: the resolved stage COOKIE_SECURE is not ${opts.cookieSecure}`);
+  if (e.TRUST_PROXY !== '1') refuse('refusing: the resolved stage TRUST_PROXY is not 1');
 }
 
 // ------------------------------------------------------------------------ files (H7) -----
@@ -433,9 +645,11 @@ const composeArgv = (env, args, exec = false) => [
 ];
 
 /** H9: run a child with inherited stdio; forward SIGTERM/SIGHUP, ignore SIGINT; resolve its status. */
+let running = 0; // children in flight: the process-level signal handlers defer to runChild's
 function runChild(argv, childEnv) {
   return new Promise((ok) => {
     const child = spawn('sh', argv, { cwd: ROOT, env: childEnv, stdio: 'inherit' });
+    running += 1;
     const fwd = (sig) => () => child.kill(sig);
     const onTerm = fwd('SIGTERM');
     const onHup = fwd('SIGHUP');
@@ -444,6 +658,7 @@ function runChild(argv, childEnv) {
     process.on('SIGHUP', onHup);
     process.on('SIGINT', onInt);
     const finish = (code) => {
+      running -= 1;
       process.off('SIGTERM', onTerm);
       process.off('SIGHUP', onHup);
       process.off('SIGINT', onInt);
@@ -514,7 +729,12 @@ function urls(env, cfg) {
     process.stdout.write(`dev Companion:  http://127.0.0.1:${cfg.services.companion.ports[0].published}\n`);
     process.stdout.write('In Companion, set the AutoLogger connection base URL to:  http://app:8787\n');
   } else if (env === 'stage') {
-    process.stdout.write(`stage:          http://localhost:${cfg.services.router.ports[0].published}   (use localhost, not 127.0.0.1)\n`);
+    const pub = cfg.services.api?.environment?.PUBLIC_BASE_URL ?? '';
+    if (pub.startsWith('https://')) {
+      process.stdout.write(`stage:          ${pub}   (the HTTPS edge proxies to http://127.0.0.1:${cfg.services.router.ports[0].published})\n`);
+    } else {
+      process.stdout.write(`stage:          http://localhost:${cfg.services.router.ports[0].published}   (use localhost, not 127.0.0.1)\n`);
+    }
   } else {
     process.stdout.write(`prod router:    http://127.0.0.1:${cfg.services.router.ports[0].published}\n`);
   }
@@ -538,6 +758,16 @@ async function main(argv, ownEnv) {
   // supabase-db D6: nothing may migrate prod or open a shell in it.
   if (env === 'prod' && plan.some((p) => p.kind === 'compose' && p.args.some((w) => w === 'run' || w === 'exec'))) {
     refuse('compose run and exec are refused for prod (no migration or shell against the prod database)');
+  }
+  // stage-public-https: the operator values exist for stage only; validated before any request.
+  if (env !== 'stage' && ['STAGE_IMAGE_TAG', 'STAGE_PUBLIC_BASE_URL'].some((k) => ownEnv[k])) {
+    refuse('STAGE_IMAGE_TAG and STAGE_PUBLIC_BASE_URL apply to stage only');
+  }
+  const stage = env === 'stage' ? parseStageOptions(ownEnv) : null;
+  if (stage) {
+    checkStagePlan(stage, plan);
+    checkStageTree(ROOT, stage.tag, ownEnv.HOME);
+    checkPinnedUntagged(ROOT, stage.tag, plan);
   }
   if (plan.some((p) => p.kind === 'reset')) {
     if (env === 'prod') refuse('reset is refused for prod (it would delete production volumes)');
@@ -570,14 +800,42 @@ async function main(argv, ownEnv) {
   if (ownEnv.TERM) childEnv.TERM = ownEnv.TERM;
   for (const [k, v] of secrets) childEnv[k] = v;
   childEnv.AUTOLOGGER_STACK = env;
+  const dockerDir = stage?.dockerAuths ? makeDockerConfig(stage.dockerAuths) : '';
+  if (dockerDir) TEMP_DIRS.add(dockerDir);
+  if (stage) Object.assign(childEnv, stageComposeEnv(stage, dockerDir));
 
+  try {
+    return await runSteps(env, plan, childEnv, secrets, stage);
+  } finally {
+    removeTempDirs();
+  }
+}
+
+// Temporary directories (the stage DOCKER_CONFIG) are removed on every exit path: normal return,
+// refusal, internal error (process 'exit'), and a signal while no child runs.
+const TEMP_DIRS = new Set();
+function removeTempDirs() {
+  for (const d of TEMP_DIRS) {
+    try {
+      rmSync(d, { recursive: true, force: true });
+    } catch {
+      // best effort; the directory holds only a registry login
+    }
+  }
+  TEMP_DIRS.clear();
+}
+
+async function runSteps(env, plan, childEnv, secrets, stage) {
   let cfg;
   const config = () => {
     cfg ??= resolveConfig(env, childEnv);
     return cfg;
   };
   for (const step of plan) {
-    if (step.kind === 'resolved') checkResolved(env, config(), secrets);
+    if (step.kind === 'resolved') {
+      checkResolved(env, config(), secrets);
+      if (stage) checkStageResolved(config(), stage);
+    }
     else if (step.kind === 'urls') urls(env, config());
     else if (step.kind === 'prod-tags') checkProdTags(secrets);
     else if (step.kind === 'reset') {
@@ -600,6 +858,17 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
     process.stderr.write(FIXED);
     process.exit(1);
   });
+  process.on('exit', removeTempDirs);
+  // While a child runs, runChild forwards SIGTERM/SIGHUP and ignores SIGINT; otherwise exit as the
+  // signal would, after removing the temporary directories.
+  for (const [sig, n] of [['SIGTERM', 15], ['SIGHUP', 1], ['SIGINT', 2]]) {
+    process.on(sig, () => {
+      if (running === 0) {
+        removeTempDirs();
+        process.exit(128 + n);
+      }
+    });
+  }
   main(process.argv.slice(2), process.env).then(
     (code) => process.exit(code),
     (e) => {

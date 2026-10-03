@@ -94,7 +94,7 @@ function standIn(secrets, { revoke = 204 } = {}) {
     if (req.method === 'POST' && req.url === '/v1/auth/approle/login') {
       return ok200(res, { auth: { client_token: TOKEN, lease_duration: 300, renewable: true } });
     }
-    if (req.method === 'GET' && req.url === '/v1/kv/data/autologger/dev') return ok200(res, kv(secrets));
+    if (req.method === 'GET' && /^\/v1\/kv\/data\/autologger\/(dev|stage)$/.test(req.url)) return ok200(res, kv(secrets));
     if (req.method === 'POST' && req.url === '/v1/auth/token/revoke-self') return res.writeHead(revoke).end();
     res.writeHead(404, { 'content-type': 'application/json' }).end('{"errors":[]}');
   };
@@ -109,7 +109,11 @@ mkdir -p "$d"
 printf '%s\\n' "$*" >>"$d/argv"
 for a in "$@"; do [ "$a" = config ] && exec ${JSON.stringify(REAL_DOCKER)} "$@"; done
 env >"$d/env"
+if [ -n "\${DOCKER_CONFIG-}" ]; then
+  ls -A "$DOCKER_CONFIG" >"$d/dockerls"; stat -c %a "$DOCKER_CONFIG" >"$d/dockermode"; cat "$DOCKER_CONFIG/config.json" >"$d/dockercfg"
+fi
 for a in "$@"; do [ "$a" = exec ] && cat >"$d/stdin"; done
+[ -f "$d/fail" ] && exit 3
 if [ -f "$d/sleep" ]; then trap 'echo TERM >"$d/signal"; exit 143' TERM; sleep 5 & wait $!; fi
 exit 0
 `);
@@ -824,5 +828,294 @@ describe('sign-in client and bootstrap owner (gotrue-sign-in D3, require-login D
     assert.notEqual(r.code, 0);
     assert.match(r.out, /GOOGLE_CLIENT_SECRET/);
     assert.equal(log('argv'), '');
+  });
+});
+
+// stage-public-https: the stage operator values (STAGE_IMAGE_TAG, STAGE_PUBLIC_BASE_URL, DOCKER_CONFIG).
+describe('stage public mode (stage-public-https)', () => {
+  const SHA = 'a'.repeat(40);
+  const URL1 = 'https://stage.example.com';
+  // The tagged end-to-end runs need the tree to be the tagged commit (checkStageTree): use HEAD.
+  const HEAD = spawnSync('git', ['-C', ROOT, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout.trim();
+  const stageSecrets = () => [secret('GOOGLE_CLIENT_ID', 'gid'), secret('GOOGLE_CLIENT_SECRET', 'gsecret'), secret('BOOTSTRAP_OWNER_EMAIL', 'owner@example.com'), secret('STAGE_PORT', '18788'), ...sbSecrets()];
+  it('STAGE_PUBLIC_BASE_URL accepts only a bare https DNS origin', async () => {
+    const { parseStagePublicUrl } = await import('./compose-run.mjs');
+    assert.equal(parseStagePublicUrl(undefined), '');
+    assert.equal(parseStagePublicUrl(''), '');
+    assert.equal(parseStagePublicUrl('https://stage.example.com'), 'https://stage.example.com');
+    assert.equal(parseStagePublicUrl('https://stage.example.com/'), 'https://stage.example.com');
+    for (const bad of ['stage.example.com', 'http://stage.example.com', 'https://stage.example.com/app', 'https://stage.example.com?x=1',
+      'https://u:p@stage.example.com', 'https://stage.example.com:8443', 'https://localhost', 'https://10.0.0.1', 'https://Stage.Example.com',
+      'https://stage.example.com#x', 'ftp://stage.example.com', 'https://stage.example.com\n', 'https://st"age.example.com', 'http://127.0.0.1:8788',
+      'http://localhost:8788', 'http://localhost']) {
+      assert.throws(() => parseStagePublicUrl(bad), /STAGE_PUBLIC_BASE_URL/, JSON.stringify(bad));
+    }
+  });
+  it('STAGE_IMAGE_TAG must be a full 40-hex SHA (never prod-push\'s 12-char tag); it selects the ghcr images; https sets COOKIE_SECURE=1', async () => {
+    const { parseStageOptions, stageComposeEnv } = await import('./compose-run.mjs');
+    const local = parseStageOptions({});
+    assert.deepEqual(local.images, { web: 'autologger-stage-web:local', api: 'autologger-stage-api:local' });
+    assert.equal(local.cookieSecure, '0');
+    assert.deepEqual(stageComposeEnv(local), {});
+    for (const bad of ['latest', 'stage', 'A'.repeat(40), 'a'.repeat(12), 'a'.repeat(13), 'a'.repeat(41), `${'a'.repeat(40)} `, '-x']) {
+      assert.throws(() => parseStageOptions({ STAGE_IMAGE_TAG: bad }), /STAGE_IMAGE_TAG/, bad);
+    }
+    // A tagged run is a public run (stage-public-https panel F2).
+    assert.throws(() => parseStageOptions({ STAGE_IMAGE_TAG: SHA }), /also set STAGE_PUBLIC_BASE_URL/);
+    const pub = parseStageOptions({ STAGE_IMAGE_TAG: SHA, STAGE_PUBLIC_BASE_URL: 'https://stage.example.com' });
+    assert.deepEqual(stageComposeEnv(pub), {
+      STAGE_WEB_IMAGE: `ghcr.io/kwcantrell/autologger-web:${SHA}`,
+      STAGE_API_IMAGE: `ghcr.io/kwcantrell/autologger-api:${SHA}`,
+      STAGE_PUBLIC_BASE_URL: 'https://stage.example.com',
+      STAGE_COOKIE_SECURE: '1',
+    });
+    // DOCKER_CONFIG is read only with a tag (re-panel RS1); untagged it is ignored, as for dev/prod.
+    for (const dc of ['rel/dir', '/tmp', join(T, 'no-such-dir')]) {
+      assert.equal(parseStageOptions({ DOCKER_CONFIG: dc }).dockerAuths, null, dc);
+      assert.deepEqual(stageComposeEnv(parseStageOptions({ DOCKER_CONFIG: dc })), {}, dc);
+      assert.throws(() => parseStageOptions({ STAGE_IMAGE_TAG: SHA, STAGE_PUBLIC_BASE_URL: URL1, DOCKER_CONFIG: dc }), /DOCKER_CONFIG/, dc);
+    }
+    const dcOk = mkdtempSync(join(T, 'dc-opt-'));
+    assert.deepEqual(parseStageOptions({ STAGE_IMAGE_TAG: SHA, STAGE_PUBLIC_BASE_URL: URL1, DOCKER_CONFIG: dcOk }).dockerAuths, {});
+    assert.equal(parseStageOptions({ STAGE_IMAGE_TAG: SHA, STAGE_PUBLIC_BASE_URL: URL1 }).dockerAuths, null);
+    // compose gets the wrapper's temporary directory, never the caller's.
+    assert.deepEqual(stageComposeEnv(pub, '/tmp/compose-run-docker-x'), { ...stageComposeEnv(pub), DOCKER_CONFIG: '/tmp/compose-run-docker-x', DOCKER_CONTEXT: 'default' });
+    // An https origin without a tag (a local build served publicly) is still COOKIE_SECURE=1.
+    assert.equal(parseStageOptions({ STAGE_PUBLIC_BASE_URL: URL1 }).cookieSecure, '1');
+  });
+  it('DOCKER_CONFIG must be a directory you own that no one else can write (and so must its config.json)', async () => {
+    const { checkDockerConfig } = await import('./compose-run.mjs');
+    const d = mkdtempSync(join(T, 'dc-'));
+    assert.doesNotThrow(() => checkDockerConfig(d));
+    writeFileSync(join(d, 'config.json'), '{}');
+    chmodSync(join(d, 'config.json'), 0o600);
+    assert.doesNotThrow(() => checkDockerConfig(d));
+    chmodSync(join(d, 'config.json'), 0o620);
+    assert.throws(() => checkDockerConfig(d), /config\.json is writable by group or others/);
+    chmodSync(join(d, 'config.json'), 0o600);
+    rmSync(join(d, 'config.json'));
+    symlinkSync('/dev/null', join(d, 'config.json'));
+    assert.throws(() => checkDockerConfig(d), /config\.json must not be a symlink/);
+    rmSync(join(d, 'config.json'));
+    assert.throws(() => checkDockerConfig('/tmp'), /DOCKER_CONFIG (must be owned by you|is writable by group or others)/);
+    assert.throws(() => checkDockerConfig(d, process.getuid() + 1), /DOCKER_CONFIG must be owned by you/);
+    chmodSync(d, 0o770);
+    assert.throws(() => checkDockerConfig(d), /DOCKER_CONFIG is writable by group or others/);
+    chmodSync(d, 0o700);
+    const link = join(T, 'dc-link');
+    rmSync(link, { force: true });
+    symlinkSync(d, link);
+    assert.throws(() => checkDockerConfig(link), /DOCKER_CONFIG must not be a symlink/);
+    writeFileSync(join(T, 'dc-file'), '');
+    assert.throws(() => checkDockerConfig(join(T, 'dc-file')), /DOCKER_CONFIG must be a directory/);
+    assert.throws(() => checkDockerConfig(join(T, 'no-such-dir')), /DOCKER_CONFIG does not exist/);
+    assert.throws(() => checkDockerConfig('rel/dir'), /absolute path/);
+  });
+  it('DOCKER_CONFIG: only the inline auths of config.json are kept; a credential helper is refused', async () => {
+    const { readDockerAuths, makeDockerConfig } = await import('./compose-run.mjs');
+    const d = mkdtempSync(join(T, 'dc-auths-'));
+    assert.deepEqual(readDockerAuths(d), {}); // no config.json: anonymous pulls
+    const cfg = (o) => {
+      rmSync(join(d, 'config.json'), { force: true });
+      writeFileSync(join(d, 'config.json'), typeof o === 'string' ? o : JSON.stringify(o));
+      chmodSync(join(d, 'config.json'), 0o600);
+    };
+    const auths = { 'ghcr.io': { auth: Buffer.from('u:tok').toString('base64') } };
+    // cliPluginsExtraDirs, currentContext and proxies are dropped: only auths survive.
+    cfg({ auths, cliPluginsExtraDirs: ['/tmp/evil'], currentContext: 'evil', proxies: { default: { httpProxy: 'http://evil' } } });
+    assert.deepEqual(readDockerAuths(d), auths);
+    cfg({ auths: { 'ghcr.io': {} }, credsStore: 'secretservice' });
+    assert.throws(() => readDockerAuths(d), /credential helper \(credsStore\/credHelpers\)/);
+    cfg({ auths, credHelpers: { 'ghcr.io': 'pass' } });
+    assert.throws(() => readDockerAuths(d), /credential helper/);
+    cfg({ auths, credHelpers: {}, credsStore: '' }); // empty: no helper
+    assert.deepEqual(readDockerAuths(d), auths);
+    cfg('{not json');
+    assert.throws(() => readDockerAuths(d), /not valid JSON/);
+    cfg({ auths: [] });
+    assert.throws(() => readDockerAuths(d), /"auths" is not an object/);
+    // The temporary directory: 0700, only config.json (0600) holding {"auths": ...}.
+    const tmp = makeDockerConfig(auths, T);
+    assert.equal(spawnSync('stat', ['-c', '%a', tmp], { encoding: 'utf8' }).stdout.trim(), '700');
+    assert.equal(spawnSync('stat', ['-c', '%a', join(tmp, 'config.json')], { encoding: 'utf8' }).stdout.trim(), '600');
+    assert.deepEqual(spawnSync('ls', ['-A', tmp], { encoding: 'utf8' }).stdout.trim(), 'config.json');
+    assert.deepEqual(JSON.parse(readFileSync(join(tmp, 'config.json'), 'utf8')), { auths });
+  });
+  it('a pinned tree (REVISION, no .git) refuses an untagged up, build or run', async () => {
+    const { checkPinnedUntagged } = await import('./compose-run.mjs');
+    const plan = (...s) => s.map((x) => ({ kind: 'compose', args: splitStep(x) }));
+    const r = mkdtempSync(join(T, 'tree-pinned-'));
+    const all = plan('compose run --rm migrate', 'compose up -d --build');
+    assert.doesNotThrow(() => checkPinnedUntagged(r, '', all)); // no REVISION: a plain tree
+    writeFileSync(join(r, 'REVISION'), `${SHA}\n`);
+    for (const s of ['compose up -d --build', 'compose up -d', 'compose build', 'compose run --rm migrate']) {
+      assert.throws(() => checkPinnedUntagged(r, '', plan(s)), /deployed pinned .* need STAGE_IMAGE_TAG/, s);
+    }
+    assert.doesNotThrow(() => checkPinnedUntagged(r, '', plan('compose down', 'compose logs -f', 'compose down -v')));
+    assert.doesNotThrow(() => checkPinnedUntagged(r, SHA, all)); // tagged: checkStageTree and checkStagePlan apply
+    mkdirSync(join(r, '.git'));
+    assert.doesNotThrow(() => checkPinnedUntagged(r, '', all)); // a git checkout is not pinned
+  });
+  it('with a tag, the tree must be the tagged commit: git HEAD, or a REVISION file without .git', async () => {
+    const { checkStageTree } = await import('./compose-run.mjs');
+    assert.doesNotThrow(() => checkStageTree(join(T, 'no-such-tree'), '')); // untagged: no check
+    const g = mkdtempSync(join(T, 'tree-git-'));
+    const git = (...a) => {
+      const r = spawnSync('git', ['-C', g, '-c', 'user.name=t', '-c', 'user.email=t@example.invalid', '-c', 'commit.gpgsign=false', ...a], { encoding: 'utf8' });
+      assert.equal(r.status, 0, r.stderr);
+      return r.stdout.trim();
+    };
+    git('init', '-q');
+    git('commit', '-q', '--allow-empty', '-m', 'one');
+    const one = git('rev-parse', 'HEAD');
+    git('commit', '-q', '--allow-empty', '-m', 'two');
+    const two = git('rev-parse', 'HEAD');
+    assert.doesNotThrow(() => checkStageTree(g, two));
+    assert.throws(() => checkStageTree(g, one), /STAGE_IMAGE_TAG is not HEAD/);
+    assert.throws(() => checkStageTree(g, one), new RegExp(`run make from a checkout of ${one}`));
+    // .git wins over a REVISION file; the hint then names the likely stale .git.
+    writeFileSync(join(g, 'REVISION'), `${one}\n`);
+    assert.throws(() => checkStageTree(g, one), /is not HEAD .*REVISION file, so its \.git is probably left over .*remove the \.git/);
+    const r = mkdtempSync(join(T, 'tree-rev-'));
+    assert.throws(() => checkStageTree(r, SHA), /no \.git and no REVISION file/);
+    writeFileSync(join(r, 'REVISION'), `${SHA}\n`);
+    assert.doesNotThrow(() => checkStageTree(r, SHA));
+    assert.throws(() => checkStageTree(r, 'b'.repeat(40)), /is not the REVISION/);
+    writeFileSync(join(r, 'REVISION'), 'junk\n');
+    assert.throws(() => checkStageTree(r, SHA), /not a 40-hex SHA/);
+    rmSync(join(r, 'REVISION'));
+    writeFileSync(join(T, 'rev-target'), `${SHA}\n`);
+    symlinkSync(join(T, 'rev-target'), join(r, 'REVISION'));
+    assert.throws(() => checkStageTree(r, SHA), /REVISION must be a small regular file/);
+  });
+  it('with a tag nothing builds and every up passes --no-build', async () => {
+    const { checkStagePlan, parseStageOptions } = await import('./compose-run.mjs');
+    const plan = (...s) => s.map((x) => ({ kind: 'compose', args: splitStep(x) }));
+    const tagged = parseStageOptions({ STAGE_IMAGE_TAG: SHA, STAGE_PUBLIC_BASE_URL: URL1 });
+    assert.doesNotThrow(() => checkStagePlan(tagged, plan('compose pull web api', 'compose run --rm migrate', 'compose up -d --no-build')));
+    assert.throws(() => checkStagePlan(tagged, plan('compose build')), /building is refused/);
+    assert.throws(() => checkStagePlan(tagged, plan('compose up -d --build')), /building is refused/);
+    assert.throws(() => checkStagePlan(tagged, plan('compose up -d')), /--no-build/);
+    assert.doesNotThrow(() => checkStagePlan(parseStageOptions({}), plan('compose up -d --build')));
+  });
+  it('the resolved stage config must carry the expected images, origin and cookie posture', async () => {
+    const { checkStageResolved, parseStageOptions } = await import('./compose-run.mjs');
+    const cfg = (web, api, url, cs) => ({ services: { router: { ports: [{ published: '8788' }] }, web: { image: web }, api: { image: api, environment: { PUBLIC_BASE_URL: url, COOKIE_SECURE: cs, TRUST_PROXY: '1' } } } });
+    const local = parseStageOptions({});
+    assert.doesNotThrow(() => checkStageResolved(cfg('autologger-stage-web:local', 'autologger-stage-api:local', 'http://localhost:8788', '0'), local));
+    assert.throws(() => checkStageResolved(cfg('autologger-stage-web:local', 'autologger-stage-api:local', 'http://localhost:8788', '1'), local), /COOKIE_SECURE/);
+    const pub = parseStageOptions({ STAGE_IMAGE_TAG: SHA, STAGE_PUBLIC_BASE_URL: 'https://stage.example.com' });
+    const g = (n) => `ghcr.io/kwcantrell/autologger-${n}:${SHA}`;
+    assert.doesNotThrow(() => checkStageResolved(cfg(g('web'), g('api'), 'https://stage.example.com', '1'), pub));
+    assert.throws(() => checkStageResolved(cfg('autologger-stage-web:local', g('api'), 'https://stage.example.com', '1'), pub), /images/);
+    assert.throws(() => checkStageResolved(cfg(g('web'), g('api'), 'http://localhost:8788', '1'), pub), /PUBLIC_BASE_URL/);
+    assert.throws(() => checkStageResolved(cfg(g('web'), g('api'), 'https://stage.example.com', '0'), pub), /COOKIE_SECURE/);
+    assert.throws(() => checkStageResolved(cfg('autologger-stage-web:local', 'autologger-stage-api:local', 'http://localhost:9999', '0'), local), /PUBLIC_BASE_URL/);
+  });
+  it('the stage values are refused for dev and prod, and a bad one stops before any request', async () => {
+    writeCreds('dev');
+    let r = await run(['dev', 'compose version'], { env: { STAGE_IMAGE_TAG: SHA } });
+    assert.notEqual(r.code, 0);
+    assert.match(r.out, /stage only/);
+    writeCreds('stage');
+    r = await run(['stage', 'compose version'], { env: { STAGE_PUBLIC_BASE_URL: 'http://stage.example.com' } });
+    assert.notEqual(r.code, 0);
+    assert.match(r.out, /STAGE_PUBLIC_BASE_URL/);
+    r = await run(['stage', 'compose up -d --build'], { env: { STAGE_IMAGE_TAG: HEAD, STAGE_PUBLIC_BASE_URL: URL1 } });
+    assert.notEqual(r.code, 0);
+    assert.match(r.out, /building is refused/);
+    r = await run(['stage', 'compose up -d --no-build'], { env: { STAGE_IMAGE_TAG: HEAD } });
+    assert.notEqual(r.code, 0);
+    assert.match(r.out, /also set STAGE_PUBLIC_BASE_URL/);
+    // F1: a tag that is not this tree's HEAD (image/migration skew) stops before any request.
+    r = await run(['stage', 'compose up -d --no-build'], { env: { STAGE_IMAGE_TAG: SHA, STAGE_PUBLIC_BASE_URL: URL1 } });
+    assert.notEqual(r.code, 0);
+    assert.match(r.out, /STAGE_IMAGE_TAG is not HEAD/);
+    // F4: with a tag, a DOCKER_CONFIG anyone can write (/tmp) stops before any request.
+    r = await run(['stage', 'compose version'], { env: { STAGE_IMAGE_TAG: HEAD, STAGE_PUBLIC_BASE_URL: URL1, DOCKER_CONFIG: '/tmp' } });
+    assert.notEqual(r.code, 0);
+    assert.match(r.out, /DOCKER_CONFIG/);
+    // FA-2: a credential helper in the caller's config.json stops before any request.
+    const dcHelper = mkdtempSync(join(T, 'dc-helper-'));
+    writeFileSync(join(dcHelper, 'config.json'), '{"auths":{"ghcr.io":{}},"credsStore":"secretservice"}');
+    chmodSync(join(dcHelper, 'config.json'), 0o600);
+    r = await run(['stage', 'compose version'], { env: { STAGE_IMAGE_TAG: HEAD, STAGE_PUBLIC_BASE_URL: URL1, DOCKER_CONFIG: dcHelper } });
+    assert.notEqual(r.code, 0);
+    assert.match(r.out, /credential helper/);
+    assert.equal(seen.length, 0);
+    assert.equal(log('argv'), '');
+  });
+  it('a tagged public stage run resolves, passes the compose variables and prints the https origin', async () => {
+    writeCreds('stage');
+    handler = standIn(stageSecrets());
+    // The caller's dir carries both plugin paths the re-panel demonstrated (FA-2): a cli-plugins
+    // symlink to a world-writable dir and cliPluginsExtraDirs. compose must see neither.
+    const dc = mkdtempSync(join(T, 'dc-run-'));
+    const evil = mkdtempSync(join(T, 'evil-'));
+    chmodSync(evil, 0o777);
+    symlinkSync(evil, join(dc, 'cli-plugins'));
+    const auths = { 'ghcr.io': { auth: Buffer.from('u:tok').toString('base64') } };
+    writeFileSync(join(dc, 'config.json'), JSON.stringify({ auths, cliPluginsExtraDirs: [evil], currentContext: 'evil' }));
+    chmodSync(join(dc, 'config.json'), 0o600);
+    const r = await run(['stage', 'resolved', 'compose pull web api', 'compose up -d --no-build', 'urls'], {
+      env: { STAGE_IMAGE_TAG: HEAD, STAGE_PUBLIC_BASE_URL: 'https://stage.example.com', DOCKER_CONFIG: dc },
+    });
+    assert.equal(r.code, 0, r.out);
+    assert.match(r.out, /stage: +https:\/\/stage\.example\.com +\(the HTTPS edge proxies to http:\/\/127\.0\.0\.1:18788\)/);
+    assert.match(log('argv'), /pull web api/);
+    const env = log('env');
+    assert.match(env, new RegExp(`^STAGE_WEB_IMAGE=ghcr\\.io/kwcantrell/autologger-web:${HEAD}$`, 'm'));
+    assert.match(env, new RegExp(`^STAGE_API_IMAGE=ghcr\\.io/kwcantrell/autologger-api:${HEAD}$`, 'm'));
+    const childDc = /^DOCKER_CONFIG=(.*)$/m.exec(env)?.[1];
+    assert.ok(childDc && childDc !== dc && /\/compose-run-docker-[^/]+$/.test(childDc), childDc);
+    assert.equal(log('dockerls').trim(), 'config.json');
+    assert.equal(log('dockermode').trim(), '700');
+    assert.deepEqual(JSON.parse(log('dockercfg')), { auths });
+    assert.equal(existsSync(childDc), false, 'the temporary DOCKER_CONFIG is removed');
+    assert.match(env, /^DOCKER_CONTEXT=default$/m);
+    assert.match(env, /^STAGE_PUBLIC_BASE_URL=https:\/\/stage\.example\.com$/m);
+    assert.match(env, /^STAGE_COOKIE_SECURE=1$/m);
+    assert.doesNotMatch(env, /^STAGE_IMAGE_TAG=/m);
+  });
+  it('an untagged stage run is the local one (resolved checks the :local images; DOCKER_CONFIG ignored)', async () => {
+    writeCreds('stage');
+    handler = standIn(stageSecrets());
+    // An ambient DOCKER_CONFIG (even /tmp) neither refuses nor reaches compose without a tag (RS1).
+    const r = await run(['stage', 'resolved', 'compose up -d --build', 'urls'], { env: { DOCKER_CONFIG: '/tmp' } });
+    assert.equal(r.code, 0, r.out);
+    assert.match(r.out, /stage: +http:\/\/localhost:18788/);
+    assert.doesNotMatch(log('env'), /^STAGE_(WEB_IMAGE|API_IMAGE|PUBLIC_BASE_URL|COOKIE_SECURE)=/m);
+    assert.doesNotMatch(log('env'), /^DOCKER_(CONFIG|CONTEXT)=/m);
+  });
+  it('the temporary DOCKER_CONFIG is removed when a step fails and on SIGTERM', async () => {
+    writeCreds('stage');
+    handler = standIn(stageSecrets());
+    const dc = mkdtempSync(join(T, 'dc-clean-'));
+    const env = { STAGE_IMAGE_TAG: HEAD, STAGE_PUBLIC_BASE_URL: URL1, DOCKER_CONFIG: dc };
+    mkdirSync(join(T, 'log'), { recursive: true });
+    writeFileSync(join(T, 'log/fail'), '');
+    let r = await run(['stage', 'compose pull web api', 'compose up -d --no-build'], { env });
+    assert.equal(r.code, 3, r.out);
+    let childDc = /^DOCKER_CONFIG=(.*)$/m.exec(log('env'))?.[1];
+    assert.ok(childDc && childDc !== dc, childDc);
+    assert.equal(existsSync(childDc), false, 'removed after a failed step');
+    rmSync(join(T, 'log'), { recursive: true, force: true });
+    mkdirSync(join(T, 'log'), { recursive: true });
+    writeFileSync(join(T, 'log/sleep'), '');
+    r = await run(['stage', 'compose up -d --no-build'], {
+      env,
+      onSpawn: (c) => {
+        const t = setInterval(() => { if (existsSync(join(T, 'log/env'))) { clearInterval(t); setTimeout(() => c.kill('SIGTERM'), 200); } }, 50);
+      },
+    });
+    assert.equal(r.code, 143, r.out);
+    childDc = /^DOCKER_CONFIG=(.*)$/m.exec(log('env'))?.[1];
+    assert.ok(childDc && childDc !== dc, childDc);
+    assert.equal(existsSync(childDc), false, 'removed after SIGTERM');
+  });
+  it('the stage values cannot come from OpenBao', () => {
+    for (const k of ['STAGE_IMAGE_TAG', 'STAGE_WEB_IMAGE', 'STAGE_API_IMAGE', 'STAGE_PUBLIC_BASE_URL', 'STAGE_COOKIE_SECURE', 'DOCKER_CONFIG']) {
+      assert.throws(() => validateSecrets(kv([secret(k, 'x')]), allowedNames('stage')), /not-allowed/, k);
+    }
   });
 });

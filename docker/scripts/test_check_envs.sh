@@ -2,7 +2,7 @@
 # docker/scripts/test_check_envs.sh -- regression cases for check-envs.sh invariants 14 and 15
 # (infisical-secrets tasks 2.1, 2.2), 16 and the invariant 4 exceptions (supabase-db task 2.1), and
 # invariant 4's packages/*/src rule (retire-sqlite-catalog task 4.1), and the auth networks
-# (gotrue-sign-in task 2.1).
+# (gotrue-sign-in task 2.1), and the stage public mode (stage-public-https, invariant 7).
 # Each case copies the working tree (tracked + untracked, git-ignored files excluded, so no env file or data directory is copied) to a scratch dir,
 # applies one mutation, runs the check there and asserts the outcome.
 #
@@ -228,6 +228,15 @@ d=$SCRATCH/pkgnonsrc; snapshot "$d"
 # An existing non-src package path, so the existence check can't be what refuses it.
 sed -i 's#^      - { type: bind, source: ./packages/catalog/src, target: /app/packages/catalog/src, read_only: true }$#&\n      - { type: bind, source: ./packages/catalog/package.json, target: /app/packages/catalog/package.json, read_only: true }#' "$d/docker/compose.dev.yaml"
 expect "a package bind outside src is caught" "$d" fail "invariant 4] dev: a read-only bind source is not under"
+
+# ---- stage-public-https (invariant 7): stage defaults stay local; the public mode is exact
+d=$SCRATCH/stagecookie; snapshot "$d"
+sed -i 's/^      COOKIE_SECURE: ${STAGE_COOKIE_SECURE:-0}$/      COOKIE_SECURE: ${STAGE_COOKIE_SECURE:-1}/' "$d/docker/compose.stage.yaml"
+expect "a stage COOKIE_SECURE default other than 0 is caught" "$d" fail "invariant 7] stage"
+
+d=$SCRATCH/stageimage; snapshot "$d"
+sed -i 's/^    image: ${STAGE_API_IMAGE:-autologger-stage-api:local}$/    image: autologger-stage-api:local/' "$d/docker/compose.stage.yaml"
+expect "a stage api image that ignores STAGE_API_IMAGE is caught" "$d" fail "invariant 7] stage"
 
 echo "test_check_envs: $PASS passed, $FAILED failed"
 [ "$FAILED" -eq 0 ]
