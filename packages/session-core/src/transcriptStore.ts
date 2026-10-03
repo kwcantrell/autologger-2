@@ -111,18 +111,20 @@ const EMPTY_ENRICHMENT: TranscriptEnrichmentInput = { paragraphs: [], sentiment:
 export class TranscriptStore {
   constructor(private core: SessionCore) {}
 
-  listTranscriptWords(): TranscriptWord[] {
-    return this.core.all('SELECT * FROM session_transcript_words ORDER BY ordinal').map(wordRow);
+  async listTranscriptWords(): Promise<TranscriptWord[]> {
+    return (await this.core.all('SELECT * FROM session_transcript_words ORDER BY ordinal')).map(
+      wordRow,
+    );
   }
 
-  insertTranscriptWord(data: {
+  async insertTranscriptWord(data: {
     session_time: string;
     speaker: string;
     word: string;
-  }): TranscriptWord {
+  }): Promise<TranscriptWord> {
     const id = crypto.randomUUID();
-    const ordinal = nextOrdinal(this.core, 'session_transcript_words');
-    this.core.db.run(
+    const ordinal = await nextOrdinal(this.core, 'session_transcript_words');
+    await this.core.db.run(
       `INSERT INTO session_transcript_words (id, session_time, speaker, word, ordinal, created_at_utc)
        VALUES (?, ?, ?, ?, ?, ?)`,
       id,
@@ -133,34 +135,34 @@ export class TranscriptStore {
       isoZ(new Date(this.core.now())),
     );
     return wordRow(
-      this.core.first('SELECT * FROM session_transcript_words WHERE id = ?', id) as Row,
+      (await this.core.first('SELECT * FROM session_transcript_words WHERE id = ?', id)) as Row,
     );
   }
 
-  updateTranscriptWord(
+  async updateTranscriptWord(
     wordId: string,
     patch: { session_time?: string; speaker?: string; word?: string },
-  ): TranscriptWord | null {
-    const existing = this.core.first(
+  ): Promise<TranscriptWord | null> {
+    const existing = await this.core.first(
       'SELECT 1 AS x FROM session_transcript_words WHERE id = ?',
       wordId,
     );
     if (existing === null) return null;
     const { cols, vals } = buildPatch(patch, ['session_time', 'speaker', 'word'] as const);
     if (cols.length) {
-      this.core.db.run(
+      await this.core.db.run(
         `UPDATE session_transcript_words SET ${cols.join(', ')} WHERE id = ?`,
         ...vals,
         wordId,
       );
     }
     return wordRow(
-      this.core.first('SELECT * FROM session_transcript_words WHERE id = ?', wordId) as Row,
+      (await this.core.first('SELECT * FROM session_transcript_words WHERE id = ?', wordId)) as Row,
     );
   }
 
-  deleteTranscriptWord(wordId: string): boolean {
-    const r = this.core.db.run('DELETE FROM session_transcript_words WHERE id = ?', wordId);
+  async deleteTranscriptWord(wordId: string): Promise<boolean> {
+    const r = await this.core.db.run('DELETE FROM session_transcript_words WHERE id = ?', wordId);
     return r.changes > 0;
   }
 
@@ -176,7 +178,7 @@ export class TranscriptStore {
    * final order; this method never re-sorts. `enrichment` defaults to empty,
    * so a replace with no enrichment argument clears any prior enrichment
    * (correct: enrichment is a snapshot of the run that produced it). */
-  replaceTranscriptWords(
+  async replaceTranscriptWords(
     words: Array<{
       session_time: string;
       speaker: string;
@@ -185,13 +187,13 @@ export class TranscriptStore {
       end_sec: number;
     }>,
     enrichment: TranscriptEnrichmentInput = EMPTY_ENRICHMENT,
-  ): TranscriptWord[] {
-    this.core.db.run('DELETE FROM session_transcript_words');
-    this.core.db.run('DELETE FROM session_transcript_paragraphs');
-    this.core.db.run('DELETE FROM session_transcript_sentiment');
+  ): Promise<TranscriptWord[]> {
+    await this.core.db.run('DELETE FROM session_transcript_words');
+    await this.core.db.run('DELETE FROM session_transcript_paragraphs');
+    await this.core.db.run('DELETE FROM session_transcript_sentiment');
     const createdAt = isoZ(new Date(this.core.now()));
-    words.forEach((w, ordinal) => {
-      this.core.db.run(
+    for (const [ordinal, w] of words.entries()) {
+      await this.core.db.run(
         `INSERT INTO session_transcript_words
            (id, session_time, speaker, word, start_sec, end_sec, ordinal, created_at_utc)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -204,9 +206,9 @@ export class TranscriptStore {
         ordinal,
         createdAt,
       );
-    });
-    enrichment.paragraphs.forEach((p, ordinal) => {
-      this.core.db.run(
+    }
+    for (const [ordinal, p] of enrichment.paragraphs.entries()) {
+      await this.core.db.run(
         `INSERT INTO session_transcript_paragraphs
            (id, start_sec, end_sec, speaker, text, ordinal, created_at_utc)
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
@@ -218,9 +220,9 @@ export class TranscriptStore {
         ordinal,
         createdAt,
       );
-    });
-    enrichment.sentiment.forEach((s, ordinal) => {
-      this.core.db.run(
+    }
+    for (const [ordinal, s] of enrichment.sentiment.entries()) {
+      await this.core.db.run(
         `INSERT INTO session_transcript_sentiment
            (id, start_sec, end_sec, sentiment, sentiment_score, text, ordinal, created_at_utc)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -233,26 +235,25 @@ export class TranscriptStore {
         ordinal,
         createdAt,
       );
-    });
+    }
     return this.listTranscriptWords();
   }
 
-  /** Synchronous read of the last generation run's persisted enrichment
+  /** Read of the last generation run's persisted enrichment
    * (design D5 / spec "Enrichment persistence and internal read"). Both
    * arrays are already in deterministic ordinal order; a never-generated
    * session (or one whose last run produced no enrichment) reads as empty
    * arrays, never an error. */
-  listTranscriptEnrichment(): {
+  async listTranscriptEnrichment(): Promise<{
     paragraphs: TranscriptParagraph[];
     sentiment: TranscriptSentimentSegment[];
-  } {
-    return {
-      paragraphs: this.core
-        .all('SELECT * FROM session_transcript_paragraphs ORDER BY ordinal')
-        .map(paragraphRow),
-      sentiment: this.core
-        .all('SELECT * FROM session_transcript_sentiment ORDER BY ordinal')
-        .map(sentimentRow),
-    };
+  }> {
+    const paragraphs = await this.core.all(
+      'SELECT * FROM session_transcript_paragraphs ORDER BY ordinal',
+    );
+    const sentiment = await this.core.all(
+      'SELECT * FROM session_transcript_sentiment ORDER BY ordinal',
+    );
+    return { paragraphs: paragraphs.map(paragraphRow), sentiment: sentiment.map(sentimentRow) };
   }
 }

@@ -5,11 +5,8 @@
 
 import Database from 'better-sqlite3';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import {
-  type AsyncSessionSql,
-  SessionTxMisuseError,
-  sqliteAsyncSessionSql,
-} from './asyncSessionSql';
+import { SessionTxMisuseError, sqliteSessionSql } from './asyncSessionSql';
+import type { SessionSql } from './sessionCore';
 
 const unhandled: unknown[] = [];
 const trap = (reason: unknown): void => {
@@ -34,7 +31,7 @@ function promptly<T>(p: Promise<T>): Promise<T> {
 
 function setup() {
   const db = new Database(':memory:');
-  const sql = sqliteAsyncSessionSql(db);
+  const sql = sqliteSessionSql(db);
   return { db, sql };
 }
 
@@ -44,9 +41,9 @@ async function withTable() {
   return s;
 }
 
-const rows = (sql: AsyncSessionSql) => sql.all<{ x: number }>('SELECT x FROM t ORDER BY x');
+const rows = (sql: SessionSql) => sql.all<{ x: number }>('SELECT x FROM t ORDER BY x');
 
-describe('sqliteAsyncSessionSql: all/run/exec as today', () => {
+describe('sqliteSessionSql: all/run/exec as today', () => {
   it('exec() runs multi-statement SQL with no binds (initSchema shape)', async () => {
     const { sql } = setup();
     await sql.exec(`
@@ -89,7 +86,7 @@ describe('sqliteAsyncSessionSql: all/run/exec as today', () => {
   });
 });
 
-describe('sqliteAsyncSessionSql: transactions', () => {
+describe('sqliteSessionSql: transactions', () => {
   it('tx commits and resolves with the body value', async () => {
     const { db, sql } = await withTable();
     const value = await sql.tx(async (t) => {
@@ -207,11 +204,11 @@ describe('sqliteAsyncSessionSql: transactions', () => {
 
   it('a handle used after its transaction ended rejects', async () => {
     const { sql } = await withTable();
-    let kept: AsyncSessionSql | undefined;
+    let kept: SessionSql | undefined;
     await sql.tx(async (t) => {
       kept = t;
     });
-    const handle = kept as AsyncSessionSql;
+    const handle = kept as SessionSql;
     await expect(promptly(handle.run('INSERT INTO t (x) VALUES (1)'))).rejects.toBeInstanceOf(
       SessionTxMisuseError,
     );

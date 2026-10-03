@@ -299,7 +299,7 @@ describe('ai/v2/design — agent credentials refusal (503)', () => {
     expect(spawnSpy).toHaveBeenCalledTimes(1);
   });
 
-  it('predicate: aiV2CredentialsRefused is independent of IP_ALLOWLIST', () => {
+  it('predicate: aiV2CredentialsRefused is independent of IP_ALLOWLIST', async () => {
     const base: Config = {
       PUBLIC_BASE_URL: '',
       HOST: '0.0.0.0',
@@ -1293,7 +1293,7 @@ describe('ai/v2/dashboard — write scoped at least as tightly, whole-config val
     // created_by is recorded in the session DB, not surfaced on the wire
     // (the port's save() returns void; GET's response is config-only, per
     // the port's shape) — check it the way the hub itself would.
-    const stored = env.ports.sessions.get(s).getDashboard('primary');
+    const stored = await (await env.ports.sessions.get(s)).getDashboard('primary');
     expect(stored?.createdBy).toBe(user);
   });
 
@@ -1301,7 +1301,7 @@ describe('ai/v2/dashboard — write scoped at least as tightly, whole-config val
     const s = (await seededSession()).sessionId;
     const res = await putDashboard(s, VALID_DASHBOARD, loopbackEnv(), J, '?turnId=turn-abc');
     expect(res.status).toBe(200);
-    const stored = env.ports.sessions.get(s).getDashboard('primary');
+    const stored = await (await env.ports.sessions.get(s)).getDashboard('primary');
     expect(stored?.createdByTurnId).toBe('turn-abc');
   });
 
@@ -1560,7 +1560,7 @@ describe("ai/v2/design — propose_dashboard's validated config reaches the dash
         `?turnId=${encodeURIComponent(dashboardPayload.turnId)}`,
       );
       expect(putRes.status).toBe(200);
-      const stored = env.ports.sessions.get(s).getDashboard('primary');
+      const stored = await (await env.ports.sessions.get(s)).getDashboard('primary');
       expect(stored?.createdByTurnId).toBe(dashboardPayload.turnId);
     },
   );

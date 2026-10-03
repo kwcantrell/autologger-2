@@ -19,9 +19,10 @@
 //   - Concurrent turns share the one listener via per-connection (per-request)
 //     transport instantiation, so two turns on distinct sessions never share
 //     transport state.
-//   - Tool bodies resolve the hub at CALL TIME (`registry.get(sessionId)`),
-//     never holding a handle across an await, so the idle-eviction sweeper can't
-//     close it underneath a long turn.
+//   - Tool bodies resolve the hub at CALL TIME (`await registry.get(sessionId)`)
+//     and use it only for that invocation's own hub calls, never keeping it
+//     across invocations or a turn, so the idle-eviction sweeper can't close it
+//     underneath a long turn (async-session-hub design D6).
 //
 // This listener is loopback-internal infrastructure — it adds NOTHING to the
 // public :8787 HTTP/WS contract.
@@ -351,9 +352,9 @@ function toolError(text: string): {
  * Build the per-request McpServer bound to one autologger session, registering
  * ONLY the turn's tool set (auto-generate-event-logs D6; no context ⇒ the
  * default three chat tools). Every tool resolves the hub at call time via the
- * registry (never held across an await, so the idle-eviction sweeper can't
- * close it underneath a long turn) and can address ONLY `sessionId` — no tool
- * parameter names a session.
+ * registry and uses it only for that invocation's own hub calls (so the
+ * idle-eviction sweeper can't close it underneath a long turn) and can address
+ * ONLY `sessionId` — no tool parameter names a session.
  *
  * `get_transcript_words` / `list_topics` return the hub row fields verbatim;
  * `get_transcript_words` therefore OMITS the per-word `session_id` the HTTP read
@@ -734,7 +735,7 @@ const TOOL_BUILDERS: Record<AiMcpToolName, (server: McpServer, ctx: ToolBuildCon
           // then never change this turn's page content or boundaries, and the
           // pagination is packed ONCE per registration. Snapshot-less
           // registrations keep 3.3's live hub read, resolved at call time
-          // (D3) — never held across an await, and never memoized (live is
+          // (D3) and used for this invocation only, never memoized (live is
           // live) nor counted as page coverage (no snapshot to cover).
           if (pageState.words !== undefined) {
             const res = selectGenerationTranscriptPage(snapshotPages(pageState), page);
@@ -744,7 +745,7 @@ const TOOL_BUILDERS: Record<AiMcpToolName, (server: McpServer, ctx: ToolBuildCon
             pageState.served.add(page);
             return { content: [{ type: 'text', text: res.text }] };
           }
-          const words = registry.get(sessionId).listTranscriptWords();
+          const words = await (await registry.get(sessionId)).listTranscriptWords();
           const res = renderGenerationTranscriptPage(words, page);
           if (!res.ok) return toolError(res.error);
           return { content: [{ type: 'text', text: res.text }] };
@@ -758,8 +759,8 @@ const TOOL_BUILDERS: Record<AiMcpToolName, (server: McpServer, ctx: ToolBuildCon
         'timecode-annotated), for reading and summarizing.',
       {},
       async () => {
-        // Hub resolved at call time (D3) — never held across an await.
-        const words = registry.get(sessionId).listTranscriptWords();
+        // Hub resolved at call time (D3), used for this invocation only.
+        const words = await (await registry.get(sessionId)).listTranscriptWords();
         // Return COMPACT, readable text — NOT the verbose per-word JSON. A real
         // transcript is thousands of 8-field word rows (~180 chars each); the
         // raw `JSON.stringify(words)` produced a single ~300KB line that
@@ -774,8 +775,8 @@ const TOOL_BUILDERS: Record<AiMcpToolName, (server: McpServer, ctx: ToolBuildCon
 
   list_topics: (server, { registry, sessionId }) => {
     server.tool('list_topics', "Returns this session's topics.", {}, async () => {
-      // Hub resolved at call time (D3) — never held across an await.
-      const topics = registry.get(sessionId).listTopics();
+      // Hub resolved at call time (D3), used for this invocation only.
+      const topics = await (await registry.get(sessionId)).listTopics();
       return { content: [{ type: 'text', text: JSON.stringify(topics) }] };
     });
   },
@@ -806,7 +807,7 @@ const TOOL_BUILDERS: Record<AiMcpToolName, (server: McpServer, ctx: ToolBuildCon
         // Hub resolved at call time (D3). insertTopic is the transactional,
         // server-assigned-ordinal manual-insert path; topics have no WS emission,
         // and this path introduces none.
-        const topic = registry.get(sessionId).insertTopic(parsed.data);
+        const topic = await (await registry.get(sessionId)).insertTopic(parsed.data);
         return { content: [{ type: 'text', text: JSON.stringify(topic) }] };
       },
     );
@@ -890,18 +891,17 @@ const TOOL_BUILDERS: Record<AiMcpToolName, (server: McpServer, ctx: ToolBuildCon
               { auto_generated: true, auto_generate_run_id: generation.runId },
               snapshotDef,
             );
-            // Hub resolved AT CALL TIME (D3) — the RPC call below is synchronous,
-            // no await introduced anywhere in this handler (package-split-
-            // foundation D6: the handler's cap-check→insert→counter-increment
-            // sequence stays uninterruptible). The read-filter-anchor-insert
-            // sequence itself now runs as ONE transactional hub RPC
-            // (`createAnchoredEvent`) instead of a comment-enforced inline
-            // block — same anchor math (anchors rebuilt fresh each call, so
-            // generated events keep sorting among themselves in timecode
-            // order), same event-generate-hardening D3 regenerate-snapshot
-            // exclusion, same one-insert-path (D4) manual-insert semantics.
-            const hub = registry.get(sessionId);
-            const { event } = hub.createAnchoredEvent({
+            // Hub resolved AT CALL TIME (D3), used for this invocation only.
+            // The cap slot is already reserved above, so the awaits below
+            // cannot let a concurrent call past the cap (async-session-hub D8).
+            // The read-filter-anchor-insert sequence runs as ONE transactional
+            // hub RPC (`createAnchoredEvent`) — same anchor math (anchors
+            // rebuilt fresh each call, so generated events keep sorting among
+            // themselves in timecode order), same event-generate-hardening D3
+            // regenerate-snapshot exclusion, same one-insert-path (D4)
+            // manual-insert semantics.
+            const hub = await registry.get(sessionId);
+            const { event } = await hub.createAnchoredEvent({
               category,
               message,
               metadataJson: JSON.stringify(metadata),

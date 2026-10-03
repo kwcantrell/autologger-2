@@ -104,11 +104,11 @@ describe('POST /api/sessions/:sessionId/local-audio-import — happy path + anch
     const session = await seededSession();
     const durationS = '125'; // 125s @ 24fps → 3000 frames (same as youtube-import fixture)
 
-    const hub = env.ports.sessions.get(session);
+    const hub = await env.ports.sessions.get(session);
     const wsMessages: Array<Record<string, unknown>> = [];
     hub.attachSocket({ send: (d: string) => void wsMessages.push(JSON.parse(d)) }, 'browser');
 
-    expect(hub.transportSnapshot(CTX).elapsed_frames).toBe(0);
+    expect((await hub.transportSnapshot(CTX)).elapsed_frames).toBe(0);
 
     const res = await postLocalImport(session, { durationS, contentType: 'audio/wav' });
     expect(res.status).toBe(200);
@@ -148,7 +148,7 @@ describe('POST /api/sessions/:sessionId/local-audio-import — happy path + anch
     // import leaves exactly one blob on disk.
     expect(await listBlobKeys(session)).toHaveLength(1);
 
-    expect(hub.transportSnapshot(CTX).elapsed_frames).toBe(3000);
+    expect((await hub.transportSnapshot(CTX)).elapsed_frames).toBe(3000);
 
     const types = wsMessages.map((m) => m.type);
     expect(types).toContain('audio.changed');
@@ -299,7 +299,7 @@ describe('POST /api/sessions/:sessionId/local-audio-import — rolling refusal (
   // same hermetic seam as sessions.youtubeImport.int.test.ts's late-guard case.
   it('the LATE guard (post-put, pre-anchor) refuses a recording that started during upload: 409, segment rolled back, live roll untouched, no Recording events', async () => {
     const session = await seededSession();
-    const hub = env.ports.sessions.get(session);
+    const hub = await env.ports.sessions.get(session);
     const originalStatusLive = hub.statusLive.bind(hub);
     let statusLiveCalls = 0;
     const spy = vi.spyOn(hub, 'statusLive').mockImplementation((ctx) => {
@@ -346,9 +346,9 @@ describe('POST /api/sessions/:sessionId/local-audio-import — rolling refusal (
 describe('POST /api/sessions/:sessionId/local-audio-import — anchor failure rollback', () => {
   it('rolls back the inserted segment and leaves events/transport unchanged when anchorImportedTake throws', async () => {
     const session = await seededSession();
-    const hub = env.ports.sessions.get(session);
+    const hub = await env.ports.sessions.get(session);
     const before = await listSegmentsRaw(session, env);
-    expect(hub.transportSnapshot(CTX).elapsed_frames).toBe(0);
+    expect((await hub.transportSnapshot(CTX)).elapsed_frames).toBe(0);
 
     const anchorSpy = vi.spyOn(hub, 'anchorImportedTake').mockImplementationOnce(() => {
       throw new Error('simulated anchor failure');
@@ -370,7 +370,7 @@ describe('POST /api/sessions/:sessionId/local-audio-import — anchor failure ro
 
     const { total } = await listEvents(session, env);
     expect(total).toBe(0);
-    expect(hub.transportSnapshot(CTX).elapsed_frames).toBe(0);
+    expect((await hub.transportSnapshot(CTX)).elapsed_frames).toBe(0);
   });
 });
 
@@ -461,7 +461,7 @@ describe('POST /api/sessions/:sessionId/local-audio-import — X-Audio-Seam-Part
     expect(await res.json()).toEqual({ detail });
 
     expect(await listSegmentsRaw(session, env)).toBe(before);
-    expect(env.ports.sessions.get(session).getAudioSeamParts()).toBeNull();
+    expect(await (await env.ports.sessions.get(session)).getAudioSeamParts()).toBeNull();
   });
 
   it('400 { detail } when the parts sum disagrees with duration_s beyond the 0.5 s tolerance', async () => {
@@ -479,7 +479,7 @@ describe('POST /api/sessions/:sessionId/local-audio-import — X-Audio-Seam-Part
     });
 
     expect(await listSegmentsRaw(session, env)).toBe(before);
-    expect(env.ports.sessions.get(session).getAudioSeamParts()).toBeNull();
+    expect(await (await env.ports.sessions.get(session)).getAudioSeamParts()).toBeNull();
   });
 
   it('a valid header persists its parts in order (readable via the hub the log-import sync uses)', async () => {
@@ -493,7 +493,7 @@ describe('POST /api/sessions/:sessionId/local-audio-import — X-Audio-Seam-Part
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true });
 
-    expect(env.ports.sessions.get(session).getAudioSeamParts()).toEqual([
+    expect(await (await env.ports.sessions.get(session)).getAudioSeamParts()).toEqual([
       { duration_s: 40 },
       { duration_s: 60 },
     ]);
@@ -518,8 +518,8 @@ describe('POST /api/sessions/:sessionId/local-audio-import — repeated imports 
     expect(second.status).toBe(200);
     expect(await second.json()).toEqual({ ok: true });
 
-    const hub = env.ports.sessions.get(session);
-    expect(hub.getAudioSeamParts()).toEqual([
+    const hub = await env.ports.sessions.get(session);
+    expect(await hub.getAudioSeamParts()).toEqual([
       { duration_s: 30 },
       { duration_s: 60 },
       { duration_s: 45 },

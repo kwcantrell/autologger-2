@@ -136,7 +136,7 @@ transcribeRouter.get('/api/sessions/:sessionId/transcribe.csv', async (c) => {
 transcribeRouter.get('/api/sessions/:sessionId/transcript-words', async (c) => {
   const sessionId = c.req.param('sessionId');
   await requireSession(c, sessionId);
-  const words = getSessionHub(c, sessionId).listTranscriptWords();
+  const words = await (await getSessionHub(c, sessionId)).listTranscriptWords();
   return c.json({ words: words.map(wordApiDict) });
 });
 
@@ -182,7 +182,7 @@ transcribeRouter.post('/api/sessions/:sessionId/transcript-words', async (c) => 
   const sessionId = c.req.param('sessionId');
   await requireSession(c, sessionId);
   const body = transcriptWordCreateSchema.parse(await c.req.json());
-  const word = getSessionHub(c, sessionId).insertTranscriptWord(body);
+  const word = await (await getSessionHub(c, sessionId)).insertTranscriptWord(body);
   return c.json(wordApiDict(word), 201);
 });
 
@@ -194,7 +194,10 @@ transcribeRouter.patch('/api/sessions/:sessionId/transcript-words/:wordId', asyn
   if (body.session_time != null) patch.session_time = body.session_time;
   if (body.speaker != null) patch.speaker = body.speaker;
   if (body.word != null) patch.word = body.word;
-  const row = getSessionHub(c, sessionId).updateTranscriptWord(c.req.param('wordId'), patch);
+  const row = await (await getSessionHub(c, sessionId)).updateTranscriptWord(
+    c.req.param('wordId'),
+    patch,
+  );
   if (row === null) throw new ApiError(404, 'Transcript word not found.');
   return c.json(wordApiDict(row));
 });
@@ -202,7 +205,7 @@ transcribeRouter.patch('/api/sessions/:sessionId/transcript-words/:wordId', asyn
 transcribeRouter.delete('/api/sessions/:sessionId/transcript-words/:wordId', async (c) => {
   const sessionId = c.req.param('sessionId');
   await requireSession(c, sessionId);
-  const ok = getSessionHub(c, sessionId).deleteTranscriptWord(c.req.param('wordId'));
+  const ok = await (await getSessionHub(c, sessionId)).deleteTranscriptWord(c.req.param('wordId'));
   if (!ok) throw new ApiError(404, 'Transcript word not found.');
   return c.body(null, 204);
 });
@@ -212,7 +215,7 @@ transcribeRouter.delete('/api/sessions/:sessionId/transcript-words/:wordId', asy
 transcribeRouter.get('/api/sessions/:sessionId/topics', async (c) => {
   const sessionId = c.req.param('sessionId');
   await requireSession(c, sessionId);
-  return c.json({ topics: getSessionHub(c, sessionId).listTopics() });
+  return c.json({ topics: await (await getSessionHub(c, sessionId)).listTopics() });
 });
 
 // ── Topic generation (topic-generation, design D1-D7) ───────────────────────
@@ -248,7 +251,7 @@ transcribeRouter.post('/api/sessions/:sessionId/topics/generate', async (c) => {
   }
 
   // Transcript precondition (design D4) — 400 before any spawn.
-  const transcriptWords = getSessionHub(c, sessionId).listTranscriptWords();
+  const transcriptWords = await (await getSessionHub(c, sessionId)).listTranscriptWords();
   if (transcriptWords.length === 0) {
     throw new ApiError(400, NO_TRANSCRIPT_DETAIL);
   }
@@ -271,9 +274,7 @@ transcribeRouter.post('/api/sessions/:sessionId/topics/generate', async (c) => {
     // nothing below ever mutates these topics until the atomic
     // delete-on-success.
     const preRunIds = new Set(
-      getSessionHub(c, sessionId)
-        .listTopics()
-        .map((t) => t.id),
+      (await (await getSessionHub(c, sessionId)).listTopics()).map((t) => t.id),
     );
 
     const outcome = await generateTopicsTurn({
@@ -287,9 +288,10 @@ transcribeRouter.post('/api/sessions/:sessionId/topics/generate', async (c) => {
 
     // Re-acquire the hub after the async, potentially multi-minute turn
     // above — the idle sweeper may have closed the prior handle in the
-    // meantime (invariant: hubs close their DB handles and reopen lazily).
-    const hub = getSessionHub(c, sessionId);
-    const after = hub.listTopics();
+    // meantime (async-session-hub design D6: a hub is re-resolved after a long
+    // non-hub await, and used across its own calls below).
+    const hub = await getSessionHub(c, sessionId);
+    const after = await hub.listTopics();
     const newIds = after.filter((t) => !preRunIds.has(t.id)).map((t) => t.id);
 
     // Page-coverage gate (topic-generate-paged-transcript D6): a run that
@@ -303,15 +305,15 @@ transcribeRouter.post('/api/sessions/:sessionId/topics/generate', async (c) => {
 
     if (outcome.ok && newIds.length >= 1 && fullyRead) {
       // Success: delete the pre-run topics, leaving only the fresh set.
-      hub.deleteTopics([...preRunIds]);
-      return c.json({ topics: hub.listTopics() });
+      await hub.deleteTopics([...preRunIds]);
+      return c.json({ topics: await hub.listTopics() });
     }
 
     // Failure (turn error/timeout/CLI error, a run that created no topics, or
     // one that never read the whole transcript): delete only the topics THIS
     // run created — the pre-run topics were never touched and remain exactly
     // as they were. Same status, same body as every other failure cause.
-    hub.deleteTopics(newIds);
+    await hub.deleteTopics(newIds);
     // Operator-facing diagnostic: the `502` body is deliberately opaque to the
     // client (a fixed, non-sensitive string), but a self-hosted operator needs
     // the real reason to debug — an exceeded `--max-budget-usd` surfaces as the
@@ -340,7 +342,7 @@ transcribeRouter.post('/api/sessions/:sessionId/topics', async (c) => {
   const sessionId = c.req.param('sessionId');
   await requireSession(c, sessionId);
   const body = topicCreateSchema.parse(await c.req.json());
-  const topic = getSessionHub(c, sessionId).insertTopic(body);
+  const topic = await (await getSessionHub(c, sessionId)).insertTopic(body);
   return c.json(topic, 201);
 });
 
@@ -358,7 +360,7 @@ transcribeRouter.patch('/api/sessions/:sessionId/topics/:topicId', async (c) => 
   if (body.duration_sec != null) patch.duration_sec = body.duration_sec;
   if (body.topic_level != null) patch.topic_level = body.topic_level;
   if (body.summary != null) patch.summary = body.summary;
-  const row = getSessionHub(c, sessionId).updateTopic(c.req.param('topicId'), patch);
+  const row = await (await getSessionHub(c, sessionId)).updateTopic(c.req.param('topicId'), patch);
   if (row === null) throw new ApiError(404, 'Topic not found.');
   return c.json(row);
 });
@@ -366,7 +368,7 @@ transcribeRouter.patch('/api/sessions/:sessionId/topics/:topicId', async (c) => 
 transcribeRouter.delete('/api/sessions/:sessionId/topics/:topicId', async (c) => {
   const sessionId = c.req.param('sessionId');
   await requireSession(c, sessionId);
-  const ok = getSessionHub(c, sessionId).deleteTopic(c.req.param('topicId'));
+  const ok = await (await getSessionHub(c, sessionId)).deleteTopic(c.req.param('topicId'));
   if (!ok) throw new ApiError(404, 'Topic not found.');
   return c.body(null, 204);
 });

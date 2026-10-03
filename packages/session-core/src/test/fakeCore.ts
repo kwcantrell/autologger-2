@@ -9,7 +9,7 @@
 // part of the package's public barrel.
 
 import Database from 'better-sqlite3';
-import { sqliteSessionSql } from '../SessionHub';
+import { sqliteSessionSql } from '../asyncSessionSql';
 import type { AttachedSocket, SessionRuntime } from '../sessionCore';
 import { SessionCore } from '../sessionCore';
 
@@ -28,8 +28,9 @@ export interface FakeRuntime {
 /** A real SessionCore (schema initialized) on a typed fake runtime: in-memory
  * SQL, one capturing browser socket, captured alarms, and an injectable clock
  * (default: the mutable `time.now` base; pass `now` to use e.g. `Date.now`
- * under vitest fake timers). */
-export function fakeRuntime(opts: { now?: () => number } = {}): FakeRuntime {
+ * under vitest fake timers). Store calls on this root core run outside any
+ * transaction, as the hub's reads do. */
+export async function fakeRuntime(opts: { now?: () => number } = {}): Promise<FakeRuntime> {
   const sent: string[] = [];
   const broadcasts: unknown[] = [];
   const alarms: number[] = [];
@@ -49,6 +50,6 @@ export function fakeRuntime(opts: { now?: () => number } = {}): FakeRuntime {
     setAlarm: (atMs) => alarms.push(atMs),
   };
   const core = new SessionCore(runtime);
-  core.initSchema();
+  await core.initSchema();
   return { core, sent, broadcasts, alarms, sockets, time };
 }

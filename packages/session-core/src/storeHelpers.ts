@@ -30,6 +30,7 @@ export function buildPatch<K extends string>(
  * for reuse (pinned in the store tests). `table` must be a literal table
  * name, never user input. (audioStore's 1-seeded ordinal is deliberately NOT
  * this helper.) */
-export function nextOrdinal(core: SessionCore, table: string): number {
-  return Number(core.first(`SELECT COALESCE(MAX(ordinal), -1) + 1 AS n FROM ${table}`)?.n ?? 0);
+export async function nextOrdinal(core: SessionCore, table: string): Promise<number> {
+  const r = await core.first(`SELECT COALESCE(MAX(ordinal), -1) + 1 AS n FROM ${table}`);
+  return Number(r?.n ?? 0);
 }

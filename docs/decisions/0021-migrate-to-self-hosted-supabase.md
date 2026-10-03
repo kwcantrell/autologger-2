@@ -151,7 +151,9 @@ Slice order:
    5. sessions' active-show read-then-write and show-check-then-create need transactions or
       constraints;
    6. the log-import job uses the request's catalog handle inside a detached job;
-   7. never hold a session hub across an await;
+   7. ~~never hold a session hub across an await~~ Replaced in 7a by the rule below
+      (async-session-hub design D6): a handler may hold a hub across that hub's own calls, and
+      re-resolves it after a long non-hub `await`;
    8. every `requireTeamAdmin` gate reads the role outside the transaction that then writes, so a
       demoted admin's in-flight request still completes (re-check inside the transaction, or
       RLS in slice 6);
@@ -711,7 +713,75 @@ Slice order:
        test), `server/src/test/rewritingCatalog.ts` (rewrites one user-bound statement's
        outcome), and `server/src/test/pg/policyFixture.ts` (the design D10 fixture shared by the
        helper and matrix tests); the probe gained `CATALOG_PROBE_ANALYZE=1`.
-7. Session tables, revision, version checks and the audited overwrite.
+7. Session tables, revision, version checks and the audited overwrite. Split (owner, 2026-10-03)
+   into three changes, async first, as slice 3 made the catalog async before slice 4 moved it:
+   - 7a `async-session-hub`: the session hub goes async, still on SQLite, with no HTTP or
+     WebSocket change for serial requests. Implemented 2026-10-03 on
+     `supabase-7a-async-session-hub`; verification, merge and the live dev and stage checks are
+     pending.
+   - 7b: the session tables in Postgres schema `catalog`, ported faithfully as 4a ported the
+     catalog; the postgres.js session adapter and the wiring; the `sessions` projection written
+     inside the hub's write transaction, retiring the mirror chain; row-level security on the
+     content tables.
+   - 7c: `sessions.revision`, per-row versions, opt-in version checks, `409` with the current row,
+     the overwrite dialog and the audit. A contract delta; Companion routes stay unchecked.
+
+   Owner decisions (owner, 2026-10-03):
+   1. **split 7a / 7b / 7c, async first:** 7a converts the call graph while the store is still
+      SQLite, so 7b's diff is storage alone;
+   2. **per-row versions** (7c), not one session-wide version;
+   3. **opt-in version checks** (7c): a request without a version keeps today's last-writer-wins;
+   4. **a faithful port** (7b): the session tables keep their types and semantics, as 4a did for
+      the catalog.
+
+   After the adversarial panel (owner, 2026-10-03):
+   - **fix all five interleaving sequences in 7a:** under a per-call lock, two handlers that
+     resume in one tick alternate between their hub calls, so the PUT event metadata merge, the
+     import's recording ordinal, the Companion transport toggle, the transcript remap and the
+     log-import duplicate check each became one hub method, tested by firing the conflicting pair
+     at once;
+   - **no transaction deadline:** hub bodies await only their own SQL (revisit item below);
+   - **a failed lease alarm logs and re-arms** with a backoff of 1 s, doubling, capped at the 40 s
+     stale threshold, reset on success;
+   - **the spec states observables only** (no dirty read, atomic read-then-write methods,
+     broadcasts in commit order, no self-deadlock, a named error on a closed hub); whether 7b
+     keeps an in-process lock is 7b's choice.
+
+   **7a's mechanism.** `SessionSql` is async, and `tx(fn)` hands its body a handle scoped to the
+   transaction (`t.tx` joins it; any error fails the whole transaction; misuse rejects with
+   `SessionTxMisuseError`). Each hub owns one FIFO lock, and every storage call takes it, reads
+   included: a write runs `BEGIN IMMEDIATE`, the body, `COMMIT`, then flushes its broadcasts before
+   the lock is released; a read runs under the lock without a transaction. The broadcast queue
+   belongs to the transaction, so a relayed Companion command is sent at once. A hub call from
+   inside the same hub's transaction rejects instead of deadlocking. The five sequences are the
+   hub methods `updateEvent` (with a metadata merge), `addImportedAudioSegment`, `toggleTake`,
+   `replaceTranscriptWordsRemapped` and `addEventAtTotalFramesIfAbsent`. A failed `ROLLBACK`
+   rejects the call and closes the hub (queued calls get `SessionHubClosedError`), and the next
+   `get` opens a fresh one. The lease alarm is armed outside the transaction's async context, runs
+   through the lock, and re-arms with the backoff above after a failure. A handler may hold a hub
+   across its own calls and re-resolves it after a long non-hub `await`.
+
+   **Revisit (owner, 2026-10-03):** a hub transaction that hangs and never resolves holds the
+   session's lock and soft-locks that session (every later call on it queues forever); revisit a
+   deadline or a lock-wait timeout.
+
+   **Slice 7b hazards** (async-session-hub design D11). They go live once session statements do
+   I/O:
+   1. the observables of the `core-ports-architecture` requirement must hold without the embedded
+      lock: every write transaction takes the `sessions` row lock first, and a multi-statement
+      read needs one snapshot (one statement, or a `REPEATABLE READ` read transaction);
+   2. broadcast flush order versus commit order across two transactions on one session (keep a
+      per-session ordering gate, or order frames by revision);
+   3. the sequences 7a documents rather than fixes (async-session-hub design D7: S1, S2, S5, S7,
+      S8 and S11), which split on any request once statements do I/O;
+   4. a hub body re-run after a `40001` retry must have only database effects: drop the held
+      broadcasts per attempt; `setAlarm` inside the lease bodies re-arms on every run (harmless,
+      one slot); the method callbacks (`mergeMetadata`, `remap`) must stay pure;
+   5. a `create_event` insert still in flight when its turn ends is not counted in `created`;
+   6. the registry stops owning connections: eviction, `open()`, `.db` creation on read paths and
+      the failed-rollback close change meaning, and the adapter sets the unconfirmed-rollback
+      policy;
+   7. the mirror chain retires (slice 4 hazards 3, 4 and 17, and the `live_revision` follow-up).
 8. Session leases.
 9. Realtime replaces the WebSocket protocol.
 10. Blobs to Supabase Storage.

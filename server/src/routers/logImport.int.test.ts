@@ -248,7 +248,7 @@ describe('log-import job HTTP surface', () => {
     // Timed transcript words — real rows via the hub (ensureTimedTranscript
     // sees them and skips DeepGram entirely). The phrase sits at session
     // ~527 s while the sheet clock says 8:48 (= 528 s) → offset −1 s.
-    env.ports.sessions.get(session).replaceTranscriptWords([
+    await (await env.ports.sessions.get(session)).replaceTranscriptWords([
       { session_time: '00:08:47', speaker: '0', word: 'almost', start_sec: 527, end_sec: 527.2 },
       { session_time: '00:08:47', speaker: '0', word: 'called', start_sec: 527.3, end_sec: 527.4 },
       { session_time: '00:08:47', speaker: '0', word: 'a', start_sec: 527.5, end_sec: 527.6 },
@@ -558,7 +558,7 @@ describe('the log-import job re-checks its creator’s show access before each s
       env,
     );
     expect(res.status).toBe(200);
-    env.ports.sessions.get(session).replaceTranscriptWords([
+    await (await env.ports.sessions.get(session)).replaceTranscriptWords([
       { session_time: '00:08:47', speaker: '0', word: 'almost', start_sec: 527, end_sec: 527.2 },
       { session_time: '00:08:47', speaker: '0', word: 'called', start_sec: 527.3, end_sec: 527.4 },
       { session_time: '00:08:47', speaker: '0', word: 'a', start_sec: 527.5, end_sec: 527.6 },

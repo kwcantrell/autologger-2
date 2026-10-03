@@ -30,7 +30,7 @@ describe('GET /api/sessions/:sessionId/events — has_auto_generated', () => {
 
   it('is false when events exist but none are auto-generated', async () => {
     const { sessionId } = await seededSession();
-    env.ports.sessions.get(sessionId).addEvent({
+    await (await env.ports.sessions.get(sessionId)).addEvent({
       category: 'cam',
       message: 'manual hit',
       metadataJson: '{}',
@@ -43,11 +43,11 @@ describe('GET /api/sessions/:sessionId/events — has_auto_generated', () => {
 
   it('is true when the only auto-generated row lies outside the requested limit/offset window', async () => {
     const { sessionId } = await seededSession();
-    const hub = env.ports.sessions.get(sessionId);
+    const hub = await env.ports.sessions.get(sessionId);
     // Three manual rows first (earliest wall times), then one auto row last —
     // a limit=1/offset=0 page returns only the first manual row.
     for (let i = 0; i < 3; i += 1) {
-      hub.addEvent({
+      await hub.addEvent({
         category: 'cam',
         message: `manual-${i}`,
         metadataJson: '{}',
@@ -55,7 +55,7 @@ describe('GET /api/sessions/:sessionId/events — has_auto_generated', () => {
         ctx: { frameRate: 24, startOffsetFrames: 0 },
       });
     }
-    hub.addEvent({
+    await hub.addEvent({
       category: 'cam',
       message: 'auto hit',
       metadataJson: '{"auto_generated":true,"auto_generate_run_id":"r1"}',

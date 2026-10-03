@@ -60,8 +60,8 @@ describe('eventRowToRpc', () => {
 // internal-category rows regardless of casing/whitespace, and near-miss
 // categories must still count as logged.
 describe('listEvents counts over a real core (D10 pin)', () => {
-  it('total counts every event; loggedTotal excludes internal (any casing/whitespace)', () => {
-    const { core } = fakeRuntime();
+  it('total counts every event; loggedTotal excludes internal (any casing/whitespace)', async () => {
+    const { core } = await fakeRuntime();
     const categories = [
       'mark', // logged
       'note', // logged
@@ -73,8 +73,8 @@ describe('listEvents counts over a real core (D10 pin)', () => {
       'internally', // logged
       'x internal', // logged
     ];
-    categories.forEach((cat, i) => {
-      core.db.run(
+    for (const [i, cat] of categories.entries()) {
+      await core.db.run(
         `INSERT INTO events (id, wall_time_utc, frame_rate, category, message)
          VALUES (?, ?, ?, ?, ?)`,
         `e${i}`,
@@ -83,8 +83,8 @@ describe('listEvents counts over a real core (D10 pin)', () => {
         cat,
         `m${i}`,
       );
-    });
-    const out = new EventStore(core).listEvents({ limit: 100, offset: 0 });
+    }
+    const out = await new EventStore(core).listEvents({ limit: 100, offset: 0 });
     expect(out.total).toBe(9);
     expect(out.loggedTotal).toBe(5);
     expect(out.events).toHaveLength(9);
@@ -99,16 +99,16 @@ describe('listEvents counts over a real core (D10 pin)', () => {
 // predicate-delete's tests pinned; the remaining tests cover the id-set
 // contract and the chunk boundary the old RPC never needed.
 describe('deleteEventsByIds', () => {
-  it('deletes exactly the given ids, leaves everything else, and broadcasts once', () => {
-    const { core, broadcasts } = fakeRuntime();
+  it('deletes exactly the given ids, leaves everything else, and broadcasts once', async () => {
+    const { core, broadcasts } = await fakeRuntime();
     const rows = [
       ['auto', '{"auto_generated":true}'],
       ['auto-extra', '{"auto_generated":true,"run":"r1"}'],
       ['manual', '{}'],
       ['false', '{"auto_generated":false}'],
     ];
-    rows.forEach(([id, metadataJson], index) => {
-      core.db.run(
+    for (const [index, [id, metadataJson]] of rows.entries()) {
+      await core.db.run(
         `INSERT INTO events
            (id, wall_time_utc, frame_rate, timecode_total_frames, category, message, metadata_json)
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
@@ -120,22 +120,22 @@ describe('deleteEventsByIds', () => {
         id,
         metadataJson,
       );
-    });
+    }
 
-    const deleted = new EventStore(core).deleteEventsByIds(['auto', 'auto-extra']);
+    const deleted = await new EventStore(core).deleteEventsByIds(['auto', 'auto-extra']);
 
     expect(deleted).toBe(2);
-    expect(core.all('SELECT id FROM events ORDER BY id')).toEqual([
+    expect(await core.all('SELECT id FROM events ORDER BY id')).toEqual([
       { id: 'false' },
       { id: 'manual' },
     ]);
-    expect(core.revision()).toBe(1);
+    expect(await core.revision()).toBe(1);
     expect(broadcasts).toEqual([{ type: 'event.changed', revision: 1 }]);
   });
 
-  it('does not bump the revision or broadcast when none of the given ids exist', () => {
-    const { core, broadcasts } = fakeRuntime();
-    core.db.run(
+  it('does not bump the revision or broadcast when none of the given ids exist', async () => {
+    const { core, broadcasts } = await fakeRuntime();
+    await core.db.run(
       `INSERT INTO events
          (id, wall_time_utc, frame_rate, timecode_total_frames, category, message, metadata_json)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
@@ -148,10 +148,10 @@ describe('deleteEventsByIds', () => {
       '{}',
     );
 
-    expect(new EventStore(core).deleteEventsByIds(['no-such-id', 'also-missing'])).toBe(0);
-    expect(core.revision()).toBe(0);
+    expect(await new EventStore(core).deleteEventsByIds(['no-such-id', 'also-missing'])).toBe(0);
+    expect(await core.revision()).toBe(0);
     expect(broadcasts).toEqual([]);
-    expect(core.all('SELECT id FROM events')).toEqual([{ id: 'manual' }]);
+    expect(await core.all('SELECT id FROM events')).toEqual([{ id: 'manual' }]);
   });
 
   // event-generate-hardening task 2.3(d) — the mid-run-manual-delete property
@@ -164,15 +164,15 @@ describe('deleteEventsByIds', () => {
   // to the rows since the snapshot was taken — a ROW ALREADY GONE (the
   // simulated mid-run manual delete) by the time this call runs still yields
   // a correctly-shrunk count over only the ids still present.
-  it('reflects a mid-run manual delete of one snapshotted id: only the still-present id is removed', () => {
-    const { core, broadcasts } = fakeRuntime();
+  it('reflects a mid-run manual delete of one snapshotted id: only the still-present id is removed', async () => {
+    const { core, broadcasts } = await fakeRuntime();
     const rows: Array<[string, string]> = [
       ['auto-1', '{"auto_generated":true,"auto_generate_run_id":"old-run"}'],
       ['auto-2', '{"auto_generated":true,"auto_generate_run_id":"old-run"}'],
       ['manual', '{}'],
     ];
-    rows.forEach(([id, metadataJson], index) => {
-      core.db.run(
+    for (const [index, [id, metadataJson]] of rows.entries()) {
+      await core.db.run(
         `INSERT INTO events
            (id, wall_time_utc, frame_rate, timecode_total_frames, category, message, metadata_json)
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
@@ -184,37 +184,37 @@ describe('deleteEventsByIds', () => {
         id,
         metadataJson,
       );
-    });
+    }
     const snapshotIds = ['auto-1', 'auto-2']; // the pre-spawn snapshot, as the route would build it
 
     // Simulate an operator manually deleting one of the snapshotted rows
     // WHILE the run is still in flight — before the post-success delete call
     // (this exercises the exact same DELETE the operator's manual route uses).
-    core.db.run('DELETE FROM events WHERE id = ?', 'auto-1');
+    await core.db.run('DELETE FROM events WHERE id = ?', 'auto-1');
 
-    const deleted = new EventStore(core).deleteEventsByIds(snapshotIds);
+    const deleted = await new EventStore(core).deleteEventsByIds(snapshotIds);
 
     expect(deleted).toBe(1); // only auto-2 was still present to remove
-    expect(core.all('SELECT id FROM events ORDER BY id')).toEqual([{ id: 'manual' }]);
-    expect(core.revision()).toBe(1); // one bump for the surviving delete
+    expect(await core.all('SELECT id FROM events ORDER BY id')).toEqual([{ id: 'manual' }]);
+    expect(await core.revision()).toBe(1); // one bump for the surviving delete
     expect(broadcasts).toEqual([{ type: 'event.changed', revision: 1 }]);
   });
 
-  it('an empty id array deletes nothing and does not broadcast', () => {
-    const { core, broadcasts } = fakeRuntime();
-    expect(new EventStore(core).deleteEventsByIds([])).toBe(0);
-    expect(core.revision()).toBe(0);
+  it('an empty id array deletes nothing and does not broadcast', async () => {
+    const { core, broadcasts } = await fakeRuntime();
+    expect(await new EventStore(core).deleteEventsByIds([])).toBe(0);
+    expect(await core.revision()).toBe(0);
     expect(broadcasts).toEqual([]);
   });
 
-  it('chunks a 1,001-id delete into multiple statements inside one call: all rows gone, one broadcast', () => {
-    const { core, broadcasts } = fakeRuntime();
+  it('chunks a 1,001-id delete into multiple statements inside one call: all rows gone, one broadcast', async () => {
+    const { core, broadcasts } = await fakeRuntime();
     const N = 1001; // > the 500-id chunk boundary, forcing 3 DELETE statements
     const ids: string[] = [];
     for (let i = 0; i < N; i += 1) {
       const id = `e${i}`;
       ids.push(id);
-      core.db.run(
+      await core.db.run(
         `INSERT INTO events
            (id, wall_time_utc, frame_rate, timecode_total_frames, category, message, metadata_json)
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
@@ -228,11 +228,11 @@ describe('deleteEventsByIds', () => {
       );
     }
 
-    const deleted = new EventStore(core).deleteEventsByIds(ids);
+    const deleted = await new EventStore(core).deleteEventsByIds(ids);
 
     expect(deleted).toBe(N);
-    expect(core.all('SELECT id FROM events')).toEqual([]);
-    expect(core.revision()).toBe(1);
+    expect(await core.all('SELECT id FROM events')).toEqual([]);
+    expect(await core.revision()).toBe(1);
     expect(broadcasts).toEqual([{ type: 'event.changed', revision: 1 }]);
   });
 });
@@ -242,13 +242,13 @@ describe('deleteEventsByIds', () => {
 // auto-predicate mirrors when it computes the regenerate id snapshot passed
 // to deleteEventsByIds, independent of any page/window.
 describe('hasAutoGeneratedEvents', () => {
-  function insertEvent(
-    core: ReturnType<typeof fakeRuntime>['core'],
+  async function insertEvent(
+    core: Awaited<ReturnType<typeof fakeRuntime>>['core'],
     id: string,
     metadataJson: string,
     index: number,
   ) {
-    core.db.run(
+    await core.db.run(
       `INSERT INTO events
          (id, wall_time_utc, frame_rate, timecode_total_frames, category, message, metadata_json)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
@@ -262,13 +262,13 @@ describe('hasAutoGeneratedEvents', () => {
     );
   }
 
-  it('is false when the session has no events', () => {
-    const { core } = fakeRuntime();
-    expect(new EventStore(core).hasAutoGeneratedEvents()).toBe(false);
+  it('is false when the session has no events', async () => {
+    const { core } = await fakeRuntime();
+    expect(await new EventStore(core).hasAutoGeneratedEvents()).toBe(false);
   });
 
-  it('is false when only non-auto/false/malformed metadata exists (predicate edges)', () => {
-    const { core } = fakeRuntime();
+  it('is false when only non-auto/false/malformed metadata exists (predicate edges)', async () => {
+    const { core } = await fakeRuntime();
     const rows: Array<[string, string]> = [
       ['manual', '{}'],
       ['false', '{"auto_generated":false}'],
@@ -276,39 +276,39 @@ describe('hasAutoGeneratedEvents', () => {
       ['string', '{"auto_generated":"true"}'],
       ['malformed', '{"auto_generated":true'],
     ];
-    rows.forEach(([id, metadataJson], index) => {
-      insertEvent(core, id, metadataJson, index);
-    });
-    expect(new EventStore(core).hasAutoGeneratedEvents()).toBe(false);
+    for (const [index, [id, metadataJson]] of rows.entries()) {
+      await insertEvent(core, id, metadataJson, index);
+    }
+    expect(await new EventStore(core).hasAutoGeneratedEvents()).toBe(false);
   });
 
-  it('is true when at least one row carries auto_generated === true (JSON boolean)', () => {
-    const { core } = fakeRuntime();
-    insertEvent(core, 'manual', '{}', 0);
-    insertEvent(core, 'auto', '{"auto_generated":true}', 1);
-    expect(new EventStore(core).hasAutoGeneratedEvents()).toBe(true);
+  it('is true when at least one row carries auto_generated === true (JSON boolean)', async () => {
+    const { core } = await fakeRuntime();
+    await insertEvent(core, 'manual', '{}', 0);
+    await insertEvent(core, 'auto', '{"auto_generated":true}', 1);
+    expect(await new EventStore(core).hasAutoGeneratedEvents()).toBe(true);
   });
 
-  it('is true for an auto row outside any list page/window (whole-session semantics)', () => {
-    const { core } = fakeRuntime();
+  it('is true for an auto row outside any list page/window (whole-session semantics)', async () => {
+    const { core } = await fakeRuntime();
     // 3 manual rows first, then the one auto row last — a listEvents({limit:1})
     // window would never see it, but the whole-session check must.
-    insertEvent(core, 'm0', '{}', 0);
-    insertEvent(core, 'm1', '{}', 1);
-    insertEvent(core, 'm2', '{}', 2);
-    insertEvent(core, 'auto', '{"auto_generated":true}', 3);
+    await insertEvent(core, 'm0', '{}', 0);
+    await insertEvent(core, 'm1', '{}', 1);
+    await insertEvent(core, 'm2', '{}', 2);
+    await insertEvent(core, 'auto', '{"auto_generated":true}', 3);
     const store = new EventStore(core);
-    const page = store.listEvents({ limit: 1, offset: 0 });
+    const page = await store.listEvents({ limit: 1, offset: 0 });
     expect(page.events.some((e) => e.event_id === 'auto')).toBe(false);
-    expect(store.hasAutoGeneratedEvents()).toBe(true);
+    expect(await store.hasAutoGeneratedEvents()).toBe(true);
   });
 
-  it('does not mutate revision or broadcast (read-only)', () => {
-    const { core, broadcasts } = fakeRuntime();
-    insertEvent(core, 'auto', '{"auto_generated":true}', 0);
-    const revBefore = core.revision();
-    expect(new EventStore(core).hasAutoGeneratedEvents()).toBe(true);
-    expect(core.revision()).toBe(revBefore);
+  it('does not mutate revision or broadcast (read-only)', async () => {
+    const { core, broadcasts } = await fakeRuntime();
+    await insertEvent(core, 'auto', '{"auto_generated":true}', 0);
+    const revBefore = await core.revision();
+    expect(await new EventStore(core).hasAutoGeneratedEvents()).toBe(true);
+    expect(await core.revision()).toBe(revBefore);
     expect(broadcasts).toEqual([]);
   });
 });
@@ -339,7 +339,7 @@ describe('JS↔SQL auto-generated predicate parity (gate ruling E3)', () => {
     { label: 'JSON null', metadataJson: 'null', expected: false },
   ];
 
-  it.each(corpus)('$label → $expected, agreeing across JS and SQL', ({
+  it.each(corpus)('$label → $expected, agreeing across JS and SQL', async ({
     metadataJson,
     expected,
   }) => {
@@ -349,8 +349,8 @@ describe('JS↔SQL auto-generated predicate parity (gate ruling E3)', () => {
     // SQL side: hasAutoGeneratedEvents() over a single row carrying this
     // metadata — the same predicate the route uses to compute the id
     // snapshot deleteEventsByIds() then removes.
-    const { core } = fakeRuntime();
-    core.db.run(
+    const { core } = await fakeRuntime();
+    await core.db.run(
       `INSERT INTO events
          (id, wall_time_utc, frame_rate, timecode_total_frames, category, message, metadata_json)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
@@ -362,7 +362,7 @@ describe('JS↔SQL auto-generated predicate parity (gate ruling E3)', () => {
       'row',
       metadataJson,
     );
-    expect(new EventStore(core).hasAutoGeneratedEvents()).toBe(expected);
+    expect(await new EventStore(core).hasAutoGeneratedEvents()).toBe(expected);
   });
 });
 
@@ -373,9 +373,9 @@ describe('JS↔SQL auto-generated predicate parity (gate ruling E3)', () => {
 describe('addEvent over a real core', () => {
   /** Rolling transport at a known instant: roll started 5s before the fake
    * clock's default now (1_000_000ms), 50 frames already banked. */
-  function rollingFixture() {
-    const rt = fakeRuntime();
-    rt.core.db.run(
+  async function rollingFixture() {
+    const rt = await fakeRuntime();
+    await rt.core.db.run(
       'UPDATE session_transport SET is_rolling = ?, current_take = ?, roll_started_at_utc = ?, elapsed_frames = ? WHERE id = 1',
       1,
       1,
@@ -387,9 +387,9 @@ describe('addEvent over a real core', () => {
   const ctx = { frameRate: 24, startOffsetFrames: 100 };
 
   describe('manual path (parameter absent) — byte-identical pin', () => {
-    it('derives via timecodeForMark from the rolling transport at now(), broadcasts one event.changed', () => {
-      const { core, broadcasts } = rollingFixture();
-      const out = new EventStore(core).addEvent({
+    it('derives via timecodeForMark from the rolling transport at now(), broadcasts one event.changed', async () => {
+      const { core, broadcasts } = await rollingFixture();
+      const out = await new EventStore(core).addEvent({
         category: 'note',
         message: 'hi',
         metadataJson: '',
@@ -411,7 +411,7 @@ describe('addEvent over a real core', () => {
       expect(out.projection.max_timecode_total_frames).toBe(270);
       expect(broadcasts).toEqual([{ type: 'event.changed', revision: 1 }]);
       // Pin the INSERT columns on the raw row, not just the RPC mapping.
-      const r = core.first('SELECT * FROM events WHERE id = ?', out.event.event_id);
+      const r = await core.first('SELECT * FROM events WHERE id = ?', out.event.event_id);
       expect(r).toEqual({
         id: out.event.event_id,
         wall_time_utc: '1970-01-01T00:16:40.000Z',
@@ -423,9 +423,9 @@ describe('addEvent over a real core', () => {
       });
     });
 
-    it('honors markedAtUtc as the mark instant for both wall time and timecode', () => {
-      const { core, broadcasts } = rollingFixture();
-      const out = new EventStore(core).addEvent({
+    it('honors markedAtUtc as the mark instant for both wall time and timecode', async () => {
+      const { core, broadcasts } = await rollingFixture();
+      const out = await new EventStore(core).addEvent({
         category: 'note',
         message: 'marked',
         metadataJson: '{"a":1}',
@@ -447,9 +447,9 @@ describe('addEvent over a real core', () => {
   // `timecode_total_frames` pin survives), but the stored wall_time_utc is
   // the caller's override, not isoZ(new Date(markMs)).
   describe('storedWallTimeUtc override (design D9)', () => {
-    it('stores the override as wall_time_utc while timecode still derives from now() via the rolling transport', () => {
-      const { core, broadcasts } = rollingFixture();
-      const out = new EventStore(core).addEvent({
+    it('stores the override as wall_time_utc while timecode still derives from now() via the rolling transport', async () => {
+      const { core, broadcasts } = await rollingFixture();
+      const out = await new EventStore(core).addEvent({
         category: 'internal',
         message: 'Recording 1 Started',
         metadataJson: '{}',
@@ -465,13 +465,16 @@ describe('addEvent over a real core', () => {
       // But the STORED wall time is the override, not isoZ(now()).
       expect(out.event.wall_time_utc).toBe('2020-01-01T00:00:00.000Z');
       expect(broadcasts).toEqual([{ type: 'event.changed', revision: 1 }]);
-      const r = core.first('SELECT wall_time_utc FROM events WHERE id = ?', out.event.event_id);
+      const r = await core.first(
+        'SELECT wall_time_utc FROM events WHERE id = ?',
+        out.event.event_id,
+      );
       expect(r).toEqual({ wall_time_utc: '2020-01-01T00:00:00.000Z' });
     });
 
-    it('is ignored when explicitAnchor is present (explicitAnchor owns wall time in that branch)', () => {
-      const { core } = rollingFixture();
-      const out = new EventStore(core).addEvent({
+    it('is ignored when explicitAnchor is present (explicitAnchor owns wall time in that branch)', async () => {
+      const { core } = await rollingFixture();
+      const out = await new EventStore(core).addEvent({
         category: 'note',
         message: 'generated',
         metadataJson: '',
@@ -483,9 +486,9 @@ describe('addEvent over a real core', () => {
       expect(out.event.wall_time_utc).toBe('2026-06-25T00:00:05.000Z');
     });
 
-    it('omitted falls back to isoZ(new Date(markMs)) — byte-identical to the pre-D9 manual path', () => {
-      const { core } = rollingFixture();
-      const out = new EventStore(core).addEvent({
+    it('omitted falls back to isoZ(new Date(markMs)) — byte-identical to the pre-D9 manual path', async () => {
+      const { core } = await rollingFixture();
+      const out = await new EventStore(core).addEvent({
         category: 'note',
         message: 'hi',
         metadataJson: '',
@@ -497,9 +500,9 @@ describe('addEvent over a real core', () => {
   });
 
   describe('explicit anchor (design D4)', () => {
-    it('stores the given frames + wall time verbatim, bypassing the transport derivation', () => {
-      const { core, broadcasts } = rollingFixture();
-      const out = new EventStore(core).addEvent({
+    it('stores the given frames + wall time verbatim, bypassing the transport derivation', async () => {
+      const { core, broadcasts } = await rollingFixture();
+      const out = await new EventStore(core).addEvent({
         category: 'note',
         message: 'generated',
         metadataJson: '{"auto_generated":true}',
@@ -523,7 +526,7 @@ describe('addEvent over a real core', () => {
       expect(out.projection.event_count).toBe(1);
       expect(out.projection.max_timecode_total_frames).toBe(12345);
       expect(broadcasts).toEqual([{ type: 'event.changed', revision: 1 }]);
-      const r = core.first('SELECT * FROM events WHERE id = ?', out.event.event_id);
+      const r = await core.first('SELECT * FROM events WHERE id = ?', out.event.event_id);
       expect(r).toEqual({
         id: out.event.event_id,
         wall_time_utc: '2026-06-25T00:01:00.000Z',
@@ -535,9 +538,9 @@ describe('addEvent over a real core', () => {
       });
     });
 
-    it('stores frame_rate rounded from ctx exactly as the manual path does (29.97)', () => {
-      const { core } = fakeRuntime();
-      const out = new EventStore(core).addEvent({
+    it('stores frame_rate rounded from ctx exactly as the manual path does (29.97)', async () => {
+      const { core } = await fakeRuntime();
+      const out = await new EventStore(core).addEvent({
         category: 'note',
         message: 'df',
         metadataJson: '',
@@ -550,13 +553,13 @@ describe('addEvent over a real core', () => {
       expect(out.event.metadata_json).toBe('{}');
     });
 
-    it('rounds a >3-decimal ctx rate exactly like the manual path (23.976023976 → 23.976)', () => {
+    it('rounds a >3-decimal ctx rate exactly like the manual path (23.976023976 → 23.976)', async () => {
       // 29.97 is already 3-decimal, so it cannot detect a rounding divergence
       // between the explicit-anchor path and fromTotalFrames' millidecimal
       // rounding (Phase-2 review finding 3) — this rate can.
       const rate = 23.976023976;
-      const { core } = fakeRuntime();
-      const out = new EventStore(core).addEvent({
+      const { core } = await fakeRuntime();
+      const out = await new EventStore(core).addEvent({
         category: 'note',
         message: 'ntsc-film',
         metadataJson: '',
@@ -566,13 +569,13 @@ describe('addEvent over a real core', () => {
       });
       expect(out.event.frame_rate).toBe(23.976);
       expect(out.event.frame_rate).toBe(fromTotalFrames(24, rate).frame_rate);
-      const r = core.first('SELECT frame_rate FROM events WHERE id = ?', out.event.event_id);
+      const r = await core.first('SELECT frame_rate FROM events WHERE id = ?', out.event.event_id);
       expect(r).toEqual({ frame_rate: 23.976 });
     });
 
-    it('still honors suppressBroadcast (same broadcast handling as the manual path)', () => {
-      const { core, broadcasts } = fakeRuntime();
-      new EventStore(core).addEvent({
+    it('still honors suppressBroadcast (same broadcast handling as the manual path)', async () => {
+      const { core, broadcasts } = await fakeRuntime();
+      await new EventStore(core).addEvent({
         category: 'note',
         message: 'quiet',
         metadataJson: '',
@@ -582,27 +585,27 @@ describe('addEvent over a real core', () => {
         suppressBroadcast: true,
       });
       expect(broadcasts).toEqual([]);
-      expect(core.revision()).toBe(1); // revision still bumps
+      expect(await core.revision()).toBe(1); // revision still bumps
     });
 
-    it('interleaves per wall_time_utc ASC among manual events in listEvents', () => {
-      const { core } = fakeRuntime();
+    it('interleaves per wall_time_utc ASC among manual events in listEvents', async () => {
+      const { core } = await fakeRuntime();
       const store = new EventStore(core);
-      store.addEvent({
+      await store.addEvent({
         category: 'note',
         message: 'first-manual',
         metadataJson: '',
         markedAtUtc: '2026-06-25T00:00:00.000Z',
         ctx,
       });
-      store.addEvent({
+      await store.addEvent({
         category: 'note',
         message: 'second-manual',
         metadataJson: '',
         markedAtUtc: '2026-06-25T00:02:00.000Z',
         ctx,
       });
-      store.addEvent({
+      await store.addEvent({
         category: 'note',
         message: 'generated-between',
         metadataJson: '',
@@ -613,7 +616,7 @@ describe('addEvent over a real core', () => {
           wallTimeUtc: '2026-06-25T00:01:00.000Z',
         },
       });
-      const out = store.listEvents({ limit: 10, offset: 0 });
+      const out = await store.listEvents({ limit: 10, offset: 0 });
       expect(out.events.map((e) => e.message)).toEqual([
         'first-manual',
         'generated-between',

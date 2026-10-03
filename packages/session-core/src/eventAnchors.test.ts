@@ -208,41 +208,41 @@ describe('bracketing over a REAL multi-take store (spec invariant; Phase-2 fix w
   const CTX = { frameRate: FPS, startOffsetFrames: 0 };
   const REAL_SESSION = { ...CTX, startedAtUtc: '2026-01-01T10:00:00.000Z' };
 
-  function multiTakeFixture(opts: { includeTake2Note?: boolean } = {}) {
+  async function multiTakeFixture(opts: { includeTake2Note?: boolean } = {}) {
     const { includeTake2Note = true } = opts;
-    const rt = fakeRuntime();
+    const rt = await fakeRuntime();
     const transport = new TransportStore(rt.core);
     const events = new EventStore(rt.core);
     const at = (iso: string): void => {
       rt.time.now = Date.parse(iso);
     };
-    const log = (category: string, message: string): void => {
-      events.addEvent({ category, message, metadataJson: '', markedAtUtc: null, ctx: CTX });
+    const log = async (category: string, message: string): Promise<void> => {
+      await events.addEvent({ category, message, metadataJson: '', markedAtUtc: null, ctx: CTX });
     };
     at('2026-01-01T10:00:00.000Z');
-    transport.startTake(CTX);
-    log('internal', 'Recording 1 Started');
+    await transport.startTake(CTX);
+    await log('internal', 'Recording 1 Started');
     at('2026-01-01T10:00:20.000Z');
-    transport.stopTake(CTX);
-    log('internal', 'Recording 1 Stopped');
+    await transport.stopTake(CTX);
+    await log('internal', 'Recording 1 Stopped');
     at('2026-01-01T10:05:00.000Z');
-    log('note', 'note-1005');
+    await log('note', 'note-1005');
     at('2026-01-01T10:15:00.000Z');
-    log('note', 'note-1015');
+    await log('note', 'note-1015');
     at('2026-01-01T10:20:00.000Z');
-    log('internal', 'Recording 2 Started');
-    transport.startTake(CTX);
+    await log('internal', 'Recording 2 Started');
+    await transport.startTake(CTX);
     if (includeTake2Note) {
       at('2026-01-01T10:20:10.000Z');
-      log('note', 'note-take2');
+      await log('note', 'note-take2');
     }
     return { rt, transport, events };
   }
 
-  function fixtureRowsAndAnchors(opts: { includeTake2Note?: boolean } = {}) {
+  async function fixtureRowsAndAnchors(opts: { includeTake2Note?: boolean } = {}) {
     const { includeTake2Note = true } = opts;
-    const { events } = multiTakeFixture({ includeTake2Note });
-    const rows = events.listEvents({ limit: 100, offset: 0 }).events;
+    const { events } = await multiTakeFixture({ includeTake2Note });
+    const rows = (await events.listEvents({ limit: 100, offset: 0 })).events;
     // Sanity: the REAL stores produced the frozen-timecode shape claimed above.
     expect(rows.map((r) => [r.message, r.timecode_total_frames])).toEqual(
       includeTake2Note
@@ -265,8 +265,8 @@ describe('bracketing over a REAL multi-take store (spec invariant; Phase-2 fix w
     return { events, rows, anchors: timecodeWallAnchors(rows) };
   }
 
-  it('take-2 timecodes (630/750/890) map after EVERY tc-600 row and before the tc-900 row', () => {
-    const { rows, anchors } = fixtureRowsAndAnchors();
+  it('take-2 timecodes (630/750/890) map after EVERY tc-600 row and before the tc-900 row', async () => {
+    const { rows, anchors } = await fixtureRowsAndAnchors();
     const tc600Walls = rows
       .filter((r) => r.timecode_total_frames === 600)
       .map((r) => Date.parse(r.wall_time_utc));
@@ -283,12 +283,12 @@ describe('bracketing over a REAL multi-take store (spec invariant; Phase-2 fix w
     }
   });
 
-  it('with the take-2 note omitted, tc 630 (past the now-LAST tc-600 anchor) lands after every tc-600 row', () => {
+  it('with the take-2 note omitted, tc 630 (past the now-LAST tc-600 anchor) lands after every tc-600 row', async () => {
     // Drops note-take2 so the frozen tc-600 group is the LAST anchor, forcing
     // the `timecodeTotalFrames >= last.timecodeTotalFrames` end-clamp arm
     // (extrapolation from `last.wallHiMs`) instead of the mid-segment
     // interpolation the other cases in this block exercise.
-    const { rows, anchors } = fixtureRowsAndAnchors({ includeTake2Note: false });
+    const { rows, anchors } = await fixtureRowsAndAnchors({ includeTake2Note: false });
     const tc600Walls = rows
       .filter((r) => r.timecode_total_frames === 600)
       .map((r) => Date.parse(r.wall_time_utc));
@@ -298,15 +298,15 @@ describe('bracketing over a REAL multi-take store (spec invariant; Phase-2 fix w
     }
   });
 
-  it('a generated tc-300 event lands inside take 1 (10:00:00–10:00:20)', () => {
-    const { anchors } = fixtureRowsAndAnchors();
+  it('a generated tc-300 event lands inside take 1 (10:00:00–10:00:20)', async () => {
+    const { anchors } = await fixtureRowsAndAnchors();
     const w = wallMsForTimecode(300, anchors, REAL_SESSION);
     expect(w).toBeGreaterThan(ms('2026-01-01T10:00:00.000Z'));
     expect(w).toBeLessThan(ms('2026-01-01T10:00:20.000Z'));
   });
 
-  it('inserted via explicitAnchor, generated rows take their bracketed feed positions', () => {
-    const { events, rows, anchors } = fixtureRowsAndAnchors();
+  it('inserted via explicitAnchor, generated rows take their bracketed feed positions', async () => {
+    const { events, rows, anchors } = await fixtureRowsAndAnchors();
     const gen: Array<[number, string]> = [
       [300, 'gen-300'],
       [630, 'gen-630'],
@@ -314,7 +314,7 @@ describe('bracketing over a REAL multi-take store (spec invariant; Phase-2 fix w
       [890, 'gen-890'],
     ];
     for (const [tc, message] of gen) {
-      events.addEvent({
+      await events.addEvent({
         category: 'note',
         message,
         metadataJson: '',
@@ -327,7 +327,7 @@ describe('bracketing over a REAL multi-take store (spec invariant; Phase-2 fix w
       });
     }
     expect(rows).toHaveLength(6); // pre-insert snapshot unaffected
-    const order = events.listEvents({ limit: 100, offset: 0 }).events.map((e) => e.message);
+    const order = (await events.listEvents({ limit: 100, offset: 0 })).events.map((e) => e.message);
     expect(order).toEqual([
       'Recording 1 Started',
       'gen-300',

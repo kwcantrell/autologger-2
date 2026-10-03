@@ -1,6 +1,5 @@
-// The asynchronous session SQL seam and its SQLite adapter (async-session-hub design D2; ADR 0021
-// slice 7a). `AsyncSessionSql` is a temporary name: it becomes `SessionSql` when the hub goes
-// async. The transaction contract is the catalog's, so 7b's postgres.js adapter meets one shape:
+// The session SQL seam's SQLite adapter (async-session-hub design D2; ADR 0021 slice 7a). The
+// transaction contract is the catalog's, so 7b's postgres.js adapter meets one shape:
 // - `tx(fn)` hands its body a handle scoped to the transaction, and `tx` on that handle joins it
 //   (no savepoints);
 // - any error inside the transaction fails all of it, even one the body catches;
@@ -9,20 +8,11 @@
 // Only this adapter wraps synchronous better-sqlite3 calls in promises.
 
 import type Database from 'better-sqlite3';
-import type { Row, SqlValue } from './sessionCore';
-
-export interface AsyncSessionSql {
-  all<T = Row>(sql: string, ...binds: SqlValue[]): Promise<T[]>;
-  run(sql: string, ...binds: SqlValue[]): Promise<{ changes: number }>;
-  /** Multi-statement DDL (initSchema); zero binds, no result. */
-  exec(multiStatementSql: string): Promise<void>;
-  /** All-or-nothing. `t` is scoped to this transaction; `t.tx` joins it. */
-  tx<T>(fn: (t: AsyncSessionSql) => Promise<T>): Promise<T>;
-}
+import type { Row, SessionSql, SqlValue } from './sessionCore';
 
 /** The SQLite adapter's root handle. `rollbackFailed` turns true when a `ROLLBACK` failed and left
  * the connection inside the transaction; the hub then closes itself (design D2, D6). */
-export interface SqliteAsyncSessionSql extends AsyncSessionSql {
+export interface SqliteSessionSql extends SessionSql {
   readonly rollbackFailed: boolean;
 }
 
@@ -60,7 +50,7 @@ function handled<T>(p: Promise<T>): Promise<T> {
   return p;
 }
 
-export function sqliteAsyncSessionSql(db: Database.Database): SqliteAsyncSessionSql {
+export function sqliteSessionSql(db: Database.Database): SqliteSessionSql {
   let active: TxState | null = null;
   let rollbackFailed = false;
 
@@ -117,7 +107,7 @@ export function sqliteAsyncSessionSql(db: Database.Database): SqliteAsyncSession
       root(() => {
         db.exec(multiStatementSql);
       }),
-    async tx<T>(fn: (t: AsyncSessionSql) => Promise<T>): Promise<T> {
+    async tx<T>(fn: (t: SessionSql) => Promise<T>): Promise<T> {
       guardRoot();
       const state: TxState = { open: true, failed: false, error: undefined, joined: 0 };
       db.exec('BEGIN IMMEDIATE');
@@ -160,7 +150,7 @@ export function sqliteAsyncSessionSql(db: Database.Database): SqliteAsyncSession
 
 /** The handle a transaction body receives. Its statements run at call time: the hub's lock is
  * already held for the whole transaction. */
-class TxHandle implements AsyncSessionSql {
+class TxHandle implements SessionSql {
   constructor(
     private readonly db: Database.Database,
     private readonly state: TxState,
@@ -181,7 +171,7 @@ class TxHandle implements AsyncSessionSql {
   }
 
   /** Joins the enclosing transaction; its error fails the whole transaction. */
-  tx<T>(fn: (t: AsyncSessionSql) => Promise<T>): Promise<T> {
+  tx<T>(fn: (t: SessionSql) => Promise<T>): Promise<T> {
     return handled(
       (async () => {
         this.checkUsable();

@@ -7,7 +7,8 @@
 import type { SessionProjection } from '@autologger/session-core';
 
 export interface SessionMirrorDeps {
-  snapshot: (sessionId: string) => SessionProjection;
+  /** The hub's projection, read when the write starts (async since async-session-hub D7). */
+  snapshot: (sessionId: string) => Promise<SessionProjection>;
   project: (sessionId: string, projection: SessionProjection) => Promise<void>;
   warn?: (line: string) => void;
 }
@@ -41,7 +42,7 @@ export class SessionMirror {
   private async write(sessionId: string): Promise<void> {
     if (this.closed) return;
     try {
-      await this.deps.project(sessionId, this.deps.snapshot(sessionId));
+      await this.deps.project(sessionId, await this.deps.snapshot(sessionId));
     } catch (e) {
       const err = e as { code?: unknown; name?: unknown; settled?: Promise<unknown> };
       const kind = typeof err?.code === 'string' ? err.code : String(err?.name ?? 'error');

@@ -466,8 +466,8 @@ aiV2Router.post('/api/sessions/:sessionId/ai/v2/answer', async (c) => {
 aiV2Router.get('/api/sessions/:sessionId/ai/v2/dashboard', async (c) => {
   const sessionId = c.req.param('sessionId');
   await guardAiV2Route(c, sessionId, SESSION_NOT_FOUND_DETAIL, 'configured-only');
-  const hub = getSessionHub(c, sessionId);
-  const stored = hub.getDashboard(PRIMARY_DASHBOARD_ID);
+  const hub = await getSessionHub(c, sessionId);
+  const stored = await hub.getDashboard(PRIMARY_DASHBOARD_ID);
   // `config: null` means "no dashboard saved yet" (never a fabricated empty
   // dashboard) — matches the port's own doc comment on `load()`.
   return c.json({ config: stored ? stored.config : null });
@@ -493,10 +493,10 @@ aiV2Router.put('/api/sessions/:sessionId/ai/v2/dashboard', async (c) => {
   const turnIdRaw = c.req.query('turnId');
   const turnId = turnIdRaw?.trim() ? turnIdRaw.trim().slice(0, 64) : null;
 
-  const hub = getSessionHub(c, sessionId);
-  let stored: ReturnType<typeof hub.saveDashboard>;
+  const hub = await getSessionHub(c, sessionId);
+  let stored: Awaited<ReturnType<typeof hub.saveDashboard>>;
   try {
-    stored = hub.saveDashboard({
+    stored = await hub.saveDashboard({
       id: PRIMARY_DASHBOARD_ID,
       config: body,
       createdBy: principal?.id ?? null,
@@ -514,7 +514,7 @@ aiV2Router.put('/api/sessions/:sessionId/ai/v2/dashboard', async (c) => {
 aiV2Router.delete('/api/sessions/:sessionId/ai/v2/dashboard', async (c) => {
   const sessionId = c.req.param('sessionId');
   await guardAiV2Route(c, sessionId, SESSION_NOT_FOUND_DETAIL, 'configured-only');
-  const hub = getSessionHub(c, sessionId);
-  hub.deleteDashboard(PRIMARY_DASHBOARD_ID);
+  const hub = await getSessionHub(c, sessionId);
+  await hub.deleteDashboard(PRIMARY_DASHBOARD_ID);
   return c.json({ ok: true });
 });

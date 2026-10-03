@@ -6,21 +6,37 @@
 // Asserted: each response's status (the one any serial order gives, since no two requests touch one
 // event), `event.changed` revisions strictly increasing with the last equal to the final
 // `events_stream_revision`, and the final event set. Characterizes today, so it is written green.
+//
+// Group 5 adds the conflicting pairs of design D10: each read-then-write pair that became one hub
+// method, fired together through the in-process app (`Promise.all`, so both handlers start in one
+// tick), and each asserting a result some serial order gives. Whether a pair actually splits over
+// HTTP depends on when its catalog replies resolve; SessionHub.concurrency.test.ts forces the split.
 
-import { rmSync } from 'node:fs';
+import { readFileSync, rmSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { aiChatTurns } from '@autologger/ai-runtime/aiChatRegistry';
 import { stableSessionCwd } from '@autologger/ai-runtime/aiChatRunner';
 import { __resetAiMcpListenerForTests } from '@autologger/ai-runtime/aiMcpServer';
+import { clearLogImportJobs } from '@autologger/log-import';
+import { TRANSCRIPTION_FIXTURES_DIR, transcriptGenerationLock } from '@autologger/transcription';
 import { type ServerType, serve } from '@hono/node-server';
 import { createNodeWebSocket } from '@hono/node-ws';
+import ExcelJS from 'exceljs';
 import { Hono } from 'hono';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { wireApp } from '../app';
 import type { AppEnv } from '../appEnv';
-import { defaultUser, env, envWith } from '../test/harness';
-import { seededSession } from '../test/helpers';
+import { app, defaultUser, env, envWith } from '../test/harness';
+import {
+  COMPANION_BEARER,
+  seededSession,
+  seedMemberStudio,
+  seedSession,
+  seedShow,
+  setCompanionPresence,
+} from '../test/helpers';
 
 const EVENTS_SUCCESS_FIXTURE = fileURLToPath(
   new URL('../test/fixtures/fake-claude-events-success.mjs', import.meta.url),
@@ -265,10 +281,325 @@ describe('session hub under a mixed concurrent load (design D10)', () => {
     ].sort();
     expect(messages).toEqual(expected);
 
+    // Test-only data (design D10): how many of this session's hub calls had to wait for the lock.
+    const lockWaits = (hub as unknown as { lockWaitCount?: number }).lockWaitCount;
     console.log(
       `[interleave] event.changed frames ${revs.length}; revisions ${startRevision} -> ${finalRevision}; ` +
-        `final events ${events.length}`,
+        `final events ${events.length}; lock waits ${lockWaits ?? 'n/a'}`,
     );
     ws.close();
+  });
+});
+
+// ── Conflicting pairs (design D10, owner decision 1) ─────────────────────────────────────────────
+
+const J = { 'content-type': 'application/json' };
+const FAKE_AUDIO = new Uint8Array([0x52, 0x49, 0x46, 0x46, 0x24, 0x00, 0x00, 0x00]);
+const SEG1 = join(TRANSCRIPTION_FIXTURES_DIR, 'audio', 'seg1.webm');
+
+async function json<T>(res: Response): Promise<T> {
+  return (await res.json()) as T;
+}
+
+async function localImport(sessionId: string, durationS = 5): Promise<Response> {
+  return app.request(
+    `/api/sessions/${sessionId}/local-audio-import?duration_s=${durationS}`,
+    { method: 'POST', headers: { 'content-type': 'audio/wav' }, body: FAKE_AUDIO },
+    env,
+  );
+}
+
+async function listEvents(
+  sessionId: string,
+): Promise<Array<{ event_id: string; category: string; message: string; metadata: unknown }>> {
+  const res = await app.request(`/api/sessions/${sessionId}/events?limit=2000`, {}, env);
+  expect(res.status).toBe(200);
+  return (
+    await json<{
+      events: Array<{ event_id: string; category: string; message: string; metadata: unknown }>;
+    }>(res)
+  ).events;
+}
+
+describe('conflicting pairs fired together equal a serial order (design D10)', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    transcriptGenerationLock.reset();
+    clearLogImportJobs();
+  });
+
+  it('two Companion toggles from a stopped transport: one start and one stop, the transport ends stopped', async () => {
+    const s = (await seededSession()).sessionId;
+    await setCompanionPresence('c1', s);
+    const toggle = () =>
+      app.request(
+        '/api/companion/transport',
+        {
+          method: 'POST',
+          headers: { ...J, ...COMPANION_BEARER },
+          body: JSON.stringify({ action: 'toggle' }),
+        },
+        { ...env },
+      );
+    const [a, b] = await Promise.all([toggle(), toggle()]);
+    expect([a.status, b.status]).toEqual([200, 200]);
+    const rolling = [
+      (await json<{ is_rolling: boolean }>(a)).is_rolling,
+      (await json<{ is_rolling: boolean }>(b)).is_rolling,
+    ].sort();
+    expect(rolling).toEqual([false, true]);
+    const status = await json<{ is_rolling: boolean; current_take: number }>(
+      await app.request(`/api/sessions/${s}/status`, {}, env),
+    );
+    expect(status).toMatchObject({ is_rolling: false, current_take: 1 });
+  });
+
+  it('two PUTs of one event: the stored event equals one of the two serial orders', async () => {
+    const s = (await seededSession({ categoriesJson: CATEGORIES_JSON })).sessionId;
+    const add = async (message: string) =>
+      (
+        await json<{ event_id: string }>(
+          await app.request(
+            `/api/sessions/${s}/events`,
+            {
+              method: 'POST',
+              headers: J,
+              body: JSON.stringify({ category: 'cam', message, metadata: { note: message } }),
+            },
+            env,
+          ),
+        )
+      ).event_id;
+    const put = (eventId: string, category: string, message: string) =>
+      app.request(
+        `/api/sessions/${s}/events/${eventId}`,
+        {
+          method: 'PUT',
+          headers: J,
+          body: JSON.stringify({
+            category,
+            message,
+            wall_time_utc: '2026-01-01T00:00:10.000Z',
+            timecode_hms: '00:00:10',
+          }),
+        },
+        env,
+      );
+    const [concurrent, abSerial, baSerial] = [await add('c'), await add('ab'), await add('ba')];
+    expect((await put(abSerial, 'slate', 'A')).status).toBe(200);
+    expect((await put(abSerial, 'cam', 'B')).status).toBe(200);
+    expect((await put(baSerial, 'cam', 'B')).status).toBe(200);
+    expect((await put(baSerial, 'slate', 'A')).status).toBe(200);
+    const [a, b] = await Promise.all([put(concurrent, 'slate', 'A'), put(concurrent, 'cam', 'B')]);
+    expect([a.status, b.status]).toEqual([200, 200]);
+
+    const byId = new Map((await listEvents(s)).map((e) => [e.event_id, e]));
+    const shape = (id: string) => {
+      const e = byId.get(id);
+      return { category: e?.category, message: e?.message, metadata: e?.metadata };
+    };
+    const serial = [shape(abSerial), shape(baSerial)];
+    // The seeded `note` differs per event, so compare the merge's own keys.
+    const strip = (x: ReturnType<typeof shape>) => ({
+      ...x,
+      metadata: { ...(x.metadata as Record<string, unknown>), note: undefined },
+    });
+    expect(serial.map(strip)).toContainEqual(strip(shape(concurrent)));
+  });
+
+  it('two local imports: two different consecutive recording ordinals, on the segments and on the Recording N events', async () => {
+    const s = (await seededSession()).sessionId;
+    const [a, b] = await Promise.all([localImport(s), localImport(s)]);
+    expect([a.status, b.status]).toEqual([200, 200]);
+    const segs = await json<{ segments: Array<{ recording_ordinal: number | null }> }>(
+      await app.request(`/api/sessions/${s}/audio/segments`, {}, env),
+    );
+    expect(segs.segments.map((x) => x.recording_ordinal).sort()).toEqual([1, 2]);
+    const internal = (await listEvents(s))
+      .filter((e) => e.category === 'internal')
+      .map((e) => e.message)
+      .sort();
+    expect(internal).toEqual([
+      'Recording 1 Started',
+      'Recording 1 Stopped',
+      'Recording 2 Started',
+      'Recording 2 Stopped',
+    ]);
+  });
+
+  it('a transcript generation against a local import: the stored words are remapped against the anchors either before or after the take', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              results: {
+                channels: [
+                  {
+                    alternatives: [
+                      {
+                        words: [
+                          { word: 'hello', start: 0.5, end: 0.9, speaker: 0 },
+                          { word: 'world', start: 1.0, end: 1.4, speaker: 1 },
+                        ],
+                      },
+                    ],
+                  },
+                ],
+              },
+            }),
+            { status: 200 },
+          ),
+      ),
+    );
+    const deepgramEnv = envWith({
+      DEEPGRAM_API_KEY: 'test-deepgram-key',
+      DEEPGRAM_MODEL: 'nova-3',
+    });
+    const prepared = async () => {
+      const s = (await seededSession()).sessionId;
+      const started = await app.request(
+        `/api/sessions/${s}/events`,
+        {
+          method: 'POST',
+          headers: J,
+          body: JSON.stringify({
+            category: 'internal',
+            message: 'Recording 1 Started',
+            metadata: {},
+          }),
+        },
+        env,
+      );
+      expect(started.status).toBe(200);
+      const seg = await app.request(
+        `/api/sessions/${s}/audio/segments?recording_ordinal=1`,
+        { method: 'POST', headers: { 'content-type': 'audio/webm' }, body: readFileSync(SEG1) },
+        env,
+      );
+      expect(seg.status).toBe(200);
+      return s;
+    };
+    const generate = (s: string) =>
+      app.request(`/api/sessions/${s}/transcript-words/generate`, { method: 'POST' }, deepgramEnv);
+    const words = async (s: string) =>
+      (
+        await json<{ words: Array<{ word: string; session_time: string; speaker: string }> }>(
+          await app.request(`/api/sessions/${s}/transcript-words`, {}, env),
+        )
+      ).words.map((w) => `${w.speaker}|${w.word}|${w.session_time}`);
+
+    const before = await prepared();
+    expect((await generate(before)).status).toBe(200);
+    expect((await localImport(before)).status).toBe(200);
+    const after = await prepared();
+    expect((await localImport(after)).status).toBe(200);
+    expect((await generate(after)).status).toBe(200);
+
+    const concurrent = await prepared();
+    const [g, i] = await Promise.all([generate(concurrent), localImport(concurrent)]);
+    expect([g.status, i.status]).toEqual([200, 200]);
+    const stored = await words(concurrent);
+    expect(stored).toHaveLength(2);
+    expect([await words(before), await words(after)]).toContainEqual(stored);
+  });
+
+  it('two log imports of one sheet: each row is stored once, and the created counts sum to the distinct rows', async () => {
+    const studio = await seedMemberStudio();
+    const show = await seedShow({
+      studioId: studio,
+      categoriesJson: JSON.stringify([
+        {
+          id: 'cam',
+          name: 'Camera',
+          color: '#112233',
+          type: 'BUTTON',
+          dropdown_options: [],
+          on_label: '',
+          off_label: '',
+        },
+        {
+          id: 'other',
+          name: 'Other',
+          color: '#445566',
+          type: 'BUTTON',
+          dropdown_options: [],
+          on_label: '',
+          off_label: '',
+        },
+      ]),
+    });
+    const session = await seedSession({ showId: show, title: 'EP 12' });
+    expect((await localImport(session, 1800)).status).toBe(200);
+    await (await env.ports.sessions.get(session)).replaceTranscriptWords([
+      { session_time: '00:08:47', speaker: '0', word: 'almost', start_sec: 527, end_sec: 527.2 },
+      { session_time: '00:08:47', speaker: '0', word: 'called', start_sec: 527.3, end_sec: 527.4 },
+      { session_time: '00:08:47', speaker: '0', word: 'a', start_sec: 527.5, end_sec: 527.6 },
+      {
+        session_time: '00:08:47',
+        speaker: '0',
+        word: 'helicopter',
+        start_sec: 527.7,
+        end_sec: 528.4,
+      },
+      { session_time: '00:08:48', speaker: '0', word: 'but', start_sec: 528.5, end_sec: 528.7 },
+    ]);
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('EP 12');
+    ws.getCell('A1').value = 'Show log header (rows 1–6 are ignored)';
+    ws.getCell('A7').value = '8:48';
+    ws.getCell('B7').value = 'almost called a helicopter but just crawled';
+    ws.getCell('C7').value = 'Camera';
+    ws.getCell('A8').value = '9:00';
+    ws.getCell('B8').value = 'ad break starts now maybe';
+    ws.getCell('C8').value = '';
+    const xlsx = Buffer.from(await wb.xlsx.writeBuffer());
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(new Uint8Array(xlsx), { status: 200 })),
+    );
+    const enabled = envWith({ SHEETS_LOG_IMPORT_ENABLED: '1', HOST: '127.0.0.1' });
+    const post = () =>
+      app.request(
+        `/api/shows/${show}/log-import`,
+        {
+          method: 'POST',
+          headers: J,
+          body: JSON.stringify({
+            spreadsheet_url: 'https://docs.google.com/spreadsheets/d/abc123xyz/edit',
+          }),
+        },
+        enabled,
+      );
+    const [p1, p2] = await Promise.all([post(), post()]);
+    expect([p1.status, p2.status]).toEqual([200, 200]);
+    const finished = async (jobId: string) => {
+      for (let n = 0; n < 200; n++) {
+        const body = await json<{ status: string; lines: string[] }>(
+          await app.request(`/api/log-import/${jobId}`, {}, env),
+        );
+        if (body.status === 'completed' || body.status === 'failed') return body;
+        await new Promise((r) => setTimeout(r, 25));
+      }
+      throw new Error('job did not finish');
+    };
+    const jobs = await Promise.all(
+      [p1, p2].map(async (p) => finished((await json<{ job_id: string }>(p)).job_id)),
+    );
+    expect(jobs.map((j) => j.status)).toEqual(['completed', 'completed']);
+    const created = jobs.map((j) => {
+      const line = j.lines.find((l) => /Created \d+, skipped \d+ duplicate/.test(l)) ?? '';
+      return Number(/Created (\d+)/.exec(line)?.[1] ?? Number.NaN);
+    });
+    expect(created[0] + created[1]).toBe(2);
+    const imported = (await listEvents(session))
+      .filter((e) => e.category !== 'internal')
+      .map((e) => e.message)
+      .sort();
+    expect(imported).toEqual([
+      'ad break starts now maybe',
+      'almost called a helicopter but just crawled',
+    ]);
   });
 });

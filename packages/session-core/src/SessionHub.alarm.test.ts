@@ -1,0 +1,160 @@
+// The lease alarm under the async hub (async-session-hub design D6, D12). A real-timer case: a
+// timer armed inside a transaction body would inherit that body's AsyncLocalStorage context, and
+// fake timers don't propagate the context, so only real timers can show that the alarm is armed
+// outside it (spike A11). And the backoff case: a failed expiry run logs and re-arms after 1 s,
+// doubling, capped at the 40 s stale threshold, and a successful run resets it.
+
+import type { AsyncLocalStorage } from 'node:async_hooks';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import type Database from 'better-sqlite3';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { sqliteSessionSql } from './asyncSessionSql';
+import { LeaseStore } from './leaseStore';
+import { SessionHub } from './SessionHub';
+import { type SlowSql, slowSql } from './test/slowSql';
+
+const unhandled: unknown[] = [];
+const trap = (reason: unknown): void => {
+  unhandled.push(reason);
+};
+beforeAll(() => {
+  process.on('unhandledRejection', trap);
+});
+afterAll(() => {
+  process.off('unhandledRejection', trap);
+  expect(unhandled).toEqual([]);
+});
+
+let dir: string;
+beforeEach(() => {
+  dir = mkdtempSync(join(tmpdir(), 'autologger-hub-alarm-'));
+});
+afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+const STALE = LeaseStore.LEASE_STALE_MS;
+
+/** Resolves once `check` passes, or rejects after `ms` of real time. */
+async function within(ms: number, check: () => Promise<boolean>): Promise<void> {
+  const deadline = Date.now() + ms;
+  while (Date.now() < deadline) {
+    if (await check()) return;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error(`not within ${ms} ms`);
+}
+
+describe('lease alarm on real timers', () => {
+  it('fires outside any transaction context, clears the stale holder and sends lease.changed', async () => {
+    const T = 1_750_000_000_000;
+    const time = { now: T };
+    const clock = { now: () => time.now };
+    const path = join(dir, 's1.db');
+
+    const first = await SessionHub.open(path, clock);
+    expect(await first.claimLease('client-a')).toBe(true);
+    await first.close();
+
+    // Reopen 10 ms before the lease goes stale: the open's expiry run re-arms the alarm about
+    // 10 ms ahead, from inside its transaction body.
+    time.now = T + STALE - 10;
+    const hub = await SessionHub.open(path, clock);
+    const frames: Record<string, unknown>[] = [];
+    hub.attachSocket({ send: (d: string) => void frames.push(JSON.parse(d)) }, 'browser');
+    expect(hub.hasArmedAlarm).toBe(true);
+
+    const context = (SessionHub as unknown as { txContext: AsyncLocalStorage<unknown> }).txContext;
+    const contexts: unknown[] = [];
+    const target = hub as unknown as { runAlarm(): Promise<void> };
+    const original = target.runAlarm.bind(hub);
+    vi.spyOn(target, 'runAlarm').mockImplementation(() => {
+      contexts.push(context.getStore());
+      return original();
+    });
+    time.now = T + STALE + 1;
+
+    await within(500, async () => (await hub.leaseStatus()).holder_client_id === null);
+    expect(frames).toContainEqual({ type: 'lease.changed' });
+    expect(contexts).toEqual([undefined]);
+    expect(hub.hasArmedAlarm).toBe(false);
+    await hub.close();
+  });
+});
+
+describe('lease alarm backoff (fake timers)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-10-03T00:00:00.000Z'));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  async function hubWithFailingSql() {
+    let sql!: SlowSql;
+    const hub = await SessionHub.open(
+      join(dir, 's1.db'),
+      { now: () => Date.now() },
+      {
+        sql: (db: Database.Database) => {
+          sql = slowSql(sqliteSessionSql(db), { delayMs: 0 });
+          return sql;
+        },
+      },
+    );
+    return { hub, sql };
+  }
+
+  const retryDelays = (log: { mock: { calls: unknown[][] } }) =>
+    log.mock.calls
+      .map((args) => /retrying in (\d+) ms/.exec(String(args[0]))?.[1])
+      .filter((x) => x !== undefined)
+      .map(Number);
+
+  it('re-arms after 1 s and then 2 s, succeeds on the third run, and resets', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { hub, sql } = await hubWithFailingSql();
+    expect(await hub.claimLease('client-a')).toBe(true);
+
+    sql.failNextTx(2);
+    await vi.advanceTimersByTimeAsync(STALE);
+    expect(retryDelays(log)).toEqual([1000]);
+    expect(hub.hasArmedAlarm).toBe(true);
+    expect((await hub.leaseStatus()).holder_client_id).toBe('client-a');
+
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(retryDelays(log)).toEqual([1000, 2000]);
+    expect((await hub.leaseStatus()).holder_client_id).toBe('client-a');
+
+    await vi.advanceTimersByTimeAsync(2000);
+    expect((await hub.leaseStatus()).holder_client_id).toBeNull();
+    expect(hub.hasArmedAlarm).toBe(false);
+
+    // Reset: the next failure starts again at 1 s.
+    expect(await hub.claimLease('client-b')).toBe(true);
+    sql.failNextTx(1);
+    await vi.advanceTimersByTimeAsync(STALE);
+    expect(retryDelays(log)).toEqual([1000, 2000, 1000]);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect((await hub.leaseStatus()).holder_client_id).toBeNull();
+    await hub.close();
+  });
+
+  it('a run of failures stops doubling at the 40 s stale threshold', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { hub, sql } = await hubWithFailingSql();
+    expect(await hub.claimLease('client-a')).toBe(true);
+
+    sql.failNextTx(8);
+    await vi.advanceTimersByTimeAsync(STALE);
+    for (const ms of [1000, 2000, 4000, 8000, 16000, 32000, 40000]) {
+      await vi.advanceTimersByTimeAsync(ms);
+    }
+    expect(retryDelays(log)).toEqual([1000, 2000, 4000, 8000, 16000, 32000, 40000, 40000]);
+    await vi.advanceTimersByTimeAsync(40000);
+    expect((await hub.leaseStatus()).holder_client_id).toBeNull();
+    await hub.close();
+  });
+});

@@ -77,18 +77,21 @@ function mimeForExt(ext: string): string {
 export class AudioStore {
   constructor(private core: SessionCore) {}
 
-  addAudioSegment(input: {
+  async addAudioSegment(input: {
     sessionId: string;
     mimeType: string;
     startedAtUtc: string | null;
     endedAtUtc: string | null;
     recordingOrdinal: number | null;
-  }): AudioSegmentMeta {
+  }): Promise<AudioSegmentMeta> {
     const segId = crypto.randomUUID();
     const ext = extForMime(input.mimeType || 'audio/webm');
     const ordinal = Number(
-      this.core.first('SELECT COALESCE(MAX(ordinal), 0) + 1 AS n FROM session_audio_segments')?.n ??
-        1,
+      (
+        await this.core.first(
+          'SELECT COALESCE(MAX(ordinal), 0) + 1 AS n FROM session_audio_segments',
+        )
+      )?.n ?? 1,
     );
     const r2Key = `audio/${input.sessionId}/${String(ordinal).padStart(4, '0')}_${segId}.${ext}`;
     let ro: number | null = null;
@@ -96,7 +99,7 @@ export class AudioStore {
       const ri = Math.trunc(input.recordingOrdinal);
       if (ri >= 1) ro = ri;
     }
-    this.core.db.run(
+    await this.core.db.run(
       `INSERT INTO session_audio_segments
          (id, ordinal, started_at_utc, ended_at_utc, mime_type, r2_key, recording_ordinal, created_at_utc)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -123,26 +126,28 @@ export class AudioStore {
     };
   }
 
-  listAudioSegments(): AudioSegmentMeta[] {
-    const rows = this.core.all('SELECT * FROM session_audio_segments ORDER BY ordinal ASC');
+  async listAudioSegments(): Promise<AudioSegmentMeta[]> {
+    const rows = await this.core.all('SELECT * FROM session_audio_segments ORDER BY ordinal ASC');
     return rows.map((r) => audioRowToMeta(r));
   }
 
-  deleteAudioSegment(segmentId: string): void {
-    this.core.db.run('DELETE FROM session_audio_segments WHERE id = ?', segmentId);
+  async deleteAudioSegment(segmentId: string): Promise<void> {
+    await this.core.db.run('DELETE FROM session_audio_segments WHERE id = ?', segmentId);
   }
 
-  getAudioSegmentKey(segmentId: string): { r2_key: string; mime_type: string } | null {
-    const r = this.core.first(
+  async getAudioSegmentKey(
+    segmentId: string,
+  ): Promise<{ r2_key: string; mime_type: string } | null> {
+    const r = await this.core.first(
       'SELECT r2_key, mime_type FROM session_audio_segments WHERE id = ?',
       segmentId,
     );
     return r ? { r2_key: String(r.r2_key), mime_type: String(r.mime_type) } : null;
   }
 
-  setAudioSegmentWaveform(input: { segmentId: string; peaks: number[] }): boolean {
+  async setAudioSegmentWaveform(input: { segmentId: string; peaks: number[] }): Promise<boolean> {
     const blob = JSON.stringify(input.peaks);
-    const r = this.core.db.run(
+    const r = await this.core.db.run(
       'UPDATE session_audio_segments SET waveform_peaks_json = ?, waveform_db_floor = ? WHERE id = ?',
       blob,
       -48.0,
@@ -153,13 +158,13 @@ export class AudioStore {
   }
 
   /** Reconcile metadata against the blob keys the router layer found under the session prefix. */
-  syncAudioFromBlobs(known: Array<{ r2_key: string; ordinal: number }>): {
+  async syncAudioFromBlobs(known: Array<{ r2_key: string; ordinal: number }>): Promise<{
     inserted: number;
-  } {
+  }> {
     let inserted = 0;
     const now = isoZ(new Date(this.core.now()));
     for (const k of known) {
-      const exists = this.core.first(
+      const exists = await this.core.first(
         'SELECT 1 AS x FROM session_audio_segments WHERE r2_key = ?',
         k.r2_key,
       );
@@ -168,7 +173,7 @@ export class AudioStore {
       if (m === null) continue;
       const segId = m[2];
       const mime = mimeForExt(m[3].toLowerCase());
-      this.core.db.run(
+      await this.core.db.run(
         `INSERT INTO session_audio_segments
            (id, ordinal, started_at_utc, ended_at_utc, mime_type, r2_key, recording_ordinal, created_at_utc)
          VALUES (?, ?, NULL, NULL, ?, ?, NULL, ?)`,
