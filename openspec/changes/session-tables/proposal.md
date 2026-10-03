@@ -49,7 +49,8 @@ decided (plan of record amended, "Owner decisions after the panel"):
    transaction and refuses; each import route answers its existing `409` rolling detail and rolls
    the segment back exactly as its post-blob rolling refusal does today (design D7).
 2. **The stop rule is confirmed:** a median `addEvent` above 5 ms, or the 31,621-word replace
-   above 10 s, measured in the stack (design D11).
+   above 10 s, measured in the stack (design D11). After task 8.2 measured 5.4-5.6 ms, the owner
+   raised the `addEvent` limit to 10 ms (owner, 2026-10-03; design D11).
 3. **A projection failure fails the write;** the api-contract-freeze REMOVED requirement stands.
 4. **Session calls get their own pool:** 4 connections beside the catalog's 3 root and 5
    transaction connections, 12 of the role's 20; heavy session traffic can only slow session

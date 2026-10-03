@@ -297,6 +297,11 @@ Slice order:
      - ~~two concurrent session creates for one show exhaust the SERIALIZABLE retries under
        load~~ resolved by `catalog-retry-backoff` (2026-10-02): lockstep re-runs exhausted 60/150
        transactions at 5 writers; jitter with 5 runs measured 0/240 at 8 writers;
+     - the Postgres session adapter's fixed per-transaction overhead (about 2.2 ms for an empty
+       locked transaction against about 0.4 ms for a hand-written 9-round-trip one; root
+       statements about 0.4 ms against 0.03 ms raw): profile and optimise it; it also lengthens
+       how long a session call holds a pool slot (the 7b-1 panel's saturation risk) (owner,
+       2026-10-03);
      - (5a) a foreign key from `catalog.users` to `auth.users`;
      - (5a) an egress allowlist for GoTrue: `auth-egress` reaches the internet, the LAN and the
        host's bridge address, while GoTrue holds `JWT_SECRET` and its database password;
@@ -819,6 +824,13 @@ Slice order:
      fail saved session changes" is retired;
    - **the stop rule:** a median `addEvent` above 5 ms, or the 31,621-word transcript replace
      above 10 s, measured in the stack (dev app container to dev database).
+   - **the stop rule raised after measurement (owner, 2026-10-03):** in the dev stack the median
+     `addEvent` measured 5.4-5.6 ms over two runs (7a on SQLite: 0.17 ms), `listEvents` 4.6-5.0 ms
+     (7a: 0.43 ms) and the 31,621-word replace 0.39-0.40 s. Most of an `addEvent` is about 2.2 ms
+     fixed per session transaction inside the adapter (an empty locked session transaction
+     2182 µs; a root `select 1` 412 µs against 29 µs on a raw connection). The owner accepted
+     this as imperceptible for live logging and raised the `addEvent` limit to 10 ms; the replace
+     limit stays 10 s. Optimising the overhead is a revisit item.
 
    **7b-1's mechanism.** Migration `20261008000000_session_tables.sql` adds nine tables in schema
    `catalog` (`events` and `meta` renamed `session_events` and `session_meta`), each with

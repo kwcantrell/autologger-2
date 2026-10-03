@@ -477,8 +477,9 @@ DATA_DIR/
 ### Invariants (spec)
 
 - **Single Node process** — no clustering, no multi-worker fan-out.
-- **SessionHub RPC bodies are synchronous** — zero `await`s inside a hub method; all async
-  work (fetch, streaming, etc.) lives in the router layer, not the hub.
+- **SessionHub RPC bodies await only their own SQL** — a hub method awaits its statements
+  inside its transaction (an in-process FIFO lock keeps one body per session at a time); all other
+  async work (fetch, streaming, etc.) lives in the router layer, not the hub.
 - **Hub mutations are transactional** — every mutating RPC runs inside one Postgres
   transaction that locks the session's `catalog.sessions` row first.
 - **Idle hubs are evicted and reopen lazily** — a hub with no attached sockets and

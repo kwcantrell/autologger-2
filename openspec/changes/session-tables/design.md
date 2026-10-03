@@ -61,7 +61,8 @@ decided:
    its transaction and refuses; each import route answers its existing `409` rolling detail and
    rolls the segment back exactly as its post-blob rolling refusal does today (D7, D13).
 2. **The stop rule is confirmed** (former Open Question 2): a median `addEvent` above 5 ms, or the
-   31,621-word replace above 10 s, measured in the stack (D11).
+   31,621-word replace above 10 s, measured in the stack (D11). Raised after task 8.2 to 10 ms
+   for `addEvent` (owner, 2026-10-03; see D11).
 3. **A projection failure fails the write** (former Open Question 3, D8); the api-contract-freeze
    REMOVED requirement stands.
 4. **Session calls get their own pool** (panel finding 6): 4 connections beside the catalog's 3
@@ -538,6 +539,11 @@ a write returns that write's state, as in 7a.
   stack, the median `addEvent` exceeds 5 ms or the 31,621-word replace exceeds 10 s (the
   transaction deadline). ADR 0021's "revisit if measured write latency hurts live recording"
   applies. A slower `listEvents` is recorded, not a stop.
+- **Post-approval (owner, 2026-10-03, after task 8.2):** the in-stack median `addEvent` measured
+  5.4-5.6 ms (7a SQLite 0.17 ms), mostly ~2.2 ms fixed per session transaction inside the adapter
+  (probe: empty session tx 2182 µs; root `select 1` 412 µs vs raw 29 µs). Accepted as imperceptible
+  for live logging; the `addEvent` limit is raised to 10 ms (the 10 s replace limit is unchanged);
+  optimising the per-transaction overhead is a follow-up (ADR 0021 revisit list).
 
 ## D12. Tests
 

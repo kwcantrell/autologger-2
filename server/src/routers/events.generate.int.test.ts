@@ -38,8 +38,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Bindings } from '../appEnv';
 import { app, defaultUser, env, envWith } from '../test/harness';
 import { catalogFor, seededSession as seedSessionChain, testDb } from '../test/helpers';
-import { slowStorage } from '../test/session/slowStorage';
 import { testRegistry } from '../test/session/sessionRows';
+import { slowStorage } from '../test/session/slowStorage';
 
 const EVENTS_SUCCESS_FIXTURE = fileURLToPath(
   new URL('../test/fixtures/fake-claude-events-success.mjs', import.meta.url),
@@ -1047,6 +1047,50 @@ describe('events/generate — configured behavior (real create_event MCP round t
         expect(aiChatTurns.isSessionInFlight(sessionId)).toBe(false);
       } finally {
         warn.mockRestore();
+        await failing.closeAll();
+      }
+    },
+  );
+
+  it(
+    'a regenerate whose post-success delete cannot write the projection answers 500 and keeps ' +
+      'every snapshotted row (session-tables auto-event-generation delta)',
+    async () => {
+      const { sessionId } = await newSession();
+      await seedAnchoredTranscript(sessionId);
+      await seedManualSlateEvent(sessionId);
+      await seedAutoSlateEvent(sessionId);
+      // Only the delete's projection fails: the inserts commit theirs as in production.
+      let deleting = false;
+      const failing = testRegistry({
+        wrap: (storage) =>
+          slowStorage(storage, {
+            delayMs: 0,
+            hooks: {
+              beforeStatement(sql) {
+                if (/^\s*DELETE FROM session_events\b/i.test(sql)) deleting = true;
+                if (deleting && /^\s*UPDATE sessions\b/i.test(sql)) {
+                  throw new Error('boom — simulated projection failure');
+                }
+              },
+            },
+          }),
+      });
+      try {
+        const res = await generateReq(
+          sessionId,
+          configuredEnv(EVENTS_SUCCESS_FIXTURE, {}, { sessions: failing }),
+          { regenerate: true },
+        );
+        expect(deleting).toBe(true);
+        expect(res.status).toBe(500);
+        const events = await listEvents(sessionId);
+        expect(events.some((e) => e.message === 'Old generated slate')).toBe(true);
+        expect(events.some((e) => e.message === 'Pre-existing slate')).toBe(true);
+        expect(events.filter((e) => e.message === 'SLATE')).toHaveLength(3);
+        expect(await catalogEventCount(sessionId)).toBe(5); // the delete rolled back as a whole
+        expect(aiChatTurns.isSessionInFlight(sessionId)).toBe(false);
+      } finally {
         await failing.closeAll();
       }
     },

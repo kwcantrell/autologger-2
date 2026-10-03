@@ -477,6 +477,39 @@ describe('PostgresCatalogDb: bindings (catalog-roles)', () => {
     }
   });
 
+  // session-tables core-ports-architecture "The connection count stays within the role's limit"
+  // (design D2): with every root, transaction and session slot busy at the defaults, the adapter
+  // holds at most 3 + 5 + 4 = 12 connections, under the app role's limit of 20.
+  it('with every pool saturated at the defaults, the adapter holds at most 12 connections', async () => {
+    const e = await make();
+    const sys = e.root.bindSystem('test');
+    const hold = gate();
+    const busy = [
+      ...Array.from({ length: 6 }, () => sys.all('SELECT pg_sleep(0.6)')),
+      ...Array.from({ length: 8 }, () =>
+        sys.tx(async (t) => {
+          await t.all('SELECT 1 AS one');
+          await hold.wait;
+        }),
+      ),
+      ...Array.from({ length: 6 }, () =>
+        e.root.bindSystem('session-hub').snapshot(async (t) => {
+          await t.all('SELECT 1 AS one');
+          await hold.wait;
+        }),
+      ),
+    ];
+    let most = 0;
+    for (let i = 0; i < 10; i++) {
+      most = Math.max(most, await appSessions(e));
+      await new Promise((r) => setTimeout(r, 40));
+    }
+    hold.open();
+    await Promise.all(busy);
+    expect(most).toBeGreaterThanOrEqual(9); // the pools did fill
+    expect(most).toBeLessThanOrEqual(12);
+  });
+
   it('a root slot whose backend is killed mid-transaction rejects, the process survives, and a fresh client serves the next call', async () => {
     const uncaught: unknown[] = [];
     const trap = (e: unknown) => uncaught.push(e);
