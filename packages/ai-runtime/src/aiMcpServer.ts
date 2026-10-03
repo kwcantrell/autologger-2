@@ -955,7 +955,9 @@ function buildSessionMcpServer(
  */
 export class AiMcpListener {
   private httpServer: http.Server | null = null;
-  private startPromise: Promise<void> | null = null;
+  /** The first `start()`'s promise, kept in a wrapper so the memo check tests an object, not a
+   * promise (promise hygiene, async-session-hub D9). */
+  private started: { promise: Promise<void> } | null = null;
   /** token → registration. The bearer allowlist: unknown token ⇒ 401. */
   private readonly turns = new Map<string, TurnRegistration>();
 
@@ -964,20 +966,23 @@ export class AiMcpListener {
   /** Start the listener (idempotent). Binds 127.0.0.1 on an ephemeral port —
    * NEVER a non-loopback address. Resolves once listening. */
   start(): Promise<void> {
-    if (this.startPromise) return this.startPromise;
+    if (this.started) return this.started.promise;
     const server = http.createServer((req, res) => {
       void this.handle(req, res);
     });
     this.httpServer = server;
-    this.startPromise = new Promise<void>((resolve, reject) => {
-      const onError = (err: Error): void => reject(err);
-      server.once('error', onError);
-      server.listen(0, LOOPBACK, () => {
-        server.removeListener('error', onError);
-        resolve();
-      });
-    });
-    return this.startPromise;
+    const started = {
+      promise: new Promise<void>((resolve, reject) => {
+        const onError = (err: Error): void => reject(err);
+        server.once('error', onError);
+        server.listen(0, LOOPBACK, () => {
+          server.removeListener('error', onError);
+          resolve();
+        });
+      }),
+    };
+    this.started = started;
+    return started.promise;
   }
 
   /** The bound address, or null before `start()` resolves. */
@@ -1052,7 +1057,7 @@ export class AiMcpListener {
     this.turns.clear();
     const server = this.httpServer;
     this.httpServer = null;
-    this.startPromise = null;
+    this.started = null;
     if (server === null) return;
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
@@ -1113,7 +1118,9 @@ async function readBody(req: http.IncomingMessage): Promise<unknown> {
 
 // ── Process-wide singleton (the shared home task 3.2 consumes) ───────────────
 
-let singletonPromise: Promise<AiMcpListener> | null = null;
+/** The started listener's promise, in a wrapper so the memo checks test an object, not a
+ * promise (promise hygiene, async-session-hub D9). */
+let singleton: { promise: Promise<AiMcpListener> } | null = null;
 
 /**
  * Get the process-wide MCP listener, starting it on first use with the app's
@@ -1126,23 +1133,28 @@ let singletonPromise: Promise<AiMcpListener> | null = null;
  * call can retry.
  */
 export function getAiMcpListener(registry: SessionHubRegistryFacade): Promise<AiMcpListener> {
-  singletonPromise ??= (async () => {
-    const listener = new AiMcpListener(registry);
-    await listener.start();
-    return listener;
-  })().catch((err) => {
-    singletonPromise = null;
+  if (singleton !== null) return singleton.promise;
+  const wrapper: { promise: Promise<AiMcpListener> } = {
+    promise: (async () => {
+      const listener = new AiMcpListener(registry);
+      await listener.start();
+      return listener;
+    })(),
+  };
+  wrapper.promise = wrapper.promise.catch((err: unknown) => {
+    if (singleton === wrapper) singleton = null;
     throw err;
   });
-  return singletonPromise;
+  singleton = wrapper;
+  return wrapper.promise;
 }
 
 /** Test-only: close and clear the singleton so it doesn't leak across cases. */
 export async function __resetAiMcpListenerForTests(): Promise<void> {
-  const p = singletonPromise;
-  singletonPromise = null;
-  if (p !== null) {
-    const listener = await p.catch(() => null);
+  const current = singleton;
+  singleton = null;
+  if (current !== null) {
+    const listener = await current.promise.catch(() => null);
     if (listener !== null) await listener.close();
   }
 }

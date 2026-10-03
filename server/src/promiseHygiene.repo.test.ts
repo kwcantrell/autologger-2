@@ -2,9 +2,12 @@
 // "Server code never drops or misuses a promise"): server production code consumes every promise.
 // A Promise-typed expression statement must be awaited, voided, returned or given a rejection
 // handler; a promise must never be a condition, a `!` operand, a comparison operand, a template
-// value or a `c.json(...)` body or field; and an async function must never go where a callback
-// returning no value is expected. The scan covers `packages/catalog/src` too, and test files may
-// not pass a promise to `expect()` (async-catalog-stores D6). Biome's noFloatingPromises misses calls through
+// value or a `c.json(...)` body or field; an async function must never go where a callback
+// returning no value is expected; and an async function must not return an un-awaited promise from
+// inside a `try` (typescript-eslint `return-await` "in-try-catch"). The scan covers
+// `packages/catalog/src`, and since async-session-hub D9 `packages/session-core`, `log-import`,
+// `transcription` and `ai-runtime` too; test files, the session-core tests included, may not pass
+// a promise to `expect()` (async-catalog-stores D6). Biome's noFloatingPromises misses calls through
 // `@autologger/ports` interfaces and `!promise`, so this uses the TypeScript type checker over the
 // real program.
 import { join, relative } from 'node:path';
@@ -12,7 +15,23 @@ import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 
 const SERVER = join(__dirname, '..');
-const CATALOG_SRC = join(SERVER, '..', 'packages', 'catalog', 'src');
+const PACKAGES = join(SERVER, '..', 'packages');
+const CATALOG_SRC = join(PACKAGES, 'catalog', 'src');
+/** Production roots beside `server/src` (async-catalog-stores D6; async-session-hub D9). */
+const PACKAGE_ROOTS = [
+  CATALOG_SRC,
+  ...['session-core', 'log-import', 'transcription', 'ai-runtime'].map((p) =>
+    join(PACKAGES, p, 'src'),
+  ),
+];
+/** Files the production scan must reach, one or more per package root (async-session-hub D9). */
+const KEY_PACKAGE_FILES = [
+  'session-core/src/SessionHub.ts',
+  'session-core/src/sessionCore.ts',
+  'log-import/src/runSessionLogImport.ts',
+  'transcription/src/generateTranscript.ts',
+  'ai-runtime/src/aiMcpServer.ts',
+];
 
 function isPromiseLike(checker: ts.TypeChecker, type: ts.Type): boolean {
   if (type.isUnion()) return type.types.some((t) => isPromiseLike(checker, t));
@@ -36,6 +55,24 @@ function handlesRejection(e: ts.Expression): boolean {
   return (
     (name === 'catch' && e.arguments.length >= 1) || (name === 'then' && e.arguments.length >= 2)
   );
+}
+
+/** A `return` inside a `try` block (or a `catch` with a `finally`) of an async function: an
+ * un-awaited promise returned there settles after the `catch`/`finally` ran (typescript-eslint
+ * `return-await` "in-try-catch"; async-session-hub D9). */
+function returnsFromTryInAsync(node: ts.ReturnStatement): boolean {
+  let inTry = false;
+  let child: ts.Node = node;
+  for (let p = node.parent; p; child = p, p = p.parent) {
+    if (ts.isTryStatement(p)) {
+      if (child === p.tryBlock || (child === p.catchClause && p.finallyBlock)) inTry = true;
+    } else if (ts.isFunctionLike(p)) {
+      const isAsync =
+        (ts.getCombinedModifierFlags(p as ts.Declaration) & ts.ModifierFlags.Async) !== 0;
+      return inTry && isAsync;
+    }
+  }
+  return false;
 }
 
 const EQUALITY = new Set([
@@ -119,6 +156,14 @@ function findPromiseMisuse(program: ts.Program, files: readonly ts.SourceFile[])
         node.operator === ts.SyntaxKind.ExclamationToken
       ) {
         checkCondition(node.operand);
+      } else if (
+        ts.isReturnStatement(node) &&
+        node.expression &&
+        !ts.isAwaitExpression(strip(node.expression)) &&
+        promiseAt(strip(node.expression)) &&
+        returnsFromTryInAsync(node)
+      ) {
+        report(node.expression, 'un-awaited return inside try');
       } else if (ts.isTemplateSpan(node) && promiseAt(node.expression)) {
         report(node.expression, 'promise in a template');
       } else if (
@@ -202,6 +247,23 @@ function fixtureProgram(source: string): { program: ts.Program; file: ts.SourceF
   return { program, file };
 }
 
+function programFor(tsconfig: string): ts.Program {
+  const parsed = ts.getParsedCommandLineOfConfigFile(
+    tsconfig,
+    {},
+    {
+      ...ts.sys,
+      onUnRecoverableConfigFileDiagnostic: (d) => {
+        throw new Error(String(d.messageText));
+      },
+    },
+  );
+  if (!parsed) throw new Error(`${tsconfig} did not parse`);
+  return ts.createProgram(parsed.fileNames, parsed.options);
+}
+
+const isTest = (f: string) => /\.test\.ts$/.test(f) || f.includes('/src/test/');
+
 const PRELUDE = `
 interface Kv { put(k: string, v: string): Promise<void>; get(k: string): Promise<string | null> }
 interface Presence { list(): Promise<string[]> }
@@ -211,7 +273,10 @@ declare function each(f: (x: string) => void): void;
 declare function inTx(mutate: (k: Kv) => undefined): void;
 async function requireSession(id: string): Promise<{ id: string }> { return { id }; }
 async function canView(id: string): Promise<boolean> { return id !== ''; }
-declare function expect(x: unknown): { resolves: { toBe(v: unknown): Promise<void> }; rejects: { toThrow(): Promise<void> }; toBe(v: unknown): void; toBeInstanceOf(c: unknown): void; not: { toBeNull(): void } };
+declare function expect(x: unknown): { resolves: { toBe(v: unknown): Promise<void> }; rejects: { toThrow(): Promise<void> }; toBe(v: unknown): void; toEqual(v: unknown): void; toBeInstanceOf(c: unknown): void; not: { toBeNull(): void } };
+interface Hub { addEvent(input: { message: string }): Promise<{ id: string }>; claimLease(id: string): Promise<boolean>; listTopics(): Promise<string[]>; replaceTranscriptWords(w: string[]): Promise<void> }
+declare const hub: Hub;
+declare const lock: { release(): void };
 `;
 
 describe('promise hygiene', () => {
@@ -281,6 +346,32 @@ describe('promise hygiene', () => {
       'async function m(x: string) { await kv.put(x, x); } export function h() { each(m); }',
       'async callback',
     ],
+    // async-session-hub D9: the same checks fire through the session hub facade.
+    [
+      'a dropped hub.addEvent(…)',
+      'export async function h() { hub.addEvent({ message: "m" }); }',
+      'dropped promise',
+    ],
+    [
+      'if (!hub.claimLease(id))',
+      'export async function h(id: string) { if (!hub.claimLease(id)) return 1; return 2; }',
+      'condition',
+    ],
+    [
+      'c.json({ topics: hub.listTopics() })',
+      'export function h() { return c.json({ topics: hub.listTopics() }); }',
+      'response',
+    ],
+    [
+      'an un-awaited return inside try/finally',
+      'export async function h(w: string[]) { try { return hub.replaceTranscriptWords(w); } finally { lock.release(); } }',
+      'un-awaited return inside try',
+    ],
+    [
+      'an un-awaited return inside try/catch',
+      'export async function h() { try { return hub.listTopics(); } catch { return []; } }',
+      'un-awaited return inside try',
+    ],
   ])('flags %s', (_name, body, what) => {
     const { program, file } = fixtureProgram(PRELUDE + body);
     const found = findPromiseMisuse(program, [file]);
@@ -332,34 +423,92 @@ export async function h() {
     expect(findUnawaitedExpect(good.program, [good.file])).toEqual([]);
   });
 
-  it('server production code drops and misuses no promise', () => {
-    const parsed = ts.getParsedCommandLineOfConfigFile(
-      join(SERVER, 'tsconfig.json'),
-      {},
-      {
-        ...ts.sys,
-        onUnRecoverableConfigFileDiagnostic: (d) => {
-          throw new Error(String(d.messageText));
-        },
-      },
+  it('flags expect(hub.listTopics()) in a test (async-session-hub D9)', () => {
+    const bad = fixtureProgram(
+      `${PRELUDE}export async function t() { expect(hub.listTopics()).toEqual([]); }`,
     );
-    if (!parsed) throw new Error('server/tsconfig.json did not parse');
-    const program = ts.createProgram(parsed.fileNames, parsed.options);
-    const isTest = (f: string) => /\.test\.ts$/.test(f) || f.includes('/src/test/');
+    const found = findUnawaitedExpect(bad.program, [bad.file]);
+    expect(found.length, found.join('\n')).toBe(1);
+    expect(found[0]).toContain('promise passed to expect()');
+  });
+
+  it('accepts return await inside try, and the wrapper-object memo of a promise (async-session-hub D9)', () => {
+    const { program, file } = fixtureProgram(
+      `${PRELUDE}
+export async function h(w: string[]) {
+  try {
+    return await hub.replaceTranscriptWords(w);
+  } finally {
+    lock.release();
+  }
+}
+export async function g() {
+  try {
+    return await hub.listTopics();
+  } catch {
+    return [];
+  }
+}
+export class Listener {
+  private started: { promise: Promise<void> } | null = null;
+  start(): Promise<void> {
+    if (this.started) return this.started.promise;
+    const started = { promise: kv.put('a', 'b') };
+    this.started = started;
+    return started.promise;
+  }
+}
+let singleton: { promise: Promise<string | null> } | null = null;
+export function getSingleton(): Promise<string | null> {
+  if (singleton !== null) return singleton.promise;
+  const wrapper: { promise: Promise<string | null> } = { promise: kv.get('k') };
+  wrapper.promise = wrapper.promise.catch((err: unknown) => {
+    if (singleton === wrapper) singleton = null;
+    throw err;
+  });
+  singleton = wrapper;
+  return wrapper.promise;
+}
+export async function reset(): Promise<void> {
+  const w = singleton;
+  singleton = null;
+  if (w !== null) await w.promise.catch(() => null);
+}`,
+    );
+    expect(findPromiseMisuse(program, [file])).toEqual([]);
+  });
+
+  it('server production code drops and misuses no promise', () => {
+    const program = programFor(join(SERVER, 'tsconfig.json'));
     const sources = program.getSourceFiles();
-    // async-catalog-stores D6: the catalog stores hold most transaction bodies.
+    // async-catalog-stores D6: the catalog stores hold most transaction bodies; async-session-hub
+    // D9 adds session-core and the packages that call the session hub.
     const files = sources.filter(
       (sf) =>
-        (sf.fileName.startsWith(join(SERVER, 'src')) || sf.fileName.startsWith(CATALOG_SRC)) &&
+        [join(SERVER, 'src'), ...PACKAGE_ROOTS].some((root) => sf.fileName.startsWith(root)) &&
         !isTest(sf.fileName),
     );
     expect(files.length).toBeGreaterThan(30);
     expect(files.some((sf) => sf.fileName.startsWith(CATALOG_SRC))).toBe(true);
+    // async-session-hub D9: session-core and the hub-calling packages are scanned too; a root
+    // that stops being reached fails here.
+    const scanned = new Set(files.map((sf) => sf.fileName));
+    expect(KEY_PACKAGE_FILES.filter((f) => !scanned.has(join(PACKAGES, f)))).toEqual([]);
     expect(findPromiseMisuse(program, files)).toEqual([]);
     const tests = sources.filter(
       (sf) => sf.fileName.startsWith(join(SERVER, 'src')) && isTest(sf.fileName),
     );
     expect(tests.length).toBeGreaterThan(30);
     expect(findUnawaitedExpect(program, tests)).toEqual([]);
+    // The server program reaches no package test, so session-core's tests get their own program.
+    const core = programFor(join(PACKAGES, 'session-core', 'tsconfig.json'));
+    const coreTests = core
+      .getSourceFiles()
+      .filter(
+        (sf) =>
+          sf.fileName.startsWith(join(PACKAGES, 'session-core', 'src')) && isTest(sf.fileName),
+      );
+    expect(coreTests.length).toBeGreaterThan(10);
+    expect(findUnawaitedExpect(core, coreTests)).toEqual([]);
   }, 120_000);
 });

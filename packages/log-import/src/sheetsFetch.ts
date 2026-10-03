@@ -77,6 +77,7 @@ export async function fetchPublicWorkbookSheets(
 
   let lastErr: Error | null = null;
   for (const url of urls) {
+    let buf: Buffer;
     try {
       const res = await fetchImpl(url, {
         redirect: 'follow',
@@ -92,7 +93,7 @@ export async function fetchPublicWorkbookSheets(
         );
         continue;
       }
-      const buf = Buffer.from(await res.arrayBuffer());
+      buf = Buffer.from(await res.arrayBuffer());
       const head = buf.subarray(0, 64).toString('utf8');
       if (head.includes('<!DOCTYPE') || head.includes('<html') || head.includes('<HTML')) {
         lastErr = new Error(
@@ -107,10 +108,13 @@ export async function fetchPublicWorkbookSheets(
         );
         continue;
       }
-      return parseWorkbookBuffer(buf);
     } catch (err) {
       lastErr = err instanceof Error ? err : new Error(String(err));
+      continue;
     }
+    // Parsed outside the `try`, as before: a workbook that fails to parse rejects at once instead
+    // of falling through to the next URL (promise hygiene, async-session-hub D9).
+    return parseWorkbookBuffer(buf);
   }
   throw lastErr ?? new Error('Could not download spreadsheet.');
 }

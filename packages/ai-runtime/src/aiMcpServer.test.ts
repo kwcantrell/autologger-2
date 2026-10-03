@@ -13,6 +13,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  __resetAiMcpListenerForTests,
   type AiGenerationRunContext,
   type AiGenerationSnapshotWord,
   AiMcpListener,
@@ -20,6 +21,7 @@ import {
   allTranscriptPagesServed,
   GENERATION_LINE_MAX_WORDS,
   GENERATION_PAGE_SIZE_WORDS,
+  getAiMcpListener,
 } from './aiMcpServer';
 
 let dir: string;
@@ -71,6 +73,58 @@ describe('AiMcpListener — loopback bind', () => {
     expect(addr).not.toBeNull();
     expect(addr?.address).toBe('127.0.0.1');
     expect(addr?.port).toBeGreaterThan(0);
+  });
+});
+
+// async-session-hub D9 reshaped the start memo and the singleton into wrapper objects; these pin
+// that one start serves concurrent first callers and a failed start is retried.
+describe('AiMcpListener — start memo and the process-wide singleton', () => {
+  it('concurrent first start() calls share one start', async () => {
+    const fresh = new AiMcpListener(registry);
+    try {
+      const a = fresh.start();
+      const b = fresh.start();
+      expect(a).toBe(b);
+      await Promise.all([a, b]);
+      expect(fresh.address?.address).toBe('127.0.0.1');
+      expect(fresh.start()).toBe(a);
+    } finally {
+      await fresh.close();
+    }
+  });
+
+  it('concurrent first getAiMcpListener() callers get one started listener', async () => {
+    await __resetAiMcpListenerForTests();
+    const startSpy = vi.spyOn(AiMcpListener.prototype, 'start');
+    try {
+      const p1 = getAiMcpListener(registry);
+      const p2 = getAiMcpListener(registry);
+      expect(p1).toBe(p2);
+      const [l1, l2] = await Promise.all([p1, p2]);
+      expect(l1).toBe(l2);
+      expect(l1.address).not.toBeNull();
+      expect(startSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      startSpy.mockRestore();
+      await __resetAiMcpListenerForTests();
+    }
+  });
+
+  it('a failed start is retried by the next getAiMcpListener() call', async () => {
+    await __resetAiMcpListenerForTests();
+    const startSpy = vi
+      .spyOn(AiMcpListener.prototype, 'start')
+      .mockRejectedValueOnce(new Error('bind failed'));
+    try {
+      await expect(getAiMcpListener(registry)).rejects.toThrow('bind failed');
+      const listener = await getAiMcpListener(registry);
+      expect(listener.address).not.toBeNull();
+      expect(startSpy).toHaveBeenCalledTimes(2);
+      expect(await getAiMcpListener(registry)).toBe(listener);
+    } finally {
+      startSpy.mockRestore();
+      await __resetAiMcpListenerForTests();
+    }
   });
 });
 
