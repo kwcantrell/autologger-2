@@ -1,5 +1,5 @@
-// runSessionLogImport is async so an async catalog mirror (projectLive) can be awaited
-// (async-session-callers D5); failures surface as rejections, not synchronous throws. Each row's
+// runSessionLogImport is async (async-session-callers D5; its hub calls are asynchronous, and each
+// insert commits the live projection with it, session-tables D8); failures surface as rejections, not synchronous throws. Each row's
 // duplicate check and insert are one hub transaction (async-session-hub D7, S10), so a row a
 // concurrent import already stored is skipped and counted as skipped.
 import type { CategoryRecord } from '@autologger/domain';
@@ -16,7 +16,6 @@ describe('runSessionLogImport', () => {
       categories: [],
       ctx: { frameRate: 24, startOffsetFrames: 0 },
       transcript: [],
-      projectLive: async () => {},
     });
     expect(run).toBeInstanceOf(Promise);
     await expect(run).rejects.toThrow(/Transcript is missing/);
@@ -46,7 +45,6 @@ describe('runSessionLogImport duplicate skip against a concurrent import', () =>
         categories: [OTHER],
         ctx: { frameRate: 24, startOffsetFrames: 0 },
         transcript: words.map((word, i) => ({ word, startSec: 10 + i * 0.3 })),
-        projectLive: async () => {},
       });
     return { hub, run };
   }

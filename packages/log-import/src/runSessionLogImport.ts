@@ -38,8 +38,8 @@ async function seamPartsForSession(hub: SessionHubFacade): Promise<{ duration_s:
   throw new Error('Session is missing stitch seam metadata; re-import audio with seam parts.');
 }
 
-/** Import parsed log rows into a session event feed (sync + create-at-frames). Async so the
- * catalog mirror (`projectLive`) can be awaited (async-session-callers D5). */
+/** Import parsed log rows into a session event feed (sync + create-at-frames). Each created row
+ * commits the session's live projection with its insert (session-tables design D8). */
 export async function runSessionLogImport(input: {
   hub: SessionHubFacade;
   rows: ParsedLogRow[];
@@ -47,14 +47,6 @@ export async function runSessionLogImport(input: {
   ctx: TimecodeCtx;
   /** Pre-resolved timed transcript tokens (after ensureTimedTranscript). */
   transcript: TranscriptToken[];
-  projectLive: (projection: {
-    event_count: number;
-    max_timecode_total_frames: number | null;
-    is_rolling: boolean;
-    current_take: number;
-    transport_elapsed_frames: number;
-    roll_started_at_utc: string | null;
-  }) => void | Promise<void>;
 }): Promise<SessionLogImportResult> {
   const lines: string[] = [];
   if (input.transcript.length === 0) {
@@ -76,7 +68,6 @@ export async function runSessionLogImport(input: {
 
   let created = 0;
   let skipped = 0;
-  let lastProjection: Parameters<typeof input.projectLive>[0] | null = null;
 
   for (const a of sync.assignments) {
     const mapped = mapLogCategory(a.row.type, a.row.message, input.categories);
@@ -98,10 +89,8 @@ export async function runSessionLogImport(input: {
       continue;
     }
     created += 1;
-    lastProjection = result.projection;
   }
 
-  if (lastProjection) await input.projectLive(lastProjection);
   lines.push(`Created ${created}, skipped ${skipped} duplicate(s).`);
   return { created, skipped, lines };
 }

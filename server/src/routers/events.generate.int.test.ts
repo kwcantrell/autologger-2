@@ -33,12 +33,13 @@ import {
   EVENT_GENERATE_SYSTEM_PROMPT,
   INSTRUCTION_OPEN,
 } from '@autologger/ai-runtime/eventGeneratePrompt';
-import { SessionIndexStore } from '@autologger/catalog';
 import type { Clock } from '@autologger/ports';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Bindings } from '../appEnv';
 import { app, defaultUser, env, envWith } from '../test/harness';
 import { catalogFor, seededSession as seedSessionChain, testDb } from '../test/helpers';
+import { slowStorage } from '../test/session/slowStorage';
+import { testRegistry } from '../test/session/sessionRows';
 
 const EVENTS_SUCCESS_FIXTURE = fileURLToPath(
   new URL('../test/fixtures/fake-claude-events-success.mjs', import.meta.url),
@@ -774,9 +775,9 @@ describe('events/generate — configured behavior (real create_event MCP round t
       expect(manual).toBeDefined();
       expect(JSON.parse(manual?.metadata_json ?? '{}').auto_generated).toBeUndefined();
 
-      // Sessions-list freshness (spec "Sessions list stays truthful"): the
-      // catalog projection was mirrored by the ROUTE — no manual write — so
-      // GET /api/sessions serves the updated event_count.
+      // Sessions-list freshness (spec "Sessions list stays truthful"): each
+      // insert committed the catalog projection with it (session-tables D8) —
+      // no manual write — so GET /api/sessions serves the updated event_count.
       const cat = catalogFor();
       await cat.auth.authSetPrefs((await defaultUser()).id, studioId, showId);
       const listRes = await app.request('/api/sessions', { method: 'GET' }, { ...env });
@@ -914,7 +915,8 @@ describe('events/generate — configured behavior (real create_event MCP round t
       // Partial results survive the failed run (spec scenario).
       const generated = (await listEvents(sessionId)).filter((e) => e.message === 'SLATE');
       expect(generated).toHaveLength(2);
-      // ...and the catalog mirror ran on the failure path too.
+      // ...and the catalog projection is current on the failure path too (each
+      // insert committed it, session-tables D8).
       expect(await catalogEventCount(sessionId)).toBe(2);
       expect(aiChatTurns.isSessionInFlight(sessionId)).toBe(false);
     },
@@ -1010,29 +1012,42 @@ describe('events/generate — configured behavior (real create_event MCP round t
   );
 
   it(
-    'finally-block ordering pin: slot release happens BEFORE the post-run catalog ' +
-      'projection, so a throw from the projection does not leave the AI slot stuck in flight',
+    'a projection update that fails fails each insert (session-tables D8): no event is saved, ' +
+      'the catalog count is unchanged, and the AI slot is released',
     async () => {
       const { sessionId } = await newSession();
       await seedAnchoredTranscript(sessionId);
-      const spy = vi
-        .spyOn(SessionIndexStore.prototype, 'projectSessionLive')
-        .mockImplementationOnce(() => {
-          throw new Error('boom — simulated projection failure');
-        });
+      // The route's registry, over storage whose projection statement fails; every other
+      // statement runs as in production.
+      const failing = testRegistry({
+        wrap: (storage) =>
+          slowStorage(storage, {
+            delayMs: 0,
+            hooks: {
+              beforeStatement(sql) {
+                if (/^\s*UPDATE sessions\b/i.test(sql)) {
+                  throw new Error('boom — simulated projection failure');
+                }
+              },
+            },
+          }),
+      });
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
       try {
-        const res = await generateReq(sessionId, configuredEnv(EVENTS_SUCCESS_FIXTURE));
-        // A failed mirror write only warns: the run's own outcome is returned
-        // (catalog-concurrency-hazards D6; was the generic 500). The slot is free either way.
-        expect(res.status).toBe(200);
-        expect(warn.mock.calls.map((c) => String(c[0])).join('\n')).toMatch(
-          /live projection not written/,
+        const res = await generateReq(
+          sessionId,
+          configuredEnv(EVENTS_SUCCESS_FIXTURE, {}, { sessions: failing }),
         );
+        // Each failed insert is a failed create_event (an internal-error tool result, not
+        // counted in `created`); the run's own outcome is returned.
+        expect(res.status).toBe(200);
+        expect(((await res.json()) as { created: number }).created).toBe(0);
+        expect((await listEvents(sessionId)).filter((e) => e.message === 'SLATE')).toHaveLength(0);
+        expect(await catalogEventCount(sessionId)).toBe(0);
         expect(aiChatTurns.isSessionInFlight(sessionId)).toBe(false);
       } finally {
-        spy.mockRestore();
         warn.mockRestore();
+        await failing.closeAll();
       }
     },
   );

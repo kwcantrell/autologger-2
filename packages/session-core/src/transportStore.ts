@@ -48,6 +48,7 @@ export class TransportStore {
       isoZ(new Date(this.core.now())),
       this.core.sessionId,
     );
+    this.core.markProjectionDirty();
     this.core.broadcast({ type: 'transport.changed', is_rolling: true, current_take: nextTake });
     const st = await this.transportStateDict(ctx);
     return { state: { ...st, started: true }, projection: await this.core.projection() };
@@ -76,6 +77,7 @@ export class TransportStore {
       totalElapsed,
       this.core.sessionId,
     );
+    this.core.markProjectionDirty();
     this.core.broadcast({
       type: 'transport.changed',
       is_rolling: false,
@@ -112,6 +114,7 @@ export class TransportStore {
       tr.elapsed_frames + extra,
       this.core.sessionId,
     );
+    this.core.markProjectionDirty();
     // Matches stopTake's exact emitted shape (design D11) — stopTakeWithDuration
     // previously broadcast nothing, which was a gap masked by having zero
     // non-test callers until the youtube-import anchor composite.

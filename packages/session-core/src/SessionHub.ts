@@ -528,7 +528,9 @@ export class SessionHub implements SessionHubFacade {
   /** The storage runs the body once per attempt (a deadlock runs it again, session-tables design
    * D2, D7): each attempt gets a fresh transaction-bound core, and the previous attempt's held
    * broadcasts and alarm are dropped, so only the committed attempt's are applied, after COMMIT.
-   * The alarm is armed here, outside the storage call's async context. */
+   * The alarm is armed here, outside the storage call's async context. A body that changed the
+   * events or the transport writes the catalog projection after it returns, before COMMIT
+   * (session-tables design D8), so a failed projection fails the write. */
   private async transaction<T>(body: (s: HubStores) => Promise<T>): Promise<T> {
     const parent = SessionHub.txContext.getStore();
     const bound: { core: SessionCore | null } = { core: null };
@@ -543,7 +545,10 @@ export class SessionHub implements SessionHubFacade {
         return SessionHub.txContext.run(ctx, async () => {
           try {
             bound.core = this.core.forTransaction(t);
-            return await body(storesFor(bound.core));
+            const result = await body(storesFor(bound.core));
+            // The live projection commits with the write (session-tables design D8).
+            await bound.core.writeProjectionIfDirty();
+            return result;
           } finally {
             ctx.open = false;
           }

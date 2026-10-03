@@ -3,7 +3,9 @@
 // (which drove its internals directly). The Node port has no
 // DO RPC boundary — SessionHubRegistry#get() returns the hub in-process — so
 // this suite instead exercises the same scenarios over real HTTP requests
-// through the router, asserting on the catalog projection and response payloads.
+// through the router, asserting on the catalog projection and response payloads. The projection
+// commits inside each hub write (session-tables design D8), so the catalog row is current as soon
+// as the response arrives, with no writer behind the route.
 // Task 9's SessionHub.test.ts already covers hub-internal timer/lease/eviction
 // mechanics directly; this file only covers what only shows up through HTTP.
 
@@ -12,7 +14,7 @@ import { app, env } from './harness';
 import { SEED_CATEGORY_ID, seededSession, testDb } from './helpers';
 
 describe('hub ↔ catalog projection', () => {
-  it('logging an event bumps the projected event_count on the catalog row', async () => {
+  it('logging an event bumps the projected event_count on the catalog row, committed with the write', async () => {
     const s = (await seededSession()).sessionId;
     const res = await app.request(
       `/api/sessions/${s}/events`,

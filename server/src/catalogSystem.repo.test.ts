@@ -36,11 +36,6 @@ const ALLOWLIST: readonly { file: string; reason: string; why: string }[] = [
   },
   {
     file: 'server/src/node/config.ts',
-    reason: 'session-mirror',
-    why: "the mirror's session-index writes, outside any request",
-  },
-  {
-    file: 'server/src/node/config.ts',
     reason: 'session-hub',
     why: 'every session hub statement, until slice 7b-2 binds hub calls to their caller',
   },

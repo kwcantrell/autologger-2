@@ -1,6 +1,7 @@
 // Events + transport + status routes — ported from web/routers/events.py.
-// Each handler resolves the session hub, calls RPC, mirrors the returned live
-// projection onto the catalog sessions row, and enriches events in the router
+// Each handler resolves the session hub, calls RPC (a hub write commits the
+// session's live projection onto the catalog sessions row in its own
+// transaction, session-tables design D8), and enriches events in the router
 // layer using the show profile (keeping show logic out of the hub).
 
 import { aiChatTurns } from '@autologger/ai-runtime/aiChatRegistry';
@@ -171,7 +172,6 @@ eventsRouter.post('/api/sessions/:sessionId/transport/start', async (c) => {
   const sessionId = c.req.param('sessionId');
   const row = await requireSession(c, sessionId);
   const { state } = await (await getSessionHub(c, sessionId)).startTake(timecodeCtx(row));
-  await c.env.ports.mirror.mirror(sessionId);
   return c.json(state);
 });
 
@@ -179,7 +179,6 @@ eventsRouter.post('/api/sessions/:sessionId/transport/stop', async (c) => {
   const sessionId = c.req.param('sessionId');
   const row = await requireSession(c, sessionId);
   const { state } = await (await getSessionHub(c, sessionId)).stopTake(timecodeCtx(row));
-  await c.env.ports.mirror.mirror(sessionId);
   return c.json(state);
 });
 
@@ -237,8 +236,6 @@ eventsRouter.post('/api/sessions/:sessionId/events', async (c) => {
     markedAtUtc: marked,
     ctx: timecodeCtx(row),
   });
-  // Ordered, and a failure only warns: the event is already saved (catalog-concurrency-hazards D6).
-  await c.env.ports.mirror.mirror(sessionId);
   return c.json(enrichEventRpc(event, profile));
 });
 
@@ -594,7 +591,7 @@ eventsRouter.post('/api/sessions/:sessionId/events/generate', async (c) => {
       // turn just awaited for up to the configured timeout, and an idle hub
       // can be evicted and reopened meanwhile (`SessionHubRegistry#get()`): a
       // hub reference is re-resolved after a long non-hub await
-      // (async-session-hub design D6), as the `finally` block's mirror does.
+      // (async-session-hub design D6).
       const deleted = regenerate
         ? outcome.createdEvents > 0
           ? await (await getSessionHub(c, sessionId)).deleteEventsByIds(snapshotIds)
@@ -617,22 +614,11 @@ eventsRouter.post('/api/sessions/:sessionId/events/generate', async (c) => {
     );
     throw new ApiError(502, EVENT_GENERATE_FAILURE_DETAIL);
   } finally {
-    // Slot release FIRST, unconditionally (Phase-4 review): a throw from the
-    // hub re-acquire/ensure() or the catalog UPDATE below must never leak the
-    // per-session slot — a leaked slot wedges every later AI turn for this
-    // session behind a 409 until restart. Releasing before the mirror is safe
-    // while the catalog adapter yields only microtasks (async-catalog-stores
-    // A7): no other request runs before the mirror's UPDATE. Re-audit when the
-    // catalog does real I/O (ADR 0021 slice 4 hazard 4).
+    // Slot release, unconditionally (Phase-4 review): a leaked slot wedges every later AI turn
+    // for this session behind a 409 until restart. The catalog projection needs no post-run
+    // write: each insert and the regenerate's delete commit it in their own transaction
+    // (session-tables design D8), so it is current by the time the route responds.
     slot.release();
-    // Post-run catalog mirror on success AND failure paths (spec "the run
-    // SHALL leave the catalog projection current by the time the route
-    // responds") — the run's inserts persist either way. The mirror's
-    // snapshot resolves the hub afresh after the potentially multi-minute turn
-    // (an idle hub can be evicted and reopened meanwhile, async-session-hub
-    // design D6). A failed mirror write only warns, so the run's own
-    // outcome is returned (catalog-concurrency-hazards D6).
-    await c.env.ports.mirror.mirror(sessionId);
   }
 });
 
@@ -693,7 +679,6 @@ eventsRouter.put('/api/sessions/:sessionId/events/:eventId', async (c) => {
     mergeMetadata,
   });
   if (result === null) throw new ApiError(404, 'Event not found.');
-  await c.env.ports.mirror.mirror(sessionId);
   return c.json(enrichEventRpc(result.event, profile));
 });
 
@@ -703,7 +688,6 @@ eventsRouter.delete('/api/sessions/:sessionId/events/:eventId', async (c) => {
   await requireSession(c, sessionId);
   const { ok } = await (await getSessionHub(c, sessionId)).deleteEvent(eventId);
   if (!ok) throw new ApiError(404, 'Event not found.');
-  await c.env.ports.mirror.mirror(sessionId);
   return c.json({ ok: true });
 });
 

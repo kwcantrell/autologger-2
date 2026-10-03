@@ -116,12 +116,12 @@ describe('POST /api/sessions/:sessionId/local-audio-import — happy path + anch
 
     const { events, total } = await listEvents(session, env);
     expect(total).toBe(2);
-    // The catalog's live projection is mirrored too (catalog-concurrency-hazards D6).
-    const mirrored = await testDb().first<{ event_count: number }>(
+    // The catalog's live projection commits with the anchor (session-tables D8).
+    const projected = await testDb().first<{ event_count: number }>(
       'SELECT event_count FROM sessions WHERE id = ?',
       session,
     );
-    expect(Number(mirrored?.event_count)).toBe(2);
+    expect(Number(projected?.event_count)).toBe(2);
     const started = events.find((e) => e.message === 'Recording 1 Started');
     const stopped = events.find((e) => e.message === 'Recording 1 Stopped');
     expect(started).toBeDefined();

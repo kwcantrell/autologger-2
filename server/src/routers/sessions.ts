@@ -435,7 +435,6 @@ sessionsRouter.post('/api/sessions/:sessionId/local-audio-import', async (c) => 
     }
     throw err;
   }
-  await c.env.ports.mirror.mirror(sessionId); // the new take (catalog-concurrency-hazards D6)
 
   return c.json({ ok: true });
 });
@@ -564,8 +563,6 @@ sessionsRouter.post('/api/sessions/:sessionId/youtube-import', async (c) => {
       }
       throw err;
     }
-
-    await c.env.ports.mirror.mirror(sessionId); // the new take (catalog-concurrency-hazards D6)
 
     // Publish-date opt-in (D4) — catalog write, not a hub RPC; a missing/
     // unusable date is a no-op, never a failure. The audio is attached by now, so a failed write

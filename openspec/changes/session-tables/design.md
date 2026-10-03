@@ -607,6 +607,14 @@ expected value is a stop:
   `server/src/test/session/`, scanned by the server program. The three promise-identity checks in
   the moved `aiMcpServer` test (`expect(a).toBe(b)` on two promises) become
   `expect(a === b).toBe(true)`. The checker itself is unchanged.
+- test plumbing found in group 5 (post-approval; no assertion changes, no scope change):
+  - `sessionHub.interleave.int.test.ts` gets a 30 s timeout. With real database I/O it takes about
+    3 s alone and up to 7 s under the parallel suite. Its observables are unchanged, and its lock
+    waits are recorded as data;
+  - fake timers in the moved tests leave postgres.js's timers real. Tests that only move time fake
+    `Date` alone, and the hub timer tests use `DRIVER_SAFE_FAKE_TIMERS` (real `setImmediate`);
+  - the opt-in real-CLI tests (`eventGenerate.real`, `topicGenerate.real`) get Postgres session
+    storage from the process's PG* settings (`server/src/test/realSessionStorage.ts`).
 
 **New tests** (written first, red where today's code allows):
 - **cross-process serialization:** two registries over two adapter instances (two processes)

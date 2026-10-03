@@ -51,7 +51,8 @@ export interface SessionRuntime {
   setAlarm(atMs: number): void;
 }
 
-/** Live fields mirrored onto the catalog sessions row for cheap listing. */
+/** Live fields copied onto the catalog sessions row for cheap listing, in the write transaction
+ * that changes them (session-tables design D8). */
 export interface SessionProjection {
   event_count: number;
   max_timecode_total_frames: number | null;
@@ -76,6 +77,12 @@ export interface TransportState {
   timecode_total_frames: number;
   started?: boolean;
   stopped?: boolean;
+}
+
+/** A projection-changing write found no row to update (session-tables design D8): the session's
+ * transport row is missing. The write fails as a whole. */
+export class SessionProjectionError extends Error {
+  override name = 'SessionProjectionError';
 }
 
 export class SessionCore {
@@ -181,8 +188,10 @@ export class SessionCore {
     return { total, logged };
   }
 
-  /** The value is only ever written by this statement and the seed, so the cast cannot fail. */
+  /** The value is only ever written by this statement and the seed, so the cast cannot fail.
+   * Every events change bumps the revision, so it also marks the projection dirty (design D8). */
   async bumpRevision(): Promise<void> {
+    this.markProjectionDirty();
     await this.db.run(
       "UPDATE session_meta SET value = (value::bigint + 1)::text WHERE session_id = ? AND key = 'events_stream_revision'",
       this.sessionId,
@@ -212,6 +221,41 @@ export class SessionCore {
       transport_elapsed_frames: tr.elapsed_frames,
       roll_started_at_utc: tr.roll_started_at_utc,
     };
+  }
+
+  // -- the live projection in the write transaction (session-tables design D8) --
+
+  private projectionDirty = false;
+
+  /** This transaction changed the events or the transport: the hub writes the catalog
+   * projection before COMMIT. */
+  markProjectionDirty(): void {
+    this.projectionDirty = true;
+  }
+
+  /** The hub, after the body and before COMMIT: when this transaction changed the events or the
+   * transport, set the six projection columns of the session's `catalog.sessions` row in one
+   * statement, to exactly `projection()`'s values. It must change exactly one row; otherwise the
+   * write fails (`SessionProjectionError`). */
+  async writeProjectionIfDirty(): Promise<void> {
+    if (!this.projectionDirty) return;
+    const { changes } = await this.db.run(
+      `UPDATE sessions s SET event_count = e.n, max_timecode_total_frames = e.mx,
+         is_rolling = t.is_rolling, current_take = t.current_take,
+         transport_elapsed_frames = t.elapsed_frames, roll_started_at_utc = t.roll_started_at_utc
+       FROM (SELECT count(*) AS n, max(timecode_total_frames) AS mx
+               FROM session_events WHERE session_id = ?) e, session_transport t
+       WHERE s.id = ? AND t.session_id = ?`,
+      this.sessionId,
+      this.sessionId,
+      this.sessionId,
+    );
+    if (changes !== 1) {
+      throw new SessionProjectionError(
+        `the live projection of session ${this.sessionId} changed ${changes} rows, not 1`,
+      );
+    }
+    this.projectionDirty = false;
   }
 
   // -- WebSocket fan-out (hibernatable; replaces polling + CompanionHub) --------

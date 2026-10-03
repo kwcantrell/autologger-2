@@ -1,5 +1,5 @@
-// Catalog sessions index + the live projection mirrored from the session hub, plus
-// session→studio profile resolution. Moved verbatim out of catalog.ts (Catalog),
+// Catalog sessions index (its live projection columns are written by the session hub's own
+// write transactions, session-tables design D8), plus session→studio profile resolution. Moved verbatim out of catalog.ts (Catalog),
 // with the cross-store calls rewritten to the injected studios/shows stores.
 
 import type { Row, SettingsBlob, StudioProfile } from '@autologger/domain';
@@ -76,17 +76,6 @@ export interface SessionIndexStoreFacade {
   setSessionArchived: (sessionId: string, archived: boolean) => Promise<boolean>;
   setSessionEpisodeDate: (sessionId: string, iso: string | null | undefined) => Promise<boolean>;
   setSessionUiHidden: (sessionId: string, hidden: boolean) => Promise<boolean>;
-  projectSessionLive: (
-    sessionId: string,
-    p: {
-      event_count: number;
-      max_timecode_total_frames: number | null;
-      is_rolling: boolean;
-      current_take: number;
-      transport_elapsed_frames: number;
-      roll_started_at_utc: string | null;
-    },
-  ) => Promise<void>;
   getSessionShowCategories: (
     sessionId: string,
   ) => Promise<{ categories: unknown[]; showName: string; showCode: string } | null>;
@@ -344,32 +333,6 @@ export class SessionIndexStore implements SessionIndexStoreFacade {
       sessionId,
     );
     return res.changes > 0;
-  }
-
-  /** Mirror the hub's live projection onto the catalog sessions row for cheap listing. */
-  async projectSessionLive(
-    sessionId: string,
-    p: {
-      event_count: number;
-      max_timecode_total_frames: number | null;
-      is_rolling: boolean;
-      current_take: number;
-      transport_elapsed_frames: number;
-      roll_started_at_utc: string | null;
-    },
-  ): Promise<void> {
-    await this.db.run(
-      `UPDATE sessions SET event_count = ?, max_timecode_total_frames = ?,
-         is_rolling = ?, current_take = ?, transport_elapsed_frames = ?, roll_started_at_utc = ?
-       WHERE id = ?`,
-      p.event_count,
-      p.max_timecode_total_frames,
-      p.is_rolling ? 1 : 0,
-      p.current_take,
-      p.transport_elapsed_frames,
-      p.roll_started_at_utc,
-      sessionId,
-    );
   }
 
   /** get_session_show_categories — categories list + names from the session's show. */
