@@ -6,7 +6,7 @@
 //   npm run capture:deepgram-fixture -w server
 //
 // Run on the host (its fixtures are not in the dev image). Reads DEEPGRAM_API_KEY / DEEPGRAM_MODEL
-// from the environment; enter the key without echo or shell history (value from Infisical):
+// from the environment; enter the key without echo or shell history (value from the OpenBao dev secret):
 //   read -rs DEEPGRAM_API_KEY && export DEEPGRAM_API_KEY && npm run capture:deepgram-fixture -w server
 // Nothing reads server/.env (retire-host-dev D3); the key is never hardcoded or on a command line.
 // This script is deliberately NOT wired into `npm test` and lives under
@@ -69,7 +69,7 @@ function fail(msg) {
 const apiKey = (process.env.DEEPGRAM_API_KEY || '').trim();
 if (!apiKey) {
   fail(
-    'DEEPGRAM_API_KEY is not set. Enter it without echo (value from Infisical): ' +
+    'DEEPGRAM_API_KEY is not set. Enter it without echo (value from the OpenBao dev secret): ' +
       '`read -rs DEEPGRAM_API_KEY && export DEEPGRAM_API_KEY`, then `npm run capture:deepgram-fixture -w server`.',
   );
 }
