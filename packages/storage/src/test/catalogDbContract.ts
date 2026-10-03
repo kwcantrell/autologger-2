@@ -161,6 +161,16 @@ export function describeCatalogDbContract(name: string, target: ContractTarget):
       });
     });
 
+    // catalog-roles D5: a root statement resolves only after its COMMIT is confirmed.
+    it('a root statement whose deferred foreign key fails at COMMIT rejects and leaves no row', async () => {
+      const f = await make();
+      await expect(f.db.run('INSERT INTO c (pid) VALUES (?)', 99)).rejects.toMatchObject({
+        code: target.foreignKeyViolation,
+      });
+      expect(await f.count('c')).toBe(0);
+      expect(await prompt(f.db.run(INSERT, 'after', 1))).toEqual({ changes: 1 });
+    });
+
     it('t.tx writes commit with the outer transaction', async () => {
       const f = await make();
       await f.db.tx(async (t) => {

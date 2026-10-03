@@ -507,7 +507,9 @@ export class PostgresCatalogDb implements CatalogDb, CatalogRoot {
   ): Promise<PgResult> {
     const slot = await this.acquire(this.rootPool, deadlineAt);
     const client = slot.client;
-    const qs: Promise<PgResult>[] = [handled(client.unsafe('BEGIN ISOLATION LEVEL READ COMMITTED'))];
+    const qs: Promise<PgResult>[] = [
+      handled(client.unsafe('BEGIN ISOLATION LEVEL READ COMMITTED')),
+    ];
     if (binding) {
       qs.push(handled(client.unsafe(PREAMBLE, preambleBinds(binding), { prepare: true })));
     }
