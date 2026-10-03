@@ -21,19 +21,23 @@ Every owner command prints names, statuses or exit codes only.
 
 ## 1. Owner prerequisites (with `~/spark-infra`)
 
-- [ ] 1.1 **(owner)** OpenBao is installed, initialised and unsealed; KV v2 is mounted at `kv`.
+- [x] 1.1 **(owner)** OpenBao is installed, initialised and unsealed; KV v2 is mounted at `kv`.
   Check: `bao status` shows `Sealed false`; `bao secrets list` shows `kv/` with `version:2`.
-- [ ] 1.2 **(owner)** Export every Infisical key into `kv/autologger/dev` and
+  Evidence: `bao status; bao secrets list -format=json` (2026-10-03) -> `Seal Type static`, `Sealed false`, `Version 2.7.1`; `kv/ kv version:2`
+- [x] 1.2 **(owner)** Export every Infisical key into `kv/autologger/dev` and
   `kv/autologger/stage` (`bin/infisical-export`). Check: the sorted key-name lists from Infisical
   and from `bao kv get -format=json kv/autologger/<env> | jq -r '.data.data|keys[]'` are equal.
-- [ ] 1.3 **(owner)** Create AppRoles `autologger-dev` and `autologger-stage` with a policy of
+  Evidence: `bin/infisical-export --dry-run` key names vs `bao kv get -format=json kv/autologger/<env>` keys (sorted) -> `dev: infisical==bao (15 names)`, `stage: infisical==bao (16 names)`
+- [x] 1.3 **(owner)** Create AppRoles `autologger-dev` and `autologger-stage` with a policy of
   `read` on `kv/data/autologger/<env>` only, `secret_id_bound_cidrs` and `token_bound_cidrs` set
   to the host or VM address, `secret_id_ttl=90d`, `token_ttl=5m`, `token_max_ttl=10m`. Check:
   `bao read auth/approle/role/autologger-dev` (field names and TTLs only) and
   `bao policy read autologger-dev` (one `path "kv/data/autologger/dev"` block, `read` only).
-- [ ] 1.4 **(owner)** Render `.env.openbao.dev` and `.env.openbao.stage` (mode 600) with Ansible.
+  Evidence: `bao read -format=json auth/approle/role/autologger-dev` -> `secret_id_bound_cidrs ['10.88.0.21/32'], token_bound_cidrs ['10.88.0.21'], secret_id_ttl 7776000, token_ttl 300, token_max_ttl 600, token_policies ['autologger-dev']` (stage: `10.88.0.20`, same TTLs); `bao policy read autologger-dev` -> one block `path "kv/data/autologger/dev" { capabilities = ["read"] }` (spark-infra 79fc2b4)
+- [x] 1.4 **(owner)** Render `.env.openbao.dev` and `.env.openbao.stage` (mode 600) with Ansible.
   Check: `stat -c '%a %U' .env.openbao.*` -> `600 <owner>`; key names only via
   `cut -d= -f1 .env.openbao.dev`.
+  Evidence: in each VM `stat -c '%a %U' .env.openbao.*; cut -d= -f1` -> `600 spark .env.openbao.dev: BAO_ADDR BAO_CACERT BAO_ROLE_ID BAO_SECRET_ID BAO_KV_PATH` (dev VM 10.88.0.21) and `600 spark .env.openbao.stage: ...` (stage VM 10.88.0.20); rendered by spark-infra `autologger_env`
 
 ## 2. Static check and compose helpers (wording only)
 
@@ -140,16 +144,20 @@ Every owner command prints names, statuses or exit codes only.
 
 ## 7. Verification against the real OpenBao (owner-run)
 
-- [ ] 7.1 **(owner)** On the host, `make dev-check` then `make dev-restart` against
+- [x] 7.1 **(owner)** On the host, `make dev-check` then `make dev-restart` against
   `https://192.168.0.100:8200`. Check: exit 0, the stack is healthy, no value printed.
-- [ ] 7.2 **(owner)** Isolation and API behaviour: dev AppRole reading `kv/autologger/stage`
+  Evidence: run on the dev VM (10.88.0.21, the cutover target per D5) at a545b62 with a clean tree: `make dev-check` -> `rc=0`, `check-envs: ok (dev)`; `make dev-restart` -> `rc=0`, then all 10 `autologger-dev-*` containers up, 8 `(healthy)`, the 2 gates running; `grep -ciE 'password=|secret=|hvs\.'` on both logs -> `0`
+- [x] 7.2 **(owner)** Isolation and API behaviour: dev AppRole reading `kv/autologger/stage`
   gets `HTTP 403`; an AppRole login from outside the bound CIDR is refused; revoke-self answers
   `204` (A2); a stale `cas` PATCH is refused (A1); a soft-deleted scratch path reads as `404` with
   `metadata.deletion_time` (A3), and `supabase-keys.mjs` against it refuses with no write.
-- [ ] 7.3 **(owner)** `make dev-psql` opens psql in the dev `db` through the wrapper (unchanged
+  Evidence: fresh dev AppRole secret_id used from the dev VM -> `login ok; read dev 200; read stage 403; metadata dev 403; revoke-self 204`; same secret_id from the stage VM -> `login refused: source address "10.88.0.20" unauthorized by CIDR restrictions`; `PATCH cas=1 (current 2)` -> `400` (A1); child token `revoke-self` -> `204`, reuse -> `403` (A2); soft-deleted `kv/scratch-openbao-test/dev` read -> `HTTP 404 version 2 deletion_time_set True data_is_null True` (A3); `AUTOLOGGER_TEST_CRED_DIR=<scratch> node docker/scripts/supabase-keys.mjs dev` -> `... is deleted; restore it with bao kv undelete or bao kv rollback first (nothing was written)` rc=1, `current_version` 2 before and after; scratch path and test secret_ids removed
+- [x] 7.3 **(owner)** `make dev-psql` opens psql in the dev `db` through the wrapper (unchanged
   behaviour, now with OpenBao secrets).
-- [ ] 7.4 **(owner)** Stage on its VM: `make stage-up` healthy; `docker/supabase/test_gateway.sh`
+  Evidence: dev VM `echo 'select current_user, count(*) from catalog.users;' | make dev-psql` -> `postgres | 1` `(1 row)`
+- [x] 7.4 **(owner)** Stage on its VM: `make stage-up` healthy; `docker/supabase/test_gateway.sh`
   passes.
+  Evidence: stage VM (10.88.0.20) at a545b62 -> all 9 `autologger-stage-*` `(healthy)`; `curl http://127.0.0.1:8788/` -> `200`; `sh docker/supabase/test_gateway.sh stage` -> `test_gateway (stage): 50 passed, 0 failed`
 
 ## Owner-owed after merge
 
