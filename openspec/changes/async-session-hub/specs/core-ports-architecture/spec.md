@@ -320,6 +320,10 @@ before it opens.
 - **WHEN** the promise-hygiene repository test runs
 - **THEN** it fails unless its scanned files include the session hub, the session core, the log-import runner, the transcript generator and the AI runtime's MCP server
 
+#### Scenario: A promise returned from inside try without await fails the build
+- **WHEN** production code in any of the scanned roots writes `return somePromise` inside a `try` block that has a `catch` or `finally`
+- **THEN** a repository test fails and names the file and line, and `return await somePromise` passes
+
 ## REMOVED Requirements
 
 ### Requirement: Session runtime is a synchronous, substitutable port
@@ -333,7 +337,3 @@ substitutable port", which keeps the substitutable `SessionRuntime` seam, its do
 surface, the multi-statement `exec` path, change detection through `run()` and the fake-runtime
 testability, and replaces "zero `await`, one synchronous transaction" with per-session
 serialization and an explicit transaction contract.
-
-#### Scenario: A promise returned from inside try without await fails the build
-- **WHEN** production code in any of the scanned roots writes `return somePromise` inside a `try` block that has a `catch` or `finally`
-- **THEN** a repository test fails and names the file and line, and `return await somePromise` passes

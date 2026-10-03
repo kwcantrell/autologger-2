@@ -607,7 +607,8 @@ Slice 7's line becomes an entry in the slice 3 style:
     doubling at 40 s (fake timers are fine here, since only the delays are checked).
 - **server and packages:** about 20 test files that call hubs directly await them. The
   integration suite's session tests pass unchanged (D10). `eventsGenerateWindow.test.ts` anchors
-  its window after the awaited snapshot statement. The `create_event` tests change as D8 says.
+  its window after the awaited snapshot statement, and `sessionMirror.test.ts` waits one
+  macrotask instead of one microtask for the now-awaited snapshot (no expectation changes). The `create_event` tests change as D8 says.
   The log-import, transcription and companion tests cover the new methods through their callers.
 - **Repo tests:** promise hygiene (D9) with the new rule and fixtures.
 

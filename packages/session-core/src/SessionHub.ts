@@ -94,8 +94,11 @@ export interface RemappedTranscript {
  * `socketCount` (coordination internals only the registry touches), and
  * `presence`/`listDashboards`/`stopTakeWithDuration` (public on the class,
  * but exercised only by this package's own unit tests against the concrete
- * `SessionHub` — never through `Ports.sessions` by an outside consumer).
- * Storage members return promises (async-session-hub design D5); the socket
+ * `SessionHub` — never through `Ports.sessions` by an outside consumer), and
+ * `getEvent`/`addEventAtTotalFrames`, whose last outside consumers (the event PUT's merge and
+ * the log import's insert) moved into `updateEvent` and `addEventAtTotalFramesIfAbsent`
+ * (async-session-hub D5). `packageBoundaries.repo.test.ts` checks that every member here has an
+ * outside consumer. Storage members return promises (async-session-hub design D5); the socket
  * members (`attachSocket`, `detachSocket`, `handleSocketMessage`,
  * `broadcastCommand`) touch no SQL and stay synchronous.
  * Property-style function types throughout, per D3: `strictFunctionTypes`
@@ -123,13 +126,6 @@ export interface SessionHubFacade {
     explicitAnchor?: { timecodeTotalFrames: number; wallTimeUtc: string };
     suppressBroadcast?: boolean;
   }) => Promise<{ event: EventRpc; projection: SessionProjection }>;
-  addEventAtTotalFrames: (input: {
-    category: string;
-    message: string;
-    metadataJson: string;
-    timecodeTotalFrames: number;
-    ctx: TimecodeCtx;
-  }) => Promise<{ event: EventRpc; projection: SessionProjection }>;
   /** One imported row (sheets-log-import "Duplicate skip"): inserts it unless a non-internal
    * event with the same `timecode_total_frames` and message exists, in one transaction (S10). */
   addEventAtTotalFramesIfAbsent: (input: {
@@ -147,7 +143,6 @@ export interface SessionHubFacade {
     loggedTotal: number;
     revision: number;
   }>;
-  getEvent: (eventId: string) => Promise<EventRpc | null>;
   exportEvents: () => Promise<EventRpc[]>;
   /** `mergeMetadata` receives the stored `metadata_json` and returns the JSON to store; the read,
    * the merge and the write are one transaction (S3). Synchronous by type; keep it pure. */

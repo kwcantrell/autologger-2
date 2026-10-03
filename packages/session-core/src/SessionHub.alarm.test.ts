@@ -80,6 +80,64 @@ describe('lease alarm on real timers', () => {
     expect(hub.hasArmedAlarm).toBe(false);
     await hub.close();
   });
+
+  // Spec "Lease expiry is ordered with the session's operations": an expiry run that starts
+  // while another transaction is open waits for it (no interruption), never sees its uncommitted
+  // heartbeat (no dirty read), and still frees the stale lease once that transaction rolls back.
+  it('an expiry during an open transaction waits for it, ignores its rolled-back heartbeat, and still frees the lease', async () => {
+    const T = 1_750_000_000_000;
+    const time = { now: T };
+    const hub = await SessionHub.open(join(dir, 's1.db'), { now: () => time.now });
+    const frames: Record<string, unknown>[] = [];
+    hub.attachSocket({ send: (d: string) => void frames.push(JSON.parse(d)) }, 'browser');
+    expect(await hub.claimLease('client-a')).toBe(true);
+    frames.length = 0;
+    time.now = T + STALE + 1;
+
+    type Stores = { core: { metaSet(k: string, v: string): Promise<void> }; lease: LeaseStore };
+    const internals = hub as unknown as {
+      inTxn<R>(body: (s: Stores) => Promise<R>): Promise<R>;
+      runAlarm(): Promise<void>;
+    };
+    let entered!: () => void;
+    const inside = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    let openGate!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      openGate = resolve;
+    });
+    const seenInside: unknown[] = [];
+    const held = internals.inTxn(async (s) => {
+      // A fresh heartbeat that is never committed: an expiry that read it would keep the lease.
+      await s.core.metaSet('lease_seen_ms', String(time.now));
+      entered();
+      await gate;
+      seenInside.push((await s.lease.leaseStatus()).holder_client_id);
+      throw new Error('roll back the heartbeat');
+    });
+    const heldOutcome = held.then(
+      () => 'committed',
+      (e: Error) => e.message,
+    );
+    await inside;
+
+    const alarmDone = { value: false };
+    const alarm = internals.runAlarm().then(() => {
+      alarmDone.value = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(alarmDone.value).toBe(false);
+    expect(hub.inFlightCount).toBe(2);
+
+    openGate();
+    expect(await heldOutcome).toBe('roll back the heartbeat');
+    await alarm;
+    expect(seenInside).toEqual(['client-a']);
+    expect((await hub.leaseStatus()).holder_client_id).toBeNull();
+    expect(frames).toEqual([{ type: 'lease.changed' }]);
+    await hub.close();
+  });
 });
 
 describe('lease alarm backoff (fake timers)', () => {
