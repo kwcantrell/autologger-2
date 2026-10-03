@@ -3,11 +3,13 @@
 // catalog-database rule table ("User policies enforce the team permission model") applied to the
 // fixture's memberships, shows and grants — not from the policies — so a policy typo fails it.
 // Each case runs in its own transaction as `catalog_user` with the actor's id (or none) and rolls
-// back, so cases don't interact.
+// back, so cases don't interact. session-content-policies D1, D12: the nine session tables join the
+// matrix (every operation on rows of sessions of accessible shows), with the lock, grant and
+// `can_write = 0` cases below.
 import postgres from 'postgres';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createTestDatabase, type TestDatabase } from '../../../../test/pg/testDb';
-import { seedPolicyFixture, T, U, V } from './policyFixture';
+import { CONTENT_INSERT, CONTENT_SESSIONS, seedPolicyFixture, T, U, V } from './policyFixture';
 
 // -- the fixture's facts (policyFixture.ts) -------------------------------------------------------
 
@@ -216,6 +218,42 @@ const RULES: Record<string, TableRules> = {
   },
 };
 
+// session-content-policies D1: the nine session tables. A content row is reachable exactly where its
+// session's show is accessible (`requireSession`'s rule), for every operation. Keys are
+// `<session>/<id>` (`<session>` for session_transport, keyed by the session alone); inserts go to a
+// new row of ss1, ss2 and ssu (`on conflict do nothing`, so an allowed insert over transport's
+// existing row is not a unique violation, and a refused one is still 42501).
+const CONTENT_TABLES: Record<string, { key: string; set: string }> = {
+  session_events: { key: "session_id || '/' || id", set: 'message = message' },
+  session_transport: { key: 'session_id', set: 'current_take = current_take' },
+  session_audio_segments: { key: "session_id || '/' || id", set: 'ordinal = ordinal' },
+  session_transcript_words: { key: "session_id || '/' || id", set: 'word = word' },
+  session_topics: { key: "session_id || '/' || id", set: 'summary = summary' },
+  session_transcript_paragraphs: { key: "session_id || '/' || id", set: 'text = text' },
+  session_transcript_sentiment: { key: "session_id || '/' || id", set: 'sentiment = sentiment' },
+  session_dashboards: { key: "session_id || '/' || id", set: 'config_json = config_json' },
+  session_meta: { key: "session_id || '/' || key", set: 'value = value' },
+};
+const sessionOfKey = (k: string) => k.split('/')[0] as string;
+const content: Rule = (a, k) => accessibleShows(a).includes(SESSIONS[sessionOfKey(k)] as string);
+for (const [table, { key, set }] of Object.entries(CONTENT_TABLES)) {
+  const keyOf = (sid: string, id: string) => (table === 'session_transport' ? sid : `${sid}/${id}`);
+  const rows = CONTENT_SESSIONS.map((sid) => keyOf(sid, 'c'));
+  RULES[table] = {
+    key,
+    set,
+    rows,
+    read: content,
+    insert: content,
+    update: content,
+    delete: content,
+    targets: () => rows,
+    insertSql: (k) =>
+      `${(CONTENT_INSERT[table] as (s: string, id: string) => string)(sessionOfKey(k), 'new')} on conflict do nothing`,
+    insertTargets: () => Object.keys(SESSIONS).map((sid) => keyOf(sid, 'new')),
+  };
+}
+
 // -- running statements as an actor ---------------------------------------------------------------
 
 let db: TestDatabase;
@@ -326,6 +364,52 @@ describe('the allow/deny matrix (catalog-database "User policies enforce the tea
     expect(
       countOf(await as('ungranted', [`update sessions set title = 'x' where id = 'ss1' returning 1`])),
     ).toEqual({ count: 0 });
+  });
+});
+
+// -- session content (session-content-policies D1, D5) ---------------------------------------------
+
+describe('session content and the session row lock (session-content-policies D1, D5)', () => {
+  it('FOR UPDATE on a session of S1 locks only for show access (catalog-database "Locking a session row needs show access")', async () => {
+    for (const actor of ACTORS) {
+      expect(
+        countOf(await as(actor, [`select 1 as k from sessions where id = 'ss1' for update`])),
+        label(actor),
+      ).toEqual({ count: accessibleShows(actor).includes('s1') ? 1 : 0 });
+    }
+  });
+
+  /** A grant on S1 to `ungranted`, written as catalog_system inside the case's transaction (the
+   * session user holds both roles), then back to catalog_user with the same user id. */
+  const grantS1 = (canWrite: 0 | 1) => [
+    `select set_config('role', 'catalog_system', true)`,
+    `insert into show_grants (user_id, show_id, can_write, granted_by_user_id, granted_at_utc)
+       values ('ungranted', 's1', ${canWrite}, 'owner', 'now')`,
+    `select set_config('role', 'catalog_user', true)`,
+  ];
+  const insertEvent = `${(CONTENT_INSERT.session_events as (s: string, id: string) => string)('ss1', 'new')} returning 1`;
+
+  it('a member without a grant sees no session content; after a grant on S1 both succeed (catalog-database "A member without a grant sees no session content")', async () => {
+    for (const table of ['session_events', 'session_transport', 'session_transcript_words', 'session_meta']) {
+      const read = `select 1 as k from ${table} where session_id = 'ss1'`;
+      expect(countOf(await as('ungranted', [read])), `${table} before the grant`).toEqual({ count: 0 });
+      expect(countOf(await as('ungranted', [...grantS1(1), read])), `${table} after the grant`).toEqual({
+        count: 1,
+      });
+    }
+    expect(await as('ungranted', [insertEvent])).toEqual({ code: '42501' });
+    expect(countOf(await as('ungranted', [...grantS1(1), insertEvent]))).toEqual({ count: 1 });
+  });
+
+  it('a grantee with can_write = 0 reads and writes session content, as requireSession admits them', async () => {
+    for (const [stmt, count] of [
+      [`select 1 as k from session_events where session_id = 'ss1'`, 1],
+      [insertEvent, 1],
+      [`update session_events set message = 'x' where session_id = 'ss1' returning 1`, 1],
+      [`delete from session_meta where session_id = 'ss1' returning 1`, 1],
+    ] as const) {
+      expect(countOf(await as('ungranted', [...grantS1(0), stmt])), stmt).toEqual({ count });
+    }
   });
 });
 
@@ -484,10 +568,10 @@ describe('locked reads and multi-step writes (design D3, D5)', () => {
 // -- the policy catalog ---------------------------------------------------------------------------
 
 describe('the catalog_user policies as installed', () => {
-  it('no catalog_user policy is the constant true, and there are 23', async () => {
+  it('no catalog_user policy is the constant true, and there are 32', async () => {
     const rows = await admin`select tablename, policyname, qual, with_check from pg_policies
                              where schemaname = 'catalog' and 'catalog_user' = any(roles)`;
-    expect(rows).toHaveLength(23);
+    expect(rows).toHaveLength(32);
     for (const p of rows) {
       expect(p.qual, `${p.policyname} using`).not.toBe('true');
       expect(p.with_check, `${p.policyname} with check`).not.toBe('true');
