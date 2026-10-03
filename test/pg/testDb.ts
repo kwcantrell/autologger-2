@@ -27,12 +27,19 @@ export interface ConnOptions {
   user: string;
   password: string;
   database: string;
+  /** Startup parameters; `options: '-c role=…'` switches role for the whole session (catalog-roles
+   * design D12, A9). Test-only: such a client never returns to a pool. */
+  connection?: { options: string };
 }
 
 export interface TestDatabase {
   name: string;
   /** As `autologger_app`, the catalog's least-privilege role. */
   app: ConnOptions;
+  /** As `autologger_app`, switched to `catalog_user` at connection start (catalog-roles D12). */
+  user: ConnOptions;
+  /** As `autologger_app`, switched to `catalog_system` at connection start (catalog-roles D12). */
+  system: ConnOptions;
   /** As `postgres`, the migrations user (not a superuser). */
   admin: ConnOptions;
 }
@@ -58,6 +65,14 @@ export async function createTestDatabase(): Promise<TestDatabase> {
   return {
     name,
     app: connOptions('autologger_app', name),
+    user: {
+      ...connOptions('autologger_app', name),
+      connection: { options: '-c role=catalog_user' },
+    },
+    system: {
+      ...connOptions('autologger_app', name),
+      connection: { options: '-c role=catalog_system' },
+    },
     admin: connOptions('postgres', name),
   };
 }

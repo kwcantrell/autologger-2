@@ -15,10 +15,10 @@ afterEach(async () => {
   await Promise.all(open.splice(0).map((s) => s.end()));
 });
 
-/** An app-role connection with users U and V and shows A and B in team `st`. */
+/** A `catalog_system` connection (catalog-roles D12) with users U and V and shows A and B in team `st`. */
 async function seeded(): Promise<postgres.Sql> {
   const db = await createTestDatabase();
-  const sql = connect(db.app);
+  const sql = connect(db.system);
   for (const id of ['U', 'V']) {
     await sql`insert into users (id, google_sub, email, created_at_utc)
               values (${id}, ${`g-${id}`}, ${`${id}@example.com`}, ${T})`;

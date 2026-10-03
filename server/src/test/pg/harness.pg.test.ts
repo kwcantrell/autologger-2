@@ -9,7 +9,7 @@ afterEach(async () => {
 });
 
 function connect(db: TestDatabase): postgres.Sql {
-  const sql = postgres({ ...db.app, max: 1, onnotice: () => {} });
+  const sql = postgres({ ...db.system, max: 1, onnotice: () => {} });
   open.push(sql);
   return sql;
 }
