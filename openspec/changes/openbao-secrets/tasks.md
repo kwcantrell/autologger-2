@@ -37,30 +37,35 @@ Every owner command prints names, statuses or exit codes only.
 
 ## 2. Static check and compose helpers (wording only)
 
-- [ ] 2.1 `check-envs.sh`, `compose-env.sh` and `make-guards.sh` name OpenBao and
+- [x] 2.1 `check-envs.sh`, `compose-env.sh` and `make-guards.sh` name OpenBao and
   `.env.openbao.*`; the invariant count stays 16 and no compose file is added. Check:
   `sh docker/scripts/test_check_envs.sh` passes unchanged from `supabase-migration`;
   `sh docker/scripts/check-envs.sh all` exits 0; `git diff supabase-migration --
   docker/scripts/test_check_envs.sh` is empty; `grep -c -i infisical docker/scripts/check-envs.sh`
   counts only `infisical-secrets` design citations.
+  Evidence: `sh docker/scripts/test_check_envs.sh` -> `test_check_envs: 47 passed, 0 failed`; `sh docker/scripts/check-envs.sh all` -> `check-envs: ok (all)`, exit 0; `git diff supabase-migration...HEAD -- docker/scripts/test_check_envs.sh | wc -l` -> `0` (three-dot: `supabase-migration` has moved to 5f9684e since the branch base e4e36e1); `grep -n -i infisical docker/scripts/check-envs.sh` -> lines 3 and 38 only, both `infisical-secrets D5`/`D2` design citations; header still says `16 invariants`; `git diff --diff-filter=A --name-only supabase-migration...HEAD -- '*.yaml'` -> nothing (no compose file added).
 
 ## 3. Wrapper (`compose-run.mjs`)
 
-- [ ] 3.1 Credentials file `.env.openbao.<env>`. Tests first: missing file names
+- [x] 3.1 Credentials file `.env.openbao.<env>`. Tests first: missing file names
   `docker/openbao-credentials.example`; `http://` `BAO_ADDR` refused with no request; mode 644
   refused; missing `BAO_ROLE_ID` named; missing `BAO_CACERT` file named; `BAO_KV_PATH` of
   `kv/autologger/prod` for dev, `kv`, `kv//dev`, `kv/../dev` refused with no request.
-- [ ] 3.2 AppRole login and KV read. Tests first: the stand-in sees exactly login, read, revoke;
+  Evidence: `node --test docker/scripts/compose-run.test.mjs` -> `ℹ tests 59`, `ℹ pass 59`, `ℹ fail 0`; suite `credentials file (H7, D1 step 1)`: `missing file names the template`, `http address is refused before any request`, `group/world-readable file is refused, naming the mode`, `a missing key is named`, `a missing or relative CA file is named`, `a KV path for another stack, or with odd segments, is refused before any request (D1)`. Written first in the earlier authoring session.
+- [x] 3.2 AppRole login and KV read. Tests first: the stand-in sees exactly login, read, revoke;
   the login body carries `role_id`/`secret_id`; the read carries `X-Vault-Token` and the path
   `/v1/kv/data/autologger/dev`; a login `400` with `errors` prints `HTTP 400: <message>` and sends
   no read; a login without `auth.client_token` sends no read.
-- [ ] 3.3 Revoke. Tests first: revoke-self is sent after a successful read and after a failed read
+  Evidence: `node --test docker/scripts/compose-run.test.mjs` -> `ℹ pass 59`, `ℹ fail 0`; `logs in once, reads the KV path, revokes the token, and spawns docker with only the clean env`, `login 400 prints only the status and errors; no read, nothing to revoke`, `login JSON without a string client_token is refused; no read`.
+- [x] 3.3 Revoke. Tests first: revoke-self is sent after a successful read and after a failed read
   (`403`), before any docker call; a failing revoke prints a warning and the steps still run; the
   token never appears in the stub docker's env or argv.
-- [ ] 3.4 Validation of `data.data`. Tests first: non-string values (number, object, null), NUL,
+  Evidence: `node --test docker/scripts/compose-run.test.mjs` -> `ℹ pass 59`, `ℹ fail 0`; `a failed revoke only warns; the token expires with its TTL`, `a refused read still revokes the token, and prints the status only`, `logs in once, reads the KV path, revokes the token, and spawns docker with only the clean env` (token absent from the stub docker env/argv).
+- [x] 3.4 Validation of `data.data`. Tests first: non-string values (number, object, null), NUL,
   `__proto__`, `LD_PRELOAD`, any `BAO_*` name, empty object, missing `data` are each refused
   without printing values. The compose keys per environment equal `supabase-migration`'s.
-- [ ] 3.5 Deleted or destroyed current version (panel finding 6). Tests first, in
+  Evidence: `node --test docker/scripts/compose-run.test.mjs` -> `ℹ pass 59`, `ℹ fail 0`; `refuses non-string values, NUL, bad identifiers, an empty or missing data object`, `refuses __proto__ and constructor without polluting anything`, `no environment allows a BAO_* name`, `refuses names outside the allowed set, printing names not values`; `diff` of the `COMPOSE_KEYS` and `allowedNames` blocks against `git show supabase-migration:docker/scripts/compose-run.mjs` -> `COMPOSE_KEYS identical`, `allowedNames identical`.
+- [x] 3.5 Deleted or destroyed current version (panel finding 6). Tests first, in
   `compose-run.test.mjs`: `validateSecrets` refuses a past or unparseable `deletion_time`
   (naming `bao kv undelete` and `bao kv rollback`) and `destroyed: true` (naming only
   `bao kv rollback`), also with `data.data: null`, and accepts a future `deletion_time`
@@ -68,46 +73,55 @@ Every owner command prints names, statuses or exit codes only.
   makes the wrapper exit non-zero naming `is deleted` and `bao kv undelete`, still revoke the
   token, and run no docker. The mock metadata uses `deletion_time` (KV v2's field), not
   `deleted_time`.
-- [ ] 3.6 `checkResolved` and the `urls` step equal `supabase-migration`'s apart from OpenBao
+  Evidence: `node --test docker/scripts/compose-run.test.mjs` -> `ℹ pass 59`, `ℹ fail 0`; `refuses a deleted or destroyed current version (KV v2 field deletion_time)` (also asserts a future `deletion_time` is accepted) and `a soft-deleted current version (404 with metadata) is refused naming undelete, after revoking`. In the earlier session these were seen failing first: 2 of 58 compose-run tests before the finding-6 fix, and 3 of 73 (both suites) before the future-`deletion_time` fix.
+- [x] 3.6 `checkResolved` and the `urls` step equal `supabase-migration`'s apart from OpenBao
   wording: every published port on `127.0.0.1`, `db` publishes nothing, no Postgres line. Check:
   `git diff supabase-migration -- docker/scripts/compose-run.mjs` shows no change inside
   `checkResolved` or `urls` other than message text.
-- [ ] 3.7 All existing wrapper tests pass with the stand-in rewritten for OpenBao (H1-H12 rows).
+  Evidence: `git diff -U0 supabase-migration...HEAD -- docker/scripts/compose-run.mjs` -> one hunk inside `checkResolved` (`@@ -410 +499 @@`), the 8080 refusal text `pick another in Infisical ${env}` -> `pick another in the OpenBao ${env} secret`; no hunk inside `urls` (lines 510-530); `resolved passes and urls prints the OpenBao DEV_PORT` passes in the 3.7 run.
+- [x] 3.7 All existing wrapper tests pass with the stand-in rewritten for OpenBao (H1-H12 rows).
+  Evidence: `node --test docker/scripts/compose-run.test.mjs` -> `ℹ tests 59`, `ℹ suites 12`, `ℹ pass 59`, `ℹ fail 0` (credentials, TLS and HTTP, H4, validation, start-up, success path, guard steps, Postgres, APP_DB_PASSWORD, Supabase keys, ports, sign-in suites all green against the OpenBao stand-in).
 
 ## 4. Generator (`supabase-keys.mjs`)
 
-- [ ] 4.1 Token source. Tests first: no `--writer` and no `BAO_TOKEN` refused before any request;
+- [x] 4.1 Token source. Tests first: no `--writer` and no `BAO_TOKEN` refused before any request;
   a writer file at mode 644 refused; `BAO_TOKEN=` line and raw-token file both accepted; the token
   never printed.
-- [ ] 4.2 Read then write. Tests first: all keys present -> only a GET, every key `kept`; some
+  Evidence: `node --test docker/scripts/supabase-keys.test.mjs` -> `ℹ tests 14`, `ℹ pass 14`, `ℹ fail 0`; `the token can come from BAO_TOKEN, or from a writer file holding the token alone` (also: no `--writer` and no `BAO_TOKEN` exits non-zero naming `BAO_TOKEN`), `a writer file readable by others is refused before any request`.
+- [x] 4.2 Read then write. Tests first: all keys present -> only a GET, every key `kept`; some
   missing -> one `PATCH` with `content-type: application/merge-patch+json`, `options.cas` equal to
   the read version, only the missing keys; `404` with no metadata on read -> one `POST` with
   `cas: 0`.
-- [ ] 4.3 Rejected write. Tests first: a `400` (cas mismatch) or `403` on the write exits non-zero
+  Evidence: `node --test docker/scripts/supabase-keys.test.mjs` -> `ℹ pass 14`, `ℹ fail 0`; `existing keys are kept: no write request, and no value is printed`, `missing keys are merged in one check-and-set PATCH, each in its format, and never printed` (asserts `application/merge-patch+json`), `a path that does not exist yet gets a create-only POST (cas 0)`.
+- [x] 4.3 Rejected write. Tests first: a `400` (cas mismatch) or `403` on the write exits non-zero
   naming the status, with exactly one write request and no retry; a partial JWT trio is refused
   with no write.
-- [ ] 4.4 Deleted or destroyed current version (panel finding 6). Test first, in
+  Evidence: `node --test docker/scripts/supabase-keys.test.mjs` -> `ℹ pass 14`, `ℹ fail 0`; `a rejected write exits non-zero with no retry`, `a partial JWT trio is refused before any write, naming the missing keys`.
+- [x] 4.4 Deleted or destroyed current version (panel finding 6). Test first, in
   `supabase-keys.test.mjs`: a read answering `404` with a past `deletion_time`, `404` with
   `destroyed: true`, `404` carrying only `metadata.version`, and `200` with a past or
   unparseable `deletion_time` or `destroyed: true` each exit non-zero, send no `PATCH` or `POST`,
   print no `created` line and no value; deleted ones name `bao kv undelete` and
   `bao kv rollback`, destroyed ones only `bao kv rollback`. A `200` with a future
   `deletion_time` is written normally (one `PATCH`, existing keys `kept`).
+  Evidence: `node --test docker/scripts/supabase-keys.test.mjs` -> `ℹ pass 14`, `ℹ fail 0`; `a soft-deleted or destroyed current version is refused, with no write`, `a live version with a future deletion_time (delete_version_after) is written normally`. In the earlier session the deleted-version test was seen failing first (1 of 13 before the finding-6 fix).
 
 ## 5. Makefile
 
-- [ ] 5.1 Makefile comments and help name OpenBao; `dev-psql` is exactly `supabase-migration`'s
+- [x] 5.1 Makefile comments and help name OpenBao; `dev-psql` is exactly `supabase-migration`'s
   target and no `stage-psql` exists. Check: `git diff supabase-migration -- Makefile` touches
   comments and help strings only; `make help` lists `dev-psql` and no `stage-psql`;
   `grep -ci infisical Makefile` -> `0`.
+  Evidence: `git diff supabase-migration...HEAD --stat -- Makefile` -> `1 file changed, 5 insertions(+), 5 deletions(-)`, all in comments and `##` help strings (header comments, `prod-check`/`prod-pull`/`prod-up` help); `make help | grep psql` -> `dev-psql           psql in the dev Postgres (no history file)` only; `grep -ci infisical Makefile` -> `0`.
 
 ## 6. Rename, docs, ADR and specs
 
-- [ ] 6.1 `docker/infisical-credentials.example` -> `docker/openbao-credentials.example`;
+- [x] 6.1 `docker/infisical-credentials.example` -> `docker/openbao-credentials.example`;
   `.gitignore` still ignores `.env.openbao.*` (`.env.*`). Check:
   `git check-ignore .env.openbao.dev .env.openbao.prod` lists both;
   `git check-ignore docker/openbao-credentials.example` lists nothing.
-- [ ] 6.2 Docs: `docs/openbao-secrets.md` (no database-engine section; AppRole policy `read` on
+  Evidence: `git check-ignore .env.openbao.dev .env.openbao.prod` -> `.env.openbao.dev`, `.env.openbao.prod`; `git check-ignore docker/openbao-credentials.example` -> nothing, exit 1; `git log --follow --name-status -- docker/openbao-credentials.example` -> `R100 docker/infisical-credentials.example docker/openbao-credentials.example` (9583a91), then `M` (2f712b1).
+- [x] 6.2 Docs: `docs/openbao-secrets.md` (no database-engine section; AppRole policy `read` on
   `kv/data/autologger/<env>` only; the deleted-version refusal), README, `docs/supabase.md`,
   `docs/security.md`, `.cursor/rules/restart-server-yourself.mdc`, `server/.env.example`,
   `server/scripts/capture-deepgram-fixture.mjs`, `server/src/bootGuard.ts` messages, compose
@@ -115,11 +129,14 @@ Every owner command prints names, statuses or exit codes only.
   lists only intended leftovers (`infisical-secrets` design citations and the two scenario titles
   of the post-archive rename below); `grep -rn -i 'BAO_DB_BIND\|bao-db\|bao-psql\|database/creds' .` outside
   `openspec/changes/archive` hits only the Non-goal text and the panel.
-- [ ] 6.3 ADR 0025 (`docs/decisions/0025-openbao-replaces-infisical.md`) supersedes ADR 0021's
+  Evidence: `git grep -n -i infisical -- ':!openspec' ':!docs/decisions' | grep -vi infisical-secrets` -> nothing (outside openspec only `infisical-secrets` citations remain); under openspec the hits are this change's own artifacts and `openspec/specs/` (synced on archive, incl. the two scenario titles); `grep -rn -i 'BAO_DB_BIND\|bao-db\|bao-psql\|database/creds' . --exclude-dir=node_modules --exclude-dir=.git --exclude-dir=archive` -> only `design.md:42` and `proposal.md:97` (Non-goal/follow-up), `panel.md` and this file.
+- [x] 6.3 ADR 0025 (`docs/decisions/0025-openbao-replaces-infisical.md`) supersedes ADR 0021's
   "Secrets live in a shared Infisical instance" bullet (panel finding 7); ADR 0021's body is
   unchanged. Check: `git diff supabase-migration --stat -- docs/decisions` lists only the new file.
-- [ ] 6.4 `openspec validate openbao-secrets --strict` and `scripts/check-change.sh --stage hook`
+  Evidence: `git diff supabase-migration...HEAD --stat -- docs/decisions` -> `docs/decisions/0025-openbao-replaces-infisical.md | 57 +++` only, `1 file changed` (ADR 0021 untouched; a two-dot diff also shows 0021 because `supabase-migration` moved to 5f9684e after the base e4e36e1).
+- [x] 6.4 `openspec validate openbao-secrets --strict` and `scripts/check-change.sh --stage hook`
   pass.
+  Evidence: `npx openspec validate openbao-secrets --strict` -> `Change 'openbao-secrets' is valid`; `GITHUB_BASE_REF=supabase-migration scripts/check-change.sh --stage hook` -> exit 0: `PASS  openspec`, `PASS  change  tier 2`, `PASS  evidence`, `PASS  commands  ran ['typecheck', 'test']`.
 
 ## 7. Verification against the real OpenBao (owner-run)
 
