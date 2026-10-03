@@ -4,8 +4,7 @@
 // concurrent turns on distinct sessions. These assert the security boundary,
 // not merely that the listener boots.
 
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   __resetAiMcpListenerForTests,
@@ -19,19 +18,19 @@ import {
   getAiMcpListener,
 } from '@autologger/ai-runtime/aiMcpServer';
 import { AI_RUNTIME_FIXTURES_DIR } from '@autologger/ai-runtime/fixturesDir';
-import { SessionHub, SessionHubRegistry, sqliteSessionSql } from '@autologger/session-core';
+import { SessionHub, type SessionHubRegistry } from '@autologger/session-core';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { slowSql } from './slowSql';
+import { slowStorage } from './slowStorage';
+import { testRegistry } from './sessionRows';
 
-let dir: string;
 let registry: SessionHubRegistry;
 let listener: AiMcpListener;
 
+// The sessions these tests name get their catalog rows on first use (session-tables D12).
 beforeEach(async () => {
-  dir = mkdtempSync(join(tmpdir(), 'ai-mcp-'));
-  registry = new SessionHubRegistry(join(dir, 'sessions'));
+  registry = testRegistry({ autoCreate: true });
   listener = new AiMcpListener(registry);
   await listener.start();
 });
@@ -39,7 +38,6 @@ beforeEach(async () => {
 afterEach(async () => {
   await listener.close();
   await registry.closeAll();
-  rmSync(dir, { recursive: true, force: true });
 });
 
 type ToolResult = { content: Array<{ type: string; text: string }>; isError?: boolean };
@@ -1364,8 +1362,9 @@ describe('create_event handler — the cap is reserved before the first await (a
   it('Cap holds under concurrent calls: five calls at cap - 1 on a timer-yielding hub insert exactly one', async () => {
     // A hub whose SQL yields to a timer before every statement, so the five inserts really
     // overlap (async-session-hub D8, D12).
-    const slowRegistry = new SessionHubRegistry(join(dir, 'slow-sessions'), undefined, {
-      sql: (db) => slowSql(sqliteSessionSql(db)),
+    const slowRegistry = testRegistry({
+      autoCreate: true,
+      wrap: (storage) => slowStorage(storage),
     });
     const slowListener = new AiMcpListener(slowRegistry);
     await slowListener.start();

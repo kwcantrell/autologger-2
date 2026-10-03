@@ -9,17 +9,15 @@ import {
   wallMsForTimecode,
   wallTimeUtcForTimecode,
 } from '@autologger/session-core/eventAnchors';
-import { EventStore } from '@autologger/session-core/eventStore';
-import { TransportStore } from '@autologger/session-core/transportStore';
 import { describe, expect, it } from 'vitest';
-import { fakeRuntime } from './fakeCore';
+import { boundCore } from './boundCore';
 
 const FPS = 30;
 
 const ms = (iso: string): number => Date.parse(iso);
 
 describe('bracketing over a REAL multi-take store (spec invariant; Phase-2 fix wave Critical 1)', () => {
-  /** Real TransportStore + EventStore over a real in-memory core. A stopped
+  /** Real TransportStore + EventStore over a real bound core. A stopped
    * transport FREEZES the timecode, so the take-1 stop row, two operator
    * notes, and the next take's `Recording 2 Started` all carry tc 600 with
    * walls spread across 20 minutes of dead air — several rows sharing one
@@ -38,20 +36,20 @@ describe('bracketing over a REAL multi-take store (spec invariant; Phase-2 fix w
 
   async function multiTakeFixture(opts: { includeTake2Note?: boolean } = {}) {
     const { includeTake2Note = true } = opts;
-    const rt = await fakeRuntime();
-    const transport = new TransportStore(rt.core);
-    const events = new EventStore(rt.core);
+    const rt = await boundCore();
     const at = (iso: string): void => {
       rt.time.now = Date.parse(iso);
     };
     const log = async (category: string, message: string): Promise<void> => {
-      await events.addEvent({ category, message, metadataJson: '', markedAtUtc: null, ctx: CTX });
+      await rt.run((s) =>
+        s.events.addEvent({ category, message, metadataJson: '', markedAtUtc: null, ctx: CTX }),
+      );
     };
     at('2026-01-01T10:00:00.000Z');
-    await transport.startTake(CTX);
+    await rt.run((s) => s.transport.startTake(CTX));
     await log('internal', 'Recording 1 Started');
     at('2026-01-01T10:00:20.000Z');
-    await transport.stopTake(CTX);
+    await rt.run((s) => s.transport.stopTake(CTX));
     await log('internal', 'Recording 1 Stopped');
     at('2026-01-01T10:05:00.000Z');
     await log('note', 'note-1005');
@@ -59,18 +57,18 @@ describe('bracketing over a REAL multi-take store (spec invariant; Phase-2 fix w
     await log('note', 'note-1015');
     at('2026-01-01T10:20:00.000Z');
     await log('internal', 'Recording 2 Started');
-    await transport.startTake(CTX);
+    await rt.run((s) => s.transport.startTake(CTX));
     if (includeTake2Note) {
       at('2026-01-01T10:20:10.000Z');
       await log('note', 'note-take2');
     }
-    return { rt, transport, events };
+    return { rt };
   }
 
   async function fixtureRowsAndAnchors(opts: { includeTake2Note?: boolean } = {}) {
     const { includeTake2Note = true } = opts;
-    const { events } = await multiTakeFixture({ includeTake2Note });
-    const rows = (await events.listEvents({ limit: 100, offset: 0 })).events;
+    const { rt } = await multiTakeFixture({ includeTake2Note });
+    const rows = (await rt.read((s) => s.events.listEvents({ limit: 100, offset: 0 }))).events;
     // Sanity: the REAL stores produced the frozen-timecode shape claimed above.
     expect(rows.map((r) => [r.message, r.timecode_total_frames])).toEqual(
       includeTake2Note
@@ -90,7 +88,7 @@ describe('bracketing over a REAL multi-take store (spec invariant; Phase-2 fix w
             ['Recording 2 Started', 600],
           ],
     );
-    return { events, rows, anchors: timecodeWallAnchors(rows) };
+    return { rt, rows, anchors: timecodeWallAnchors(rows) };
   }
 
   it('take-2 timecodes (630/750/890) map after EVERY tc-600 row and before the tc-900 row', async () => {
@@ -134,7 +132,7 @@ describe('bracketing over a REAL multi-take store (spec invariant; Phase-2 fix w
   });
 
   it('inserted via explicitAnchor, generated rows take their bracketed feed positions', async () => {
-    const { events, rows, anchors } = await fixtureRowsAndAnchors();
+    const { rt, rows, anchors } = await fixtureRowsAndAnchors();
     const gen: Array<[number, string]> = [
       [300, 'gen-300'],
       [630, 'gen-630'],
@@ -142,20 +140,24 @@ describe('bracketing over a REAL multi-take store (spec invariant; Phase-2 fix w
       [890, 'gen-890'],
     ];
     for (const [tc, message] of gen) {
-      await events.addEvent({
-        category: 'note',
-        message,
-        metadataJson: '',
-        markedAtUtc: null,
-        ctx: CTX,
-        explicitAnchor: {
-          timecodeTotalFrames: tc,
-          wallTimeUtc: wallTimeUtcForTimecode(tc, anchors, REAL_SESSION),
-        },
-      });
+      await rt.run((s) =>
+        s.events.addEvent({
+          category: 'note',
+          message,
+          metadataJson: '',
+          markedAtUtc: null,
+          ctx: CTX,
+          explicitAnchor: {
+            timecodeTotalFrames: tc,
+            wallTimeUtc: wallTimeUtcForTimecode(tc, anchors, REAL_SESSION),
+          },
+        }),
+      );
     }
     expect(rows).toHaveLength(6); // pre-insert snapshot unaffected
-    const order = (await events.listEvents({ limit: 100, offset: 0 })).events.map((e) => e.message);
+    const order = (await rt.read((s) => s.events.listEvents({ limit: 100, offset: 0 }))).events.map(
+      (e) => e.message,
+    );
     expect(order).toEqual([
       'Recording 1 Started',
       'gen-300',

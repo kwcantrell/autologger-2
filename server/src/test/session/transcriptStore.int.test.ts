@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { fakeRuntime } from './fakeCore';
-import { paragraphRow, sentimentRow, TranscriptStore, wordRow } from '@autologger/session-core/transcriptStore';
+import { boundCore } from './boundCore';
+import { paragraphRow, sentimentRow, wordRow } from '@autologger/session-core/transcriptStore';
 
 describe('wordRow', () => {
   it('maps a full transcript-word row', () => {
@@ -107,37 +107,37 @@ describe('sentimentRow', () => {
 });
 
 // code-health-tail task 2.4 (design D12) — behavior pins over a REAL core
-// (in-memory SQLite), written BEFORE the insert-ordinal seed and update
+// (in-memory SQLite then; Postgres since session-tables, through the bound-core
+// harness), written BEFORE the insert-ordinal seed and update
 // patch-builder moved into the shared store helpers. These must pass
 // unmodified across the extraction.
 describe('TranscriptStore over a real core (D12 pins)', () => {
-  async function store(): Promise<TranscriptStore> {
-    return new TranscriptStore((await fakeRuntime()).core);
-  }
   const data = (word: string) => ({ session_time: '00:00:01', speaker: 'A', word });
 
   it('insertTranscriptWord seeds ordinals 0,1,2… and reuses MAX+1 after the top row is deleted', async () => {
-    const words = await store();
-    const a = await words.insertTranscriptWord(data('a'));
-    const b = await words.insertTranscriptWord(data('b'));
-    const c = await words.insertTranscriptWord(data('c'));
+    const { run } = await boundCore();
+    const a = await run((s) => s.transcript.insertTranscriptWord(data('a')));
+    const b = await run((s) => s.transcript.insertTranscriptWord(data('b')));
+    const c = await run((s) => s.transcript.insertTranscriptWord(data('c')));
     expect([a.ordinal, b.ordinal, c.ordinal]).toEqual([0, 1, 2]);
     // COALESCE(MAX(ordinal), -1) + 1: deleting the max frees its ordinal.
-    await words.deleteTranscriptWord(c.id);
-    expect((await words.insertTranscriptWord(data('d'))).ordinal).toBe(2);
+    await run((s) => s.transcript.deleteTranscriptWord(c.id));
+    expect((await run((s) => s.transcript.insertTranscriptWord(data('d')))).ordinal).toBe(2);
   });
 
   it('updateTranscriptWord patches only the provided fields and returns the fresh row', async () => {
-    const words = await store();
-    const w = await words.insertTranscriptWord(data('orig'));
-    const updated = await words.updateTranscriptWord(w.id, { word: 'edited', speaker: 'B' });
+    const { run } = await boundCore();
+    const w = await run((s) => s.transcript.insertTranscriptWord(data('orig')));
+    const updated = await run((s) =>
+      s.transcript.updateTranscriptWord(w.id, { word: 'edited', speaker: 'B' }),
+    );
     expect(updated).toEqual({ ...w, word: 'edited', speaker: 'B' });
   });
 
   it('updateTranscriptWord with an empty patch is a no-op returning the row; unknown id returns null', async () => {
-    const words = await store();
-    const w = await words.insertTranscriptWord(data('orig'));
-    expect(await words.updateTranscriptWord(w.id, {})).toEqual(w);
-    expect(await words.updateTranscriptWord('nope', { word: 'x' })).toBeNull();
+    const { run } = await boundCore();
+    const w = await run((s) => s.transcript.insertTranscriptWord(data('orig')));
+    expect(await run((s) => s.transcript.updateTranscriptWord(w.id, {}))).toEqual(w);
+    expect(await run((s) => s.transcript.updateTranscriptWord('nope', { word: 'x' }))).toBeNull();
   });
 });

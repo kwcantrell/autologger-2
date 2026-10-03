@@ -16,6 +16,13 @@ describe('parseSheetTimecodeToSeconds', () => {
     expect(parseSheetTimecodeToSeconds('nope')).toBeNull();
     expect(parseSheetTimecodeToSeconds('1:99')).toBeNull();
   });
+
+  // session-tables design D5 (A11): an hour so large that its frame count at 120 fps is not a safe
+  // integer would reach a session `bigint` out of range; it is unparseable, so the row is dropped
+  // at fetch as any malformed timecode row is.
+  it('rejects a timecode whose frame count at 120 fps is not a safe integer', () => {
+    expect(parseSheetTimecodeToSeconds('123456789012345678901:00:00')).toBeNull();
+  });
 });
 
 describe('secondsToTotalFrames', () => {

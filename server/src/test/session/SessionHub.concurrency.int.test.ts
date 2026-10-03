@@ -1,22 +1,32 @@
 // The async hub's concurrency contract (async-session-hub design D3-D6, D12): per-session
 // serialization with broadcasts in commit order, reads that never see an open write, rollback
 // with dropped broadcasts, joins, misuse without deadlock, the relayed command, each atomic D5
-// method against its conflicting twin, eviction, draining close, single-flight open and the
-// failed-ROLLBACK close. Every hub here runs on a SQL that yields to a timer before each
-// statement (test/slowSql.ts), so calls really overlap. An unhandled rejection fails the file;
-// every "promptly" case races a 200 ms timer.
+// method against its conflicting twin, eviction, draining close, single-flight open and a failed
+// ROLLBACK (the adapter retires the connection; session-tables D9). Every hub here runs on a
+// session storage that yields to a timer before each statement (./slowStorage, over the Postgres
+// session tables since session-tables D12), so calls really overlap. An unhandled rejection fails
+// the file; every "promptly" case races a 200 ms timer.
 
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import type { EventRpc } from '@autologger/domain';
-import type Database from 'better-sqlite3';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { SessionHubClosedError, SessionTxMisuseError, sqliteSessionSql } from '@autologger/session-core/asyncSessionSql';
+import {
+  CatalogTxMisuseError,
+  connectPostgres,
+  type PgClient,
+  type PgClientOptions,
+  type PgQuery,
+  PostgresCatalogDb,
+} from '@autologger/storage';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import {
+  SessionHubClosedError,
+  SessionTxMisuseError,
+} from '@autologger/session-core/asyncSessionSql';
 import type { EventStore } from '@autologger/session-core/eventStore';
-import { SessionHub, SessionHubRegistry } from '@autologger/session-core/SessionHub';
+import { SessionHub } from '@autologger/session-core/SessionHub';
 import type { SessionCore } from '@autologger/session-core/sessionCore';
-import { type SlowSql, slowSql } from './slowSql';
+import { testDatabase } from '../harness';
+import { type SlowStorage, slowStorage } from './slowStorage';
+import { createSessionRow, sessionDb, testRegistry, testStorage } from './sessionRows';
 
 const unhandled: unknown[] = [];
 const trap = (reason: unknown): void => {
@@ -30,11 +40,10 @@ afterAll(() => {
   expect(unhandled).toEqual([]);
 });
 
-let dir: string;
-beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), 'autologger-hub-conc-'));
+const adapters: PostgresCatalogDb[] = [];
+afterEach(async () => {
+  for (const db of adapters.splice(0)) await db.close();
 });
-afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
 const CTX = { frameRate: 24, startOffsetFrames: 0 };
 
@@ -57,17 +66,13 @@ type TxHub = { inTxn<T>(fn: (t: TxStores) => Promise<T>): Promise<T> };
 
 const clock = { now: () => Date.now() };
 
-async function slowHub(name = 's1') {
-  let sql!: SlowSql;
-  const hub = await SessionHub.open(join(dir, `${name}.db`), clock, {
-    sql: (db: Database.Database) => {
-      sql = slowSql(sqliteSessionSql(db));
-      return sql;
-    },
-  });
+async function slowHub() {
+  const id = await createSessionRow();
+  const storage: SlowStorage = slowStorage(testStorage(id));
+  const hub = await SessionHub.open(id, storage, clock);
   const frames: Record<string, unknown>[] = [];
   hub.attachSocket({ send: (d: string) => void frames.push(JSON.parse(d)) }, 'browser');
-  return { hub, frames, sql, tx: hub as unknown as TxHub };
+  return { hub, frames, storage, tx: hub as unknown as TxHub };
 }
 
 const event = (message: string) => ({
@@ -167,9 +172,12 @@ describe('joins', () => {
     await hub.close();
   });
 
-  it('a hub delegate inside its own transaction rejects promptly with SessionTxMisuseError; the outer still commits, and another hub works', async () => {
-    const { hub, tx } = await slowHub('a');
-    const other = await slowHub('b');
+  // session-tables D2, D12 (panel finding 7): the same-hub half is 7a's; another session's hub
+  // inside a hub transaction is an adapter call inside an open attempt, which the adapter refuses
+  // and which fails that transaction (production never nests).
+  it("a hub delegate inside its own transaction rejects promptly with SessionTxMisuseError and the outer still commits; another hub's call rejects promptly with the adapter's misuse error and the outer rolls back", async () => {
+    const { hub, tx } = await slowHub();
+    const other = await slowHub();
     await tx.inTxn(async (t) => {
       await expect(promptly(hub.addEvent(event('self')))).rejects.toBeInstanceOf(
         SessionTxMisuseError,
@@ -177,12 +185,23 @@ describe('joins', () => {
       await expect(promptly(hub.listEvents({ limit: 1, offset: 0 }))).rejects.toBeInstanceOf(
         SessionTxMisuseError,
       );
-      const { event: added } = await other.hub.addEvent(event('elsewhere'));
-      expect(added.message).toBe('elsewhere');
       await t.events.addEvent(event('own'));
     });
     const listed = await hub.listEvents({ limit: 10, offset: 0 });
     expect(listed.events.map((e) => e.message)).toEqual(['own']);
+
+    await expect(
+      tx.inTxn(async (t) => {
+        await t.events.addEvent(event('rolled back'));
+        await expect(promptly(other.hub.addEvent(event('elsewhere')))).rejects.toBeInstanceOf(
+          CatalogTxMisuseError,
+        );
+      }),
+    ).rejects.toBeInstanceOf(CatalogTxMisuseError);
+    expect((await hub.listEvents({ limit: 10, offset: 0 })).events.map((e) => e.message)).toEqual([
+      'own',
+    ]);
+    expect((await other.hub.listEvents({ limit: 10, offset: 0 })).events).toEqual([]);
     await hub.close();
     await other.hub.close();
   });
@@ -374,21 +393,55 @@ describe('each atomic method against its conflicting twin equals a serial order'
 });
 
 describe('lifecycle', () => {
-  function registry(opts: { now?: () => number } = {}) {
+  function registry(opts: { now?: () => number; root?: PostgresCatalogDb } = {}) {
     const time = { now: 1_000_000 };
-    const sqls: SlowSql[] = [];
-    const reg = new SessionHubRegistry(
-      dir,
-      { now: opts.now ?? (() => time.now) },
-      {
-        sql: (db: Database.Database) => {
-          const s = slowSql(sqliteSessionSql(db));
-          sqls.push(s);
-          return s;
-        },
+    const storages: SlowStorage[] = [];
+    const reg = testRegistry({
+      clock: { now: opts.now ?? (() => time.now) },
+      autoCreate: true,
+      db: opts.root ? sessionDb(opts.root) : undefined,
+      wrap: (storage) => {
+        const s = slowStorage(storage);
+        storages.push(s);
+        return s;
       },
-    );
-    return { reg, time, sqls };
+    });
+    return { reg, time, storages };
+  }
+
+  /** A second adapter on the test database whose next ROLLBACK gets no server reply (the
+   * session storage contract's fault); `ended` counts the clients it retired. */
+  function adapterWithUnconfirmedRollback() {
+    let armed = false;
+    let ended = 0;
+    const connect = (o: PgClientOptions): PgClient => {
+      const real = connectPostgres(o);
+      return {
+        unsafe(text: string, binds?: unknown[], opts?: { prepare: boolean }): PgQuery {
+          if (armed && text === 'ROLLBACK') {
+            armed = false;
+            const lost = Promise.reject(
+              Object.assign(new Error('injected: no reply'), { code: 'CONNECTION_CLOSED' }),
+            );
+            return Object.assign(lost, { cancel: () => null }) as unknown as PgQuery;
+          }
+          return real.unsafe(text, binds, opts);
+        },
+        async end(opts?: { timeout?: number }) {
+          ended += 1;
+          await real.end(opts);
+        },
+      };
+    };
+    const root = new PostgresCatalogDb({ ...testDatabase(), connect });
+    adapters.push(root);
+    return {
+      root,
+      failNextRollback() {
+        armed = true;
+      },
+      ended: () => ended,
+    };
   }
 
   it('evictIdle skips a hub with a call in flight or queued, and closes it once idle', async () => {
@@ -468,11 +521,15 @@ describe('lifecycle', () => {
     await expect(hub.ensure()).rejects.toBeInstanceOf(SessionHubClosedError);
   });
 
-  it('a failed ROLLBACK rejects that call, closes the hub for queued calls, drops it from the registry, and the next get opens a fresh hub', async () => {
-    const { reg, sqls } = registry();
+  // session-tables D9, D12: a failed ROLLBACK is the adapter's concern. It retires the connection
+  // (the server rolls back an ended session), so the call rejects, the hub stays open, and the
+  // next calls succeed on another connection.
+  it('a failed ROLLBACK rejects that call, the hub stays open, and queued and later calls succeed on another connection', async () => {
+    const faulty = adapterWithUnconfirmedRollback();
+    const { reg } = registry({ root: faulty.root });
     const hub = await reg.get('sess-a');
     await hub.addEvent(event('kept'));
-    sqls[0].failNextRollback();
+    faulty.failNextRollback();
     const failing = hub.saveDashboard({
       id: 'primary',
       config: { widgets: [{ id: 'w', type: 'no_such_widget' }], interactions: [] },
@@ -481,14 +538,13 @@ describe('lifecycle', () => {
     });
     const queued = hub.addEvent(event('queued'));
     await expect(failing).rejects.toThrow();
-    await expect(queued).rejects.toBeInstanceOf(SessionHubClosedError);
-    await expect(hub.ensure()).rejects.toBeInstanceOf(SessionHubClosedError);
-    const fresh = await reg.get('sess-a');
-    expect(fresh).not.toBe(hub);
-    const listed = await fresh.listEvents({ limit: 10, offset: 0 });
-    expect(listed.events.map((e) => e.message)).toEqual(['kept']);
-    await fresh.addEvent(event('after'));
-    expect((await fresh.ensure()).event_count).toBe(2);
+    await queued;
+    expect(faulty.ended()).toBe(1);
+    expect(await reg.get('sess-a')).toBe(hub);
+    const listed = await hub.listEvents({ limit: 10, offset: 0 });
+    expect(listed.events.map((e) => e.message).sort()).toEqual(['kept', 'queued']);
+    await hub.addEvent(event('after'));
+    expect((await hub.ensure()).event_count).toBe(3);
     await reg.closeAll();
   });
 });

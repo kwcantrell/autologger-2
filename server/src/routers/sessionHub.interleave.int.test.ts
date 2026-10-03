@@ -288,7 +288,9 @@ describe('session hub under a mixed concurrent load (design D10)', () => {
         `final events ${events.length}; lock waits ${lockWaits ?? 'n/a'}`,
     );
     ws.close();
-  });
+    // Every hub call is a Postgres round trip since session-tables (7b-1): under the full parallel
+    // suite the 200 requests can outlast the 5 s default timeout (about 3 s alone).
+  }, 30_000);
 });
 
 // ── Conflicting pairs (design D10, owner decision 1) ─────────────────────────────────────────────

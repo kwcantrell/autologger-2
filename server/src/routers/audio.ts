@@ -195,7 +195,10 @@ audioRouter.post('/api/sessions/:sessionId/audio/segments', async (c) => {
   const started = parseOptionalMarkedAt(c.req.query('started_at_utc'));
   const ended = parseOptionalMarkedAt(c.req.query('ended_at_utc'));
   const roRaw = c.req.query('recording_ordinal');
-  const recordingOrdinal = roRaw !== undefined && /^\d+$/.test(roRaw) ? Number(roRaw) : null;
+  // A digit string too large for a safe integer is treated as absent, as a non-digit one is, so it
+  // never reaches the session table's bigint out of range (session-tables D5, A11).
+  const roNum = roRaw !== undefined && /^\d+$/.test(roRaw) ? Number(roRaw) : null;
+  const recordingOrdinal = roNum !== null && Number.isSafeInteger(roNum) ? roNum : null;
 
   const seg = await (await getSessionHub(c, sessionId)).addAudioSegment({
     sessionId,

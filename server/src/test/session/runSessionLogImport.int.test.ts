@@ -2,13 +2,11 @@
 // (async-session-callers D5); failures surface as rejections, not synchronous throws. Each row's
 // duplicate check and insert are one hub transaction (async-session-hub D7, S10), so a row a
 // concurrent import already stored is skipped and counted as skipped.
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import type { CategoryRecord } from '@autologger/domain';
 import { SessionHub } from '@autologger/session-core';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { runSessionLogImport } from '@autologger/log-import/runSessionLogImport';
+import { createSessionRow, testStorage } from './sessionRows';
 
 describe('runSessionLogImport', () => {
   it('returns a promise that rejects on an untimed transcript', async () => {
@@ -26,12 +24,6 @@ describe('runSessionLogImport', () => {
 });
 
 describe('runSessionLogImport duplicate skip against a concurrent import', () => {
-  let dir: string;
-  beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), 'autologger-logimport-'));
-  });
-  afterEach(() => rmSync(dir, { recursive: true, force: true }));
-
   const OTHER: CategoryRecord = {
     id: 'cat-other',
     name: 'Other',
@@ -44,7 +36,8 @@ describe('runSessionLogImport duplicate skip against a concurrent import', () =>
   const words = ['alpha', 'bravo', 'charlie', 'delta', 'echo'];
 
   async function setup() {
-    const hub = await SessionHub.open(join(dir, 's1.db'));
+    const id = await createSessionRow();
+    const hub = await SessionHub.open(id, testStorage(id));
     await hub.appendAudioSeamParts([{ duration_s: 600 }]);
     const run = () =>
       runSessionLogImport({

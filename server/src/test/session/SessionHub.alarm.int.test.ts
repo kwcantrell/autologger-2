@@ -5,15 +5,11 @@
 // doubling, capped at the 40 s stale threshold, and a successful run resets it.
 
 import type { AsyncLocalStorage } from 'node:async_hooks';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import type Database from 'better-sqlite3';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { sqliteSessionSql } from '@autologger/session-core/asyncSessionSql';
 import { LeaseStore } from '@autologger/session-core/leaseStore';
 import { SessionHub } from '@autologger/session-core/SessionHub';
-import { type SlowSql, slowSql } from './slowSql';
+import { type SlowStorage, slowStorage } from './slowStorage';
+import { createSessionRow, DRIVER_SAFE_FAKE_TIMERS, testStorage } from './sessionRows';
 
 const unhandled: unknown[] = [];
 const trap = (reason: unknown): void => {
@@ -27,11 +23,10 @@ afterAll(() => {
   expect(unhandled).toEqual([]);
 });
 
-let dir: string;
-beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), 'autologger-hub-alarm-'));
+let sessionId: string;
+beforeEach(async () => {
+  sessionId = await createSessionRow();
 });
-afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
 const STALE = LeaseStore.LEASE_STALE_MS;
 
@@ -50,16 +45,14 @@ describe('lease alarm on real timers', () => {
     const T = 1_750_000_000_000;
     const time = { now: T };
     const clock = { now: () => time.now };
-    const path = join(dir, 's1.db');
-
-    const first = await SessionHub.open(path, clock);
+    const first = await SessionHub.open(sessionId, testStorage(sessionId), clock);
     expect(await first.claimLease('client-a')).toBe(true);
     await first.close();
 
     // Reopen 10 ms before the lease goes stale: the open's expiry run re-arms the alarm about
     // 10 ms ahead, from inside its transaction body.
     time.now = T + STALE - 10;
-    const hub = await SessionHub.open(path, clock);
+    const hub = await SessionHub.open(sessionId, testStorage(sessionId), clock);
     const frames: Record<string, unknown>[] = [];
     hub.attachSocket({ send: (d: string) => void frames.push(JSON.parse(d)) }, 'browser');
     expect(hub.hasArmedAlarm).toBe(true);
@@ -87,7 +80,7 @@ describe('lease alarm on real timers', () => {
   it('an expiry during an open transaction waits for it, ignores its rolled-back heartbeat, and still frees the lease', async () => {
     const T = 1_750_000_000_000;
     const time = { now: T };
-    const hub = await SessionHub.open(join(dir, 's1.db'), { now: () => time.now });
+    const hub = await SessionHub.open(sessionId, testStorage(sessionId), { now: () => time.now });
     const frames: Record<string, unknown>[] = [];
     hub.attachSocket({ send: (d: string) => void frames.push(JSON.parse(d)) }, 'browser');
     expect(await hub.claimLease('client-a')).toBe(true);
@@ -142,7 +135,7 @@ describe('lease alarm on real timers', () => {
 
 describe('lease alarm backoff (fake timers)', () => {
   beforeEach(() => {
-    vi.useFakeTimers();
+    vi.useFakeTimers(DRIVER_SAFE_FAKE_TIMERS);
     vi.setSystemTime(new Date('2026-10-03T00:00:00.000Z'));
   });
   afterEach(() => {
@@ -151,17 +144,8 @@ describe('lease alarm backoff (fake timers)', () => {
   });
 
   async function hubWithFailingSql() {
-    let sql!: SlowSql;
-    const hub = await SessionHub.open(
-      join(dir, 's1.db'),
-      { now: () => Date.now() },
-      {
-        sql: (db: Database.Database) => {
-          sql = slowSql(sqliteSessionSql(db), { delayMs: 0 });
-          return sql;
-        },
-      },
-    );
+    const sql: SlowStorage = slowStorage(testStorage(sessionId), { delayMs: 0 });
+    const hub = await SessionHub.open(sessionId, sql, { now: () => Date.now() });
     return { hub, sql };
   }
 

@@ -1,17 +1,26 @@
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { MAX_DASHBOARDS_PER_SESSION } from '@autologger/contract';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { DashboardBoundsError, DashboardValidationError } from '@autologger/session-core/dashboardStore';
+import {
+  DashboardBoundsError,
+  DashboardValidationError,
+} from '@autologger/session-core/dashboardStore';
 import { EventStore } from '@autologger/session-core/eventStore';
-import { SessionHub, SessionHubRegistry } from '@autologger/session-core/SessionHub';
+import { SessionHub } from '@autologger/session-core/SessionHub';
+import {
+  catalogRoot,
+  createSessionRow,
+  DRIVER_SAFE_FAKE_TIMERS,
+  testRegistry,
+  testStorage,
+} from './sessionRows';
 
-let dir: string;
-beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), 'autologger-hub-'));
+// One session per test (session-tables D12): a hub over its storage; reopening is a second hub on
+// the same session.
+let sessionId: string;
+beforeEach(async () => {
+  sessionId = await createSessionRow();
 });
-afterEach(() => rmSync(dir, { recursive: true, force: true }));
+const openHub = () => SessionHub.open(sessionId, testStorage(sessionId));
 
 const CTX = { frameRate: 24, startOffsetFrames: 0 };
 
@@ -24,7 +33,7 @@ type TxHub = { inTxn<T>(fn: (t: TxStores) => Promise<T>): Promise<T> };
 
 describe('SessionHub', () => {
   it('ensure() initializes the schema and returns an empty projection', async () => {
-    const hub = await SessionHub.open(join(dir, 's1.db'));
+    const hub = await openHub();
     expect(await hub.ensure()).toMatchObject({
       event_count: 0,
       is_rolling: false,
@@ -34,7 +43,7 @@ describe('SessionHub', () => {
   });
 
   it('addEvent persists atomically with its revision bump', async () => {
-    const hub = await SessionHub.open(join(dir, 's1.db'));
+    const hub = await openHub();
     const { event, projection } = await hub.addEvent({
       category: 'cam',
       message: 'hello',
@@ -49,9 +58,8 @@ describe('SessionHub', () => {
     await hub.close();
   });
 
-  it('state survives close + reopen (persisted on disk)', async () => {
-    const p = join(dir, 's1.db');
-    const hub = await SessionHub.open(p);
+  it('state survives close + reopen (persisted in the database)', async () => {
+    const hub = await openHub();
     await hub.addEvent({
       category: 'cam',
       message: 'x',
@@ -60,13 +68,13 @@ describe('SessionHub', () => {
       ctx: CTX,
     });
     await hub.close();
-    const hub2 = await SessionHub.open(p);
+    const hub2 = await openHub();
     expect((await hub2.ensure()).event_count).toBe(1);
     await hub2.close();
   });
 
   it('broadcasts to attached sockets and counts presence by role', async () => {
-    const hub = await SessionHub.open(join(dir, 's1.db'));
+    const hub = await openHub();
     const got: string[] = [];
     const ws = { send: (d: string) => void got.push(d) };
     hub.attachSocket(ws, 'browser');
@@ -80,7 +88,7 @@ describe('SessionHub', () => {
   });
 
   it('handleSocketMessage re-broadcasts client commands and ignores garbage', async () => {
-    const hub = await SessionHub.open(join(dir, 's1.db'));
+    const hub = await openHub();
     const got: string[] = [];
     hub.attachSocket({ send: (d: string) => void got.push(d) }, 'browser');
     hub.handleSocketMessage('not json');
@@ -92,11 +100,11 @@ describe('SessionHub', () => {
   });
 
   describe('lease timer (single-slot, fake time)', () => {
-    beforeEach(() => vi.useFakeTimers());
+    beforeEach(() => vi.useFakeTimers(DRIVER_SAFE_FAKE_TIMERS));
     afterEach(() => vi.useRealTimers());
 
     it('expires a stale lease via the timer 40s after the last heartbeat', async () => {
-      const hub = await SessionHub.open(join(dir, 's1.db'));
+      const hub = await openHub();
       expect(await hub.claimLease('client-a')).toBe(true);
       expect((await hub.leaseStatus()).lease_alive).toBe(true);
       vi.advanceTimersByTime(41_000);
@@ -106,7 +114,7 @@ describe('SessionHub', () => {
     });
 
     it('heartbeats re-arm the single slot instead of stacking timers', async () => {
-      const hub = await SessionHub.open(join(dir, 's1.db'));
+      const hub = await openHub();
       await hub.claimLease('client-a');
       vi.advanceTimersByTime(30_000);
       await hub.heartbeatLease('client-a');
@@ -118,12 +126,11 @@ describe('SessionHub', () => {
     });
 
     it('a lease already stale at instantiation is cleaned up (expireIfStale on open)', async () => {
-      const p = join(dir, 's1.db');
-      const hub = await SessionHub.open(p);
+      const hub = await openHub();
       await hub.claimLease('client-a');
       await hub.close(); // process "dies" holding the lease
       vi.advanceTimersByTime(60_000);
-      const hub2 = await SessionHub.open(p);
+      const hub2 = await openHub();
       expect((await hub2.leaseStatus()).holder_client_id).toBeNull(); // meta rows purged, not just lazily masked
       await hub2.close();
     });
@@ -134,7 +141,7 @@ describe('SessionHub', () => {
 // recorded-take shape (Started → advance → Stopped) around imported audio.
 describe('SessionHub.anchorImportedTake (composite anchor RPC)', () => {
   it('anchors Recording N Started at position P and Recording N Stopped at P + trunc(durationS*frameRate)', async () => {
-    const hub = await SessionHub.open(join(dir, 's1.db'));
+    const hub = await openHub();
     // Establish a non-zero starting position P (via the plain stopTakeWithDuration
     // delegate) so Started/Stopped land at provably distinct timecodes, not both at 0.
     await hub.stopTakeWithDuration({ durationS: 3, ctx: CTX }); // P = trunc(3 * 24) = 72
@@ -156,7 +163,7 @@ describe('SessionHub.anchorImportedTake (composite anchor RPC)', () => {
   });
 
   it('emits event.changed and transport.changed exactly once each, after commit (Phase-9 fix-wave finding 1)', async () => {
-    const hub = await SessionHub.open(join(dir, 's1.db'));
+    const hub = await openHub();
     const got: string[] = [];
     hub.attachSocket({ send: (d: string) => void got.push(d) }, 'browser');
 
@@ -180,7 +187,7 @@ describe('SessionHub.anchorImportedTake (composite anchor RPC)', () => {
   });
 
   it('is atomic: a mid-transaction throw on the third write (Stopped) persists none of the three anchor writes AND broadcasts nothing', async () => {
-    const hub = await SessionHub.open(join(dir, 's1.db'));
+    const hub = await openHub();
     const before = await hub.ensure();
     const beforeEvents = await hub.listEvents({ limit: 10, offset: 0 });
     const got: string[] = [];
@@ -235,7 +242,7 @@ describe('SessionHub.anchorImportedTake (composite anchor RPC)', () => {
 // each frame's shape and their order.
 describe('SessionHub broadcast frame pins (success-path byte-identity gate)', () => {
   async function capturingHub() {
-    const hub = await SessionHub.open(join(dir, 's1.db'));
+    const hub = await openHub();
     const frames: Record<string, unknown>[] = [];
     // Attach AFTER construction so the constructor's expireIfStale txn (no
     // holder → no broadcast) can never colour the capture.
@@ -301,10 +308,10 @@ describe('SessionHub broadcast frame pins (success-path byte-identity gate)', ()
 
 // code-health-consolidation phase 2 (design D1, delta "Broadcast atomicity with
 // the owning transaction"): the post-commit broadcast queue at the REAL seam —
-// better-sqlite3 transactions/savepoints under SessionHub.inTxn.
+// the session storage transactions under SessionHub.inTxn.
 describe('SessionHub post-commit broadcast queue (D1)', () => {
   async function capturingHub() {
-    const hub = await SessionHub.open(join(dir, 's1.db'));
+    const hub = await openHub();
     const frames: Record<string, unknown>[] = [];
     hub.attachSocket({ send: (d: string) => void frames.push(JSON.parse(d)) }, 'browser');
     return { hub, frames };
@@ -399,7 +406,7 @@ describe('SessionHub post-commit broadcast queue (D1)', () => {
 
 describe('SessionHub.replaceTranscriptWords', () => {
   it('inserts words with start_sec/end_sec and contiguous ordinals from 0', async () => {
-    const hub = await SessionHub.open(join(dir, 's1.db'));
+    const hub = await openHub();
     const result = await hub.replaceTranscriptWords([
       { session_time: '00:00:01:00', speaker: '0', word: 'hello', start_sec: 1, end_sec: 1.4 },
       { session_time: '00:00:02:00', speaker: '1', word: 'world', start_sec: 2, end_sec: 2.5 },
@@ -431,7 +438,7 @@ describe('SessionHub.replaceTranscriptWords', () => {
   });
 
   it('deletes the prior word set atomically (delete-then-insert replaces, not merges)', async () => {
-    const hub = await SessionHub.open(join(dir, 's1.db'));
+    const hub = await openHub();
     await hub.insertTranscriptWord({ session_time: '00:00:00:00', speaker: '0', word: 'stale' });
     const result = await hub.replaceTranscriptWords([
       { session_time: '00:00:05:00', speaker: '0', word: 'fresh', start_sec: 5, end_sec: 5.5 },
@@ -444,7 +451,7 @@ describe('SessionHub.replaceTranscriptWords', () => {
   });
 
   it('replacing with an empty list clears all existing words', async () => {
-    const hub = await SessionHub.open(join(dir, 's1.db'));
+    const hub = await openHub();
     await hub.insertTranscriptWord({ session_time: '00:00:00:00', speaker: '0', word: 'gone' });
     const result = await hub.replaceTranscriptWords([]);
     expect(result).toEqual([]);
@@ -463,13 +470,13 @@ const SENTIMENT = [
 
 describe('SessionHub enrichment persistence (single atomic replace)', () => {
   it('never-generated session reads listTranscriptEnrichment as empty arrays, not error', async () => {
-    const hub = await SessionHub.open(join(dir, 's1.db'));
+    const hub = await openHub();
     expect(await hub.listTranscriptEnrichment()).toEqual({ paragraphs: [], sentiment: [] });
     await hub.close();
   });
 
   it('one call delete-then-inserts words + paragraphs + sentiment together', async () => {
-    const hub = await SessionHub.open(join(dir, 's1.db'));
+    const hub = await openHub();
     await hub.replaceTranscriptWords(WORDS, { paragraphs: PARAGRAPHS, sentiment: SENTIMENT });
     expect(await hub.listTranscriptWords()).toHaveLength(1);
     const enrichment = await hub.listTranscriptEnrichment();
@@ -481,7 +488,7 @@ describe('SessionHub enrichment persistence (single atomic replace)', () => {
   });
 
   it('a replace with EMPTY enrichment (default) clears prior enrichment', async () => {
-    const hub = await SessionHub.open(join(dir, 's1.db'));
+    const hub = await openHub();
     await hub.replaceTranscriptWords(WORDS, { paragraphs: PARAGRAPHS, sentiment: SENTIMENT });
     await hub.replaceTranscriptWords(WORDS); // no enrichment arg — must default to empty
     expect(await hub.listTranscriptEnrichment()).toEqual({ paragraphs: [], sentiment: [] });
@@ -489,7 +496,7 @@ describe('SessionHub enrichment persistence (single atomic replace)', () => {
   });
 
   it('preserves NULL start_sec/end_sec through the round trip (never coerced to 0)', async () => {
-    const hub = await SessionHub.open(join(dir, 's1.db'));
+    const hub = await openHub();
     await hub.replaceTranscriptWords(WORDS, {
       paragraphs: [{ start_sec: null, end_sec: null, speaker: '0', text: 'unanchored' }],
       sentiment: [
@@ -505,7 +512,7 @@ describe('SessionHub enrichment persistence (single atomic replace)', () => {
   });
 
   it('lists enrichment in ordinal order (array-position order, not re-sorted)', async () => {
-    const hub = await SessionHub.open(join(dir, 's1.db'));
+    const hub = await openHub();
     const paragraphs = [
       { start_sec: 5, end_sec: 6, speaker: '0', text: 'second' },
       { start_sec: 1, end_sec: 2, speaker: '0', text: 'first' },
@@ -519,7 +526,7 @@ describe('SessionHub enrichment persistence (single atomic replace)', () => {
   });
 
   it('rolls back words, paragraphs, AND sentiment together when an insert throws mid-transaction (single writer, no partial write)', async () => {
-    const hub = await SessionHub.open(join(dir, 's1.db'));
+    const hub = await openHub();
     await hub.replaceTranscriptWords(WORDS, { paragraphs: PARAGRAPHS, sentiment: SENTIMENT });
     const priorWords = await hub.listTranscriptWords();
     const priorEnrichment = await hub.listTranscriptEnrichment();
@@ -573,13 +580,13 @@ describe('SessionHub dashboard persistence', () => {
   }
 
   it('getDashboard returns null for a session with nothing saved', async () => {
-    const hub = await SessionHub.open(join(dir, 's1.db'));
+    const hub = await openHub();
     expect(await hub.getDashboard('primary')).toBeNull();
     await hub.close();
   });
 
   it('saveDashboard then getDashboard round-trips the exact config and records created_by + turn', async () => {
-    const hub = await SessionHub.open(join(dir, 's1.db'));
+    const hub = await openHub();
     const saved = await hub.saveDashboard({
       id: 'primary',
       config: validConfig(),
@@ -598,7 +605,7 @@ describe('SessionHub dashboard persistence', () => {
   });
 
   it('a direct edit (re-save of the same id) updates the config but PRESERVES the original created_by/turn', async () => {
-    const hub = await SessionHub.open(join(dir, 's1.db'));
+    const hub = await openHub();
     await hub.saveDashboard({
       id: 'primary',
       config: validConfig(),
@@ -621,7 +628,7 @@ describe('SessionHub dashboard persistence', () => {
   });
 
   it('deleteDashboard removes it (removable/replaceable through the interface, design D5b)', async () => {
-    const hub = await SessionHub.open(join(dir, 's1.db'));
+    const hub = await openHub();
     await hub.saveDashboard({
       id: 'primary',
       config: validConfig(),
@@ -635,7 +642,7 @@ describe('SessionHub dashboard persistence', () => {
   });
 
   it('rejects (throws DashboardValidationError) an unknown widget type — nothing is stored', async () => {
-    const hub = await SessionHub.open(join(dir, 's1.db'));
+    const hub = await openHub();
     await expect(
       hub.saveDashboard({
         id: 'primary',
@@ -652,7 +659,7 @@ describe('SessionHub dashboard persistence', () => {
   });
 
   it('rejects (throws DashboardValidationError) a javascript: URI title — nothing is stored', async () => {
-    const hub = await SessionHub.open(join(dir, 's1.db'));
+    const hub = await openHub();
     await expect(
       hub.saveDashboard({
         id: 'primary',
@@ -666,7 +673,7 @@ describe('SessionHub dashboard persistence', () => {
   });
 
   it('stores an HTML-bearing title as literal text (allowed — renders inert, task 4.5)', async () => {
-    const hub = await SessionHub.open(join(dir, 's1.db'));
+    const hub = await openHub();
     const saved = await hub.saveDashboard({
       id: 'primary',
       config: validConfig({ title: '<b>Bold</b> title' }),
@@ -678,7 +685,7 @@ describe('SessionHub dashboard persistence', () => {
   });
 
   it('enforces the per-session dashboard-COUNT bound (design D5b): the (MAX+1)th distinct id is rejected, nothing new is stored', async () => {
-    const hub = await SessionHub.open(join(dir, 's1.db'));
+    const hub = await openHub();
     for (let i = 0; i < MAX_DASHBOARDS_PER_SESSION; i += 1) {
       await hub.saveDashboard({
         id: `dash-${i}`,
@@ -717,7 +724,7 @@ describe('SessionHub dashboard persistence', () => {
 
 describe('SessionHubRegistry', () => {
   it('returns the same hub per session id and isolates sessions', async () => {
-    const reg = new SessionHubRegistry(dir);
+    const reg = testRegistry({ autoCreate: true });
     const a = await reg.get('sess-a');
     expect(await reg.get('sess-a')).toBe(a);
     await a.addEvent({
@@ -732,15 +739,15 @@ describe('SessionHubRegistry', () => {
   });
 
   it('rejects path-hostile session ids', async () => {
-    const reg = new SessionHubRegistry(dir);
+    const reg = testRegistry({ autoCreate: true });
     await expect(reg.get('../escape')).rejects.toThrow();
     await expect(reg.get('a/b')).rejects.toThrow();
     await reg.closeAll();
   });
 
   it('evictIdle closes idle hubs (no sockets, no alarm) and they reopen lazily', async () => {
-    vi.useFakeTimers();
-    const reg = new SessionHubRegistry(dir);
+    vi.useFakeTimers(DRIVER_SAFE_FAKE_TIMERS);
+    const reg = testRegistry({ autoCreate: true });
     const a = await reg.get('sess-a');
     await a.addEvent({
       category: 'cam',
@@ -759,8 +766,8 @@ describe('SessionHubRegistry', () => {
   });
 
   it('does not evict a hub with a live socket or an armed lease', async () => {
-    vi.useFakeTimers();
-    const reg = new SessionHubRegistry(dir);
+    vi.useFakeTimers(DRIVER_SAFE_FAKE_TIMERS);
+    const reg = testRegistry({ autoCreate: true });
     const withSocket = await reg.get('sess-a');
     withSocket.attachSocket({ send: () => {} }, 'browser');
     const withLease = await reg.get('sess-b');
@@ -782,7 +789,7 @@ describe('SessionHubRegistry', () => {
 
 describe('SessionHubRegistry.closeUserSockets (show-grants D20)', () => {
   it("'all' closes that user's sockets on every live hub (the fail-closed path)", async () => {
-    const reg = new SessionHubRegistry(dir);
+    const reg = testRegistry({ autoCreate: true });
     const m1 = fakeWs();
     const m3 = fakeWs();
     const other1 = fakeWs();
@@ -813,7 +820,7 @@ describe('SessionHubRegistry.closeUserSockets (show-grants D20)', () => {
   };
 
   it('attachSocket records the user id; only that user’s sockets on the named live sessions close', async () => {
-    const reg = new SessionHubRegistry(dir);
+    const reg = testRegistry({ autoCreate: true });
     const s1 = await reg.get('sess-1');
     const s3 = await reg.get('sess-3');
     const m1 = fakeWs(); // M on sess-1: closes
@@ -838,13 +845,17 @@ describe('SessionHubRegistry.closeUserSockets (show-grants D20)', () => {
     expect(other1.got).toHaveLength(1);
     expect(anon1.got).toHaveLength(1);
     expect(s1.presence()).toEqual({ browsers: 1, companions: 1 });
-    // A session with no live hub is never instantiated (no database file is created).
-    expect(existsSync(join(dir, 'sess-never.db'))).toBe(false);
+    // A session with no live hub is never instantiated (no seed rows are written).
+    expect(
+      await catalogRoot()
+        .bindSystem('test')
+        .all('SELECT 1 FROM session_transport WHERE session_id = ?', 'sess-never'),
+    ).toEqual([]);
     await reg.closeAll();
   });
 
   it('closes nothing for a user with no sockets, and an empty session set closes nothing', async () => {
-    const reg = new SessionHubRegistry(dir);
+    const reg = testRegistry({ autoCreate: true });
     const ws = fakeWs();
     (await reg.get('sess-1')).attachSocket(ws, 'browser', 'user-m');
     expect(reg.closeUserSockets('user-x', new Set(['sess-1']), 4403)).toBe(0);

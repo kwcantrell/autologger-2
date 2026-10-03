@@ -10,6 +10,7 @@ import { join } from 'node:path';
 import type { BlobStore, Config } from '@autologger/ports';
 import { SessionHub } from '@autologger/session-core';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createSessionRow, testStorage } from './sessionRows';
 
 type GenerateModule = typeof import('@autologger/transcription/generateTranscript');
 type LockModule = typeof import('@autologger/transcription/transcriptGenerationLock');
@@ -60,7 +61,7 @@ afterEach(() => {
 
 describe('generateTranscriptWords remaps inside the replace transaction', () => {
   it('a no_speech result writes nothing and leaves the existing transcript unchanged', async () => {
-    const hub = await SessionHub.open(join(dir, 's1.db'));
+    const hub = await SessionHub.open(await createSessionRow('s1'), testStorage('s1'));
     await hub.insertTranscriptWord({ session_time: '00:00:01:00', speaker: '0', word: 'kept' });
     await hub.addAudioSegment({
       sessionId: 's1',

@@ -8,27 +8,24 @@
 // the server's ../fakeClock (moved here from @autologger/session-core,
 // session-tables D12).
 
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SessionHub } from '@autologger/session-core/SessionHub';
 import { makeFakeClock } from '../fakeClock';
+import { createSessionRow, DRIVER_SAFE_FAKE_TIMERS, testStorage } from './sessionRows';
 
 describe('lease expiry through the hub with a fake clock (task 5.3)', () => {
-  let dir: string;
-  beforeEach(() => {
-    vi.useFakeTimers();
-    dir = mkdtempSync(join(tmpdir(), 'autologger-clock-'));
+  let id: string;
+  beforeEach(async () => {
+    id = await createSessionRow();
+    vi.useFakeTimers(DRIVER_SAFE_FAKE_TIMERS);
   });
   afterEach(() => {
     vi.useRealTimers();
-    rmSync(dir, { recursive: true, force: true });
   });
 
   it('claim → advance past stale threshold → alarm frees the lease, no real time', async () => {
     const { clock, tick } = makeFakeClock();
-    const hub = await SessionHub.open(join(dir, 's1.db'), clock);
+    const hub = await SessionHub.open(id, testStorage(id), clock);
 
     expect(await hub.claimLease('tab-a')).toBe(true);
     expect((await hub.leaseStatus()).holder_client_id).toBe('tab-a');
@@ -49,7 +46,7 @@ describe('lease expiry through the hub with a fake clock (task 5.3)', () => {
 
   it('heartbeat keeps the lease alive across would-be expiry', async () => {
     const { clock, tick } = makeFakeClock();
-    const hub = await SessionHub.open(join(dir, 's1.db'), clock);
+    const hub = await SessionHub.open(id, testStorage(id), clock);
 
     await hub.claimLease('tab-a');
     tick(30_000);

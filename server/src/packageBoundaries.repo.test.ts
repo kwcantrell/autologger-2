@@ -1514,8 +1514,8 @@ const TEST_INFRASTRUCTURE_EXEMPTIONS: Record<string, readonly string[]> = {
     'src/test/pgDb.ts',
     'src/test/sessionSqlContract.ts',
   ],
-  // session-tables (slice 7b-1): fakeCore.ts moved to server/src/test/session/ with the DB-backed
-  // session tests.
+  // session-tables (slice 7b-1): fakeCore.ts left with the DB-backed session tests (replaced by
+  // server/src/test/session/boundCore.ts).
   '@autologger/session-core': ['src/test/fakeClock.ts'],
   '@autologger/log-import': ['src/test/fakeClock.ts'],
 };

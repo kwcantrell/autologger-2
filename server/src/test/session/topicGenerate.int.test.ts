@@ -14,11 +14,10 @@
 //      back to the full default set) would fail the negative assertion even
 //      though the positive one would still pass.
 
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Clock } from '@autologger/ports';
-import { SessionHubRegistry } from '@autologger/session-core';
+import type { SessionHubRegistry } from '@autologger/session-core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AI_CHAT_SYSTEM_PROMPT_BRIEF, stableSessionCwd } from '@autologger/ai-runtime/aiChatRunner';
 import { __resetAiMcpListenerForTests, AiMcpListener } from '@autologger/ai-runtime/aiMcpServer';
@@ -28,6 +27,7 @@ import {
   TOPIC_GENERATE_MESSAGE,
   TOPIC_GENERATE_SYSTEM_PROMPT,
 } from '@autologger/ai-runtime/topicGenerate';
+import { testRegistry } from './sessionRows';
 
 // ai-runtime-package (task 2.2) — a plain real-time clock literal, defined
 // locally rather than importing `server/src/node/systemClock` (composition-
@@ -38,20 +38,18 @@ const systemClock: Clock = { now: () => Date.now() };
 const SUCCESS_FIXTURE = join(AI_RUNTIME_FIXTURES_DIR, 'fake-claude.mjs');
 const ERROR_FIXTURE = join(AI_RUNTIME_FIXTURES_DIR, 'fake-claude-error.mjs');
 
-let dir: string;
 let registry: SessionHubRegistry;
 let sessionId: string;
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), 'topic-generate-'));
-  registry = new SessionHubRegistry(join(dir, 'sessions'));
+  // The sessions these tests name get their catalog rows on first use (session-tables D12).
+  registry = testRegistry({ autoCreate: true });
   sessionId = `sess-${Math.random().toString(36).slice(2)}`;
 });
 
 afterEach(async () => {
   await __resetAiMcpListenerForTests();
   await registry.closeAll();
-  rmSync(dir, { recursive: true, force: true });
   rmSync(stableSessionCwd(sessionId), { recursive: true, force: true });
 });
 

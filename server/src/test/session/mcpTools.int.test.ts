@@ -9,11 +9,8 @@
 // functions directly, so the assertions cover the actual wire-shaped tool
 // behavior a design turn would see.
 
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import type { DashboardConfig } from '@autologger/contract';
-import { SessionHubRegistry } from '@autologger/session-core';
+import type { SessionHubRegistry } from '@autologger/session-core';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -22,18 +19,17 @@ import {
   type BuildAggregateMcpServerDeps,
   buildAggregateMcpServer,
 } from '@autologger/ai-runtime/mcpTools';
+import { testRegistry } from './sessionRows';
 
-let dir: string;
 let registry: SessionHubRegistry;
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), 'ai-v2-mcp-'));
-  registry = new SessionHubRegistry(join(dir, 'sessions'));
+  // The sessions these tests name get their catalog rows on first use (session-tables D12).
+  registry = testRegistry({ autoCreate: true });
 });
 
 afterEach(async () => {
   await registry.closeAll();
-  rmSync(dir, { recursive: true, force: true });
 });
 
 type ToolResult = { content: Array<{ type: string; text: string }>; isError?: boolean };

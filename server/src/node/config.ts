@@ -7,7 +7,13 @@ import { isAbsolute, join } from 'node:path';
 import { createCatalog } from '@autologger/catalog';
 import { sweepStaleYoutubeImportTempDirs } from '@autologger/media-import';
 import { SessionHubRegistry } from '@autologger/session-core';
-import { acquireDataDirLock, BlobStore, KvStore, PostgresCatalogDb } from '@autologger/storage';
+import {
+  acquireDataDirLock,
+  BlobStore,
+  KvStore,
+  PostgresCatalogDb,
+  PostgresSessionDb,
+} from '@autologger/storage';
 import type { Bindings } from '../appEnv';
 import { GoogleIdentityVerifier } from '../auth/oauth_google';
 import { CATALOG_PG_VARS } from '../bootGuard';
@@ -29,7 +35,6 @@ export function createBindings(procEnv: Record<string, string | undefined>): {
   // retire-host-dev D2: one server per DATA_DIR. Taken before anything is created or swept; a
   // second server refuses here (DataDirLockedError). Released by close().
   const lock = acquireDataDirLock(dataDir);
-  mkdirSync(join(dataDir, 'sessions'), { recursive: true });
   // r2_key values already start with "audio/", so the blob root is a sibling dir:
   // bytes land at DATA_DIR/blobs/audio/<sid>/…  tmp stays OUTSIDE the root
   // so listings/reconciliation never see partial writes.
@@ -48,7 +53,11 @@ export function createBindings(procEnv: Record<string, string | undefined>): {
   });
   // catalog-roles D9/D10: KV runs as system:kv, the mirror as system:session-mirror.
   const kv = new KvStore(catalogDb.bindSystem('kv'), clock);
-  const registry = new SessionHubRegistry(join(dataDir, 'sessions'), clock);
+  // session-tables D2/D10: session content lives in the session tables, on the adapter's session
+  // connections, as system:session-hub until slice 7b-2 binds hub calls to their caller.
+  // DATA_DIR/sessions is no longer created or written (legacy files stay for slice 11).
+  const sessions = new PostgresSessionDb(catalogDb.bindSystem('session-hub'));
+  const registry = new SessionHubRegistry({ storage: (id) => sessions.forSession(id), clock });
   const sessionIndex = createCatalog(catalogDb).system('session-mirror').sessions;
   const mirror = new SessionMirror({
     snapshot: async (sid) => (await registry.get(sid)).ensure(),

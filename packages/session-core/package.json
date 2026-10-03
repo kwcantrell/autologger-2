@@ -16,11 +16,7 @@
     "@autologger/contract": "*",
     "@autologger/ports": "*"
   },
-  "peerDependencies": {
-    "better-sqlite3": "^12.11.1"
-  },
   "devDependencies": {
-    "better-sqlite3": "^12.11.1",
     "typescript": "^5.7.2",
     "vitest": "^4.1.10"
   }
