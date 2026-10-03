@@ -32,8 +32,8 @@ services:
       PGPORT: "5432"
       PGDATABASE: postgres
       JWT_EXP: "3600"
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?add POSTGRES_PASSWORD to this environment in Infisical with docker/scripts/supabase-keys.mjs (see docs/supabase.md)}
-      PGPASSWORD: ${POSTGRES_PASSWORD:?add POSTGRES_PASSWORD to this environment in Infisical with docker/scripts/supabase-keys.mjs (see docs/supabase.md)}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?add POSTGRES_PASSWORD to this environment's OpenBao secret with docker/scripts/supabase-keys.mjs (see docs/supabase.md)}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?add POSTGRES_PASSWORD to this environment's OpenBao secret with docker/scripts/supabase-keys.mjs (see docs/supabase.md)}
       # Used only by init SQL (roles.sql) on an empty volume (supabase-services D6).
       SUPABASE_ROLES_PASSWORD: ${SUPABASE_ROLES_PASSWORD:?add the Supabase keys with docker/scripts/supabase-keys.mjs (see docs/supabase.md)}
     volumes:
@@ -68,9 +68,9 @@ services:
       PGHOST: db
       PGUSER: postgres
       PGDATABASE: postgres
-      PGPASSWORD: ${POSTGRES_PASSWORD:?add POSTGRES_PASSWORD to this environment in Infisical with docker/scripts/supabase-keys.mjs (see docs/supabase.md)}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?add POSTGRES_PASSWORD to this environment's OpenBao secret with docker/scripts/supabase-keys.mjs (see docs/supabase.md)}
       # The catalog app role's password, set by migrate.sh after the migrations (catalog-pg-schema D4).
-      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?add APP_DB_PASSWORD to this environment in Infisical with docker/scripts/supabase-keys.mjs (see docs/supabase.md)}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?add APP_DB_PASSWORD to this environment's OpenBao secret with docker/scripts/supabase-keys.mjs (see docs/supabase.md)}
     volumes:
       - ./supabase/migrations:/migrations:ro
       - ./docker/supabase/migrate.sh:/migrate.sh:ro

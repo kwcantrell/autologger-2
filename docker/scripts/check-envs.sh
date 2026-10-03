@@ -8,8 +8,8 @@
 # Needs only docker (compose v2 plugin), jq and a POSIX sh (verified with dash). Every project is
 # resolved with `docker compose config --no-env-resolution` (never inlines env_file contents)
 # through docker/scripts/compose-env.sh, the same helper the Makefile uses (seam S2), with
-# placeholder --env-file files written to a temp dir. It NEVER contacts Infisical and NEVER reads,
-# opens or prints .env, .env.dev, .env.stage or any .env.infisical.* file. Failures are reported as "FAIL [invariant N] ..." on stderr; the exit
+# placeholder --env-file files written to a temp dir. It NEVER contacts OpenBao and NEVER reads,
+# opens or prints .env, .env.dev, .env.stage or any .env.openbao.* file. Failures are reported as "FAIL [invariant N] ..." on stderr; the exit
 # status is non-zero if any invariant failed.
 #
 # Run from anywhere; the script cd's to the repo root.
@@ -35,7 +35,7 @@ for k in $SB_SECRETS; do eval "$k=sbsentinel_${k}_z; export $k"; done
 SUPABASE_PORT=18790; export SUPABASE_PORT
 SB_SCOPE='{"POSTGRES_PASSWORD":["db","migrate","realtime"],"APP_DB_PASSWORD":{"dev":["app","migrate"],"stage":["api","migrate"],"prod":["api","migrate"]},"SUPABASE_ROLES_PASSWORD":["db","auth","rest","storage"],"JWT_SECRET":["auth","rest","realtime","storage"],"ANON_KEY":["supabase-gw","realtime","storage"],"SERVICE_ROLE_KEY":["supabase-gw","storage"],"SECRET_KEY_BASE":["realtime"],"REALTIME_DB_ENC_KEY":["realtime"]}'
 
-# The shared allowlist (infisical-secrets D2): every key a container may receive, one null
+# The shared allowlist (infisical-secrets D2; secrets now come from OpenBao, openbao-secrets): every key a container may receive, one null
 # passthrough per line. Those keys must not leak the caller's values into the resolved JSON, and
 # the D4 sentinel gets a fixed placeholder so a hand-typed-compose refusal never trips the check.
 ALLOWLIST=docker/secrets-env.yaml
@@ -147,9 +147,9 @@ check_name() { # json label expected
 }
 
 # Invariant 14 (dev, stage, prod): no service has an env_file.
-# Secrets reach compose from Infisical and containers through the shared allowlist.
+# Secrets reach compose from OpenBao and containers through the shared allowlist.
 check_no_env_file() { # json label
-  jq_ok 14 "$2: a service has an env_file (secrets come from Infisical through $ALLOWLIST)" "$1" \
+  jq_ok 14 "$2: a service has an env_file (secrets come from OpenBao through $ALLOWLIST)" "$1" \
     '[.services|to_entries[]|select((.value.env_file//[])|length>0)|.key]|length==0'
 }
 

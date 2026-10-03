@@ -7,7 +7,7 @@
 #   docker compose -f compose.yaml -f docker/compose.stage.yaml --env-file /dev/null ...
 # The three exported placeholders only satisfy compose.yaml's `${...:?}` guards, which compose
 # interpolates before merging; the overlay's own image, PUBLIC_BASE_URL etc. are what take effect.
-# Secrets come from Infisical `stage` through prod's allowlist (docker/secrets-env.yaml).
+# Secrets come from the OpenBao `stage` secret (kv/autologger/stage) through prod's allowlist (docker/secrets-env.yaml).
 #
 # Invariants a future reader must not "helpfully" undo:
 #   * Do NOT set TRUST_PROXY here: stage inherits prod's posture unchanged. REQUIRE_LOGIN no
