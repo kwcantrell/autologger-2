@@ -47,7 +47,7 @@ Every owner command prints names, statuses or exit codes only.
   `sh docker/scripts/check-envs.sh all` exits 0; `git diff supabase-migration --
   docker/scripts/test_check_envs.sh` is empty; `grep -c -i infisical docker/scripts/check-envs.sh`
   counts only `infisical-secrets` design citations.
-  Evidence: `sh docker/scripts/test_check_envs.sh` -> `test_check_envs: 47 passed, 0 failed`; `sh docker/scripts/check-envs.sh all` -> `check-envs: ok (all)`, exit 0; `git diff supabase-migration...HEAD -- docker/scripts/test_check_envs.sh | wc -l` -> `0` (three-dot: `supabase-migration` has moved to 5f9684e since the branch base e4e36e1); `grep -n -i infisical docker/scripts/check-envs.sh` -> lines 3 and 38 only, both `infisical-secrets D5`/`D2` design citations; header still says `16 invariants`; `git diff --diff-filter=A --name-only supabase-migration...HEAD -- '*.yaml'` -> nothing (no compose file added).
+  Evidence: `sh docker/scripts/test_check_envs.sh` -> `test_check_envs: 47 passed, 0 failed`; `sh docker/scripts/check-envs.sh all` -> `check-envs: ok (all)`, exit 0; `git diff supabase-migration...HEAD -- docker/scripts/test_check_envs.sh | wc -l` -> `0` (three-dot: `supabase-migration` has moved to 5f9684e since the branch base 5f9684e); `grep -n -i infisical docker/scripts/check-envs.sh` -> lines 3 and 38 only, both `infisical-secrets D5`/`D2` design citations; header still says `16 invariants`; `git diff --diff-filter=A --name-only supabase-migration...HEAD -- '*.yaml'` -> nothing (no compose file added).
 
 ## 3. Wrapper (`compose-run.mjs`)
 
@@ -124,7 +124,7 @@ Every owner command prints names, statuses or exit codes only.
   `.gitignore` still ignores `.env.openbao.*` (`.env.*`). Check:
   `git check-ignore .env.openbao.dev .env.openbao.prod` lists both;
   `git check-ignore docker/openbao-credentials.example` lists nothing.
-  Evidence: `git check-ignore .env.openbao.dev .env.openbao.prod` -> `.env.openbao.dev`, `.env.openbao.prod`; `git check-ignore docker/openbao-credentials.example` -> nothing, exit 1; `git log --follow --name-status -- docker/openbao-credentials.example` -> `R100 docker/infisical-credentials.example docker/openbao-credentials.example` (9583a91), then `M` (2f712b1).
+  Evidence: `git check-ignore .env.openbao.dev .env.openbao.prod` -> `.env.openbao.dev`, `.env.openbao.prod`; `git check-ignore docker/openbao-credentials.example` -> nothing, exit 1; `git log --follow --name-status -- docker/openbao-credentials.example` -> `R100 docker/infisical-credentials.example docker/openbao-credentials.example` (52ba589), then `M` (07f5da1).
 - [x] 6.2 Docs: `docs/openbao-secrets.md` (no database-engine section; AppRole policy `read` on
   `kv/data/autologger/<env>` only; the deleted-version refusal), README, `docs/supabase.md`,
   `docs/security.md`, `.cursor/rules/restart-server-yourself.mdc`, `server/.env.example`,
@@ -137,7 +137,7 @@ Every owner command prints names, statuses or exit codes only.
 - [x] 6.3 ADR 0025 (`docs/decisions/0025-openbao-replaces-infisical.md`) supersedes ADR 0021's
   "Secrets live in a shared Infisical instance" bullet (panel finding 7); ADR 0021's body is
   unchanged. Check: `git diff supabase-migration --stat -- docs/decisions` lists only the new file.
-  Evidence: `git diff supabase-migration...HEAD --stat -- docs/decisions` -> `docs/decisions/0025-openbao-replaces-infisical.md | 57 +++` only, `1 file changed` (ADR 0021 untouched; a two-dot diff also shows 0021 because `supabase-migration` moved to 5f9684e after the base e4e36e1).
+  Evidence: `git diff supabase-migration...HEAD --stat -- docs/decisions` -> `docs/decisions/0025-openbao-replaces-infisical.md | 57 +++` only, `1 file changed` (ADR 0021 untouched; a two-dot diff also shows 0021 because `supabase-migration` moved to 5f9684e after the base 5f9684e).
 - [x] 6.4 `openspec validate openbao-secrets --strict` and `scripts/check-change.sh --stage hook`
   pass.
   Evidence: `npx openspec validate openbao-secrets --strict` -> `Change 'openbao-secrets' is valid`; `GITHUB_BASE_REF=supabase-migration scripts/check-change.sh --stage hook` -> exit 0: `PASS  openspec`, `PASS  change  tier 2`, `PASS  evidence`, `PASS  commands  ran ['typecheck', 'test']`.
@@ -151,7 +151,7 @@ Every owner command prints names, statuses or exit codes only.
   gets `HTTP 403`; an AppRole login from outside the bound CIDR is refused; revoke-self answers
   `204` (A2); a stale `cas` PATCH is refused (A1); a soft-deleted scratch path reads as `404` with
   `metadata.deletion_time` (A3), and `supabase-keys.mjs` against it refuses with no write.
-  Evidence: fresh dev AppRole secret_id used from the dev VM -> `login ok; read dev 200; read stage 403; metadata dev 403; revoke-self 204`; same secret_id from the stage VM -> `login refused: source address "10.88.0.20" unauthorized by CIDR restrictions`; `PATCH cas=1 (current 2)` -> `400` (A1); child token `revoke-self` -> `204`, reuse -> `403` (A2); soft-deleted `kv/scratch-openbao-test/dev` read -> `HTTP 404 version 2 deletion_time_set True data_is_null True` (A3); `AUTOLOGGER_TEST_CRED_DIR=<scratch> node docker/scripts/supabase-keys.mjs dev` -> `... is deleted; restore it with bao kv undelete or bao kv rollback first (nothing was written)` rc=1, `current_version` 2 before and after; scratch path and test secret_ids removed
+  Evidence: fresh dev AppRole secret_id used from the dev VM -> `login ok; read dev 200; read stage 403; metadata dev 403; revoke-self 204`; same secret_id from the stage VM -> `login refused: source address "10.88.0.20" unauthorized by CIDR restrictions`; `PATCH cas=1 (current 2)` -> `400` (A1); child token `revoke-self` -> `204`, reuse -> `403` (A2); soft-deleted `kv/scratch-openbao-test/dev` read -> `HTTP 404 version 2 deletion_time_set True data_is_null True` (A3); `AUTOLOGGER_TEST=1 AUTOLOGGER_TEST_CRED_DIR=<scratch> node docker/scripts/supabase-keys.mjs dev` -> `... is deleted; restore it with bao kv undelete or bao kv rollback first (nothing was written)` rc=1, `current_version` 2 before and after; scratch path and test secret_ids removed
 - [x] 7.3 **(owner)** `make dev-psql` opens psql in the dev `db` through the wrapper (unchanged
   behaviour, now with OpenBao secrets).
   Evidence: dev VM `echo 'select current_user, count(*) from catalog.users;' | make dev-psql` -> `postgres | 1` `(1 row)`

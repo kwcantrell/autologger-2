@@ -15,3 +15,8 @@ Delta: reduced scope (database engine cut) and fixes for findings 1-7 · Reviewe
 
 - [x] [major] Task 6.4 "(after archive)" was a checkbox that cannot be ticked honestly before the PR, so the PR-stage `tasks` gate would fail and block merge. Evidence: scripts/lib/check_change.py:332-341 `check_tasks` FAILs on unticked boxes; STAGES["pr"] includes "tasks"; archive/2026-09-29-fix-dependency-vulns/tasks.md:42 keeps post-merge work unchecked. (scope) Resolved: moved to the tasks.md "Owner-owed after merge" prose section with no checkbox; proposal.md and panel finding 5 now point there; strict validate passes.
 - [x] [major] The finding-6 fix treated any non-empty `deletion_time` as deleted, but with KV v2 `delete_version_after` a live version carries a future `deletion_time` and reads 200, so both scripts would refuse a healthy secret. Evidence: `bao kv metadata put -delete-version-after=1h ...; compose-run.mjs dev 'compose version'` -> "is deleted or destroyed" rc=1 on a 200 read. (assumption tester) Resolved: `deletedState` counts a version as deleted only if `destroyed === true`, a 404 carries metadata, or `deletion_time` is at or before now (unparseable fails closed); a future one is live; destroyed suggests only `bao kv rollback`; failing tests first (73/73 now); design D1/D4, spec delta, proposal, tasks and docs updated.
+
+## Consistency read 2026-10-03
+Edits since approval: tasks.md (all 25 tasks ticked, 1.1-7.4, each with an Evidence line; no task text, Check or count changed; evidence hashes updated after the rebase onto 5f9684e), panel.md (finding 8 ticked with a Resolved note; finding text unchanged)
+Scope change: no
+No findings.
