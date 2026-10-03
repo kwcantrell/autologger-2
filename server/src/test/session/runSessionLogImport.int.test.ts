@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import type { CategoryRecord } from '@autologger/domain';
 import { SessionHub } from '@autologger/session-core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { runSessionLogImport } from './runSessionLogImport';
+import { runSessionLogImport } from '@autologger/log-import/runSessionLogImport';
 
 describe('runSessionLogImport', () => {
   it('returns a promise that rejects on an untimed transcript', async () => {

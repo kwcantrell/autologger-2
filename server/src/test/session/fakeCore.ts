@@ -4,14 +4,14 @@
 // through a TYPED fake `SessionRuntime` — no `as unknown as SessionCore`
 // casts, no SQL string-sniffing stubs. Domain-store unit tests build on this
 // so the seam stays substitutable and the fakes can't drift from the real
-// core's behavior. Non-exported test infrastructure inside
-// `@autologger/session-core` (persistence-package-extraction task 4.3) — not
-// part of the package's public barrel.
+// core's behavior. Test infrastructure, moved here from
+// `@autologger/session-core` with the DB-backed session tests (session-tables
+// D12).
 
 import Database from 'better-sqlite3';
-import { sqliteSessionSql } from '../asyncSessionSql';
-import type { AttachedSocket, SessionRuntime } from '../sessionCore';
-import { SessionCore } from '../sessionCore';
+import { sqliteSessionSql } from '@autologger/session-core/asyncSessionSql';
+import type { AttachedSocket, SessionRuntime } from '@autologger/session-core/sessionCore';
+import { SessionCore } from '@autologger/session-core/sessionCore';
 
 export interface FakeRuntime {
   core: SessionCore;

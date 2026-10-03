@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { AudioStore, audioRowToMeta } from './audioStore';
-import { fakeRuntime } from './test/fakeCore';
+import { AudioStore, audioRowToMeta } from '@autologger/session-core/audioStore';
+import { fakeRuntime } from './fakeCore';
 
 describe('audioRowToMeta', () => {
   it('maps a full segment row incl. parsed waveform peaks', () => {

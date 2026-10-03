@@ -3,9 +3,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { MAX_DASHBOARDS_PER_SESSION } from '@autologger/contract';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { DashboardBoundsError, DashboardValidationError } from './dashboardStore';
-import { EventStore } from './eventStore';
-import { SessionHub, SessionHubRegistry } from './SessionHub';
+import { DashboardBoundsError, DashboardValidationError } from '@autologger/session-core/dashboardStore';
+import { EventStore } from '@autologger/session-core/eventStore';
+import { SessionHub, SessionHubRegistry } from '@autologger/session-core/SessionHub';
 
 let dir: string;
 beforeEach(() => {

@@ -5,8 +5,8 @@
 
 import Database from 'better-sqlite3';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { SessionTxMisuseError, sqliteSessionSql } from './asyncSessionSql';
-import type { SessionSql } from './sessionCore';
+import { SessionTxMisuseError, sqliteSessionSql } from '@autologger/session-core/asyncSessionSql';
+import type { SessionSql } from '@autologger/session-core/sessionCore';
 
 const unhandled: unknown[] = [];
 const trap = (reason: unknown): void => {

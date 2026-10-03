@@ -3,10 +3,11 @@
 // the real SQLite adapter, so the transaction contract is the production one, and it can inject
 // two failures the real adapter only reaches in rare states: a transaction that rejects before its
 // body runs, and a failed ROLLBACK (reported through `rollbackFailed`, design D2, D6). Test
-// infrastructure, not part of the package's barrel.
+// infrastructure, moved here from @autologger/session-core with the DB-backed session tests
+// (session-tables D12).
 
-import type { SqliteSessionSql } from '../asyncSessionSql';
-import type { Row, SessionSql, SqlValue } from '../sessionCore';
+import type { SqliteSessionSql } from '@autologger/session-core/asyncSessionSql';
+import type { Row, SessionSql, SqlValue } from '@autologger/session-core/sessionCore';
 
 export interface SlowSql extends SqliteSessionSql {
   /** The next `count` root transactions reject with `error` before their body runs. */

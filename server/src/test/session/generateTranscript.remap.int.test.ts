@@ -1,17 +1,32 @@
 // The anchors read, the remap and the replace are one hub transaction (async-session-hub design
 // D7, S9): the zero-word guard's `no_speech` throws from inside the remap, so the replace rolls
 // back and the existing transcript stays as it was. The provider and the audio merge are mocked;
-// the hub is real.
+// the hub is real. Moved from @autologger/transcription (session-tables D12): the integration
+// setup file loads the app, and with it the modules under test, before this file's mocks
+// register, so they are imported afresh after them (`vi.resetModules`).
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { BlobStore, Config } from '@autologger/ports';
 import { SessionHub } from '@autologger/session-core';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { generateTranscriptWords, NO_SPEECH_DETAIL } from './generateTranscript';
-import { transcriptGenerationLock } from './transcriptGenerationLock';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('./audioMerge', () => ({
+type GenerateModule = typeof import('@autologger/transcription/generateTranscript');
+type LockModule = typeof import('@autologger/transcription/transcriptGenerationLock');
+let generateTranscriptWords: GenerateModule['generateTranscriptWords'];
+let NO_SPEECH_DETAIL: GenerateModule['NO_SPEECH_DETAIL'];
+let transcriptGenerationLock: LockModule['transcriptGenerationLock'];
+beforeAll(async () => {
+  vi.resetModules();
+  ({ generateTranscriptWords, NO_SPEECH_DETAIL } = await import(
+    '@autologger/transcription/generateTranscript'
+  ));
+  ({ transcriptGenerationLock } = await import(
+    '@autologger/transcription/transcriptGenerationLock'
+  ));
+});
+
+vi.mock('@autologger/transcription/audioMerge', () => ({
   mergeAudioSegments: vi.fn(async (paths: string[], scratch: string) => ({
     groups: [
       {
@@ -29,8 +44,8 @@ vi.mock('node:fs/promises', async (importOriginal) => ({
   ...(await importOriginal<typeof import('node:fs/promises')>()),
   stat: vi.fn(async () => ({ size: 1 })),
 }));
-vi.mock('./deepgram', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('./deepgram')>()),
+vi.mock('@autologger/transcription/deepgram', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@autologger/transcription/deepgram')>()),
   transcribeGroup: vi.fn(async () => ({ words: [], paragraphs: [], sentiments: [] })),
 }));
 

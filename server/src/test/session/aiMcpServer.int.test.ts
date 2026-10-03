@@ -6,13 +6,7 @@
 
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { SessionHub, SessionHubRegistry, sqliteSessionSql } from '@autologger/session-core';
-import { slowSql } from '@autologger/session-core/test/slowSql';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { join } from 'node:path';
 import {
   __resetAiMcpListenerForTests,
   type AiGenerationRunContext,
@@ -23,7 +17,13 @@ import {
   GENERATION_LINE_MAX_WORDS,
   GENERATION_PAGE_SIZE_WORDS,
   getAiMcpListener,
-} from './aiMcpServer';
+} from '@autologger/ai-runtime/aiMcpServer';
+import { AI_RUNTIME_FIXTURES_DIR } from '@autologger/ai-runtime/fixturesDir';
+import { SessionHub, SessionHubRegistry, sqliteSessionSql } from '@autologger/session-core';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { slowSql } from './slowSql';
 
 let dir: string;
 let registry: SessionHubRegistry;
@@ -85,10 +85,10 @@ describe('AiMcpListener — start memo and the process-wide singleton', () => {
     try {
       const a = fresh.start();
       const b = fresh.start();
-      expect(a).toBe(b);
+      expect(a === b).toBe(true);
       await Promise.all([a, b]);
       expect(fresh.address?.address).toBe('127.0.0.1');
-      expect(fresh.start()).toBe(a);
+      expect(fresh.start() === a).toBe(true);
     } finally {
       await fresh.close();
     }
@@ -100,7 +100,7 @@ describe('AiMcpListener — start memo and the process-wide singleton', () => {
     try {
       const p1 = getAiMcpListener(registry);
       const p2 = getAiMcpListener(registry);
-      expect(p1).toBe(p2);
+      expect(p1 === p2).toBe(true);
       const [l1, l2] = await Promise.all([p1, p2]);
       expect(l1).toBe(l2);
       expect(l1.address).not.toBeNull();
@@ -1293,7 +1293,7 @@ function stripComments(src: string): string {
 }
 
 describe('create_event handler — the cap is reserved before the first await (async-session-hub D8 / delta spec "The create_event cap is reserved before any await")', () => {
-  const AI_MCP_SERVER_SRC = join(dirname(fileURLToPath(import.meta.url)), 'aiMcpServer.ts');
+  const AI_MCP_SERVER_SRC = join(AI_RUNTIME_FIXTURES_DIR, '../src/aiMcpServer.ts');
 
   it('stripComments removes a comment containing the word "await" (mutation check — proves the predicate is not vacuous)', async () => {
     const sample = 'const x = 1; // never held across an await\nconst y = 2;';

@@ -10,10 +10,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type Database from 'better-sqlite3';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { sqliteSessionSql } from './asyncSessionSql';
-import { LeaseStore } from './leaseStore';
-import { SessionHub } from './SessionHub';
-import { type SlowSql, slowSql } from './test/slowSql';
+import { sqliteSessionSql } from '@autologger/session-core/asyncSessionSql';
+import { LeaseStore } from '@autologger/session-core/leaseStore';
+import { SessionHub } from '@autologger/session-core/SessionHub';
+import { type SlowSql, slowSql } from './slowSql';
 
 const unhandled: unknown[] = [];
 const trap = (reason: unknown): void => {

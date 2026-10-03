@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { SessionCore, TimecodeCtx } from './sessionCore';
-import { fakeRuntime } from './test/fakeCore';
-import { TransportStore } from './transportStore';
+import type { SessionCore, TimecodeCtx } from '@autologger/session-core/sessionCore';
+import { fakeRuntime } from './fakeCore';
+import { TransportStore } from '@autologger/session-core/transportStore';
 
 interface TRow {
   is_rolling: boolean;

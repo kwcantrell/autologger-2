@@ -5,15 +5,15 @@
 // under test. The KV-TTL and presence-freshness suites that used to live here
 // moved beside the modules they test (storage's kvStore.pg.test.ts,
 // node/presence.test.ts — code-health-tail task 5.2); the shared helper is
-// ./test/fakeClock (this package's own copy, per the duplicate-per-package
-// policy — persistence-package-extraction task 4.3).
+// the server's ../fakeClock (moved here from @autologger/session-core,
+// session-tables D12).
 
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { SessionHub } from './SessionHub';
-import { makeFakeClock } from './test/fakeClock';
+import { SessionHub } from '@autologger/session-core/SessionHub';
+import { makeFakeClock } from '../fakeClock';
 
 describe('lease expiry through the hub with a fake clock (task 5.3)', () => {
   let dir: string;

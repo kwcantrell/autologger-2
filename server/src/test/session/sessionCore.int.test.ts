@@ -1,14 +1,14 @@
 // SessionCore against a fake SessionRuntime — proves the seam is substitutable:
 // in-memory SQL (no database file), fake sockets, captured alarms. Domain
 // stores run unmodified on the fake substrate. The typed fake runtime this
-// file established now lives in ./test/fakeCore (code-health-tail task 5.2;
-// relocated into this package at persistence-package-extraction task 4.3) so
-// the store unit tests share it.
+// file established now lives in ./fakeCore (code-health-tail task 5.2; moved
+// to the server with the DB-backed session tests, session-tables D12) so the
+// store tests share it.
 
+import { EventStore } from '@autologger/session-core/eventStore';
+import { TopicStore } from '@autologger/session-core/topicStore';
 import { describe, expect, it } from 'vitest';
-import { EventStore } from './eventStore';
-import { fakeRuntime } from './test/fakeCore';
-import { TopicStore } from './topicStore';
+import { fakeRuntime } from './fakeCore';
 
 describe('SessionCore on a fake runtime', () => {
   it('initSchema is idempotent and seeds the revision counter', async () => {

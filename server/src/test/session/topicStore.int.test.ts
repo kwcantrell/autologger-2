@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { fakeRuntime } from './test/fakeCore';
-import { TopicStore, topicRow } from './topicStore';
+import { fakeRuntime } from './fakeCore';
+import { TopicStore, topicRow } from '@autologger/session-core/topicStore';
 
 describe('topicRow', () => {
   it('maps a full topic row', () => {

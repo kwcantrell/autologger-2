@@ -20,14 +20,14 @@ import { join } from 'node:path';
 import type { Clock } from '@autologger/ports';
 import { SessionHubRegistry } from '@autologger/session-core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { AI_CHAT_SYSTEM_PROMPT_BRIEF, stableSessionCwd } from './aiChatRunner';
-import { __resetAiMcpListenerForTests, AiMcpListener } from './aiMcpServer';
-import { AI_RUNTIME_FIXTURES_DIR } from './fixturesDir';
+import { AI_CHAT_SYSTEM_PROMPT_BRIEF, stableSessionCwd } from '@autologger/ai-runtime/aiChatRunner';
+import { __resetAiMcpListenerForTests, AiMcpListener } from '@autologger/ai-runtime/aiMcpServer';
+import { AI_RUNTIME_FIXTURES_DIR } from '@autologger/ai-runtime/fixturesDir';
 import {
   generateTopicsTurn,
   TOPIC_GENERATE_MESSAGE,
   TOPIC_GENERATE_SYSTEM_PROMPT,
-} from './topicGenerate';
+} from '@autologger/ai-runtime/topicGenerate';
 
 // ai-runtime-package (task 2.2) — a plain real-time clock literal, defined
 // locally rather than importing `server/src/node/systemClock` (composition-

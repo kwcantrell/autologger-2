@@ -12,11 +12,11 @@ import { join } from 'node:path';
 import type { EventRpc } from '@autologger/domain';
 import type Database from 'better-sqlite3';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { SessionHubClosedError, SessionTxMisuseError, sqliteSessionSql } from './asyncSessionSql';
-import type { EventStore } from './eventStore';
-import { SessionHub, SessionHubRegistry } from './SessionHub';
-import type { SessionCore } from './sessionCore';
-import { type SlowSql, slowSql } from './test/slowSql';
+import { SessionHubClosedError, SessionTxMisuseError, sqliteSessionSql } from '@autologger/session-core/asyncSessionSql';
+import type { EventStore } from '@autologger/session-core/eventStore';
+import { SessionHub, SessionHubRegistry } from '@autologger/session-core/SessionHub';
+import type { SessionCore } from '@autologger/session-core/sessionCore';
+import { type SlowSql, slowSql } from './slowSql';
 
 const unhandled: unknown[] = [];
 const trap = (reason: unknown): void => {

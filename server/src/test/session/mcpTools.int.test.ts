@@ -21,7 +21,7 @@ import {
   AGGREGATE_TOOL_NAMES,
   type BuildAggregateMcpServerDeps,
   buildAggregateMcpServer,
-} from './mcpTools';
+} from '@autologger/ai-runtime/mcpTools';
 
 let dir: string;
 let registry: SessionHubRegistry;

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { LeaseStore } from './leaseStore';
-import { fakeRuntime } from './test/fakeCore';
+import { LeaseStore } from '@autologger/session-core/leaseStore';
+import { fakeRuntime } from './fakeCore';
 
 // A REAL core over the shared typed fake runtime (code-health-tail task 5.2)
 // — replaces this file's hand-rolled `as unknown as SessionCore` cast fake.

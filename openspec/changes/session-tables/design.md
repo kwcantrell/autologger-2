@@ -602,6 +602,11 @@ expected value is a stop:
   asserts that a call on another session's hub from inside the transaction also rejects promptly,
   with the adapter's misuse error, and that the outer transaction then rolls back (panel finding 7:
   the adapter refuses any adapter call inside an open transaction, A12; production never nests).
+- the promise-hygiene repo test (post-approval, task 4.1 stop; no scope change). Its "session-core
+  has more than 10 test files" floor moves to the moved files: at least 10 files under
+  `server/src/test/session/`, scanned by the server program. The three promise-identity checks in
+  the moved `aiMcpServer` test (`expect(a).toBe(b)` on two promises) become
+  `expect(a === b).toBe(true)`. The checker itself is unchanged.
 
 **New tests** (written first, red where today's code allows):
 - **cross-process serialization:** two registries over two adapter instances (two processes)

@@ -499,6 +499,10 @@ export async function reset(): Promise<void> {
       (sf) => sf.fileName.startsWith(join(SERVER, 'src')) && isTest(sf.fileName),
     );
     expect(tests.length).toBeGreaterThan(30);
+    // session-tables D12: the DB-backed session tests moved to server/src/test/session/ and are
+    // scanned here.
+    const moved = tests.filter((sf) => sf.fileName.startsWith(join(SERVER, 'src/test/session/')));
+    expect(moved.length).toBeGreaterThanOrEqual(10);
     expect(findUnawaitedExpect(program, tests)).toEqual([]);
     // The server program reaches no package test, so session-core's tests get their own program.
     const core = programFor(join(PACKAGES, 'session-core', 'tsconfig.json'));
@@ -508,7 +512,8 @@ export async function reset(): Promise<void> {
         (sf) =>
           sf.fileName.startsWith(join(PACKAGES, 'session-core', 'src')) && isTest(sf.fileName),
       );
-    expect(coreTests.length).toBeGreaterThan(10);
+    // session-tables D12: only the pure session-core tests stay in the package.
+    expect(coreTests.length).toBeGreaterThanOrEqual(1);
     expect(findUnawaitedExpect(core, coreTests)).toEqual([]);
   }, 120_000);
 });

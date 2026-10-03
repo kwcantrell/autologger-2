@@ -5,8 +5,8 @@ import {
   isoZ,
 } from '@autologger/domain';
 import { describe, expect, it } from 'vitest';
-import { EventStore, eventRowToRpc } from './eventStore';
-import { fakeRuntime } from './test/fakeCore';
+import { EventStore, eventRowToRpc } from '@autologger/session-core/eventStore';
+import { fakeRuntime } from './fakeCore';
 
 describe('eventRowToRpc', () => {
   it('maps a row with a timecode', () => {

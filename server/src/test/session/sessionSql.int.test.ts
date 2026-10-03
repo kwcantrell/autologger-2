@@ -4,7 +4,7 @@
 
 import Database from 'better-sqlite3';
 import { describe, expect, it } from 'vitest';
-import { sqliteSessionSql } from './asyncSessionSql';
+import { sqliteSessionSql } from '@autologger/session-core/asyncSessionSql';
 
 function sql() {
   return sqliteSessionSql(new Database(':memory:'));
