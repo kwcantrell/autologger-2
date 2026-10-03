@@ -112,8 +112,15 @@ inside a route transaction joins it.
 
 The `Catalog` type SHALL expose its domain stores (`shows`, `studios`, `auth`,
 `sessions`, `profile`) as its API surface, plus two lifecycle members: `init()`, which loads the
-studio registry, and `tx()`, which runs a body on a `Catalog` bound to one catalog transaction. The flat delegate methods that forward to
-those stores SHALL be removed, and callers SHALL reach behavior through the store fields.
+studio registry, and `tx()`, which runs a body on a `Catalog` bound to one catalog transaction,
+and three binding members (core-ports-architecture "Every catalog call is bound to a caller"):
+`forUser(userId)`, which returns a catalog whose statements run for that signed-in user,
+`system(reason)`, which returns a catalog whose statements run for the named system task, and
+`unbound()`, which returns a catalog whose every statement is refused. Each binding member SHALL
+return a catalog that carries this catalog's studio-registry snapshot without a query. A catalog
+from `tx()` SHALL keep the binding of the catalog it was called on. The flat delegate methods that
+forward to those stores SHALL be removed, and callers SHALL reach behavior through the store
+fields.
 
 #### Scenario: Delegate shim removed
 - **WHEN** the catalog facade is inspected
@@ -314,7 +321,8 @@ seam.
 ### Requirement: Port types are interfaces in a dedicated package with app-level composition
 
 The injectable port types (`Clock`, `IdentityVerifier`, `BlobStore`, `KvStore`,
-`PresenceRegistry`, `CatalogDb`) and the `Config` type SHALL live in
+`PresenceRegistry`, `CatalogDb`, and `CatalogRoot`, the unbound catalog adapter that hands out
+bound `CatalogDb` handles) and the `Config` type SHALL live in
 `@autologger/ports` as **interfaces/types only** — the package SHALL contain no runtime
 implementations (`systemClock` lives with the composition root) and SHALL NOT import
 from `server/src`, directly or transitively. Concrete implementations SHALL declare
@@ -334,14 +342,14 @@ preserved.
 
 #### Scenario: Ports package is interface-only and closed
 - **WHEN** `@autologger/ports` is inspected
-- **THEN** it contains no runtime implementations and no import that resolves into `server/src`, and each of the six port types is an interface or type declaration
+- **THEN** it contains no runtime implementations and no import that resolves into `server/src`, and each of the seven port types is an interface or type declaration
 
 #### Scenario: God-barrel stays retired and the concrete-class allowance is gone
 - **WHEN** the server source is searched for imports of `server/src/types` and `appEnv.ts` is inspected
 - **THEN** no `types.ts` import remains, `server/src/types.ts` does not exist, and `appEnv.ts` names no concrete class — its persistence types are the facade interfaces exported by `@autologger/session-core` and `@autologger/catalog`
 
 #### Scenario: Implementations conform to the package interfaces
-- **WHEN** the concrete `BlobStore`, `KvStore`, `PresenceRegistry`, and `CatalogDb` classes are inspected
+- **WHEN** the concrete `BlobStore`, `KvStore`, `PresenceRegistry`, `CatalogRoot` and bound `CatalogDb` classes are inspected
 - **THEN** each declares `implements` against its `@autologger/ports` interface, and `auth/identity.ts` imports the `KvStore` interface from the package (not from `node/`)
 
 #### Scenario: WebSocket upgrades still complete after the type move
@@ -368,9 +376,10 @@ contravariantly and drift between class and interface fails `tsc --noEmit`.
 Concrete classes SHALL declare `implements` against their facade interfaces. Because
 `Catalog` is constructed **per request** (in `middleware/auth.ts`, with `init()`
 refreshing the studio registry once per request before registry reads),
-`@autologger/catalog` SHALL export a factory (`createCatalog(db: CatalogDb)` returning
-the facade type) as the sanctioned construction path outside the composition root; the
-per-request construct-then-`init()` lifecycle SHALL be preserved exactly. Outside the
+`@autologger/catalog` SHALL export a factory (`createCatalog(root: CatalogRoot)` returning
+the facade type, unbound until `forUser` or `system` binds it) as the sanctioned construction
+path outside the composition root; the per-request construct-then-`init()` lifecycle SHALL be
+preserved, with `init()` run on the request's system-bound catalog before the caller is resolved. Outside the
 persistence packages themselves, production code SHALL otherwise reference the facade
 interfaces only: the composition root (`server/src/node/config.ts`) is the sole production
 module that names the concrete classes.
@@ -439,7 +448,7 @@ fire on compliant code.
 
 #### Scenario: Per-request catalog lifecycle preserved
 - **WHEN** requests are served after the factory change
-- **THEN** each request constructs a fresh catalog facade via `createCatalog` and runs `init()` before registry reads, exactly as `new Catalog(db)` + `init()` did — request-scoped studio-registry snapshot isolation is unchanged
+- **THEN** each request constructs a fresh catalog facade via `createCatalog` and runs `init()` before registry reads, and the user-bound (or unbound) catalog the routes receive carries that snapshot — request-scoped studio-registry snapshot isolation is unchanged
 
 #### Scenario: Facade conformance is compiler-checked
 - **WHEN** a concrete class member drifts from its facade signature — including a **narrowed parameter type** on a facade member
@@ -693,6 +702,24 @@ A Postgres implementation of the catalog port SHALL meet "The catalog transactio
 proven by the catalog transaction contract test suite. That suite SHALL include a
 statement the body starts without awaiting: if it fails, the transaction fails.
 
+Bindings (ADR 0021 slice 6b-1):
+- the adapter itself SHALL offer no statement or transaction method; it SHALL hand out handles
+  bound to a user (`catalog_user`, with that user's id) or to a named system task
+  (`catalog_system`, with no user id), which share its connections;
+- binding to an empty or non-string user id, or to a reason that is not a short lowercase
+  identifier (`[a-z][a-z0-9-]*`), SHALL throw at once;
+- every transaction of a bound handle SHALL, right after it begins and before the body's first
+  statement, switch to the handle's role and set its user id (or clear it) for that transaction
+  only, and SHALL do so again on every run after a retry;
+- the role and user id SHALL be sent pipelined with the transaction's begin, without waiting for
+  the begin's reply, so a binding adds no round trip;
+- the adapter SHALL NOT change the role or the user id for longer than one transaction, and a
+  connection SHALL serve another call only after its transaction was confirmed committed or
+  rolled back, so no role or user id carries over to the next caller;
+- a permission error from the database (`42501`) SHALL reach the caller as a distinct forbidden
+  error that names the table and the binding's kind and reason (never the user id), is never
+  retried, and fails a transaction it occurs in.
+
 Statements:
 - it SHALL accept the `?` placeholders the catalog stores use, and leave quoted text and comments
   unchanged;
@@ -702,7 +729,9 @@ Statements:
   invalid-text error before it is sent; inside a transaction, that refusal fails the transaction.
 
 Transactions:
-- every transaction SHALL run at the `SERIALIZABLE` isolation level;
+- every transaction started with `tx()` SHALL run at the `SERIALIZABLE` isolation level (a
+  statement outside one runs as a short `READ COMMITTED` transaction, core-ports-architecture
+  "Root catalog statements are time-bounded");
 - a transaction that fails on a serialization failure or a deadlock SHALL roll back and run its
   body again, at most five runs in total. The caller SHALL then receive the last serialization
   error;
@@ -725,6 +754,9 @@ Time:
 - no step SHALL wait on the server without a bound.
 
 Connections:
+- transactions and root statements SHALL each run on adapter-owned single-connection clients
+  (the transaction connections and the root connections), never on a connection lent out by a
+  shared pool;
 - a connection SHALL serve another transaction only after its previous transaction was confirmed
   committed or rolled back, with no cancel pending;
 - any other connection SHALL be closed and replaced;
@@ -741,7 +773,7 @@ Closing:
   `close()` SHALL resolve once the adapter's connections have closed.
 
 #### Scenario: The shared contract holds on Postgres
-- **WHEN** the catalog transaction contract suite runs against the Postgres adapter, as the app's least-privilege role
+- **WHEN** the catalog transaction contract suite runs against a user-bound and against a system-bound handle of the Postgres adapter, logged in as the app's least-privilege role
 - **THEN** every case passes
 
 #### Scenario: A dropped failing statement fails the transaction
@@ -796,6 +828,31 @@ Closing:
 - **WHEN** a statement binds a string containing NUL, at the root or inside a transaction
 - **THEN** the call rejects with the invalid-text error, no statement is sent for it, and a transaction it was part of writes nothing
 
+#### Scenario: A bound handle runs as its role
+- **WHEN** a handle bound to user `u-1` and a handle bound to the system task `test` each select
+  `current_user` and `catalog.app_user_id()`, once outside a transaction and once inside one
+- **THEN** the user handle reads `catalog_user` and `u-1` both times, and the system handle reads
+  `catalog_system` and null both times
+
+#### Scenario: A retry re-applies the role
+- **WHEN** a user-bound transaction hits a serialization failure on its first run and commits on
+  its second
+- **THEN** the second run also reads `catalog_user` and the user's id
+
+#### Scenario: No role carries over to the next caller
+- **WHEN** user-bound and system-bound transactions and statements commit, roll back and fail on
+  the adapter's connections, and then each connection is inspected directly
+- **THEN** every connection reports `current_user` `autologger_app` and no user id
+
+#### Scenario: A permission error is a distinct error
+- **WHEN** a bound statement is refused by the database with `42501`
+- **THEN** the caller receives the forbidden error naming the table and the binding's kind and
+  reason, not the user id, and a transaction it was part of rolls back without a retry
+
+#### Scenario: A malformed binding is refused
+- **WHEN** a handle is bound to an empty user id, or to the reason `Not A Reason`
+- **THEN** the binding throws, and no connection is used
+
 ### Requirement: Key/value compare-and-set
 The key/value port SHALL offer `replaceIf(key, expected, next)`. In one statement, it replaces the
 value of an unexpired key only if the stored value equals `expected`, keeps its expiry, and reports
@@ -806,17 +863,122 @@ whether it replaced.
 - **THEN** `replaceIf` reports false and the other writer's value remains
 
 ### Requirement: Root catalog statements are time-bounded
-A catalog statement outside a transaction SHALL reject with a timeout error when it hasn't
-completed within the adapter's root deadline (5 seconds by default), including any time spent
-waiting for a pooled connection. Each root connection SHALL carry one statement at a time.
-- A statement that times out before it was sent SHALL be withdrawn and SHALL never run.
-- For one already sent, the adapter SHALL NOT send a cancel, because a late cancel could reach
-  another caller's statement on that pooled connection; the role's statement timeout ends it on
-  the server. Such a write may still apply after the caller's timeout, so its outcome is unknown,
-  and the adapter SHALL NOT retry it.
-- The timeout error SHALL expose when the statement has finished on the server, so a caller that
-  orders its writes can wait for it.
+A catalog statement outside a transaction SHALL run as its own short transaction at the
+`READ COMMITTED` isolation level, on one of the adapter's root connections (single-connection
+clients it owns, separate from the transaction connections): it begins, switches to the
+handle's role and user id (core-ports-architecture "The Postgres catalog adapter", Bindings),
+runs the one statement, and commits, or rolls back if the statement fails. The begin, the role
+and user id, the statement and the commit SHALL be sent pipelined, without waiting for a reply in
+between. It SHALL NOT be retried, and it SHALL NOT be run at `SERIALIZABLE`.
+
+It SHALL resolve only after the server confirms the commit. A commit that fails (a deferred
+constraint, for example) SHALL reject the call with that error, and none of its write persists.
+
+It SHALL reject with a timeout error when it hasn't completed within the adapter's root deadline
+(5 seconds by default), including any time spent waiting for a root connection. Each root
+connection SHALL carry one such transaction at a time.
+- A statement that times out before its transaction was sent SHALL be withdrawn and SHALL never
+  run.
+- For one already sent, the adapter SHALL NOT send a cancel; the role's statement and
+  idle-in-transaction timeouts end it on the server. Such a write may still apply after the
+  caller's timeout, so its outcome is unknown, and the adapter SHALL NOT retry it.
+- The timeout error SHALL expose when the statement's transaction has ended on the server (or its
+  connection was closed), so a caller that orders its writes can wait for it.
+- A root connection SHALL serve another call only after its transaction was confirmed committed
+  or rolled back. When its connection is lost, or its commit's reply does not arrive within
+  the adapter's bound (the root deadline, or for a call already timed out, the role's timeouts
+  plus a grace), the call SHALL reject, nothing more SHALL be sent on that connection, the connection
+  SHALL be closed and replaced, and the process SHALL keep running.
 
 #### Scenario: A paused database
 - **WHEN** a root statement is sent while the database does not answer
 - **THEN** the caller receives the timeout error within about the root deadline, and later statements succeed once the database answers
+
+#### Scenario: A root statement is one short transaction
+- **WHEN** a bound handle runs one statement outside a transaction, once successfully and once
+  with a statement that fails with a unique violation
+- **THEN** each runs inside its own `READ COMMITTED` transaction under the handle's role, the
+  first commits, the second rolls back and rejects with the unique violation after one run, and
+  neither is retried
+
+#### Scenario: A root statement resolves only after its commit
+- **WHEN** a bound handle runs, outside a transaction, an insert whose deferred foreign key fails
+  at commit
+- **THEN** the call rejects with the foreign-key violation, and the row does not exist
+
+#### Scenario: A lost root connection is replaced
+- **WHEN** the server connection of a root statement's transaction is terminated while the
+  statement runs, and another root statement follows
+- **THEN** the first call rejects, the process keeps running, the connection is replaced, and the
+  second call succeeds on a fresh connection outside any transaction
+
+#### Scenario: A root commit with no confirmation never reaches another caller
+- **WHEN** a root statement's commit fails, or its reply never arrives, and later root statements
+  run
+- **THEN** the first call rejects, its connection is closed and replaced, and no later statement
+  runs inside its transaction or under its role
+
+### Requirement: Every catalog call is bound to a caller
+
+Every catalog statement the server sends SHALL run for a caller: a signed-in user (the user
+binding) or a named system task (the system binding). A catalog with neither SHALL refuse every
+statement and transaction, including `init()`, with a distinct unbound-catalog error, before
+anything is sent; reaching it is a programming error, which the server answers with its generic
+`500` and an error log line naming the error. The database refuses the app's login role on every
+catalog table (catalog-database "The app connects as a least-privilege role"), so a path that
+bypasses the adapter's bindings fails closed too.
+
+**Request binding.** The authentication middleware SHALL resolve the caller (the session lookup
+and the user read) and load the request's studio registry on a catalog bound to the system task
+`auth-resolve`. After resolution, the catalog the routes receive SHALL be bound to the signed-in
+user, or unbound when there is none, and SHALL carry the registry snapshot loaded during
+resolution. A route that serves a request with no user and needs the catalog SHALL ask for a
+system binding explicitly.
+
+**One binding per transaction.** A transaction SHALL run under the binding of the catalog that
+started it, and a body SHALL NOT switch bindings: a statement or transaction on any other handle
+while a transaction is open is refused (core-ports-architecture "The catalog transaction
+contract").
+
+**System reasons are reviewed.** Every system binding in production code SHALL name its reason
+as a string literal. A repository test SHALL list every system binding in the production sources
+of `server/src` and the packages with its file and reason, and SHALL fail when the list differs
+from a reviewed allowlist in either direction (a new call site, a new reason, a reason moved to
+another file, or an allowlist entry no longer used), or when a system binding's reason is not a
+string literal. The user binding SHALL be created only by the authentication middleware. Tests
+are exempt.
+
+The allowlisted reasons in this slice are: `auth-resolve`, `boot-wait`, `kv` (login sessions,
+OAuth state, the Companion's last command and the expiry purges), `session-mirror`,
+`log-import-job`, `oauth-callback`, `bootstrap-claim`, `support-plane` (`/api/admin/*`),
+`companion-token` (token-only Companion calls), `access-loss-check`, `team-invite` and
+`team-create`.
+
+#### Scenario: A signed-in request runs as its user
+- **WHEN** a signed-in user loads `GET /api/profile`
+- **THEN** the session lookup and the user read run under the system binding (`kv`,
+  `auth-resolve`), and every statement the route itself sends runs as `catalog_user` with that
+  user's id
+
+#### Scenario: A request with no user fails closed
+- **WHEN** a request with no signed-in user reaches a handler that queries the request catalog
+  without asking for a system binding
+- **THEN** the response is `500` `{"detail": "Internal Server Error"}`, the log names the
+  unbound-catalog error, and no statement reaches the database
+
+#### Scenario: Unchanged behaviour
+- **WHEN** the server's unit, integration and `pg` suites run after the bindings are introduced
+- **THEN** they pass with no change to any HTTP status, body or WebSocket message they assert
+
+#### Scenario: A new system call site needs review
+- **WHEN** a production file gains a system binding whose file and reason are not on the
+  allowlist, or uses a reason held in a variable
+- **THEN** the repository test fails and names the file and the reason
+
+#### Scenario: A stale allowlist entry fails
+- **WHEN** an allowlisted system binding is removed from the code but not from the allowlist
+- **THEN** the repository test fails and names the stale entry
+
+#### Scenario: A system handle inside a user transaction is refused
+- **WHEN** a body of a user-bound transaction issues a statement through a system-bound catalog
+- **THEN** the call rejects with the misuse error and the transaction rolls back
