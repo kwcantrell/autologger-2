@@ -27,6 +27,7 @@ export interface StudioRegistryFacade {
   insertStudioDefinition: (sid: string, disp: string) => Promise<void>;
   validateNewStudio: (studioId: string, displayName: string) => { sid: string; disp: string };
   studioExists: (studioId: string) => Promise<boolean>;
+  studioExistsAnywhere: (studioId: string) => Promise<boolean>;
   adminDeleteStudio: (studioId: string) => Promise<void>;
   getSetting: (key: string, def?: string | null) => Promise<string | null>;
   isKnownStudio: (studioId: string) => boolean;
@@ -218,6 +219,15 @@ export class StudioRegistry implements StudioRegistryFacade {
    * inside their transaction (catalog-concurrency-hazards D3). */
   async studioExists(studioId: string): Promise<boolean> {
     return (await this.db.first<Row>('SELECT 1 FROM studio_definitions WHERE id = ?', studioId)) !== null;
+  }
+
+  /** Whether a team definition with this id exists at all, whatever the caller's memberships
+   * (catalog-policies D6): `catalog.studio_exists`, a definer helper executable on a user binding
+   * only. `POST /api/shows` asks it when the policy-scoped `studioExists` is false, so a foreign
+   * team stays `404` and a missing one `400`. */
+  async studioExistsAnywhere(studioId: string): Promise<boolean> {
+    const r = await this.db.first<{ e: boolean }>('SELECT catalog.studio_exists(?) AS e', studioId);
+    return r?.e === true;
   }
 
   /** Insert a validated team's definition on this registry's handle (inside the caller's

@@ -134,6 +134,7 @@ export function showCategoriesApiShape(rawCategories: unknown): Array<Record<str
  * that drifts (e.g. a narrowed parameter type) fails `tsc --noEmit`. */
 export interface ShowsStoreFacade {
   getShowRow: (showId: string) => Promise<Row | null>;
+  showExistsAnywhere: (showId: string) => Promise<boolean>;
   listShowsForStudio: (studioId: string) => Promise<Row[]>;
   createShow: (opts: {
     studioId: string;
@@ -171,6 +172,14 @@ export class ShowsStore implements ShowsStoreFacade {
 
   async getShowRow(showId: string): Promise<Row | null> {
     return this.db.first<Row>('SELECT * FROM shows WHERE id = ?', showId);
+  }
+
+  /** Whether a show with this id exists at all, whatever the caller's memberships
+   * (catalog-policies D6): `catalog.show_exists`, a definer helper executable on a user binding
+   * only. `POST /api/sessions` asks it when the policy-scoped `getShowRow` finds nothing. */
+  async showExistsAnywhere(showId: string): Promise<boolean> {
+    const r = await this.db.first<{ e: boolean }>('SELECT catalog.show_exists(?) AS e', showId);
+    return r?.e === true;
   }
 
   async listShowsForStudio(studioId: string): Promise<Row[]> {
