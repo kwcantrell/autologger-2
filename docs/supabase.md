@@ -51,7 +51,9 @@ gets the definitions only. Its keys and first start wait for the cutover.
   | --- | --- | --- |
   | `supabase_admin` (superuser), `postgres` | `db`, `migrate`, realtime | `POSTGRES_PASSWORD` |
   | `authenticator` (rest), `supabase_auth_admin` (auth), `supabase_storage_admin` (storage) | those services | `SUPABASE_ROLES_PASSWORD` |
-  | `autologger_app`: DML on schema `catalog` only, at most 20 connections, 30 s statement and 15 s idle-in-transaction timeouts, `search_path` `catalog` | the app (`PGUSER`) | `APP_DB_PASSWORD`, set by the migrations runner |
+  | `autologger_app`: no table privileges (`USAGE` on schema `catalog` only); member (set only) of `catalog_user` and `catalog_system`; at most 20 connections, 30 s statement and 15 s idle-in-transaction timeouts, `search_path` `catalog` | the app (`PGUSER`) | `APP_DB_PASSWORD`, set by the migrations runner |
+  | `catalog_user` (NOLOGIN): DML on every catalog table, under row-level security; statements made for a signed-in user, whose id the transaction sets in `app.user_id` | the app, per transaction (`set_config('role', …, true)`) | none |
+  | `catalog_system` (NOLOGIN): DML on every catalog table, under row-level security; statements made for a named system task | the app, per transaction (`set_config('role', …, true)`) | none |
 
   The public-facing API services never hold the superuser password. Realtime does, because
   upstream requires it. The keys and their allowed services are listed in
@@ -149,10 +151,11 @@ working until the app is recreated.
 
 **Catalog time limits** (catalog-concurrency-hazards). A transaction has a 10 s deadline and is
 retried up to 5 runs on a serialization failure or deadlock, with a jittered backoff before each
-re-run (`catalog-retry-backoff`). A statement outside a transaction has a 5 s
-client deadline; each root connection carries one statement, so a queued one is withdrawn at its
-deadline, while one already sent is left to the role's 30 s `statement_timeout` and may still
-apply. Either timeout reaches the client as the generic 500.
+re-run (`catalog-retry-backoff`). A statement outside a transaction is a short `READ COMMITTED`
+transaction on one of 3 dedicated root connections, resolved after its commit (catalog-roles). It
+has a 5 s client deadline: one still queued for a root connection is withdrawn at its deadline,
+while one already sent is left to the role's timeouts (30 s `statement_timeout`, 15 s
+idle-in-transaction) and may still apply. Either timeout reaches the client as the generic 500.
 
 **The server's catalog** (catalog-on-postgres) is this schema: the app connects as
 `autologger_app` with the `PG*` env the compose files pass, and refuses to boot without them. It

@@ -29,9 +29,10 @@ Move all storage to a **self-hosted Supabase** instance per environment (dev, st
 Postgres as the source of truth. Build it in slices on an integration branch, then cut over once.
 
 - **Data access:** the server keeps the Hono HTTP API. It queries through postgres.js and, in each
-  transaction, runs `set local role authenticated` with the caller's JWT claims, so RLS applies
-  to server traffic and transactions still work. supabase-js on the server is for Auth admin,
-  Storage and Realtime only.
+  transaction, runs `set_config('role', 'catalog_user' | 'catalog_system', true)` and
+  `set_config('app.user_id', …, true)` (slice 6b-1), so RLS applies to server traffic and
+  transactions still work. The `authenticated` role gets nothing in the catalog. supabase-js on the
+  server is for Auth admin, Storage and Realtime only.
 - **Schema:**
   - one set of tables keyed by `session_id` (no per-session databases);
   - `timestamptz` and `jsonb`;
@@ -442,13 +443,108 @@ Slice order:
      drive the close from the database: a row trigger with `pg_notify` and a `LISTEN`ing server,
      or Realtime RLS authorization. Spike first how promptly Realtime re-checks policies on a channel a client
      has already joined.
-   - 6b `catalog-rls`: Postgres row-level security that mirrors 6a. The owner's decision (2 above)
-     is a dedicated NOLOGIN role that only `autologger_app` can `SET ROLE` to, so the bare
-     `authenticated` role (any Google sign-in) gets nothing and PostgREST sees no catalog.
-     Outline: create that role, and write policies that mirror 6a's access rule (owner or admin
-     of the show's team, or a member with a grant for the show). 6a keeps the rule in one SQL
-     predicate (`authCanAccessShow`) so 6b can copy it into a policy. 6a creates no role, no
-     policy and no `SET ROLE`.
+   - 6b-1 `catalog-roles`: every catalog statement runs as a user or a named system task, with
+     row-level security on and policies that allow everything, so behaviour does not change.
+     Implemented 2026-10-02 on `supabase-6b1-catalog-roles`. Owner decisions (owner, 2026-10-02):
+     1. **split 6b in two:** 6b-1 is the plumbing with allow-all policies; 6b-2
+        `catalog-policies` adds the real policies;
+     2. **a system path through a second role:** a NOLOGIN `catalog_system` role, reached only
+        through an explicit `system('<reason>')` handle; a repo test lists every caller against an
+        allowlist; `autologger_app` keeps no table grants, so a path that forgets to bind fails
+        closed;
+     3. **policy strictness (6b-2):** reads at team level, writes at access level; the 6a app gates
+        stay as the precise check;
+     4. **a dedicated NOLOGIN user role** (`catalog_user`, decided in 6a), not `authenticated`;
+        the bare `authenticated` role gets nothing and the catalog stays invisible to PostgREST.
+
+     After the adversarial panel (owner, 2026-10-02):
+     - **A. rollback is documented SQL, not a file** (below), with the migration's history row
+       deleted so a later deploy re-applies it;
+     - **B. performance is a concurrency probe, not retry counting:** N = 20 parallel signed-in
+       request mixes against one adapter, root-call p95 and root timeouts before and after the
+       bindings; pipelining `BEGIN`, the preamble and the statement (and `COMMIT` at the root) is
+       mandatory; stop and ask if root p95 more than doubles or any root timeout appears;
+     - **C. no database-side trace of the system reason in 6b-1** (follow-up below);
+     - **D. `postgres`'s automatic admin membership** in the two roles stays (follow-up below).
+
+     Approver confirmations (design, confirmed at approval): a statement outside a transaction
+     runs as a short `READ COMMITTED` transaction on adapter-owned single-connection root clients
+     (never postgres.js `reserve()`), keeps the root rules (no retry, 5 s deadline, no cancel once
+     sent, "may still apply") and resolves only after its `COMMIT` is confirmed; a `42501` maps to
+     the generic `500` in this slice; key/value runs on one system binding, `kv`; team creation
+     and team invites run entirely as system; the anonymous profile needs no system binding; the
+     4a migration's role guard is edited in place.
+
+     What it does: two NOLOGIN roles `catalog_user` and `catalog_system`, granted to
+     `autologger_app` `with inherit false, set true`; `autologger_app` keeps only `USAGE` on schema
+     `catalog`; the helper `catalog.app_user_id()`; RLS on every catalog table with
+     `<table>_user_all` and `<table>_system_all` allow-all policies. The adapter hands out
+     `bindUser(id)` / `bindSystem(reason)` handles; each transaction (and each retry) sends
+     `select set_config('role', $1, true), set_config('app.user_id', $2, true)` pipelined with
+     `BEGIN`. The auth middleware resolves the caller as `system:auth-resolve` and hands routes a
+     user-bound catalog, or an unbound one that refuses every statement. The system reasons are
+     `auth-resolve`, `kv`, `session-mirror`, `boot-wait`, `log-import-job`, `oauth-callback`,
+     `bootstrap-claim`, `support-plane`, `companion-token`, `access-loss-check`, `team-invite`
+     and `team-create`.
+
+     **The edited 4a guard.** Roles are cluster-wide, so when the migrations run in a second
+     database of a cluster (the `pg` test setup migrates `postgres` and then
+     `autologger_template`), `autologger_app` already holds the two memberships and 4a's old
+     "no membership" check failed. 4a's guard is relaxed in place to "no membership other than
+     `catalog_user` or `catalog_system`, set only, no inherit, no admin option". `migrate.sh`
+     never re-runs an applied file, so dev and stage keep the old recorded text.
+
+     **Rollback** (owner decision A). Run as `postgres` in one transaction
+     (`psql -X -v ON_ERROR_STOP=1 --single-transaction`), then deploy the previous image:
+     ```sql
+     revoke catalog_user, catalog_system from autologger_app;
+     grant select, insert, update, delete on all tables in schema catalog to autologger_app;
+     alter default privileges for role postgres in schema catalog
+       grant select, insert, update, delete on tables to autologger_app;
+     do $$
+       declare t text;
+       begin
+         for t in select tablename from pg_tables where schemaname = 'catalog' loop
+           execute format('drop policy if exists %I on catalog.%I', t || '_user_all', t);
+           execute format('drop policy if exists %I on catalog.%I', t || '_system_all', t);
+           execute format('alter table catalog.%I disable row level security', t);
+         end loop;
+       end
+     $$;
+     drop function if exists catalog.app_user_id();
+     delete from supabase_migrations.schema_migrations where version = '20261006000000';
+     ```
+     Deleting the version row is the roll-forward path: the next `migrate` run re-applies the
+     migration (its role creation, grants and guard are idempotent, the function uses
+     `create or replace`, and the policies were dropped). The two NOLOGIN roles and their grants
+     stay; they are harmless without members.
+
+     Implementation notes (2026-10-02):
+     - the adapter's `rootSettleMs` constructor option (default 46 s) is design D5's bound on a
+       timed-out root call's background wait (30 s `statement_timeout` + 15 s
+       `idle_in_transaction_session_timeout` + a grace), made configurable for tests;
+     - a `SERIALIZABLE` transaction's snapshot is now taken by the role preamble right after
+       `BEGIN` (design D4), not by the body's first statement; this changed the expectation of the
+       `gatedCatalog.int` self-test (a statement held before it is sent no longer sees a row
+       committed while it waits);
+     - the test-only `POST /api/admin/__unbound` route exists only in test files
+       (`middleware/catalogBinding.int.test.ts`); production has no such route;
+     - groups 4 and 5 of the task list landed together (owner, 2026-10-02), because the unbound
+       facade breaks the server until the wiring binds it.
+
+     Follow-ups:
+     - **post-migration database-side logging and auditing** (owner decision C): the system
+       reason and the user visible in `pg_stat_activity` and the database log;
+     - **the reach of `postgres`** (owner decision D): `postgres` owns the catalog tables with
+       `BYPASSRLS`, reads every table through `pg_read_all_data`, and holds an automatic admin
+       membership in `catalog_user` and `catalog_system` because it created them; that reach,
+       held by `db`, `migrate` and realtime, is out of slice 6's scope.
+   - 6b-2 `catalog-policies`: the real policies on top of 6b-1. Outline: team-level reads and
+     access-level writes for `catalog_user` (owner decision 3), replacing the `_user_all`
+     policies; `SECURITY DEFINER` helpers (`member_studios`, `admin_studios`, `granted_shows`) with
+     `EXECUTE` revoked from `public`; an allow/deny matrix test; the `40001` retry measurement;
+     moving `team-create`, `team-invite`, `access-loss-check` and `log-import-job` back toward
+     user scope; mapping `CatalogForbiddenError` to the routes' masked `404`/`403`.
 7. Session tables, revision, version checks and the audited overwrite.
 8. Session leases.
 9. Realtime replaces the WebSocket protocol.
