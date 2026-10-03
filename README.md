@@ -7,9 +7,10 @@ Originally a faithful TypeScript port of the Python AutoLogger backend — this 
 the canonical implementation. It authenticates
 via Google OAuth, persists the global catalog (users/studios/shows/prefs) plus login sessions
 and OAuth CSRF in a **Postgres catalog** (schema `catalog` in the stack's self-hosted Supabase
-Postgres; ADR 0021), holds live per-session data (events, transport,
-audio metadata, recording lease, transcript words, topics) in an **in-process SessionHub per
-session** (embedded SQLite), keeps audio bytes on the **filesystem**, and pushes live updates
+Postgres; ADR 0021), serves live per-session data (events, transport,
+audio metadata, recording lease, transcript words, topics) through an **in-process SessionHub per
+session** over the same Postgres (the session tables in schema `catalog`, ADR 0021 slice 7b-1),
+keeps audio bytes on the **filesystem**, and pushes live updates
 over a **WebSocket** — all with the **frozen JSON shapes** the React frontend and Companion
 module consume (see Endpoints below; the contract is frozen).
 
@@ -18,9 +19,10 @@ module consume (see Endpoints below; the contract is frozen).
 - **Hono** — routing + middleware (ported from `web/app.py` + routers)
 - **Zod** — request validation at the route boundary (ported from `web/schemas.py`)
 - **jose** — Google ID-token verification against Google's JWKS
-- **postgres.js** — the catalog (users, teams, shows, sessions index, KV) on self-hosted Supabase
-  Postgres (ADR 0021)
-- **better-sqlite3** — one DB file per session, and the `DATA_DIR` single-server lock
+- **postgres.js** — the catalog (users, teams, shows, sessions index, KV) and session content
+  (the session tables) on self-hosted Supabase Postgres (ADR 0021)
+- **better-sqlite3** — the `DATA_DIR` single-server lock, and the copier for the legacy SQLite
+  files (`catalog.db`, `sessions/*.db`), kept for the slice 11 import
 - **filesystem blobs** — audio bytes (replaces R2)
 - **in-process SessionHub per session** — replaces the Durable Object; live spine for events,
   transport, audio metadata, recording lease, transcript words, topics, and WebSocket fan-out
@@ -44,9 +46,9 @@ spawned or called *by the server*, never by a client.
 │              │◀── WS ─┤   │  ├─ sessions / events / audio     │        │  (global index,   │
 ├──────────────┤        │   │  ├─ transcribe / exports          │        │   kv, presence)   │
 │ Companion    │  HTTP  │   │  └─ companion / admin             │        ├───────────────────┤
-│ module       │───────▶│   │                                   │        │  sessions/<id>.db │
-│              │◀── WS ─┤   │  SessionHubRegistry (in-memory)   │──SQL──▶│  (one per session:│
-├──────────────┤        │   │   └─ SessionHub per session ──────┼───┐    │   events, topics, │
+│ module       │───────▶│   │                                   │        │  (session tables  │
+│              │◀── WS ─┤   │  SessionHubRegistry (in-memory)   │──SQL──▶│   in PG: events,  │
+├──────────────┤        │   │   └─ SessionHub per session ──────┼───┐    │   topics, audio,  │
 │ stale/ext.   │────────┘   │      (events, transport, lease,   │   │    │   transcript…)    │
 │ clients      │            │       transcript, topics, WS fan) │   │    ├───────────────────┤
 └──────────────┘            └─────────────┬────────────────────┘   └───▶│  blobs/audio/…    │
@@ -88,8 +90,9 @@ refactor of this one.
   transport, audio-segment metadata, recording lease (in-hub state + a timer-driven
   auto-expiry), transcript words, topics, and the WebSocket fan-out. Single writer per
   session, so the Python `RLock` and `events_stream_revision` polling machinery disappear —
-  the hub broadcasts instead. After each mutation the process mirrors a few live fields back
-  to the catalog's sessions index (`projectSessionLive`).
+  the hub broadcasts instead. Its rows live in the session tables of schema `catalog`; every
+  write locks the session's `catalog.sessions` row first, and a write that changes the events or
+  the transport updates the index's few live fields in the same transaction.
 - **Filesystem blobs** = audio bytes under `DATA_DIR/blobs/audio/<session_id>/<ordinal>_<uuid>.<ext>`;
   the hub holds only metadata + relative keys. Download streams bytes back with HTTP range
   support (416 on unsatisfiable ranges).
@@ -296,7 +299,7 @@ is configuration presence, not a version probe — but may fail per-turn with a 
 `error` event.
 
 **Chat history is ephemeral.** The server persists no chat conversation content: no chat
-tables in the catalog or session DBs, no chat blobs under `DATA_DIR`, and no history-read
+tables in the catalog (session tables included), no chat blobs under `DATA_DIR`, and no history-read
 endpoint — conversation state lives only in the browser tab's page state, so a refresh
 clears it. The `claude` CLI keeps its own per-session files outside `DATA_DIR`, under the
 operator's `~/.claude`; those accumulate across turns independent of this server-side
@@ -403,8 +406,8 @@ mechanism as the round trip below, then commits its proposal by calling an in-pr
 turn's own `dashboard` SSE event. Every edit after that is **direct manipulation** in the UI, not
 further conversation. Rendered widgets get their data by the browser aggregating the session's own
 transcript-words/topics/events data client-side — there is no new aggregate HTTP endpoint — and a
-saved dashboard's config persists in the **session's own SQLite DB** (one dashboard per session,
-`{config}` / `{config: null}`), not the catalog DB. Widgets whose inputs the current schema can't
+saved dashboard's config persists in the **session's rows** (`catalog.session_dashboards`; one
+dashboard per session, `{config}` / `{config: null}`), not the catalog's show or team tables. Widgets whose inputs the current schema can't
 yet compute (e.g. certain sentiment/utterance stats) render an honest "unavailable" state rather
 than a fabricated zero.
 
@@ -464,8 +467,9 @@ DATA_DIR/
   catalog.db           Legacy SQLite catalog: no longer opened (the catalog is Postgres schema
                         `catalog`: users/studios/shows/prefs, kv, sessions index), kept for the
                         slice 11 import
-  sessions/<id>.db      One SQLite file per session — events, transport, audio metadata,
-                        recording lease, transcript words, topics
+  sessions/<id>.db      Legacy SQLite file per session: no longer opened or written (session
+                        content is in the Postgres session tables), kept for the slice 11
+                        import
   blobs/audio/…         Audio bytes (r2_key-shaped relative paths)
   tmp/                  Atomic-put staging (outside blobs/, so listings never see partials)
 ```
@@ -475,11 +479,12 @@ DATA_DIR/
 - **Single Node process** — no clustering, no multi-worker fan-out.
 - **SessionHub RPC bodies are synchronous** — zero `await`s inside a hub method; all async
   work (fetch, streaming, etc.) lives in the router layer, not the hub.
-- **Hub mutations are transactional** — every mutating RPC runs inside a
-  `better-sqlite3` transaction.
-- **Idle hubs close their DB handles and reopen lazily** — a hub with no attached sockets and
-  no armed lease timer is evicted after an idle window; `SessionHubRegistry#get()` reopens the
-  session's DB file on next access. `expireIfStale()` re-checks the recording lease on reopen.
+- **Hub mutations are transactional** — every mutating RPC runs inside one Postgres
+  transaction that locks the session's `catalog.sessions` row first.
+- **Idle hubs are evicted and reopen lazily** — a hub with no attached sockets and
+  no armed lease timer is evicted after an idle window (it holds no connection; eviction frees
+  memory); `SessionHubRegistry#get()` reopens it on next access. `expireIfStale()` re-checks
+  the recording lease on reopen.
 
 ## Source layout
 
@@ -594,15 +599,17 @@ packages/                 Source-only npm workspace packages (no build step; ser
                               Clock, BlobStore, KvStore, PresenceRegistry, CatalogDb,
                               IdentityVerifier interfaces + the Config type + the base Ports shape
   session-core/src/        @autologger/session-core — the in-process per-session live spine
-                           (L1; deps: domain, contract, ports; better-sqlite3 peerDependency)
+                           (L1; deps: domain, contract, ports; no database driver: the
+                           composition root supplies its storage, the Postgres session adapter)
                            moved from server/src/session/ (persistence-package-extraction task 4.3)
     SessionHub.ts            In-process per-session hub: registry, idle eviction, RPC surface;
                              exports the SessionHubFacade/SessionHubRegistryFacade property-style
                              interfaces (facade membership = reached through Ports.sessions by an
                              outside consumer) and DashboardValidationError/DashboardBoundsError
                              (mapped to 422 by instanceof at routers/aiV2.ts)
-    sessionCore.ts           Shared substrate: SQLite handle, WS fan-out, events_stream_revision,
-                             lease, the SessionRuntime port
+    sessionCore.ts           Shared substrate: the SessionSql/SessionStorage seam,
+                             WS fan-out, events_stream_revision, lease, the live projection,
+                             the SessionRuntime port
     eventStore.ts / transportStore.ts / audioStore.ts / leaseStore.ts / transcriptStore.ts /
     topicStore.ts / dashboardStore.ts / eventAnchors.ts / audioSeamParts.ts / storeHelpers.ts
                             Domain stores built on SessionCore                (← storage/db.py)
@@ -877,7 +884,7 @@ only: nothing reads `server/.env`. The stacks take values from Infisical
 
 | Var | Default | What it does |
 |-----|---------|--------------|
-| `DATA_DIR` | *(required, absolute; the stacks pin `/data`)* | Root for per-session DBs, audio blobs and temp staging (the catalog is Postgres; a legacy `catalog.db` is left untouched). |
+| `DATA_DIR` | *(required, absolute; the stacks pin `/data`)* | Root for audio blobs and temp staging (the catalog and session content are Postgres; legacy `catalog.db` and `sessions/*.db` files are left untouched). |
 | `HOST` | `127.0.0.1` outside production, `0.0.0.0` in production | Network **interface to bind**. `127.0.0.1` = loopback-only (reachable only on-box / via a local reverse proxy); `0.0.0.0` = all interfaces (LAN/internet). |
 | `PORT` | `8787` | TCP port to listen on. |
 | `PUBLIC_BASE_URL` | *(required; `.env.example` ships `http://127.0.0.1:8787`)* | Externally-visible origin the server **advertises** — used to build the Google OAuth callback (`…/auth/google/callback`). Must match the browser URL *and* the redirect URI registered in Google Cloud. Behind a proxy this differs from `HOST` (e.g. `https://autologger.example.com`). |
@@ -904,9 +911,6 @@ proxy), `PUBLIC_BASE_URL=https://your.domain`, `TRUST_PROXY=1`, and an
 
 These are accepted operational tradeoffs, not bugs to "fix" with a cross-DB transaction:
 
-- The catalog's sessions-index projection can be **momentarily stale** after a crash between
-  a session mutation and its `projectSessionLive` mirror write — the session DB itself is
-  always authoritative; the index just lags until the next mutation.
 - **Ghost metadata rows** are possible: an audio-segment metadata row can exist whose blob
   bytes never landed (crash between the DB insert and the blob write, or vice versa). There is
   no background reaper for these.
@@ -1073,7 +1077,7 @@ The image fetches nothing else at runtime; the Claude CLI auto-updater is disabl
 
 | Volume (compose name) | Mount in `api` | Holds |
 |-----------------------|----------------|-------|
-| `autologger_autologger-data` | `/data` (`DATA_DIR`) | `catalog.db`, `sessions/*.db`, `blobs/`, `tmp/` |
+| `autologger_autologger-data` | `/data` (`DATA_DIR`) | `blobs/`, `tmp/`, and the legacy `catalog.db` and `sessions/*.db` (no longer written; kept for the slice 11 import) |
 | `autologger_autologger-home` | `/home/node` | `~/.claude/` **and** `~/.claude.json` (subscription credentials and CLI config) |
 
 Both are owned by uid 1000 (`node`); a fresh named volume inherits that from the image. State
@@ -1188,6 +1192,9 @@ rsync -a --delete ${own:+--chown="$own"} "$src"/ "$dst"/'
 ```
 
 ### Backup
+
+This section describes prod, which runs `main` (catalog and session content in SQLite files)
+until the Supabase cutover (ADR 0021 slice 11).
 
 Use the WAL-safe copier from a repo checkout on the host (it needs `tsx` and `better-sqlite3`,
 which the checkout has; it is not in the image). It opens every `*.db` read-only, copies a

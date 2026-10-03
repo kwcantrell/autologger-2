@@ -96,7 +96,9 @@ Slice order:
        - The service roles get their own password, separate from the superuser's.
        - Studio and postgres-meta are deferred to a later slice (owner, 2026-09-30, after the
          panel);
-   - 1.3 `postgres-backups`;
+   - 1.3 `postgres-backups`. Not built yet, and a **cutover blocker** (owner, 2026-10-03): from
+     slice 7b-1 session content lives in Postgres too, and nothing backs it up. It is done as its
+     own change before slice 11;
    - 1.4, run before 1.3 (owner, 2026-09-30), split into:
      - 1.4a `retire-e2e`: retire the Playwright e2e harness; the router's security cases are
        kept as `docker/scripts/test_router.sh`. **Size exception:** 1,410 counted lines,
@@ -278,12 +280,15 @@ Slice order:
      - `503` + `Retry-After` for timeouts and exhausted retries, instead of the generic `500`;
      - foreign keys from memberships, invites and shows to `studio_definitions` (built-ins seeded
        as rows, `23503` mapped), instead of in-transaction re-checks and the create purge;
-     - a `live_revision` column with a hub counter, instead of the in-process mirror chain
-       (needed once slice 8 runs several processes);
-     - reconcile-on-read, or a retried dirty set, instead of log-and-succeed for mirror failures;
-     - a rate limit on `/auth/google/start` and on team writes, instead of the periodic purge
-       alone (a sustained flood can still exhaust SERIALIZABLE retries, and with 5 runs a
-       contended request can do up to 5/3 the database work);
+     - ~~a `live_revision` column with a hub counter, instead of the in-process mirror chain
+       (needed once slice 8 runs several processes)~~ resolved by 7b-1: the projection commits
+       with the session write;
+     - ~~reconcile-on-read, or a retried dirty set, instead of log-and-succeed for mirror
+       failures~~ resolved by 7b-1: a projection failure fails the write;
+     - a rate limit on `/auth/google/start`, on team writes and on session writes, instead of the
+       periodic purge alone (a sustained flood can still exhaust SERIALIZABLE retries, and with 5
+       runs a contended request can do up to 5/3 the database work; one member can fill the
+       4-connection session pool and slow every session's calls to the 10-second deadline, 7b-1);
      - the 5 s root deadline's value, and a distinct timeout for root writes;
      - registry display names that go stale across awaits (#14);
      - an email-indexed user lookup, so an invite doesn't read all of `users`;
@@ -716,13 +721,19 @@ Slice order:
 7. Session tables, revision, version checks and the audited overwrite. Split (owner, 2026-10-03)
    into three changes, async first, as slice 3 made the catalog async before slice 4 moved it:
    - 7a `async-session-hub`: the session hub goes async, still on SQLite, with no HTTP or
-     WebSocket change for serial requests. Implemented 2026-10-03 on
-     `supabase-7a-async-session-hub`; verification, merge and the live dev and stage checks are
-     pending.
+     WebSocket change for serial requests. Merged (PR #42) and live-checked on dev and stage
+     2026-10-03.
    - 7b: the session tables in Postgres schema `catalog`, ported faithfully as 4a ported the
      catalog; the postgres.js session adapter and the wiring; the `sessions` projection written
      inside the hub's write transaction, retiring the mirror chain; row-level security on the
-     content tables.
+     content tables. Split (owner, 2026-10-03) like 6b into:
+     - 7b-1 `session-tables`: the nine tables, the adapter's session mode, the wiring and the
+       projection in the write transaction. Every session statement runs as the system task
+       `session-hub` against allow-all system policies, so serial requests do not change.
+       Implemented 2026-10-03 on `supabase-7b1-session-tables`; the after-measurements, merge and
+       the live dev and stage checks are pending;
+     - 7b-2: the content policies (show access, as in 6a) and hub calls bound to the calling
+       user.
    - 7c: `sessions.revision`, per-row versions, opt-in version checks, `409` with the current row,
      the overwrite dialog and the audit. A contract delta; Companion routes stay unchecked.
 
@@ -761,9 +772,10 @@ Slice order:
    through the lock, and re-arms with the backoff above after a failure. A handler may hold a hub
    across its own calls and re-resolves it after a long non-hub `await`.
 
-   **Revisit (owner, 2026-10-03):** a hub transaction that hangs and never resolves holds the
+   **Revisit (owner, 2026-10-03):** ~~a hub transaction that hangs and never resolves holds the
    session's lock and soft-locks that session (every later call on it queues forever); revisit a
-   deadline or a lock-wait timeout.
+   deadline or a lock-wait timeout.~~ Resolved by 7b-1: session transactions have the catalog's
+   10-second deadline (below).
 
    **Slice 7b hazards** (async-session-hub design D11). They go live once session statements do
    I/O:
@@ -782,6 +794,72 @@ Slice order:
       the failed-rollback close change meaning, and the adapter sets the unconfirmed-rollback
       policy;
    7. the mirror chain retires (slice 4 hazards 3, 4 and 17, and the `live_revision` follow-up).
+
+   **7b-1 `session-tables`** (owner decisions, 2026-10-03):
+   1. **split 7b like 6b:** 7b-1 builds the tables, the adapter, the wiring and the projection
+      inside the write transaction, as the system task `session-hub`; 7b-2 adds the content
+      policies and user-bound hub calls;
+   2. **serialization by row lock under `READ COMMITTED`:** every session write transaction
+      first locks the session's `catalog.sessions` row (`FOR UPDATE`); a multi-statement read
+      runs in one `REPEATABLE READ READ ONLY` snapshot. The in-process FIFO lock stays, to keep
+      broadcast order, until slice 9;
+   3. **start empty,** as 4c did: the `sessions/*.db` files stay untouched for slice 11's
+      import, and every existing session's live projection resets to an empty session's;
+   4. **backups** (1.3) were never built: a cutover blocker, done as their own change before
+      slice 11, not in 7b.
+
+   After the adversarial panel (owner, 2026-10-03):
+   - **session calls get their own pool** of 4 connections beside the catalog's 3 root and 5
+     transaction connections (12 of the role's 20 per process), so heavy session traffic can slow
+     only session calls, never sign-in or catalog writes;
+   - **S4/S5 are folded in:** `anchorImportedTake` re-checks `is_rolling` inside its transaction
+     and refuses; each import route answers its existing `409` and rolls the segment back as its
+     post-blob rolling refusal does;
+   - **a projection failure fails the write:** api-contract-freeze "Catalog mirror failures don't
+     fail saved session changes" is retired;
+   - **the stop rule:** a median `addEvent` above 5 ms, or the 31,621-word transcript replace
+     above 10 s, measured in the stack (dev app container to dev database).
+
+   **7b-1's mechanism.** Migration `20261008000000_session_tables.sql` adds nine tables in schema
+   `catalog` (`events` and `meta` renamed `session_events` and `session_meta`), each with
+   `session_id` referencing `catalog.sessions` and leading every key and index, row-level
+   security with only the `_system_all` policy, and `catalog_user`'s privileges revoked; it
+   resets every session's projection. The catalog adapter gains a session mode (`READ
+   COMMITTED`, the row lock pipelined with `BEGIN` and the bindings preamble, retry on `40P01`
+   only, `SessionNotFoundError` for a missing row) and a snapshot mode, both on the 4-connection
+   session pool, with the catalog's 10-second deadline; every connection sets
+   `extra_float_digits` so floats read back exactly. `PostgresSessionDb` hands each hub a
+   `SessionStorage` (`tx`, `snapshot`) over `bindSystem('session-hub')`. Every session statement
+   names `session_id` (a repo test checks it). Each hub write attempt gets a fresh bound core,
+   whose broadcasts and alarm are applied after `COMMIT`, once; a write that changed the events
+   or the transport sets the six projection columns in one statement before `COMMIT`. The mirror
+   chain, `projectSessionLive` and the `session-mirror` binding are gone. The hub owns no
+   connection, and the anchor re-checks the transport as above. Text with NUL in session content
+   is refused (`400`, nothing saved).
+
+   **The 7b hazards after 7b-1:**
+   1. resolved: the row lock first and one snapshot per read; the FIFO lock also stays;
+   2. held in-process by the FIFO lock; carried to slice 9 for several processes;
+   3. S4/S5 resolved (the anchor re-checks inside its transaction); S1, S2, S7, S8 and S11
+      carried, and their windows widen from one tick to any concurrent request: each response
+      field is still one a serial order produces, with unchanged shapes and statuses;
+   4. resolved: broadcasts and the alarm per attempt; `mergeMetadata` and `remap` stay pure;
+   5. carried unchanged (7a counts successful inserts only);
+   6. resolved: the registry and the hubs own no connection; the adapter retires a connection
+      whose rollback is unconfirmed;
+   7. resolved, with slice 4 hazards 3, 4 and 17 and the `live_revision` follow-up.
+
+   **Constraints left for 7b-2.** Its per-user binding is not a one-line swap:
+   - the seam carries no caller: one storage root per hub serves every user on the session, so
+     the binding is passed per call through the seam (each `tx` and `snapshot`, or a bound
+     storage per hub method), not per hub;
+   - the row lock and the projection update run under the caller's policy
+     (`sessions_user_update`): a writer without access gets zero rows, which 7b-1 reports as
+     `SessionNotFoundError`, so 7b-2 must tell missing access from a missing session and answer
+     the refusal the routes already give;
+   - background writers have no caller: the lease alarm, transcript generation, AI turns
+     (`create_event`, `create_topic`, dashboards) and the log-import job need reviewed system
+     bindings of their own, as 6b-1 gave detached catalog work.
 8. Session leases.
 9. Realtime replaces the WebSocket protocol.
 10. Blobs to Supabase Storage.
@@ -805,6 +883,8 @@ Slice order:
   conflicts. Each change needs a delta amending `api-contract-freeze`.
 - The dev loop gains roughly 10 containers per stack. Offline native dev goes away.
 - Self-hosting makes backups, upgrades and secret rotation the owner's job.
+- Backups are a cutover blocker (owner, 2026-10-03): from slice 7b-1 session content is in
+  Postgres and nothing backs it up yet; slice 1.3 is done as its own change before slice 11.
 - Main is frozen until cutover, and the only prod feedback comes at cutover.
 - Revisit if:
   - the Companion spike fails and a relay would keep the old WebSocket protocol alive anyway; or
