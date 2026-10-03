@@ -22,6 +22,9 @@ only (not staged), so the artifacts-first commit holds this directory alone.
 2.6 and changed 1.5, 2.3, 2.5 and 3.4. Every Evidence line in sections 1-2 was re-run after those
 edits on 2026-10-03; the code and README are still in the working tree only.
 
+**Committed (2026-10-03, after approval).** Artifacts first (3512ce4), then code (e5d7e1b,
+1936449) and README (5215462); owner evidence in later `docs(openspec)` commits.
+
 **Tests.** `docker/scripts/compose-run.test.mjs` (suite `stage public mode (stage-public-https)`)
 runs under `npm test` against the local OpenBao stand-in and a stub `docker`.
 `docker/scripts/test_check_envs.sh` covers the static check. "Fails on the base" below means: a
@@ -121,7 +124,7 @@ and the working-tree code as it was before the re-panel fixes (re-run: `ℹ test
   public URL for a tagged run; the rsync excludes do not drop `REVISION`.
   Evidence: committed in `~/spark-infra` as `27430a9 autologger_env: pinned deploy writes REVISION (app checks tree == tag), public URL required for tagged runs` (`git show --stat 27430a9` -> `roles/autologger_env/tasks/sync_pinned.yml | 15 ++++++++++++++-`, `roles/autologger_env/tasks/up.yml | 7 ++++---`); excludes `/.git`, `node_modules/`, `.worktrees/`, `server/data/`, `.env.infisical.*`, `.env.openbao.*` (none matches `REVISION`).
 
-- [x] 2.6 (re-panel FA-1, coordinated in `~/spark-infra`, uncommitted there) The deploy no longer
+- [x] 2.6 (re-panel FA-1, coordinated in `~/spark-infra`, committed there as eb02c8a) The deploy no longer
   trusts the deployed tree to enforce the guards: `roles/autologger_env/tasks/up.yml` (pinned)
   greps the tree for `checkStageTree` and refuses before `make` (:37, :45); writes the pull login
   as an inline `config.json` `auth` instead of `docker login` (:82; design A13); after `make`,
@@ -141,7 +144,7 @@ and the working-tree code as it was before the re-panel fixes (re-run: `ℹ test
   Check: `docker compose -p autologger-stage images` shows the two `ghcr.io/...:<sha>` images;
   `ss -ltn | grep 8788` shows only `127.0.0.1:8788`.
   Evidence: stage host stage-linode (2026-10-03), pinned tree `/home/spark/autologger-2`: `cat REVISION` -> `52154623477432a834e7c930d90290c750fc781f`, no `.git`; `docker compose -p autologger-stage images` -> `autologger-stage-api ghcr.io/kwcantrell/autologger-api 52154623477432a834e7c930d90290c750fc781f linux/amd64`, `autologger-stage-web-1 ghcr.io/kwcantrell/autologger-web 52154623477432a834e7c930d90290c750fc781f linux/amd64` (digests `sha256:6cce2e7c...`, `sha256:f6ae218d...`); all 9 `autologger-stage-*` `(healthy)`; api env `PUBLIC_BASE_URL=https://stage.nrvo.ai`, `COOKIE_SECURE=1`, `TRUST_PROXY=1`; `ss -ltn | grep -E ':(8788|8791)'` -> `127.0.0.1:8791`, `127.0.0.1:8788` only (no other stage listener on a routable address).
-- [ ] 3.2 **(owner)** Access (panel F3):
+- [x] 3.2 **(owner)** Access (panel F3):
   (a) the Access application's policy admits only named identities (emails or a group of them),
   not "any Google account" or "everyone": Zero Trust dashboard -> Access -> Applications -> stage
   -> Policies;
@@ -153,13 +156,15 @@ and the working-tree code as it was before the re-panel fixes (re-run: `ℹ test
   Machine evidence (agent, 2026-10-03; the connector-level clause is config only, owner decides):
   (a) Cloudflare API `GET /accounts/<a>/access/apps` -> app `spark stage.nrvo.ai`, domain `stage.nrvo.ai`, aud `a6fea2a4...eaab76`, one policy `spark-infra allow` `decision allow`, `include [{email: cantrell.kalen@gmail.com}]`, `exclude []`, `require []` (the account's `everyone` policies `Public Access`/`Public` have `app_count 0`);
   (b) `curl -sI https://stage.nrvo.ai/` and `/api/profile` -> `HTTP/2 302`, `location: https://ennystudios.cloudflareaccess.com/cdn-cgi/access/login/stage.nrvo.ai?kid=a6fea2a4...`, `server: cloudflare`; with a forged `CF_Authorization` cookie -> the same `302` (never the app); `GET /accounts/<a>/cfd_tunnel/39e4d22f.../configurations` -> ingress `stage.nrvo.ai -> http://127.0.0.1:8788` with `originRequest.access {required: true, teamName: ennystudios, audTag: [a6fea2a4...eaab76]}` (= the app's aud), then catch-all `http_status:404`; zone DNS: `stage.nrvo.ai CNAME 39e4d22f-....cfargotunnel.com` is the only record pointing at the tunnel (`*.nrvo.ai` goes to 45.33.127.55, not the tunnel), so neither an unrouted hostname nor a request without a valid Access JWT can reach the connector from the internet; the connector's own 403/404 was therefore not observed live.
-- [ ] 3.3 **(owner)** OAuth and cookie (assumption A9): add
+  Evidence: owner (Kalen, 2026-10-03) accepted the machine evidence above: (a) API shows the only policy includes `cantrell.kalen@gmail.com`; (b) anonymous and forged-`CF_Authorization` requests get the Access 302; connector clause accepted on config (`access.required: true`, `audTag` = app aud, catch-all `http_status:404`) because `stage.nrvo.ai` is the only hostname routed to the tunnel.
+- [x] 3.3 **(owner)** OAuth and cookie (assumption A9): add
   `https://stage.<domain>/auth/google/callback` to the stage OAuth client; check the Access
   application's cookie `SameSite` is `Lax` or `None` (not `Strict`); sign in through Access
   and Google. Check: browser devtools shows `autologger_stage_sid` with `Secure`, `HttpOnly`,
   `SameSite=Lax`; `/api/profile` returns the user. If it fails, follow the D7 fallback.
   Machine evidence (agent, 2026-10-03; devtools check still open): api env `COOKIE_SECURE=1`, `SESSION_COOKIE=autologger_stage_sid`, so `cookieSecureForRequest` (server/src/env.ts:82) returns true and the session cookie is set with `httpOnly: true`, `sameSite: 'Lax'`, `secure: true` (server/src/routers/auth.ts:296); Access app `same_site_cookie_attribute: null` (Cloudflare default `None`, not `Strict`), `http_only_cookie_attribute: true`, `session_duration 24h`. The owner reports a full sign-in through Access and Google at `https://stage.nrvo.ai` with real data (so the callback URI is registered and the Access cookie survives the Google redirect).
-- [ ] 3.4 **(owner)** Forwarded headers (assumption A8, re-panel RA-1): through the edge (with an
+  Evidence: owner devtools (Kalen, 2026-10-03) -> `autologger_stage_sid` Secure ✓ HttpOnly ✓ SameSite Lax; `CF_Authorization` SameSite not Strict; `/api/profile` -> user JSON; sign-in via Access (email PIN) + Google at https://stage.nrvo.ai ok; redirect URI added to the stage OAuth client.
+- [x] 3.4 **(owner)** Forwarded headers (assumption A8, re-panel RA-1): through the edge (with an
   Access service token or session), send one request with no `X-Forwarded-For` and one with
   `X-Forwarded-For: 1.2.3.4`. Check both: (a) the client IP the api logs is never `1.2.3.4`, and
   (b) for both requests it equals your real public IP, as Cloudflare reports it in
@@ -168,6 +173,7 @@ and the working-tree code as it was before the re-panel fixes (re-run: `ℹ test
   and (b) both pass, do not set `IP_ALLOWLIST` on the public stage and treat logged client IPs as
   untrusted (D6 fallback).
   Machine evidence (agent, 2026-10-03; owner requests still open): the api logs no client IP (no logging in server/src uses it; it is only used by `IP_ALLOWLIST`), so the observable is the one `X-Forwarded-For` value the router hands the api, which with `TRUST_PROXY=1` is the api's client IP (`effectiveClientIpFrom`, server/src/middleware/ipAllowlist.ts:160). Captured on stage-linode with `sudo nsenter -t <api pid> -n tcpdump -i any -l -A -s0 'tcp dst port 8787'` (only the request line and `X-Forwarded-For` printed): loopback probes to `127.0.0.1:8788` -> no header: `X-Forwarded-For: 172.28.21.1` (bridge gateway); `X-Forwarded-For: 1.2.3.4` -> `1.2.3.4` and `X-Forwarded-For: 1.2.3.4, 198.51.100.7` -> `198.51.100.7` (right-most untrusted kept; a host-local caller such as `cloudflared` is trusted, so check (a) depends on the edge appending the real IP); the owner's live browser traffic through the edge at the same time -> `X-Forwarded-For: 2600:8801:...` (a public IPv6 address, middle redacted, not a gateway, so `cloudflared` forwards the edge's client IP). Not yet shown: that this equals the owner's `CF-Connecting-IP`, and a forged header through the edge.
+  Evidence: owner requests + operator capture (2026-10-03): `curl -s https://www.cloudflare.com/cdn-cgi/trace | grep ^ip=` -> `ip=2600:8801:9800:3000:…` (redacted); `curl --cookie CF_Authorization=… .../api/profile?probe=owner-noxff` -> 200 and `... -H "X-Forwarded-For: 1.2.3.4" ...?probe=owner-forged` -> 200; capture into the api (`nsenter -n tcpdump ... tcp dst port 8787`) -> `GET /api/profile?probe=owner-noxff` / `X-Forwarded-For: 2600:8801:9800:3000:…` and `GET /api/profile?probe=owner-forged` / `X-Forwarded-For: 2600:8801:9800:3000:…`; `1.2.3.4` occurs 0 times. (a) and (b) pass.
 
 ## 4. Verify
 
