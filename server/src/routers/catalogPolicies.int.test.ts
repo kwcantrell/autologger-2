@@ -273,3 +273,154 @@ describe('policy outcomes map to existing statuses (design D8, before the polici
     }
   });
 });
+
+// -- under the policies (task 4.2; red before migration step 2 for the race cases) ----------------
+
+/** requireSession's access read, after which a race commits (design D8). */
+const ACCESS_READ = /^SELECT 1 FROM shows s\s+JOIN user_studio_memberships m ON m\.studio_id = s\.studio_id AND m\.user_id = \?\s+WHERE s\.id = \?/;
+
+describe('routes under the catalog_user policies (design D3, D5, D7, D8)', () => {
+  it("a plain member's profile loads defaults for a team with no settings row, and writes none", async () => {
+    const { studioId, ungranted } = await seedAccessMatrix();
+    await testDb().run('DELETE FROM app_settings WHERE key = ?', `studio_config:${studioId}`);
+    const res = await send('GET', '/api/profile', ungranted.cookie);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { studio_settings: Record<string, { categories: unknown[] }> };
+    expect(body.studio_settings[studioId]?.categories.length).toBeGreaterThan(0);
+    expect(await settingsValue(studioId)).toBeNull();
+  });
+
+  it("a plain member's name edit is stored", async () => {
+    const { studioId, ungranted } = await seedAccessMatrix();
+    const res = await send('PUT', '/api/profile', ungranted.cookie, {
+      active_studio_id: studioId,
+      given_name: 'Plain',
+      family_name: 'Member',
+    });
+    expect(res.status).toBe(200);
+    expect(await namesOf(ungranted.id)).toEqual({ given_name: 'Plain', family_name: 'Member' });
+  });
+
+  it("the owner's team delete leaves no invite, definition, settings or membership row", async () => {
+    const team = await seedStudio();
+    const ownerId = await seedUser({ studios: [team], role: 'owner' });
+    await seedUser({ studios: [team], role: 'member' });
+    await testDb().run(
+      "INSERT INTO team_invites (studio_id, email_norm, invited_by_user_id, invited_at_utc) VALUES (?, 'x@example.com', ?, '2026-10-03')",
+      team,
+      ownerId,
+    );
+    const res = await send('DELETE', `/api/teams/${team}`, await loginCookie(ownerId));
+    expect(res.status).toBe(200);
+    const left = await testDb().first<{ n: number }>(
+      `SELECT (SELECT COUNT(*) FROM team_invites WHERE studio_id = ?)
+            + (SELECT COUNT(*) FROM studio_definitions WHERE id = ?)
+            + (SELECT COUNT(*) FROM app_settings WHERE key = ?)
+            + (SELECT COUNT(*) FROM user_studio_memberships WHERE studio_id = ?) AS n`,
+      team,
+      team,
+      `studio_config:${team}`,
+      team,
+    );
+    expect(Number(left?.n)).toBe(0);
+  });
+
+  it("a granted member's leave removes their grants in that team only", async () => {
+    const a = await seedAccessMatrix();
+    const b = await seedAccessMatrix();
+    await createCatalog(env.ports.catalog)
+      .system('test-seed')
+      .auth.authAddMembershipWithRole(a.granted.id, b.studioId, 'member');
+    await createCatalog(env.ports.catalog)
+      .system('test-seed')
+      .auth.authGrantShow(a.granted.id, b.showId, b.owner.id, '2026-10-03T00:00:00Z');
+    const res = await send('POST', `/api/teams/${a.studioId}/leave`, a.granted.cookie, {});
+    expect(res.status).toBe(200);
+    const grants = await testDb().all<{ show_id: string }>(
+      'SELECT show_id FROM show_grants WHERE user_id = ? ORDER BY show_id',
+      a.granted.id,
+    );
+    expect(grants).toEqual([{ show_id: b.showId }]);
+  });
+
+  it('a transfer to a non-member or to an unknown user id is 404 Member not found', async () => {
+    const { studioId, owner, nonMember } = await seedAccessMatrix();
+    for (const target of [nonMember.id, 'no-such-user']) {
+      const res = await send('POST', `/api/teams/${studioId}/owner`, owner.cookie, {
+        user_id: target,
+      });
+      expect(res.status, target).toBe(404);
+      expect(await res.json()).toEqual({ detail: 'Member not found' });
+    }
+  });
+
+  it('a grant revoked between requireSession and the session update gives 404 and changes nothing', async () => {
+    const { studioId, showId, sessionId, owner, granted } = await seedAccessMatrix();
+    const gated = new GatedCatalog(env.ports.catalog);
+    const h = gated.holdAfter(ACCESS_READ);
+    const put = send(
+      'PUT',
+      `/api/sessions/${sessionId}`,
+      granted.cookie,
+      { title: 'Renamed in a race' },
+      envWith({}, { catalog: gated }),
+    );
+    await h.reached;
+    const revoke = await send(
+      'DELETE',
+      `/api/teams/${studioId}/shows/${showId}/grants/${granted.id}`,
+      owner.cookie,
+    );
+    expect(revoke.status).toBe(200);
+    h.release();
+    const res = await put;
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ detail: 'Session not found' });
+    expect(
+      await testDb().first('SELECT title FROM sessions WHERE id = ?', sessionId),
+    ).toEqual({ title: 'Test Session' });
+  });
+
+  it('a member removed between requireSession and an archive gives 404 and the session stays', async () => {
+    const { studioId, sessionId, owner, granted } = await seedAccessMatrix();
+    const gated = new GatedCatalog(env.ports.catalog);
+    const h = gated.holdAfter(ACCESS_READ);
+    const archive = send(
+      'POST',
+      `/api/sessions/${sessionId}/archive`,
+      granted.cookie,
+      {},
+      envWith({}, { catalog: gated }),
+    );
+    await h.reached;
+    const remove = await send('DELETE', `/api/teams/${studioId}/members/${granted.id}`, owner.cookie);
+    expect(remove.status).toBe(200);
+    h.release();
+    const res = await archive;
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ detail: 'Session not found' });
+    expect(
+      Number((await testDb().first<{ archived: number }>('SELECT archived FROM sessions WHERE id = ?', sessionId))?.archived),
+    ).toBe(0);
+  });
+
+  it("POST /api/shows for a foreign team takes the catalog.studio_exists path", async () => {
+    const mine = await seedStudio();
+    const foreign = await seedStudio();
+    const userId = await seedUser({ studios: [mine], role: 'owner' });
+    const gated = new GatedCatalog(env.ports.catalog);
+    const res = await send(
+      'POST',
+      '/api/shows',
+      await loginCookie(userId),
+      { studio_id: foreign, name: 'X' },
+      envWith({}, { catalog: gated }),
+    );
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ detail: 'Unknown studio id.' });
+    expect(gated.bindings).toContainEqual({
+      binding: `user:${userId}`,
+      sql: 'SELECT catalog.studio_exists(?) AS e',
+    });
+  });
+});

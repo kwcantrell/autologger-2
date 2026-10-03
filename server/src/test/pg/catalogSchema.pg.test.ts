@@ -331,7 +331,9 @@ describe('catalog schema (design D1)', () => {
 
 describe('the app role (design D3)', () => {
   it.each([
-    'user',
+    // catalog-policies D2: catalog_user no longer holds full DML (no kv, no users insert or
+    // delete, no membership or invite insert); its unqualified-name reads and writes run in
+    // catalogPolicies.pg.test.ts's matrix.
     'system',
   ] as const)('as catalog_%s, reads and writes every catalog table by unqualified name (catalog-roles D12)', async (role) => {
     const db = await createTestDatabase();
@@ -462,7 +464,7 @@ describe('the bare app role is refused (catalog-roles D1 step 2)', () => {
   });
 });
 
-describe('row-level security on every catalog table (catalog-roles D1, D2)', () => {
+describe('row-level security on every catalog table (catalog-roles D1, D2; catalog-policies D2)', () => {
   it('every catalog table has row-level security and a policy for each catalog role', async () => {
     const db = await createTestDatabase();
     const sql = connect(db.admin);
@@ -475,13 +477,22 @@ describe('row-level security on every catalog table (catalog-roles D1, D2)', () 
       const policies = await sql`select policyname, roles::text[] as roles from pg_policies
                                  where schemaname = 'catalog' and tablename = ${t.relname}`;
       const byName = Object.fromEntries(policies.map((p) => [p.policyname, p.roles]));
-      expect(byName[`${t.relname}_user_all`], t.relname).toEqual(['catalog_user']);
       expect(byName[`${t.relname}_system_all`], t.relname).toEqual(['catalog_system']);
+      // catalog-policies D2: every table but kv has catalog_user policies (none allows every
+      // row: catalogPolicies.pg.test.ts), and kv has none. The 6b-1 allow-all `<table>_user_all`
+      // policies are gone; the name now belongs only to the one `for all` rule of user_prefs and
+      // show_grants (D2's naming).
+      expect(byName[`${t.relname}_user_all`] !== undefined, t.relname).toBe(
+        t.relname === 'user_prefs' || t.relname === 'show_grants',
+      );
+      const userPolicies = policies.filter((p) => (p.roles as string[]).includes('catalog_user'));
+      expect(userPolicies.length > 0, t.relname).toBe(t.relname !== 'kv');
     }
   });
 
+  // catalog-policies D2: only catalog_system keeps allow-all policies; catalog_user's rules are
+  // catalogPolicies.pg.test.ts's.
   it.each([
-    'user',
     'system',
   ] as const)('as catalog_%s, the allow-all policies change nothing on rows naming another user', async (role) => {
     const db = await createTestDatabase();
@@ -508,7 +519,7 @@ describe('row-level security on every catalog table (catalog-roles D1, D2)', () 
     const sql = connect(db.app);
     await sql.begin(async (tx) => {
       await tx`select set_config('role', ${`catalog_${role}`}, true),
-                        set_config('app.user_id', ${role === 'user' ? 'u-1' : ''}, true)`;
+                        set_config('app.user_id', '', true)`;
       expect((await tx`select current_user as u`)[0]?.u).toBe(`catalog_${role}`);
       for (const table of TABLES) {
         const sel = await tx.unsafe(`select count(*)::int as n from ${table}`);
