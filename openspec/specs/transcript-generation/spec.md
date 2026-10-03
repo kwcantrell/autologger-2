@@ -448,9 +448,10 @@ NOT be resolved in a post-pass over the already-merged, already-sorted word set.
   start/end (never silently `0`), and are not dropped
 
 ### Requirement: Enrichment persistence and internal read
-A successful generation run SHALL persist the remapped enrichment in the per-session
-database in two tables created idempotently in the per-session schema init (no catalog
-migration), so existing session databases gain them empty on next open: paragraph rows
+A successful generation run SHALL persist the remapped enrichment in the session's own rows of
+two session tables (`session_transcript_paragraphs` and `session_transcript_sentiment`,
+catalog-database "Session content tables"), so every session, existing ones included, reads them
+as empty until its first run: paragraph rows
 (nullable session-timeline `start_sec`/`end_sec`, speaker rendered as the same decimal
 string convention as word speakers, concatenated text) and sentiment-segment rows (nullable
 session-timeline `start_sec`/`end_sec`, `sentiment`, `sentiment_score`, segment text). Rows
@@ -482,8 +483,13 @@ Enrichment SHALL NOT reintroduce either dropped key, and SHALL NOT add fields to
 
 #### Scenario: Never-generated session reads as empty, not error
 - **WHEN** `listTranscriptEnrichment` is invoked for a session with no transcript enrichment
-- **THEN** it returns empty `paragraphs` and empty `sentiment` (the tables exist but hold no
-  rows), never an error
+- **THEN** it returns empty `paragraphs` and empty `sentiment` (the tables hold no rows for that
+  session), never an error
+
+#### Scenario: One session's run leaves another session's enrichment alone
+- **WHEN** a generation run replaces session A's words and enrichment while session B has
+  persisted enrichment
+- **THEN** session B's words, paragraphs and sentiment segments are unchanged
 
 #### Scenario: Enrichment adds nothing to the transcript-words shape
 - **WHEN** a client calls `GET /api/sessions/:id/transcript-words` for a session that has

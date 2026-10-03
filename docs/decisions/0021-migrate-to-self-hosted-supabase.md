@@ -292,8 +292,9 @@ Slice order:
      - the 5 s root deadline's value, and a distinct timeout for root writes;
      - registry display names that go stale across awaits (#14);
      - an email-indexed user lookup, so an invite doesn't read all of `users`;
-     - stale SQLite wording in the frozen `api-contract-freeze` spec: `SQLITE_FULL` as the example
-       commit failure, and "the SQLite column `shows.next_episode`" (4e panel);
+     - stale SQLite wording in the frozen `api-contract-freeze` spec: ~~`SQLITE_FULL` as the
+       example commit failure~~ (replaced at the 7b-1 archive), and "the SQLite column
+       `shows.next_episode`" (4e panel);
      - ~~two concurrent session creates for one show exhaust the SERIALIZABLE retries under
        load~~ resolved by `catalog-retry-backoff` (2026-10-02): lockstep re-runs exhausted 60/150
        transactions at 5 writers; jitter with 5 runs measured 0/240 at 8 writers;
