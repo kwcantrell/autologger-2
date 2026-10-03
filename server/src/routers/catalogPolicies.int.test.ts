@@ -3,10 +3,19 @@
 // "Writes whose access is revoked in flight change nothing").
 
 import { createCatalog } from '@autologger/catalog';
-import { describe, expect, it } from 'vitest';
+import { CatalogForbiddenError } from '@autologger/storage';
+import { describe, expect, it, vi } from 'vitest';
 import { GatedCatalog } from '../test/gatedCatalog';
 import { anonApp, env, envWith } from '../test/harness';
-import { loginCookie, seedShow, seedStudio, seedUser, testDb } from '../test/helpers';
+import {
+  loginCookie,
+  seedAccessMatrix,
+  seedShow,
+  seedStudio,
+  seedUser,
+  testDb,
+} from '../test/helpers';
+import { RewritingCatalog } from '../test/rewritingCatalog';
 
 const J = { 'content-type': 'application/json' };
 
@@ -179,5 +188,88 @@ describe('PUT /api/profile re-checks the role in its write transaction (design D
     expect(await res.json()).toEqual({ detail: 'Add at least one log category.' });
     expect(await showName(first)).toBe('First renamed');
     expect(await showName(second)).toBe('Second');
+  });
+});
+
+describe('policy outcomes map to existing statuses (design D8, before the policies)', () => {
+  it('a session update whose UPDATE changes no row is 404 Session not found', async () => {
+    const { sessionId, granted } = await seedAccessMatrix();
+    const rw = new RewritingCatalog(env.ports.catalog);
+    const UPDATE = /^UPDATE sessions SET title/;
+    rw.rewrite(UPDATE, { changes: 0 });
+    const res = await send(
+      'PUT',
+      `/api/sessions/${sessionId}`,
+      granted.cookie,
+      { title: 'Renamed' },
+      envWith({}, { catalog: rw }),
+    );
+    expect(rw.applied(UPDATE)).toBe(true);
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ detail: 'Session not found' });
+  });
+
+  it('a transfer whose target user row cannot be read is 404 Member not found', async () => {
+    const { studioId, owner, admin } = await seedAccessMatrix();
+    const rw = new RewritingCatalog(env.ports.catalog);
+    const TARGET = /^SELECT \* FROM users WHERE id = \?$/;
+    rw.rewrite(TARGET, { noRow: true });
+    const res = await send(
+      'POST',
+      `/api/teams/${studioId}/owner`,
+      owner.cookie,
+      { user_id: admin.id },
+      envWith({}, { catalog: rw }),
+    );
+    expect(rw.applied(TARGET)).toBe(true);
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ detail: 'Member not found' });
+    const roles = await testDb().all<{ user_id: string; role: string }>(
+      'SELECT user_id, role FROM user_studio_memberships WHERE studio_id = ? AND user_id IN (?, ?) ORDER BY role',
+      studioId,
+      owner.id,
+      admin.id,
+    );
+    expect(roles).toEqual(
+      expect.arrayContaining([
+        { user_id: owner.id, role: 'owner' },
+        { user_id: admin.id, role: 'admin' },
+      ]),
+    );
+  });
+
+  it('a CatalogForbiddenError after requireTeamRoleIn is the generic 500 with a redacted log line', async () => {
+    const { studioId, owner } = await seedAccessMatrix();
+    const rw = new RewritingCatalog(env.ports.catalog);
+    const RENAME = /^UPDATE studio_definitions SET display_name/;
+    rw.rewrite(RENAME, {
+      throws: () =>
+        new CatalogForbiddenError('user', {
+          table_name: 'studio_definitions',
+          message: 'permission denied for table studio_definitions',
+        }),
+    });
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const res = await send(
+        'PATCH',
+        `/api/teams/${studioId}`,
+        owner.cookie,
+        { display_name: 'Renamed' },
+        envWith({}, { catalog: rw }),
+      );
+      expect(rw.applied(RENAME)).toBe(true);
+      expect(res.status).toBe(500);
+      expect(await res.json()).toEqual({ detail: 'Internal Server Error' });
+      expect(spy).toHaveBeenCalledWith('unhandled error', {
+        name: 'CatalogForbiddenError',
+        code: '42501',
+        table_name: 'studio_definitions',
+        binding: 'user',
+      });
+      expect(JSON.stringify(spy.mock.calls)).not.toContain(owner.id);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

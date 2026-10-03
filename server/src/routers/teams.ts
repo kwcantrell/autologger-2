@@ -411,7 +411,9 @@ teamsRouter.post('/api/teams/:id/owner', async (c) => {
       throw new ApiError(404, 'Member not found');
     }
     const row: Row | null = await catalog.auth.authGetUserRowAny(targetUserId);
-    if (row?.disabled_at_utc !== null && row?.disabled_at_utc !== undefined) {
+    // catalog-policies D8: a co-member's row is always readable, so no row is a bug or a race.
+    if (row === null) throw new ApiError(404, 'Member not found');
+    if (row.disabled_at_utc !== null && row.disabled_at_utc !== undefined) {
       throw new ApiError(400, "That member's account is disabled.");
     }
     try {
