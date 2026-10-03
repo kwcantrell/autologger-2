@@ -300,10 +300,13 @@ speaker reconciliation.
 ### Requirement: Regeneration replaces the transcript atomically
 A successful generation run SHALL replace the session's entire transcript-words set **and
 its persisted enrichment** via a **single-transaction hub RPC** (delete-then-insert of
-words, paragraphs, and sentiment segments in one transaction; the RPC body stays
-synchronous per the hub invariant, and accepts `start_sec`/`end_sec`). All enrichment
-extraction and remapping happens in the **router layer** before this call — no `await` and
-no provider-shape logic enters the synchronous hub body. The replace transaction SHALL run
+words, paragraphs, and sentiment segments in one transaction; the RPC body awaits only its
+own transaction's statements, and accepts `start_sec`/`end_sec`). All provider calls, blob
+reads and enrichment extraction happen in the **router layer** before this call — none enters
+the hub body. The remap of words and enrichment onto the session timeline SHALL run inside the
+replace transaction, as a pure computation over the recording anchors read in that same
+transaction, so the stored transcript is never remapped against anchors that changed before it
+committed. The replace transaction SHALL run
 only after **all** groups' provider requests have succeeded — a failed group discards the
 whole run's results, words and enrichment alike. A failed run SHALL leave the existing words
 **and existing enrichment** untouched. **Zero-word guard (gate decision 2026-07-14):** a run
@@ -320,6 +323,10 @@ vice versa).
 - **WHEN** generation succeeds on a session that already has transcript words and enrichment
 - **THEN** the stored set afterward contains only the new run's words and enrichment,
   replaced in a single transaction
+
+#### Scenario: Remap uses the anchors the replace transaction reads
+- **WHEN** a recorded or imported take adds `Recording N` anchors while a generation run waits on the provider
+- **THEN** the replace remaps the run's words against the anchors present when its transaction runs, including the new take's
 
 #### Scenario: Failed run preserves existing words
 - **WHEN** any group's provider request fails mid-run
@@ -339,9 +346,10 @@ remains) SHALL yield `400` with a distinct detail; a provider request failure or
 timeout SHALL yield `502` with a detail that does not leak the API key or verbatim
 upstream bodies; the client-side provider timeout SHALL be configured longer than the
 provider's documented 10-minute processing ceiling (undici's 300s default is insufficient
-and MUST be overridden). The pipeline SHALL run in the router layer — no `await` enters a
-SessionHub RPC body — and any hub access after an `await` SHALL re-acquire the hub through
-the registry (idle eviction may have closed the previous handle during the await).
+and MUST be overridden). The pipeline SHALL run in the router layer — no provider call or
+blob read enters a SessionHub RPC body — and any hub access after a provider or blob `await`
+SHALL re-acquire the hub through the registry (idle eviction may have closed the previous
+handle during the await).
 Generation runs against the segment set snapshotted at run start; segments uploaded
 mid-run (e.g. a recording in progress) are absent from the result — accepted snapshot
 semantics.
@@ -454,7 +462,7 @@ provider request; the system SHALL NOT attempt cross-group speaker reconciliatio
 enrichment, matching the words path. No session-level sentiment average is persisted (a
 consumer computes any roll-up from the stored segments with the weighting it needs).
 
-Enrichment SHALL be readable through a synchronous SessionHub read
+Enrichment SHALL be readable through a SessionHub read
 (`listTranscriptEnrichment`) returning `{ paragraphs, sentiment }` as arrays in ordinal
 order; a session that has never generated (or whose last run produced no enrichment) SHALL
 read as empty arrays, never an error. This is an **in-process read only** — no HTTP route
