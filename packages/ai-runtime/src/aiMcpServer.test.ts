@@ -1239,7 +1239,7 @@ function stripComments(src: string): string {
   );
 }
 
-describe('create_event handler — zero-await invariant (package-split-foundation D6 / delta spec "Handler is uninterruptible")', () => {
+describe('create_event handler — the cap is reserved before the first await (async-session-hub D8 / delta spec "The create_event cap is reserved before any await")', () => {
   const AI_MCP_SERVER_SRC = join(dirname(fileURLToPath(import.meta.url)), 'aiMcpServer.ts');
 
   it('stripComments removes a comment containing the word "await" (mutation check — proves the predicate is not vacuous)', () => {
@@ -1249,7 +1249,7 @@ describe('create_event handler — zero-await invariant (package-split-foundatio
     expect(stripped).toContain('const y = 2;');
   });
 
-  it('the create_event tool-builder registration contains zero `await` expressions', () => {
+  it("the handler's cap check and its reservation both precede its first `await`", () => {
     const source = readFileSync(AI_MCP_SERVER_SRC, 'utf8');
     const startMarker =
       'create_event: (server, { registry, sessionId, generation, createdEvents }) => {';
@@ -1260,8 +1260,52 @@ describe('create_event handler — zero-await invariant (package-split-foundatio
     const endMarker = '\n  },\n};';
     const endIdx = source.indexOf(endMarker, startIdx);
     expect(endIdx).toBeGreaterThan(startIdx);
-    const handlerSource = source.slice(startIdx, endIdx);
-    expect(stripComments(handlerSource)).not.toMatch(/\bawait\b/);
+    const handler = stripComments(source.slice(startIdx, endIdx));
+    const capCheck = handler.indexOf(
+      'if (createdEvents.count + createdEvents.reserved >= generation.cap)',
+    );
+    const reserve = handler.indexOf('createdEvents.reserved += 1;');
+    expect(capCheck).toBeGreaterThanOrEqual(0);
+    expect(reserve).toBeGreaterThan(capCheck);
+    const firstAwait = handler.search(/\bawait\b/);
+    if (firstAwait >= 0) expect(reserve).toBeLessThan(firstAwait);
+  });
+
+  it('a failed insert at cap - 1 returns the internal-error result, leaves createdEvents() unchanged and frees its reservation for the next call', async () => {
+    const turn = listener.registerTurn('gen-reserve', genContext({ cap: 2 }));
+    const first = await createEventViaMcp(turn.url, turn.token, {
+      category: 'cat1',
+      message: 'SLATE',
+      session_time: '00:00:01:00',
+    });
+    expect(first.isError).toBeFalsy();
+    expect(turn.createdEvents()).toBe(1);
+    const spy = vi.spyOn(SessionHub.prototype, 'createAnchoredEvent').mockImplementationOnce(() => {
+      throw new Error('simulated insert fault');
+    });
+    try {
+      const faulted = await createEventViaMcp(turn.url, turn.token, {
+        category: 'cat1',
+        message: 'SLATE',
+        session_time: '00:00:02:00',
+      });
+      expect(faulted.isError).toBe(true);
+      expect(faulted.content[0].text).toBe(
+        'create_event failed: internal error; no event was created.',
+      );
+      expect(turn.createdEvents()).toBe(1);
+      const ok = await createEventViaMcp(turn.url, turn.token, {
+        category: 'cat1',
+        message: 'SLATE',
+        session_time: '00:00:03:00',
+      });
+      expect(ok.isError).toBeFalsy();
+      expect(turn.createdEvents()).toBe(2);
+      expect(listEventRows('gen-reserve')).toHaveLength(2);
+    } finally {
+      spy.mockRestore();
+      turn.dispose();
+    }
   });
 });
 

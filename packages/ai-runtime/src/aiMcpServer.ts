@@ -254,13 +254,22 @@ interface TurnPageState {
   readonly served: Set<number>;
 }
 
+/** A run's created-events counter (async-session-hub D8): `count` is successful inserts only;
+ * `reserved` holds a slot for each insert still in flight, so concurrent calls cannot pass the
+ * cap check together. */
+interface CreatedEventsCounter {
+  count: number;
+  reserved: number;
+}
+
 interface TurnRegistration {
   readonly sessionId: string;
   /** Per-turn context (D6); undefined ⇒ default chat tool set, no snapshot. */
   readonly context: AiMcpTurnContext | undefined;
   /** The turn's mutable created-events counter (task 3.2). Lives on the
-   * REGISTRATION — per-request MCP servers share it across a turn's calls. */
-  readonly createdEvents: { count: number };
+   * REGISTRATION — per-request MCP servers share it across a turn's calls.
+   * `reserved` counts inserts in flight (async-session-hub D8). */
+  readonly createdEvents: CreatedEventsCounter;
   /** The turn's paged-transcript memo + coverage counter (D1/D6). */
   readonly pageState: TurnPageState;
 }
@@ -676,7 +685,7 @@ interface ToolBuildContext {
   readonly registry: SessionHubRegistryFacade;
   readonly sessionId: string;
   readonly generation: AiGenerationRunContext | undefined;
-  readonly createdEvents: { count: number };
+  readonly createdEvents: CreatedEventsCounter;
   /** The topic one-shot's paged word snapshot (D1) — the OTHER key for the
    * paged `get_transcript_words` registration; carries no event-run fields. */
   readonly pagedWords: readonly AiGenerationSnapshotWord[] | undefined;
@@ -853,52 +862,60 @@ const TOOL_BUILDERS: Record<AiMcpToolName, (server: McpServer, ctx: ToolBuildCon
                 'or drop-frame HH:MM:SS;FF, below 24:00:00 with frames under the session rate.',
             );
           }
-          if (createdEvents.count >= generation.cap) {
+          // async-session-hub D8: the cap check and the reservation run before the first
+          // `await`, so concurrent calls cannot both pass it; the `finally` below releases the
+          // slot, and only a successful insert counts.
+          if (createdEvents.count + createdEvents.reserved >= generation.cap) {
             return toolError(
               `Per-run event cap reached (${generation.cap} events): no further events ` +
                 'can be created by this run.',
             );
           }
-          const totalFrames = toTotalFrames(tc);
-          // Metadata composition (spec "bounded and attributable"): attribution
-          // pair + the SAME category label/color UI snapshot keys the manual
-          // route writes, sourced from the RUN SNAPSHOT (never a catalog read).
-          const snapshotDef: CategoryDef = {
-            id: cat.id,
-            label: cat.name,
-            color: cat.color,
-            kind: cat.type,
-            dropdown_options: cat.dropdown_options.map((o) => o.label),
-            on_label: '',
-            off_label: '',
-          };
-          const metadata = mergeCategoryUiSnapshotsIntoMetadata(
-            { auto_generated: true, auto_generate_run_id: generation.runId },
-            snapshotDef,
-          );
-          // Hub resolved AT CALL TIME (D3) — the RPC call below is synchronous,
-          // no await introduced anywhere in this handler (package-split-
-          // foundation D6: the handler's cap-check→insert→counter-increment
-          // sequence stays uninterruptible). The read-filter-anchor-insert
-          // sequence itself now runs as ONE transactional hub RPC
-          // (`createAnchoredEvent`) instead of a comment-enforced inline
-          // block — same anchor math (anchors rebuilt fresh each call, so
-          // generated events keep sorting among themselves in timecode
-          // order), same event-generate-hardening D3 regenerate-snapshot
-          // exclusion, same one-insert-path (D4) manual-insert semantics.
-          const hub = registry.get(sessionId);
-          const { event } = hub.createAnchoredEvent({
-            category,
-            message,
-            metadataJson: JSON.stringify(metadata),
-            timecodeTotalFrames: totalFrames,
-            frameRate: generation.frameRate,
-            startOffsetFrames: generation.startOffsetFrames,
-            startedAtUtc: generation.startedAtUtc,
-            excludeEventIds: generation.regenerateSnapshotIds,
-          });
-          createdEvents.count += 1; // ONLY on successful insert
-          return { content: [{ type: 'text', text: JSON.stringify(event) }] };
+          createdEvents.reserved += 1;
+          try {
+            const totalFrames = toTotalFrames(tc);
+            // Metadata composition (spec "bounded and attributable"): attribution
+            // pair + the SAME category label/color UI snapshot keys the manual
+            // route writes, sourced from the RUN SNAPSHOT (never a catalog read).
+            const snapshotDef: CategoryDef = {
+              id: cat.id,
+              label: cat.name,
+              color: cat.color,
+              kind: cat.type,
+              dropdown_options: cat.dropdown_options.map((o) => o.label),
+              on_label: '',
+              off_label: '',
+            };
+            const metadata = mergeCategoryUiSnapshotsIntoMetadata(
+              { auto_generated: true, auto_generate_run_id: generation.runId },
+              snapshotDef,
+            );
+            // Hub resolved AT CALL TIME (D3) — the RPC call below is synchronous,
+            // no await introduced anywhere in this handler (package-split-
+            // foundation D6: the handler's cap-check→insert→counter-increment
+            // sequence stays uninterruptible). The read-filter-anchor-insert
+            // sequence itself now runs as ONE transactional hub RPC
+            // (`createAnchoredEvent`) instead of a comment-enforced inline
+            // block — same anchor math (anchors rebuilt fresh each call, so
+            // generated events keep sorting among themselves in timecode
+            // order), same event-generate-hardening D3 regenerate-snapshot
+            // exclusion, same one-insert-path (D4) manual-insert semantics.
+            const hub = registry.get(sessionId);
+            const { event } = hub.createAnchoredEvent({
+              category,
+              message,
+              metadataJson: JSON.stringify(metadata),
+              timecodeTotalFrames: totalFrames,
+              frameRate: generation.frameRate,
+              startOffsetFrames: generation.startOffsetFrames,
+              startedAtUtc: generation.startedAtUtc,
+              excludeEventIds: generation.regenerateSnapshotIds,
+            });
+            createdEvents.count += 1; // ONLY on successful insert
+            return { content: [{ type: 'text', text: JSON.stringify(event) }] };
+          } finally {
+            createdEvents.reserved -= 1;
+          }
         } catch {
           // Never throw out of the handler (spec). Kept opaque — raw internal
           // errors are not surfaced to the model.
@@ -994,7 +1011,7 @@ export class AiMcpListener {
     // One created-events counter PER REGISTRATION (task 3.2) — shared by the
     // turn's per-request MCP servers, readable after the run via the returned
     // `createdEvents()` (the generate route's `{created, cap_hit}` source).
-    const createdEvents = { count: 0 };
+    const createdEvents: CreatedEventsCounter = { count: 0, reserved: 0 };
     // One paged-transcript memo + coverage counter PER REGISTRATION (D1/D6),
     // on the same terms. The snapshot is the event run's words when present,
     // else the topic one-shot's `pagedWords`; neither ⇒ no snapshot, no
