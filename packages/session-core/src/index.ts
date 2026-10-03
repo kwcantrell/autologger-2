@@ -17,11 +17,13 @@
 // (verified: `tsc --noEmit -p packages/session-core` is clean; same
 // coexistence `@autologger/catalog`'s barrel already relies on).
 
+export * from './asyncSessionSql';
 export * from './audioSeamParts';
 export * from './audioStore';
 export * from './dashboardStore';
 export * from './eventAnchors';
 export * from './eventStore';
+export * from './fifoLock';
 export * from './leaseStore';
 export * from './SessionHub';
 export * from './sessionCore';
