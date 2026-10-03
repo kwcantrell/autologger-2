@@ -415,6 +415,14 @@ storage or ports' concrete handles, and a handle carries connections, not just a
 - **Stop rule (owner's current, ADR 0021 7b-1):** stop and ask the owner if, in the stack and at
   either session count, the median `addEvent` exceeds 10 ms or the 31,621-word replace exceeds
   10 s. A slower `listEvents` is recorded, not a stop.
+- **Post-approval owner decision (2026-10-03), after task 7.2 tripped the stop rule:** the bench
+  measured a median `addEvent` of 11.9 ms at about 300 accessible sessions and 15.5 ms at about
+  3,000. The owner accepted the result without investigating: performance work waits for
+  database-side observability, so it is measured rather than guessed. The numbers and a revisit
+  item are in ADR 0021. The bench runs 3,000 calls x 3 runs (not 7b-1's 5,000 x 5) by owner
+  direction to save compute; its figures are per-call medians, comparable with 7b-1's. The pinned
+  bench also has two optional switches that were not used for the recorded numbers:
+  `BENCH_CALLER=system` (a control run) and per-500-call `addEvent` timings.
 
 ## D12. Tests
 
@@ -521,6 +529,12 @@ Test plumbing found in group 5 (post-approval; no scope change, no expected valu
 - Placement: the YouTube and regenerate races sit in `sessions.youtubeImport.int` and
   `events.generate.int`, which own the fake `yt-dlp` and the fake CLI; the other route races are
   in `catalogPolicies.int` beside the precedent.
+
+Test plumbing found in group 7 (post-approval; no scope change, no expected value changed):
+- `crossProcess.int.test.ts` "100 concurrent toggle pairs" gets a 30 s timeout, the 7b-1 precedent
+  of the interleave test. It asserts a serial-order outcome, not a latency: alone it takes about
+  1 s, but under the full parallel suite it outlasted the 5 s default three times (groups 3 and 4,
+  and the 7.3 gate run).
 
 ## D13. Specs, README and ADR 0021
 

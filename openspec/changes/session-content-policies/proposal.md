@@ -76,6 +76,11 @@ implementation splits into two green commits; the remaining minors are in `panel
   31,621-row words insert 238-251 ms (the first draft's set form grew to 9.3 ms and 18.3 ms at
   20,000). The stop rule is the owner's current one, measured under a user binding with 300 and
   3,000 sessions seeded.
+  Post-approval (task 7.2): measured end to end in the stack, the median `addEvent` was 11.9 ms at
+  about 300 accessible sessions and 15.5 ms at about 3,000, against 7b-1's 5.3-5.4 ms. This
+  contradicts "slightly" and "does not grow", and trips the stop rule. The owner accepted it on
+  2026-10-03 without investigating the cause: the investigation waits for database-side
+  observability (design D11, ADR 0021 revisit item).
 - **Token-only Companion calls stay system calls for any session id** (slice 9's credential), and
   are the one path the policies do not cover.
 - **The scan of reviewed bindings grows** (design D9): session callers are made only by

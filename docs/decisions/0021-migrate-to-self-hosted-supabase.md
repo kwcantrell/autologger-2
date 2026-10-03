@@ -303,6 +303,9 @@ Slice order:
        statements about 0.4 ms against 0.03 ms raw): profile and optimise it; it also lengthens
        how long a session call holds a pool slot (the 7b-1 panel's saturation risk) (owner,
        2026-10-03);
+     - the 7b-2 user-bound session path (median `addEvent` 11.9-15.5 ms against 7b-1's 5.3-5.4 ms,
+       above the 10 ms stop rule, accepted by the owner 2026-10-03): investigate once database-side
+       observability exists (per-statement timings, plans), not before;
      - (5a) a foreign key from `catalog.users` to `auth.users`;
      - (5a) an egress allowlist for GoTrue: `auth-egress` reaches the internet, the LAN and the
        host's bridge address, while GoTrue holds `JWT_SECRET` and its database password;
@@ -921,7 +924,12 @@ Slice order:
      token-only Companion calls, undo steps, the merge script); AI turns and the log-import job
      carry their starting user.
 
-   **Measurement** (dev stack, design D11): MEASUREMENT-7B2-PENDING (task 7.2).
+   **Measurement** (dev stack, design D11, `spike/bench7b2.mts`, every hub call as a user, 3,000
+   calls x 3 runs): median `addEvent` 11.9 ms at about 300 accessible sessions and 15.5 ms at about
+   3,000 (7b-1 baseline 5.3-5.4 ms), `listEvents` 7.7 ms and 10.6 ms (baseline 5.0-5.2 ms), the
+   31,621-word replace 0.50 s and 0.49 s. This trips the 10 ms stop rule. The owner accepted it
+   without investigating (2026-10-03): performance work waits for database-side observability, so
+   it is measured rather than guessed. The cause is not yet known.
 8. Session leases.
 9. Realtime replaces the WebSocket protocol.
 10. Blobs to Supabase Storage.

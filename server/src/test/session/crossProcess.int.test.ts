@@ -36,7 +36,9 @@ describe('two processes on one session', () => {
     expect(status.current_take).toBe(100);
     expect((await hubTwo.transportSnapshot(CTX)).current_take).toBe(100);
     await Promise.all([one.closeAll(), two.closeAll()]);
-  });
+    // 200 toggles, each a Postgres transaction under the session row lock: under the full parallel
+    // suite they can outlast the 5 s default timeout (about 1 s alone), as the interleave test can.
+  }, 30_000);
 
   // catalog-database "Concurrent writes leave the last state" (design D8): the projection is
   // written inside each write's transaction, under the row lock, so the last commit's state wins.

@@ -40,3 +40,9 @@ Scope change: no (the change brings the code to the approved scenario "An import
 - [x] [minor] Before the decision, design D7's undo sites (segment deletes only) and the spec scenario (segment and blob removed) disagreed for the YouTube import. Resolved: D7's owner-decision bullet and task 5.2 now include the file delete; the spec stands as written.
 - [x] [minor] Checked: D8 ("its undo already ran" before the 404), D7's seven `undoHub` sites and the D9 allowlist are unchanged by the file delete (the blob store is not a session caller). No contradiction.
 - [x] [minor] Checked: every spec-delta requirement still has a task and a test; no task touches a proposal non-goal.
+
+## Consistency read 2026-10-03 (after the 7.2 stop)
+Edits since the last read: design.md (D11 post-approval owner decision: the 7.2 stop is accepted, investigation waits for observability; the smaller bench run), proposal.md (a post-approval note on the "Write latency" bullet), tasks.md (7.1 and 7.2 evidence; targeted suites per group by owner direction), spike/bench7b2.mts (new, as 7.2 specifies)
+Scope change: no. It changes an accepted risk, write latency above the 10 ms stop rule, which the owner decided explicitly on 2026-10-03, as 7b-1's stop-rule decision was recorded.
+- [x] [minor] The proposal's "Write latency rises slightly and does not grow with the catalog" contradicted the 7.2 measurement (11.9 ms at about 300 sessions, 15.5 ms at about 3,000). Resolved: post-approval note on that bullet, matching D11 and the ADR 0021 measurement and revisit item.
+- [x] [minor] Every spec-delta requirement still has a task and a test; no spec delta states a latency bound, so the accepted latency contradicts no requirement. Resolved: no change needed.
