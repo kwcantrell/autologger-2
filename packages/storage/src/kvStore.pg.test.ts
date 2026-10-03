@@ -13,14 +13,16 @@ afterEach(async () => {
 });
 
 interface Env {
-  db: PostgresCatalogDb;
+  /** A `system:kv` handle, as the server builds KV (catalog-roles D9). */
+  db: CatalogDb;
   s: KvStore;
   tick(ms: number): void;
 }
 
 async function env(wrap?: (db: CatalogDb) => CatalogDb): Promise<Env> {
-  const db = new PostgresCatalogDb((await createTestDatabase()).app);
-  open.push(db);
+  const root = new PostgresCatalogDb((await createTestDatabase()).app);
+  open.push(root);
+  const db = root.bindSystem('kv');
   let now = 1_750_000_000_000;
   const s = new KvStore(wrap ? wrap(db) : db, { now: () => now });
   return {

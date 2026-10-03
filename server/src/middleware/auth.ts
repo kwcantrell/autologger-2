@@ -13,13 +13,15 @@ import {
 import { sessionCookieName } from '../env';
 
 export const authContext: MiddlewareHandler<AppEnv> = async (c, next) => {
-  const catalog = createCatalog(c.env.ports.catalog);
-  await catalog.init();
-  c.set('catalog', catalog);
-
+  // catalog-roles D9: resolve the caller and load the registry as system:auth-resolve; routes get
+  // a catalog bound to the signed-in user, or an unbound one (every statement refused) with no
+  // user. Both carry the registry snapshot loaded here.
+  const sys = createCatalog(c.env.ports.catalog).system('auth-resolve');
+  await sys.init();
   const cookie = getCookie(c, sessionCookieName(c.env.config));
-  const user = await resolveSessionUser(c.env.ports.kv, catalog, cookie);
+  const user = await resolveSessionUser(c.env.ports.kv, sys, cookie);
   c.set('user', user);
+  c.set('catalog', user ? sys.forUser(user.id) : sys.unbound());
 
   // API_TOKEN authenticates only the Companion surface (api-contract-freeze
   // "API_TOKEN authenticates only the Companion surface"; design D10). Outside

@@ -2,6 +2,7 @@
 // POST /api/admin/restart is dropped: serverless has no supervised process to
 // restart (adminMeta already returns restart_supported:false).
 
+import type { CatalogFacade } from '@autologger/catalog';
 import { adminMembershipBodySchema, adminStudioCreateBodySchema } from '@autologger/contract';
 import { ValidationError } from '@autologger/domain';
 import { type Context, Hono } from 'hono';
@@ -22,9 +23,15 @@ function requireAdminToken(c: Context<AppEnv>): void {
   }
 }
 
-adminRouter.get('/api/admin/users', async (c) => {
+/** The support plane's catalog (catalog-roles D10): checks ADMIN_TOKEN first, then binds the
+ * system task `support-plane`. */
+function adminCatalog(c: Context<AppEnv>): CatalogFacade {
   requireAdminToken(c);
-  const catalog = c.get('catalog');
+  return c.get('catalog').system('support-plane');
+}
+
+adminRouter.get('/api/admin/users', async (c) => {
+  const catalog = adminCatalog(c);
   const names = catalog.studios.studioNamesDict();
   // `builtin` stays in the frozen shape, always false: there are no built-in teams
   // (owner-bootstrap D9).
@@ -52,9 +59,8 @@ adminRouter.get('/api/admin/users', async (c) => {
 });
 
 adminRouter.post('/api/admin/studios', async (c) => {
-  requireAdminToken(c);
+  const catalog = adminCatalog(c);
   const body = adminStudioCreateBodySchema.parse(await c.req.json());
-  const catalog = c.get('catalog');
   try {
     await catalog.studios.adminCreateStudio(body.id.trim(), body.display_name.trim());
   } catch (e) {
@@ -67,10 +73,10 @@ adminRouter.post('/api/admin/studios', async (c) => {
 });
 
 adminRouter.delete('/api/admin/studios/:studioId', async (c) => {
-  requireAdminToken(c);
+  const catalog = adminCatalog(c);
   try {
-    await c.get('catalog').studios.adminDeleteStudio(c.req.param('studioId').trim());
-    await c.get('catalog').studios.refreshAfterWrite();
+    await catalog.studios.adminDeleteStudio(c.req.param('studioId').trim());
+    await catalog.studios.refreshAfterWrite();
   } catch (e) {
     if (e instanceof ValidationError) throw new ApiError(400, e.message);
     throw e;
@@ -79,12 +85,12 @@ adminRouter.delete('/api/admin/studios/:studioId', async (c) => {
 });
 
 adminRouter.post('/api/admin/users/:userId/memberships', async (c) => {
-  requireAdminToken(c);
+  const support = adminCatalog(c);
   const body = adminMembershipBodySchema.parse(await c.req.json());
   const sid = body.studio_id.trim();
   // The team is checked inside the upsert's transaction, not against the request's snapshot, so a
   // team deleted meanwhile gets no membership (catalog-concurrency-hazards D3).
-  const userId = await c.get('catalog').tx(async (catalog) => {
+  const userId = await support.tx(async (catalog) => {
     if (!(await catalog.studios.studioExists(sid))) throw new ApiError(400, 'Unknown team id.');
     const row = await catalog.auth.authGetUserRowAny(c.req.param('userId').trim());
     if (row === null) throw new ApiError(404, 'User not found.');
@@ -113,27 +119,25 @@ adminRouter.post('/api/admin/users/:userId/memberships', async (c) => {
   // After the commit, an upsert that leaves the user a member closes their sockets on the team's
   // shows they hold no grant for (show-grants D20).
   if ((body.role ?? 'member') === 'member') {
-    await closeSocketsAfterAccessLoss(c, userId, () => teamShowIds(c, sid));
+    await closeSocketsAfterAccessLoss(c, userId, (cat) => teamShowIds(cat, sid));
   }
   return c.json({ ok: true });
 });
 
 adminRouter.delete('/api/admin/users/:userId/memberships/:studioId', async (c) => {
-  requireAdminToken(c);
-  const catalog = c.get('catalog');
+  const catalog = adminCatalog(c);
   const row = await catalog.auth.authGetUserRowAny(c.req.param('userId').trim());
   if (row === null) throw new ApiError(404, 'User not found.');
   const studioId = c.req.param('studioId').trim();
   // authRemoveMembership deletes the member's grants in the team in the same transaction (D2);
   // after it commits, their sockets in the team close (show-grants D20).
   await catalog.auth.authRemoveMembership(String(row.id), studioId);
-  await closeSocketsAfterAccessLoss(c, String(row.id), () => teamShowIds(c, studioId));
+  await closeSocketsAfterAccessLoss(c, String(row.id), (cat) => teamShowIds(cat, studioId));
   return c.json({ ok: true });
 });
 
 adminRouter.post('/api/admin/users/:userId/disable', async (c) => {
-  requireAdminToken(c);
-  const catalog = c.get('catalog');
+  const catalog = adminCatalog(c);
   const row = await catalog.auth.authGetUserRowAny(c.req.param('userId').trim());
   if (row === null) throw new ApiError(404, 'User not found.');
   // Disabling flips disabled_at_utc; resolveSessionUser already filters disabled
@@ -143,8 +147,7 @@ adminRouter.post('/api/admin/users/:userId/disable', async (c) => {
 });
 
 adminRouter.post('/api/admin/users/:userId/enable', async (c) => {
-  requireAdminToken(c);
-  const catalog = c.get('catalog');
+  const catalog = adminCatalog(c);
   const row = await catalog.auth.authGetUserRowAny(c.req.param('userId').trim());
   if (row === null) throw new ApiError(404, 'User not found.');
   await catalog.auth.authSetUserDisabled(String(row.id), false);

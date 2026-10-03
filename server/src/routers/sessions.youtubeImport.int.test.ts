@@ -57,7 +57,7 @@ import type { Bindings } from '../appEnv';
 import { resolveYtDlpPath } from '../env';
 import { createBindings } from '../node/config';
 import { anonApp, app, env, envWith } from '../test/harness';
-import { catalogFor, seedAccessMatrix, seededSession } from '../test/helpers';
+import { catalogFor, seedAccessMatrix, seededSession, testDb } from '../test/helpers';
 
 const FIXTURE_PATH = join(MEDIA_IMPORT_FIXTURES_DIR, 'fake-ytdlp.mjs');
 
@@ -241,7 +241,7 @@ describe('configured success (matrix: youtu.be accepted + success + episode_date
       expect(warn.mock.calls.map((c) => String(c[0])).join('\n')).toMatch(
         new RegExp(`${session}.*2024-01-1[45]`),
       );
-      const row = await env.ports.catalog.first<{ event_count: number }>(
+      const row = await testDb().first<{ event_count: number }>(
         'SELECT event_count FROM sessions WHERE id = ?',
         session,
       );

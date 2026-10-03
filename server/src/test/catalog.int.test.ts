@@ -9,6 +9,7 @@ import {
   seedShow,
   seedStudio,
   seedUser,
+  testDb,
 } from './helpers';
 
 describe('catalog studio + auth stores', () => {
@@ -106,7 +107,7 @@ describe('catalog transactions', () => {
     const cat = catalogFor();
     await Promise.all([cat.auth.authEnsurePrefsRow(user), cat.auth.authEnsurePrefsRow(user)]);
     expect(
-      await env.ports.catalog.first('SELECT COUNT(*) AS n FROM user_prefs WHERE user_id = ?', user),
+      await testDb().first('SELECT COUNT(*) AS n FROM user_prefs WHERE user_id = ?', user),
     ).toEqual({ n: 1 });
 
     const results = await Promise.allSettled([
@@ -117,9 +118,7 @@ describe('catalog transactions', () => {
     const rejected = results.find((r) => r.status === 'rejected') as PromiseRejectedResult;
     expect(rejected.reason).toBeInstanceOf(ValidationError);
     expect(
-      await env.ports.catalog.first(
-        "SELECT COUNT(*) AS n FROM studio_definitions WHERE id = 'dup-team'",
-      ),
+      await testDb().first("SELECT COUNT(*) AS n FROM studio_definitions WHERE id = 'dup-team'"),
     ).toEqual({ n: 1 });
   });
 });
@@ -201,7 +200,7 @@ describe('former built-in teams are data (owner-bootstrap D9)', () => {
     expect(viaTeams.status).toBe(400);
     expect(((await viaTeams.json()) as { detail: string }).detail).toMatch(/still has 1 show/);
     // With its show gone the former built-in deletes like any team.
-    await env.ports.catalog.run("DELETE FROM shows WHERE studio_id = 'test-studios'");
+    await testDb().run("DELETE FROM shows WHERE studio_id = 'test-studios'");
     const again = await anonApp.request(
       '/api/admin/studios/test-studios',
       { method: 'DELETE', headers: ADMIN_H },
@@ -219,7 +218,7 @@ describe('former built-in teams are data (owner-bootstrap D9)', () => {
   });
 
   it('getStudioSettingsBlob of an unknown team returns the default and persists nothing', async () => {
-    const before = await env.ports.catalog.all(
+    const before = await testDb().all(
       "SELECT key, value FROM app_settings WHERE key LIKE 'studio_config:%' ORDER BY key",
     );
     const cat = catalogFor();
@@ -228,7 +227,7 @@ describe('former built-in teams are data (owner-bootstrap D9)', () => {
       categories: Array<{ name: string }>;
     };
     expect(blob.categories.map((c) => c.name)).toEqual(['Scene', 'Audio issue', 'Note']);
-    const after = await env.ports.catalog.all(
+    const after = await testDb().all(
       "SELECT key, value FROM app_settings WHERE key LIKE 'studio_config:%' ORDER BY key",
     );
     expect(after).toEqual(before);

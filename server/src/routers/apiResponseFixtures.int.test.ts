@@ -38,6 +38,7 @@ import {
   seedShow,
   seedStudio,
   seedUser,
+  testDb,
 } from '../test/helpers';
 
 const JSON_HEADERS = { 'content-type': 'application/json' };
@@ -431,11 +432,7 @@ describe('sessions', () => {
     // captured title is deterministic (`ATS_0002`) rather than embedding
     // today's UTC date — the Date-suffix derivation path has its own
     // dedicated, non-fixture coverage in sessions.int.test.ts.
-    await env.ports.catalog.run(
-      'UPDATE shows SET title_suffix = ? WHERE id = ?',
-      'episode',
-      showId,
-    );
+    await testDb().run('UPDATE shows SET title_suffix = ? WHERE id = ?', 'episode', showId);
     const res = await app.request(
       '/api/sessions',
       {

@@ -9,7 +9,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { app, env } from './harness';
-import { SEED_CATEGORY_ID, seededSession } from './helpers';
+import { SEED_CATEGORY_ID, seededSession, testDb } from './helpers';
 
 describe('hub ↔ catalog projection', () => {
   it('logging an event bumps the projected event_count on the catalog row', async () => {
@@ -24,7 +24,7 @@ describe('hub ↔ catalog projection', () => {
       env,
     );
     expect(res.status).toBe(200);
-    const row = await env.ports.catalog.first<{ event_count: number }>(
+    const row = await testDb().first<{ event_count: number }>(
       'SELECT event_count FROM sessions WHERE id = ?',
       s,
     );
@@ -42,7 +42,7 @@ describe('hub ↔ catalog projection', () => {
     const status = await app.request(`/api/sessions/${s}/status`, {}, env);
     expect(((await status.json()) as { is_rolling: boolean }).is_rolling).toBe(true);
 
-    const rowWhileRolling = await env.ports.catalog.first<{ is_rolling: number }>(
+    const rowWhileRolling = await testDb().first<{ is_rolling: number }>(
       'SELECT is_rolling FROM sessions WHERE id = ?',
       s,
     );
@@ -54,7 +54,7 @@ describe('hub ↔ catalog projection', () => {
     expect(stopBody.stopped).toBe(true);
     expect(stopBody.is_rolling).toBe(false);
 
-    const rowAfterStop = await env.ports.catalog.first<{ is_rolling: number }>(
+    const rowAfterStop = await testDb().first<{ is_rolling: number }>(
       'SELECT is_rolling FROM sessions WHERE id = ?',
       s,
     );

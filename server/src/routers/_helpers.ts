@@ -3,7 +3,7 @@
 // (closeSocketsAfterAccessLoss; show-grants D20), per-session hub resolution, timecode context,
 // and marked-at parsing.
 
-import type { AuthUser, Row } from '@autologger/catalog';
+import type { AuthUser, CatalogFacade, Row } from '@autologger/catalog';
 import type { SessionHubFacade, TimecodeCtx } from '@autologger/session-core';
 import type { Context } from 'hono';
 import type { AppEnv } from '../appEnv';
@@ -103,11 +103,13 @@ export const ACCESS_LOST_CLOSE_CODE = 4403;
 export async function closeSocketsAfterAccessLoss(
   c: Context<AppEnv>,
   userId: string,
-  showIds: readonly string[] | (() => Promise<readonly string[]>),
+  showIds: readonly string[] | ((catalog: CatalogFacade) => Promise<readonly string[]>),
 ): Promise<void> {
   try {
-    const catalog = c.get('catalog');
-    const shows = typeof showIds === 'function' ? await showIds() : showIds;
+    // catalog-roles D10: it reads another user's access, so it runs as a system task; the
+    // `showIds` thunk gets this catalog, so the admin path never reaches the unbound one.
+    const catalog = c.get('catalog').system('access-loss-check');
+    const shows = typeof showIds === 'function' ? await showIds(catalog) : showIds;
     const lost: string[] = [];
     for (const showId of shows) {
       if (!(await catalog.auth.authCanAccessShow(userId, showId))) lost.push(showId);
@@ -129,8 +131,8 @@ export async function closeSocketsAfterAccessLoss(
 }
 
 /** The ids of every show of a team, for `closeSocketsAfterAccessLoss` after a team-wide loss. */
-export async function teamShowIds(c: Context<AppEnv>, teamId: string): Promise<string[]> {
-  return (await c.get('catalog').shows.listShowsForStudio(teamId)).map((r) => String(r.id));
+export async function teamShowIds(catalog: CatalogFacade, teamId: string): Promise<string[]> {
+  return (await catalog.shows.listShowsForStudio(teamId)).map((r) => String(r.id));
 }
 
 /** _parse_optional_marked_at — validate an ISO-8601 instant; throw 400 on garbage. */

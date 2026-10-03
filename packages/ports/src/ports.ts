@@ -5,7 +5,7 @@
 // session-core extraction change, so it is not named here.
 
 import type { BlobStore } from './blobStore';
-import type { CatalogDb } from './catalogDb';
+import type { CatalogRoot } from './catalogDb';
 import type { Clock } from './clock';
 import type { IdentityVerifier } from './identityVerifier';
 import type { KvStore } from './kvStore';
@@ -14,7 +14,8 @@ import type { PresenceRegistry } from './presenceRegistry';
 export interface Ports {
   clock: Clock;
   identity: IdentityVerifier;
-  catalog: CatalogDb;
+  /** The unbound catalog adapter; every statement goes through a bound handle (catalog-roles D4). */
+  catalog: CatalogRoot;
   kv: KvStore;
   audio: BlobStore;
   presence: PresenceRegistry;

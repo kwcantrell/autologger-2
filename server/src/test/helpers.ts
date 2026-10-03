@@ -1,10 +1,18 @@
 import { Catalog } from '@autologger/catalog';
+import type { CatalogDb } from '@autologger/ports';
 import { createLoginSession } from '../auth/identity';
 import { sessionCookieName } from '../env';
 import { defaultUser, env } from './harness';
 
+/** A catalog for seeding, bound to the system task `test-seed` (catalog-roles D12; tests are
+ * exempt from the system allowlist). */
 export function catalogFor(): Catalog {
-  return new Catalog(env.ports.catalog);
+  return new Catalog(env.ports.catalog.bindSystem('test-seed'), { root: env.ports.catalog });
+}
+
+/** The catalog adapter as a `system:test` handle, for a test's direct SQL (catalog-roles D12). */
+export function testDb(): CatalogDb {
+  return env.ports.catalog.bindSystem('test');
 }
 
 let counter = 0;

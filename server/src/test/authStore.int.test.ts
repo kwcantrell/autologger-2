@@ -1,7 +1,6 @@
 // teams-self-serve (design D1/D2): role-aware membership ops + invite storage.
 import { describe, expect, it } from 'vitest';
-import { env } from './harness';
-import { catalogFor, seedShow, seedStudio, seedUser } from './helpers';
+import { catalogFor, seedShow, seedStudio, seedUser, testDb } from './helpers';
 
 describe('AuthStore: role-aware memberships (design D1)', () => {
   it('authAddMembershipWithRole creates with the given role', async () => {
@@ -393,7 +392,7 @@ describe('AuthStore: team ownership (owner-bootstrap D3, D6, D7)', () => {
     const claimant = await seedUser();
     await cat.auth.authAddMembershipWithRole(claimant, memberOf, 'member');
     const expected = (
-      await env.ports.catalog.all<{ id: string }>(
+      await testDb().all<{ id: string }>(
         `SELECT d.id FROM studio_definitions d WHERE NOT EXISTS (
            SELECT 1 FROM user_studio_memberships m WHERE m.studio_id = d.id AND m.role = 'owner')
          ORDER BY d.id`,
@@ -464,7 +463,7 @@ describe('AuthStore: show access and grants (show-grants D2)', () => {
   it('authCanAccessShow is false for a non-member holding a stale grant row', async () => {
     const cat = catalogFor();
     const m = await matrix();
-    await env.ports.catalog.run(
+    await testDb().run(
       'INSERT INTO show_grants (user_id, show_id, granted_at_utc) VALUES (?, ?, ?)',
       m.outsider,
       m.showA,
@@ -476,7 +475,7 @@ describe('AuthStore: show access and grants (show-grants D2)', () => {
   it('authCanAccessShowForShare gives the same answers inside catalog.tx', async () => {
     const cat = catalogFor();
     const m = await matrix();
-    await env.ports.catalog.run(
+    await testDb().run(
       'INSERT INTO show_grants (user_id, show_id, granted_at_utc) VALUES (?, ?, ?)',
       m.outsider,
       m.showA,

@@ -6,7 +6,7 @@
 import { describe, expect, it } from 'vitest';
 import { GatedCatalog } from '../test/gatedCatalog';
 import { app, env, envWith } from '../test/harness';
-import { catalogFor, loginCookie, seedStudio, seedUser } from '../test/helpers';
+import { catalogFor, loginCookie, seedStudio, seedUser, testDb } from '../test/helpers';
 
 const J = { 'content-type': 'application/json' };
 /** The early (root) role check every admin route makes before its write. */
@@ -55,7 +55,7 @@ const role = (userId: string, team: string) =>
 /** The ids of the team's owners; the one-owner index means at most one. */
 async function owners(team: string): Promise<string[]> {
   return (
-    await env.ports.catalog.all<{ user_id: string }>(
+    await testDb().all<{ user_id: string }>(
       "SELECT user_id FROM user_studio_memberships WHERE studio_id = ? AND role = 'owner'",
       team,
     )
@@ -87,7 +87,7 @@ describe('role re-check inside the write (#8)', () => {
 
   it('the owner’s demotion of admin B racing B’s rename: B gets 403 and the name is unchanged', async () => {
     const { team, ids, cookies } = await teamWithAdmins(3);
-    const before = await env.ports.catalog.first<{ display_name: string }>(
+    const before = await testDb().first<{ display_name: string }>(
       'SELECT display_name FROM studio_definitions WHERE id = ?',
       team,
     );
@@ -110,7 +110,7 @@ describe('role re-check inside the write (#8)', () => {
     expect(demote.status).toBe(200);
     h.release();
     expect((await rename).status).toBe(403);
-    const after = await env.ports.catalog.first<{ display_name: string }>(
+    const after = await testDb().first<{ display_name: string }>(
       'SELECT display_name FROM studio_definitions WHERE id = ?',
       team,
     );
@@ -213,21 +213,21 @@ const CAP_COUNT =
 
 async function members(team: string): Promise<string[]> {
   return (
-    await env.ports.catalog.all<{ user_id: string }>(
+    await testDb().all<{ user_id: string }>(
       'SELECT user_id FROM user_studio_memberships WHERE studio_id = ? ORDER BY user_id',
       team,
     )
   ).map((r) => r.user_id);
 }
 async function invites(team: string): Promise<number> {
-  const r = await env.ports.catalog.first<{ n: number }>(
+  const r = await testDb().first<{ n: number }>(
     'SELECT COUNT(*) AS n FROM team_invites WHERE studio_id = ?',
     team,
   );
   return Number(r?.n ?? 0);
 }
 async function settingsRow(team: string): Promise<string | null> {
-  const r = await env.ports.catalog.first<{ value: string }>(
+  const r = await testDb().first<{ value: string }>(
     'SELECT value FROM app_settings WHERE key = ?',
     `studio_config:${team}`,
   );
@@ -235,17 +235,17 @@ async function settingsRow(team: string): Promise<string | null> {
 }
 /** Rows a pre-4d race could have left under a deleted team's id. */
 async function leaveOrphans(team: string, strangerId: string): Promise<void> {
-  await env.ports.catalog.run(
+  await testDb().run(
     "INSERT INTO user_studio_memberships (user_id, studio_id, role) VALUES (?, ?, 'member')",
     strangerId,
     team,
   );
-  await env.ports.catalog.run(
+  await testDb().run(
     "INSERT INTO team_invites (studio_id, email_norm, invited_by_user_id, invited_at_utc) VALUES (?, 'old@example.com', ?, '2026-01-01T00:00:00Z')",
     team,
     strangerId,
   );
-  await env.ports.catalog.run(
+  await testDb().run(
     'INSERT INTO app_settings (key, value) VALUES (?, \'{"stale":true}\')',
     `studio_config:${team}`,
   );
@@ -309,7 +309,7 @@ describe('team creation (#9, #18)', () => {
   });
 
   it('an id that still has shows is refused', async () => {
-    await env.ports.catalog.run(
+    await testDb().run(
       "INSERT INTO shows (id, studio_id, name, show_code, created_at_utc) VALUES ('ghost-show', 'ghost-team', 'G', 'G', '2026-01-01T00:00:00Z')",
     );
     const res = await send('POST', '/api/teams', await loginCookie(await seedUser()), {
@@ -348,7 +348,7 @@ describe('team creation (#9, #18)', () => {
     expect(await invites('admin-reused')).toBe(0);
     expect(await settingsRow('admin-reused')).toBeNull();
 
-    await env.ports.catalog.run(
+    await testDb().run(
       "INSERT INTO shows (id, studio_id, name, show_code, created_at_utc) VALUES ('ghost-show-2', 'admin-ghost', 'G', 'G', '2026-01-01T00:00:00Z')",
     );
     const ghost = await app.request(
@@ -459,7 +459,7 @@ describe('show create and admin membership add vs team delete (#13, #14)', () =>
     const res = await create;
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ detail: 'Unknown studio id.' });
-    const n = await env.ports.catalog.first<{ n: number }>(
+    const n = await testDb().first<{ n: number }>(
       'SELECT COUNT(*) AS n FROM shows WHERE studio_id = ?',
       team,
     );
@@ -544,10 +544,7 @@ describe('show grants racing membership changes (show-grants D5)', () => {
   async function grantTeam() {
     const { team, ids, cookies } = await teamWithAdmins(3); // owner, admin A, admin B
     const show = (
-      await env.ports.catalog.first<{ id: string }>(
-        'SELECT id FROM shows WHERE studio_id = ? LIMIT 1',
-        team,
-      )
+      await testDb().first<{ id: string }>('SELECT id FROM shows WHERE studio_id = ? LIMIT 1', team)
     )?.id;
     const showId =
       show ??
@@ -576,7 +573,7 @@ describe('show grants racing membership changes (show-grants D5)', () => {
 
   async function grantRow(userId: string, showId: string): Promise<boolean> {
     return (
-      (await env.ports.catalog.first(
+      (await testDb().first(
         'SELECT 1 FROM show_grants WHERE user_id = ? AND show_id = ?',
         userId,
         showId,
@@ -586,7 +583,7 @@ describe('show grants racing membership changes (show-grants D5)', () => {
 
   /** Grants on the team's shows whose holder is no longer a member: must always be none. */
   async function orphanGrants(team: string): Promise<number> {
-    const r = await env.ports.catalog.first<{ n: number }>(
+    const r = await testDb().first<{ n: number }>(
       `SELECT COUNT(*) AS n FROM show_grants g JOIN shows s ON s.id = g.show_id
        WHERE s.studio_id = ? AND NOT EXISTS (
          SELECT 1 FROM user_studio_memberships m WHERE m.user_id = g.user_id AND m.studio_id = ?)`,

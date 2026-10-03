@@ -3,16 +3,15 @@
 
 import { Catalog } from '@autologger/catalog';
 import { describe, expect, it } from 'vitest';
-import { env } from './harness';
-import { seedStudio } from './helpers';
+import { seedStudio, testDb } from './helpers';
 
 async function initedCatalog(): Promise<Catalog> {
-  const cat = new Catalog(env.ports.catalog);
+  const cat = new Catalog(testDb());
   await cat.init();
   return cat;
 }
 const settingsRows = async (team: string) =>
-  env.ports.catalog.all<{ value: string }>(
+  testDb().all<{ value: string }>(
     'SELECT value FROM app_settings WHERE key = ?',
     `studio_config:${team}`,
   );
@@ -38,7 +37,7 @@ describe('studio settings defaults', () => {
 
   it('a corrupt blob is replaced once with defaults', async () => {
     const team = await seedStudio();
-    await env.ports.catalog.run(
+    await testDb().run(
       'INSERT INTO app_settings (key, value) VALUES (?, ?)',
       `studio_config:${team}`,
       '{not json',

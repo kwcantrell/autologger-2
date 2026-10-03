@@ -7,17 +7,12 @@ import { isAbsolute, join } from 'node:path';
 import { createCatalog } from '@autologger/catalog';
 import { sweepStaleYoutubeImportTempDirs } from '@autologger/media-import';
 import { SessionHubRegistry } from '@autologger/session-core';
-import {
-  acquireDataDirLock,
-  BlobStore,
-  KvStore,
-  PostgresCatalogDb,
-} from '@autologger/storage';
+import { acquireDataDirLock, BlobStore, KvStore, PostgresCatalogDb } from '@autologger/storage';
 import type { Bindings } from '../appEnv';
-import { CATALOG_PG_VARS } from '../bootGuard';
 import { GoogleIdentityVerifier } from '../auth/oauth_google';
-import { SessionMirror } from '../sessionMirror';
+import { CATALOG_PG_VARS } from '../bootGuard';
 import { aiV2UsesLoginFallback, newUserAllTeamsEnabled, resolveYtDlpPath } from '../env';
+import { SessionMirror } from '../sessionMirror';
 import { PresenceRegistry } from './presence';
 import { systemClock } from './systemClock';
 
@@ -51,9 +46,10 @@ export function createBindings(procEnv: Record<string, string | undefined>): {
     password: procEnv.PGPASSWORD as string,
     database: procEnv.PGDATABASE as string,
   });
-  const kv = new KvStore(catalogDb, clock);
+  // catalog-roles D9/D10: KV runs as system:kv, the mirror as system:session-mirror.
+  const kv = new KvStore(catalogDb.bindSystem('kv'), clock);
   const registry = new SessionHubRegistry(join(dataDir, 'sessions'), clock);
-  const sessionIndex = createCatalog(catalogDb).sessions;
+  const sessionIndex = createCatalog(catalogDb).system('session-mirror').sessions;
   const mirror = new SessionMirror({
     snapshot: (sid) => registry.get(sid).ensure(),
     project: (sid, projection) => sessionIndex.projectSessionLive(sid, projection),

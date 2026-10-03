@@ -4,7 +4,7 @@
 import { SessionIndexStore } from '@autologger/catalog';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { app, env } from '../test/harness';
-import { SEED_CATEGORY_ID, seededSession } from '../test/helpers';
+import { SEED_CATEGORY_ID, seededSession, testDb } from '../test/helpers';
 
 const J = { 'content-type': 'application/json' };
 afterEach(() => vi.restoreAllMocks());
@@ -17,10 +17,12 @@ const logEvent = (sessionId: string, message: string) =>
   );
 const eventCount = async (sessionId: string) =>
   Number(
-    (await env.ports.catalog.first<{ event_count: number }>(
-      'SELECT event_count FROM sessions WHERE id = ?',
-      sessionId,
-    ))?.event_count,
+    (
+      await testDb().first<{ event_count: number }>(
+        'SELECT event_count FROM sessions WHERE id = ?',
+        sessionId,
+      )
+    )?.event_count,
   );
 
 describe('a failed mirror write after a saved session change', () => {

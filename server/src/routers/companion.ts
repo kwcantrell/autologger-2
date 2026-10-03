@@ -6,7 +6,7 @@
 //     record/play because it owns the mic), replacing the long-poll relay.
 // The thin HTTP endpoints still drive the per-session hub.
 
-import { type Row, showCategoriesApiShape } from '@autologger/catalog';
+import { type CatalogFacade, type Row, showCategoriesApiShape } from '@autologger/catalog';
 import {
   companionCommandAckBodySchema,
   companionCommandBodySchema,
@@ -87,6 +87,13 @@ function primarySession(presences: PresenceMeta[]): string | null {
 /** Whether the caller may see `sessionId` through the Companion routes (show-grants D10): a
  * token-only caller (no user; the Companion's device credential until slice 9) is the system
  * caller and may; a signed-in caller needs access to the session's show. */
+/** The Companion routes' catalog (catalog-roles D10): a token-only caller (no user) runs as the
+ * system task `companion-token`; a signed-in caller keeps its user-bound catalog. */
+function companionCatalog(c: Context<AppEnv>): CatalogFacade {
+  const catalog = c.get('catalog');
+  return c.get('user') === null ? catalog.system('companion-token') : catalog;
+}
+
 async function callerMaySee(c: Context<AppEnv>, sessionId: string): Promise<boolean> {
   if (c.get('user') === null) return true;
   return canAccessSession(c, sessionId);
@@ -99,7 +106,7 @@ async function callerMaySee(c: Context<AppEnv>, sessionId: string): Promise<bool
 async function requireActiveSession(c: Context<AppEnv>): Promise<{ sid: string; row: Row }> {
   const sid = primarySession(await c.env.ports.presence.list());
   const row = sid
-    ? await c.get('catalog').sessions.getSessionIndexRow(sid, { includeHidden: true })
+    ? await companionCatalog(c).sessions.getSessionIndexRow(sid, { includeHidden: true })
     : null;
   if (!sid || row === null || !(await callerMaySee(c, sid))) {
     throw new ApiError(409, 'No active session — open AutoLogger in a browser and open a session.');
@@ -137,7 +144,7 @@ companionRouter.post('/api/companion/presence', async (c) => {
 });
 
 companionRouter.get('/api/companion/state', async (c) => {
-  const catalog = c.get('catalog');
+  const catalog = companionCatalog(c);
   const presences = await c.env.ports.presence.list();
   const activeSid = primarySession(presences);
   let sessionOut: CompanionSessionState | null = null;
@@ -187,7 +194,7 @@ companionRouter.get('/api/companion/state', async (c) => {
 companionRouter.post('/api/companion/log', async (c) => {
   const body = companionLogBodySchema.parse(await c.req.json());
   const { sid, row } = await requireActiveSession(c);
-  const catalog = c.get('catalog');
+  const catalog = companionCatalog(c);
   const profile = await catalog.sessions.studioProfileForSession(sid);
   let cat = null;
   if (body.category_id?.trim()) {
@@ -252,7 +259,7 @@ companionRouter.post('/api/companion/command', async (c) => {
 
 companionRouter.get('/api/companion/categories', async (c) => {
   const { sid, row } = await requireActiveSession(c);
-  const catalog = c.get('catalog');
+  const catalog = companionCatalog(c);
   const raw = await catalog.sessions.getSessionShowCategories(sid);
   if (raw === null) throw new ApiError(409, 'Active session has no show categories.');
   const showId = (row.show_id as string | null) ?? null;

@@ -38,7 +38,7 @@ import type { Clock } from '@autologger/ports';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Bindings } from '../appEnv';
 import { app, defaultUser, env, envWith } from '../test/harness';
-import { catalogFor, seededSession as seedSessionChain } from '../test/helpers';
+import { catalogFor, seededSession as seedSessionChain, testDb } from '../test/helpers';
 
 const EVENTS_SUCCESS_FIXTURE = fileURLToPath(
   new URL('../test/fixtures/fake-claude-events-success.mjs', import.meta.url),
@@ -933,7 +933,7 @@ describe('events/generate — configured behavior (real create_event MCP round t
         // started_at_utc, never `new Date()` at run time (design D4: on a
         // zero-anchor session the run clock would misplace every event).
         const startedAtUtc = '2019-03-07T04:05:06.789Z';
-        await env.ports.catalog.run(
+        await testDb().run(
           'UPDATE sessions SET started_at_utc = ? WHERE id = ?',
           startedAtUtc,
           sessionId,
@@ -1024,7 +1024,9 @@ describe('events/generate — configured behavior (real create_event MCP round t
         // A failed mirror write only warns: the run's own outcome is returned
         // (catalog-concurrency-hazards D6; was the generic 500). The slot is free either way.
         expect(res.status).toBe(200);
-        expect(warn.mock.calls.map((c) => String(c[0])).join('\n')).toMatch(/live projection not written/);
+        expect(warn.mock.calls.map((c) => String(c[0])).join('\n')).toMatch(
+          /live projection not written/,
+        );
         expect(aiChatTurns.isSessionInFlight(sessionId)).toBe(false);
       } finally {
         spy.mockRestore();

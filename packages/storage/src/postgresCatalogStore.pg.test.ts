@@ -1,10 +1,22 @@
 // postgres-catalog-adapter tasks 3.1 (design D1-D8; core-ports-architecture "The Postgres catalog
 // adapter"): the shared contract suite and the Postgres-only cases, against the pinned image as
 // the app's least-privilege role, one cloned database per adapter.
+import type { CatalogDb } from '@autologger/ports';
 import postgres from 'postgres';
 import { afterEach, describe, expect, it } from 'vitest';
-import { CatalogAdapterBrokenError, CatalogTxTimeoutError } from './catalogErrors';
-import { CatalogInvalidTextError, PostgresCatalogDb } from './postgresCatalogStore';
+import {
+  CatalogAdapterBrokenError,
+  CatalogForbiddenError,
+  CatalogTxTimeoutError,
+} from './catalogErrors';
+import {
+  CatalogInvalidTextError,
+  CatalogRootTimeoutError,
+  type PgClient,
+  type PgClientOptions,
+  PostgresCatalogDb,
+  type PostgresCatalogDbOptions,
+} from './postgresCatalogStore';
 import { describeCatalogDbContract, gate, prompt } from './test/catalogDbContract';
 import { createTestDatabase, type TestDatabase } from './test/pgDb';
 
@@ -16,16 +28,18 @@ const TABLES = `
 interface Env {
   tdb: TestDatabase;
   admin: postgres.Sql;
-  db: PostgresCatalogDb;
+  root: PostgresCatalogDb;
+  /** A `system:test` handle on `root` (catalog-roles D12). */
+  db: CatalogDb;
 }
 
 /** A fresh database with the fixture tables, an admin client and an app-role adapter. */
-async function env(opts: { txTimeoutMs?: number; txSlots?: number } = {}): Promise<Env> {
+async function env(opts: Partial<PostgresCatalogDbOptions> = {}): Promise<Env> {
   const tdb = await createTestDatabase();
   const admin = postgres({ ...tdb.admin, max: 2, onnotice: () => {} });
   await admin.unsafe(TABLES);
-  const db = new PostgresCatalogDb({ ...tdb.app, ...opts });
-  return { tdb, admin, db };
+  const root = new PostgresCatalogDb({ ...tdb.app, ...opts });
+  return { tdb, admin, root, db: root.bindSystem('test') };
 }
 
 async function count(admin: postgres.Sql, table: string, where?: [string, unknown]) {
@@ -43,22 +57,29 @@ async function appSessions(e: Env): Promise<number> {
   return (row as unknown as { n: number }).n;
 }
 
-describeCatalogDbContract('PostgresCatalogDb', {
-  uniqueViolation: '23505',
-  foreignKeyViolation: '23503',
-  shortTxTimeoutMs: 300,
-  async make(opts) {
-    const e = await env(opts);
-    return {
-      db: e.db,
-      count: (table, where) => count(e.admin, table, where),
-      async close() {
-        await e.db.close();
-        await e.admin.end();
-      },
-    };
-  },
-});
+// catalog-roles D12: the contract holds on a user-bound and a system-bound handle (the adapter has
+// no unbound methods since task 6.1).
+for (const [label, bind] of [
+  [' (bound to a user)', (db: PostgresCatalogDb): CatalogDb => db.bindUser('u-1')],
+  [' (bound to the system)', (db: PostgresCatalogDb): CatalogDb => db.bindSystem('test')],
+] as const) {
+  describeCatalogDbContract(`PostgresCatalogDb${label}`, {
+    uniqueViolation: '23505',
+    foreignKeyViolation: '23503',
+    shortTxTimeoutMs: 300,
+    async make(opts) {
+      const e = await env(opts);
+      return {
+        db: bind(e.root),
+        count: (table, where) => count(e.admin, table, where),
+        async close() {
+          await e.root.close();
+          await e.admin.end();
+        },
+      };
+    },
+  });
+}
 
 describe('PostgresCatalogDb: Postgres-only cases', () => {
   const open: Env[] = [];
@@ -69,7 +90,7 @@ describe('PostgresCatalogDb: Postgres-only cases', () => {
   };
   afterEach(async () => {
     for (const e of open.splice(0)) {
-      await e.db.close().catch(() => {});
+      await e.root.close().catch(() => {});
       await e.admin.end();
     }
   });
@@ -106,7 +127,7 @@ describe('PostgresCatalogDb: Postgres-only cases', () => {
     let runs = 0;
     let reads = 0;
     const both = gate();
-    const body = async (t: Parameters<Parameters<PostgresCatalogDb['tx']>[0]>[0]) => {
+    const body = async (t: CatalogDb) => {
       runs++;
       const row = await t.first<{ v: number }>('SELECT v FROM t WHERE k = ?', 'c');
       if (++reads === 2) both.open();
@@ -151,7 +172,7 @@ describe('PostgresCatalogDb: Postgres-only cases', () => {
   it('8 contending read-modify-write transactions all commit', async () => {
     const e = await make();
     await e.db.run(INSERT, 'w', 0);
-    const body = async (t: Parameters<Parameters<PostgresCatalogDb['tx']>[0]>[0]) => {
+    const body = async (t: CatalogDb) => {
       const row = await t.first<{ v: number }>('SELECT v FROM t WHERE k = ?', 'w');
       await t.first('SELECT count(*) FROM t');
       await t.first('SELECT count(*) FROM t');
@@ -276,7 +297,7 @@ describe('PostgresCatalogDb: Postgres-only cases', () => {
         () => 'resolved',
         (err: unknown) => err,
       );
-    const closing = e.db.close();
+    const closing = e.root.close();
     g.open();
     await expect(prompt(running, 3000)).resolves.toBeUndefined();
     expect(await prompt(queued, 3000)).toBeInstanceOf(CatalogAdapterBrokenError);
@@ -290,5 +311,272 @@ describe('PostgresCatalogDb: Postgres-only cases', () => {
     }
     expect(sessions).toBe(0);
     expect(await count(e.admin, 't')).toBe(1);
+  });
+});
+
+// catalog-roles tasks 3.3 (design D4-D6, D8): bindings against the real server.
+describe('PostgresCatalogDb: bindings (catalog-roles)', () => {
+  const open: Env[] = [];
+  const make = async (opts: Partial<PostgresCatalogDbOptions> = {}) => {
+    const e = await env(opts);
+    open.push(e);
+    return e;
+  };
+  afterEach(async () => {
+    for (const e of open.splice(0)) {
+      await e.root.close().catch(() => {});
+      await e.admin.end();
+    }
+  });
+
+  const INSERT = 'INSERT INTO t (k, v) VALUES (?, ?)';
+  const WHO =
+    "SELECT current_user AS u, catalog.app_user_id() AS id, current_setting('transaction_isolation') AS iso";
+  const raise = (code: string) =>
+    `DO $$ BEGIN RAISE EXCEPTION 'forced %', '${code}' USING ERRCODE = '${code}'; END $$`;
+
+  /** A `connect` that records every client the adapter opens, and which of them it ended. */
+  function recording() {
+    const clients: { sql: postgres.Sql; ended: boolean }[] = [];
+    const connect = (o: PgClientOptions): PgClient => {
+      const sql = postgres({
+        ...o,
+        types: { bigint: { to: 20, from: [20], parse: Number, serialize: String } },
+        onnotice: () => {},
+        max_lifetime: null,
+        idle_timeout: 0,
+        connection: { client_connection_check_interval: '1s' },
+      } as never) as unknown as postgres.Sql;
+      const rec = { sql, ended: false };
+      clients.push(rec);
+      const end = sql.end.bind(sql);
+      return Object.assign(sql, {
+        end: (opts?: { timeout?: number }) => {
+          rec.ended = true;
+          return end(opts);
+        },
+      }) as unknown as PgClient;
+    };
+    /** Each live client, asked directly: who it is and its user id setting. */
+    const inspect = async () =>
+      Promise.all(
+        clients
+          .filter((c) => !c.ended)
+          .map(async (c) => {
+            const [r] = await c.sql.unsafe(
+              "select current_user as u, current_setting('app.user_id', true) as id, " +
+                'now() = statement_timestamp() as fresh',
+            );
+            return { ...r };
+          }),
+      );
+    return { clients, connect, inspect };
+  }
+
+  const backendOf = async (e: Env, like: string): Promise<number> => {
+    for (let i = 0; i < 50; i++) {
+      const rows = await e.admin.unsafe(
+        "select pid from pg_stat_activity where datname = $1 and usename = 'autologger_app' and query like $2",
+        [e.tdb.name, like],
+      );
+      if (rows[0]) return (rows[0] as unknown as { pid: number }).pid;
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    throw new Error(`no backend running ${like}`);
+  };
+
+  const gone = async (e: Env, pid: number) => {
+    for (let i = 0; i < 50; i++) {
+      const [row] = await e.admin.unsafe(
+        'select count(*)::int as n from pg_stat_activity where pid = $1',
+        [pid],
+      );
+      if ((row as unknown as { n: number }).n === 0) return;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    throw new Error(`backend ${pid} still running`);
+  };
+
+  it('a user-bound and a system-bound handle run as their role, at the root and in a transaction', async () => {
+    const { root: db } = await make();
+    const user = db.bindUser('u-1');
+    const sys = db.bindSystem('test');
+    expect(await user.first(WHO)).toEqual({ u: 'catalog_user', id: 'u-1', iso: 'read committed' });
+    expect(await user.tx((t) => t.first(WHO))).toEqual({
+      u: 'catalog_user',
+      id: 'u-1',
+      iso: 'serializable',
+    });
+    expect(await sys.first(WHO)).toEqual({ u: 'catalog_system', id: null, iso: 'read committed' });
+    expect(await sys.tx((t) => t.first(WHO))).toEqual({
+      u: 'catalog_system',
+      id: null,
+      iso: 'serializable',
+    });
+  });
+
+  it('a retry after a serialization failure re-applies the role and user id', async () => {
+    const { root: db } = await make();
+    const seen: unknown[] = [];
+    let runs = 0;
+    await db.bindUser('u-1').tx(async (t) => {
+      runs++;
+      seen.push(await t.first('SELECT current_user AS u, catalog.app_user_id() AS id'));
+      if (runs === 1) await t.run(raise('40001'));
+    });
+    expect(runs).toBe(2);
+    expect(seen).toEqual([
+      { u: 'catalog_user', id: 'u-1' },
+      { u: 'catalog_user', id: 'u-1' },
+    ]);
+  });
+
+  it('after a mixed workload every live client is autologger_app with no user id', async () => {
+    const r = recording();
+    const { root: db } = await make({ connect: r.connect, rootMax: 2, txSlots: 2 });
+    const user = db.bindUser('u-1');
+    const sys = db.bindSystem('test');
+    await user.run(INSERT, 'a', 1);
+    await sys.first('SELECT k FROM t WHERE k = ?', 'a');
+    await user.tx(async (t) => t.run(INSERT, 'b', 2));
+    await sys.tx(async (t) => t.run(INSERT, 'c', 3));
+    await expect(
+      user.tx(async (t) => {
+        await t.run(INSERT, 'd', 4);
+        throw new Error('roll back');
+      }),
+    ).rejects.toThrow('roll back');
+    await expect(sys.run(INSERT, 'a', 9)).rejects.toMatchObject({ code: '23505' });
+    await expect(sys.tx(async (t) => t.run(INSERT, 'a', 9))).rejects.toMatchObject({
+      code: '23505',
+    });
+    let runs = 0;
+    await user.tx(async (t) => {
+      if (++runs === 1) await t.run(raise('40001'));
+      await t.run(INSERT, 'e', 5);
+    });
+    await Promise.all([
+      user.first('SELECT 1 AS one'),
+      sys.all('SELECT k FROM t'),
+      sys.run(INSERT, 'f', 6),
+    ]);
+    const live = await r.inspect();
+    expect(live.length).toBeGreaterThanOrEqual(4);
+    for (const c of live) {
+      expect(c.u).toBe('autologger_app');
+      expect(c.id === null || c.id === '').toBe(true);
+    }
+  });
+
+  it('a root slot whose backend is killed mid-transaction rejects, the process survives, and a fresh client serves the next call', async () => {
+    const uncaught: unknown[] = [];
+    const trap = (e: unknown) => uncaught.push(e);
+    process.on('uncaughtException', trap);
+    process.on('unhandledRejection', trap);
+    try {
+      const r = recording();
+      const e = await make({ connect: r.connect, rootMax: 1 });
+      const user = e.root.bindUser('u-1');
+      await user.first('SELECT 1 AS warm');
+      const doomed = user.run('INSERT INTO t (k, v) SELECT ?, 1 FROM pg_sleep(10)', 'killed');
+      doomed.catch(() => {});
+      const pid = await backendOf(e, '%pg_sleep(10)%');
+      await e.admin.unsafe('select pg_terminate_backend($1)', [pid]);
+      await expect(prompt(doomed, 3000)).rejects.toBeDefined();
+      expect(r.clients[0]?.ended).toBe(true);
+      const next = await prompt(
+        user.first<{ u: string; id: string; pid: number }>(
+          'SELECT current_user AS u, catalog.app_user_id() AS id, pg_backend_pid() AS pid',
+        ),
+      );
+      expect(next).toMatchObject({ u: 'catalog_user', id: 'u-1' });
+      expect(next?.pid).not.toBe(pid);
+      expect(await count(e.admin, 't')).toBe(0);
+      const live = await r.inspect();
+      for (const c of live) expect(c).toMatchObject({ u: 'autologger_app', fresh: true });
+      await new Promise((res) => setTimeout(res, 50));
+      expect(uncaught).toEqual([]);
+    } finally {
+      process.off('uncaughtException', trap);
+      process.off('unhandledRejection', trap);
+    }
+  });
+
+  // `fresh`: a root call is its own short transaction, so it has no transaction id of its own
+  // after a SELECT; inside the earlier, writing transaction it would.
+  it('a root COMMIT that fails retires the client, and no later call runs in its transaction or role', async () => {
+    const r = recording();
+    const e = await make({ connect: r.connect, rootMax: 1 });
+    await expect(
+      e.root.bindUser('u-1').run('INSERT INTO c (pid) VALUES (?)', 42),
+    ).rejects.toMatchObject({ code: '23503' });
+    expect(r.clients[0]?.ended).toBe(true);
+    expect(
+      await e.db.first(
+        "SELECT current_user AS u, current_setting('app.user_id', true) AS id, pg_current_xact_id_if_assigned() IS NULL AS fresh",
+      ),
+    ).toEqual({ u: 'catalog_system', id: '', fresh: true });
+    expect(await count(e.admin, 'c')).toBe(0);
+  });
+
+  it('a root COMMIT stalled past the deadline: the caller times out, the client is retired at its bound, and nothing leaks', async () => {
+    const r = recording();
+    const e = await make({ connect: r.connect, rootMax: 1, rootTimeoutMs: 300, rootSettleMs: 800 });
+    await e.admin.unsafe('insert into catalog.p (id) values (1)');
+    // The deferred foreign key's check at COMMIT waits for this lock on the parent row.
+    const locker = postgres({ ...e.tdb.admin, max: 1, onnotice: () => {} });
+    try {
+      const held = locker.begin(async (t) => {
+        await t.unsafe('select id from catalog.p where id = 1 for update');
+        await new Promise((res) => setTimeout(res, 3000));
+      });
+      held.catch(() => {});
+      await new Promise((res) => setTimeout(res, 100));
+      const err = (await e.root
+        .bindUser('u-1')
+        .run('INSERT INTO c (pid) VALUES (?)', 1)
+        .catch((x: unknown) => x)) as CatalogRootTimeoutError;
+      expect(err).toBeInstanceOf(CatalogRootTimeoutError);
+      expect(err.message).toMatch(/may still apply/);
+      const pid = await backendOf(e, 'COMMIT');
+      await prompt(err.settled, 3000);
+      expect(r.clients[0]?.ended).toBe(true);
+      // The next root call runs on a fresh client: not inside the stalled transaction, not as its role.
+      expect(
+        await prompt(
+          e.db.first(
+            "SELECT current_user AS u, current_setting('app.user_id', true) AS id, pg_current_xact_id_if_assigned() IS NULL AS fresh",
+          ),
+        ),
+      ).toEqual({ u: 'catalog_system', id: '', fresh: true });
+      await gone(e, pid);
+      await held;
+    } finally {
+      await locker.end();
+    }
+    expect(await count(e.admin, 'c')).toBe(0);
+  });
+
+  it('a bound statement on a table its role may not read is a CatalogForbiddenError', async () => {
+    const e = await make();
+    await e.admin.unsafe('revoke all on catalog.t from catalog_user');
+    const err = await e.root
+      .bindUser('u-1')
+      .first('SELECT k FROM t')
+      .catch((x: unknown) => x);
+    expect(err).toBeInstanceOf(CatalogForbiddenError);
+    expect(err).toMatchObject({ code: '42501', table_name: 't', binding: 'user' });
+    let runs = 0;
+    const inTx = await e.root
+      .bindUser('u-1')
+      .tx(async (t) => {
+        runs++;
+        await t.run(INSERT, 'x', 1);
+      })
+      .catch((x: unknown) => x);
+    expect(inTx).toBeInstanceOf(CatalogForbiddenError);
+    expect(runs).toBe(1);
+    // The system role keeps its grant.
+    expect(await e.root.bindSystem('test').first('SELECT count(*) AS n FROM t')).toEqual({ n: 0 });
   });
 });

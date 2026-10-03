@@ -198,7 +198,8 @@ authRouter.get('/auth/google/callback', async (c) => {
     return c.redirect('/?login_error=identity_unavailable', 302);
   };
 
-  const catalog = c.get('catalog');
+  // catalog-roles D10: no session exists yet, so the callback runs as a system task.
+  const catalog = c.get('catalog').system('oauth-callback');
 
   // Design D11: resolve the sub against ALL rows (not just enabled ones)
   // before the existing/new split. A disabled match must redirect here.
@@ -276,7 +277,10 @@ authRouter.get('/auth/google/callback', async (c) => {
     console.warn('OAuth callback: bootstrap owner claim refused (non-ASCII email)');
   } else if (match) {
     try {
-      const ids = await catalog.tx((cat) => cat.auth.authClaimOwnerlessStudios(uid));
+      const ids = await c
+        .get('catalog')
+        .system('bootstrap-claim')
+        .tx((cat) => cat.auth.authClaimOwnerlessStudios(uid));
       for (const id of ids) console.info(`OAuth callback: bootstrap owner claimed team ${id}`);
     } catch (e) {
       const code =

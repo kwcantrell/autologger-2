@@ -2,6 +2,7 @@
 // insert the same id and subject, and an id GoTrue linked to another Google account clashes on the
 // primary key. Neither may surface as a 23505: the insert returns null and the router re-reads.
 import { AuthStore } from '@autologger/catalog';
+import type { CatalogDb } from '@autologger/ports';
 import { PostgresCatalogDb } from '@autologger/storage';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createTestDatabase } from '../../../../test/pg/testDb';
@@ -10,15 +11,16 @@ const open: PostgresCatalogDb[] = [];
 afterEach(async () => {
   await Promise.all(open.splice(0).map((db) => db.close()));
 });
-/** Two adapters on one fresh database, as two server requests would see it. */
-async function twoAdapters(): Promise<[PostgresCatalogDb, PostgresCatalogDb]> {
+/** Two adapters on one fresh database, as two server requests would see it; each as a
+ * `system:test` handle (catalog-roles D12). */
+async function twoAdapters(): Promise<[CatalogDb, CatalogDb]> {
   const { app } = await createTestDatabase();
   const pair: [PostgresCatalogDb, PostgresCatalogDb] = [
     new PostgresCatalogDb(app),
     new PostgresCatalogDb(app),
   ];
   open.push(...pair);
-  return pair;
+  return [pair[0].bindSystem('test'), pair[1].bindSystem('test')];
 }
 const user = (id: string, googleSub: string) => ({
   id,

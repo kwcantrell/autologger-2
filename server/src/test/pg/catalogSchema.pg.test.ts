@@ -301,7 +301,7 @@ describe('catalog schema (design D1)', () => {
 
   it('orders text bytewise', async () => {
     const db = await createTestDatabase();
-    const sql = connect(db.app);
+    const sql = connect(db.system);
     for (const [id, name] of [
       ['s-a', 'a'],
       ['s-b', 'B'],
@@ -315,7 +315,7 @@ describe('catalog schema (design D1)', () => {
 
   it('round-trips epoch milliseconds, frame counts past int4 and fractional frame rates', async () => {
     const db = await createTestDatabase();
-    const sql = connect(db.app);
+    const sql = connect(db.system);
     const expires = Date.now() + 86_400_000;
     await sql`insert into kv (key, value, expires_at) values ('k', 'v', ${expires})`;
     await sql`insert into sessions (id, start_offset_frames, frame_rate)
@@ -330,9 +330,13 @@ describe('catalog schema (design D1)', () => {
 });
 
 describe('the app role (design D3)', () => {
-  it('reads and writes every catalog table by unqualified name', async () => {
+  it.each([
+    'user',
+    'system',
+  ] as const)('as catalog_%s, reads and writes every catalog table by unqualified name (catalog-roles D12)', async (role) => {
     const db = await createTestDatabase();
-    const sql = connect(db.app);
+    const sql = connect(db[role]);
+    expect((await sql`select current_user as u`)[0]?.u).toBe(`catalog_${role}`);
     const t = '2026-10-01T00:00:00.000Z';
     await sql`insert into users (id, google_sub, email, created_at_utc) values ('u', 'g', 'e', ${t})`;
     await sql`insert into user_studio_memberships (user_id, studio_id) values ('u', 'st')`;
@@ -373,7 +377,7 @@ describe('the app role (design D3)', () => {
     });
   });
 
-  it('has only the designed attributes, limits and settings, and no memberships', async () => {
+  it('has only the designed attributes, limits and settings, and exactly the two memberships', async () => {
     const db = await createTestDatabase();
     const sql = connect(db.admin);
     const [r] = await sql`
@@ -394,9 +398,14 @@ describe('the app role (design D3)', () => {
       'search_path=catalog',
       'statement_timeout=30s',
     ]);
-    const m = await sql`select count(*)::int as n from pg_auth_members
-                        where member = 'autologger_app'::regrole`;
-    expect(m[0]?.n).toBe(0);
+    // catalog-roles D1/D3: set only, no inherit, no admin option.
+    const m = await sql`select r.rolname, m.inherit_option, m.set_option, m.admin_option
+                        from pg_auth_members m join pg_roles r on r.oid = m.roleid
+                        where m.member = 'autologger_app'::regrole order by r.rolname`;
+    expect(m.map((x) => ({ ...x }))).toEqual([
+      { rolname: 'catalog_system', inherit_option: false, set_option: true, admin_option: false },
+      { rolname: 'catalog_user', inherit_option: false, set_option: true, admin_option: false },
+    ]);
   });
 
   it('re-running the role block keeps the role as designed', async () => {
@@ -409,6 +418,115 @@ describe('the app role (design D3)', () => {
     const [r] = await sql`select rolsuper, rolbypassrls, rolconnlimit from pg_roles
                           where rolname = 'autologger_app'`;
     expect(r).toMatchObject({ rolsuper: false, rolbypassrls: false, rolconnlimit: 20 });
+  });
+});
+
+describe('the bare app role is refused (catalog-roles D1 step 2)', () => {
+  it('autologger_app without a catalog role gets 42501 on every DML statement of every table', async () => {
+    const db = await createTestDatabase();
+    const sql = connect(db.app);
+    expect((await sql`select current_user as u`)[0]?.u).toBe('autologger_app');
+    for (const table of TABLES) {
+      const key = KEY_COLUMN[table];
+      for (const stmt of [
+        `select count(*) from ${table}`,
+        `insert into ${table} (${key}) values ('x')`,
+        `update ${table} set ${key} = ${key}`,
+        `delete from ${table}`,
+      ]) {
+        await expect(sql.unsafe(stmt), stmt).rejects.toMatchObject({ code: '42501' });
+      }
+    }
+  });
+
+  it('autologger_app holds no table privilege, no policy names it, and default privileges go to the catalog roles only', async () => {
+    const db = await createTestDatabase();
+    const sql = connect(db.admin);
+    for (const table of TABLES) {
+      for (const priv of ['select', 'insert', 'update', 'delete']) {
+        const r =
+          await sql`select has_table_privilege('autologger_app', ${`catalog.${table}`}, ${priv}) as p`;
+        expect(r[0]?.p, `${table} ${priv}`).toBe(false);
+      }
+    }
+    const policies = await sql`select tablename, policyname from pg_policies
+                               where schemaname = 'catalog' and 'autologger_app' = any(roles)`;
+    expect(policies.map((p) => `${p.tablename}.${p.policyname}`)).toEqual([]);
+    const acl = await sql`select defaclobjtype, defaclacl::text[] as acl from pg_default_acl
+                          where defaclrole = 'postgres'::regrole
+                            and defaclnamespace = 'catalog'::regnamespace`;
+    const tables = acl.filter((r) => r.defaclobjtype === 'r');
+    expect(tables).toHaveLength(1);
+    const grantees = ((tables[0]?.acl ?? []) as string[]).map((e) => e.split('=')[0]).sort();
+    expect(grantees).toEqual(['catalog_system', 'catalog_user']);
+  });
+});
+
+describe('row-level security on every catalog table (catalog-roles D1, D2)', () => {
+  it('every catalog table has row-level security and a policy for each catalog role', async () => {
+    const db = await createTestDatabase();
+    const sql = connect(db.admin);
+    const tables = await sql`select c.relname, c.relrowsecurity from pg_class c
+                             where c.relnamespace = 'catalog'::regnamespace and c.relkind = 'r'
+                             order by c.relname`;
+    expect(tables.map((t) => t.relname)).toEqual([...TABLES].sort());
+    for (const t of tables) {
+      expect(t.relrowsecurity, t.relname).toBe(true);
+      const policies = await sql`select policyname, roles::text[] as roles from pg_policies
+                                 where schemaname = 'catalog' and tablename = ${t.relname}`;
+      const byName = Object.fromEntries(policies.map((p) => [p.policyname, p.roles]));
+      expect(byName[`${t.relname}_user_all`], t.relname).toEqual(['catalog_user']);
+      expect(byName[`${t.relname}_system_all`], t.relname).toEqual(['catalog_system']);
+    }
+  });
+
+  it.each([
+    'user',
+    'system',
+  ] as const)('as catalog_%s, the allow-all policies change nothing on rows naming another user', async (role) => {
+    const db = await createTestDatabase();
+    const admin = connect(db.admin);
+    const t = '2026-10-06T00:00:00.000Z';
+    // Rows naming `other`, written by the table owner (which bypasses RLS).
+    await admin.unsafe(`
+        insert into catalog.users (id, google_sub, email, created_at_utc) values ('other', 'g-o', 'o@example.com', '${t}');
+        insert into catalog.user_studio_memberships (user_id, studio_id) values ('other', 'st-o');
+        insert into catalog.user_prefs (user_id) values ('other');
+        insert into catalog.studio_definitions (id, display_name, created_at_utc) values ('st-o', 'O', '${t}');
+        insert into catalog.shows (id, studio_id, name, show_code, created_at_utc) values ('sh-o', 'st-o', 'N', 'C', '${t}');
+        insert into catalog.app_settings (key, value) values ('k-o', 'v');
+        insert into catalog.sessions (id, show_id) values ('se-o', 'sh-o');
+        insert into catalog.kv (key, value) values ('k-o', 'v');
+        insert into catalog.team_invites (studio_id, email_norm, invited_by_user_id, invited_at_utc) values ('st-o', 'e', 'other', '${t}');
+        insert into catalog.show_grants (user_id, show_id, granted_at_utc) values ('other', 'sh-o', '${t}');
+      `);
+    const counts: Record<string, number> = {};
+    for (const table of TABLES) {
+      const n = await admin.unsafe(`select count(*)::int as n from catalog.${table}`);
+      counts[table] = n[0]?.n as number;
+    }
+    const sql = connect(db.app);
+    await sql.begin(async (tx) => {
+      await tx`select set_config('role', ${`catalog_${role}`}, true),
+                        set_config('app.user_id', ${role === 'user' ? 'u-1' : ''}, true)`;
+      expect((await tx`select current_user as u`)[0]?.u).toBe(`catalog_${role}`);
+      for (const table of TABLES) {
+        const sel = await tx.unsafe(`select count(*)::int as n from ${table}`);
+        expect(sel[0]?.n, `select ${table}`).toBe(counts[table]);
+        const key = KEY_COLUMN[table];
+        const upd = await tx.unsafe(`update ${table} set ${key} = ${key}`);
+        expect(upd.count, `update ${table}`).toBe(counts[table]);
+      }
+      await tx`insert into users (id, google_sub, email, created_at_utc)
+                 values ('u-1', 'g-1', 'u1@example.com', ${t})`;
+      await tx`insert into show_grants (user_id, show_id, granted_at_utc) values ('u-1', 'sh-o', ${t})`;
+      expect((await tx`select count(*)::int as n from users`)[0]?.n).toBe(counts.users + 1);
+      for (const table of [...TABLES].reverse()) {
+        const del = await tx.unsafe(`delete from ${table}`);
+        const extra = table === 'users' || table === 'show_grants' ? 1 : 0;
+        expect(del.count, `delete ${table}`).toBe(counts[table] + extra);
+      }
+    });
   });
 });
 

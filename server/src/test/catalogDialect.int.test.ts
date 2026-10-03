@@ -2,8 +2,7 @@
 // case-insensitive order and the membership inserts that ignore an existing row.
 
 import { describe, expect, it } from 'vitest';
-import { env } from './harness';
-import { catalogFor, seedShow, seedStudio, seedUser } from './helpers';
+import { catalogFor, seedShow, seedStudio, seedUser, testDb } from './helpers';
 
 describe('catalog store dialect on Postgres (catalog-on-postgres D4)', () => {
   it('lists a team’s shows by name ignoring ASCII case, ties bytewise (catalog-database spec)', async () => {
@@ -19,7 +18,7 @@ describe('catalog store dialect on Postgres (catalog-on-postgres D4)', () => {
     const cat = catalogFor();
     await cat.auth.authAddMemberships(userId, [studioId]);
     await cat.auth.authAddMembershipWithRole(userId, studioId, 'admin');
-    const rows = await env.ports.catalog.all<{ role: string }>(
+    const rows = await testDb().all<{ role: string }>(
       'SELECT role FROM user_studio_memberships WHERE user_id = ? AND studio_id = ?',
       userId,
       studioId,

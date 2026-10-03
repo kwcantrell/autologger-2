@@ -120,7 +120,7 @@ on conflict (id) do nothing;
 
 -- The app role (design D3). Roles are cluster-wide, so it may already exist (the test setup
 -- migrates two databases in one cluster); its attributes are reset either way, and a membership
--- in any role fails the migration. `begin`/`end` stay indented: migrate.sh refuses a line that
+-- other than the two catalog-roles allows (see the guard) fails the migration. `begin`/`end` stay indented: migrate.sh refuses a line that
 -- starts with transaction control.
 -- role:begin
 do $$
@@ -136,10 +136,18 @@ alter role autologger_app nocreatedb nocreaterole nobypassrls connection limit 2
 alter role autologger_app set search_path = catalog;
 alter role autologger_app set statement_timeout = '30s';
 alter role autologger_app set idle_in_transaction_session_timeout = '15s';
+-- catalog-roles (ADR 0021 slice 6b-1, design D3) relaxed this guard in place: roles are
+-- cluster-wide, so in a second database of a cluster `autologger_app` already holds the two
+-- set-only memberships the 6b-1 migration gives it. Any other membership, or one of those two with
+-- inherit or the admin option, still fails. Databases where this file was applied never re-run it.
+-- guard:begin
 do $$
   begin
-    if exists (select from pg_auth_members where member = 'autologger_app'::regrole) then
-      raise exception 'autologger_app must not be a member of any role';
+    if exists (select from pg_auth_members m join pg_roles r on r.oid = m.roleid
+               where m.member = 'autologger_app'::regrole
+                 and not (r.rolname in ('catalog_user', 'catalog_system')
+                          and m.set_option and not m.inherit_option and not m.admin_option)) then
+      raise exception 'autologger_app must not be a member of any role other than catalog_user and catalog_system (set only)';
     end if;
     if exists (select from pg_roles where rolname = 'autologger_app'
                and (rolsuper or rolreplication)) then
@@ -147,6 +155,7 @@ do $$
     end if;
   end
 $$;
+-- guard:end
 -- role:end
 
 grant usage on schema catalog to autologger_app;
