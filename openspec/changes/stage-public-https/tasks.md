@@ -135,11 +135,12 @@ and the working-tree code as it was before the re-panel fixes (re-run: `ℹ test
 
 ## 3. Owner verification (needs GHCR, the tunnel, Access and the stage host)
 
-- [ ] 3.1 **(owner)** Push and pull: on the Spark build host `make stage-push STAGE_IMAGE_TAG=$(git rev-parse HEAD)`;
+- [x] 3.1 **(owner)** Push and pull: on the Spark build host `make stage-push STAGE_IMAGE_TAG=$(git rev-parse HEAD)`;
   on the stage host (tree at that SHA: the pinned deploy writes `REVISION`)
   `make stage-up STAGE_IMAGE_TAG=<sha> STAGE_PUBLIC_BASE_URL=https://stage.<domain>`.
   Check: `docker compose -p autologger-stage images` shows the two `ghcr.io/...:<sha>` images;
   `ss -ltn | grep 8788` shows only `127.0.0.1:8788`.
+  Evidence: stage host stage-linode (2026-10-03), pinned tree `/home/spark/autologger-2`: `cat REVISION` -> `52154623477432a834e7c930d90290c750fc781f`, no `.git`; `docker compose -p autologger-stage images` -> `autologger-stage-api ghcr.io/kwcantrell/autologger-api 52154623477432a834e7c930d90290c750fc781f linux/amd64`, `autologger-stage-web-1 ghcr.io/kwcantrell/autologger-web 52154623477432a834e7c930d90290c750fc781f linux/amd64` (digests `sha256:6cce2e7c...`, `sha256:f6ae218d...`); all 9 `autologger-stage-*` `(healthy)`; api env `PUBLIC_BASE_URL=https://stage.nrvo.ai`, `COOKIE_SECURE=1`, `TRUST_PROXY=1`; `ss -ltn | grep -E ':(8788|8791)'` -> `127.0.0.1:8791`, `127.0.0.1:8788` only (no other stage listener on a routable address).
 - [ ] 3.2 **(owner)** Access (panel F3):
   (a) the Access application's policy admits only named identities (emails or a group of them),
   not "any Google account" or "everyone": Zero Trust dashboard -> Access -> Applications -> stage
@@ -149,11 +150,15 @@ and the working-tree code as it was before the re-panel fixes (re-run: `ℹ test
   valid Access JWT for the app's `aud` (for example `curl -sI` with a `CF_Authorization` cookie for
   another application), and a request to a hostname with no ingress rule, gets the connector's
   403 / 404, not the app.
+  Machine evidence (agent, 2026-10-03; the connector-level clause is config only, owner decides):
+  (a) Cloudflare API `GET /accounts/<a>/access/apps` -> app `spark stage.nrvo.ai`, domain `stage.nrvo.ai`, aud `a6fea2a4...eaab76`, one policy `spark-infra allow` `decision allow`, `include [{email: cantrell.kalen@gmail.com}]`, `exclude []`, `require []` (the account's `everyone` policies `Public Access`/`Public` have `app_count 0`);
+  (b) `curl -sI https://stage.nrvo.ai/` and `/api/profile` -> `HTTP/2 302`, `location: https://ennystudios.cloudflareaccess.com/cdn-cgi/access/login/stage.nrvo.ai?kid=a6fea2a4...`, `server: cloudflare`; with a forged `CF_Authorization` cookie -> the same `302` (never the app); `GET /accounts/<a>/cfd_tunnel/39e4d22f.../configurations` -> ingress `stage.nrvo.ai -> http://127.0.0.1:8788` with `originRequest.access {required: true, teamName: ennystudios, audTag: [a6fea2a4...eaab76]}` (= the app's aud), then catch-all `http_status:404`; zone DNS: `stage.nrvo.ai CNAME 39e4d22f-....cfargotunnel.com` is the only record pointing at the tunnel (`*.nrvo.ai` goes to 45.33.127.55, not the tunnel), so neither an unrouted hostname nor a request without a valid Access JWT can reach the connector from the internet; the connector's own 403/404 was therefore not observed live.
 - [ ] 3.3 **(owner)** OAuth and cookie (assumption A9): add
   `https://stage.<domain>/auth/google/callback` to the stage OAuth client; check the Access
   application's cookie `SameSite` is `Lax` or `None` (not `Strict`); sign in through Access
   and Google. Check: browser devtools shows `autologger_stage_sid` with `Secure`, `HttpOnly`,
   `SameSite=Lax`; `/api/profile` returns the user. If it fails, follow the D7 fallback.
+  Machine evidence (agent, 2026-10-03; devtools check still open): api env `COOKIE_SECURE=1`, `SESSION_COOKIE=autologger_stage_sid`, so `cookieSecureForRequest` (server/src/env.ts:82) returns true and the session cookie is set with `httpOnly: true`, `sameSite: 'Lax'`, `secure: true` (server/src/routers/auth.ts:296); Access app `same_site_cookie_attribute: null` (Cloudflare default `None`, not `Strict`), `http_only_cookie_attribute: true`, `session_duration 24h`. The owner reports a full sign-in through Access and Google at `https://stage.nrvo.ai` with real data (so the callback URI is registered and the Access cookie survives the Google redirect).
 - [ ] 3.4 **(owner)** Forwarded headers (assumption A8, re-panel RA-1): through the edge (with an
   Access service token or session), send one request with no `X-Forwarded-For` and one with
   `X-Forwarded-For: 1.2.3.4`. Check both: (a) the client IP the api logs is never `1.2.3.4`, and
@@ -162,11 +167,13 @@ and the working-tree code as it was before the re-panel fixes (re-run: `ℹ test
   `curl -s https://www.cloudflare.com/cdn-cgi/trace | grep ^ip=` from the same machine). Until (a)
   and (b) both pass, do not set `IP_ALLOWLIST` on the public stage and treat logged client IPs as
   untrusted (D6 fallback).
+  Machine evidence (agent, 2026-10-03; owner requests still open): the api logs no client IP (no logging in server/src uses it; it is only used by `IP_ALLOWLIST`), so the observable is the one `X-Forwarded-For` value the router hands the api, which with `TRUST_PROXY=1` is the api's client IP (`effectiveClientIpFrom`, server/src/middleware/ipAllowlist.ts:160). Captured on stage-linode with `sudo nsenter -t <api pid> -n tcpdump -i any -l -A -s0 'tcp dst port 8787'` (only the request line and `X-Forwarded-For` printed): loopback probes to `127.0.0.1:8788` -> no header: `X-Forwarded-For: 172.28.21.1` (bridge gateway); `X-Forwarded-For: 1.2.3.4` -> `1.2.3.4` and `X-Forwarded-For: 1.2.3.4, 198.51.100.7` -> `198.51.100.7` (right-most untrusted kept; a host-local caller such as `cloudflared` is trusted, so check (a) depends on the edge appending the real IP); the owner's live browser traffic through the edge at the same time -> `X-Forwarded-For: 2600:8801:...` (a public IPv6 address, middle redacted, not a gateway, so `cloudflared` forwards the edge's client IP). Not yet shown: that this equals the owner's `CF-Connecting-IP`, and a forged header through the edge.
 
 ## 4. Verify
 
-- [ ] 4.1 `scripts/check-change.sh --stage hook` passes (on this stacked branch, with the base set
+- [x] 4.1 `scripts/check-change.sh --stage hook` passes (on this stacked branch, with the base set
   to `openbao-secrets`; see the PR note on the "one change per branch" gate).
+  Evidence: after `npm ci`, at 5215462 plus this tasks.md edit (2026-10-03), `scripts/check-change.sh --stage hook --base openbao-secrets` -> `PASS openspec`, `PASS yaml 84 YAML file(s) parse`, `PASS workflows`, `PASS skills-sync`, `PASS guide-size`, `PASS change tier 2 (openspec/changes/stage-public-https)`, `PASS risk-floor`, `PASS evidence every ticked task cites evidence`, `PASS commands ran ['typecheck', 'test']; not configured: ['lint']`, rc=0. Without a base (origin/main) the `change` gate reports every stacked change dir ("one change per branch"), hence the base.
 
 ## 5. Archive
 
