@@ -121,6 +121,15 @@ describe('PostgresCatalogDb: Postgres-only cases', () => {
     expect(await db.first("SELECT '?' AS q, ?::bigint AS v", 5)).toEqual({ q: '?', v: 5 });
   });
 
+  // session-tables A10: the image sets extra_float_digits = 0; the adapter's connections set 1.
+  it('a catalog double precision reads back exactly', async () => {
+    const { db } = await make();
+    await db.run('INSERT INTO sessions (id, frame_rate) VALUES (?, ?)', 's-f', 29.969999999999995);
+    expect(await db.first('SELECT frame_rate FROM sessions WHERE id = ?', 's-f')).toEqual({
+      frame_rate: 29.969999999999995,
+    });
+  });
+
   it('two concurrent read-modify-write transactions both commit after one retry', async () => {
     const e = await make();
     await e.db.run(INSERT, 'c', 0);

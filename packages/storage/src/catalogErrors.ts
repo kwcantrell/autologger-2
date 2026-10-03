@@ -40,3 +40,12 @@ export class CatalogForbiddenError extends Error {
     this.table_name = table;
   }
 }
+
+/** A session write transaction found no `catalog.sessions` row for its session (session-tables
+ * D2): it was rolled back before its body ran, and is never retried. */
+export class SessionNotFoundError extends Error {
+  override name = 'SessionNotFoundError';
+  constructor(readonly sessionId: string) {
+    super(`session ${sessionId} does not exist`);
+  }
+}

@@ -1506,11 +1506,13 @@ const NODE_BUILTIN_PREFIX = 'node:';
  * duplicate-per-package per the final policy (task 2.4/4.3). */
 const TEST_INFRASTRUCTURE_EXEMPTIONS: Record<string, readonly string[]> = {
   // postgres-catalog-adapter (ADR 0021 slice 4b): the CatalogDb contract suite the adapter runs,
-  // and the package's copy of the test/pg per-test database helper.
+  // and the package's copy of the test/pg per-test database helper; session-tables (slice 7b-1):
+  // the session storage contract suite.
   '@autologger/storage': [
     'src/test/fakeClock.ts',
     'src/test/catalogDbContract.ts',
     'src/test/pgDb.ts',
+    'src/test/sessionSqlContract.ts',
   ],
   '@autologger/session-core': ['src/test/fakeClock.ts', 'src/test/fakeCore.ts'],
   '@autologger/log-import': ['src/test/fakeClock.ts'],
