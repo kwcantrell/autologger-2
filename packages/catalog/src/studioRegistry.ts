@@ -142,27 +142,9 @@ export class StudioRegistry implements StudioRegistryFacade {
       }
       return merged;
     };
-    // Self-healing read (deliberate, ported behavior), without a transaction that concurrent
-    // first reads could conflict on (catalog-concurrency-hazards D4): a missing blob is inserted
-    // only if still missing and the team exists; a corrupt one is replaced only if unchanged.
-    const raw = await this.getSetting(key);
-    const stored = parse(raw);
-    if (stored) return stored;
-    if (raw) {
-      await this.db.run(
-        'UPDATE app_settings SET value = ? WHERE key = ? AND value = ?',
-        JSON.stringify(base),
-        key,
-        raw,
-      );
-    } else {
-      if (!(await this.studioExists(studioId))) return base;
-      await this.db.run(
-        'INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO NOTHING',
-        key,
-        JSON.stringify(base),
-      );
-    }
+    // A pure read (catalog-policies D7; catalog-database "Settings defaults are race-free…"): a
+    // missing or corrupt blob reads as the default and nothing is written. Team creation stores
+    // the default row (`insertStudioDefinition`); saving writes it.
     return parse(await this.getSetting(key)) ?? base;
   }
 
@@ -239,8 +221,9 @@ export class StudioRegistry implements StudioRegistryFacade {
   }
 
   /** Insert a validated team's definition on this registry's handle (inside the caller's
-   * transaction). An id that still has shows is refused, and memberships, invites and settings
-   * left under the id are removed, so a reused id starts empty (catalog-concurrency-hazards D2). */
+   * transaction). An id that still has shows is refused, memberships and invites left under the
+   * id are removed, and the team's settings row is (re)written with the defaults, so a reused id
+   * starts empty (catalog-concurrency-hazards D2, catalog-policies D7). */
   async insertStudioDefinition(sid: string, disp: string): Promise<void> {
     const existing = await this.db.first<Row>('SELECT 1 FROM studio_definitions WHERE id = ?', sid);
     if (existing !== null) throw new ValidationError('A team with that id already exists.');
@@ -254,7 +237,19 @@ export class StudioRegistry implements StudioRegistryFacade {
     );
     await this.db.run('DELETE FROM team_invites WHERE studio_id = ?', sid);
     await this.db.run('DELETE FROM user_studio_memberships WHERE studio_id = ?', sid);
-    await this.db.run('DELETE FROM app_settings WHERE key = ?', studioConfigKey(sid));
+    // catalog-policies D7: store the default settings (the normalized shape a save stores),
+    // replacing any row left under a reused id.
+    await this.db.run(
+      'INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value',
+      studioConfigKey(sid),
+      JSON.stringify(
+        validateSettingsBlob(
+          defaultSettingsBlob(sid) as unknown as Record<string, unknown>,
+          sid,
+          () => true,
+        ),
+      ),
+    );
   }
 
   /** admin_create_studio — insert a user-defined team (stable lowercase slug id). */
