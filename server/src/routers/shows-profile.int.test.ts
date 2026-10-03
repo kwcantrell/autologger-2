@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { anonApp, app, env } from '../test/harness';
-import { catalogFor, loginCookie, seedShow, seedStudio, seedUser } from '../test/helpers';
+import { catalogFor, loginCookie, seedShow, seedStudio, seedUser, testDb } from '../test/helpers';
 
 async function activeStudioId(): Promise<string> {
   const res = await app.request('/api/studio', { method: 'GET' }, { ...env });
@@ -158,7 +158,7 @@ describe('PUT /api/profile', () => {
     const sid = await activeStudioId();
     const show = await seedShow({ studioId: sid, name: 'Anon Write Show', code: 'AW' });
     const settings = () =>
-      env.ports.catalog.all<{ key: string; value: string }>(
+      testDb().all<{ key: string; value: string }>(
         "SELECT key, value FROM app_settings WHERE key IN ('active_studio_id', 'active_show_id') ORDER BY key",
       );
     const before = await settings();
@@ -374,7 +374,7 @@ describe('session-title-suffix — show wire', () => {
   it('legacy next_episode on a show_updates entry is ignored: 200, no 400, no counter written', async () => {
     const sid = await activeStudioId();
     const showId = await seedShow({ studioId: sid, name: 'Legacy Show', code: 'LG' });
-    const before = await env.ports.catalog.first<{ next_episode: number }>(
+    const before = await testDb().first<{ next_episode: number }>(
       'SELECT next_episode FROM shows WHERE id = ?',
       showId,
     );
@@ -402,7 +402,7 @@ describe('session-title-suffix — show wire', () => {
     expect('next_episode' in (show ?? {})).toBe(false);
 
     // The soft-retained SQL column itself never moved off its pre-update value.
-    const after = await env.ports.catalog.first<{ next_episode: number }>(
+    const after = await testDb().first<{ next_episode: number }>(
       'SELECT next_episode FROM shows WHERE id = ?',
       showId,
     );

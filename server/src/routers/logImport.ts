@@ -157,7 +157,7 @@ logImportRouter.post('/api/shows/:showId/log-import', async (c) => {
     setLogImportStatus(env.ports.clock, job.id, 'running');
     try {
       // The job outlives its request, so it builds its own catalog (catalog-concurrency-hazards D9).
-      const catalog = createCatalog(env.ports.catalog);
+      const catalog = createCatalog(env.ports.catalog).system('log-import-job');
       await catalog.init();
       appendLogImportLine(job.id, 'Fetching spreadsheet…');
       const sheets = await fetchPublicWorkbookSheets(spreadsheetUrl);

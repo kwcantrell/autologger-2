@@ -3,6 +3,7 @@
 import { describe, expect, it } from 'vitest';
 import { GatedCatalog } from './gatedCatalog';
 import { env } from './harness';
+import { testDb } from './helpers';
 
 const pendingAfter = async (p: Promise<unknown>, ms = 50) => {
   let settled = false;
@@ -31,9 +32,17 @@ describe('GatedCatalog', () => {
     await h.reached;
     expect(await pendingAfter(held)).toBe(true);
     // Another writer commits meanwhile, through the ungated catalog.
-    await env.ports.catalog.run("INSERT INTO app_settings (key, value) VALUES ('gate-b', 'x')");
+    await testDb().run("INSERT INTO app_settings (key, value) VALUES ('gate-b', 'x')");
     h.release();
-    expect(await held).toEqual({ value: 'x' });
+    // The transaction's snapshot is taken by its role preamble, right after BEGIN and before the
+    // held statement (catalog-roles D4), so it does not see the row committed meanwhile; both
+    // writes commit.
+    expect(await held).toBeNull();
+    expect(
+      await testDb().all(
+        "SELECT key FROM app_settings WHERE key IN ('gate-a', 'gate-b') ORDER BY key",
+      ),
+    ).toEqual([{ key: 'gate-a' }, { key: 'gate-b' }]);
   });
 
   it('is one-shot: a later matching statement, as in a re-run body, passes', async () => {

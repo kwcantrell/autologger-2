@@ -6,8 +6,8 @@
 // Postgres schema in supabase/migrations/ (ADR 0021 slice 4; the SQLite
 // migrations were retired in slice 4e).
 
-import type { CatalogDb } from '@autologger/ports';
-import { Catalog, type CatalogFacade } from './catalog';
+import type { CatalogRoot } from '@autologger/ports';
+import { Catalog, type CatalogFacade, UNBOUND_DB } from './catalog';
 
 export * from './authStore';
 export * from './catalog';
@@ -20,13 +20,11 @@ export * from './studioRegistry';
 /**
  * Sanctioned non-composition-root construction path (design D3): `Catalog`
  * is constructed per request in `server/src/middleware/auth.ts`, followed
- * by `init()` (refreshes the studio registry) before any registry read —
- * that lifecycle is preserved exactly by this factory. Returns the
- * `CatalogFacade` interface (task 5.1/5.3 — narrowed from the concrete
- * `Catalog` class); the body is unchanged. `middleware/auth.ts` itself keeps
- * calling `new Catalog(db)` directly until task 5.3 switches it to this
- * factory.
+ * by `init()` before any registry read. The catalog it returns is unbound
+ * (catalog-roles D7): every store call, `tx` and `init()` reject with
+ * `CatalogUnboundError` until `forUser(id)` or `system(reason)` derives a
+ * bound catalog from it (`unbound()` derives another unbound one).
  */
-export function createCatalog(db: CatalogDb): CatalogFacade {
-  return new Catalog(db);
+export function createCatalog(root: CatalogRoot): CatalogFacade {
+  return new Catalog(UNBOUND_DB, { root });
 }

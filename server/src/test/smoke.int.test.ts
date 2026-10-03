@@ -1,11 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { app, env } from './harness';
+import { testDb } from './helpers';
 
 describe('harness smoke', () => {
   it('migrations applied: a migrated table is queryable', async () => {
-    const r = await env.ports.catalog.first<{ n: number }>(
-      'SELECT COUNT(*) AS n FROM studio_definitions',
-    );
+    const r = await testDb().first<{ n: number }>('SELECT COUNT(*) AS n FROM studio_definitions');
     expect(typeof r?.n).toBe('number');
   });
 

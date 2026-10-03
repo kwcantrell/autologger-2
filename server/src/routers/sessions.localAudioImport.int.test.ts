@@ -6,7 +6,7 @@ import type { Clock } from '@autologger/ports';
 import { describe, expect, it, vi } from 'vitest';
 import type { Bindings } from '../appEnv';
 import { app, env, envWith } from '../test/harness';
-import { seededSession as seedSessionChain } from '../test/helpers';
+import { seededSession as seedSessionChain, testDb } from '../test/helpers';
 import { __setLocalAudioImportByteCapForTests, MAX_LOCAL_AUDIO_IMPORT_BYTES } from './audio';
 
 // Detail strings copied verbatim from `server/src/routers/sessions.ts`'s own
@@ -117,7 +117,7 @@ describe('POST /api/sessions/:sessionId/local-audio-import — happy path + anch
     const { events, total } = await listEvents(session, env);
     expect(total).toBe(2);
     // The catalog's live projection is mirrored too (catalog-concurrency-hazards D6).
-    const mirrored = await env.ports.catalog.first<{ event_count: number }>(
+    const mirrored = await testDb().first<{ event_count: number }>(
       'SELECT event_count FROM sessions WHERE id = ?',
       session,
     );

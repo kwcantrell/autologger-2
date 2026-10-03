@@ -5,7 +5,14 @@
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { putOauthState } from '../auth/identity';
 import { app, env, envWith } from '../test/harness';
-import { COMPANION_BEARER, catalogFor, loginCookie, seedStudio, seedUser } from '../test/helpers';
+import {
+  COMPANION_BEARER,
+  catalogFor,
+  loginCookie,
+  seedStudio,
+  seedUser,
+  testDb,
+} from '../test/helpers';
 import {
   makeKeypair,
   mintIdToken,
@@ -57,7 +64,7 @@ describe('NUL in request values reaching the catalog is a 400', () => {
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ detail: expect.any(String) });
     expect(
-      await env.ports.catalog.first('SELECT id FROM studio_definitions WHERE id = ?', 'nul-team'),
+      await testDb().first('SELECT id FROM studio_definitions WHERE id = ?', 'nul-team'),
     ).toBeNull();
   });
 

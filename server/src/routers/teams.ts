@@ -123,7 +123,9 @@ teamsRouter.post('/api/teams', async (c) => {
     // Cap, definition and owner membership in one transaction (catalog-concurrency-hazards D2,
     // owner-bootstrap D5): two creates can't both pass the cap, and the team never exists without
     // its owner.
-    await catalog.tx(async (cat) => {
+    // catalog-roles D10: the whole create runs as system (its purge touches rows no user policy
+    // will allow); the cap check stays inside it.
+    await catalog.system('team-create').tx(async (cat) => {
       if ((await cat.auth.authCountOwnedTeams(user.id)) >= MAX_OWNED_TEAMS) {
         throw new ApiError(
           400,
@@ -230,28 +232,33 @@ teamsRouter.post('/api/teams/:id/invites', async (c) => {
   // One transaction for the lookup, the cap and the write (catalog-concurrency-hazards D2): two
   // invites can't pass the cap together, and an invite can't miss a user whose first sign-in
   // commits meanwhile.
-  await c.get('catalog').tx(async (catalog) => {
-    await requireTeamRoleIn(catalog, admin.id, teamId, OWNER_OR_ADMIN);
-    const matches = await catalog.auth.authListUsersByEmailNorm(emailNorm);
-    if (matches.length > 0) {
-      // Immediate membership for every matching user row (incl. disabled —
-      // design D2); a match that's already a member is a strict no-op (role
-      // preserved by authAddMembershipWithRole's ON CONFLICT DO NOTHING).
-      for (const m of matches) {
-        await catalog.auth.authAddMembershipWithRole(String(m.id), teamId, 'member');
+  // catalog-roles D10: the whole invite runs as system (it looks users up by email and adds their
+  // memberships); the role check stays inside it, against committed state.
+  await c
+    .get('catalog')
+    .system('team-invite')
+    .tx(async (catalog) => {
+      await requireTeamRoleIn(catalog, admin.id, teamId, OWNER_OR_ADMIN);
+      const matches = await catalog.auth.authListUsersByEmailNorm(emailNorm);
+      if (matches.length > 0) {
+        // Immediate membership for every matching user row (incl. disabled —
+        // design D2); a match that's already a member is a strict no-op (role
+        // preserved by authAddMembershipWithRole's ON CONFLICT DO NOTHING).
+        for (const m of matches) {
+          await catalog.auth.authAddMembershipWithRole(String(m.id), teamId, 'member');
+        }
+      } else {
+        const pending = await catalog.auth.authListInvitesForTeam(teamId);
+        const alreadyPending = pending.some((r) => String(r.email_norm) === emailNorm);
+        if (!alreadyPending && pending.length >= MAX_PENDING_INVITES) {
+          throw new ApiError(
+            400,
+            `This team already has ${MAX_PENDING_INVITES} pending invites; revoke one before inviting more.`,
+          );
+        }
+        await catalog.auth.authUpsertInvite(teamId, emailNorm, admin.id);
       }
-    } else {
-      const pending = await catalog.auth.authListInvitesForTeam(teamId);
-      const alreadyPending = pending.some((r) => String(r.email_norm) === emailNorm);
-      if (!alreadyPending && pending.length >= MAX_PENDING_INVITES) {
-        throw new ApiError(
-          400,
-          `This team already has ${MAX_PENDING_INVITES} pending invites; revoke one before inviting more.`,
-        );
-      }
-      await catalog.auth.authUpsertInvite(teamId, emailNorm, admin.id);
-    }
-  });
+    });
   // Uniform 200 either way (design D2: shape minimalism, not enumeration
   // hygiene — the admin reads the outcome from the next GET team detail).
   return c.json({ ok: true });
@@ -342,7 +349,7 @@ teamsRouter.post('/api/teams/:id/members/:userId/role', async (c) => {
   // After the commit, a demotion to member closes the target's sockets on the team's shows they
   // hold no grant for (show-grants D20; granted shows keep theirs).
   if (changed && body.role === 'member') {
-    await closeSocketsAfterAccessLoss(c, targetUserId, () => teamShowIds(c, teamId));
+    await closeSocketsAfterAccessLoss(c, targetUserId, (cat) => teamShowIds(cat, teamId));
   }
   return c.json({ ok: true, role: body.role });
 });
@@ -366,7 +373,7 @@ teamsRouter.delete('/api/teams/:id/members/:userId', async (c) => {
     }
   });
   // After the commit: the removed member's sockets in this team close (show-grants D20).
-  await closeSocketsAfterAccessLoss(c, targetUserId, () => teamShowIds(c, teamId));
+  await closeSocketsAfterAccessLoss(c, targetUserId, (cat) => teamShowIds(cat, teamId));
   return c.json({ ok: true });
 });
 
@@ -385,7 +392,7 @@ teamsRouter.post('/api/teams/:id/leave', async (c) => {
     }
   });
   // After the commit: the caller's own sockets in this team close (show-grants D20).
-  await closeSocketsAfterAccessLoss(c, user.id, () => teamShowIds(c, teamId));
+  await closeSocketsAfterAccessLoss(c, user.id, (cat) => teamShowIds(cat, teamId));
   return c.json({ ok: true });
 });
 

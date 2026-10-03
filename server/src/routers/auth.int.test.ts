@@ -4,7 +4,7 @@ import type { Bindings } from '../appEnv';
 import { putOauthState } from '../auth/identity';
 import { GatedCatalog } from '../test/gatedCatalog';
 import { anonApp, env, envWith } from '../test/harness';
-import { catalogFor, loginCookie, seedStudio, seedUser } from '../test/helpers';
+import { catalogFor, loginCookie, seedStudio, seedUser, testDb } from '../test/helpers';
 import {
   makeKeypair,
   mintIdToken,
@@ -512,7 +512,7 @@ describe('callback -- invite materialization (task 3.1, design D2)', () => {
   });
 
   it('a new user is not seeded from the global active team and show (owner-bootstrap D10)', async () => {
-    await env.ports.catalog.run(
+    await testDb().run(
       `INSERT INTO app_settings (key, value) VALUES ('active_studio_id', 'test-studios'),
          ('active_show_id', 'show-autolog-test')
        ON CONFLICT (key) DO UPDATE SET value = excluded.value`,
@@ -594,7 +594,7 @@ describe('callback -- invite materialization (task 3.1, design D2)', () => {
 // Google ID token is exchanged with Supabase Auth, whose user id becomes the account id.
 describe('callback -- Supabase Auth exchange', () => {
   async function userCount(sub: string): Promise<number> {
-    const n = await env.ports.catalog.first<{ n: number }>(
+    const n = await testDb().first<{ n: number }>(
       'SELECT COUNT(*) AS n FROM users WHERE google_sub = ?',
       sub,
     );
@@ -706,7 +706,7 @@ describe('callback -- concurrent first sign-in for one sub', () => {
       expect(res.headers.get('location')).toBe('/');
       expect(res.headers.get('set-cookie')).toContain('autologger_sid=');
     }
-    const n = await env.ports.catalog.first<{ n: number }>(
+    const n = await testDb().first<{ n: number }>(
       'SELECT COUNT(*) AS n FROM users WHERE google_sub = ?',
       'sub-twin',
     );

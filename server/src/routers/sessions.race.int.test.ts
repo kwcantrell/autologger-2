@@ -5,7 +5,7 @@
 import { describe, expect, it } from 'vitest';
 import { GatedCatalog } from '../test/gatedCatalog';
 import { anonApp, env, envWith } from '../test/harness';
-import { catalogFor, seedAccessMatrix } from '../test/helpers';
+import { catalogFor, seedAccessMatrix, testDb } from '../test/helpers';
 
 const J = { 'content-type': 'application/json' };
 /** The create's grant read, inside its transaction (authCanAccessShowForShare). */
@@ -36,7 +36,7 @@ function revoke(m: Awaited<ReturnType<typeof seedAccessMatrix>>) {
 }
 
 async function sessionsTitled(showId: string, title: string): Promise<number> {
-  const r = await env.ports.catalog.first<{ n: number }>(
+  const r = await testDb().first<{ n: number }>(
     'SELECT COUNT(*) AS n FROM sessions WHERE show_id = ? AND title = ?',
     showId,
     title,

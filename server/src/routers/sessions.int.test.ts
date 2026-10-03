@@ -10,6 +10,7 @@ import {
   seedShow,
   seedStudio,
   seedUser,
+  testDb,
 } from '../test/helpers';
 
 async function activeStudioId(): Promise<string> {
@@ -46,7 +47,7 @@ describe('POST /api/sessions', () => {
   it('422 for a start_offset_frames past MAX_SAFE_INTEGER, on create and update (api-contract-freeze "Catalog integer fields are bounded")', async () => {
     const show = await seedShow({ studioId: await activeStudioId() });
     const count = async () =>
-      (await env.ports.catalog.first<{ n: number }>('SELECT COUNT(*) AS n FROM sessions'))?.n;
+      (await testDb().first<{ n: number }>('SELECT COUNT(*) AS n FROM sessions'))?.n;
     const before = await count();
     const create = await app.request(
       '/api/sessions',
@@ -92,7 +93,7 @@ describe('POST /api/sessions', () => {
 // the column directly via raw SQL, mirroring what Settings will do once the
 // Unit B wire lands.
 async function setTitleSuffix(showId: string, suffix: 'date' | 'episode'): Promise<void> {
-  await env.ports.catalog.run('UPDATE shows SET title_suffix = ? WHERE id = ?', suffix, showId);
+  await testDb().run('UPDATE shows SET title_suffix = ? WHERE id = ?', suffix, showId);
 }
 
 /** Test oracle for the UTC calendar date the server's own clock read will
@@ -254,7 +255,7 @@ describe('POST /api/sessions — title derivation (session-title-suffix)', () =>
     const show = await seedShow({ studioId: studio, code: 'NB' });
     await setTitleSuffix(show, 'episode');
     await postSession({ show_id: show, episode: '9' });
-    const row = await env.ports.catalog.first<{ next_episode: number }>(
+    const row = await testDb().first<{ next_episode: number }>(
       'SELECT next_episode FROM shows WHERE id = ?',
       show,
     );
@@ -269,7 +270,7 @@ describe('POST /api/sessions — title derivation (session-title-suffix)', () =>
   it('batch-import-shaped create (explicit title + episode, no derivation) stores both verbatim and does not bump the counter', async () => {
     const studio = await activeStudioId();
     const show = await seedShow({ studioId: studio, code: 'BI' });
-    const before = await env.ports.catalog.first<{ next_episode: number }>(
+    const before = await testDb().first<{ next_episode: number }>(
       'SELECT next_episode FROM shows WHERE id = ?',
       show,
     );
@@ -281,7 +282,7 @@ describe('POST /api/sessions — title derivation (session-title-suffix)', () =>
     expect(status).toBe(200);
     expect(json.title).toBe('clip_003');
     expect(json.episode).toBe('clip_003');
-    const after = await env.ports.catalog.first<{ next_episode: number }>(
+    const after = await testDb().first<{ next_episode: number }>(
       'SELECT next_episode FROM shows WHERE id = ?',
       show,
     );
@@ -693,11 +694,7 @@ describe('GET /api/sessions for a show without access (show-grants D21)', () => 
     for (const who of [m.ungranted, m.granted, m.admin]) {
       await catalogFor().auth.authSetPrefs(who.id, m.studioId, m.showId);
     }
-    await env.ports.catalog.run(
-      'UPDATE sessions SET notes = ? WHERE id = ?',
-      'secret notes',
-      m.sessionId,
-    );
+    await testDb().run('UPDATE sessions SET notes = ? WHERE id = ?', 'secret notes', m.sessionId);
     const ev = await anonApp.request(
       `/api/sessions/${m.sessionId}/events`,
       {

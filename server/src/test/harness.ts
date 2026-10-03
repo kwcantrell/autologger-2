@@ -5,7 +5,7 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Catalog } from '@autologger/catalog';
+import { createCatalog } from '@autologger/catalog';
 import { Hono } from 'hono';
 import type { UpgradeWebSocket } from 'hono/ws';
 import { createTestDatabase } from '../../../test/pg/testDb';
@@ -99,7 +99,7 @@ export function defaultUser(): Promise<{ id: string; cookie: string }> {
   const cur = current;
   if (!cur) throw new Error('test env not initialized — is setup.int.ts registered?');
   cur.defaultUser ??= (async () => {
-    const catalog = new Catalog(cur.bindings.ports.catalog);
+    const catalog = createCatalog(cur.bindings.ports.catalog).system('test-seed');
     const id = crypto.randomUUID();
     await catalog.auth.authCreateUserGoogle({
       id,

@@ -24,6 +24,7 @@ import {
   seedShow,
   seedStudio,
   seedUser,
+  testDb,
 } from '../test/helpers';
 
 const J = { 'content-type': 'application/json' };
@@ -1284,7 +1285,7 @@ describe('transcript generation lock status', () => {
     // session is hidden. (A holder with no row at all has no studio, so no signed-in caller can
     // view it; only the removed anonymous mode could — require-login.)
     const { sessionId } = await seededSession();
-    await env.ports.catalog.run('UPDATE sessions SET ui_hidden = 1 WHERE id = ?', sessionId);
+    await testDb().run('UPDATE sessions SET ui_hidden = 1 WHERE id = ?', sessionId);
     const startedAtMs = 1_700_000_000_000;
     expect(transcriptGenerationLock.tryAcquire(sessionId, startedAtMs)).toBe(true);
 

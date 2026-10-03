@@ -1,12 +1,16 @@
-// A `CatalogDb` that can hold one statement until the test releases it (catalog-concurrency-hazards
-// D1), so a test can stop request A at a chosen statement, let request B commit, then let A go.
-// Pass it to one request with `envWith({}, { catalog: gated })`; KV and the mirror hold their own
-// adapter, so a test that races them builds those on the gated catalog too.
+// A `CatalogRoot` wrapper that can hold one statement until the test releases it
+// (catalog-concurrency-hazards D1), so a test can stop request A at a chosen statement, let request
+// B commit, then let A go. Pass it to one request with `envWith({}, { catalog: gated })`; KV and the
+// mirror hold their own adapter, so a test that races them builds those on the gated catalog too
+// (`new KvStore(gated.bindSystem('kv'), clock)`).
+//
+// It gates the handles `bindUser`/`bindSystem` return and records each statement with its binding
+// (`bindings`, catalog-roles D12). Used directly as a `CatalogDb` it is a `system:test` handle.
 //
 // A hold is one-shot: the first statement matching its pattern waits; after `release()` every
 // later match passes, so a transaction body re-run after a serialization failure can't deadlock.
 
-import type { CatalogDb } from '@autologger/ports';
+import type { CatalogDb, CatalogRoot } from '@autologger/ports';
 
 export interface Hold {
   /** Resolves when a matching statement has arrived and is waiting. */
@@ -41,9 +45,14 @@ class Gates {
 
   /** Every statement sent through the gated catalog, in order (a body re-run shows up twice). */
   readonly log: string[] = [];
+  /** The same statements with the binding of the handle that sent them. */
+  readonly bindings: { binding: string; sql: string }[] = [];
 
-  async pass(sql: string, after = false): Promise<void> {
-    if (!after) this.log.push(sql);
+  async pass(sql: string, binding: string, after = false): Promise<void> {
+    if (!after) {
+      this.log.push(sql);
+      this.bindings.push({ binding, sql });
+    }
     const p = this.holds.find((h) => h.armed && h.after === after && h.pattern.test(sql));
     if (!p) return;
     p.armed = false;
@@ -56,37 +65,55 @@ class GatedHandle implements CatalogDb {
   constructor(
     protected readonly inner: CatalogDb,
     protected readonly gates: Gates,
+    protected readonly binding: string,
   ) {}
 
   async all<T = Record<string, unknown>>(sql: string, ...binds: unknown[]): Promise<T[]> {
-    await this.gates.pass(sql);
+    await this.gates.pass(sql, this.binding);
     const r = await this.inner.all<T>(sql, ...binds);
-    await this.gates.pass(sql, true);
+    await this.gates.pass(sql, this.binding, true);
     return r;
   }
 
   async first<T = Record<string, unknown>>(sql: string, ...binds: unknown[]): Promise<T | null> {
-    await this.gates.pass(sql);
+    await this.gates.pass(sql, this.binding);
     const r = await this.inner.first<T>(sql, ...binds);
-    await this.gates.pass(sql, true);
+    await this.gates.pass(sql, this.binding, true);
     return r;
   }
 
   async run(sql: string, ...binds: unknown[]): Promise<{ changes: number }> {
-    await this.gates.pass(sql);
+    await this.gates.pass(sql, this.binding);
     const r = await this.inner.run(sql, ...binds);
-    await this.gates.pass(sql, true);
+    await this.gates.pass(sql, this.binding, true);
     return r;
   }
 
   tx<T>(fn: (t: CatalogDb) => Promise<T>): Promise<T> {
-    return this.inner.tx((t) => fn(new GatedHandle(t, this.gates)));
+    return this.inner.tx((t) => fn(new GatedHandle(t, this.gates, this.binding)));
   }
 }
 
-export class GatedCatalog extends GatedHandle {
-  constructor(inner: CatalogDb) {
-    super(inner, new Gates());
+export class GatedCatalog extends GatedHandle implements CatalogRoot {
+  constructor(private readonly root: CatalogRoot) {
+    super(root.bindSystem('test'), new Gates(), 'system:test');
+  }
+
+  bindUser(userId: string): CatalogDb {
+    return new GatedHandle(this.root.bindUser(userId), this.gates, `user:${userId}`);
+  }
+
+  bindSystem(reason: string): CatalogDb {
+    return new GatedHandle(this.root.bindSystem(reason), this.gates, `system:${reason}`);
+  }
+
+  close(): Promise<void> {
+    return this.root.close();
+  }
+
+  /** Every statement with its binding (`user:<id>` or `system:<reason>`), in order. */
+  get bindings(): readonly { binding: string; sql: string }[] {
+    return this.gates.bindings;
   }
 
   /** Hold the first statement whose SQL matches `pattern`, before it is sent, until `release()`. */

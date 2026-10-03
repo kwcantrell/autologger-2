@@ -61,7 +61,8 @@ describe('route helpers assert a principal (require-login D3)', () => {
 describe('closeSocketsAfterAccessLoss fails closed (show-grants D20)', () => {
   function closeContext(catalog: unknown) {
     const calls: unknown[][] = [];
-    const vars: Record<string, unknown> = { catalog };
+    // The check runs on `system('access-loss-check')` (catalog-roles D10); the fake binds to itself.
+    const vars: Record<string, unknown> = { catalog: { system: () => catalog } };
     const c = {
       get: (k: string) => vars[k],
       env: { ports: { sessions: { closeUserSockets: (...a: unknown[]) => (calls.push(a), 0) } } },

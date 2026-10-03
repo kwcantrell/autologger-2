@@ -41,7 +41,7 @@ console.info(`bootstrap owner: ${maskBootstrapOwnerEmail(bindings.config.BOOTSTR
 // catalog-on-postgres D2: listen only once the catalog answers. Exit 1 otherwise, so the
 // supervisor retries (the stack's migrations service may still be creating the schema).
 try {
-  await waitForCatalog(bindings.ports.catalog);
+  await waitForCatalog(bindings.ports.catalog.bindSystem('boot-wait'));
 } catch (e) {
   console.error(`autologger: ${(e as Error).message}`);
   await close().catch(() => {});
