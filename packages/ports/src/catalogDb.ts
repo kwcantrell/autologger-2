@@ -18,3 +18,15 @@ export interface CatalogDb {
   run(sql: string, ...binds: unknown[]): Promise<{ changes: number }>;
   tx<T>(fn: (t: CatalogDb) => Promise<T>): Promise<T>;
 }
+
+/** The unbound catalog adapter (catalog-roles design D4; core-ports-architecture "The Postgres
+ * catalog adapter", Bindings): it hands out handles bound to a signed-in user (`catalog_user`, with
+ * that user's id) or to a named system task (`catalog_system`, no user id), which share its
+ * connections. Every transaction of a handle, and every root statement (a short transaction),
+ * switches to the handle's role and user id for that transaction only. `bindUser` with an empty or
+ * non-string id, or `bindSystem` with a reason that is not `[a-z][a-z0-9-]*`, throws `TypeError`. */
+export interface CatalogRoot {
+  bindUser(userId: string): CatalogDb;
+  bindSystem(reason: string): CatalogDb;
+  close(): Promise<void>;
+}

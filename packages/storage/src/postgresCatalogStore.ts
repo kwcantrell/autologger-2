@@ -1,17 +1,28 @@
 // Asynchronous catalog query layer over postgres.js (postgres-catalog-adapter design D1-D7; ADR 0021
 // slice 4b). The catalog port's transaction contract, on a server that runs callers
-// concurrently: root statements use an ordinary pool, and each transaction holds one of a fixed set
-// of single-connection clients. postgres.js's own `reserve()` and `begin()` crash the process when a
-// statement reaches a connection whose socket has closed (design A5-A7), so the adapter tracks each
-// transaction's connection itself and never sends a statement after it was lost. Every transaction
-// is SERIALIZABLE and re-runs its body on a serialization failure or deadlock, after a jittered
-// backoff (catalog-retry-backoff), at most `maxTries` runs; one deadline bounds the whole call.
+// concurrently: each transaction holds one of a fixed set of single-connection clients, and each
+// statement outside a transaction runs as a short READ COMMITTED transaction on one of a separate
+// set of single-connection root clients (catalog-roles design D5). postgres.js's own `reserve()` and
+// `begin()` crash the process when a statement reaches a connection whose socket has closed, and
+// `release()` hands back a connection still inside a transaction (design A5-A7; catalog-roles A23),
+// so the adapter never uses them: it tracks each client's connection itself, never sends a
+// statement after it was lost, and hands a client to the next caller only after a confirmed COMMIT
+// or ROLLBACK. Every transaction is SERIALIZABLE and re-runs its body on a serialization failure or
+// deadlock, after a jittered backoff (catalog-retry-backoff), at most `maxTries` runs; one deadline
+// bounds the whole call.
+//
+// Bindings (catalog-roles D4, ADR 0021 slice 6b-1): `bindUser(id)` and `bindSystem(reason)` hand
+// out handles whose every transaction, and every run of it after a retry, starts with
+// `set_config('role', …, true), set_config('app.user_id', …, true)`, pipelined with BEGIN (and at
+// the root with the statement and COMMIT), so a binding adds no round trip. Nothing sets a role or
+// setting beyond one transaction (design D6).
 
 import { AsyncLocalStorage } from 'node:async_hooks';
-import type { CatalogDb } from '@autologger/ports';
+import type { CatalogDb, CatalogRoot } from '@autologger/ports';
 import postgres from 'postgres';
 import {
   CatalogAdapterBrokenError,
+  CatalogForbiddenError,
   CatalogTxMisuseError,
   CatalogTxTimeoutError,
 } from './catalogErrors';
@@ -69,8 +80,6 @@ export interface PgClientOptions {
   password: string;
   database: string;
   max: number;
-  /** Queries a connection may have in flight at once; the root pool uses 1 (design D10). */
-  max_pipeline?: number;
   onclose?: (connId: number) => void;
 }
 
@@ -80,13 +89,16 @@ export interface PostgresCatalogDbOptions {
   user: string;
   password: string;
   database: string;
-  /** Root (autocommit) pool size. */
+  /** Root connections: each carries one short root transaction at a time (catalog-roles D5). */
   rootMax?: number;
   /** Concurrent transactions; with `rootMax`, 8 of the app role's 20 connections. */
   txSlots?: number;
   txTimeoutMs?: number;
   /** Client-side bound on a root statement, queueing included (default 5 000). */
   rootTimeoutMs?: number;
+  /** After a root call timed out, how long the adapter waits for its replies before it retires the
+   * client: the role's statement and idle-in-transaction timeouts plus a grace (default 46 000). */
+  rootSettleMs?: number;
   maxTries?: number;
   connect?: (opts: PgClientOptions) => PgClient;
   /** Backoff randomness and wait, for tests (catalog-retry-backoff D3). */
@@ -115,7 +127,6 @@ function connectPostgres(opts: PgClientOptions): PgClient {
 }
 
 const GRACE_MS = 1000;
-const ROOT_EXPIRED = Symbol('root-expired');
 const RETRYABLE = new Set(['40001', '40P01']);
 
 const pgText = new Map<string, string>();
@@ -148,9 +159,55 @@ export function toPg(sql: string): string {
   return out;
 }
 
+/** Who a handle's statements run for (catalog-roles D4). `null` is the adapter's own unbound
+ * methods, which send no preamble until task 6.1 removes them. */
+type Binding = { kind: 'user'; userId: string } | { kind: 'system'; reason: string };
+
+const PREAMBLE = "select set_config('role', $1, true), set_config('app.user_id', $2, true)";
+const REASON = /^[a-z][a-z0-9-]*$/;
+
+/** The role comes from the binding's kind, never from caller text. */
+function preambleBinds(b: Binding): string[] {
+  return b.kind === 'user' ? ['catalog_user', b.userId] : ['catalog_system', ''];
+}
+
+/** What a forbidden error names: the kind and reason, never the user id (design D8). */
+function bindingLabel(b: Binding | null): string {
+  if (b === null) return 'unbound';
+  return b.kind === 'user' ? 'user' : `system:${b.reason}`;
+}
+
+function mapForbidden(error: unknown, label: string): unknown {
+  if (error instanceof postgres.PostgresError && error.code === '42501') {
+    return new CatalogForbiddenError(label, error);
+  }
+  return error;
+}
+
+const connectionLost = (what: string) =>
+  Object.assign(new Error(`catalog ${what} connection lost`), { code: 'CONNECTION_CLOSED' });
+
+interface Waiter {
+  grant(slot: Slot): void;
+  reject(error: Error): void;
+}
+
+/** A set of single-connection clients with a FIFO wait queue: the transaction slots, or the root
+ * slots (catalog-roles D5), so neither kind of call queues behind the other. */
+interface Pool {
+  slots: Slot[];
+  free: Slot[];
+  waiters: Waiter[];
+  /** The error a waiter whose deadline passed in the queue rejects with. */
+  expired(): Error;
+}
+
 interface Slot {
   client: PgClient;
+  pool: Pool;
   holder: Attempt | null;
+  /** Set while a root call holds the slot: its client's connection closed under it. */
+  onLost: (() => void) | null;
 }
 
 /** One transaction run's state on a real connection (design D4). */
@@ -160,6 +217,8 @@ interface Attempt {
   error: unknown;
   joined: number;
   slot: Slot;
+  /** Who the transaction runs for, as a forbidden error names it. */
+  label: string;
   /** The connection closed under the attempt; nothing more may be sent on it. */
   lost: boolean;
   /** Statements go out one at a time, so none can reach a reconnected socket (design D4). */
@@ -217,11 +276,60 @@ function checkUsable(a: Attempt): void {
 
 const closedError = () => new CatalogAdapterBrokenError('catalog adapter is closed');
 
-export class PostgresCatalogDb implements CatalogDb {
-  private readonly root: PgClient;
-  private readonly slots: Slot[] = [];
-  private readonly free: Slot[] = [];
-  private readonly waiters: { grant(slot: Slot): void; reject(error: Error): void }[] = [];
+type RootOutcome =
+  | { ok: true; value: PgResult; confirmed: true }
+  | { ok: false; error: unknown; confirmed: boolean };
+
+/** Reads a short root transaction's replies (BEGIN, [preamble,] statement, COMMIT). The client is
+ * reused only when the server confirmed the end: a COMMIT answered COMMIT, or ROLLBACK after an
+ * earlier error. A failed COMMIT, a failed BEGIN or anything but a server reply retires it
+ * (catalog-roles D5, D6). */
+function rootOutcome(results: PromiseSettledResult<PgResult>[]): RootOutcome {
+  const untrusted = results.find(
+    (r) => r.status === 'rejected' && !(r.reason instanceof postgres.PostgresError),
+  );
+  if (untrusted?.status === 'rejected')
+    return { ok: false, error: untrusted.reason, confirmed: false };
+  const begin = results[0];
+  const stmt = results[results.length - 2];
+  const commit = results[results.length - 1];
+  if (begin?.status === 'rejected') return { ok: false, error: begin.reason, confirmed: false };
+  const earlier = results.slice(0, -1).find((r) => r.status === 'rejected');
+  const earlierError = earlier?.status === 'rejected' ? earlier.reason : undefined;
+  if (commit?.status !== 'fulfilled') {
+    return {
+      ok: false,
+      error: earlierError ?? (commit as PromiseRejectedResult | undefined)?.reason,
+      confirmed: false,
+    };
+  }
+  const command = commit.value.command;
+  if (command === 'COMMIT' && earlier === undefined && stmt?.status === 'fulfilled') {
+    return { ok: true, value: stmt.value, confirmed: true };
+  }
+  if (command === 'ROLLBACK') {
+    return {
+      ok: false,
+      error: earlierError ?? new CatalogTxMisuseError('COMMIT was answered with ROLLBACK'),
+      confirmed: true,
+    };
+  }
+  return {
+    ok: false,
+    error: earlierError ?? new CatalogTxMisuseError(`COMMIT was answered with ${command}`),
+    confirmed: false,
+  };
+}
+
+/** What a bound handle calls on its adapter. */
+interface HandleOps {
+  root<T>(b: Binding | null, sql: string, binds: unknown[], map: (r: PgResult) => T): Promise<T>;
+  tx<T>(fn: (t: CatalogDb) => Promise<T>, b: Binding | null): Promise<T>;
+}
+
+export class PostgresCatalogDb implements CatalogDb, CatalogRoot {
+  private readonly txPool: Pool;
+  private readonly rootPool: Pool;
   private readonly retired = new WeakSet<PgClient>();
   private readonly ending = new Set<Promise<void>>();
   private readonly running = new Set<Promise<unknown>>();
@@ -229,9 +337,11 @@ export class PostgresCatalogDb implements CatalogDb {
   private readonly conn: Omit<PgClientOptions, 'max' | 'onclose'>;
   private readonly txTimeoutMs: number;
   private readonly rootTimeoutMs: number;
+  private readonly rootSettleMs: number;
   private readonly maxTries: number;
   private readonly random: () => number;
   private readonly sleep: (ms: number) => Promise<void>;
+  private readonly ops: HandleOps;
   private closed = false;
 
   constructor(opts: PostgresCatalogDbOptions) {
@@ -240,6 +350,7 @@ export class PostgresCatalogDb implements CatalogDb {
       txSlots = 5,
       txTimeoutMs = 10_000,
       rootTimeoutMs = 5_000,
+      rootSettleMs = 30_000 + 15_000 + GRACE_MS,
       maxTries = 5,
       connect,
       random = Math.random,
@@ -249,41 +360,97 @@ export class PostgresCatalogDb implements CatalogDb {
     this.random = random;
     this.sleep = sleep;
     this.rootTimeoutMs = rootTimeoutMs;
+    this.rootSettleMs = rootSettleMs;
     this.connect = connect ?? connectPostgres;
     this.conn = conn;
     this.txTimeoutMs = txTimeoutMs;
     this.maxTries = maxTries;
-    // One statement per root connection, so a query still queued can be withdrawn at its deadline
-    // instead of riding behind a stalled statement (design D10).
-    this.root = this.connect({ ...conn, max: rootMax, max_pipeline: 1 });
-    for (let i = 0; i < txSlots; i++) {
-      const slot: Slot = { client: this.root, holder: null };
-      slot.client = this.slotClient(slot);
-      this.slots.push(slot);
-      this.free.push(slot);
+    this.ops = {
+      root: (b, sql, binds, map) => this.rootQuery(b, sql, binds, map),
+      tx: (fn, b) => this.runTx(fn, b),
+    };
+    // Root slots first, then transaction slots; each is a `max: 1` client (catalog-roles D5).
+    this.rootPool = this.pool(
+      rootMax,
+      () =>
+        new CatalogRootTimeoutError(
+          'catalog statement timed out before it was sent',
+          Promise.resolve(),
+        ),
+    );
+    this.txPool = this.pool(
+      txSlots,
+      () => new CatalogTxTimeoutError('catalog transaction timed out waiting for a connection'),
+    );
+  }
+
+  /** A handle whose statements run as `catalog_user` with this user's id (catalog-roles D4). */
+  bindUser(userId: string): CatalogDb {
+    if (typeof userId !== 'string' || userId === '') {
+      throw new TypeError('bindUser needs a non-empty user id');
     }
+    return new BoundHandle(this.ops, { kind: 'user', userId });
+  }
+
+  /** A handle whose statements run as `catalog_system` for the named task (catalog-roles D4). */
+  bindSystem(reason: string): CatalogDb {
+    if (typeof reason !== 'string' || !REASON.test(reason)) {
+      throw new TypeError('bindSystem needs a reason matching [a-z][a-z0-9-]*');
+    }
+    return new BoundHandle(this.ops, { kind: 'system', reason });
   }
 
   all<T = Record<string, unknown>>(sql: string, ...binds: unknown[]): Promise<T[]> {
-    return this.rootQuery(sql, binds, (r) => [...r] as T[]);
+    return this.rootQuery(null, sql, binds, (r) => [...r] as T[]);
   }
 
   first<T = Record<string, unknown>>(sql: string, ...binds: unknown[]): Promise<T | null> {
-    return this.rootQuery(sql, binds, (r) => (r[0] as T | undefined) ?? null);
+    return this.rootQuery(null, sql, binds, (r) => (r[0] as T | undefined) ?? null);
   }
 
   run(sql: string, ...binds: unknown[]): Promise<{ changes: number }> {
-    return this.rootQuery(sql, binds, (r) => ({ changes: r.count }));
+    return this.rootQuery(null, sql, binds, (r) => ({ changes: r.count }));
   }
 
-  async tx<T>(fn: (t: CatalogDb) => Promise<T>): Promise<T> {
+  tx<T>(fn: (t: CatalogDb) => Promise<T>): Promise<T> {
+    return this.runTx(fn, null);
+  }
+
+  /** Rejects waiting and new calls, lets running calls settle on their own bounds, then ends every
+   * connection (design D7). */
+  async close(): Promise<void> {
+    if (!this.closed) {
+      this.closed = true;
+      for (const pool of [this.rootPool, this.txPool]) {
+        for (const w of pool.waiters.splice(0)) w.reject(closedError());
+      }
+    }
+    await Promise.allSettled([...this.running]);
+    for (const slot of [...this.rootPool.slots, ...this.txPool.slots]) {
+      if (!this.retired.has(slot.client)) this.retire(slot.client);
+    }
+    await Promise.all([...this.ending]);
+  }
+
+  private pool(size: number, expired: () => Error): Pool {
+    const pool: Pool = { slots: [], free: [], waiters: [], expired };
+    for (let i = 0; i < size; i++) {
+      const slot = { pool, holder: null, onLost: null } as unknown as Slot;
+      slot.client = this.slotClient(slot);
+      pool.slots.push(slot);
+      pool.free.push(slot);
+    }
+    return pool;
+  }
+
+  private async runTx<T>(fn: (t: CatalogDb) => Promise<T>, binding: Binding | null): Promise<T> {
     this.guardRoot();
     if (this.closed) throw closedError();
     const deadlineAt = Date.now() + this.txTimeoutMs;
     const run = (async () => {
       for (let n = 1; ; n++) {
         try {
-          return await this.attempt(fn, deadlineAt);
+          return await this.attempt(fn, deadlineAt, binding);
         } catch (error) {
           const code = (error as { code?: unknown } | null)?.code;
           if (n >= this.maxTries || this.closed || !RETRYABLE.has(code as string)) throw error;
@@ -309,63 +476,96 @@ export class PostgresCatalogDb implements CatalogDb {
     }
   }
 
-  /** Rejects waiting and new calls, lets running transactions settle on their own bounds, then
-   * ends every connection (design D7). */
-  async close(): Promise<void> {
-    if (!this.closed) {
-      this.closed = true;
-      for (const w of this.waiters.splice(0)) w.reject(closedError());
-    }
-    await Promise.allSettled([...this.running]);
-    for (const slot of this.slots) {
-      if (!this.retired.has(slot.client)) this.retire(slot.client);
-    }
-    if (!this.retired.has(this.root)) {
-      this.retired.add(this.root);
-      this.ending.add(this.root.end({ timeout: 5 }).catch(() => {}));
-    }
-    await Promise.all([...this.ending]);
-  }
-
-  private async rootQuery<T>(sql: string, binds: unknown[], map: (r: PgResult) => T): Promise<T> {
+  private async rootQuery<T>(
+    binding: Binding | null,
+    sql: string,
+    binds: unknown[],
+    map: (r: PgResult) => T,
+  ): Promise<T> {
     this.guardRoot();
     if (this.closed) throw closedError();
     checkText(binds);
-    const q = this.root.unsafe(toPg(sql), binds, { prepare: true });
-    let timer: NodeJS.Timeout | undefined;
-    const expired = new Promise<typeof ROOT_EXPIRED>((r) => {
-      timer = setTimeout(() => r(ROOT_EXPIRED), this.rootTimeoutMs);
-    });
-    let res: PgResult | typeof ROOT_EXPIRED;
+    const call = this.rootCall(binding, sql, binds, Date.now() + this.rootTimeoutMs);
+    this.running.add(call);
     try {
-      res = await Promise.race([q, expired]);
+      return map(await call);
     } finally {
-      clearTimeout(timer);
+      this.running.delete(call);
     }
-    if (res !== ROOT_EXPIRED) return map(res);
-    // Not sent yet: withdraw it (postgres.js only dequeues; nothing reaches the server). Sent: never
-    // cancel, since a late cancel could hit the next statement on the pooled connection (A4).
-    if (q.state === null || q.state === undefined) {
-      try {
-        q.cancel();
-      } catch {}
-      q.catch(() => {});
+  }
+
+  /** One short root transaction (catalog-roles D5): take a root slot within the deadline (or
+   * leave the queue, never sent), issue BEGIN, the preamble, the statement and COMMIT without
+   * waiting in between, and resolve only once the COMMIT is confirmed. Past the deadline the
+   * caller gets the may-still-apply timeout and the replies are awaited in the background; no
+   * cancel and no retry. */
+  private async rootCall(
+    binding: Binding | null,
+    sql: string,
+    binds: unknown[],
+    deadlineAt: number,
+  ): Promise<PgResult> {
+    const slot = await this.acquire(this.rootPool, deadlineAt);
+    const client = slot.client;
+    const qs: Promise<PgResult>[] = [handled(client.unsafe('BEGIN ISOLATION LEVEL READ COMMITTED'))];
+    if (binding) {
+      qs.push(handled(client.unsafe(PREAMBLE, preambleBinds(binding), { prepare: true })));
+    }
+    qs.push(handled(client.unsafe(toPg(sql), binds, { prepare: true })));
+    qs.push(handled(client.unsafe('COMMIT')));
+    let markLost!: () => void;
+    const lost = new Promise<'lost'>((r) => {
+      markLost = () => r('lost');
+    });
+    slot.onLost = markLost;
+    const replies = Promise.allSettled(qs);
+    let timer: NodeJS.Timeout | undefined;
+    const expired = new Promise<'expired'>((r) => {
+      timer = setTimeout(() => r('expired'), Math.max(0, deadlineAt - Date.now()));
+    });
+    const first = await Promise.race([replies, lost, expired]).finally(() => clearTimeout(timer));
+    if (first === 'lost') {
+      this.endRoot(slot, false);
+      throw connectionLost('root');
+    }
+    if (first === 'expired') {
       throw new CatalogRootTimeoutError(
-        'catalog statement timed out before it was sent',
-        Promise.resolve(),
+        'catalog statement timed out; it may still apply',
+        this.settleRoot(slot, replies, lost),
       );
     }
-    throw new CatalogRootTimeoutError(
-      'catalog statement timed out; it may still apply',
-      q.then(
-        () => {},
-        () => {},
-      ),
-    );
+    const outcome = rootOutcome(first);
+    this.endRoot(slot, outcome.confirmed);
+    if (outcome.ok) return outcome.value;
+    throw mapForbidden(outcome.error, bindingLabel(binding));
+  }
+
+  /** After a root timeout: wait for the replies, bounded by the role's timeouts plus a grace, then
+   * release the slot on a confirmed end or retire the client. Resolves once either happened. */
+  private async settleRoot(
+    slot: Slot,
+    replies: Promise<PromiseSettledResult<PgResult>[]>,
+    lost: Promise<'lost'>,
+  ): Promise<void> {
+    let timer: NodeJS.Timeout | undefined;
+    const bound = new Promise<'bound'>((r) => {
+      timer = setTimeout(() => r('bound'), this.rootSettleMs);
+      timer.unref();
+    });
+    const end = await Promise.race([replies, lost, bound]).finally(() => clearTimeout(timer));
+    this.endRoot(slot, typeof end === 'object' && rootOutcome(end).confirmed);
+  }
+
+  private endRoot(slot: Slot, confirmed: boolean): void {
+    if (slot.onLost === null) return;
+    slot.onLost = null;
+    if (confirmed) this.release(slot);
+    else this.recycle(slot);
   }
 
   /** The transaction contract: the root handle inside an open transaction would escape it, and
-   * work left over from a failed transaction must not run (design D4). */
+   * work left over from a failed transaction must not run (design D4). This also refuses a handle
+   * of another binding inside an open transaction (catalog-roles "One binding per transaction"). */
   private guardRoot(): void {
     const a = current.getStore();
     if (!a) return;
@@ -383,14 +583,20 @@ export class PostgresCatalogDb implements CatalogDb {
     }
   }
 
-  private async attempt<T>(fn: (t: CatalogDb) => Promise<T>, deadlineAt: number): Promise<T> {
-    const slot = await this.acquire(deadlineAt);
+  private async attempt<T>(
+    fn: (t: CatalogDb) => Promise<T>,
+    deadlineAt: number,
+    binding: Binding | null,
+  ): Promise<T> {
+    const slot = await this.acquire(this.txPool, deadlineAt);
+    const label = bindingLabel(binding);
     const a: Attempt = {
       open: true,
       failed: false,
       error: undefined,
       joined: 0,
       slot,
+      label,
       lost: false,
       chain: Promise.resolve(),
       inFlight: null,
@@ -401,12 +607,15 @@ export class PostgresCatalogDb implements CatalogDb {
     let confirmed = false; // the server confirmed the transaction ended
     try {
       try {
-        await bounded(
-          slot.client.unsafe('BEGIN ISOLATION LEVEL SERIALIZABLE'),
-          deadlineAt - Date.now(),
-        );
+        // BEGIN and the preamble go out together: one round trip, as BEGIN alone was
+        // (catalog-roles D4). On a retry this runs again, so the role is re-applied.
+        const begin = handled(slot.client.unsafe('BEGIN ISOLATION LEVEL SERIALIZABLE'));
+        const pre = binding
+          ? handled(slot.client.unsafe(PREAMBLE, preambleBinds(binding), { prepare: true }))
+          : null;
+        await bounded(Promise.all([begin, pre]), deadlineAt - Date.now());
       } catch (error) {
-        if (!(error instanceof BoundExpired)) throw error;
+        if (!(error instanceof BoundExpired)) throw mapForbidden(error, label);
         throw new CatalogTxTimeoutError(`catalog transaction exceeded ${this.txTimeoutMs} ms`);
       }
       const settle = () => {
@@ -461,7 +670,8 @@ export class PostgresCatalogDb implements CatalogDb {
               cause: error,
             });
           }
-          confirmed = true; // a failed COMMIT ends the transaction on the server
+          // A failed COMMIT ends the transaction on the server, but the client is retired rather
+          // than reused (catalog-roles D6).
           fail(a, error);
           throw a.error;
         }
@@ -491,12 +701,12 @@ export class PostgresCatalogDb implements CatalogDb {
   }
 
   /** FIFO; a waiter whose deadline passes leaves the queue, so no slot is granted to it. */
-  private acquire(deadlineAt: number): Promise<Slot> {
+  private acquire(pool: Pool, deadlineAt: number): Promise<Slot> {
     if (this.closed) return Promise.reject(closedError());
-    const slot = this.free.shift();
+    const slot = pool.free.shift();
     if (slot) return Promise.resolve(slot);
     return new Promise<Slot>((resolve, reject) => {
-      const waiter = {
+      const waiter: Waiter = {
         grant(s: Slot) {
           clearTimeout(timer);
           resolve(s);
@@ -508,21 +718,19 @@ export class PostgresCatalogDb implements CatalogDb {
       };
       const timer = setTimeout(
         () => {
-          this.waiters.splice(this.waiters.indexOf(waiter), 1);
-          reject(
-            new CatalogTxTimeoutError('catalog transaction timed out waiting for a connection'),
-          );
+          pool.waiters.splice(pool.waiters.indexOf(waiter), 1);
+          reject(pool.expired());
         },
         Math.max(0, deadlineAt - Date.now()),
       );
-      this.waiters.push(waiter);
+      pool.waiters.push(waiter);
     });
   }
 
   private release(slot: Slot): void {
-    const waiter = this.waiters.shift();
+    const waiter = slot.pool.waiters.shift();
     if (waiter) waiter.grant(slot);
-    else this.free.push(slot);
+    else slot.pool.free.push(slot);
   }
 
   /** Never hands out a connection whose transaction may still be open: ends it (the server rolls
@@ -535,6 +743,7 @@ export class PostgresCatalogDb implements CatalogDb {
   }
 
   private retire(client: PgClient): void {
+    if (this.retired.has(client)) return;
     this.retired.add(client);
     const ended = client.end({ timeout: 0 }).catch(() => {});
     this.ending.add(ended);
@@ -549,19 +758,40 @@ export class PostgresCatalogDb implements CatalogDb {
       max: 1,
       onclose: () => {
         if (this.retired.has(client) || slot.client !== client) return;
+        slot.onLost?.();
         const a = slot.holder;
         if (a && !a.lost) {
           a.lost = true;
-          fail(
-            a,
-            Object.assign(new Error('catalog transaction connection lost'), {
-              code: 'CONNECTION_CLOSED',
-            }),
-          );
+          fail(a, connectionLost('transaction'));
         }
       },
     });
     return client;
+  }
+}
+
+/** A handle bound to a user or a system task (catalog-roles D4): its root statements and
+ * transactions run under its binding, on the adapter's connections. */
+class BoundHandle implements CatalogDb {
+  constructor(
+    private readonly ops: HandleOps,
+    private readonly binding: Binding,
+  ) {}
+
+  all<T = Record<string, unknown>>(sql: string, ...binds: unknown[]): Promise<T[]> {
+    return this.ops.root(this.binding, sql, binds, (r) => [...r] as T[]);
+  }
+
+  first<T = Record<string, unknown>>(sql: string, ...binds: unknown[]): Promise<T | null> {
+    return this.ops.root(this.binding, sql, binds, (r) => (r[0] as T | undefined) ?? null);
+  }
+
+  run(sql: string, ...binds: unknown[]): Promise<{ changes: number }> {
+    return this.ops.root(this.binding, sql, binds, (r) => ({ changes: r.count }));
+  }
+
+  tx<T>(fn: (t: CatalogDb) => Promise<T>): Promise<T> {
+    return this.ops.tx(fn, this.binding);
   }
 }
 
@@ -630,8 +860,9 @@ class TxHandle implements CatalogDb {
           } catch (error) {
             // Anything but a server reply means the connection can't be trusted (A8).
             if (!(error instanceof postgres.PostgresError)) a.lost = true;
-            fail(a, error);
-            throw error;
+            const mapped = mapForbidden(error, a.label);
+            fail(a, mapped);
+            throw mapped;
           } finally {
             if (a.inFlight === query) a.inFlight = null;
           }
