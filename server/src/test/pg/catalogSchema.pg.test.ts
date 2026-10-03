@@ -421,6 +421,47 @@ describe('the app role (design D3)', () => {
   });
 });
 
+describe('the bare app role is refused (catalog-roles D1 step 2)', () => {
+  it('autologger_app without a catalog role gets 42501 on every DML statement of every table', async () => {
+    const db = await createTestDatabase();
+    const sql = connect(db.app);
+    expect((await sql`select current_user as u`)[0]?.u).toBe('autologger_app');
+    for (const table of TABLES) {
+      const key = KEY_COLUMN[table];
+      for (const stmt of [
+        `select count(*) from ${table}`,
+        `insert into ${table} (${key}) values ('x')`,
+        `update ${table} set ${key} = ${key}`,
+        `delete from ${table}`,
+      ]) {
+        await expect(sql.unsafe(stmt), stmt).rejects.toMatchObject({ code: '42501' });
+      }
+    }
+  });
+
+  it('autologger_app holds no table privilege, no policy names it, and default privileges go to the catalog roles only', async () => {
+    const db = await createTestDatabase();
+    const sql = connect(db.admin);
+    for (const table of TABLES) {
+      for (const priv of ['select', 'insert', 'update', 'delete']) {
+        const r =
+          await sql`select has_table_privilege('autologger_app', ${`catalog.${table}`}, ${priv}) as p`;
+        expect(r[0]?.p, `${table} ${priv}`).toBe(false);
+      }
+    }
+    const policies = await sql`select tablename, policyname from pg_policies
+                               where schemaname = 'catalog' and 'autologger_app' = any(roles)`;
+    expect(policies.map((p) => `${p.tablename}.${p.policyname}`)).toEqual([]);
+    const acl = await sql`select defaclobjtype, defaclacl::text[] as acl from pg_default_acl
+                          where defaclrole = 'postgres'::regrole
+                            and defaclnamespace = 'catalog'::regnamespace`;
+    const tables = acl.filter((r) => r.defaclobjtype === 'r');
+    expect(tables).toHaveLength(1);
+    const grantees = ((tables[0]?.acl ?? []) as string[]).map((e) => e.split('=')[0]).sort();
+    expect(grantees).toEqual(['catalog_system', 'catalog_user']);
+  });
+});
+
 describe('row-level security on every catalog table (catalog-roles D1, D2)', () => {
   it('every catalog table has row-level security and a policy for each catalog role', async () => {
     const db = await createTestDatabase();

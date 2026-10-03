@@ -6,9 +6,8 @@
 -- (`set_config('role', …, true)`) and holds none of their privileges while it has not. Row-level
 -- security is on for every catalog table, with one allow-all policy per role, so behaviour does not
 -- change; slice 6b-2 replaces the `catalog_user` policies.
---
--- Step 1 of this file (catalog-roles D16): `autologger_app` keeps its own table grants and an
--- interim allow-all policy (`<table>_app_all`) until every caller is bound.
+-- `autologger_app` keeps only `USAGE` on the schema, so a statement it sends without switching
+-- role fails with `permission denied for table …`.
 --
 -- No transaction-control lines: every `begin`/`end` inside a DO block stays indented (migrate.sh
 -- refuses a line that starts with one).
@@ -71,6 +70,9 @@ do $$
 $$;
 -- role:end
 
+revoke all on all tables in schema catalog from autologger_app;
+alter default privileges for role postgres in schema catalog
+  revoke select, insert, update, delete on tables from autologger_app;
 grant usage on schema catalog to catalog_user, catalog_system;
 grant select, insert, update, delete on all tables in schema catalog to catalog_user, catalog_system;
 alter default privileges for role postgres in schema catalog
@@ -83,8 +85,7 @@ create or replace function catalog.app_user_id() returns text language sql stabl
 revoke all on function catalog.app_user_id() from public;
 grant execute on function catalog.app_user_id() to catalog_user, catalog_system;
 
--- Row-level security on every catalog table, one allow-all policy per catalog role (design D2),
--- plus the interim `<table>_app_all` policy for the still-unbound app role (step 1, design D16).
+-- Row-level security on every catalog table, one allow-all policy per catalog role (design D2).
 do $$
   declare t text;
   begin
@@ -92,7 +93,6 @@ do $$
       execute format('alter table catalog.%I enable row level security', t);
       execute format('create policy %I on catalog.%I for all to catalog_user using (true) with check (true)', t || '_user_all', t);
       execute format('create policy %I on catalog.%I for all to catalog_system using (true) with check (true)', t || '_system_all', t);
-      execute format('create policy %I on catalog.%I for all to autologger_app using (true) with check (true)', t || '_app_all', t);
     end loop;
   end
 $$;

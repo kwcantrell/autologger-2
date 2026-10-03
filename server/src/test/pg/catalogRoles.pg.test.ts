@@ -121,6 +121,8 @@ describe('catalog.app_user_id() and the per-transaction role (catalog-roles D1, 
       }),
     ).rejects.toMatchObject({ code: '22012' });
     expect(await sessionState()).toEqual({ u: 'autologger_app', id: '' });
+    // catalog-roles 6.2: back to the bare login role, a catalog table read is refused.
+    await expect(sql`select count(*) from users`).rejects.toMatchObject({ code: '42501' });
   });
 
   it('no function in schema catalog is executable by public; the helper only by the catalog roles', async () => {
