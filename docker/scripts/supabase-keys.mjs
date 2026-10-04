@@ -1,19 +1,22 @@
 #!/usr/bin/env node
 // docker/scripts/supabase-keys.mjs -- create missing Supabase secrets in one environment's
-// Infisical project (supabase-db design D5). Node built-ins only.
+// OpenBao KV v2 secret (supabase-db design D5; openbao-secrets D4). Node built-ins only.
 //
-//   node docker/scripts/supabase-keys.mjs dev|stage|prod --writer FILE
+//   node docker/scripts/supabase-keys.mjs dev|stage|prod [--writer FILE]
 //
-// The project id, Infisical URL and CA come from .env.infisical.<env>; the client id and secret
-// come from FILE, an identity that can write (the environment's viewer identity cannot). Create
-// only: an existing key is kept, never updated or deleted. Prints key names and outcomes only.
+// The OpenBao address, CA and KV path come from .env.openbao.<env>. The token comes from FILE
+// (mode 600; a `BAO_TOKEN=...` line, or the token alone, e.g. ~/.vault-token after `bao login`)
+// or else from BAO_TOKEN in the environment: an admin token that can write the path (the stack's
+// AppRole cannot). Create only: an existing key is kept, never updated or deleted, and the write
+// is check-and-set on the version read, so a concurrent write makes it fail whole. Prints key
+// names and outcomes only.
 
 import { createHmac, randomBytes } from 'node:crypto';
 import { lstatSync, readFileSync } from 'node:fs';
 import { isAbsolute, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { Refusal, checkCredFile, checkNodeVersion, httpsJson, readCreds } from './compose-run.mjs';
+import { Refusal, checkCredFile, checkNodeVersion, deletedMessage, deletedState, httpsRequest, kvDataPath, readCreds, statusRefusal } from './compose-run.mjs';
 
 const ROOT = resolve(import.meta.dirname, '../..');
 const ENVS = ['dev', 'stage', 'prod'];
@@ -40,30 +43,36 @@ const refuse = (msg) => {
   throw new Refusal(msg);
 };
 
-function readWriter(f) {
-  try {
-    lstatSync(f);
-  } catch {
-    refuse(`writer file ${f} does not exist`);
+const TOKEN_RE = /^[\x21-\x7e]{1,512}$/;
+
+/** The admin token: from the writer file if given (mode-600 checked), else BAO_TOKEN. */
+function readToken(f, ownEnv) {
+  let token;
+  if (f) {
+    try {
+      lstatSync(f);
+    } catch {
+      refuse(`writer file ${f} does not exist`);
+    }
+    checkCredFile(f);
+    const lines = readFileSync(f, 'utf8').split('\n').map((l) => l.trimEnd()).filter(Boolean);
+    const kv = lines.map((l) => /^BAO_TOKEN=(.*)$/.exec(l)).find(Boolean);
+    token = kv ? kv[1] : lines.length === 1 ? lines[0] : '';
+    if (!token) refuse('the writer file holds no token (a BAO_TOKEN=... line, or the token alone)');
+  } else {
+    token = ownEnv.BAO_TOKEN ?? '';
+    if (!token) refuse('no OpenBao token: set BAO_TOKEN (an admin token, e.g. after `bao login`) or pass --writer FILE');
   }
-  checkCredFile(f);
-  const kv = new Map();
-  for (const line of readFileSync(f, 'utf8').split('\n')) {
-    const m = /^([A-Z_]+)=(.*)$/.exec(line.trimEnd());
-    if (m) kv.set(m[1], m[2]);
-  }
-  for (const k of ['INFISICAL_UNIVERSAL_AUTH_CLIENT_ID', 'INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET']) {
-    if (!kv.get(k)) refuse(`${k} is missing or empty in the writer file`);
-  }
-  return { clientId: kv.get('INFISICAL_UNIVERSAL_AUTH_CLIENT_ID'), clientSecret: kv.get('INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET') };
+  if (!TOKEN_RE.test(token)) refuse('the OpenBao token has an unexpected format');
+  return token;
 }
 
 async function main(argv, ownEnv) {
   checkNodeVersion(process.versions.node);
   const [env, flag, writer, ...rest] = argv;
-  if (!ENVS.includes(env) || flag !== '--writer' || !writer || rest.length) {
-    refuse('usage: supabase-keys.mjs dev|stage|prod --writer FILE');
-  }
+  const usage = 'usage: supabase-keys.mjs dev|stage|prod [--writer FILE]';
+  if (!ENVS.includes(env)) refuse(usage);
+  if (flag !== undefined && (flag !== '--writer' || !writer || rest.length)) refuse(usage);
   let credDir = ROOT;
   if (ownEnv.AUTOLOGGER_TEST === '1' && ownEnv.AUTOLOGGER_TEST_CRED_DIR) {
     if (env === 'prod') refuse('test hooks (AUTOLOGGER_TEST_*) are refused for prod');
@@ -71,60 +80,67 @@ async function main(argv, ownEnv) {
     credDir = ownEnv.AUTOLOGGER_TEST_CRED_DIR;
   }
   const target = readCreds(env, credDir, { auth: false });
-  const who = readWriter(writer);
+  const token = readToken(writer, ownEnv);
+  const path = kvDataPath(target.kv);
+  const call = (method, body, headers = {}) =>
+    httpsRequest({ url: target.url, ca: target.ca, method, path, headers: { 'x-vault-token': token, ...headers }, body: body ? JSON.stringify(body) : undefined });
 
-  const call = (method, path, body, token) =>
-    httpsJson({
-      url: target.url,
-      ca: target.ca,
-      method,
-      path,
-      headers: token ? { authorization: `Bearer ${token}` } : {},
-      body: body ? JSON.stringify(body) : undefined,
-    });
-  const login = await call('POST', '/api/v1/auth/universal-auth/login', who);
-  if (typeof login?.accessToken !== 'string' || login.accessToken === '') refuse('Infisical login returned no access token');
-  const token = login.accessToken;
-
-  // The same scope compose-run.mjs fetches with, names only.
-  const q = new URLSearchParams({
-    projectId: target.projectId,
-    environment: env,
-    secretPath: '/',
-    expandSecretReferences: 'false',
-    includeImports: 'false',
-    recursive: 'false',
-    viewSecretValue: 'false',
-  });
-  const listed = await call('GET', `/api/v4/secrets?${q}`, null, token);
-  if (!Array.isArray(listed?.secrets)) refuse('Infisical returned an unexpected response shape (no secrets array)');
-  const have = new Set(listed.secrets.map((s) => s?.secretKey));
+  // The same path compose-run.mjs reads. KV v2 has no names-only read, so the values are
+  // dropped at once: only the key names and the current version are kept.
+  const read = await call('GET');
+  let have;
+  let version;
+  // A soft-deleted (`deletion_time` passed) or destroyed current version still has its keys in an
+  // older version: writing a fresh set over it would replace every database and JWT secret. KV v2
+  // answers such a read with 404 plus the metadata, so any metadata on a 404 means the path exists.
+  // A future deletion_time (delete_version_after) is a live version (deletedState).
+  const md = read.json?.data?.metadata;
+  const gone = read.status === 200 || read.status === 404 ? deletedState(md, read.status) : null;
+  if (gone) refuse(`${deletedMessage(gone, `the OpenBao secret ${target.kv.mount}/${target.kv.path}`)} first (nothing was written)`);
+  if (read.status === 200) {
+    const data = read.json?.data?.data;
+    version = md?.version;
+    if (data && typeof data === 'object' && !Array.isArray(data)) have = new Set(Object.keys(data));
+    else refuse('OpenBao returned an unexpected response shape (no data.data object)');
+  } else if (read.status === 404) {
+    // No secret at this path yet (a 404 with no metadata).
+    have = new Set();
+    version = 0;
+  } else throw statusRefusal(read);
+  read.json = undefined;
+  if (!Number.isInteger(version) || version < 0) refuse('OpenBao returned no usable secret version');
 
   const trioHave = TRIO.filter((k) => have.has(k));
   if (trioHave.length && trioHave.length < TRIO.length) {
-    refuse(`JWT_SECRET, ANON_KEY and SERVICE_ROLE_KEY are created together; ${TRIO.filter((k) => !have.has(k)).join(', ')} missing. Delete the others in Infisical first (see docs/supabase.md)`);
+    refuse(`JWT_SECRET, ANON_KEY and SERVICE_ROLE_KEY are created together; ${TRIO.filter((k) => !have.has(k)).join(', ')} missing. Delete the others in OpenBao first (see docs/supabase.md)`);
   }
-  const create = [];
-  for (const [key, make] of Object.entries(KEYS)) if (!have.has(key)) create.push({ secretKey: key, secretValue: make() });
+  const create = {};
+  for (const [key, make] of Object.entries(KEYS)) if (!have.has(key)) create[key] = make();
   if (!trioHave.length) {
-    const secret = create.find((c) => c.secretKey === 'JWT_SECRET').secretValue;
     const iat = Math.floor(Date.now() / 1000);
-    create.push({ secretKey: 'ANON_KEY', secretValue: apiKey(secret, 'anon', iat) });
-    create.push({ secretKey: 'SERVICE_ROLE_KEY', secretValue: apiKey(secret, 'service_role', iat) });
+    create.ANON_KEY = apiKey(create.JWT_SECRET, 'anon', iat);
+    create.SERVICE_ROLE_KEY = apiKey(create.JWT_SECRET, 'service_role', iat);
   }
   for (const k of [...Object.keys(KEYS), 'ANON_KEY', 'SERVICE_ROLE_KEY']) if (have.has(k)) process.stdout.write(`kept ${k}\n`);
-  if (create.length) {
-    // One batch: Infisical rejects the whole batch if any key exists and inserts in one transaction.
+  const names = Object.keys(create);
+  if (names.length) {
+    // One check-and-set write: PATCH merges into the current version; a path with no live data
+    // gets a create-only POST (cas 0 on a new path). Either fails whole if anyone wrote since the read.
+    const body = { options: { cas: version }, data: create };
+    const patch = have.size > 0;
+    let r;
     try {
-      await call('POST', '/api/v4/secrets/batch', { projectId: target.projectId, environment: env, secretPath: '/', secrets: create }, token);
+      r = patch ? await call('PATCH', body, { 'content-type': 'application/merge-patch+json' }) : await call('POST', body);
     } catch (e) {
-      refuse(`creating ${create.map((c) => c.secretKey).join(', ')} failed: ${e instanceof Refusal ? e.message : 'request error'} (not retried; nothing was created)`);
+      refuse(`creating ${names.join(', ')} failed: ${e instanceof Refusal ? e.message : 'request error'} (not retried; nothing was created)`);
     }
-    for (const c of create) process.stdout.write(`created ${c.secretKey}\n`);
+    if (r.status !== 200 && r.status !== 204) {
+      refuse(`creating ${names.join(', ')} failed: ${statusRefusal(r).message} (not retried; nothing was created)`);
+    }
+    for (const k of names) process.stdout.write(`created ${k}\n`);
   }
   return 0;
 }
-
 const FIXED = 'supabase-keys: internal error (details suppressed so that no secret can be printed)\n';
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   process.on('uncaughtException', () => {

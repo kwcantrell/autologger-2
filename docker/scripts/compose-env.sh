@@ -28,10 +28,10 @@
 #   * Ambient COMPOSE_PROJECT_NAME / COMPOSE_FILE / COMPOSE_PATH_SEPARATOR / COMPOSE_PROFILES /
 #     COMPOSE_ENV_FILES / COMPOSE_DISABLE_ENV_FILE are stripped for the call (they would
 #     silently override `name:`, the file list or the env file). The Makefile only reaches these
-#     functions through docker/scripts/compose-run.mjs (infisical-secrets), which passes
-#     /dev/null as the env file and an environment built from the stack's Infisical secrets, so
+#     functions through docker/scripts/compose-run.mjs (openbao-secrets), which passes
+#     /dev/null as the env file and an environment built from the stack's OpenBao KV secret, so
 #     ambient overrides such as `DEV_PORT=9000 make dev-up` no longer apply: set the value in
-#     Infisical. check-envs.sh strips the caller's variables itself.
+#     OpenBao. check-envs.sh strips the caller's variables itself.
 #   * All three also add -f docker/supabase-db.yaml (supabase-db D1: db and migrate) and
 #     -f docker/supabase-services.yaml (supabase-services D1: auth, rest, realtime, storage, gateway).
 #   * Variables (for callers that need the raw pieces): AL_DEV_FILE, AL_DB_FILE, AL_STAGE_FILES,

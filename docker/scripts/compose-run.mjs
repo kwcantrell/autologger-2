@@ -1,15 +1,17 @@
 #!/usr/bin/env node
 // docker/scripts/compose-run.mjs -- run guard and compose steps for one stack with its secrets
-// from Infisical (infisical-secrets design D1, hardening rules H1-H12). Node built-ins only.
+// from OpenBao (openbao-secrets design D1; hardening rules H1-H12 of infisical-secrets, kept).
+// Node built-ins only.
 //
 //   node docker/scripts/compose-run.mjs dev|stage|prod STEP...
 //     STEP: resolved | prod-tags | urls | reset | 'compose ARGS...'
 //     e.g.  compose-run.mjs dev resolved 'compose up -d --build' urls
 //
 // The Makefile starts this under `env -i` (H1). One process: read the per-host credentials file
-// (.env.infisical.<env>), log in to Infisical's HTTP API, fetch the environment, validate every
-// secret, then run each step with a child environment built from scratch (only the validated
-// allowlist keys). No secret is ever parsed by a shell, put on argv, written to disk, or printed.
+// (.env.openbao.<env>), log in to OpenBao with AppRole, read the stack's KV v2 secret, revoke the
+// token, validate every secret, then run each step with a child environment built from scratch
+// (only the validated allowlist keys). No secret is ever parsed by a shell, put on argv, written
+// to disk, or printed.
 
 import { spawn, spawnSync } from 'node:child_process';
 import { createHmac, timingSafeEqual } from 'node:crypto';
@@ -21,7 +23,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const FIXED_PATH = '/usr/local/bin:/usr/bin:/bin';
 const ALLOWLIST = 'docker/secrets-env.yaml';
-const TEMPLATE = 'docker/infisical-credentials.example';
+const TEMPLATE = 'docker/openbao-credentials.example';
 const ENVS = ['dev', 'stage', 'prod'];
 // Compose-interpolation keys an environment may hold besides the allowlist (design D3).
 // The Supabase keys reach only the services SECRET_SCOPE allows (supabase-db D4, supabase-services D4).
@@ -58,6 +60,7 @@ const SECRET_SCOPE = {
 };
 const PROJECT = { dev: 'autologger-dev', stage: 'autologger-stage', prod: 'autologger' };
 const KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/; // no `m` flag: `$` is end of input only
+const SEGMENT_RE = /^[A-Za-z0-9_-]+$/;
 const WORD_RE = /^[A-Za-z0-9@%+=:,./_-]+$/;
 const MAX_BODY = 1024 * 1024;
 const MAX_CA = 64 * 1024;
@@ -86,18 +89,28 @@ export function checkOwnEnv(env) {
 }
 
 /** H2: a bare https origin. */
-export function parseDomain(s) {
+export function parseAddr(s) {
   let u;
   try {
     u = new URL(s);
   } catch {
-    refuse('INFISICAL_DOMAIN is not a URL');
+    refuse('BAO_ADDR is not a URL');
   }
-  if (u.protocol !== 'https:') refuse('INFISICAL_DOMAIN must start with https://');
+  if (u.protocol !== 'https:') refuse('BAO_ADDR must start with https://');
   if (u.username || u.password || u.search || u.hash || u.pathname !== '/') {
-    refuse('INFISICAL_DOMAIN must be a bare https://host[:port] with no path, query, fragment or user');
+    refuse('BAO_ADDR must be a bare https://host[:port] with no path, query, fragment or user');
   }
   return u;
+}
+
+/** D1: BAO_KV_PATH is MOUNT/PATH...; plain segments only, and the last one names the stack. */
+export function parseKvPath(s, env) {
+  const parts = String(s).split('/');
+  if (parts.length < 2 || !parts.every((p) => SEGMENT_RE.test(p))) {
+    refuse('BAO_KV_PATH must be MOUNT/PATH (for example kv/autologger/dev): segments of A-Z a-z 0-9 _ - only');
+  }
+  if (parts.at(-1) !== env) refuse(`BAO_KV_PATH must end in /${env} (the credentials of one stack read only that stack's secrets)`);
+  return { mount: parts[0], path: parts.slice(1).join('/') };
 }
 
 /** H11: a compose step is split on spaces; every word must be plain. */
@@ -109,49 +122,69 @@ export function splitStep(step) {
   return words;
 }
 
-/** H4: an Infisical error `message`, made safe to print. */
+/** H4: an OpenBao `errors` array (strings), made safe to print. */
 export function sanitizeMessage(m) {
-  if (typeof m === 'string') return m.replace(/[\u0000-\u001f\u007f-\u009f]/g, '').slice(0, 200);
-  if (Array.isArray(m)) {
-    return m
-      .map((i) => `${Array.isArray(i?.path) ? i.path.join('.') : ''}: ${typeof i?.code === 'string' ? i.code : ''}`)
-      .join('; ')
-      .replace(/[\u0000-\u001f\u007f-\u009f]/g, '')
-      .slice(0, 200);
-  }
+  const clean = (x) => x.replace(/[\u0000-\u001f\u007f-\u009f]/g, '').slice(0, 200);
+  if (typeof m === 'string') return clean(m);
+  if (Array.isArray(m)) return clean(m.filter((x) => typeof x === 'string').join('; '));
   return '';
 }
 
-/** Design D1 step 4, H5, H6: all-or-nothing validation. Returns Map<key, value>. */
-export function validateSecrets(json, allowed) {
-  if (!json || typeof json !== 'object' || !Array.isArray(json.secrets)) {
-    refuse('Infisical returned an unexpected response shape (no secrets array)');
+/** Whether a KV v2 read's current version is gone: 'destroyed', 'deleted', or null (live).
+ * - `destroyed: true` is destroyed;
+ * - a `404` that still carries metadata is a deleted version of an existing path;
+ * - `deletion_time` counts only once it has passed: with `delete_version_after` set, a LIVE
+ *   version carries a future `deletion_time`. A non-empty value that does not parse fails closed. */
+export function deletedState(md, status = 200, now = Date.now()) {
+  if (!md || typeof md !== 'object') return null;
+  if (md.destroyed === true) return 'destroyed';
+  const dt = md.deletion_time;
+  if (dt !== undefined && dt !== null && dt !== '') {
+    const t = typeof dt === 'string' ? Date.parse(dt) : Number.NaN;
+    if (Number.isNaN(t) || t <= now) return 'deleted';
   }
-  if (json.secrets.length === 0) refuse('Infisical returned no secrets for this environment');
+  return status === 404 ? 'deleted' : null;
+}
+/** The refusal text for a gone version: undelete cannot restore a destroyed one. */
+export function deletedMessage(state, where = 'the OpenBao secret') {
+  return state === 'destroyed'
+    ? `the current version of ${where} is destroyed; restore an older version with \`bao kv rollback\``
+    : `the current version of ${where} is deleted; restore it with \`bao kv undelete\` or \`bao kv rollback\``;
+}
+
+/** Design D1 step 4, H5, H6: all-or-nothing validation of a KV v2 read
+ * (`{ data: { data: {KEY: value}, metadata } }`). Returns Map<key, value>. */
+export function validateSecrets(json, allowed) {
+  const kv = json?.data?.data;
+  if (!json || typeof json !== 'object' || !json.data || typeof json.data !== 'object') {
+    refuse('OpenBao returned an unexpected response shape (no data object)');
+  }
+  const gone = deletedState(json.data.metadata);
+  if (gone) refuse(deletedMessage(gone));
+  if (!kv || typeof kv !== 'object' || Array.isArray(kv)) refuse('OpenBao returned an unexpected response shape (no data.data object)');
+  const entries = Object.entries(kv);
+  if (entries.length === 0) refuse('OpenBao returned no secrets for this stack');
   const out = new Map();
   const names = new Set();
   const reasons = new Set();
   let others = 0;
   const bad = (k, why) => {
     reasons.add(why);
-    if (typeof k === 'string' && KEY_RE.test(k)) names.add(k);
+    if (KEY_RE.test(k)) names.add(k);
     else others += 1;
   };
-  for (const s of json.secrets) {
-    const k = s?.secretKey;
-    if (!s || typeof s !== 'object' || typeof k !== 'string' || typeof s.secretValue !== 'string') bad(k, 'not-a-string');
-    else if (!KEY_RE.test(k)) bad(k, 'invalid-name');
+  for (const [k, v] of entries) {
+    if (!KEY_RE.test(k)) bad(k, 'invalid-name');
     else if (!allowed.has(k)) bad(k, 'not-allowed');
-    else if (s.secretValueHidden !== false) bad(k, 'hidden-value');
-    else if (s.secretValue.includes('\u0000')) bad(k, 'NUL');
-    else if (out.has(k)) bad(k, 'duplicate');
-    else if (Object.hasOwn(KEY_FORMAT, k) && !KEY_FORMAT[k].test(s.secretValue)) bad(k, 'bad-format');
-    else out.set(k, s.secretValue);
+    else if (typeof v !== 'string') bad(k, 'not-a-string');
+    else if (v.includes('\u0000')) bad(k, 'NUL');
+    else if (Object.hasOwn(KEY_FORMAT, k) && !KEY_FORMAT[k].test(v)) bad(k, 'bad-format');
+    else out.set(k, v);
   }
   if (names.size || others) {
     const list = [...names].sort().join(' ');
     refuse(
-      `refusing the Infisical environment: ${list}${others ? `${list ? ' ' : ''}(and ${others} more that are not valid names)` : ''}` +
+      `refusing the OpenBao secret: ${list}${others ? `${list ? ' ' : ''}(and ${others} more that are not valid names)` : ''}` +
         ` [${[...reasons].sort().join(', ')}]. Allowed: the keys in ${ALLOWLIST} plus this environment's compose keys.`,
     );
   }
@@ -193,14 +226,14 @@ export function checkSupabaseKeys(secrets, nowSec = Math.floor(Date.now() / 1000
 // BOOTSTRAP_OWNER_EMAIL. Refuse before compose starts instead. Values are trimmed.
 export function checkSignInClient(env, secrets) {
   for (const k of ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'BOOTSTRAP_OWNER_EMAIL']) {
-    if (!(secrets.get(k) ?? '').trim()) refuse(`${k} is unset or blank in Infisical ${env} (login is always required and the bootstrap owner must be named; see docs/infisical-secrets.md)`);
+    if (!(secrets.get(k) ?? '').trim()) refuse(`${k} is unset or blank in the OpenBao ${env} secret (login is always required and the bootstrap owner must be named; see docs/openbao-secrets.md)`);
   }
 }
 
 export function checkProdTags(secrets) {
   for (const k of ['WEB_TAG', 'API_TAG']) {
     const v = secrets.get(k);
-    if (!v) refuse(`${k} is unset or empty in Infisical prod (a git-SHA tag is required)`);
+    if (!v) refuse(`${k} is unset or empty in the OpenBao prod secret (a git-SHA tag is required)`);
     if (v === 'latest') refuse(`${k}=latest is refused; pin a git-SHA tag`);
   }
 }
@@ -216,18 +249,19 @@ export function checkCredFile(f, uid = process.getuid()) {
 
 export function checkCaFile(f) {
   const st = lstatSync(f);
-  if (st.isSymbolicLink() || !st.isFile()) refuse('INFISICAL_CA_FILE must name a regular file, not a symlink');
-  if ((st.mode & 0o022) !== 0) refuse('INFISICAL_CA_FILE is writable by group or others');
-  if (st.size > MAX_CA) refuse('INFISICAL_CA_FILE is larger than 64 KiB');
+  if (st.isSymbolicLink() || !st.isFile()) refuse('BAO_CACERT must name a regular file, not a symlink');
+  if ((st.mode & 0o022) !== 0) refuse('BAO_CACERT is writable by group or others');
+  if (st.size > MAX_CA) refuse('BAO_CACERT is larger than 64 KiB');
 }
 
-/** Read .env.infisical.<env>; with auth=false the client id and secret are not required. */
+/** Read .env.openbao.<env>; with auth=false the AppRole role id and secret id are not required. */
 export function readCreds(env, dir, { auth = true } = {}) {
-  const f = join(dir, `.env.infisical.${env}`);
+  const name = `.env.openbao.${env}`;
+  const f = join(dir, name);
   try {
     lstatSync(f);
   } catch {
-    refuse(`.env.infisical.${env} is missing. Create it from ${TEMPLATE} (chmod 600); see docs/infisical-secrets.md`);
+    refuse(`${name} is missing. Create it from ${TEMPLATE} (chmod 600); see docs/openbao-secrets.md`);
   }
   checkCredFile(f);
   const kv = new Map();
@@ -235,31 +269,37 @@ export function readCreds(env, dir, { auth = true } = {}) {
     const m = /^([A-Z_]+)=(.*)$/.exec(line.trimEnd());
     if (m) kv.set(m[1], m[2]);
   }
-  const need = [...(auth ? ['INFISICAL_UNIVERSAL_AUTH_CLIENT_ID', 'INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET'] : []), 'INFISICAL_PROJECT_ID', 'INFISICAL_DOMAIN', 'INFISICAL_CA_FILE'];
-  for (const k of need) if (!kv.get(k)) refuse(`${k} is missing or empty in .env.infisical.${env} (see ${TEMPLATE})`);
-  const url = parseDomain(kv.get('INFISICAL_DOMAIN'));
-  const caPath = kv.get('INFISICAL_CA_FILE');
+  const need = [...(auth ? ['BAO_ROLE_ID', 'BAO_SECRET_ID'] : []), 'BAO_ADDR', 'BAO_CACERT', 'BAO_KV_PATH'];
+  for (const k of need) if (!kv.get(k)) refuse(`${k} is missing or empty in ${name} (see ${TEMPLATE})`);
+  const url = parseAddr(kv.get('BAO_ADDR'));
+  const kvPath = parseKvPath(kv.get('BAO_KV_PATH'), env);
+  const caPath = kv.get('BAO_CACERT');
+  if (!isAbsolute(caPath)) refuse(`BAO_CACERT in ${name} must be an absolute path`);
   try {
     lstatSync(caPath);
   } catch {
-    refuse(`INFISICAL_CA_FILE in .env.infisical.${env} names a file that does not exist`);
+    refuse(`BAO_CACERT in ${name} names a file that does not exist`);
   }
   checkCaFile(caPath);
   return {
-    clientId: kv.get('INFISICAL_UNIVERSAL_AUTH_CLIENT_ID'),
-    clientSecret: kv.get('INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET'),
-    projectId: kv.get('INFISICAL_PROJECT_ID'),
+    roleId: kv.get('BAO_ROLE_ID'),
+    secretId: kv.get('BAO_SECRET_ID'),
     url,
+    kv: kvPath,
     ca: readFileSync(caPath),
   };
 }
+
+/** The KV v2 data endpoint of a parsed BAO_KV_PATH. */
+export const kvDataPath = ({ mount, path }) => `/v1/${mount}/data/${path}`;
 
 // ------------------------------------------------------------------------ HTTPS (H2-H4) ----
 
 const TLS_CODES = /CERT|SELF_SIGNED|UNABLE_TO_VERIFY|UNABLE_TO_GET_ISSUER|ERR_TLS|HOSTNAME|ALTNAME/;
 
-/** One JSON request. Resolves the parsed body of a 200; rejects with a printable Refusal. */
-export function httpsJson({ url, ca, method, path, headers = {}, body, connectMs = 15000, totalMs = 30000 }) {
+/** One JSON request. Resolves `{ status, json }` for any complete response (json is undefined
+ * when the body is empty or not JSON); rejects with a printable Refusal on transport errors. */
+export function httpsRequest({ url, ca, method, path, headers = {}, body, connectMs = 15000, totalMs = 30000 }) {
   return new Promise((ok, fail) => {
     const host = url.hostname.replace(/^\[|\]$/g, '');
     const req = https.request({
@@ -270,7 +310,12 @@ export function httpsJson({ url, ca, method, path, headers = {}, body, connectMs
       ca,
       rejectUnauthorized: true, // explicit: defeats NODE_TLS_REJECT_UNAUTHORIZED=0 (H2)
       agent: false,
-      headers: { accept: 'application/json', ...headers, ...(body ? { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) } : {}) },
+      headers: {
+        accept: 'application/json',
+        ...(body ? { 'content-type': 'application/json' } : {}),
+        ...headers,
+        ...(body ? { 'content-length': Buffer.byteLength(body) } : {}),
+      },
     });
     const done = (err, val) => {
       clearTimeout(total);
@@ -280,25 +325,25 @@ export function httpsJson({ url, ca, method, path, headers = {}, body, connectMs
         fail(err);
       } else ok(val);
     };
-    const total = setTimeout(() => done(new Refusal(`Infisical request timed out after ${totalMs / 1000}s`)), totalMs);
-    const connect = setTimeout(() => done(new Refusal(`could not connect to Infisical within ${connectMs / 1000}s`)), connectMs);
+    const total = setTimeout(() => done(new Refusal(`OpenBao request timed out after ${totalMs / 1000}s`)), totalMs);
+    const connect = setTimeout(() => done(new Refusal(`could not connect to OpenBao within ${connectMs / 1000}s`)), connectMs);
     req.on('socket', (s) => s.once('secureConnect', () => clearTimeout(connect)));
     req.on('error', (e) => {
       if (e instanceof Refusal) return done(e);
       const code = String(e?.code ?? '');
-      if (TLS_CODES.test(code)) return done(new Refusal(`TLS check failed (${code}); trust the Infisical CA (INFISICAL_CA_FILE)`));
-      return done(new Refusal(`could not reach Infisical (${code || 'network error'})`));
+      if (TLS_CODES.test(code)) return done(new Refusal(`TLS check failed (${code}); trust the OpenBao CA (BAO_CACERT)`));
+      return done(new Refusal(`could not reach OpenBao (${code || 'network error'})`));
     });
     req.on('response', (res) => {
       if (res.headers['content-encoding'] && res.headers['content-encoding'] !== 'identity') {
         res.resume();
-        return done(new Refusal('Infisical sent a content-encoding this tool does not accept'));
+        return done(new Refusal('OpenBao sent a content-encoding this tool does not accept'));
       }
       const chunks = [];
       let size = 0;
       res.on('data', (c) => {
         size += c.length;
-        if (size > MAX_BODY) done(new Refusal('Infisical response too large (over 1 MiB)'));
+        if (size > MAX_BODY) done(new Refusal('OpenBao response too large (over 1 MiB)'));
         else chunks.push(c);
       });
       res.on('end', () => {
@@ -309,18 +354,62 @@ export function httpsJson({ url, ca, method, path, headers = {}, body, connectMs
         } catch {
           json = undefined;
         }
-        if (res.statusCode !== 200) {
-          const m = sanitizeMessage(json?.message);
-          return done(new Refusal(`Infisical answered HTTP ${res.statusCode}${m ? `: ${m}` : ''}`));
-        }
-        if (json === undefined) return done(new Refusal('Infisical response is not valid JSON'));
-        return done(null, json);
+        return done(null, { status: res.statusCode, json });
       });
-      res.on('error', () => done(new Refusal('Infisical response was interrupted')));
+      res.on('error', () => done(new Refusal('OpenBao response was interrupted')));
     });
     if (body) req.end(body);
     else req.end();
   });
+}
+
+/** A refusal for a non-success status: the status and OpenBao's sanitized `errors` only. */
+export function statusRefusal({ status, json }) {
+  const m = sanitizeMessage(json?.errors);
+  return new Refusal(`OpenBao answered HTTP ${status}${m ? `: ${m}` : ''}`);
+}
+
+/** One JSON request that must answer 200 with a JSON body (or 204, when allowEmpty). */
+export async function httpsJson({ allowEmpty = false, ...opts }) {
+  const r = await httpsRequest(opts);
+  if (allowEmpty && r.status === 204) return null;
+  if (r.status !== 200) throw statusRefusal(r);
+  if (r.json === undefined) throw new Refusal('OpenBao response is not valid JSON');
+  return r.json;
+}
+
+/** D1 step 2: AppRole login. Returns the client token (never printed). */
+export async function approleLogin(creds) {
+  const login = await httpsJson({
+    url: creds.url,
+    ca: creds.ca,
+    method: 'POST',
+    path: '/v1/auth/approle/login',
+    body: JSON.stringify({ role_id: creds.roleId, secret_id: creds.secretId }),
+  });
+  const token = login?.auth?.client_token;
+  if (typeof token !== 'string' || token === '') refuse('OpenBao login returned no client token');
+  return token;
+}
+
+/** D1 step 3: read the stack's KV v2 secret, then revoke the token whatever the outcome. */
+export async function fetchSecrets(creds, warn = () => {}) {
+  const token = await approleLogin(creds);
+  try {
+    const r = await httpsRequest({ url: creds.url, ca: creds.ca, method: 'GET', path: kvDataPath(creds.kv), headers: { 'x-vault-token': token } });
+    // KV v2 answers a soft-deleted or destroyed current version with 404 plus its metadata.
+    const gone = r.status === 404 ? deletedState(r.json?.data?.metadata, 404) : null;
+    if (gone) refuse(deletedMessage(gone));
+    if (r.status !== 200) throw statusRefusal(r);
+    if (r.json === undefined) refuse('OpenBao response is not valid JSON');
+    return r.json;
+  } finally {
+    try {
+      await httpsJson({ url: creds.url, ca: creds.ca, method: 'POST', path: '/v1/auth/token/revoke-self', headers: { 'x-vault-token': token }, allowEmpty: true });
+    } catch (e) {
+      warn(`could not revoke the OpenBao token (${e instanceof Refusal ? e.message : 'request error'}); it expires with its TTL`);
+    }
+  }
 }
 
 // ------------------------------------------------------------------------ children --------
@@ -377,7 +466,7 @@ function resolveConfig(env, childEnv) {
     maxBuffer: 16 * 1024 * 1024,
     stdio: ['ignore', 'pipe', 'ignore'],
   });
-  if (r.status !== 0) refuse(`compose could not resolve the ${env} config (bad port value?); check the Infisical ${env} environment`);
+  if (r.status !== 0) refuse(`compose could not resolve the ${env} config (bad port value?); check the OpenBao ${env} secret`);
   try {
     return JSON.parse(r.stdout);
   } catch {
@@ -407,7 +496,7 @@ export function checkResolved(env, cfg, secrets = new Map()) {
   if (ports.some((p) => p.host_ip !== '127.0.0.1')) refuse(`refusing: a published ${env} port is not bound to 127.0.0.1`);
   const pub = ports.map((p) => String(p.published));
   if (!pub.every((p) => /^[1-9][0-9]{0,4}$/.test(p) && Number(p) <= 65535)) refuse(`refusing: a published ${env} port is not a plain number 1-65535`);
-  if (env !== 'prod' && pub.includes('8080')) refuse(`refusing: a published ${env} port is 8080 (production's router port); pick another in Infisical ${env}`);
+  if (env !== 'prod' && pub.includes('8080')) refuse(`refusing: a published ${env} port is 8080 (production's router port); pick another in the OpenBao ${env} secret`);
   if (env === 'dev' && pub.some((p) => p === '80' || p === '443')) {
     refuse('refusing: a published dev port is 80 or 443; browsers omit the default port from Host/Origin so the dev gate would reject every request');
   }
@@ -469,30 +558,7 @@ async function main(argv, ownEnv) {
   }
 
   const creds = readCreds(env, credDir);
-  const login = await httpsJson({
-    url: creds.url,
-    ca: creds.ca,
-    method: 'POST',
-    path: '/api/v1/auth/universal-auth/login',
-    body: JSON.stringify({ clientId: creds.clientId, clientSecret: creds.clientSecret }),
-  });
-  if (typeof login?.accessToken !== 'string' || login.accessToken === '') refuse('Infisical login returned no access token');
-  const q = new URLSearchParams({
-    projectId: creds.projectId,
-    environment: env,
-    secretPath: '/',
-    expandSecretReferences: 'false',
-    includeImports: 'false',
-    recursive: 'false',
-    viewSecretValue: 'true',
-  });
-  const fetched = await httpsJson({
-    url: creds.url,
-    ca: creds.ca,
-    method: 'GET',
-    path: `/api/v4/secrets?${q}`,
-    headers: { authorization: `Bearer ${login.accessToken}` },
-  });
+  const fetched = await fetchSecrets(creds, (w) => process.stderr.write(`compose-run: warning: ${w}\n`));
   const secrets = validateSecrets(fetched, allowedNames(env));
   for (const w of checkSupabaseKeys(secrets)) process.stderr.write(`compose-run: warning: ${w}\n`);
   checkSignInClient(env, secrets);

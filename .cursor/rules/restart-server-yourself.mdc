@@ -7,7 +7,7 @@ After a server-code change, `tsx watch` in the dev stack reloads on its own. Whe
 still needed, restart the dev stack yourself — but ONLY through `make dev-restart`, or a process
 you started yourself in this session.
 
-- `make dev-restart` fetches the dev stack's secrets from Infisical and restarts the app, the
+- `make dev-restart` fetches the dev stack's secrets from OpenBao and restarts the app, the
   Companion and both gates. If it fails, stop and ask the user; never `docker restart` or
   `docker exec` into a container to restart or start a server.
 - Never start a second server by hand (in `make dev-shell` or anywhere): the server refuses a
