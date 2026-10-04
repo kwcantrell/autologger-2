@@ -30,7 +30,7 @@ SHALL authorize restarting only (a) processes the agent itself started, or (b) t
 repository's dev stack, through `make dev-restart`; for any other process — including an
 unidentified listener on `:8787` or any container outside the `autologger-dev` project — the
 rule SHALL direct the agent to ask first. The rule SHALL state what `make dev-restart` does (it
-fetches the stack's secrets from Infisical and restarts the app, the Companion and both gates),
+reads the stack's secrets from OpenBao and restarts the app, the Companion and both gates),
 SHALL direct the agent to stop and ask when `make dev-restart` fails rather than restart or exec
 into containers directly, SHALL forbid starting a second server by hand inside a container, SHALL reference restart
 commands via the Makefile rather than duplicating command lines, and SHALL state explicitly that
