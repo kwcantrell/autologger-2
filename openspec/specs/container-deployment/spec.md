@@ -212,8 +212,9 @@ These properties SHALL hold:
   user's home directory, which holds `~/.claude/` and `~/.claude.json`. `db` SHALL keep its
   data directory and its `/etc/postgresql-custom` directory on named volumes, and `storage` its
   objects on a named volume.
-- **Secrets:** secrets SHALL come from the Infisical `prod` environment, injected into the
-  compose process at start. No service SHALL use `env_file`. `api` SHALL receive only the
+- **Secrets:** secrets SHALL come from the OpenBao `kv/autologger/prod` KV secret, read with the prod
+  AppRole and injected into the compose process at start. No service SHALL use `env_file`.
+  `api` SHALL receive only the
   variables named in a shared allowlist file, as null passthroughs, plus the catalog connection
   literals `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER` and `PGPASSWORD` (`APP_DB_PASSWORD`). Each Supabase
   secret's value SHALL appear only in the services that secret is allowed for. The superuser
@@ -259,8 +260,8 @@ These properties SHALL hold:
 - **WHEN** `docker compose up --scale api=2` is run
 - **THEN** compose refuses to create a second `api` container
 
-#### Scenario: Posture cannot be flipped from Infisical
-- **WHEN** the Infisical `prod` environment sets `REQUIRE_LOGIN=0`
+#### Scenario: Posture cannot be flipped from OpenBao
+- **WHEN** the OpenBao `prod` KV secret sets `REQUIRE_LOGIN=0`
 - **THEN** the compose target refuses the environment, naming `REQUIRE_LOGIN` as outside its
   allowed names, and starts nothing
 

@@ -36,20 +36,20 @@ dev or stage files never resolves to the prod project.
 
 | Environment | `name:` | Compose files | Invocation |
 |---|---|---|---|
-| dev | `autologger-dev` | `docker/compose.dev.yaml` | `--project-directory .`, Infisical environment `dev` |
-| stage | `autologger-stage` | `compose.yaml` + `docker/compose.stage.yaml` | the overlay's `name:` wins; Infisical environment `stage` |
-| prod | `autologger` | `compose.yaml` | Infisical environment `prod`, exactly as README "Container deployment" documents |
+| dev | `autologger-dev` | `docker/compose.dev.yaml` | `--project-directory .`, OpenBao KV path `kv/autologger/dev` |
+| stage | `autologger-stage` | `compose.yaml` + `docker/compose.stage.yaml` | the overlay's `name:` wins; OpenBao KV path `kv/autologger/stage` |
+| prod | `autologger` | `compose.yaml` | OpenBao KV path `kv/autologger/prod`, exactly as README "Container deployment" documents |
 
 Every target that touches a compose project SHALL:
-- log in to Infisical once;
-- fetch its environment's secrets once, check every name before any program is started with
+- log in to OpenBao once, with that environment's AppRole;
+- read its environment's KV secret once, then revoke the token, check every name before any program is started with
   them, and run its guards and its compose commands in one clean environment that contains only
   a fixed base plus those secrets;
 - pass an explicit empty `--env-file`, so compose never reads the root `.env` or any other env
   file for interpolation.
 
 Variables in the operator's shell SHALL NOT reach compose or any container. Ports and tags are
-set in Infisical. A `docker compose` command typed by hand against these files, outside the
+set in OpenBao. A `docker compose` command typed by hand against these files, outside the
 Makefile, SHALL fail with a message naming the Makefile, rather than start a service without
 its secrets.
 
@@ -113,7 +113,7 @@ No target SHALL remove a prod volume or run `docker volume prune` or
 - **THEN** the resolved dev config takes neither value from that file
 
 #### Scenario: Shell variables do not leak into a stack
-- **WHEN** the operator's shell exports `API_TOKEN=weak`, the Infisical `stage` environment
+- **WHEN** the operator's shell exports `API_TOKEN=weak`, the OpenBao `stage` KV secret
   has no `API_TOKEN`, and `make stage-up` runs
 - **THEN** the stage `api` container has no `API_TOKEN`
 
@@ -133,7 +133,7 @@ without an image rebuild. Every `packages/*` directory SHALL have its `src` moun
 missing mount SHALL fail the dev check. A dependency-manifest, lockfile, or config change
 SHALL require `make dev-build`, and the documentation SHALL say so.
 
-The following SHALL be settable through the Infisical `dev` environment:
+The following SHALL be settable through the OpenBao `dev` KV secret:
 - `DEEPGRAM_API_KEY`
 - `SHEETS_LOG_IMPORT_ENABLED`
 - `AI_V2_ENABLED`
@@ -142,13 +142,13 @@ The following SHALL be settable through the Infisical `dev` environment:
 - `API_TOKEN`
 
 Sign-in is required, as in every stack:
-- The Infisical `dev` environment SHALL hold its own Google OAuth client
+- The OpenBao `dev` KV secret SHALL hold its own Google OAuth client
   (`GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`); without it, dev refuses to start (see
-  "Secrets come from Infisical, one environment per stack").
+  "Secrets come from OpenBao, one KV path per stack").
 - Google sign-in works against `PUBLIC_BASE_URL=http://localhost:${DEV_PORT}`, which the
   compose file pins.
 - The documentation SHALL state the redirect URI the OAuth client needs, and that dev needs
-  the Google client and an `API_TOKEN` in the Infisical `dev` environment.
+  the Google client and an `API_TOKEN` in the OpenBao `dev` KV secret.
 
 #### Scenario: Server edit hot-reloads
 - **WHEN** the dev environment is up and a file under `server/src/` is edited on the host
@@ -163,7 +163,7 @@ Sign-in is required, as in every stack:
 - **WHEN** all of the following hold:
   - the dev environment is up;
   - the host `~/.claude/.credentials.json` holds a Claude login;
-  - the Infisical `dev` environment sets `DEEPGRAM_API_KEY`, `SHEETS_LOG_IMPORT_ENABLED=1`,
+  - the OpenBao `dev` KV secret sets `DEEPGRAM_API_KEY`, `SHEETS_LOG_IMPORT_ENABLED=1`,
     and `AI_V2_ENABLED=1`, and no `AI_V2_API_KEY`;
   - a signed-in member of the session's team makes the calls
 - **THEN** none of these is answered with its "not configured" or credentials-refusal `503`:
@@ -176,7 +176,7 @@ Sign-in is required, as in every stack:
   - transcript generation.
 
 #### Scenario: Optional sign-in
-- **WHEN** the Infisical `dev` environment sets a Google OAuth client whose redirect URI is
+- **WHEN** the OpenBao `dev` KV secret sets a Google OAuth client whose redirect URI is
   `http://localhost:<DEV_PORT>/auth/google/callback`, and a user signs in at
   `http://localhost:<DEV_PORT>/`
 - **THEN** the callback completes on that origin, and `/api/profile` reports the user
@@ -272,7 +272,7 @@ Bind mounts:
 - No bind mount SHALL be any of the following:
   - the repository root;
   - a path with a `data` segment;
-  - a `.env` file, including an Infisical credentials file;
+  - a `.env` file, including an OpenBao credentials file (`.env.openbao.<env>`);
   - any other path under the host home directory, which includes `~/.claude` as a directory
     and `~/.claude.json`.
 
@@ -280,10 +280,10 @@ The runtime user's home SHALL be a named volume of the dev project (`dev-home`).
 session store, its `~/.claude.json`, and its history live there, never on the host.
 
 The dev `app` container SHALL receive secrets only as the variables named in the shared
-allowlist file, each passed through from the Infisical `dev` environment, plus the catalog
+allowlist file, each passed through from the OpenBao `dev` KV secret, plus the catalog
 connection literals `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER` and `PGPASSWORD`, whose password
 is `APP_DB_PASSWORD`. It SHALL have no `env_file`, and
-SHALL NOT receive the Infisical access token or machine-identity credentials. The
+SHALL NOT receive the OpenBao token or AppRole credentials. The
 documentation SHALL state the accepted residuals of the credentials mount:
 - the container can read the operator's Claude login;
 - the OAuth token may be refreshed, and the file rewritten, by either the container or host
@@ -307,11 +307,11 @@ documentation SHALL state the accepted residuals of the credentials mount:
 - **THEN** an AI chat turn succeeds without any login step inside the container
 - **AND** nothing is written under the host `~/.claude` other than that file
 
-#### Scenario: Unnamed Infisical secrets stay out of the container
+#### Scenario: Unnamed OpenBao secrets stay out of the container
 - **WHEN** dev is up
 - **THEN** `env` inside the `app` container shows no variable outside the allowlist, the pins,
   the five `PG*` catalog connection literals, and the image's own environment
-- **AND** it shows no `INFISICAL_*` variable and no `SSL_CERT_FILE`
+- **AND** it shows no `BAO_*` variable and no `SSL_CERT_FILE`
 
 ### Requirement: Stage behaves as production, with local sign-in
 The stage environment SHALL run `compose.yaml` with `docker/compose.stage.yaml` layered
@@ -328,7 +328,7 @@ At the compose level, the overlay SHALL differ from production only in:
 - `SESSION_COOKIE=autologger_stage_sid`;
 - the router's published port, `127.0.0.1:${STAGE_PORT:-8788}` via `ports: !override`.
 
-Stage SHALL take its secrets from the Infisical `stage` environment, through the same
+Stage SHALL take its secrets from the OpenBao `stage` KV secret, through the same
 allowlist as production.
 
 Things stage keeps from production:
@@ -386,7 +386,7 @@ The dev environment SHALL include a `companion` service. The service SHALL:
 
 The connection's base URL SHALL be entered once in the Companion UI, and the documentation
 SHALL give its value. Companion reaches the dev app through the app's gate on the dev
-network, authenticating with the `API_TOKEN` from the Infisical `dev` environment, which is
+network, authenticating with the `API_TOKEN` from the OpenBao `dev` KV secret, which is
 also entered once in the Companion UI.
 
 The build's per-Dockerfile ignore file SHALL be in allowlist form. It begins by excluding
@@ -458,14 +458,14 @@ Wherever either is set, its value SHALL be a single dotted IPv4 address.
 - tag them `:local`, never with a git SHA.
 
 `prod-up` SHALL:
-- use `compose.yaml` with the Infisical `prod` environment exactly as README "Container
+- use `compose.yaml` with the OpenBao `prod` KV secret exactly as README "Container
   deployment" documents, with no overlay;
-- fail if `WEB_TAG` or `API_TAG` is unset, empty, or `latest` in the Infisical `prod`
-  environment.
+- fail if `WEB_TAG` or `API_TAG` is unset, empty, or `latest` in the OpenBao `prod`
+  KV secret.
 
-`prod-check` SHALL run the prod guards and resolve the prod config through Infisical `prod`
+`prod-check` SHALL run the prod guards and resolve the prod config through OpenBao `prod`
 without starting anything and without the `main` requirement. This lets a deploy host dry-run
-the Infisical path before cutover.
+the OpenBao path before cutover.
 
 #### Scenario: Dirty or untracked tree refuses push
 - **WHEN** a tracked file is modified, or an untracked source file exists, and
@@ -482,7 +482,7 @@ the Infisical path before cutover.
   SHA is created or overwritten
 
 #### Scenario: Unpinned prod tag refuses start
-- **WHEN** the Infisical `prod` environment has `API_TAG=latest` and `make prod-up` runs on a
+- **WHEN** the OpenBao `prod` KV secret has `API_TAG=latest` and `make prod-up` runs on a
   clean `main`
 - **THEN** it exits non-zero naming `API_TAG`, and starts nothing
 
@@ -494,8 +494,8 @@ the Infisical path before cutover.
 `docker/scripts/check-envs.sh` SHALL resolve each environment with
 `docker compose config --no-env-resolution`, with every profile enabled so that tool services
 are checked too, using placeholder `--env-file`s it writes to a
-temporary directory. It SHALL never contact Infisical, and SHALL never read or print `.env`,
-`.env.dev`, `.env.stage`, or any `.env.infisical.*` file.
+temporary directory. It SHALL never contact OpenBao, and SHALL never read or print `.env`,
+`.env.dev`, `.env.stage`, or any `.env.openbao.*` file.
 
 It SHALL fail, naming the violated invariant, when any of the following holds:
 1. A published port in any project is not bound to `127.0.0.1`.
@@ -624,134 +624,6 @@ It SHALL need only `docker`, `jq`, and a POSIX shell.
 - **WHEN** `rest`, or the dev `companion`, is joined to the `auth-app` network
 - **THEN** `make check` exits non-zero and names invariant 16
 
-### Requirement: Secrets come from Infisical, one environment per stack
-Each stack SHALL read its secrets and its compose interpolation values from one Infisical
-environment (`dev`, `stage`, or `prod`), held in its own Infisical project. Each environment SHALL
-be read with its own machine identity, which SHALL have no access to the other environments'
-projects.
-
-The per-host credentials for an environment SHALL live in an untracked file
-`.env.infisical.<env>` at the repository root. The file SHALL hold:
-- the machine identity's client id and client secret;
-- the project id of that environment's project;
-- the Infisical URL, which SHALL use `https://`;
-- the path of the CA certificate that Infisical's TLS chains to.
-
-The Infisical URL and CA path SHALL NOT be written in any tracked file other than examples and
-documentation, so moving Infisical to another host needs no code change. The tracked template
-SHALL be `docker/infisical-credentials.example`, with keys and no values.
-
-**Git ignore rules.** The files `.env`, `.env.dev`, `.env.stage`, and `.env.infisical.*` SHALL be
-ignored by git, and the tracked templates SHALL NOT be.
-
-**Allowed names.** Every Infisical key an environment may hold SHALL be either:
-- listed in the shared allowlist file, which lists the keys containers may receive; or
-- one of that environment's fixed compose-interpolation keys: `DEV_PORT` and
-  `DEV_COMPANION_PORT` for dev, `STAGE_PORT` for stage, and `ROUTER_PORT`, `WEB_TAG`, `API_TAG`,
-  and `PUBLIC_BASE_URL` for prod; or
-- one of the Supabase keys, in every environment. These are interpolation keys that only the
-  services allowed for them in invariant 16 receive, and they SHALL NOT be listed in the shared
-  allowlist file. Each value SHALL match its format, and a compose target SHALL refuse the
-  environment, naming the key and printing no value, when one does not:
-
-  | Key | Format |
-  | --- | --- |
-  | `POSTGRES_PASSWORD`, `SUPABASE_ROLES_PASSWORD`, `APP_DB_PASSWORD` | at least 32 lowercase hexadecimal characters |
-  | `JWT_SECRET` | at least 40 characters of `[A-Za-z0-9_-]` |
-  | `SECRET_KEY_BASE` | at least 64 characters of `[A-Za-z0-9_-]` |
-  | `REALTIME_DB_ENC_KEY` | exactly 16 characters of `[A-Za-z0-9_-]` |
-  | `ANON_KEY`, `SERVICE_ROLE_KEY` | HS256 JWTs that verify against `JWT_SECRET`, with `role` `anon` and `service_role` respectively, distinct, and not expired |
-  | `SUPABASE_PORT` | a port number 1024-65535 |
-
-  The wrapper SHALL warn, naming the key, when `ANON_KEY` or `SERVICE_ROLE_KEY` expires within
-  90 days. At run time, it SHALL refuse to start compose if any Supabase secret's value appears in
-  the resolved configuration of a service outside that secret's allowed set.
-
-**Ordering with frozen checkouts.** A checkout whose allowed names lack `POSTGRES_PASSWORD`
-(or `APP_DB_PASSWORD`) refuses an environment that holds it. The Supabase keys SHALL therefore be added to the Infisical
-`prod` environment only as part of the cutover, after `main` allows them. The documentation SHALL say so.
-
-**Documentation.** The documentation SHALL:
-- list those keys;
-- state the `WEB_TAG`/`API_TAG` format (the 12-character git SHA that `prod-push` produces);
-- warn against reusing prod secrets in dev or stage;
-- describe a break-glass procedure for when Infisical is unreachable.
-
-**Failures.** A compose target SHALL fail before starting anything, with a message that names
-the fix and prints no secret value, when:
-- Node older than 22.12 is running the wrapper;
-- the environment's credentials file is missing, lacks a key, names a missing CA file, uses a
-  non-`https` URL, or is readable by group or others;
-- login fails, including a TLS verification failure. The message SHALL NOT suggest disabling
-  verification or using plain HTTP;
-- the environment injects any name outside its allowed names. The message SHALL list only
-  offending names that are valid identifiers;
-- `GOOGLE_CLIENT_ID` or `GOOGLE_CLIENT_SECRET` is unset or empty in the environment. This
-  applies to every stack, dev included, because the server refuses to boot without them.
-- `BOOTSTRAP_OWNER_EMAIL` is unset, empty or only whitespace in the environment. This applies
-  to every stack, dev included, because the server refuses to boot without it. The shared
-  allowlist file SHALL list it, so the app container receives it.
-
-**Secret handling.** The client secret and the access token SHALL NOT appear on any command line
-and SHALL NOT be written to disk by the Makefile or its scripts. Secret values SHALL be fetched
-without reference expansion and without imports. Every secret key and value SHALL be a string,
-and the fetch SHALL be refused as a whole if any secret fails validation.
-
-**Tooling.** The compose targets SHALL need Node 22.12 or newer on the host and no npm packages.
-
-#### Scenario: A weak Postgres password is refused
-- **WHEN** the Infisical `dev` environment's `POSTGRES_PASSWORD` is `-e`, or any value that is
-  not at least 32 lowercase hexadecimal characters, and `make dev-up` runs
-- **THEN** it exits non-zero naming `POSTGRES_PASSWORD`, prints no value, and runs no docker
-  command
-
-#### Scenario: Swapped Supabase API keys are refused
-- **WHEN** the Infisical `dev` environment's `ANON_KEY` and `SERVICE_ROLE_KEY` are swapped, or
-  either is signed with a different secret, and `make dev-up` runs
-- **THEN** it exits non-zero naming the key, prints no value, and runs no docker command
-
-#### Scenario: Credentials and old env files are ignored, templates are not
-- **WHEN** `git check-ignore .env .env.dev .env.stage .env.infisical.dev .env.infisical.prod` is run
-- **THEN** all five are ignored, and `docker/infisical-credentials.example` is not
-
-#### Scenario: Missing credentials file
-- **WHEN** `make stage-up` runs with no `.env.infisical.stage`
-- **THEN** it exits non-zero with a message naming `docker/infisical-credentials.example`,
-  and starts nothing
-
-#### Scenario: Dev without a Google client is refused
-- **WHEN** the Infisical `dev` environment has no `GOOGLE_CLIENT_SECRET`, and `make dev-up` runs
-- **THEN** it exits non-zero naming `GOOGLE_CLIENT_SECRET`, prints no value, and runs no
-  docker command
-
-#### Scenario: A stack without a bootstrap owner is refused
-- **WHEN** the Infisical `stage` environment has no `BOOTSTRAP_OWNER_EMAIL`, or holds only
-  spaces in it, and `make stage-up` runs
-- **THEN** it exits non-zero naming `BOOTSTRAP_OWNER_EMAIL`, prints no value, and runs no
-  docker command
-
-#### Scenario: Plain HTTP is refused
-- **WHEN** `.env.infisical.dev` sets an `http://` Infisical URL and `make dev-up` runs
-- **THEN** it exits non-zero before contacting Infisical, and starts nothing
-
-#### Scenario: A hostile secret name is refused
-- **WHEN** the Infisical `dev` environment holds a key named `LD_PRELOAD` or `DOCKER_HOST`, and
-  `make dev-up` runs
-- **THEN** it exits non-zero naming that key, prints no value, and runs no docker command
-
-#### Scenario: A malformed secret list is refused as a whole
-- **WHEN** Infisical returns a secret whose value is not a string, a duplicate key, or no
-  secrets at all, and `make dev-up` runs
-- **THEN** it exits non-zero, prints no value, and runs no docker command
-
-#### Scenario: One environment's identity cannot read another's
-- **WHEN** the dev credentials are pointed at the stage or prod project
-- **THEN** the fetch is refused with an HTTP 403, and no value is printed
-
-#### Scenario: Secrets stay off the process list
-- **WHEN** `make dev-up` is running and `ps -eo args` is captured
-- **THEN** no captured argument contains the client secret or the access token
-
 ### Requirement: Migrations runner
 Schema migrations SHALL live in `supabase/migrations/` as `<version>_<name>.sql` files.
 `<version>` is a 14-digit UTC timestamp, and `<name>` uses lowercase letters, digits and
@@ -820,26 +692,38 @@ unset, or is not a single line of at least 32 lowercase hexadecimal characters.
 - **THEN** it exits non-zero naming `APP_DB_PASSWORD`, prints no value, and applies nothing
 
 ### Requirement: Supabase secret generator
-`docker/scripts/supabase-keys.mjs ENV --writer FILE` SHALL create each missing Supabase secret
-for environment `ENV` in that environment's Infisical project: `POSTGRES_PASSWORD`,
+`docker/scripts/supabase-keys.mjs ENV [--writer FILE]` SHALL create each missing Supabase secret
+for environment `ENV` in that environment's OpenBao KV secret: `POSTGRES_PASSWORD`,
 `SUPABASE_ROLES_PASSWORD`, `APP_DB_PASSWORD`, `JWT_SECRET`, `ANON_KEY`, `SERVICE_ROLE_KEY`,
 `SECRET_KEY_BASE` and `REALTIME_DB_ENC_KEY`. `SUPABASE_PORT` is set by the operator. It SHALL:
-- read the project id, Infisical URL and CA path from `.env.infisical.<ENV>`, with the same
-  checks as the compose wrapper (the URL SHALL be `https://`);
-- read the client id and client secret from `FILE`. `FILE` SHALL pass the same ownership and
-  permission checks as a credentials file;
-- list existing keys with the same path, recursion and import settings the compose wrapper
-  fetches with, and without reading values;
+- read the OpenBao address, CA path and KV path from `.env.openbao.<ENV>`, with the same
+  checks as the compose wrapper (the address SHALL be `https://`); the AppRole keys are not
+  needed;
+- take an admin token from `FILE`, or from `BAO_TOKEN` when `--writer` is not given. `FILE`
+  SHALL pass the same ownership and permission checks as a credentials file, and SHALL hold a
+  `BAO_TOKEN=` line or a single token line;
+- read the KV secret at the same path the compose wrapper reads, keep only its key names and
+  current version, and discard the values;
+- refuse, exiting non-zero before any write, when the path exists but its current version is
+  soft-deleted or destroyed: a `404` whose body still carries `metadata.version`,
+  `metadata.destroyed` true, or a non-empty `metadata.deletion_time` at or before the current
+  time (a value that does not parse SHALL count as passed). A future `deletion_time`, which KV v2
+  sets on a live version when `delete_version_after` is configured, SHALL NOT count. The message
+  SHALL name `bao kv undelete` and `bao kv rollback` for a deleted version and only
+  `bao kv rollback` for a destroyed one. It SHALL never write a fresh set of keys over such a
+  path;
 - generate each value from a cryptographically secure random source, in its format from
   "Allowed names". `ANON_KEY` and `SERVICE_ROLE_KEY` SHALL be HS256 JWTs signed with the
   `JWT_SECRET` created in the same run, with `role` `anon` and `service_role`, `iss`
   `supabase`, and an expiry five years after issue;
 - create `JWT_SECRET`, `ANON_KEY` and `SERVICE_ROLE_KEY` together. If some but not all of the
-  three exist, it SHALL refuse, naming them, without reading any value and without writing;
-- send every missing key in one create request, so a run creates all of them or none;
-- only ever create. It SHALL never update, overwrite or delete a key. A key that already exists
-  SHALL be reported as kept. A create that Infisical rejects SHALL exit non-zero without retrying
-  or updating;
+  three exist, it SHALL refuse, naming them, without printing any value and without writing;
+- send every missing key in one write: a KV v2 `PATCH` (`application/merge-patch+json`) with
+  `options.cas` set to the version it read, or, when the path does not exist yet, a `POST` with
+  `options.cas` `0`. A concurrent write SHALL make the whole write fail, so a run creates all of
+  them or none;
+- only ever add keys. It SHALL never change or delete an existing key. A key that already exists
+  SHALL be reported as kept. A write that OpenBao rejects SHALL exit non-zero without retrying;
 - print key names and outcomes only, never a value or a token;
 - refuse Node older than 22.12, and need no npm packages.
 
@@ -862,14 +746,30 @@ for environment `ENV` in that environment's Infisical project: `POSTGRES_PASSWOR
 - **THEN** the generator exits non-zero naming the missing keys, and writes nothing
 
 #### Scenario: A rejected create is not retried as an update
-- **WHEN** Infisical answers the create with an error, for example because a concurrent run
-  created the key first
-- **THEN** the generator exits non-zero, prints no value, and sends no update request
+- **WHEN** OpenBao answers the write with an error, for example a check-and-set mismatch because
+  a concurrent run wrote first
+- **THEN** the generator exits non-zero, prints no value, and sends no second write
 
 #### Scenario: The app password is created for an existing stack
 - **WHEN** the environment holds every other Supabase key but not `APP_DB_PASSWORD`, and the
   generator runs
 - **THEN** it creates only `APP_DB_PASSWORD`, reports the others as kept, and prints no value
+
+#### Scenario: A soft-deleted current version is refused
+- **WHEN** the current version of the environment's KV secret has been deleted with
+  `bao kv delete` (or destroyed), and the generator runs
+- **THEN** it exits non-zero naming `bao kv undelete` (only `bao kv rollback` when destroyed),
+  sends no write request, and prints no value
+
+#### Scenario: A version with a future deletion time is live
+- **WHEN** the current version's `metadata.deletion_time` is in the future because
+  `delete_version_after` is set, and the generator runs
+- **THEN** it treats the version as live, reports existing keys as kept, and writes only the
+  missing ones
+
+#### Scenario: A writer without a token is refused
+- **WHEN** the generator runs without `--writer` and without `BAO_TOKEN`
+- **THEN** it exits non-zero before any request, naming `BAO_TOKEN`
 
 ### Requirement: Supabase gateway routes and key checks
 Each project SHALL have a `supabase-gw` service, the only way to reach the Supabase services from
@@ -952,3 +852,161 @@ email addresses, so it links identities by email only when the address is verifi
 - **WHEN** the gateway's `/auth/v1/settings` is read with the anon key
 - **THEN** it reports sign-up enabled, `google` as the only enabled external provider, and email,
   phone and anonymous sign-in disabled
+
+### Requirement: Secrets come from OpenBao, one KV path per stack
+Each stack SHALL read its secrets and its compose interpolation values from one OpenBao KV v2
+secret: `kv/autologger/dev`, `kv/autologger/stage` or `kv/autologger/prod`. Each environment SHALL
+log in with its own AppRole, whose policy SHALL allow reading only its own KV path (`read` on
+`kv/data/autologger/<env>`) and nothing else. Each AppRole's secret ids SHALL be bound to the CIDR of the host
+that runs that stack.
+
+The per-host credentials for an environment SHALL live in an untracked file
+`.env.openbao.<env>` at the repository root. The file SHALL hold:
+- `BAO_ADDR`, the OpenBao address, a bare `https://host[:port]` origin with no path;
+- `BAO_CACERT`, the absolute path of the CA certificate that OpenBao's TLS chains to;
+- `BAO_ROLE_ID` and `BAO_SECRET_ID`, the AppRole credentials;
+- `BAO_KV_PATH`, the KV path as `<mount>/<path>`. Every segment SHALL match `[A-Za-z0-9_-]+`,
+  there SHALL be at least two segments, the first SHALL be the KV v2 mount, and the last SHALL be
+  the environment name.
+
+The OpenBao address and CA path SHALL NOT be written in any tracked file other than examples and
+documentation, so moving OpenBao needs no code change. The tracked template SHALL be
+`docker/openbao-credentials.example`, with keys and no values.
+
+**Git ignore rules.** The files `.env`, `.env.dev`, `.env.stage`, and `.env.openbao.*` SHALL be
+ignored by git, and the tracked templates SHALL NOT be.
+
+**Request flow.** The compose wrapper SHALL:
+1. log in with `POST /v1/auth/approle/login` and the body `{role_id, secret_id}`, and refuse
+   unless the response holds a non-empty string `auth.client_token`;
+2. read `GET /v1/<mount>/data/<path>` with the token in the `X-Vault-Token` header, and refuse
+   unless `data.data` is a non-empty object;
+3. revoke the token with `POST /v1/auth/token/revoke-self` once the read has finished, whether it
+   succeeded or not. A failed revoke SHALL be a warning only.
+
+**Allowed names.** Every key a KV secret may hold SHALL be either:
+- listed in the shared allowlist file, which lists the keys containers may receive; or
+- one of that environment's fixed compose-interpolation keys: `DEV_PORT` and
+  `DEV_COMPANION_PORT` for dev, `STAGE_PORT` for stage, and `ROUTER_PORT`, `WEB_TAG`, `API_TAG`,
+  and `PUBLIC_BASE_URL` for prod; or
+- one of the Supabase keys, in every environment. These are interpolation keys that only the
+  services allowed for them in invariant 16 receive, and they SHALL NOT be listed in the shared
+  allowlist file. Each value SHALL match its format, and a compose target SHALL refuse the
+  environment, naming the key and printing no value, when one does not:
+
+  | Key | Format |
+  | --- | --- |
+  | `POSTGRES_PASSWORD`, `SUPABASE_ROLES_PASSWORD`, `APP_DB_PASSWORD` | at least 32 lowercase hexadecimal characters |
+  | `JWT_SECRET` | at least 40 characters of `[A-Za-z0-9_-]` |
+  | `SECRET_KEY_BASE` | at least 64 characters of `[A-Za-z0-9_-]` |
+  | `REALTIME_DB_ENC_KEY` | exactly 16 characters of `[A-Za-z0-9_-]` |
+  | `ANON_KEY`, `SERVICE_ROLE_KEY` | HS256 JWTs that verify against `JWT_SECRET`, with `role` `anon` and `service_role` respectively, distinct, and not expired |
+  | `SUPABASE_PORT` | a port number 1024-65535 |
+
+  The wrapper SHALL warn, naming the key, when `ANON_KEY` or `SERVICE_ROLE_KEY` expires within
+  90 days. At run time, it SHALL refuse to start compose if any Supabase secret's value appears in
+  the resolved configuration of a service outside that secret's allowed set.
+
+**Documentation.** The documentation SHALL:
+- list those keys and the KV layout;
+- state the `WEB_TAG`/`API_TAG` format (the 12-character git SHA that `prod-push` produces);
+- describe the AppRole settings (policy, CIDR binding, secret-id TTL, token TTL);
+- warn against reusing prod secrets in dev or stage;
+- describe a break-glass procedure for when OpenBao is sealed or unreachable.
+
+**Failures.** A compose target SHALL fail before starting anything, with a message that names
+the fix and prints no secret value, when:
+- Node older than 22.12 is running the wrapper;
+- the environment's credentials file is missing, lacks a key, names a missing CA file, uses a
+  non-`https` address, has a malformed `BAO_KV_PATH` or one whose last segment is not the
+  environment name, or is readable by group or others. These SHALL be checked before any
+  request;
+- login fails, including a TLS verification failure. The message SHALL give the HTTP status and
+  OpenBao's sanitized error text only, and SHALL NOT suggest disabling verification or using
+  plain HTTP;
+- the KV secret holds any name outside its allowed names. The message SHALL list only offending
+  names that are valid identifiers;
+- `GOOGLE_CLIENT_ID` or `GOOGLE_CLIENT_SECRET` is unset or empty in the KV secret. This
+  applies to every stack, dev included, because the server refuses to boot without them.
+- `BOOTSTRAP_OWNER_EMAIL` is unset, empty or only whitespace in the KV secret. This applies
+  to every stack, dev included, because the server refuses to boot without it. The shared
+  allowlist file SHALL list it, so the app container receives it.
+
+**Secret handling.** The secret id and the token SHALL NOT appear on any command line, SHALL NOT
+reach any child process, and SHALL NOT be written to disk by the Makefile or its scripts. Every
+key and value in the KV secret SHALL be a string, and the read SHALL be refused as a whole if any
+key fails validation, if the latest version is deleted or destroyed (`data.data` null,
+`metadata.destroyed` true, or a `metadata.deletion_time` at or before the current time, an
+unparseable one counting as passed), or if the secret is empty. A future `deletion_time` is a
+live version and SHALL NOT be refused.
+
+**Tooling.** The compose targets SHALL need Node 22.12 or newer on the host and no npm packages.
+
+#### Scenario: A weak Postgres password is refused
+- **WHEN** the OpenBao `dev` KV secret's `POSTGRES_PASSWORD` is `-e`, or any value that is
+  not at least 32 lowercase hexadecimal characters, and `make dev-up` runs
+- **THEN** it exits non-zero naming `POSTGRES_PASSWORD`, prints no value, and runs no docker
+  command
+
+#### Scenario: Swapped Supabase API keys are refused
+- **WHEN** the OpenBao `dev` KV secret's `ANON_KEY` and `SERVICE_ROLE_KEY` are swapped, or
+  either is signed with a different secret, and `make dev-up` runs
+- **THEN** it exits non-zero naming the key, prints no value, and runs no docker command
+
+#### Scenario: Credentials and old env files are ignored, templates are not
+- **WHEN** `git check-ignore .env .env.dev .env.stage .env.openbao.dev .env.openbao.prod` is run
+- **THEN** all five are ignored, and `docker/openbao-credentials.example` is not
+
+#### Scenario: Missing credentials file
+- **WHEN** `make stage-up` runs with no `.env.openbao.stage`
+- **THEN** it exits non-zero with a message naming `docker/openbao-credentials.example`,
+  and starts nothing
+
+#### Scenario: Dev without a Google client is refused
+- **WHEN** the OpenBao `dev` KV secret has no `GOOGLE_CLIENT_SECRET`, and `make dev-up` runs
+- **THEN** it exits non-zero naming `GOOGLE_CLIENT_SECRET`, prints no value, and runs no
+  docker command
+
+#### Scenario: A stack without a bootstrap owner is refused
+- **WHEN** the OpenBao `stage` KV secret has no `BOOTSTRAP_OWNER_EMAIL`, or holds only
+  spaces in it, and `make stage-up` runs
+- **THEN** it exits non-zero naming `BOOTSTRAP_OWNER_EMAIL`, prints no value, and runs no
+  docker command
+
+#### Scenario: Plain HTTP is refused
+- **WHEN** `.env.openbao.dev` sets an `http://` `BAO_ADDR` and `make dev-up` runs
+- **THEN** it exits non-zero before contacting OpenBao, and starts nothing
+
+#### Scenario: A KV path for another environment is refused before any request
+- **WHEN** `.env.openbao.dev` sets `BAO_KV_PATH=kv/autologger/prod` and `make dev-up` runs
+- **THEN** it exits non-zero naming `BAO_KV_PATH`, sends no request to OpenBao, and starts
+  nothing
+
+#### Scenario: A failed AppRole login prints the status only
+- **WHEN** OpenBao answers the AppRole login with HTTP 400 and an `errors` message
+- **THEN** the wrapper exits non-zero printing the status and that message, sends no read
+  request, and prints neither the role id nor the secret id
+
+#### Scenario: The token is revoked after the read
+- **WHEN** `make dev-up` runs and the KV read succeeds
+- **THEN** the wrapper sends `POST /v1/auth/token/revoke-self` with that token before running
+  any docker command, and no child process receives the token
+
+#### Scenario: A hostile secret name is refused
+- **WHEN** the OpenBao `dev` KV secret holds a key named `LD_PRELOAD` or `DOCKER_HOST`, and
+  `make dev-up` runs
+- **THEN** it exits non-zero naming that key, prints no value, and runs no docker command
+
+#### Scenario: A malformed secret is refused as a whole
+- **WHEN** OpenBao returns a value that is not a string, a deleted or destroyed latest version, or an empty
+  secret, and `make dev-up` runs
+- **THEN** it exits non-zero, prints no value, and runs no docker command
+
+#### Scenario: One environment's AppRole cannot read another's path
+- **WHEN** the dev AppRole credentials are used to read `kv/autologger/stage` or
+  `kv/autologger/prod`
+- **THEN** the read is refused with HTTP 403, and no value is printed
+
+#### Scenario: Secrets stay off the process list
+- **WHEN** `make dev-up` is running and `ps -eo args` is captured
+- **THEN** no captured argument contains the secret id or the token
