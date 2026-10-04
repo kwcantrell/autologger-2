@@ -5,10 +5,12 @@
 // table's KvStore port implementation), `dataDirLock` (the DATA_DIR single-server lock),
 // `catalogErrors` (the transaction contract's errors) and `postgresCatalogStore`
 // (`PostgresCatalogDb`, the CatalogDb port on postgres.js; ADR 0021 slices 4b-4c, the server's
-// only catalog adapter since the SQLite one was retired in slice 4e).
+// only catalog adapter since the SQLite one was retired in slice 4e) and `postgresSessionSql`
+// (`PostgresSessionDb`, the session storage over it; session-tables, ADR 0021 slice 7b-1).
 
 export * from './blobStore';
 export * from './catalogErrors';
 export * from './dataDirLock';
 export * from './kvStore';
 export * from './postgresCatalogStore';
+export * from './postgresSessionSql';

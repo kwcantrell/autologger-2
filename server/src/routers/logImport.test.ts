@@ -39,7 +39,7 @@ function makeWord(word: string, startSec: number): TranscriptWord {
  * returns the next entry in `sequence`, holding the last once exhausted. */
 function makeHub(sequence: TranscriptWord[][]): SessionHubFacade {
   let call = 0;
-  const listTranscriptWords = vi.fn(() => {
+  const listTranscriptWords = vi.fn(async () => {
     const words = sequence[Math.min(call, sequence.length - 1)] ?? [];
     call += 1;
     return words;
@@ -54,7 +54,7 @@ const audio = {} as Parameters<typeof ensureTimedTranscript>[0]['audio'];
 function baseInput(hub: SessionHubFacade, onProgress: (line: string) => void) {
   return {
     sessionId: 'sess-1',
-    getHub: () => hub,
+    getHub: async () => hub,
     config,
     audio,
     ctx,

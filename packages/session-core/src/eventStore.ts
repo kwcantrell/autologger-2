@@ -1,5 +1,6 @@
-// Event log domain — events table CRUD, the export feed, and the one-shot
-// orphan-relink pass. Moved verbatim out of the original single-file session spine.
+// Event log domain — session_events CRUD, the export feed, and the one-shot
+// orphan-relink pass. Moved verbatim out of the original single-file session spine;
+// Postgres dialect, scoped by session_id, since session-tables (design D5).
 
 import {
   type EventRpc,
@@ -34,7 +35,7 @@ export function eventRowToRpc(r: Row): EventRpc {
 export class EventStore {
   constructor(private core: SessionCore) {}
 
-  addEvent(input: {
+  async addEvent(input: {
     category: string;
     message: string;
     metadataJson: string;
@@ -77,7 +78,7 @@ export class EventStore {
      * returns. Every other caller omits this (default false), preserving the
      * existing per-write broadcast behavior. */
     suppressBroadcast?: boolean;
-  }): { event: EventRpc; projection: SessionProjection } {
+  }): Promise<{ event: EventRpc; projection: SessionProjection }> {
     let wallIso: string;
     let frameRate: number;
     let totalFrames: number;
@@ -90,7 +91,7 @@ export class EventStore {
     } else {
       const markMs = input.markedAtUtc ? parseUtcMs(input.markedAtUtc) : this.core.now();
       const wallMs = Number.isNaN(markMs) ? this.core.now() : markMs;
-      const tr = this.core.transportRow();
+      const tr = await this.core.transportRow();
       const tc = timecodeForMark(input.ctx.frameRate, input.ctx.startOffsetFrames, tr, wallMs);
       totalFrames = toTotalFrames(tc);
       frameRate = tc.frame_rate;
@@ -98,9 +99,10 @@ export class EventStore {
     }
     const id = crypto.randomUUID();
     const metaJson = input.metadataJson || '{}';
-    this.core.db.run(
-      `INSERT INTO events (id, wall_time_utc, frame_rate, timecode_total_frames, category, message, metadata_json)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    await this.core.db.run(
+      `INSERT INTO session_events (session_id, id, wall_time_utc, frame_rate, timecode_total_frames, category, message, metadata_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      this.core.sessionId,
       id,
       wallIso,
       frameRate,
@@ -109,12 +111,20 @@ export class EventStore {
       input.message,
       metaJson,
     );
-    this.core.bumpRevision();
+    await this.core.bumpRevision();
     if (!input.suppressBroadcast) {
-      this.core.broadcast({ type: 'event.changed', revision: this.core.revision() });
+      this.core.broadcast({ type: 'event.changed', revision: await this.core.revision() });
     }
-    const r = this.core.first('SELECT * FROM events WHERE id = ?', id);
-    return { event: eventRowToRpc(r as Row), projection: this.core.projection() };
+    const r = await this.event(id);
+    return { event: eventRowToRpc(r as Row), projection: await this.core.projection() };
+  }
+
+  private event(eventId: string): Promise<Row | null> {
+    return this.core.first(
+      'SELECT * FROM session_events WHERE session_id = ? AND id = ?',
+      this.core.sessionId,
+      eventId,
+    );
   }
 
   /** sheets-log-import: place an event at an explicit session timecode (total frames). */
@@ -124,7 +134,7 @@ export class EventStore {
     metadataJson: string;
     timecodeTotalFrames: number;
     ctx: TimecodeCtx;
-  }): { event: EventRpc; projection: SessionProjection } {
+  }): Promise<{ event: EventRpc; projection: SessionProjection }> {
     return this.addEvent({
       category: input.category,
       message: input.message,
@@ -138,117 +148,132 @@ export class EventStore {
     });
   }
 
-  listEvents(input: { limit: number; offset: number }): {
+  async listEvents(input: { limit: number; offset: number }): Promise<{
     events: EventRpc[];
     total: number;
     loggedTotal: number;
     revision: number;
-  } {
-    const rows = this.core.all(
-      'SELECT * FROM events ORDER BY wall_time_utc ASC, id ASC LIMIT ? OFFSET ?',
+  }> {
+    const rows = await this.core.all(
+      'SELECT * FROM session_events WHERE session_id = ? ORDER BY wall_time_utc ASC, id ASC LIMIT ? OFFSET ?',
+      this.core.sessionId,
       Math.trunc(input.limit),
       Math.trunc(input.offset),
     );
-    const counts = this.core.eventCounts();
+    const counts = await this.core.eventCounts();
     return {
       events: rows.map((r) => eventRowToRpc(r)),
       total: counts.total,
       loggedTotal: counts.logged,
-      revision: this.core.revision(),
+      revision: await this.core.revision(),
     };
   }
 
-  getEvent(eventId: string): EventRpc | null {
-    const r = this.core.first('SELECT * FROM events WHERE id = ?', eventId);
+  async getEvent(eventId: string): Promise<EventRpc | null> {
+    const r = await this.event(eventId);
     return r ? eventRowToRpc(r) : null;
   }
 
-  /** All events (unpaged) for CSV/JSONL export; the router layer sorts + enriches. */
-  exportEvents(): EventRpc[] {
-    return this.core.all('SELECT * FROM events').map((r) => eventRowToRpc(r));
+  /** All events (unpaged) for CSV/JSONL export; the router layer sorts + enriches. In feed order:
+   * SQLite returned rowid order, which no consumer relies on (session-tables A14). */
+  async exportEvents(): Promise<EventRpc[]> {
+    return (
+      await this.core.all(
+        'SELECT * FROM session_events WHERE session_id = ? ORDER BY wall_time_utc, id',
+        this.core.sessionId,
+      )
+    ).map((r) => eventRowToRpc(r));
   }
 
-  updateEvent(input: {
+  /** `mergeMetadata` gets the stored row's `metadata_json` and returns the JSON to store, so the
+   * read, the merge and the write are one transaction (async-session-hub design D5, S3). It is
+   * synchronous by type and must stay pure. A missing event returns null without calling it. */
+  async updateEvent(input: {
     eventId: string;
     category: string;
     message: string;
     wallTimeUtc: string;
     timecodeTotalFrames: number;
-    metadataJson: string;
-  }): { event: EventRpc; projection: SessionProjection } | null {
-    const old = this.core.first('SELECT * FROM events WHERE id = ?', input.eventId);
+    mergeMetadata: (storedMetadataJson: string) => string;
+  }): Promise<{ event: EventRpc; projection: SessionProjection } | null> {
+    const old = await this.event(input.eventId);
     if (old === null) return null;
-    this.core.db.run(
-      `UPDATE events SET category = ?, message = ?, wall_time_utc = ?,
-         timecode_total_frames = ?, metadata_json = ? WHERE id = ?`,
+    const metadataJson = input.mergeMetadata(eventRowToRpc(old).metadata_json);
+    await this.core.db.run(
+      `UPDATE session_events SET category = ?, message = ?, wall_time_utc = ?,
+         timecode_total_frames = ?, metadata_json = ? WHERE session_id = ? AND id = ?`,
       input.category,
       input.message,
       input.wallTimeUtc,
       input.timecodeTotalFrames,
-      input.metadataJson || '{}',
+      metadataJson || '{}',
+      this.core.sessionId,
       input.eventId,
     );
-    this.core.bumpRevision();
-    this.core.broadcast({ type: 'event.changed', revision: this.core.revision() });
-    const r = this.core.first('SELECT * FROM events WHERE id = ?', input.eventId);
-    return { event: eventRowToRpc(r as Row), projection: this.core.projection() };
+    await this.core.bumpRevision();
+    this.core.broadcast({ type: 'event.changed', revision: await this.core.revision() });
+    const r = await this.event(input.eventId);
+    return { event: eventRowToRpc(r as Row), projection: await this.core.projection() };
   }
 
-  deleteEvent(eventId: string): { ok: boolean; projection: SessionProjection } {
-    const existed = this.core.first('SELECT 1 AS x FROM events WHERE id = ?', eventId) !== null;
+  async deleteEvent(eventId: string): Promise<{ ok: boolean; projection: SessionProjection }> {
+    const existed =
+      (await this.core.first(
+        'SELECT 1 AS x FROM session_events WHERE session_id = ? AND id = ?',
+        this.core.sessionId,
+        eventId,
+      )) !== null;
     if (existed) {
-      this.core.db.run('DELETE FROM events WHERE id = ?', eventId);
-      this.core.bumpRevision();
-      this.core.broadcast({ type: 'event.changed', revision: this.core.revision() });
+      await this.core.db.run(
+        'DELETE FROM session_events WHERE session_id = ? AND id = ?',
+        this.core.sessionId,
+        eventId,
+      );
+      await this.core.bumpRevision();
+      this.core.broadcast({ type: 'event.changed', revision: await this.core.revision() });
     }
-    return { ok: existed, projection: this.core.projection() };
+    return { ok: existed, projection: await this.core.projection() };
   }
 
   /** event-generate-hardening D6 — replaces `deleteAutoGeneratedEvents()`:
    * deletes an EXPLICIT id set (the route's pre-spawn auto-row snapshot, gate
    * ruling E3), not a predicate scan — the route computes membership, this
-   * method just removes rows. Chunked at <=500 ids per `DELETE ... WHERE id
-   * IN (...)` statement, all chunks inside the ONE caller transaction
-   * (`SessionHub.inTxn`): better-sqlite3's bind-variable ceiling is 32,766, so
-   * an unbounded snapshot must not 500 an otherwise-successful run. ONE
-   * `event.changed` broadcast when the TOTAL deleted count across every chunk
-   * is > 0 (parity with the old predicate delete's `changes > 0` guard — WS
-   * emission semantics stay frozen), none otherwise. Returns the total
+   * method just removes rows. One statement whatever the set's size: the ids
+   * travel as one JSON text bind (session-tables D5), inside the ONE caller
+   * transaction (`SessionHub.inTxn`). ONE `event.changed` broadcast when the
+   * deleted count is > 0 (parity with the old predicate delete's `changes > 0`
+   * guard — WS emission semantics stay frozen), none otherwise. Returns the
    * deleted count (ids no longer present, e.g. already manually deleted,
    * simply don't count). */
-  deleteEventsByIds(ids: string[]): number {
-    const CHUNK_SIZE = 500;
-    let total = 0;
-    for (let i = 0; i < ids.length; i += CHUNK_SIZE) {
-      const chunk = ids.slice(i, i + CHUNK_SIZE);
-      const placeholders = chunk.map(() => '?').join(', ');
-      const { changes } = this.core.db.run(
-        `DELETE FROM events WHERE id IN (${placeholders})`,
-        ...chunk,
-      );
-      total += changes;
-    }
+  async deleteEventsByIds(ids: string[]): Promise<number> {
+    if (ids.length === 0) return 0;
+    const { changes: total } = await this.core.db.run(
+      'DELETE FROM session_events WHERE session_id = ? AND id IN (SELECT json_array_elements_text(?::text::json))',
+      this.core.sessionId,
+      JSON.stringify(ids),
+    );
     if (total > 0) {
-      this.core.bumpRevision();
-      this.core.broadcast({ type: 'event.changed', revision: this.core.revision() });
+      await this.core.bumpRevision();
+      this.core.broadcast({ type: 'event.changed', revision: await this.core.revision() });
     }
     return total;
   }
 
   /** event-generate-hardening D1 — whole-session EXISTS check over the SAME
-   * SQL predicate `deleteEventsByIds`'s caller (the route) uses to compute the
-   * id snapshot (json_valid + json_type '$.auto_generated' = 'true'),
-   * independent of any list page/window. Read-only: no revision bump, no
-   * broadcast. */
-  hasAutoGeneratedEvents(): boolean {
-    const row = this.core.first(
-      `SELECT 1 AS x FROM events
-       WHERE CASE
-         WHEN json_valid(metadata_json)
-         THEN json_type(metadata_json, '$.auto_generated') = 'true'
-         ELSE 0
-       END
+   * predicate `deleteEventsByIds`'s caller (the route) uses to compute the id
+   * snapshot (valid JSON whose `auto_generated` is `true`), independent of any
+   * list page/window. Read-only: no revision bump, no broadcast. As `jsonb`
+   * (session-tables D5, A2): a duplicate key reads as its last value, as in
+   * JavaScript, and metadata with a `\u0000` escape is not valid `jsonb`, so it
+   * reads as not auto-generated (pinned in the store tests). */
+  async hasAutoGeneratedEvents(): Promise<boolean> {
+    const row = await this.core.first(
+      `SELECT 1 AS x FROM session_events
+       WHERE session_id = ?
+         AND coalesce(CASE WHEN pg_input_is_valid(metadata_json, 'jsonb')
+           THEN (metadata_json::jsonb -> 'auto_generated') = 'true'::jsonb END, false)
        LIMIT 1`,
+      this.core.sessionId,
     );
     return row !== null;
   }
@@ -256,23 +281,33 @@ export class EventStore {
   /** Relink orphan events to a category id when the snapshot label matches exactly one button.
    *  Guarded to run at most once per events_stream_revision (the only inputs are events +
    *  the show categories the router passes in, both of which bump the revision). */
-  maybeRelinkOrphans(input: { validIds: string[]; labelToIds: Record<string, string[]> }): number {
-    const rev = this.core.revision();
-    const lastRaw = this.core.first("SELECT value FROM meta WHERE key = 'relink_checked_rev'");
-    if (lastRaw !== null && Number(lastRaw.value) === rev) return 0;
-    this.core.db.run(
-      "INSERT INTO meta (key, value) VALUES ('relink_checked_rev', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-      String(rev),
-    );
+  async maybeRelinkOrphans(input: {
+    validIds: string[];
+    labelToIds: Record<string, string[]>;
+  }): Promise<number> {
+    const rev = await this.core.revision();
+    const lastRaw = await this.core.metaGet('relink_checked_rev');
+    if (lastRaw !== null && Number(lastRaw) === rev) return 0;
+    await this.core.metaSet('relink_checked_rev', String(rev));
+    // A row whose metadata is not valid JSON is skipped here, as the loop below skips it
+    // (SQLite's JSON path lookup threw on it; session-tables D5).
     const hasSnap =
-      this.core.first(
-        'SELECT 1 AS x FROM events WHERE json_extract(metadata_json, ?) IS NOT NULL LIMIT 1',
-        `$.${UI_SNAPSHOT_LABEL_KEY}`,
-      ) !== null;
+      (await this.core.first(
+        `SELECT 1 AS x FROM session_events
+         WHERE session_id = ?
+           AND coalesce(CASE WHEN pg_input_is_valid(metadata_json, 'jsonb')
+             THEN jsonb_typeof(metadata_json::jsonb -> ?) <> 'null' END, false)
+         LIMIT 1`,
+        this.core.sessionId,
+        UI_SNAPSHOT_LABEL_KEY,
+      )) !== null;
     if (!hasSnap) return 0;
 
     const valid = new Set(input.validIds);
-    const rows = this.core.all('SELECT * FROM events ORDER BY wall_time_utc ASC, id ASC');
+    const rows = await this.core.all(
+      'SELECT * FROM session_events WHERE session_id = ? ORDER BY wall_time_utc ASC, id ASC',
+      this.core.sessionId,
+    );
     let n = 0;
     for (const row of rows) {
       const catId = String(row.category);
@@ -291,15 +326,16 @@ export class EventStore {
       if (candidates.length !== 1) continue;
       delete meta[UI_SNAPSHOT_LABEL_KEY];
       delete meta[UI_SNAPSHOT_COLOR_KEY];
-      this.core.db.run(
-        'UPDATE events SET category = ?, metadata_json = ? WHERE id = ?',
+      await this.core.db.run(
+        'UPDATE session_events SET category = ?, metadata_json = ? WHERE session_id = ? AND id = ?',
         candidates[0],
         JSON.stringify(meta),
+        this.core.sessionId,
         String(row.id),
       );
       n += 1;
     }
-    if (n) this.core.bumpRevision();
+    if (n) await this.core.bumpRevision();
     return n;
   }
 }

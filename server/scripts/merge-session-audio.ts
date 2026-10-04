@@ -5,18 +5,22 @@
 //
 // Run it in the dev stack (`make dev-shell`, then `cd server`), with `--out /tmp/<name>` so the
 // output stays off the data volume; copy it out with `docker cp`. DATA_DIR (or --data-dir) is
-// required: there is no default data directory (retire-host-dev D3).
+// required: there is no default data directory (retire-host-dev D3). The process's PG* settings
+// name the database (the dev shell has them).
 //
-// Reads segment order from the session DB (DATA_DIR/sessions/<id>.db), maps
+// Reads segment order from the session's rows in `catalog.session_audio_segments` (one read-only
+// snapshot through the Postgres session adapter, session-tables D10), maps
 // each row's r2_key to its blob under DATA_DIR/blobs/, and packet-copies each
 // codec-family run into its own container (Opus->WebM, AAC->MP4, PCM->WAVE)
 // via @autologger/transcription's audioMerge.ts. Read-only over server state; the merged files
 // are written outside the blob store.
 
+import { systemCaller } from '@autologger/session-core';
+import { PostgresCatalogDb, PostgresSessionDb } from '@autologger/storage';
 import { mergeAudioSegments } from '@autologger/transcription';
-import Database from 'better-sqlite3';
 import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { CATALOG_PG_VARS } from '../src/bootGuard';
 
 function fail(msg: string): never {
   console.error(`error: ${msg}`);
@@ -44,17 +48,30 @@ if (!sessionId || positional.length > 1) {
 const dataDirIn = dataDirArg ?? process.env.DATA_DIR;
 if (!dataDirIn) fail('set DATA_DIR or pass --data-dir (there is no default data directory)');
 const dataDir = resolve(dataDirIn);
-const dbPath = join(dataDir, 'sessions', `${sessionId}.db`);
-if (!existsSync(dbPath)) fail(`no session DB at ${dbPath}`);
+const missingPg = CATALOG_PG_VARS.filter((k) => !process.env[k]);
+if (missingPg.length) fail(`database settings missing: ${missingPg.join(', ')}`);
 
-const db = new Database(dbPath, { readonly: true, fileMustExist: true });
+const catalogDb = new PostgresCatalogDb({
+  host: process.env.PGHOST as string,
+  port: Number(process.env.PGPORT),
+  user: process.env.PGUSER as string,
+  password: process.env.PGPASSWORD as string,
+  database: process.env.PGDATABASE as string,
+});
 let rows: Array<{ ordinal: number; r2_key: string }>;
 try {
-  rows = db
-    .prepare('SELECT ordinal, r2_key FROM session_audio_segments ORDER BY ordinal ASC')
-    .all() as Array<{ ordinal: number; r2_key: string }>;
+  // A reviewed system caller (session-content-policies D7, D9): the operator's script reads what the
+  // hub stores, for any session.
+  rows = await new PostgresSessionDb(catalogDb)
+    .forSession(sessionId)
+    .snapshot(systemCaller('merge-audio-script'), (t) =>
+      t.all<{ ordinal: number; r2_key: string }>(
+        'SELECT ordinal, r2_key FROM session_audio_segments WHERE session_id = ? ORDER BY ordinal ASC, id ASC',
+        sessionId,
+      ),
+    );
 } finally {
-  db.close();
+  await catalogDb.close();
 }
 if (rows.length === 0) fail(`session ${sessionId} has no audio segments`);
 

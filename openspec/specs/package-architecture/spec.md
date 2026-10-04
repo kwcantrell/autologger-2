@@ -136,8 +136,10 @@ respectively), the dependency SHALL resolve to exactly one copy in the install t
 each such class SHALL have exactly one module instance in the running process (moves
 land as same-commit move + import rewrite; no shim window). `@autologger/contract`
 SHALL declare `zod` as a peerDependency so it can never install a private copy, and
-`@autologger/session-core` and `@autologger/storage` SHALL declare `better-sqlite3` as
-a peerDependency (the server workspace remains the installing dependency).
+`@autologger/storage` (the data-directory lock) SHALL declare `better-sqlite3` as a
+peerDependency (the server workspace remains the installing dependency).
+`@autologger/session-core` SHALL NOT depend on `better-sqlite3` in any form: its storage is the
+Postgres session adapter, injected by the composition root (ADR 0021 slice 7b-1).
 
 `instanceof` mapping is **not** the only ground for single-copy treatment, and this
 requirement SHALL NOT be read as licensing a private copy wherever no `instanceof` occurs.
@@ -156,7 +158,7 @@ is one reason to need it.
 
 #### Scenario: One better-sqlite3 in the tree
 - **WHEN** `npm ls better-sqlite3 --json` output is inspected after install
-- **THEN** exactly one resolved copy exists, with the L1 packages resolving to it via peerDependency
+- **THEN** exactly one resolved copy exists, with `@autologger/storage` resolving to it via peerDependency and `@autologger/session-core` declaring no dependency on it
 
 #### Scenario: Cross-package error identity preserved
 - **WHEN** a request fails a contract-package schema, a request triggers a domain-package `ValidationError`, an audio request with an unsatisfiable range triggers the storage package's `InvalidRangeError`, and a dashboard-config write with an invalid config triggers the session-core package's `DashboardValidationError`, each exercised through the real app

@@ -4,8 +4,9 @@
 // WHOLE session, independent of the returned page's `limit`/`offset`.
 
 import { describe, expect, it } from 'vitest';
-import { app, env } from '../test/harness';
-import { seededSession } from '../test/helpers';
+import { app, defaultUser, env } from '../test/harness';
+import { catalogFor, SEED_CATEGORY_ID, seededSession } from '../test/helpers';
+import { harnessHub } from '../test/session/sessionRows';
 
 async function getEvents(
   sessionId: string,
@@ -30,7 +31,7 @@ describe('GET /api/sessions/:sessionId/events — has_auto_generated', () => {
 
   it('is false when events exist but none are auto-generated', async () => {
     const { sessionId } = await seededSession();
-    env.ports.sessions.get(sessionId).addEvent({
+    await (await harnessHub(sessionId)).addEvent({
       category: 'cam',
       message: 'manual hit',
       metadataJson: '{}',
@@ -43,11 +44,11 @@ describe('GET /api/sessions/:sessionId/events — has_auto_generated', () => {
 
   it('is true when the only auto-generated row lies outside the requested limit/offset window', async () => {
     const { sessionId } = await seededSession();
-    const hub = env.ports.sessions.get(sessionId);
+    const hub = await harnessHub(sessionId);
     // Three manual rows first (earliest wall times), then one auto row last —
     // a limit=1/offset=0 page returns only the first manual row.
     for (let i = 0; i < 3; i += 1) {
-      hub.addEvent({
+      await hub.addEvent({
         category: 'cam',
         message: `manual-${i}`,
         metadataJson: '{}',
@@ -55,7 +56,7 @@ describe('GET /api/sessions/:sessionId/events — has_auto_generated', () => {
         ctx: { frameRate: 24, startOffsetFrames: 0 },
       });
     }
-    hub.addEvent({
+    await hub.addEvent({
       category: 'cam',
       message: 'auto hit',
       metadataJson: '{"auto_generated":true,"auto_generate_run_id":"r1"}',
@@ -68,5 +69,30 @@ describe('GET /api/sessions/:sessionId/events — has_auto_generated', () => {
     expect(pageEvents).toHaveLength(1);
     expect(pageEvents[0]?.message).toBe('manual-0');
     expect(page.has_auto_generated).toBe(true);
+  });
+});
+
+// session-tables design D8 (catalog-database "The session live projection commits with the session
+// write", scenario "The list is current after the response"): the projection commits with the
+// event's insert, so the list read right after the response reports the new count, with no
+// separate catalog writer behind the route (the mirror it once had is retired).
+describe('GET /api/sessions right after POST …/events', () => {
+  it('reports the new event_count', async () => {
+    const { studioId, showId, sessionId } = await seededSession();
+    await catalogFor().auth.authSetPrefs((await defaultUser()).id, studioId, showId);
+    const post = await app.request(
+      `/api/sessions/${sessionId}/events`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ category: SEED_CATEGORY_ID, message: 'listed' }),
+      },
+      { ...env },
+    );
+    expect(post.status).toBe(200);
+    const list = await app.request('/api/sessions', { method: 'GET' }, { ...env });
+    expect(list.status).toBe(200);
+    const body = (await list.json()) as { active: Array<Record<string, unknown>> };
+    expect(body.active.find((s) => s.id === sessionId)?.event_count).toBe(1);
   });
 });

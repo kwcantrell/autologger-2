@@ -121,6 +121,15 @@ describe('PostgresCatalogDb: Postgres-only cases', () => {
     expect(await db.first("SELECT '?' AS q, ?::bigint AS v", 5)).toEqual({ q: '?', v: 5 });
   });
 
+  // session-tables A10: the image sets extra_float_digits = 0; the adapter's connections set 1.
+  it('a catalog double precision reads back exactly', async () => {
+    const { db } = await make();
+    await db.run('INSERT INTO sessions (id, frame_rate) VALUES (?, ?)', 's-f', 29.969999999999995);
+    expect(await db.first('SELECT frame_rate FROM sessions WHERE id = ?', 's-f')).toEqual({
+      frame_rate: 29.969999999999995,
+    });
+  });
+
   it('two concurrent read-modify-write transactions both commit after one retry', async () => {
     const e = await make();
     await e.db.run(INSERT, 'c', 0);
@@ -466,6 +475,39 @@ describe('PostgresCatalogDb: bindings (catalog-roles)', () => {
       expect(c.u).toBe('autologger_app');
       expect(c.id === null || c.id === '').toBe(true);
     }
+  });
+
+  // session-tables core-ports-architecture "The connection count stays within the role's limit"
+  // (design D2): with every root, transaction and session slot busy at the defaults, the adapter
+  // holds at most 3 + 5 + 4 = 12 connections, under the app role's limit of 20.
+  it('with every pool saturated at the defaults, the adapter holds at most 12 connections', async () => {
+    const e = await make();
+    const sys = e.root.bindSystem('test');
+    const hold = gate();
+    const busy = [
+      ...Array.from({ length: 6 }, () => sys.all('SELECT pg_sleep(0.6)')),
+      ...Array.from({ length: 8 }, () =>
+        sys.tx(async (t) => {
+          await t.all('SELECT 1 AS one');
+          await hold.wait;
+        }),
+      ),
+      ...Array.from({ length: 6 }, () =>
+        e.root.bindSystem('session-hub').snapshot('no-probe', async (t) => {
+          await t.all('SELECT 1 AS one');
+          await hold.wait;
+        }),
+      ),
+    ];
+    let most = 0;
+    for (let i = 0; i < 10; i++) {
+      most = Math.max(most, await appSessions(e));
+      await new Promise((r) => setTimeout(r, 40));
+    }
+    hold.open();
+    await Promise.all(busy);
+    expect(most).toBeGreaterThanOrEqual(9); // the pools did fill
+    expect(most).toBeLessThanOrEqual(12);
   });
 
   it('a root slot whose backend is killed mid-transaction rejects, the process survives, and a fresh client serves the next call', async () => {

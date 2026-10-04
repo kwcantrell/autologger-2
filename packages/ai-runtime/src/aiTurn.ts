@@ -25,7 +25,7 @@
 // failure).
 
 import type { Clock } from '@autologger/ports';
-import type { SessionHubRegistryFacade } from '@autologger/session-core';
+import type { SessionCaller, SessionHubRegistryFacade } from '@autologger/session-core';
 import type { AiChatSseEvent } from './aiChatRelay';
 import {
   type AiChatSpawnResult,
@@ -54,6 +54,8 @@ export interface DriveAiTurnOptions {
   clock: Clock;
   /** The process-wide session registry — resolves the MCP listener singleton. */
   registry: SessionHubRegistryFacade;
+  /** Who the turn's tool bodies run for: the route's caller (session-content-policies D7). */
+  caller: SessionCaller;
   /** `CLAUDE_CLI_PATH`, already trimmed. */
   cliPath: string;
   sessionId: string;
@@ -134,7 +136,7 @@ export async function driveAiTurn(opts: DriveAiTurnOptions): Promise<DriveAiTurn
   let spawned: AiChatSpawnResult | null = null;
   try {
     const listener = await getAiMcpListener(opts.registry);
-    const turn = listener.registerTurn(opts.sessionId, opts.mcpContext);
+    const turn = listener.registerTurn(opts.sessionId, opts.caller, opts.mcpContext);
     mcpTurn = turn;
     spawned = spawnAiChatTurn({
       cliPath: opts.cliPath,

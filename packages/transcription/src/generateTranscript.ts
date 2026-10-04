@@ -65,7 +65,9 @@ export function isTranscriptGenerationInFlight(): boolean {
 export interface GenerateTranscriptDeps {
   config: Config;
   audio: BlobStore;
-  getHub: () => SessionHubFacade;
+  /** Resolves the session hub at the point of use, so a reference is never held idle across
+   * the provider call (async-session-hub design D6). */
+  getHub: () => Promise<SessionHubFacade>;
   ctx: TimecodeCtx;
   sessionId: string;
   /** Optional abort before the provider call starts. */
@@ -98,7 +100,7 @@ export async function generateTranscriptWords(
   const blobStore = deps.audio;
   let scratchDir: string | null = null;
   try {
-    const segments = deps.getHub().listAudioSegments();
+    const segments = await (await deps.getHub()).listAudioSegments();
     if (segments.length === 0) {
       throw new TranscriptGenerateError('no_audio', NO_AUDIO_DETAIL);
     }
@@ -154,8 +156,6 @@ export async function generateTranscriptWords(
       });
     }
 
-    const events = deps.getHub().exportEvents();
-    const anchors = recordingStartAnchors(events);
     const segmentInfo: SegmentAnchorInfo[] = segments.map((s, i) => ({
       path: inputPaths[i],
       ordinal: s.ordinal,
@@ -167,19 +167,27 @@ export async function generateTranscriptWords(
       // `A + max(0, (startedAtUtc - eventWallTimeUtc) / 1000)`.
       startedAtUtc: s.started_at_utc,
     }));
-    const remappedWords = remapTranscriptWords(
-      enrichmentGroups,
-      segmentInfo,
-      anchors,
-      deps.ctx.frameRate,
-    );
-
-    if (remappedWords.length === 0) {
-      throw new TranscriptGenerateError('no_speech', NO_SPEECH_DETAIL);
-    }
-
-    const remappedEnrichment = remapTranscriptEnrichment(enrichmentGroups, segmentInfo, anchors);
-    return deps.getHub().replaceTranscriptWords(remappedWords, remappedEnrichment);
+    // The anchors read, the remap and the replace are one hub transaction (async-session-hub
+    // design D7, S9), so the words are remapped against the anchors the replace commits with. A
+    // `no_speech` throw from inside the remap rolls it back and writes nothing. `return await`:
+    // the finally below releases the generation lock only after the replace has committed.
+    const hub = await deps.getHub();
+    return await hub.replaceTranscriptWordsRemapped((events) => {
+      const anchors = recordingStartAnchors(events);
+      const remappedWords = remapTranscriptWords(
+        enrichmentGroups,
+        segmentInfo,
+        anchors,
+        deps.ctx.frameRate,
+      );
+      if (remappedWords.length === 0) {
+        throw new TranscriptGenerateError('no_speech', NO_SPEECH_DETAIL);
+      }
+      return {
+        words: remappedWords,
+        enrichment: remapTranscriptEnrichment(enrichmentGroups, segmentInfo, anchors),
+      };
+    });
   } finally {
     transcriptGenerationLock.release();
     if (scratchDir) await rm(scratchDir, { recursive: true, force: true });

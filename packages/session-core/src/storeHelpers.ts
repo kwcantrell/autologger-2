@@ -25,11 +25,16 @@ export function buildPatch<K extends string>(
   return { cols, vals };
 }
 
-/** Next insert ordinal for `table`: COALESCE(MAX(ordinal), -1) + 1 — 0-seeded,
- * so the first row gets ordinal 0 and deleting the MAX row frees its ordinal
- * for reuse (pinned in the store tests). `table` must be a literal table
+/** Next insert ordinal for `table` in the core's session: COALESCE(MAX(ordinal), -1) + 1 —
+ * 0-seeded, so the first row gets ordinal 0 and deleting the MAX row frees its ordinal
+ * for reuse (pinned in the store tests). The session row lock held by every write makes the
+ * read-then-insert safe across processes (session-tables D5). `table` must be a literal table
  * name, never user input. (audioStore's 1-seeded ordinal is deliberately NOT
  * this helper.) */
-export function nextOrdinal(core: SessionCore, table: string): number {
-  return Number(core.first(`SELECT COALESCE(MAX(ordinal), -1) + 1 AS n FROM ${table}`)?.n ?? 0);
+export async function nextOrdinal(core: SessionCore, table: string): Promise<number> {
+  const r = await core.first(
+    `SELECT COALESCE(MAX(ordinal), -1) + 1 AS n FROM ${table} WHERE session_id = ?`,
+    core.sessionId,
+  );
+  return Number(r?.n ?? 0);
 }

@@ -45,7 +45,7 @@ export interface CatalogFacade {
 }
 
 /** A catalog call with neither a user nor a system binding: a programming error, refused before
- * anything is sent (catalog-roles D7; core-ports-architecture "Every catalog call is bound to a
+ * anything is sent (catalog-roles D7; core-ports-architecture "Every catalog and session call is bound to a
  * caller"). */
 export class CatalogUnboundError extends Error {
   override name = 'CatalogUnboundError';

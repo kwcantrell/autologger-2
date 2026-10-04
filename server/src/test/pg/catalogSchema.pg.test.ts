@@ -2,7 +2,7 @@
 // The schema is checked against a recorded expectation (retire-sqlite-catalog D3).
 
 import { spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import postgres from 'postgres';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -12,7 +12,21 @@ import {
   createTestDatabase,
   testPg,
 } from '../../../../test/pg/testDb';
+import { CONTENT_INSERT, seedPolicyFixture } from './policyFixture';
+import { holdRoleGuardLock } from './roleGuardLock';
 
+// session-tables D1: the session content tables (slice 7b-1).
+const SESSION_TABLES = [
+  'session_events',
+  'session_transport',
+  'session_audio_segments',
+  'session_transcript_words',
+  'session_topics',
+  'session_transcript_paragraphs',
+  'session_transcript_sentiment',
+  'session_dashboards',
+  'session_meta',
+];
 const TABLES = [
   'users',
   'user_studio_memberships',
@@ -24,6 +38,7 @@ const TABLES = [
   'kv',
   'team_invites',
   'show_grants',
+  ...SESSION_TABLES,
 ];
 const KEY_COLUMN: Record<string, string> = {
   users: 'id',
@@ -36,11 +51,11 @@ const KEY_COLUMN: Record<string, string> = {
   kv: 'key',
   team_invites: 'studio_id',
   show_grants: 'user_id',
+  ...Object.fromEntries(SESSION_TABLES.map((t) => [t, 'session_id'])),
 };
-const MIGRATION = resolve(
-  import.meta.dirname,
-  '../../../../supabase/migrations/20261001000000_catalog_schema.sql',
-);
+const MIGRATIONS = resolve(import.meta.dirname, '../../../../supabase/migrations');
+const MIGRATION = resolve(MIGRATIONS, '20261001000000_catalog_schema.sql');
+const SESSION_TABLES_MIGRATION = '20261008000000_session_tables.sql';
 
 const open: postgres.Sql[] = [];
 function connect(o: ConnOptions): postgres.Sql {
@@ -222,12 +237,143 @@ const EXPECTED_SCHEMA: SchemaRecord = {
       'FOREIGN KEY (user_id) REFERENCES catalog.users(id) ON DELETE CASCADE',
     ],
   },
+  // session-tables D1: the nine session tables, keyed and indexed by session.
+  session_events: {
+    columns: [
+      'session_id text collate C not null',
+      'id text collate C not null',
+      'wall_time_utc text collate C not null',
+      'frame_rate double precision not null',
+      'timecode_total_frames bigint',
+      'category text collate C not null',
+      'message text collate C not null',
+      "metadata_json text collate C not null default '{}'::text",
+    ],
+    primaryKey: ['session_id', 'id'],
+    foreignKeys: ['FOREIGN KEY (session_id) REFERENCES catalog.sessions(id)'],
+  },
+  session_transport: {
+    columns: [
+      'session_id text collate C not null',
+      'is_rolling bigint not null default 0',
+      'current_take bigint not null default 0',
+      'roll_started_at_utc text collate C',
+      'elapsed_frames bigint not null default 0',
+    ],
+    primaryKey: ['session_id'],
+    foreignKeys: ['FOREIGN KEY (session_id) REFERENCES catalog.sessions(id)'],
+  },
+  session_audio_segments: {
+    columns: [
+      'session_id text collate C not null',
+      'id text collate C not null',
+      'ordinal bigint not null',
+      'started_at_utc text collate C',
+      'ended_at_utc text collate C',
+      'mime_type text collate C not null',
+      'r2_key text collate C not null',
+      'recording_ordinal bigint',
+      'waveform_peaks_json text collate C',
+      'waveform_db_floor double precision',
+      'created_at_utc text collate C not null',
+    ],
+    primaryKey: ['session_id', 'id'],
+    foreignKeys: ['FOREIGN KEY (session_id) REFERENCES catalog.sessions(id)'],
+  },
+  session_transcript_words: {
+    columns: [
+      'session_id text collate C not null',
+      'id text collate C not null',
+      "session_time text collate C not null default ''::text",
+      "speaker text collate C not null default ''::text",
+      "word text collate C not null default ''::text",
+      'start_sec double precision not null default 0.0',
+      'end_sec double precision not null default 0.0',
+      'ordinal bigint not null',
+      'created_at_utc text collate C not null',
+    ],
+    primaryKey: ['session_id', 'id'],
+    foreignKeys: ['FOREIGN KEY (session_id) REFERENCES catalog.sessions(id)'],
+  },
+  session_topics: {
+    columns: [
+      'session_id text collate C not null',
+      'id text collate C not null',
+      "session_time text collate C not null default ''::text",
+      'duration_sec double precision not null default 0',
+      'topic_level bigint not null default 1',
+      "summary text collate C not null default ''::text",
+      'ordinal bigint not null',
+      'created_at_utc text collate C not null',
+    ],
+    primaryKey: ['session_id', 'id'],
+    foreignKeys: ['FOREIGN KEY (session_id) REFERENCES catalog.sessions(id)'],
+  },
+  session_transcript_paragraphs: {
+    columns: [
+      'session_id text collate C not null',
+      'id text collate C not null',
+      'start_sec double precision',
+      'end_sec double precision',
+      "speaker text collate C not null default ''::text",
+      "text text collate C not null default ''::text",
+      'ordinal bigint not null',
+      'created_at_utc text collate C not null',
+    ],
+    primaryKey: ['session_id', 'id'],
+    foreignKeys: ['FOREIGN KEY (session_id) REFERENCES catalog.sessions(id)'],
+  },
+  session_transcript_sentiment: {
+    columns: [
+      'session_id text collate C not null',
+      'id text collate C not null',
+      'start_sec double precision',
+      'end_sec double precision',
+      "sentiment text collate C not null default ''::text",
+      'sentiment_score double precision not null default 0',
+      "text text collate C not null default ''::text",
+      'ordinal bigint not null',
+      'created_at_utc text collate C not null',
+    ],
+    primaryKey: ['session_id', 'id'],
+    foreignKeys: ['FOREIGN KEY (session_id) REFERENCES catalog.sessions(id)'],
+  },
+  session_dashboards: {
+    columns: [
+      'session_id text collate C not null',
+      'id text collate C not null',
+      'config_json text collate C not null',
+      'created_by text collate C',
+      'created_by_turn_id text collate C',
+      'created_at_utc text collate C not null',
+      'updated_at_utc text collate C not null',
+    ],
+    primaryKey: ['session_id', 'id'],
+    foreignKeys: ['FOREIGN KEY (session_id) REFERENCES catalog.sessions(id)'],
+  },
+  session_meta: {
+    columns: [
+      'session_id text collate C not null',
+      'key text collate C not null',
+      'value text collate C not null',
+    ],
+    primaryKey: ['session_id', 'key'],
+    foreignKeys: ['FOREIGN KEY (session_id) REFERENCES catalog.sessions(id)'],
+  },
   $unique: ['catalog.users UNIQUE (google_sub)'],
   // owner-bootstrap D1: the role check and at most one owner per team.
   $checks: [
     "catalog.user_studio_memberships user_studio_memberships_role_check CHECK ((role = ANY (ARRAY['owner'::text, 'admin'::text, 'member'::text])))",
   ],
   $indexes: [
+    'CREATE INDEX idx_session_audio_ordinal ON catalog.session_audio_segments USING btree (session_id, ordinal)',
+    'CREATE INDEX idx_session_audio_r2_key ON catalog.session_audio_segments USING btree (session_id, r2_key)',
+    'CREATE INDEX idx_session_dashboards_created ON catalog.session_dashboards USING btree (session_id, created_at_utc)',
+    'CREATE INDEX idx_session_events_wall ON catalog.session_events USING btree (session_id, wall_time_utc, id)',
+    'CREATE INDEX idx_session_paragraphs_ordinal ON catalog.session_transcript_paragraphs USING btree (session_id, ordinal)',
+    'CREATE INDEX idx_session_sentiment_ordinal ON catalog.session_transcript_sentiment USING btree (session_id, ordinal)',
+    'CREATE INDEX idx_session_topics_ordinal ON catalog.session_topics USING btree (session_id, ordinal)',
+    'CREATE INDEX idx_session_words_ordinal ON catalog.session_transcript_words USING btree (session_id, ordinal)',
     'CREATE INDEX idx_sessions_show ON catalog.sessions USING btree (show_id)',
     'CREATE INDEX idx_show_grants_show ON catalog.show_grants USING btree (show_id)',
     'CREATE INDEX idx_shows_studio ON catalog.shows USING btree (studio_id)',
@@ -352,6 +498,23 @@ describe('the app role (design D3)', () => {
     await sql`insert into team_invites (studio_id, email_norm, invited_by_user_id, invited_at_utc)
               values ('st', 'e', 'u', ${t})`;
     await sql`insert into show_grants (user_id, show_id, granted_at_utc) values ('u', 'sh', ${t})`;
+    // session-tables D1: one row in each session table.
+    await sql`insert into session_events (session_id, id, wall_time_utc, frame_rate, category, message)
+              values ('se', 'e', ${t}, 24, 'c', 'm')`;
+    await sql`insert into session_transport (session_id) values ('se')`;
+    await sql`insert into session_audio_segments (session_id, id, ordinal, mime_type, r2_key, created_at_utc)
+              values ('se', 'a', 1, 'audio/webm', 'k', ${t})`;
+    await sql`insert into session_transcript_words (session_id, id, ordinal, created_at_utc)
+              values ('se', 'w', 0, ${t})`;
+    await sql`insert into session_topics (session_id, id, ordinal, created_at_utc)
+              values ('se', 'tp', 0, ${t})`;
+    await sql`insert into session_transcript_paragraphs (session_id, id, ordinal, created_at_utc)
+              values ('se', 'p', 0, ${t})`;
+    await sql`insert into session_transcript_sentiment (session_id, id, ordinal, created_at_utc)
+              values ('se', 's', 0, ${t})`;
+    await sql`insert into session_dashboards (session_id, id, config_json, created_at_utc, updated_at_utc)
+              values ('se', 'd', '{}', ${t}, ${t})`;
+    await sql`insert into session_meta (session_id, key, value) values ('se', 'k', 'v')`;
     for (const table of TABLES) {
       const n = await sql.unsafe(`select count(*)::int as n from ${table}`);
       expect(n[0]?.n, table).toBeGreaterThan(0);
@@ -482,11 +645,90 @@ describe('row-level security on every catalog table (catalog-roles D1, D2; catal
       // row: catalogPolicies.pg.test.ts), and kv has none. The 6b-1 allow-all `<table>_user_all`
       // policies are gone; the name now belongs only to the one `for all` rule of user_prefs and
       // show_grants (D2's naming).
+      // session-content-policies D1: so does each session table's.
+      const session = SESSION_TABLES.includes(t.relname);
       expect(byName[`${t.relname}_user_all`] !== undefined, t.relname).toBe(
-        t.relname === 'user_prefs' || t.relname === 'show_grants',
+        t.relname === 'user_prefs' || t.relname === 'show_grants' || session,
       );
+      // session-content-policies D1 (inverting session-tables D1's 7b-1 rule): each session table
+      // has exactly the system policy and the one `_user_all` content policy, and catalog_user
+      // holds select, insert, update and delete on it.
       const userPolicies = policies.filter((p) => (p.roles as string[]).includes('catalog_user'));
       expect(userPolicies.length > 0, t.relname).toBe(t.relname !== 'kv');
+      if (session) {
+        expect(policies.map((p) => p.policyname).sort(), t.relname).toEqual([
+          `${t.relname}_system_all`,
+          `${t.relname}_user_all`,
+        ]);
+        expect(byName[`${t.relname}_user_all`], t.relname).toEqual(['catalog_user']);
+        for (const priv of ['select', 'insert', 'update', 'delete']) {
+          const r =
+            await sql`select has_table_privilege('catalog_user', ${`catalog.${t.relname}`}, ${priv}) as p`;
+          expect(r[0]?.p, `${t.relname} ${priv}`).toBe(true);
+        }
+      }
+    }
+  });
+
+  it('A user binding is refused on the session tables (catalog-database; session-content-policies D1)', async () => {
+    const db = await createTestDatabase();
+    await seedPolicyFixture(connect(db.system));
+    const sql = connect(db.app);
+    // Session S is `ss1` (show s1 of team T); each case runs in a transaction that rolls back.
+    class Rollback extends Error {}
+    const run = async (uid: string | null, ...stmts: string[]) => {
+      let out!: { count: number } | { code: string };
+      await sql
+        .begin(async (tx) => {
+          await tx`select set_config('role', 'catalog_user', true),
+                          set_config('app.user_id', ${uid ?? ''}, true)`;
+          for (const stmt of stmts) {
+            try {
+              out = { count: (await tx.unsafe(stmt)).length };
+            } catch (e) {
+              out = { code: String((e as { code?: unknown }).code) };
+              break;
+            }
+          }
+          throw new Rollback();
+        })
+        .catch((e) => {
+          if (!(e instanceof Rollback)) throw e;
+        });
+      return out;
+    };
+    // Another team's owner, a member of T without a grant, no user id; then T's owner and a
+    // member granted s1.
+    for (const [uid, access] of [
+      ['outsider', false],
+      ['ungranted', false],
+      [null, false],
+      ['owner', true],
+      ['granted', true],
+    ] as const) {
+      for (const table of SESSION_TABLES) {
+        const who = `${table} as ${uid ?? 'no user id'}`;
+        const insert = (CONTENT_INSERT[table] as (s: string, id: string) => string)('ss1', 'new');
+        // session_transport holds one row per session: the insert follows a delete of it.
+        const insertStmts =
+          table === 'session_transport'
+            ? [`delete from session_transport where session_id = 'ss1'`, `${insert} returning 1`]
+            : [`${insert} returning 1`];
+        expect(await run(uid, `select 1 from ${table} where session_id = 'ss1'`), `select ${who}`).toEqual({
+          count: access ? 1 : 0,
+        });
+        expect(
+          await run(uid, `update ${table} set session_id = session_id where session_id = 'ss1' returning 1`),
+          `update ${who}`,
+        ).toEqual({ count: access ? 1 : 0 });
+        expect(
+          await run(uid, `delete from ${table} where session_id = 'ss1' returning 1`),
+          `delete ${who}`,
+        ).toEqual({ count: access ? 1 : 0 });
+        expect(await run(uid, ...insertStmts), `insert ${who}`).toEqual(
+          access ? { count: 1 } : { code: '42501' },
+        );
+      }
     }
   });
 
@@ -538,6 +780,46 @@ describe('row-level security on every catalog table (catalog-roles D1, D2; catal
         expect(del.count, `delete ${table}`).toBe(counts[table] + extra);
       }
     });
+  });
+});
+
+describe('the session tables migration (session-tables D1)', () => {
+  it("the migration resets every session's projection", async () => {
+    const name = `t_st_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    // The replay runs the role guards, which a parallel scratch role would trip (roleGuardLock.ts).
+    await holdRoleGuardLock(connect(connOptions('postgres', 'postgres')));
+    const root = connect(connOptions('postgres', 'postgres'));
+    await root.unsafe(`create database ${name} template template0`);
+    const sql = connect(connOptions('postgres', name));
+    const earlier = readdirSync(MIGRATIONS)
+      .filter((f) => f.endsWith('.sql') && f < SESSION_TABLES_MIGRATION)
+      .sort();
+    expect(earlier.at(-1)).toBe('20261007000000_catalog_policies.sql');
+    for (const f of earlier) {
+      const text = readFileSync(resolve(MIGRATIONS, f), 'utf8');
+      await sql.begin((tx) => tx.unsafe(text));
+    }
+    await sql`insert into catalog.sessions (id, event_count, max_timecode_total_frames, is_rolling,
+                current_take, transport_elapsed_frames, roll_started_at_utc)
+              values ('se', 7, 1234, 1, 3, 456, '2026-10-08T00:00:00.000Z')`;
+    const text = readFileSync(resolve(MIGRATIONS, SESSION_TABLES_MIGRATION), 'utf8');
+    await sql.begin((tx) => tx.unsafe(text));
+    const rows = await sql`select event_count::int as event_count,
+                                  max_timecode_total_frames::int as max_timecode_total_frames,
+                                  is_rolling::int as is_rolling, current_take::int as current_take,
+                                  transport_elapsed_frames::int as transport_elapsed_frames,
+                                  roll_started_at_utc
+                           from catalog.sessions where id = 'se'`;
+    expect(rows.map((r) => ({ ...r }))).toEqual([
+      {
+        event_count: 0,
+        max_timecode_total_frames: null,
+        is_rolling: 0,
+        current_take: 0,
+        transport_elapsed_frames: 0,
+        roll_started_at_utc: null,
+      },
+    ]);
   });
 });
 

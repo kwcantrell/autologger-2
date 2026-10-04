@@ -168,38 +168,6 @@ for the same session is permitted.
   ceiling is not exceeded
 - **THEN** neither is rejected as concurrent on account of the other
 
-### Requirement: Downloaded audio is ingested as a single supported-container segment
-
-On a successful download the server SHALL attach the downloaded audio as **exactly one**
-session audio segment, reusing the existing recorder ingestion path: a synchronous hub RPC
-records the segment metadata and returns its blob key, then the router layer writes the
-downloaded bytes to that key in the audio blob store. The fetch SHALL pin `yt-dlp`'s format
-selection to the containers the audio path supports, and the stored extension and
-`Content-Type` SHALL be derived from the **actually produced file**, not assumed. If the
-produced container is not one the audio path supports, the request SHALL fail cleanly
-(`502 {detail}`) rather than storing a mislabeled, undecodable blob. The audio SHALL be
-stored as downloaded (no transcode). After a successful import the segment SHALL appear in
-the session's audio-segment listing exactly as a recorded segment would (it renders a
-client-computed waveform like any segment with no server-side peaks).
-
-#### Scenario: Import produces one playable segment
-
-- **WHEN** an import successfully downloads a video's audio in a supported container
-- **THEN** the session's audio-segment listing gains exactly one new segment whose bytes are
-  the downloaded container, retrievable and seekable through the existing audio-segment blob
-  route, with a `Content-Type` matching the produced container
-
-#### Scenario: Unsupported produced container fails cleanly
-
-- **WHEN** `yt-dlp` produces a container the audio path does not support
-- **THEN** the request fails with `502 {detail}` and no segment (and no blob) is attached
-
-#### Scenario: Segment metadata write stays a synchronous hub RPC
-
-- **WHEN** the segment metadata is recorded
-- **THEN** it is written by a synchronous hub RPC inside a transaction, with the async blob
-  write performed in the router layer (no `await` inside the hub method)
-
 ### Requirement: Publish-date opt-in writes the session episode date via the catalog layer
 
 When `use_publish_date` is true and the fetched video metadata carries a usable upload date,
@@ -362,7 +330,11 @@ positive number SHALL be rejected as a failed import rather than producing a zer
 If the session's transport is actively rolling (a live recording in progress) when a
 `youtube-import` request would proceed, the server SHALL refuse it with `409 {detail}` and
 SHALL NOT synthesize a take or advance/clobber the live roll. This protects the in-flight
-recording, which the import's transport advance would otherwise silently end and corrupt.
+recording, which the import's transport advance would otherwise silently end and corrupt. The
+check SHALL also hold for a take that starts while the import is in flight: the transaction that
+anchors the imported take SHALL re-check the transport and, if it is rolling, write nothing, and
+the request SHALL be refused with the same `409 {detail}`, with the attached segment rolled back
+as the earlier rolling refusal rolls it back (ADR 0021 slice 7b-1).
 
 #### Scenario: Import during a live recording is refused
 
@@ -370,6 +342,13 @@ recording, which the import's transport advance would otherwise silently end and
   true
 - **THEN** the response is `409 {detail}`, no subprocess/synthesis clobbers the live roll,
   and the recording continues unaffected
+
+#### Scenario: A take started during the import is not clobbered
+
+- **WHEN** a `youtube-import` passes its rolling checks, and a take starts before the imported
+  take is anchored
+- **THEN** the response is the same `409 {detail}`, the session gains no audio segment and no
+  `Recording N` events, and the transport is still rolling with its take unchanged
 
 ### Requirement: Existing anchorless imports are not retroactively changed
 
@@ -381,3 +360,36 @@ anchored take).
 
 - **WHEN** the server runs against a session that already holds an anchorless imported segment
 - **THEN** that segment is left exactly as it was; only a new import produces an anchored take
+
+### Requirement: Downloaded audio is ingested as one supported-container segment through a transactional hub RPC
+
+On a successful download the server SHALL attach the downloaded audio as **exactly one**
+session audio segment, reusing the existing recorder ingestion path: a transactional hub RPC
+records the segment metadata and returns its blob key, then the router layer writes the
+downloaded bytes to that key in the audio blob store. The fetch SHALL pin `yt-dlp`'s format
+selection to the containers the audio path supports, and the stored extension and
+`Content-Type` SHALL be derived from the **actually produced file**, not assumed. If the
+produced container is not one the audio path supports, the request SHALL fail cleanly
+(`502 {detail}`) rather than storing a mislabeled, undecodable blob. The audio SHALL be
+stored as downloaded (no transcode). After a successful import the segment SHALL appear in
+the session's audio-segment listing exactly as a recorded segment would (it renders a
+client-computed waveform like any segment with no server-side peaks).
+
+#### Scenario: Import produces one playable segment
+
+- **WHEN** an import successfully downloads a video's audio in a supported container
+- **THEN** the session's audio-segment listing gains exactly one new segment whose bytes are
+  the downloaded container, retrievable and seekable through the existing audio-segment blob
+  route, with a `Content-Type` matching the produced container
+
+#### Scenario: Unsupported produced container fails cleanly
+
+- **WHEN** `yt-dlp` produces a container the audio path does not support
+- **THEN** the request fails with `502 {detail}` and no segment (and no blob) is attached
+
+#### Scenario: Segment metadata write stays a transactional hub RPC
+
+- **WHEN** the segment metadata is recorded
+- **THEN** it is written by one hub RPC inside a transaction, whose body awaits only its own
+  transaction's statements, with the blob write performed in the router layer after the RPC
+  returns

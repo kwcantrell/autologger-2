@@ -96,7 +96,9 @@ Slice order:
        - The service roles get their own password, separate from the superuser's.
        - Studio and postgres-meta are deferred to a later slice (owner, 2026-09-30, after the
          panel);
-   - 1.3 `postgres-backups`;
+   - 1.3 `postgres-backups`. Not built yet, and a **cutover blocker** (owner, 2026-10-03): from
+     slice 7b-1 session content lives in Postgres too, and nothing backs it up. It is done as its
+     own change before slice 11;
    - 1.4, run before 1.3 (owner, 2026-09-30), split into:
      - 1.4a `retire-e2e`: retire the Playwright e2e harness; the router's security cases are
        kept as `docker/scripts/test_router.sh`. **Size exception:** 1,410 counted lines,
@@ -151,7 +153,9 @@ Slice order:
    5. sessions' active-show read-then-write and show-check-then-create need transactions or
       constraints;
    6. the log-import job uses the request's catalog handle inside a detached job;
-   7. never hold a session hub across an await;
+   7. ~~never hold a session hub across an await~~ Replaced in 7a by the rule below
+      (async-session-hub design D6): a handler may hold a hub across that hub's own calls, and
+      re-resolves it after a long non-hub `await`;
    8. every `requireTeamAdmin` gate reads the role outside the transaction that then writes, so a
       demoted admin's in-flight request still completes (re-check inside the transaction, or
       RLS in slice 6);
@@ -276,20 +280,32 @@ Slice order:
      - `503` + `Retry-After` for timeouts and exhausted retries, instead of the generic `500`;
      - foreign keys from memberships, invites and shows to `studio_definitions` (built-ins seeded
        as rows, `23503` mapped), instead of in-transaction re-checks and the create purge;
-     - a `live_revision` column with a hub counter, instead of the in-process mirror chain
-       (needed once slice 8 runs several processes);
-     - reconcile-on-read, or a retried dirty set, instead of log-and-succeed for mirror failures;
-     - a rate limit on `/auth/google/start` and on team writes, instead of the periodic purge
-       alone (a sustained flood can still exhaust SERIALIZABLE retries, and with 5 runs a
-       contended request can do up to 5/3 the database work);
+     - ~~a `live_revision` column with a hub counter, instead of the in-process mirror chain
+       (needed once slice 8 runs several processes)~~ resolved by 7b-1: the projection commits
+       with the session write;
+     - ~~reconcile-on-read, or a retried dirty set, instead of log-and-succeed for mirror
+       failures~~ resolved by 7b-1: a projection failure fails the write;
+     - a rate limit on `/auth/google/start`, on team writes and on session writes, instead of the
+       periodic purge alone (a sustained flood can still exhaust SERIALIZABLE retries, and with 5
+       runs a contended request can do up to 5/3 the database work; one member can fill the
+       4-connection session pool and slow every session's calls to the 10-second deadline, 7b-1);
      - the 5 s root deadline's value, and a distinct timeout for root writes;
      - registry display names that go stale across awaits (#14);
      - an email-indexed user lookup, so an invite doesn't read all of `users`;
-     - stale SQLite wording in the frozen `api-contract-freeze` spec: `SQLITE_FULL` as the example
-       commit failure, and "the SQLite column `shows.next_episode`" (4e panel);
+     - stale SQLite wording in the frozen `api-contract-freeze` spec: ~~`SQLITE_FULL` as the
+       example commit failure~~ (replaced at the 7b-1 archive), and "the SQLite column
+       `shows.next_episode`" (4e panel);
      - ~~two concurrent session creates for one show exhaust the SERIALIZABLE retries under
        load~~ resolved by `catalog-retry-backoff` (2026-10-02): lockstep re-runs exhausted 60/150
        transactions at 5 writers; jitter with 5 runs measured 0/240 at 8 writers;
+     - the Postgres session adapter's fixed per-transaction overhead (about 2.2 ms for an empty
+       locked transaction against about 0.4 ms for a hand-written 9-round-trip one; root
+       statements about 0.4 ms against 0.03 ms raw): profile and optimise it; it also lengthens
+       how long a session call holds a pool slot (the 7b-1 panel's saturation risk) (owner,
+       2026-10-03);
+     - the 7b-2 user-bound session path (median `addEvent` 11.9-15.5 ms against 7b-1's 5.3-5.4 ms,
+       above the 10 ms stop rule, accepted by the owner 2026-10-03): investigate once database-side
+       observability exists (per-statement timings, plans), not before;
      - (5a) a foreign key from `catalog.users` to `auth.users`;
      - (5a) an egress allowlist for GoTrue: `auth-egress` reaches the internet, the LAN and the
        host's bridge address, while GoTrue holds `JWT_SECRET` and its database password;
@@ -711,7 +727,209 @@ Slice order:
        test), `server/src/test/rewritingCatalog.ts` (rewrites one user-bound statement's
        outcome), and `server/src/test/pg/policyFixture.ts` (the design D10 fixture shared by the
        helper and matrix tests); the probe gained `CATALOG_PROBE_ANALYZE=1`.
-7. Session tables, revision, version checks and the audited overwrite.
+7. Session tables, revision, version checks and the audited overwrite. Split (owner, 2026-10-03)
+   into three changes, async first, as slice 3 made the catalog async before slice 4 moved it:
+   - 7a `async-session-hub`: the session hub goes async, still on SQLite, with no HTTP or
+     WebSocket change for serial requests. Merged (PR #42) and live-checked on dev and stage
+     2026-10-03.
+   - 7b: the session tables in Postgres schema `catalog`, ported faithfully as 4a ported the
+     catalog; the postgres.js session adapter and the wiring; the `sessions` projection written
+     inside the hub's write transaction, retiring the mirror chain; row-level security on the
+     content tables. Split (owner, 2026-10-03) like 6b into:
+     - 7b-1 `session-tables`: the nine tables, the adapter's session mode, the wiring and the
+       projection in the write transaction. Every session statement runs as the system task
+       `session-hub` against allow-all system policies, so serial requests do not change.
+       Implemented 2026-10-03 on `supabase-7b1-session-tables`; the after-measurements, merge and
+       the live dev and stage checks are pending;
+     - 7b-2 `session-content-policies`: the content policies (show access, as in 6a) and every
+       hub call bound to its caller (the signed-in user, or a reviewed system task: the hub's open
+       and lease alarm, token-only Companion calls, undo steps, the merge script). Implemented
+       2026-10-03 on `supabase-7b2-session-content-policies`; the merge and the live dev and stage
+       checks are pending.
+   - 7c: `sessions.revision`, per-row versions, opt-in version checks, `409` with the current row,
+     the overwrite dialog and the audit. A contract delta; Companion routes stay unchecked.
+
+   Owner decisions (owner, 2026-10-03):
+   1. **split 7a / 7b / 7c, async first:** 7a converts the call graph while the store is still
+      SQLite, so 7b's diff is storage alone;
+   2. **per-row versions** (7c), not one session-wide version;
+   3. **opt-in version checks** (7c): a request without a version keeps today's last-writer-wins;
+   4. **a faithful port** (7b): the session tables keep their types and semantics, as 4a did for
+      the catalog.
+
+   After the adversarial panel (owner, 2026-10-03):
+   - **fix all five interleaving sequences in 7a:** under a per-call lock, two handlers that
+     resume in one tick alternate between their hub calls, so the PUT event metadata merge, the
+     import's recording ordinal, the Companion transport toggle, the transcript remap and the
+     log-import duplicate check each became one hub method, tested by firing the conflicting pair
+     at once;
+   - **no transaction deadline:** hub bodies await only their own SQL (revisit item below);
+   - **a failed lease alarm logs and re-arms** with a backoff of 1 s, doubling, capped at the 40 s
+     stale threshold, reset on success;
+   - **the spec states observables only** (no dirty read, atomic read-then-write methods,
+     broadcasts in commit order, no self-deadlock, a named error on a closed hub); whether 7b
+     keeps an in-process lock is 7b's choice.
+
+   **7a's mechanism.** `SessionSql` is async, and `tx(fn)` hands its body a handle scoped to the
+   transaction (`t.tx` joins it; any error fails the whole transaction; misuse rejects with
+   `SessionTxMisuseError`). Each hub owns one FIFO lock, and every storage call takes it, reads
+   included: a write runs `BEGIN IMMEDIATE`, the body, `COMMIT`, then flushes its broadcasts before
+   the lock is released; a read runs under the lock without a transaction. The broadcast queue
+   belongs to the transaction, so a relayed Companion command is sent at once. A hub call from
+   inside the same hub's transaction rejects instead of deadlocking. The five sequences are the
+   hub methods `updateEvent` (with a metadata merge), `addImportedAudioSegment`, `toggleTake`,
+   `replaceTranscriptWordsRemapped` and `addEventAtTotalFramesIfAbsent`. A failed `ROLLBACK`
+   rejects the call and closes the hub (queued calls get `SessionHubClosedError`), and the next
+   `get` opens a fresh one. The lease alarm is armed outside the transaction's async context, runs
+   through the lock, and re-arms with the backoff above after a failure. A handler may hold a hub
+   across its own calls and re-resolves it after a long non-hub `await`.
+
+   **Revisit (owner, 2026-10-03):** ~~a hub transaction that hangs and never resolves holds the
+   session's lock and soft-locks that session (every later call on it queues forever); revisit a
+   deadline or a lock-wait timeout.~~ Resolved by 7b-1: session transactions have the catalog's
+   10-second deadline (below).
+
+   **Slice 7b hazards** (async-session-hub design D11). They go live once session statements do
+   I/O:
+   1. the observables of the `core-ports-architecture` requirement must hold without the embedded
+      lock: every write transaction takes the `sessions` row lock first, and a multi-statement
+      read needs one snapshot (one statement, or a `REPEATABLE READ` read transaction);
+   2. broadcast flush order versus commit order across two transactions on one session (keep a
+      per-session ordering gate, or order frames by revision);
+   3. the sequences 7a documents rather than fixes (async-session-hub design D7: S1, S2, S5, S7,
+      S8 and S11), which split on any request once statements do I/O;
+   4. a hub body re-run after a `40001` retry must have only database effects: drop the held
+      broadcasts per attempt; `setAlarm` inside the lease bodies re-arms on every run (harmless,
+      one slot); the method callbacks (`mergeMetadata`, `remap`) must stay pure;
+   5. a `create_event` insert still in flight when its turn ends is not counted in `created`;
+   6. the registry stops owning connections: eviction, `open()`, `.db` creation on read paths and
+      the failed-rollback close change meaning, and the adapter sets the unconfirmed-rollback
+      policy;
+   7. the mirror chain retires (slice 4 hazards 3, 4 and 17, and the `live_revision` follow-up).
+
+   **7b-1 `session-tables`** (owner decisions, 2026-10-03):
+   1. **split 7b like 6b:** 7b-1 builds the tables, the adapter, the wiring and the projection
+      inside the write transaction, as the system task `session-hub`; 7b-2 adds the content
+      policies and user-bound hub calls;
+   2. **serialization by row lock under `READ COMMITTED`:** every session write transaction
+      first locks the session's `catalog.sessions` row (`FOR UPDATE`); a multi-statement read
+      runs in one `REPEATABLE READ READ ONLY` snapshot. The in-process FIFO lock stays, to keep
+      broadcast order, until slice 9;
+   3. **start empty,** as 4c did: the `sessions/*.db` files stay untouched for slice 11's
+      import, and every existing session's live projection resets to an empty session's;
+   4. **backups** (1.3) were never built: a cutover blocker, done as their own change before
+      slice 11, not in 7b.
+
+   After the adversarial panel (owner, 2026-10-03):
+   - **session calls get their own pool** of 4 connections beside the catalog's 3 root and 5
+     transaction connections (12 of the role's 20 per process), so heavy session traffic can slow
+     only session calls, never sign-in or catalog writes;
+   - **S4/S5 are folded in:** `anchorImportedTake` re-checks `is_rolling` inside its transaction
+     and refuses; each import route answers its existing `409` and rolls the segment back as its
+     post-blob rolling refusal does;
+   - **a projection failure fails the write:** api-contract-freeze "Catalog mirror failures don't
+     fail saved session changes" is retired;
+   - **the stop rule:** a median `addEvent` above 5 ms, or the 31,621-word transcript replace
+     above 10 s, measured in the stack (dev app container to dev database).
+   - **the stop rule raised after measurement (owner, 2026-10-03):** in the dev stack the median
+     `addEvent` measured 5.4-5.6 ms over two runs (7a on SQLite: 0.17 ms), `listEvents` 4.6-5.0 ms
+     (7a: 0.43 ms) and the 31,621-word replace 0.39-0.40 s. Most of an `addEvent` is about 2.2 ms
+     fixed per session transaction inside the adapter (an empty locked session transaction
+     2182 µs; a root `select 1` 412 µs against 29 µs on a raw connection). The owner accepted
+     this as imperceptible for live logging and raised the `addEvent` limit to 10 ms; the replace
+     limit stays 10 s. Optimising the overhead is a revisit item.
+
+   **7b-1's mechanism.** Migration `20261008000000_session_tables.sql` adds nine tables in schema
+   `catalog` (`events` and `meta` renamed `session_events` and `session_meta`), each with
+   `session_id` referencing `catalog.sessions` and leading every key and index, row-level
+   security with only the `_system_all` policy, and `catalog_user`'s privileges revoked; it
+   resets every session's projection. The catalog adapter gains a session mode (`READ
+   COMMITTED`, the row lock pipelined with `BEGIN` and the bindings preamble, retry on `40P01`
+   only, `SessionNotFoundError` for a missing row) and a snapshot mode, both on the 4-connection
+   session pool, with the catalog's 10-second deadline; every connection sets
+   `extra_float_digits` so floats read back exactly. `PostgresSessionDb` hands each hub a
+   `SessionStorage` (`tx`, `snapshot`) over `bindSystem('session-hub')`. Every session statement
+   names `session_id` (a repo test checks it). Each hub write attempt gets a fresh bound core,
+   whose broadcasts and alarm are applied after `COMMIT`, once; a write that changed the events
+   or the transport sets the six projection columns in one statement before `COMMIT`. The mirror
+   chain, `projectSessionLive` and the `session-mirror` binding are gone. The hub owns no
+   connection, and the anchor re-checks the transport as above. Text with NUL in session content
+   is refused (`400`, nothing saved).
+
+   **The 7b hazards after 7b-1:**
+   1. resolved: the row lock first and one snapshot per read; the FIFO lock also stays;
+   2. held in-process by the FIFO lock; carried to slice 9 for several processes;
+   3. S4/S5 resolved (the anchor re-checks inside its transaction); S1, S2, S7, S8 and S11
+      carried, and their windows widen from one tick to any concurrent request: each response
+      field is still one a serial order produces, with unchanged shapes and statuses;
+   4. resolved: broadcasts and the alarm per attempt; `mergeMetadata` and `remap` stay pure;
+   5. carried unchanged (7a counts successful inserts only);
+   6. resolved: the registry and the hubs own no connection; the adapter retires a connection
+      whose rollback is unconfirmed;
+   7. resolved, with slice 4 hazards 3, 4 and 17 and the `live_revision` follow-up.
+
+   **Constraints left for 7b-2.** Its per-user binding is not a one-line swap:
+   - the seam carries no caller: one storage root per hub serves every user on the session, so
+     the binding is passed per call through the seam (each `tx` and `snapshot`, or a bound
+     storage per hub method), not per hub;
+   - the row lock and the projection update run under the caller's policy
+     (`sessions_user_update`): a writer without access gets zero rows, which 7b-1 reports as
+     `SessionNotFoundError`, so 7b-2 must tell missing access from a missing session and answer
+     the refusal the routes already give;
+   - background writers have no caller: the lease alarm, transcript generation, AI turns
+     (`create_event`, `create_topic`, dashboards) and the log-import job need reviewed system
+     bindings of their own, as 6b-1 gave detached catalog work.
+
+   **7b-2 `session-content-policies`** (owner decisions, 2026-10-03):
+   1. **full show access** (`accessible_shows`) for read, insert, update and delete on all nine
+      tables: the rule `requireSession` applies, whatever a grant's `can_write`; a member without
+      a grant keeps seeing session titles only;
+   2. **AI turns and the log-import job run as the user who started them**, so the database
+      applies that user's current access to every statement;
+   3. **no access is told from no session** by a definer helper, `catalog.session_exists(id)`;
+   4. **one change**, landed as reviewable commits.
+
+   After the adversarial panel (owner, 2026-10-03):
+   - **P1, undo steps run as the reviewed system task `session-undo`:** the imports' and the
+     upload's segment deletes and the regenerate's snapshot delete remove only what the same
+     request wrote or replaced, and cannot themselves be refused after a revoke. After the 5.1
+     stop the owner added that the YouTube import's undo after its blob put also deletes the
+     stored file, best-effort, as the local import's does (fixing an orphan file after any failed
+     YouTube import);
+   - **P2, disabled accounts are stated, unchanged:** access means a membership or a grant; a
+     running AI turn or log-import job of a disabled account finishes.
+
+   **7b-2's mechanism.** Migration `20261009000000_session_content_policies.sql` adds one
+   `<table>_user_all` policy per session table (a correlated `exists` on `catalog.sessions` by
+   primary key against `accessible_shows`, flat in the number of sessions), restores
+   `catalog_user`'s privileges, and adds `catalog.session_exists`. Session-core's branded
+   `SessionCaller` (`userCaller`, `systemCaller`) is passed per call through
+   `SessionStorage.tx`/`snapshot`; `PostgresSessionDb` holds the catalog root and binds each call.
+   The registry resolves a `SessionHubEntry` (socket members and `as(caller)`), so a hub call
+   without a caller does not compile. A refused user lock asks `session_exists` and raises
+   `SessionAccessDeniedError` (a neutral message, no id) or `SessionNotFoundError`; a user snapshot
+   pipelines one probe with `BEGIN`. `app.onError` answers the refusal `404 Session not found`, the
+   YouTube import lets it through its `502` wrapper, and the Companion routes answer their
+   no-active-session `409` or the masked `200` state. The reviewed-bindings scan covers
+   `systemCaller(`, `userCaller(` (two router files), `new PostgresSessionDb(` and caller literals;
+   the 7b-1 system task is retired for `session-open`, `session-lease-alarm`, `session-undo` and
+   `merge-audio-script`.
+
+   **The 7b-1 constraints, met:**
+   - the binding is passed per call through the seam, not per hub; views over one hub share its
+     lock, so callers interleave in one FIFO order;
+   - the row lock and the projection run under the caller's policy; missing access is told from a
+     missing session and answered as each route already answers missing access;
+   - writers with no caller of their own run as reviewed system tasks (the open, the lease alarm,
+     token-only Companion calls, undo steps, the merge script); AI turns and the log-import job
+     carry their starting user.
+
+   **Measurement** (dev stack, design D11, `spike/bench7b2.mts`, every hub call as a user, 3,000
+   calls x 3 runs): median `addEvent` 11.9 ms at about 300 accessible sessions and 15.5 ms at about
+   3,000 (7b-1 baseline 5.3-5.4 ms), `listEvents` 7.7 ms and 10.6 ms (baseline 5.0-5.2 ms), the
+   31,621-word replace 0.50 s and 0.49 s. This trips the 10 ms stop rule. The owner accepted it
+   without investigating (2026-10-03): performance work waits for database-side observability, so
+   it is measured rather than guessed. The cause is not yet known.
 8. Session leases.
 9. Realtime replaces the WebSocket protocol.
 10. Blobs to Supabase Storage.
@@ -735,6 +953,8 @@ Slice order:
   conflicts. Each change needs a delta amending `api-contract-freeze`.
 - The dev loop gains roughly 10 containers per stack. Offline native dev goes away.
 - Self-hosting makes backups, upgrades and secret rotation the owner's job.
+- Backups are a cutover blocker (owner, 2026-10-03): from slice 7b-1 session content is in
+  Postgres and nothing backs it up yet; slice 1.3 is done as its own change before slice 11.
 - Main is frozen until cutover, and the only prod feedback comes at cutover.
 - Revisit if:
   - the Companion spike fails and a relay would keep the old WebSocket protocol alive anyway; or

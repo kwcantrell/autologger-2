@@ -2,7 +2,8 @@
 // backfill of `20261007000000_catalog_policies.sql`. Each helper returns exactly its set (or
 // boolean) for each fixture actor, an unknown id and null, called as `catalog_user`; each is a
 // definer function owned by `postgres` with a pinned `search_path` and `enable_seqscan = off`,
-// executable by `catalog_user` only. The backfill gives every team without a settings row the
+// executable by `catalog_user` only. session-content-policies D1 adds the eighth, `session_exists`
+// (`20261009000000_session_content_policies.sql`). The backfill gives every team without a settings row the
 // server's default shape, with fresh category ids, and leaves stored rows alone.
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -38,6 +39,7 @@ const HELPERS = [
   ...SET_HELPERS.map((h) => `catalog.${h}(text)`),
   'catalog.studio_exists(text)',
   'catalog.show_exists(text)',
+  'catalog.session_exists(text)',
 ];
 
 const CO_T = ['admin', 'granted', 'owner', 'ungranted'];
@@ -131,7 +133,7 @@ describe('the policy helpers (catalog-policies D1)', () => {
     });
   }
 
-  it('studio_exists and show_exists see every row and nothing else', async () => {
+  it('studio_exists, show_exists and session_exists see every row and nothing else', async () => {
     for (const [fn, id, want] of [
       ['studio_exists', T, true],
       ['studio_exists', U, true],
@@ -139,6 +141,9 @@ describe('the policy helpers (catalog-policies D1)', () => {
       ['show_exists', 's1', true],
       ['show_exists', 'su', true],
       ['show_exists', 'no-such-show', false],
+      ['session_exists', 'ss1', true],
+      ['session_exists', 'ssu', true],
+      ['session_exists', 'no-such-session', false],
     ] as const) {
       // Called by `outsider`, who is not a member of T: the answer is still the row's existence.
       const [r] = await asUser('outsider', (tx) =>

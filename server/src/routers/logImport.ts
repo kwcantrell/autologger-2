@@ -11,7 +11,7 @@ import {
   timedTranscriptTokens,
 } from '@autologger/log-import';
 import type { Config } from '@autologger/ports';
-import type { SessionHubFacade, TimecodeCtx } from '@autologger/session-core';
+import { type SessionHubFacade, type TimecodeCtx, userCaller } from '@autologger/session-core';
 import { generateTranscriptWords, TranscriptGenerateError } from '@autologger/transcription';
 import { Hono } from 'hono';
 import { z } from 'zod';
@@ -50,13 +50,14 @@ function categoriesFromShowRow(row: { categories_json?: unknown }): CategoryReco
 /** Ensure timed transcript words exist; generate via DeepGram when missing. */
 export async function ensureTimedTranscript(input: {
   sessionId: string;
-  getHub: () => SessionHubFacade;
+  /** Resolves the hub at the point of use; it is re-resolved after the generation's await. */
+  getHub: () => Promise<SessionHubFacade>;
   config: Config;
   audio: Bindings['ports']['audio'];
   ctx: TimecodeCtx;
   onProgress: (line: string) => void;
 }): Promise<TranscriptToken[]> {
-  let tokens = timedTranscriptTokens(input.getHub());
+  let tokens = await timedTranscriptTokens(await input.getHub());
   if (tokens.length > 0) {
     input.onProgress(`Transcript already present (${tokens.length} timed words).`);
     return tokens;
@@ -71,7 +72,7 @@ export async function ensureTimedTranscript(input: {
       ctx: input.ctx,
       sessionId: input.sessionId,
     });
-    const next = timedTranscriptTokens(input.getHub());
+    const next = await timedTranscriptTokens(await input.getHub());
     if (next.length === 0) {
       throw new Error(
         `Transcript generation finished (${words.length} words) but none have usable timing for sync.`,
@@ -149,7 +150,6 @@ logImportRouter.post('/api/shows/:showId/log-import', async (c) => {
 
   const job = createLogImportJob(c.env.ports.clock, user.id);
   const env = c.env;
-  const mirror = env.ports.mirror;
   const spreadsheetUrl = parsed.data.spreadsheet_url;
   const categories = categoriesFromShowRow(show);
 
@@ -188,7 +188,10 @@ logImportRouter.post('/api/shows/:showId/log-import', async (c) => {
         const sessionId = String(session.id);
         appendLogImportLine(job.id, `Importing “${title}” → session ${sessionId.slice(0, 8)}…`);
         try {
-          const getHub = () => env.ports.sessions.get(sessionId);
+          // The job's hub calls run as its creator (session-content-policies D7, owner decision 2):
+          // the database applies the creator's current access to every statement.
+          const getHub = async () =>
+            (await env.ports.sessions.get(sessionId)).as(userCaller(job.createdByUserId));
           const row = await catalog.sessions.getSessionJoinedRow(sessionId, {
             includeHidden: true,
           });
@@ -203,12 +206,11 @@ logImportRouter.post('/api/shows/:showId/log-import', async (c) => {
             onProgress: (line) => appendLogImportLine(job.id, `  ${title}: ${line}`),
           });
           const result = await runSessionLogImport({
-            hub: getHub(),
+            hub: await getHub(),
             rows: sheet.rows,
             categories,
             ctx,
             transcript,
-            projectLive: () => mirror.mirror(sessionId),
           });
           for (const line of result.lines) {
             appendLogImportLine(job.id, `  ${title}: ${line}`);

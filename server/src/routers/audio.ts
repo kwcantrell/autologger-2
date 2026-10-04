@@ -5,13 +5,26 @@
 
 import { audioSegmentWaveformBodySchema } from '@autologger/contract';
 import type { BlobRange } from '@autologger/ports';
-import type { AudioSegmentMeta } from '@autologger/session-core';
+import {
+  type AudioSegmentMeta,
+  type SessionHubFacade,
+  systemCaller,
+} from '@autologger/session-core';
 import { InvalidRangeError } from '@autologger/storage';
+import type { Context } from 'hono';
 import { Hono } from 'hono';
 import type { AppEnv } from '../appEnv';
 import { isCompressibleResponseType } from '../compressibleTypes';
 import { ApiError } from '../httpError';
 import { getSessionHub, parseOptionalMarkedAt, requireSession } from './_helpers';
+
+/** An undo step's hub (session-content-policies D7, owner decision P1): a request whose later step
+ * failed, or was refused after a revoke, removes only what it wrote itself (the segment it just
+ * created, or the snapshot its regenerate replaced) as the reviewed system task `session-undo`, so
+ * the undo cannot itself be refused. */
+async function undoHub(c: Context<AppEnv>, sessionId: string): Promise<SessionHubFacade> {
+  return (await c.env.ports.sessions.get(sessionId)).as(systemCaller('session-undo'));
+}
 
 export const audioRouter = new Hono<AppEnv>();
 
@@ -176,7 +189,7 @@ export async function readLocalAudioImportBody(
 audioRouter.get('/api/sessions/:sessionId/audio/segments', async (c) => {
   const sessionId = c.req.param('sessionId');
   await requireSession(c, sessionId);
-  const segs = getSessionHub(c, sessionId).listAudioSegments();
+  const segs = await (await getSessionHub(c, sessionId)).listAudioSegments();
   return c.json({
     segments: segs.map((s) => segmentApiDict(sessionId, s)),
     has_audio: segs.length > 0,
@@ -195,9 +208,12 @@ audioRouter.post('/api/sessions/:sessionId/audio/segments', async (c) => {
   const started = parseOptionalMarkedAt(c.req.query('started_at_utc'));
   const ended = parseOptionalMarkedAt(c.req.query('ended_at_utc'));
   const roRaw = c.req.query('recording_ordinal');
-  const recordingOrdinal = roRaw !== undefined && /^\d+$/.test(roRaw) ? Number(roRaw) : null;
+  // A digit string too large for a safe integer is treated as absent, as a non-digit one is, so it
+  // never reaches the session table's bigint out of range (session-tables D5, A11).
+  const roNum = roRaw !== undefined && /^\d+$/.test(roRaw) ? Number(roRaw) : null;
+  const recordingOrdinal = roNum !== null && Number.isSafeInteger(roNum) ? roNum : null;
 
-  const seg = getSessionHub(c, sessionId).addAudioSegment({
+  const seg = await (await getSessionHub(c, sessionId)).addAudioSegment({
     sessionId,
     mimeType: mime,
     startedAtUtc: started,
@@ -208,7 +224,7 @@ audioRouter.post('/api/sessions/:sessionId/audio/segments', async (c) => {
     await c.env.ports.audio.put(seg.r2_key, payload, { contentType: seg.mime_type });
   } catch (e) {
     // Roll back the dangling metadata row if the bytes never landed.
-    getSessionHub(c, sessionId).deleteAudioSegment(seg.id);
+    await (await undoHub(c, sessionId)).deleteAudioSegment(seg.id);
     throw e;
   }
   return c.json(segmentApiDict(sessionId, seg));
@@ -229,13 +245,13 @@ audioRouter.post('/api/sessions/:sessionId/audio/segments/sync-from-disk', async
     cursor = listed.truncated ? listed.cursor : undefined;
   } while (cursor);
 
-  const hub = getSessionHub(c, sessionId);
-  const out = hub.syncAudioFromBlobs(known);
+  const hub = await getSessionHub(c, sessionId);
+  const out = await hub.syncAudioFromBlobs(known);
   return c.json({
     inserted: out.inserted,
     updated: 0,
     scanned: known.length,
-    has_audio: hub.listAudioSegments().length > 0,
+    has_audio: (await hub.listAudioSegments()).length > 0,
   });
 });
 
@@ -243,7 +259,7 @@ audioRouter.get('/api/sessions/:sessionId/audio/segments/:segmentId', async (c) 
   const sessionId = c.req.param('sessionId');
   const segmentId = c.req.param('segmentId');
   await requireSession(c, sessionId);
-  const got = getSessionHub(c, sessionId).getAudioSegmentKey(segmentId);
+  const got = await (await getSessionHub(c, sessionId)).getAudioSegmentKey(segmentId);
   if (got === null) throw new ApiError(404, 'Audio segment not found.');
   // Defense in depth for the "audio responses are never compressible"
   // invariant (see normalizeAudioMimeType): upload normalization covers rows
@@ -309,7 +325,7 @@ audioRouter.put('/api/sessions/:sessionId/audio/segments/:segmentId/waveform', a
       throw new ApiError(400, 'waveform peaks must be in [0, 1].');
     }
   }
-  const ok = getSessionHub(c, sessionId).setAudioSegmentWaveform({
+  const ok = await (await getSessionHub(c, sessionId)).setAudioSegmentWaveform({
     segmentId,
     peaks: body.peaks,
   });

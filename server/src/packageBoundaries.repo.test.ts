@@ -1506,13 +1506,17 @@ const NODE_BUILTIN_PREFIX = 'node:';
  * duplicate-per-package per the final policy (task 2.4/4.3). */
 const TEST_INFRASTRUCTURE_EXEMPTIONS: Record<string, readonly string[]> = {
   // postgres-catalog-adapter (ADR 0021 slice 4b): the CatalogDb contract suite the adapter runs,
-  // and the package's copy of the test/pg per-test database helper.
+  // and the package's copy of the test/pg per-test database helper; session-tables (slice 7b-1):
+  // the session storage contract suite.
   '@autologger/storage': [
     'src/test/fakeClock.ts',
     'src/test/catalogDbContract.ts',
     'src/test/pgDb.ts',
+    'src/test/sessionSqlContract.ts',
   ],
-  '@autologger/session-core': ['src/test/fakeClock.ts', 'src/test/fakeCore.ts'],
+  // session-tables (slice 7b-1): fakeCore.ts left with the DB-backed session tests (replaced by
+  // server/src/test/session/boundCore.ts).
+  '@autologger/session-core': ['src/test/fakeClock.ts'],
   '@autologger/log-import': ['src/test/fakeClock.ts'],
 };
 
@@ -2988,5 +2992,64 @@ describe('checkServerManifestDeclaresWorkspaceImports (mutation check on a synth
       'server/src/node/config.test.ts': `import { z } from '@autologger/session-core';\nexport const w = z;\n`,
     });
     expect(checkServerManifestDeclaresWorkspaceImports(tmpRoot)).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Facade membership is consumption-based (spec "Persistence facades are consumed through
+// package-exported interfaces": a public member is on a facade iff a consumer outside the
+// package reaches it). The other direction is compile-checked, since consumers see only the
+// facade; this scan catches a member whose last outside consumer went away (async-session-hub
+// consistency read: `getEvent` and `addEventAtTotalFrames` after S3 and S10 moved into the hub).
+// ---------------------------------------------------------------------------
+
+/** The member names of `export interface <name> { … }` (property-style members, two-space
+ * indent, as the facades are authored). */
+function facadeMembers(source: string, name: string): string[] {
+  const start = source.indexOf(`export interface ${name} {`);
+  if (start < 0) throw new Error(`interface ${name} not found`);
+  const body = source.slice(start, source.indexOf('\n}', start));
+  return [...body.matchAll(/^ {2}([A-Za-z_$][\w$]*)\??:/gm)].map((m) => m[1] as string);
+}
+
+/** Facade members that no consumer source names as a whole word. */
+function unconsumedFacadeMembers(members: string[], consumerSources: string[]): string[] {
+  return members.filter(
+    (m) => !consumerSources.some((src) => new RegExp(`\\b${m.replace(/\$/g, '\\$')}\\b`).test(src)),
+  );
+}
+
+describe('SessionHubFacade membership is consumption-based', () => {
+  it('mutation check: flags a member no consumer names, and not one a consumer calls', () => {
+    const src = 'export interface F {\n  used: () => void;\n  stale: () => Promise<void>;\n}\n';
+    expect(facadeMembers(src, 'F')).toEqual(['used', 'stale']);
+    expect(unconsumedFacadeMembers(['used', 'stale'], ['await hub.used();'])).toEqual(['stale']);
+    expect(unconsumedFacadeMembers(['used'], ['hub.usedLater();'])).toEqual(['used']);
+  });
+
+  it('real repo: every SessionHubFacade member is reached from outside session-core', () => {
+    const hubSource = fs.readFileSync(
+      path.join(REPO_ROOT, 'packages/session-core/src/SessionHub.ts'),
+      'utf8',
+    );
+    const consumers = [
+      'server/src',
+      'packages/log-import/src',
+      'packages/transcription/src',
+      'packages/ai-runtime/src',
+    ].flatMap((dir) =>
+      walkTsFiles(path.join(REPO_ROOT, dir))
+        // This file names members in its own comments; it is no consumer.
+        .filter((f) => f !== fileURLToPath(import.meta.url))
+        .map((f) => fs.readFileSync(f, 'utf8')),
+    );
+    const members = facadeMembers(hubSource, 'SessionHubFacade');
+    expect(members.length).toBeGreaterThan(20);
+    expect(unconsumedFacadeMembers(members, consumers)).toEqual([]);
+    // session-content-policies D3: the registry resolves a `SessionHubEntry` (the socket members
+    // and `as`), and every one of its members is consumed outside session-core too.
+    const entry = facadeMembers(hubSource, 'SessionHubEntry');
+    expect(entry).toContain('as');
+    expect(unconsumedFacadeMembers(entry, consumers)).toEqual([]);
   });
 });

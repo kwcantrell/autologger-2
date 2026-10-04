@@ -1,6 +1,16 @@
-/** Parse sheet log timecodes like `8:48`, `1:07:05`, `00:08:48` → seconds (frame 0). */
+/** Parse sheet log timecodes like `8:48`, `1:07:05`, `00:08:48` → seconds (frame 0). A timecode
+ * whose frame count at the highest frame rate (120) would not be a safe integer is unparseable,
+ * so it can never reach a session `bigint` out of range (session-tables D5, A11). */
+
+const MAX_FRAME_RATE = 120;
 
 export function parseSheetTimecodeToSeconds(raw: string): number | null {
+  const seconds = parseClock(raw);
+  if (seconds === null || !Number.isSafeInteger(seconds * MAX_FRAME_RATE)) return null;
+  return seconds;
+}
+
+function parseClock(raw: string): number | null {
   const s = String(raw ?? '').trim();
   if (!s) return null;
   const parts = s.split(':').map((p) => p.trim());

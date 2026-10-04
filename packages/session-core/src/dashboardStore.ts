@@ -1,10 +1,9 @@
 // ai-v2-dashboards — dashboard persistence (task 5.1/5.2/5.3; design D5
 // ruled session DB, D5a whole-config validation, D5b write-authz/bounds/
-// delete). Stored in the session DB (`session_dashboards`, sessionCore.ts's
-// `initSchema` — idempotent `CREATE TABLE IF NOT EXISTS`, no migration
-// files, per D5) rather than the catalog DB: a dashboard belongs to exactly
-// one session, is deleted with it, and there is no cross-session reuse story
-// in v1.
+// delete). Stored with the session's content (`session_dashboards`, keyed by
+// session; a session table since session-tables) rather than in a catalog
+// table of its own: a dashboard belongs to exactly one session, and there is
+// no cross-session reuse story in v1.
 //
 // Every write goes through `validateDashboardConfig` (packages/contract/src/
 // aiV2Catalog.ts) — the SAME function the persistence route (task 5.2) and, in a
@@ -77,15 +76,22 @@ export function dashboardRow(r: Row): StoredDashboard {
 export class DashboardStore {
   constructor(private core: SessionCore) {}
 
-  getDashboard(id: string): StoredDashboard | null {
-    const row = this.core.first('SELECT * FROM session_dashboards WHERE id = ?', id);
+  async getDashboard(id: string): Promise<StoredDashboard | null> {
+    const row = await this.core.first(
+      'SELECT * FROM session_dashboards WHERE session_id = ? AND id = ?',
+      this.core.sessionId,
+      id,
+    );
     return row ? dashboardRow(row) : null;
   }
 
-  listDashboards(): StoredDashboard[] {
-    return this.core
-      .all('SELECT * FROM session_dashboards ORDER BY created_at_utc, id')
-      .map(dashboardRow);
+  async listDashboards(): Promise<StoredDashboard[]> {
+    return (
+      await this.core.all(
+        'SELECT * FROM session_dashboards WHERE session_id = ? ORDER BY created_at_utc, id',
+        this.core.sessionId,
+      )
+    ).map(dashboardRow);
   }
 
   /** Whole-config validated (design D5a) and bounds-checked (design D5b)
@@ -97,20 +103,31 @@ export class DashboardStore {
    * SHALL record the principal that created them and the turn they
    * originated from"). A new `id` is an INSERT, gated on the per-session
    * count bound. */
-  saveDashboard(input: {
+  async saveDashboard(input: {
     id: string;
     config: unknown;
     createdBy: string | null;
     createdByTurnId: string | null;
-  }): StoredDashboard {
+  }): Promise<StoredDashboard> {
     const parsed = validateDashboardConfig(input.config);
     if (!parsed.success) {
       throw new DashboardValidationError(parsed.error.issues.map((i) => i.message));
     }
 
-    const existing = this.core.first('SELECT 1 FROM session_dashboards WHERE id = ?', input.id);
+    const existing = await this.core.first(
+      'SELECT 1 AS x FROM session_dashboards WHERE session_id = ? AND id = ?',
+      this.core.sessionId,
+      input.id,
+    );
     if (existing === null) {
-      const count = Number(this.core.first('SELECT COUNT(*) AS n FROM session_dashboards')?.n ?? 0);
+      const count = Number(
+        (
+          await this.core.first(
+            'SELECT COUNT(*) AS n FROM session_dashboards WHERE session_id = ?',
+            this.core.sessionId,
+          )
+        )?.n ?? 0,
+      );
       if (count >= MAX_DASHBOARDS_PER_SESSION) {
         throw new DashboardBoundsError(
           `This session already has the maximum of ${MAX_DASHBOARDS_PER_SESSION} saved dashboards.`,
@@ -120,13 +137,14 @@ export class DashboardStore {
 
     const now = isoZ(new Date(this.core.now()));
     const configJson = JSON.stringify(parsed.data);
-    this.core.db.run(
+    await this.core.db.run(
       `INSERT INTO session_dashboards
-         (id, config_json, created_by, created_by_turn_id, created_at_utc, updated_at_utc)
-       VALUES (?, ?, ?, ?, ?, ?)
-       ON CONFLICT(id) DO UPDATE SET
+         (session_id, id, config_json, created_by, created_by_turn_id, created_at_utc, updated_at_utc)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT (session_id, id) DO UPDATE SET
          config_json = excluded.config_json,
          updated_at_utc = excluded.updated_at_utc`,
+      this.core.sessionId,
       input.id,
       configJson,
       input.createdBy,
@@ -134,11 +152,15 @@ export class DashboardStore {
       now,
       now,
     );
-    return this.getDashboard(input.id) as StoredDashboard;
+    return (await this.getDashboard(input.id)) as StoredDashboard;
   }
 
-  deleteDashboard(id: string): boolean {
-    const r = this.core.db.run('DELETE FROM session_dashboards WHERE id = ?', id);
+  async deleteDashboard(id: string): Promise<boolean> {
+    const r = await this.core.db.run(
+      'DELETE FROM session_dashboards WHERE session_id = ? AND id = ?',
+      this.core.sessionId,
+      id,
+    );
     return r.changes > 0;
   }
 }

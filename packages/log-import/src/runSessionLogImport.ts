@@ -13,8 +13,8 @@ export interface SessionLogImportResult {
 
 /** Consumed by `routers/logImport.ts`'s `ensureTimedTranscript` coordinator
  * (feature-service-packages D2) — no caller remains in this module. */
-export function timedTranscriptTokens(hub: SessionHubFacade): TranscriptToken[] {
-  const words = hub.listTranscriptWords();
+export async function timedTranscriptTokens(hub: SessionHubFacade): Promise<TranscriptToken[]> {
+  const words = await hub.listTranscriptWords();
   const out: TranscriptToken[] = [];
   for (const w of words) {
     const start = Number(w.start_sec);
@@ -25,10 +25,10 @@ export function timedTranscriptTokens(hub: SessionHubFacade): TranscriptToken[] 
   return out;
 }
 
-function seamPartsForSession(hub: SessionHubFacade): { duration_s: number }[] {
-  const seams = hub.getAudioSeamParts();
+async function seamPartsForSession(hub: SessionHubFacade): Promise<{ duration_s: number }[]> {
+  const seams = await hub.getAudioSeamParts();
   if (seams && seams.length > 0) return seams;
-  const segs = hub.listAudioSegments();
+  const segs = await hub.listAudioSegments();
   if (segs.length === 0) throw new Error('Session has no audio segments.');
   const seg = segs[0];
   if (seg.started_at_utc && seg.ended_at_utc) {
@@ -38,8 +38,8 @@ function seamPartsForSession(hub: SessionHubFacade): { duration_s: number }[] {
   throw new Error('Session is missing stitch seam metadata; re-import audio with seam parts.');
 }
 
-/** Import parsed log rows into a session event feed (sync + create-at-frames). Async so the
- * catalog mirror (`projectLive`) can be awaited (async-session-callers D5). */
+/** Import parsed log rows into a session event feed (sync + create-at-frames). Each created row
+ * commits the session's live projection with its insert (session-tables design D8). */
 export async function runSessionLogImport(input: {
   hub: SessionHubFacade;
   rows: ParsedLogRow[];
@@ -47,21 +47,13 @@ export async function runSessionLogImport(input: {
   ctx: TimecodeCtx;
   /** Pre-resolved timed transcript tokens (after ensureTimedTranscript). */
   transcript: TranscriptToken[];
-  projectLive: (projection: {
-    event_count: number;
-    max_timecode_total_frames: number | null;
-    is_rolling: boolean;
-    current_take: number;
-    transport_elapsed_frames: number;
-    roll_started_at_utc: string | null;
-  }) => void | Promise<void>;
 }): Promise<SessionLogImportResult> {
   const lines: string[] = [];
   if (input.transcript.length === 0) {
     throw new Error('Transcript is missing or untimed after ensure step.');
   }
 
-  const parts = seamPartsForSession(input.hub);
+  const parts = await seamPartsForSession(input.hub);
   const sync = syncLogRowsToSeams(
     input.rows.map((r) => ({ sheetSec: r.sheetSec, message: r.message, type: r.type })),
     parts,
@@ -74,38 +66,31 @@ export async function runSessionLogImport(input: {
     );
   }
 
-  const existing = input.hub.exportEvents().filter((e) => e.category.toLowerCase() !== 'internal');
-  const existingKeys = new Set(
-    existing.map((e) => `${e.timecode_total_frames ?? ''}\n${e.message}`),
-  );
-
   let created = 0;
   let skipped = 0;
-  let lastProjection: Parameters<typeof input.projectLive>[0] | null = null;
 
   for (const a of sync.assignments) {
     const mapped = mapLogCategory(a.row.type, a.row.message, input.categories);
     const frames = secondsToTotalFrames(a.sessionSec, input.ctx.frameRate);
-    const key = `${frames}\n${mapped.message}`;
-    if (existingKeys.has(key)) {
-      skipped += 1;
-      continue;
-    }
     const meta: Record<string, unknown> = { imported_from_sheets: true };
     if (mapped.importOption) meta.import_option = mapped.importOption;
-    const { projection } = input.hub.addEventAtTotalFrames({
+    // The duplicate check (a non-internal event with the same frames and message) and the insert
+    // are one hub transaction per row (async-session-hub design D7, S10): a later identical row of
+    // this batch, or a row a concurrent import stored, is skipped.
+    const result = await input.hub.addEventAtTotalFramesIfAbsent({
       category: mapped.categoryId,
       message: mapped.message,
       metadataJson: JSON.stringify(meta),
       timecodeTotalFrames: frames,
       ctx: input.ctx,
     });
-    existingKeys.add(key);
+    if (!result.created) {
+      skipped += 1;
+      continue;
+    }
     created += 1;
-    lastProjection = projection;
   }
 
-  if (lastProjection) await input.projectLive(lastProjection);
   lines.push(`Created ${created}, skipped ${skipped} duplicate(s).`);
   return { created, skipped, lines };
 }

@@ -34,7 +34,7 @@ import {
   aiChatTimeoutSec,
 } from '../env';
 import { ApiError } from '../httpError';
-import { requireSession } from './_helpers';
+import { requireSession, sessionCaller } from './_helpers';
 
 export const aiRouter = new Hono<AppEnv>();
 
@@ -151,6 +151,7 @@ aiRouter.post('/api/sessions/:sessionId/ai/chat', async (c) => {
       const outcome = await driveAiTurn({
         clock: c.env.ports.clock,
         registry: c.env.ports.sessions,
+        caller: sessionCaller(c),
         cliPath: c.env.config.CLAUDE_CLI_PATH.trim(),
         sessionId,
         message: body.message,

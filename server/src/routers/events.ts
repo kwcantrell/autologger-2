@@ -1,6 +1,7 @@
 // Events + transport + status routes — ported from web/routers/events.py.
-// Each handler resolves the session hub, calls RPC, mirrors the returned live
-// projection onto the catalog sessions row, and enriches events in the router
+// Each handler resolves the session hub, calls RPC (a hub write commits the
+// session's live projection onto the catalog sessions row in its own
+// transaction, session-tables design D8), and enriches events in the router
 // layer using the show profile (keeping show logic out of the hub).
 
 import { aiChatTurns } from '@autologger/ai-runtime/aiChatRegistry';
@@ -39,6 +40,8 @@ import {
   sessionDeckDisplayTitle,
   stripCategoryUiSnapshots,
 } from '@autologger/domain';
+import { type SessionHubFacade, systemCaller } from '@autologger/session-core';
+import type { Context } from 'hono';
 import { Hono } from 'hono';
 import type { AppEnv } from '../appEnv';
 import {
@@ -51,7 +54,21 @@ import {
   eventGenerateTimeoutSec,
 } from '../env';
 import { ApiError } from '../httpError';
-import { getSessionHub, parseOptionalMarkedAt, requireSession, timecodeCtx } from './_helpers';
+import {
+  getSessionHub,
+  parseOptionalMarkedAt,
+  requireSession,
+  sessionCaller,
+  timecodeCtx,
+} from './_helpers';
+
+/** An undo step's hub (session-content-policies D7, owner decision P1): a request whose later step
+ * failed, or was refused after a revoke, removes only what it wrote itself (the segment it just
+ * created, or the snapshot its regenerate replaced) as the reviewed system task `session-undo`, so
+ * the undo cannot itself be refused. */
+async function undoHub(c: Context<AppEnv>, sessionId: string): Promise<SessionHubFacade> {
+  return (await c.env.ports.sessions.get(sessionId)).as(systemCaller('session-undo'));
+}
 
 export const eventsRouter = new Hono<AppEnv>();
 
@@ -100,9 +117,9 @@ eventsRouter.get('/api/sessions/:sessionId/status', async (c) => {
   const row = await catalog.sessions.getSessionJoinedRow(sessionId, { includeHidden: false });
   if (row === null) throw new ApiError(404, 'Session not found.');
   const ctx = timecodeCtx(row);
-  const hub = getSessionHub(c, sessionId);
-  const live = hub.statusLive(ctx);
-  const lease = hub.leaseStatus();
+  const hub = await getSessionHub(c, sessionId);
+  const live = await hub.statusLive(ctx);
+  const lease = await hub.leaseStatus();
 
   const now = new Date(c.env.ports.clock.now());
   const startedMs = row.started_at_utc ? Date.parse(String(row.started_at_utc)) : Number.NaN;
@@ -141,7 +158,7 @@ eventsRouter.post('/api/sessions/:sessionId/audio-recording-lease', async (c) =>
   const sessionId = c.req.param('sessionId');
   await requireSession(c, sessionId);
   const body = audioRecordingLeaseBodySchema.parse(await c.req.json());
-  const ok = getSessionHub(c, sessionId).claimLease(body.client_id.trim());
+  const ok = await (await getSessionHub(c, sessionId)).claimLease(body.client_id.trim());
   if (!ok) {
     throw new ApiError(
       409,
@@ -155,7 +172,7 @@ eventsRouter.post('/api/sessions/:sessionId/audio-recording-lease/heartbeat', as
   const sessionId = c.req.param('sessionId');
   await requireSession(c, sessionId);
   const body = audioRecordingLeaseBodySchema.parse(await c.req.json());
-  const ok = getSessionHub(c, sessionId).heartbeatLease(body.client_id.trim());
+  const ok = await (await getSessionHub(c, sessionId)).heartbeatLease(body.client_id.trim());
   return c.json({ ok });
 });
 
@@ -163,23 +180,21 @@ eventsRouter.post('/api/sessions/:sessionId/audio-recording-lease/release', asyn
   const sessionId = c.req.param('sessionId');
   await requireSession(c, sessionId);
   const body = audioRecordingLeaseBodySchema.parse(await c.req.json());
-  getSessionHub(c, sessionId).releaseLease(body.client_id.trim());
+  await (await getSessionHub(c, sessionId)).releaseLease(body.client_id.trim());
   return c.json({ ok: true });
 });
 
 eventsRouter.post('/api/sessions/:sessionId/transport/start', async (c) => {
   const sessionId = c.req.param('sessionId');
   const row = await requireSession(c, sessionId);
-  const { state } = getSessionHub(c, sessionId).startTake(timecodeCtx(row));
-  await c.env.ports.mirror.mirror(sessionId);
+  const { state } = await (await getSessionHub(c, sessionId)).startTake(timecodeCtx(row));
   return c.json(state);
 });
 
 eventsRouter.post('/api/sessions/:sessionId/transport/stop', async (c) => {
   const sessionId = c.req.param('sessionId');
   const row = await requireSession(c, sessionId);
-  const { state } = getSessionHub(c, sessionId).stopTake(timecodeCtx(row));
-  await c.env.ports.mirror.mirror(sessionId);
+  const { state } = await (await getSessionHub(c, sessionId)).stopTake(timecodeCtx(row));
   return c.json(state);
 });
 
@@ -190,11 +205,11 @@ eventsRouter.get('/api/sessions/:sessionId/events', async (c) => {
   const limit = clampInt(c.req.query('limit'), 200, 1, 2000);
   const offset = clampInt(c.req.query('offset'), 0, 0, Number.MAX_SAFE_INTEGER);
   const profile = await catalog.sessions.studioProfileForSession(sessionId);
-  const hub = getSessionHub(c, sessionId);
+  const hub = await getSessionHub(c, sessionId);
   if (offset === 0) {
-    hub.maybeRelinkOrphans(relinkMaps(profile));
+    await hub.maybeRelinkOrphans(relinkMaps(profile));
   }
-  const res = hub.listEvents({ limit, offset });
+  const res = await hub.listEvents({ limit, offset });
   return c.json({
     events: res.events.map((e) => enrichEventRpc(e, profile)),
     total: res.total,
@@ -204,7 +219,7 @@ eventsRouter.get('/api/sessions/:sessionId/events', async (c) => {
     // event-generate-hardening D1 — computed whole-session (independent of
     // this page's limit/offset), the same predicate the regenerate pre-spawn
     // snapshot uses.
-    has_auto_generated: hub.hasAutoGeneratedEvents(),
+    has_auto_generated: await hub.hasAutoGeneratedEvents(),
   });
 });
 
@@ -230,15 +245,13 @@ eventsRouter.post('/api/sessions/:sessionId/events', async (c) => {
     if (catDef !== null) meta = mergeCategoryUiSnapshotsIntoMetadata(meta, catDef);
   }
   const marked = parseOptionalMarkedAt(body.marked_at_utc);
-  const { event } = getSessionHub(c, sessionId).addEvent({
+  const { event } = await (await getSessionHub(c, sessionId)).addEvent({
     category: body.category,
     message: body.message,
     metadataJson: JSON.stringify(meta),
     markedAtUtc: marked,
     ctx: timecodeCtx(row),
   });
-  // Ordered, and a failure only warns: the event is already saved (catalog-concurrency-hazards D6).
-  await c.env.ports.mirror.mirror(sessionId);
   return c.json(enrichEventRpc(event, profile));
 });
 
@@ -461,9 +474,13 @@ eventsRouter.post('/api/sessions/:sessionId/events/generate', async (c) => {
 
   // 3. Anchored-transcript precondition — a run without session-time anchors
   // could only invent timecodes. This read doubles as the run's WORD SNAPSHOT
-  // (spec "snapshot at run start"; Phase-3 review carry): no `await` occurs
-  // between here and the turn registration, so nothing can interleave.
-  const transcriptWords = getSessionHub(c, sessionId).listTranscriptWords();
+  // (spec "snapshot at run start"; Phase-3 review carry): once it resolves, no
+  // storage call or other `await` occurs before the per-session slot is
+  // acquired below. The prologue's event export after the slot is a separate
+  // hub read, so the run's word and event snapshots can come from two
+  // committed states when another handler resumes in the same tick
+  // (async-session-hub design D7, S11).
+  const transcriptWords = await (await getSessionHub(c, sessionId)).listTranscriptWords();
   if (transcriptWords.length === 0) {
     throw new ApiError(400, EVENT_GENERATE_NO_TRANSCRIPT_DETAIL);
   }
@@ -513,17 +530,17 @@ eventsRouter.post('/api/sessions/:sessionId/events/generate', async (c) => {
   }
 
   try {
-    const hub = getSessionHub(c, sessionId);
+    const hub = await getSessionHub(c, sessionId);
     const regenerate = body.regenerate === true;
     // event-generate-hardening D2/D3 (gate ruling E3) — ONE hub.exportEvents()
-    // read here, in the synchronous prologue, serves three purposes: (1) the
+    // read here, in the prologue before the turn starts, serves three purposes: (1) the
     // regenerate pre-spawn id SNAPSHOT (route-side JS predicate — no
     // dedicated store-side listing RPC, so the exclusion set and delete set
     // are the same array by construction), (2) the prompt's existing-events
     // enumeration with the snapshot excluded, and (3) the anchor-basis
     // exclusion threaded into the run context for create_event (D3). A
     // non-regenerate run sees the export untouched — byte-identical to today.
-    const exportedEvents = hub.exportEvents();
+    const exportedEvents = await hub.exportEvents();
     const snapshotIds = regenerate
       ? exportedEvents
           .filter((e) => isAutoGeneratedMetadataJson(e.metadata_json))
@@ -568,6 +585,7 @@ eventsRouter.post('/api/sessions/:sessionId/events/generate', async (c) => {
     const outcome = await driveAiTurn({
       clock: c.env.ports.clock,
       registry: c.env.ports.sessions,
+      caller: sessionCaller(c),
       cliPath: c.env.config.CLAUDE_CLI_PATH.trim(),
       sessionId,
       message,
@@ -587,14 +605,13 @@ eventsRouter.post('/api/sessions/:sessionId/events/generate', async (c) => {
       // destruction requires a replacement. A clean turn that created nothing
       // keeps the prior set and reports deleted:0. The delete goes through a
       // FRESHLY re-acquired hub — never the `hub` bound above — because the
-      // turn just awaited for up to the configured timeout, and idle hubs
-      // close their DB handles and reopen lazily
-      // (`SessionHubRegistry#get()`); reusing a reference from before the
-      // await would be the same class of staleness the `finally` block's own
-      // re-acquire below already guards against.
+      // turn just awaited for up to the configured timeout, and an idle hub
+      // can be evicted and reopened meanwhile (`SessionHubRegistry#get()`): a
+      // hub reference is re-resolved after a long non-hub await
+      // (async-session-hub design D6).
       const deleted = regenerate
         ? outcome.createdEvents > 0
-          ? getSessionHub(c, sessionId).deleteEventsByIds(snapshotIds)
+          ? await (await undoHub(c, sessionId)).deleteEventsByIds(snapshotIds)
           : 0
         : undefined;
       return c.json({
@@ -614,21 +631,11 @@ eventsRouter.post('/api/sessions/:sessionId/events/generate', async (c) => {
     );
     throw new ApiError(502, EVENT_GENERATE_FAILURE_DETAIL);
   } finally {
-    // Slot release FIRST, unconditionally (Phase-4 review): a throw from the
-    // hub re-acquire/ensure() or the catalog UPDATE below must never leak the
-    // per-session slot — a leaked slot wedges every later AI turn for this
-    // session behind a 409 until restart. Releasing before the mirror is safe
-    // while the catalog adapter yields only microtasks (async-catalog-stores
-    // A7): no other request runs before the mirror's UPDATE. Re-audit when the
-    // catalog does real I/O (ADR 0021 slice 4 hazard 4).
+    // Slot release, unconditionally (Phase-4 review): a leaked slot wedges every later AI turn
+    // for this session behind a 409 until restart. The catalog projection needs no post-run
+    // write: each insert and the regenerate's delete commit it in their own transaction
+    // (session-tables design D8), so it is current by the time the route responds.
     slot.release();
-    // Post-run catalog mirror on success AND failure paths (spec "the run
-    // SHALL leave the catalog projection current by the time the route
-    // responds") — the run's inserts persist either way. The hub is
-    // RE-ACQUIRED after the potentially multi-minute turn (idle hubs close
-    // their DB handles and reopen lazily). A failed mirror write only warns, so the run's own
-    // outcome is returned (catalog-concurrency-hazards D6).
-    await c.env.ports.mirror.mirror(sessionId);
   }
 });
 
@@ -652,39 +659,43 @@ eventsRouter.put('/api/sessions/:sessionId/events/:eventId', async (c) => {
   const fps = Math.round(Number(row.frame_rate));
   const totalFrames = (hh * 3600 + mm * 60 + ss) * fps;
 
-  const hub = getSessionHub(c, sessionId);
-  const old = hub.getEvent(eventId);
-  if (old === null) throw new ApiError(404, 'Event not found.');
-  let oldMeta: Record<string, unknown> = {};
-  try {
-    const parsed = JSON.parse(old.metadata_json || '{}');
-    if (parsed && typeof parsed === 'object') oldMeta = parsed as Record<string, unknown>;
-  } catch {
-    oldMeta = {};
-  }
-  let meta = { ...oldMeta };
-  // FROZEN edge (api-contract-freeze): this `internal` branch is REACHABLE, not
-  // dead — category-id validation (validateCategoriesList) reserves no ids, so
-  // a studio profile MAY define a category whose id case-insensitively equals
-  // 'internal'; the profile-membership 400 above then passes and this branch
-  // strips the UI snapshots. The PUT-vs-POST asymmetry is deliberate frozen
-  // behavior: POST admits the built-in 'internal' category even when the
-  // profile does not define it, PUT requires profile membership first. Do not
-  // remove this branch as dead code, and do not align PUT to POST — either is
-  // an observable contract change (pinned by events.putInternal.int.test.ts).
-  if (body.category.toLowerCase() === 'internal') meta = stripCategoryUiSnapshots(meta);
-  else meta = mergeCategoryUiSnapshotsIntoMetadata(meta, catDef);
+  // The stored metadata is read, merged and written in one hub transaction
+  // (async-session-hub design D7, S3), so two concurrent edits of one event
+  // equal a serial order. A missing event answers 404 from `updateEvent`.
+  const mergeMetadata = (storedMetadataJson: string): string => {
+    let oldMeta: Record<string, unknown> = {};
+    try {
+      const parsed = JSON.parse(storedMetadataJson || '{}');
+      if (parsed && typeof parsed === 'object') oldMeta = parsed as Record<string, unknown>;
+    } catch {
+      oldMeta = {};
+    }
+    const meta = { ...oldMeta };
+    // FROZEN edge (api-contract-freeze): this `internal` branch is REACHABLE, not
+    // dead — category-id validation (validateCategoriesList) reserves no ids, so
+    // a studio profile MAY define a category whose id case-insensitively equals
+    // 'internal'; the profile-membership 400 above then passes and this branch
+    // strips the UI snapshots. The PUT-vs-POST asymmetry is deliberate frozen
+    // behavior: POST admits the built-in 'internal' category even when the
+    // profile does not define it, PUT requires profile membership first. Do not
+    // remove this branch as dead code, and do not align PUT to POST — either is
+    // an observable contract change (pinned by events.putInternal.int.test.ts).
+    return JSON.stringify(
+      body.category.toLowerCase() === 'internal'
+        ? stripCategoryUiSnapshots(meta)
+        : mergeCategoryUiSnapshotsIntoMetadata(meta, catDef),
+    );
+  };
 
-  const result = hub.updateEvent({
+  const result = await (await getSessionHub(c, sessionId)).updateEvent({
     eventId,
     category: body.category,
     message: body.message,
     wallTimeUtc: dt,
     timecodeTotalFrames: totalFrames,
-    metadataJson: JSON.stringify(meta),
+    mergeMetadata,
   });
   if (result === null) throw new ApiError(404, 'Event not found.');
-  await c.env.ports.mirror.mirror(sessionId);
   return c.json(enrichEventRpc(result.event, profile));
 });
 
@@ -692,9 +703,8 @@ eventsRouter.delete('/api/sessions/:sessionId/events/:eventId', async (c) => {
   const sessionId = c.req.param('sessionId');
   const eventId = c.req.param('eventId');
   await requireSession(c, sessionId);
-  const { ok } = getSessionHub(c, sessionId).deleteEvent(eventId);
+  const { ok } = await (await getSessionHub(c, sessionId)).deleteEvent(eventId);
   if (!ok) throw new ApiError(404, 'Event not found.');
-  await c.env.ports.mirror.mirror(sessionId);
   return c.json({ ok: true });
 });
 

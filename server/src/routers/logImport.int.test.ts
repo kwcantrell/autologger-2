@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { SessionIndexStore } from '@autologger/catalog';
 import { clearLogImportJobs } from '@autologger/log-import';
+import type { SessionHubFacade } from '@autologger/session-core';
 import { TRANSCRIPTION_FIXTURES_DIR } from '@autologger/transcription';
 import ExcelJS from 'exceljs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -15,6 +16,7 @@ import {
   seedStudio,
   seedUser,
 } from '../test/helpers';
+import { harnessHub } from '../test/session/sessionRows';
 
 const NOT_CONFIGURED_DETAIL =
   'Google Sheets log import is not configured on this deployment. Set SHEETS_LOG_IMPORT_ENABLED=1 to enable it.';
@@ -248,7 +250,7 @@ describe('log-import job HTTP surface', () => {
     // Timed transcript words — real rows via the hub (ensureTimedTranscript
     // sees them and skips DeepGram entirely). The phrase sits at session
     // ~527 s while the sheet clock says 8:48 (= 528 s) → offset −1 s.
-    env.ports.sessions.get(session).replaceTranscriptWords([
+    await (await harnessHub(session)).replaceTranscriptWords([
       { session_time: '00:08:47', speaker: '0', word: 'almost', start_sec: 527, end_sec: 527.2 },
       { session_time: '00:08:47', speaker: '0', word: 'called', start_sec: 527.3, end_sec: 527.4 },
       { session_time: '00:08:47', speaker: '0', word: 'a', start_sec: 527.5, end_sec: 527.6 },
@@ -558,7 +560,7 @@ describe('the log-import job re-checks its creator’s show access before each s
       env,
     );
     expect(res.status).toBe(200);
-    env.ports.sessions.get(session).replaceTranscriptWords([
+    await (await harnessHub(session)).replaceTranscriptWords([
       { session_time: '00:08:47', speaker: '0', word: 'almost', start_sec: 527, end_sec: 527.2 },
       { session_time: '00:08:47', speaker: '0', word: 'called', start_sec: 527.3, end_sec: 527.4 },
       { session_time: '00:08:47', speaker: '0', word: 'a', start_sec: 527.5, end_sec: 527.6 },
@@ -594,8 +596,13 @@ describe('the log-import job re-checks its creator’s show access before each s
   }
 
   /** Runs a two-sheet import as `creator`, calling `between` once after the first sheet's import
-   * wrote its events (its live-projection mirror call) and before the second sheet. */
-  async function runTwoSheetImport(creator: string, between: () => Promise<void>) {
+   * wrote its events (its insert, which commits the live projection with it, session-tables D8)
+   * and before the second sheet. */
+  async function runTwoSheetImport(
+    creator: string,
+    between: () => Promise<void>,
+    opts: { beforeFirstCall?: boolean } = {},
+  ) {
     const studio = await seedMemberStudio();
     const show = await seedShow({ studioId: studio, categoriesJson: CATEGORIES });
     await catalogFor().auth.authAddMembershipWithRole(creator, studio, 'member');
@@ -606,22 +613,63 @@ describe('the log-import job re-checks its creator’s show access before each s
       'fetch',
       vi.fn(async () => new Response(new Uint8Array(xlsx), { status: 200 })),
     );
-    const realMirror = env.ports.mirror;
+    const realSessions = env.ports.sessions;
     let hooked = false;
-    const bindings = envWith(
-      { SHEETS_LOG_IMPORT_ENABLED: '1', HOST: '127.0.0.1' },
-      {
-        mirror: {
-          mirror: async (sessionId: string) => {
-            await realMirror.mirror(sessionId);
-            if (sessionId === s1 && !hooked) {
-              hooked = true;
-              await between();
-            }
-          },
+    // s1's bound hub, with its row insert followed by `between` once; every other member is the
+    // hub's.
+    const hookedHub = (hub: SessionHubFacade): SessionHubFacade =>
+      new Proxy(hub, {
+        get(target, prop) {
+          // session-content-policies task 5.1: `beforeFirstCall` runs `between` once before s1's
+          // first hub call instead, after the job's per-sheet access check.
+          const member = Reflect.get(target, prop, target);
+          if (opts.beforeFirstCall && typeof member === 'function') {
+            return async (...args: unknown[]) => {
+              if (!hooked) {
+                hooked = true;
+                await between();
+              }
+              return (member as (...a: unknown[]) => unknown).apply(target, args);
+            };
+          }
+          if (prop === 'addEventAtTotalFramesIfAbsent') {
+            return async (input: Parameters<SessionHubFacade['addEventAtTotalFramesIfAbsent']>[0]) => {
+              const result = await target.addEventAtTotalFramesIfAbsent(input);
+              if (!hooked) {
+                hooked = true;
+                await between();
+              }
+              return result;
+            };
+          }
+          const value = Reflect.get(target, prop, target);
+          return typeof value === 'function' ? value.bind(target) : value;
         },
+      });
+    const sessions = new Proxy(realSessions, {
+      get(target, prop) {
+        if (prop === 'get') {
+          return async (sessionId: string) => {
+            const entry = await target.get(sessionId);
+            if (sessionId !== s1) return entry;
+            // The job binds its creator with `as` (session-content-policies D7): hook the bound
+            // view it gets back.
+            return new Proxy(entry, {
+              get(e, prop) {
+                if (prop === 'as') {
+                  return (caller: Parameters<typeof e.as>[0]) => hookedHub(e.as(caller));
+                }
+                const value = Reflect.get(e, prop, e);
+                return typeof value === 'function' ? value.bind(e) : value;
+              },
+            });
+          };
+        }
+        const value = Reflect.get(target, prop, target);
+        return typeof value === 'function' ? value.bind(target) : value;
       },
-    );
+    });
+    const bindings = envWith({ SHEETS_LOG_IMPORT_ENABLED: '1', HOST: '127.0.0.1' }, { sessions });
     return { studio, show, s1, s2, bindings, hookedRef: () => hooked };
   }
 
@@ -658,6 +706,34 @@ describe('the log-import job re-checks its creator’s show access before each s
     expect(body.lines[body.lines.length - 1]).toBe('Access revoked; stopping.');
     expect(body.lines.join('\n')).not.toContain('Done.');
     expect(await eventMessages(run.s1)).toContain(SHEET_ROW);
+    expect(await eventMessages(run.s2)).not.toContain(SHEET_ROW);
+  });
+
+  it('a creator revoked after the per-sheet check: the sheet fails with the neutral refusal, no event is stored, and the next sheet stops the job', async () => {
+    const member = await seedUser();
+    const cookie = await loginCookie(member);
+    let showId = '';
+    const run = await runTwoSheetImport(
+      member,
+      async () => {
+        await catalogFor().auth.authRevokeShow(member, showId);
+      },
+      { beforeFirstCall: true },
+    );
+    showId = run.show;
+    await grant(member, run.show);
+
+    const post = await postImport(run.show, run.bindings, { cookie });
+    expect(post.status).toBe(200);
+    const { job_id } = (await post.json()) as { job_id: string };
+    const body = await finished(job_id, cookie);
+
+    expect(run.hookedRef(), body.lines.join('\n')).toBe(true);
+    expect(body.lines).toContain('Failed “EP 1”: access to the session was refused');
+    expect(body.status, body.lines.join('\n')).toBe('failed');
+    expect(body.error).toBe('Access revoked.');
+    expect(body.lines[body.lines.length - 1]).toBe('Access revoked; stopping.');
+    expect(await eventMessages(run.s1)).not.toContain(SHEET_ROW);
     expect(await eventMessages(run.s2)).not.toContain(SHEET_ROW);
   });
 

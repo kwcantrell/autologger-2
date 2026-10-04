@@ -146,13 +146,16 @@ side effect a manual insert performs**: the same transactional hub write path,
 server-assigned id, one `event.changed` broadcast per insert (unchanged
 emission semantics), category label/color UI snapshots merged into metadata
 (so later button deletion/rename degrades and relinks identically to manual
-rows), and the catalog live projection (`event_count` / max-timecode mirror)
-so `GET /api/sessions` stays truthful — the run SHALL leave the catalog
-projection current by the time the route responds (on regenerate, current
-**including** the post-success delete's decrement) whenever the catalog mirror
-write succeeds; if that write fails, the run's own outcome is still returned, a
-warning is logged, and the session's next change rewrites the projection
-(api-contract-freeze "Catalog mirror failures don't fail saved session changes").
+rows), and the catalog live projection (`event_count` / max-timecode) so
+`GET /api/sessions` stays truthful. Each insert, and the regenerate's
+post-success delete, SHALL commit the session's live projection in its own
+transaction (catalog-database "The session live projection commits with the
+session write"), so the projection is current by the time the route responds (on
+regenerate, current **including** the post-success delete's decrement). An insert
+or delete whose projection cannot be written SHALL fail as a whole: the insert is
+then a failed `create_event` (an internal-error tool result, not counted in
+`created`), and a failed post-success delete answers the generic `500` with every
+snapshotted row kept.
 
 #### Scenario: Generate All appends without deleting
 
@@ -188,6 +191,11 @@ warning is logged, and the session's next change rewrites the projection
 - **WHEN** a run creates 40 events and completes
 - **THEN** `GET /api/sessions` reflects the updated `event_count` without any
   intervening manual write
+
+#### Scenario: A regenerate's delete updates the list in the same commit
+- **WHEN** a regenerate run creates 3 events and then deletes 5 snapshotted auto rows
+- **THEN** a `GET /api/sessions` issued as soon as the response arrives reports the
+  `event_count` after the delete
 
 ### Requirement: Optional generate body for regenerate and selection
 
@@ -402,47 +410,6 @@ regenerate's snapshot sweep still removes any predicate-matching row.
 - **THEN** the stored row still matches the auto predicate and remains
   subject to a later regenerate sweep
 
-### Requirement: Anchored event insert is transactional
-
-The `create_event` write path SHALL compute its anchor basis and perform its insert
-inside a single `SessionHub` transaction (`createAnchoredEvent`): the live-event read,
-the exclusion of regenerate snapshot ids, the timecode wall-anchor computation, and the
-explicit-anchor insert SHALL be one synchronous transactional RPC (invoking the
-store-level insert, not a nested self-transactional delegate), with zero `await`
-expressions in the RPC body. Observable behavior SHALL be unchanged from the prior
-two-step form: identical anchor math and monotone clamping, identical regenerate
-snapshot-id exclusion, and exactly one `event.changed` broadcast per successful insert.
-
-#### Scenario: Anchor basis and insert cannot interleave
-- **WHEN** `createAnchoredEvent` executes
-- **THEN** the anchor-basis read and the insert run inside one transaction, so no concurrent hub mutation can be observed between them
-
-#### Scenario: Behavior parity with the prior insert path
-- **WHEN** the existing `create_event` tests (anchor ordering among generated events, regenerate snapshot-id exclusion, cap behavior, broadcast emission) run against the transactional RPC
-- **THEN** all pass unchanged — persisted rows, wall times, and WS emissions are byte-identical to the prior read-then-insert form
-
-#### Scenario: Hub synchronous invariant holds
-- **WHEN** the `createAnchoredEvent` RPC body is inspected
-- **THEN** it contains zero `await` expressions and runs inside a single synchronous transaction
-
-### Requirement: The create_event handler is await-free
-
-The `create_event` MCP tool handler SHALL contain zero `await` expressions: the cap
-check, the transactional RPC call, and the per-run counter increment SHALL execute as
-one uninterruptible synchronous sequence, so concurrent `create_event` tool calls on one
-run can never interleave between the cap check and the counter increment and the per-run
-cap can never be exceeded. Any future change introducing an `await` into this handler
-(e.g. an async session-access port) SHALL first move cap reservation into the
-synchronous prologue or the transactional RPC, authorized by its own delta.
-
-#### Scenario: Handler is uninterruptible
-- **WHEN** the `create_event` handler body is inspected
-- **THEN** it contains zero `await` expressions from cap check through counter increment
-
-#### Scenario: Cap holds under concurrent calls
-- **WHEN** multiple `create_event` tool calls arrive concurrently on one generation run at `cap - 1` created events
-- **THEN** at most one insert succeeds and the reported `{created, cap_hit}` never exceeds the configured cap
-
 ### Requirement: Generation endpoint guard ladder runs before any spawn
 The server SHALL expose `POST /api/sessions/:sessionId/events/generate` (added to the
 README endpoint table), a **synchronous JSON** route mirroring `topics/generate`'s
@@ -505,3 +472,50 @@ persisted and are reported nowhere in the error body.
 - **WHEN** the CLI exits nonzero after the run has inserted events
 - **THEN** the route responds `502` with the scrubbed generate-failure detail, no raw
   subprocess output, and the already-inserted events remain persisted
+
+### Requirement: Anchored event insert is one serialized transaction
+
+The `create_event` write path SHALL compute its anchor basis and perform its insert
+inside a single `SessionHub` transaction (`createAnchoredEvent`): the live-event read,
+the exclusion of regenerate snapshot ids, the timecode wall-anchor computation, and the
+explicit-anchor insert SHALL be one transactional RPC (invoking the store-level insert,
+not a nested self-transactional delegate) whose body awaits nothing but its own
+transaction's statements, and which runs in the session's per-session order, so no other
+operation on the session runs between the anchor-basis read and the insert. Observable
+behavior SHALL be unchanged from the prior two-step form: identical anchor math and monotone clamping, identical regenerate
+snapshot-id exclusion, and exactly one `event.changed` broadcast per successful insert.
+
+#### Scenario: Anchor basis and insert cannot interleave
+- **WHEN** `createAnchoredEvent` executes
+- **THEN** the anchor-basis read and the insert run inside one transaction, so no concurrent hub mutation can be observed between them
+
+#### Scenario: Behavior parity with the prior insert path
+- **WHEN** the existing `create_event` tests (anchor ordering among generated events, regenerate snapshot-id exclusion, cap behavior, broadcast emission) run against the transactional RPC
+- **THEN** all pass unchanged — persisted rows, wall times, and WS emissions are byte-identical to the prior read-then-insert form
+
+#### Scenario: Anchor basis and insert stay in one serialized transaction
+- **WHEN** the `createAnchoredEvent` RPC body is inspected, and it runs while other operations on the same session are called concurrently
+- **THEN** it awaits only its own transaction's statements, and none of the concurrent operations runs between its anchor-basis read and its insert
+
+### Requirement: The create_event cap is reserved before any await
+
+The `create_event` MCP tool handler SHALL check the per-run cap and reserve one slot of it in a
+single synchronous step before its first `await`: a call SHALL be refused with the existing cap
+error when the run's successful inserts plus its reserved slots already reach the cap. A
+successful insert SHALL count as one created event; a failed insert SHALL release its reserved
+slot and count nothing. So concurrent `create_event` tool calls on one run can never exceed the
+per-run cap, however their awaits interleave, and the reported created count includes only
+successful inserts. The tool's error texts, the order of its validations, and the generate route's
+`{created, cap_hit}` response are unchanged.
+
+#### Scenario: The cap check and reservation precede the first await
+- **WHEN** the `create_event` handler body is inspected
+- **THEN** the cap check and the slot reservation run synchronously before its first `await` expression
+
+#### Scenario: Cap holds under concurrent calls
+- **WHEN** multiple `create_event` tool calls arrive concurrently on one generation run at `cap - 1` created events, and the session's storage yields between statements
+- **THEN** at most one insert succeeds and the reported `{created, cap_hit}` never exceeds the configured cap
+
+#### Scenario: A failed insert frees its slot
+- **WHEN** a `create_event` call passes the cap check and its insert then fails
+- **THEN** the call returns the existing internal-error tool result, nothing is counted, and a later call on the same run can use the slot

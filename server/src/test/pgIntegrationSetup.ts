@@ -1,8 +1,9 @@
 // Test Postgres for the `integration` vitest project (catalog-on-postgres D6): the shared
 // test/pg global setup, then a higher connection limit for the app role in THIS container only.
-// Every integration test builds the server's own catalog adapter (up to 8 connections, the 4b
-// defaults) and vitest runs about 19 files at once, past the role's production limit of 20. The
-// `pg` project's container keeps 20, which catalogSchema.pg.test.ts asserts.
+// Every integration test builds the server's own catalog adapter (up to 12 connections: 3 root,
+// 5 transaction and 4 session, session-tables D2) and vitest runs about 19 files at once, past the
+// role's production limit of 20. The `pg` project's container keeps 20, which
+// catalogSchema.pg.test.ts asserts.
 
 import postgres from 'postgres';
 import type { TestProject } from 'vitest/node';
@@ -22,7 +23,7 @@ export default async function setup(project: TestProject): Promise<() => Promise
       onnotice: () => {},
     });
     try {
-      await admin.unsafe('alter role autologger_app connection limit 200');
+      await admin.unsafe('alter role autologger_app connection limit 280');
     } finally {
       await admin.end();
     }

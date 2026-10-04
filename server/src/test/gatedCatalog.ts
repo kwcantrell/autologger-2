@@ -1,8 +1,8 @@
 // A `CatalogRoot` wrapper that can hold one statement until the test releases it
 // (catalog-concurrency-hazards D1), so a test can stop request A at a chosen statement, let request
 // B commit, then let A go. Pass it to one request with `envWith({}, { catalog: gated })`; KV and the
-// mirror hold their own adapter, so a test that races them builds those on the gated catalog too
-// (`new KvStore(gated.bindSystem('kv'), clock)`).
+// session hubs hold their own adapter handles, so a test that races them builds those on the gated
+// catalog too (`new KvStore(gated.bindSystem('kv'), clock)`).
 //
 // It gates the handles `bindUser`/`bindSystem` return and records each statement with its binding
 // (`bindings`, catalog-roles D12). Used directly as a `CatalogDb` it is a `system:test` handle.

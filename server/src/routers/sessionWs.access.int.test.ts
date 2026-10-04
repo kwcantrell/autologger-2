@@ -85,7 +85,7 @@ function within<T>(p: Promise<T>, ms = 3000): Promise<T> {
  * close frame sent earlier on the same connection would arrive first). */
 async function expectStillOpen(sessionId: string, open: Sock[]): Promise<void> {
   const before = open.map((s) => s.messages.length);
-  env.ports.sessions.get(sessionId).broadcastCommand('play-toggle');
+  (await env.ports.sessions.get(sessionId)).broadcastCommand('play-toggle');
   for (const [i, s] of open.entries()) {
     await within(
       (async () => {

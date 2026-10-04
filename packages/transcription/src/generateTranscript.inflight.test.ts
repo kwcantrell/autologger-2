@@ -9,7 +9,7 @@ const deps = (resolveSessionTitle: (id: string) => Promise<string | null>) =>
   ({
     config: { DEEPGRAM_API_KEY: 'k' } as unknown as Config,
     audio: {} as never,
-    getHub: () => ({}) as never,
+    getHub: async () => ({}) as never,
     ctx: { frameRate: 24, startOffsetFrames: 0 },
     sessionId: 'mine',
     resolveSessionTitle,

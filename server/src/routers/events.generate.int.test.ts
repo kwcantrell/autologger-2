@@ -33,12 +33,19 @@ import {
   EVENT_GENERATE_SYSTEM_PROMPT,
   INSTRUCTION_OPEN,
 } from '@autologger/ai-runtime/eventGeneratePrompt';
-import { SessionIndexStore } from '@autologger/catalog';
 import type { Clock } from '@autologger/ports';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Bindings } from '../appEnv';
 import { app, defaultUser, env, envWith } from '../test/harness';
-import { catalogFor, seededSession as seedSessionChain, testDb } from '../test/helpers';
+import {
+  catalogFor,
+  seedAccessMatrix,
+  seededSession as seedSessionChain,
+  testDb,
+} from '../test/helpers';
+import { sessionGate, systemCall } from '../test/session/sessionGate';
+import { harnessHub, testRegistry } from '../test/session/sessionRows';
+import { slowStorage } from '../test/session/slowStorage';
 
 const EVENTS_SUCCESS_FIXTURE = fileURLToPath(
   new URL('../test/fixtures/fake-claude-events-success.mjs', import.meta.url),
@@ -202,9 +209,9 @@ function generateReq(sessionId: string, envOverride: ReturnType<typeof envWith>,
 
 /** Anchored transcript: words carrying session-time anchors around the
  * fixtures' create_event timecodes. */
-function seedAnchoredTranscript(sessionId: string): void {
-  const hub = env.ports.sessions.get(sessionId);
-  hub.replaceTranscriptWords([
+async function seedAnchoredTranscript(sessionId: string): Promise<void> {
+  const hub = await harnessHub(sessionId);
+  await hub.replaceTranscriptWords([
     { session_time: '00:00:01:00', speaker: 'A', word: 'roll', start_sec: 1, end_sec: 2 },
     { session_time: '00:00:03:00', speaker: 'A', word: 'slate', start_sec: 3, end_sec: 4 },
     { session_time: '00:00:05:00', speaker: 'B', word: 'marker', start_sec: 5, end_sec: 6 },
@@ -212,18 +219,16 @@ function seedAnchoredTranscript(sessionId: string): void {
 }
 
 /** Words that exist but carry NO session-time anchors. */
-function seedAnchorlessTranscript(sessionId: string): void {
-  env.ports.sessions
-    .get(sessionId)
-    .replaceTranscriptWords([
-      { session_time: '', speaker: 'A', word: 'unanchored', start_sec: 1, end_sec: 2 },
-    ]);
+async function seedAnchorlessTranscript(sessionId: string): Promise<void> {
+  await (await harnessHub(sessionId)).replaceTranscriptWords([
+    { session_time: '', speaker: 'A', word: 'unanchored', start_sec: 1, end_sec: 2 },
+  ]);
 }
 
 /** A pre-existing manual `slate` event at 00:00:01:00 — the dedup basis the
  * prompt must embed, and the run's one timecode↔wall anchor. */
-function seedManualSlateEvent(sessionId: string): void {
-  env.ports.sessions.get(sessionId).addEvent({
+async function seedManualSlateEvent(sessionId: string): Promise<void> {
+  await (await harnessHub(sessionId)).addEvent({
     category: 'slate',
     message: 'Pre-existing slate',
     metadataJson: '{}',
@@ -233,8 +238,11 @@ function seedManualSlateEvent(sessionId: string): void {
   });
 }
 
-function seedAutoSlateEvent(sessionId: string, message = 'Old generated slate'): void {
-  env.ports.sessions.get(sessionId).addEvent({
+async function seedAutoSlateEvent(
+  sessionId: string,
+  message = 'Old generated slate',
+): Promise<void> {
+  await (await harnessHub(sessionId)).addEvent({
     category: 'slate',
     message,
     metadataJson: '{"auto_generated":true,"auto_generate_run_id":"old-run"}',
@@ -244,8 +252,9 @@ function seedAutoSlateEvent(sessionId: string, message = 'Old generated slate'):
   });
 }
 
-function listEvents(sessionId: string) {
-  return env.ports.sessions.get(sessionId).listEvents({ limit: 1000, offset: 0 }).events;
+async function listEvents(sessionId: string) {
+  return (await (await harnessHub(sessionId)).listEvents({ limit: 1000, offset: 0 }))
+    .events;
 }
 
 async function catalogEventCount(sessionId: string): Promise<number> {
@@ -322,7 +331,7 @@ describe('events/generate — guard ladder', () => {
 
   it('2. CLAUDE_CLI_PATH unset → 503 with an actionable detail, no spawn, no MCP registration', async () => {
     const { sessionId } = await newSession();
-    seedAnchoredTranscript(sessionId);
+    await seedAnchoredTranscript(sessionId);
     const res = await generateReq(sessionId, envWith({ CLAUDE_CLI_PATH: '' }));
     expect(res.status).toBe(503);
     expect(await detailOf(res)).toMatch(/CLAUDE_CLI_PATH/);
@@ -355,7 +364,7 @@ describe('events/generate — guard ladder', () => {
 
   it('4b. transcript with no session-time anchors → 400 naming the missing anchors', async () => {
     const { sessionId } = await newSession();
-    seedAnchorlessTranscript(sessionId);
+    await seedAnchorlessTranscript(sessionId);
     const res = await generateReq(sessionId, configuredEnv(EVENTS_SUCCESS_FIXTURE));
     expect(res.status).toBe(400);
     expect(await detailOf(res)).toMatch(/anchor/i);
@@ -376,7 +385,7 @@ describe('events/generate — guard ladder', () => {
         },
       ]),
     });
-    seedAnchoredTranscript(sessionId);
+    await seedAnchoredTranscript(sessionId);
     const res = await generateReq(sessionId, configuredEnv(EVENTS_SUCCESS_FIXTURE));
     expect(res.status).toBe(400);
     expect(await detailOf(res)).toMatch(/instruction/i);
@@ -385,7 +394,7 @@ describe('events/generate — guard ladder', () => {
 
   it('6a. aggregate instruction BYTES over the bound → 400 naming the bound, no spawn', async () => {
     const { sessionId } = await newSession();
-    seedAnchoredTranscript(sessionId);
+    await seedAnchoredTranscript(sessionId);
     const res = await generateReq(
       sessionId,
       configuredEnv(EVENTS_SUCCESS_FIXTURE, { EVENT_GENERATE_MAX_INSTRUCTION_BYTES: '4' }),
@@ -400,7 +409,7 @@ describe('events/generate — guard ladder', () => {
   it('6b. aggregate instruction ENTRY COUNT over the bound → 400 (bearing categories + bearing options counted)', async () => {
     // 3 entries: slate button + mic button-level + Lav option-level.
     const { sessionId } = await newSession({ categoriesJson: GEN_DROPDOWN_CATEGORIES_JSON });
-    seedAnchoredTranscript(sessionId);
+    await seedAnchoredTranscript(sessionId);
     const over = await generateReq(
       sessionId,
       configuredEnv(EVENTS_SUCCESS_FIXTURE, { EVENT_GENERATE_MAX_INSTRUCTION_ENTRIES: '2' }),
@@ -412,7 +421,7 @@ describe('events/generate — guard ladder', () => {
 
   it('6→7 order: an aggregate-bound 400 leaves the slot FREE — the next request is not 409-busy', async () => {
     const { sessionId } = await newSession();
-    seedAnchoredTranscript(sessionId);
+    await seedAnchoredTranscript(sessionId);
     const over = await generateReq(
       sessionId,
       configuredEnv(EVENTS_SUCCESS_FIXTURE, { EVENT_GENERATE_MAX_INSTRUCTION_BYTES: '4' }),
@@ -429,7 +438,7 @@ describe('events/generate — guard ladder', () => {
 
   it('7. shared AI slot held → 409 naming the full holder set incl. event generation, no spawn', async () => {
     const { sessionId } = await newSession();
-    seedAnchoredTranscript(sessionId);
+    await seedAnchoredTranscript(sessionId);
     const slot = aiChatTurns.tryAcquire(sessionId, 2);
     expect(slot.ok).toBe(true);
     try {
@@ -447,7 +456,7 @@ describe('events/generate — guard ladder', () => {
   it('7b. process-wide ceiling reached → 409 with the distinct at-capacity detail naming event generation', async () => {
     const other = (await newSession()).sessionId;
     const { sessionId } = await newSession();
-    seedAnchoredTranscript(sessionId);
+    await seedAnchoredTranscript(sessionId);
     const slot = aiChatTurns.tryAcquire(other, 1);
     expect(slot.ok).toBe(true);
     try {
@@ -495,7 +504,7 @@ describe('events/generate — optional body, regenerate, and selection', () => {
     const spy = mockSuccessfulTurn();
     try {
       const { sessionId } = await newSession();
-      seedAnchoredTranscript(sessionId);
+      await seedAnchoredTranscript(sessionId);
 
       const res = await generateReq(sessionId, configuredEnv(EVENTS_SUCCESS_FIXTURE));
 
@@ -513,7 +522,7 @@ describe('events/generate — optional body, regenerate, and selection', () => {
       const { sessionId } = await newSession({
         categoriesJson: GEN_OPTION_ONLY_DROPDOWN_CATEGORIES_JSON,
       });
-      seedAnchoredTranscript(sessionId);
+      await seedAnchoredTranscript(sessionId);
       const boundedEnv = configuredEnv(EVENTS_SUCCESS_FIXTURE, {
         EVENT_GENERATE_MAX_INSTRUCTION_ENTRIES: '2',
       });
@@ -549,7 +558,7 @@ describe('events/generate — optional body, regenerate, and selection', () => {
     const { sessionId } = await newSession({
       categoriesJson: GEN_OPTION_ONLY_DROPDOWN_CATEGORIES_JSON,
     });
-    seedAnchoredTranscript(sessionId);
+    await seedAnchoredTranscript(sessionId);
 
     const res = await generateReq(
       sessionId,
@@ -568,8 +577,8 @@ describe('events/generate — optional body, regenerate, and selection', () => {
     const spy = mockSuccessfulTurn();
     try {
       const { sessionId } = await newSession();
-      seedAnchoredTranscript(sessionId);
-      seedAutoSlateEvent(sessionId);
+      await seedAnchoredTranscript(sessionId);
+      await seedAutoSlateEvent(sessionId);
 
       const res = await generateReq(sessionId, configuredEnv(EVENTS_SUCCESS_FIXTURE), {
         regenerate: false,
@@ -577,9 +586,9 @@ describe('events/generate — optional body, regenerate, and selection', () => {
 
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual({ created: 0, cap_hit: false });
-      expect(listEvents(sessionId).some((event) => event.message === 'Old generated slate')).toBe(
-        true,
-      );
+      expect(
+        (await listEvents(sessionId)).some((event) => event.message === 'Old generated slate'),
+      ).toBe(true);
     } finally {
       spy.mockRestore();
     }
@@ -594,9 +603,9 @@ describe('events/generate — optional body, regenerate, and selection', () => {
   // to the delete decision itself).
   it('regenerate + zero-created success keeps the prior set: 200 {created:0, cap_hit:false, deleted:0}', async () => {
     const { sessionId } = await newSession();
-    seedAnchoredTranscript(sessionId);
-    seedManualSlateEvent(sessionId);
-    seedAutoSlateEvent(sessionId);
+    await seedAnchoredTranscript(sessionId);
+    await seedManualSlateEvent(sessionId);
+    await seedAutoSlateEvent(sessionId);
 
     const res = await generateReq(sessionId, configuredEnv(NO_TOOL_CALLS_FIXTURE), {
       regenerate: true,
@@ -604,7 +613,7 @@ describe('events/generate — optional body, regenerate, and selection', () => {
 
     expect(res.status, await res.clone().text()).toBe(200);
     expect(await res.json()).toEqual({ created: 0, cap_hit: false, deleted: 0 });
-    const events = listEvents(sessionId);
+    const events = await listEvents(sessionId);
     expect(events.some((event) => event.message === 'Old generated slate')).toBe(true);
     expect(events.some((event) => event.message === 'Pre-existing slate')).toBe(true);
     expect(await catalogEventCount(sessionId)).toBe(2);
@@ -614,7 +623,7 @@ describe('events/generate — optional body, regenerate, and selection', () => {
     const spy = mockSuccessfulTurn();
     try {
       const { sessionId } = await newSession({ categoriesJson: GEN_DROPDOWN_CATEGORIES_JSON });
-      seedAnchoredTranscript(sessionId);
+      await seedAnchoredTranscript(sessionId);
 
       const res = await generateReq(
         sessionId,
@@ -662,8 +671,8 @@ describe('events/generate — optional body, regenerate, and selection', () => {
 
   it('unmatched selection returns 400 before slot acquisition and deletes nothing', async () => {
     const { sessionId } = await newSession();
-    seedAnchoredTranscript(sessionId);
-    seedAutoSlateEvent(sessionId);
+    await seedAnchoredTranscript(sessionId);
+    await seedAutoSlateEvent(sessionId);
     const slot = aiChatTurns.tryAcquire(sessionId, 2);
     expect(slot.ok).toBe(true);
     try {
@@ -675,9 +684,9 @@ describe('events/generate — optional body, regenerate, and selection', () => {
       expect(await detailOf(res)).toMatch(/instruction/i);
       expect(neverSpawned(sessionId)).toBe(true);
       expect(aiChatTurns.isSessionInFlight(sessionId)).toBe(true);
-      expect(listEvents(sessionId).some((event) => event.message === 'Old generated slate')).toBe(
-        true,
-      );
+      expect(
+        (await listEvents(sessionId)).some((event) => event.message === 'Old generated slate'),
+      ).toBe(true);
     } finally {
       if (slot.ok) slot.release();
     }
@@ -685,7 +694,7 @@ describe('events/generate — optional body, regenerate, and selection', () => {
 
   it('regenerate plus non-empty selection returns 400 before guards and deletes nothing', async () => {
     const { sessionId } = await newSession();
-    seedAutoSlateEvent(sessionId);
+    await seedAutoSlateEvent(sessionId);
 
     const res = await generateReq(sessionId, envWith({ CLAUDE_CLI_PATH: '' }), {
       regenerate: true,
@@ -693,9 +702,9 @@ describe('events/generate — optional body, regenerate, and selection', () => {
     });
 
     expect(res.status).toBe(400);
-    expect(listEvents(sessionId).some((event) => event.message === 'Old generated slate')).toBe(
-      true,
-    );
+    expect(
+      (await listEvents(sessionId)).some((event) => event.message === 'Old generated slate'),
+    ).toBe(true);
     expect(neverSpawned(sessionId)).toBe(true);
   });
 
@@ -717,17 +726,17 @@ describe('events/generate — optional body, regenerate, and selection', () => {
 
   it('over-bound selection (501 entries) returns 400 before any delete/spawn (D5)', async () => {
     const { sessionId } = await newSession();
-    seedAnchoredTranscript(sessionId);
-    seedAutoSlateEvent(sessionId);
+    await seedAnchoredTranscript(sessionId);
+    await seedAutoSlateEvent(sessionId);
     const selection = Array.from({ length: 501 }, (_, i) => ({ category_id: `c${i}` }));
 
     const res = await generateReq(sessionId, configuredEnv(EVENTS_SUCCESS_FIXTURE), { selection });
 
     expect(res.status).toBe(400);
     expect(neverSpawned(sessionId)).toBe(true);
-    expect(listEvents(sessionId).some((event) => event.message === 'Old generated slate')).toBe(
-      true,
-    );
+    expect(
+      (await listEvents(sessionId)).some((event) => event.message === 'Old generated slate'),
+    ).toBe(true);
   });
 });
 
@@ -740,8 +749,8 @@ describe('events/generate — configured behavior (real create_event MCP round t
       'prompt embeds the existing events as the dedup basis',
     async () => {
       const { studioId, showId, sessionId } = await newSession();
-      seedAnchoredTranscript(sessionId);
-      seedManualSlateEvent(sessionId);
+      await seedAnchoredTranscript(sessionId);
+      await seedManualSlateEvent(sessionId);
 
       const res = await generateReq(sessionId, configuredEnv(EVENTS_SUCCESS_FIXTURE));
       expect(res.status).toBe(200);
@@ -750,7 +759,7 @@ describe('events/generate — configured behavior (real create_event MCP round t
       // The fixture's three REAL create_event calls landed, at the supplied
       // timecodes (24 fps ⇒ HH:MM:SS:FF), with the attribution pair + the
       // manual path's category UI-snapshot keys from the run snapshot.
-      const events = listEvents(sessionId);
+      const events = await listEvents(sessionId);
       const generated = events.filter((e) => e.message === 'SLATE');
       expect(generated).toHaveLength(3);
       expect(generated.map((e) => e.timecode).sort()).toEqual([
@@ -772,9 +781,9 @@ describe('events/generate — configured behavior (real create_event MCP round t
       expect(manual).toBeDefined();
       expect(JSON.parse(manual?.metadata_json ?? '{}').auto_generated).toBeUndefined();
 
-      // Sessions-list freshness (spec "Sessions list stays truthful"): the
-      // catalog projection was mirrored by the ROUTE — no manual write — so
-      // GET /api/sessions serves the updated event_count.
+      // Sessions-list freshness (spec "Sessions list stays truthful"): each
+      // insert committed the catalog projection with it (session-tables D8) —
+      // no manual write — so GET /api/sessions serves the updated event_count.
       const cat = catalogFor();
       await cat.auth.authSetPrefs((await defaultUser()).id, studioId, showId);
       const listRes = await app.request('/api/sessions', { method: 'GET' }, { ...env });
@@ -820,9 +829,9 @@ describe('events/generate — configured behavior (real create_event MCP round t
       'rows, and excludes the old auto row (but not the manual row) from the prompt',
     async () => {
       const { sessionId } = await newSession();
-      seedAnchoredTranscript(sessionId);
-      seedManualSlateEvent(sessionId);
-      seedAutoSlateEvent(sessionId);
+      await seedAnchoredTranscript(sessionId);
+      await seedManualSlateEvent(sessionId);
+      await seedAutoSlateEvent(sessionId);
 
       const res = await generateReq(sessionId, configuredEnv(EVENTS_SUCCESS_FIXTURE), {
         regenerate: true,
@@ -831,7 +840,7 @@ describe('events/generate — configured behavior (real create_event MCP round t
       expect(res.status, await res.clone().text()).toBe(200);
       expect(await res.json()).toEqual({ created: 3, cap_hit: false, deleted: 1 });
 
-      const events = listEvents(sessionId);
+      const events = await listEvents(sessionId);
       expect(events.some((e) => e.message === 'Old generated slate')).toBe(false);
       const manual = events.find((e) => e.message === 'Pre-existing slate');
       expect(manual).toBeDefined();
@@ -855,9 +864,9 @@ describe('events/generate — configured behavior (real create_event MCP round t
   // success).
   it('failed regenerate preserves the prior auto row AND the partial inserts (502, no delete)', async () => {
     const { sessionId } = await newSession();
-    seedAnchoredTranscript(sessionId);
-    seedManualSlateEvent(sessionId);
-    seedAutoSlateEvent(sessionId);
+    await seedAnchoredTranscript(sessionId);
+    await seedManualSlateEvent(sessionId);
+    await seedAutoSlateEvent(sessionId);
 
     const res = await generateReq(sessionId, configuredEnv(EVENTS_PARTIAL_FAIL_FIXTURE), {
       regenerate: true,
@@ -867,7 +876,7 @@ describe('events/generate — configured behavior (real create_event MCP round t
     const body = (await res.json()) as Record<string, unknown>;
     expect(body).toEqual({ detail: EVENT_GENERATE_FAILURE_DETAIL });
 
-    const events = listEvents(sessionId);
+    const events = await listEvents(sessionId);
     expect(events.some((e) => e.message === 'Old generated slate')).toBe(true);
     expect(events.some((e) => e.message === 'Pre-existing slate')).toBe(true);
     const partial = events.filter((e) => e.message === 'SLATE');
@@ -878,7 +887,7 @@ describe('events/generate — configured behavior (real create_event MCP round t
 
   it('cap: EVENT_GENERATE_MAX_CREATED_EVENTS=2 → the third call is refused at the tool; 200 {created:2, cap_hit:true}', async () => {
     const { sessionId } = await newSession();
-    seedAnchoredTranscript(sessionId);
+    await seedAnchoredTranscript(sessionId);
 
     const res = await generateReq(
       sessionId,
@@ -888,7 +897,7 @@ describe('events/generate — configured behavior (real create_event MCP round t
     expect(await res.json()).toEqual({ created: 2, cap_hit: true });
 
     // The cap ended WRITING, not the world: exactly the first two persisted.
-    const generated = listEvents(sessionId).filter((e) => e.message === 'SLATE');
+    const generated = (await listEvents(sessionId)).filter((e) => e.message === 'SLATE');
     expect(generated.map((e) => e.timecode).sort()).toEqual(['00:00:02:00', '00:00:04:00']);
     expect(aiChatTurns.isSessionInFlight(sessionId)).toBe(false);
   });
@@ -899,7 +908,7 @@ describe('events/generate — configured behavior (real create_event MCP round t
       'projection is still current on the failure path',
     async () => {
       const { sessionId } = await newSession();
-      seedAnchoredTranscript(sessionId);
+      await seedAnchoredTranscript(sessionId);
 
       const res = await generateReq(sessionId, configuredEnv(EVENTS_PARTIAL_FAIL_FIXTURE));
       expect(res.status).toBe(502);
@@ -910,9 +919,10 @@ describe('events/generate — configured behavior (real create_event MCP round t
       expect(JSON.stringify(body)).not.toMatch(/upstream-failed|claude|created/i);
 
       // Partial results survive the failed run (spec scenario).
-      const generated = listEvents(sessionId).filter((e) => e.message === 'SLATE');
+      const generated = (await listEvents(sessionId)).filter((e) => e.message === 'SLATE');
       expect(generated).toHaveLength(2);
-      // ...and the catalog mirror ran on the failure path too.
+      // ...and the catalog projection is current on the failure path too (each
+      // insert committed it, session-tables D8).
       expect(await catalogEventCount(sessionId)).toBe(2);
       expect(aiChatTurns.isSessionInFlight(sessionId)).toBe(false);
     },
@@ -927,7 +937,7 @@ describe('events/generate — configured behavior (real create_event MCP round t
       const spy = vi.spyOn(aiTurnModule, 'driveAiTurn');
       try {
         const { sessionId } = await newSession();
-        seedAnchoredTranscript(sessionId);
+        await seedAnchoredTranscript(sessionId);
         // Distinctive PAST session start, distinct from any run-clock value —
         // the snapshot's startedAtUtc must be the catalog row's
         // started_at_utc, never `new Date()` at run time (design D4: on a
@@ -996,7 +1006,7 @@ describe('events/generate — configured behavior (real create_event MCP round t
         // Run-start word snapshot (Phase-3 carry): the seeded words, frozen.
         expect(generation?.words?.map((w) => w.word)).toEqual(['roll', 'slate', 'marker']);
         // The registration's runId is the one stamped into every created row.
-        const generated = listEvents(sessionId).filter((e) => e.message === 'SLATE');
+        const generated = (await listEvents(sessionId)).filter((e) => e.message === 'SLATE');
         expect(generated.length).toBeGreaterThan(0);
         for (const e of generated) {
           expect(JSON.parse(e.metadata_json).auto_generate_run_id).toBe(generation?.runId);
@@ -1008,29 +1018,86 @@ describe('events/generate — configured behavior (real create_event MCP round t
   );
 
   it(
-    'finally-block ordering pin: slot release happens BEFORE the post-run catalog ' +
-      'projection, so a throw from the projection does not leave the AI slot stuck in flight',
+    'a projection update that fails fails each insert (session-tables D8): no event is saved, ' +
+      'the catalog count is unchanged, and the AI slot is released',
     async () => {
       const { sessionId } = await newSession();
-      seedAnchoredTranscript(sessionId);
-      const spy = vi
-        .spyOn(SessionIndexStore.prototype, 'projectSessionLive')
-        .mockImplementationOnce(() => {
-          throw new Error('boom — simulated projection failure');
-        });
+      await seedAnchoredTranscript(sessionId);
+      // The route's registry, over storage whose projection statement fails; every other
+      // statement runs as in production.
+      const failing = testRegistry({
+        wrap: (storage) =>
+          slowStorage(storage, {
+            delayMs: 0,
+            hooks: {
+              beforeStatement(sql) {
+                if (/^\s*UPDATE sessions\b/i.test(sql)) {
+                  throw new Error('boom — simulated projection failure');
+                }
+              },
+            },
+          }),
+      });
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
       try {
-        const res = await generateReq(sessionId, configuredEnv(EVENTS_SUCCESS_FIXTURE));
-        // A failed mirror write only warns: the run's own outcome is returned
-        // (catalog-concurrency-hazards D6; was the generic 500). The slot is free either way.
-        expect(res.status).toBe(200);
-        expect(warn.mock.calls.map((c) => String(c[0])).join('\n')).toMatch(
-          /live projection not written/,
+        const res = await generateReq(
+          sessionId,
+          configuredEnv(EVENTS_SUCCESS_FIXTURE, {}, { sessions: failing }),
         );
+        // Each failed insert is a failed create_event (an internal-error tool result, not
+        // counted in `created`); the run's own outcome is returned.
+        expect(res.status).toBe(200);
+        expect(((await res.json()) as { created: number }).created).toBe(0);
+        expect((await listEvents(sessionId)).filter((e) => e.message === 'SLATE')).toHaveLength(0);
+        expect(await catalogEventCount(sessionId)).toBe(0);
         expect(aiChatTurns.isSessionInFlight(sessionId)).toBe(false);
       } finally {
-        spy.mockRestore();
         warn.mockRestore();
+        await failing.closeAll();
+      }
+    },
+  );
+
+  it(
+    'a regenerate whose post-success delete cannot write the projection answers 500 and keeps ' +
+      'every snapshotted row (session-tables auto-event-generation delta)',
+    async () => {
+      const { sessionId } = await newSession();
+      await seedAnchoredTranscript(sessionId);
+      await seedManualSlateEvent(sessionId);
+      await seedAutoSlateEvent(sessionId);
+      // Only the delete's projection fails: the inserts commit theirs as in production.
+      let deleting = false;
+      const failing = testRegistry({
+        wrap: (storage) =>
+          slowStorage(storage, {
+            delayMs: 0,
+            hooks: {
+              beforeStatement(sql) {
+                if (/^\s*DELETE FROM session_events\b/i.test(sql)) deleting = true;
+                if (deleting && /^\s*UPDATE sessions\b/i.test(sql)) {
+                  throw new Error('boom — simulated projection failure');
+                }
+              },
+            },
+          }),
+      });
+      try {
+        const res = await generateReq(
+          sessionId,
+          configuredEnv(EVENTS_SUCCESS_FIXTURE, {}, { sessions: failing }),
+          { regenerate: true },
+        );
+        expect(deleting).toBe(true);
+        expect(res.status).toBe(500);
+        const events = await listEvents(sessionId);
+        expect(events.some((e) => e.message === 'Old generated slate')).toBe(true);
+        expect(events.some((e) => e.message === 'Pre-existing slate')).toBe(true);
+        expect(events.filter((e) => e.message === 'SLATE')).toHaveLength(3);
+        expect(await catalogEventCount(sessionId)).toBe(5); // the delete rolled back as a whole
+        expect(aiChatTurns.isSessionInFlight(sessionId)).toBe(false);
+      } finally {
+        await failing.closeAll();
       }
     },
   );
@@ -1050,9 +1117,9 @@ describe('events/generate — mid-run interleaving (real HTTP requests during a 
       'paused; after resume, success deletes exactly that row',
     async () => {
       const { sessionId } = await newSession();
-      seedAnchoredTranscript(sessionId);
-      seedManualSlateEvent(sessionId);
-      seedAutoSlateEvent(sessionId);
+      await seedAnchoredTranscript(sessionId);
+      await seedManualSlateEvent(sessionId);
+      await seedAutoSlateEvent(sessionId);
 
       const genPromise = generateReq(sessionId, configuredEnv(EVENTS_PAUSED_FIXTURE), {
         regenerate: true,
@@ -1083,7 +1150,7 @@ describe('events/generate — mid-run interleaving (real HTTP requests during a 
       expect(res.status, await res.clone().text()).toBe(200);
       expect(await res.json()).toEqual({ created: 3, cap_hit: false, deleted: 1 });
 
-      const events = listEvents(sessionId);
+      const events = await listEvents(sessionId);
       expect(events.some((e) => e.message === 'Old generated slate')).toBe(false);
       expect(events.some((e) => e.message === 'Pre-existing slate')).toBe(true);
       expect(events.filter((e) => e.message === 'SLATE')).toHaveLength(3);
@@ -1095,10 +1162,10 @@ describe('events/generate — mid-run interleaving (real HTTP requests during a 
       'own created rows and the manual row persist',
     async () => {
       const { sessionId } = await newSession();
-      seedAnchoredTranscript(sessionId);
-      seedManualSlateEvent(sessionId);
-      seedAutoSlateEvent(sessionId);
-      const priorAutoId = listEvents(sessionId).find(
+      await seedAnchoredTranscript(sessionId);
+      await seedManualSlateEvent(sessionId);
+      await seedAutoSlateEvent(sessionId);
+      const priorAutoId = (await listEvents(sessionId)).find(
         (e) => e.message === 'Old generated slate',
       )?.event_id;
       expect(priorAutoId).toBeDefined();
@@ -1127,10 +1194,52 @@ describe('events/generate — mid-run interleaving (real HTTP requests during a 
       // while the run's OWN 3 new rows and the manual row are untouched.
       expect(await res.json()).toEqual({ created: 3, cap_hit: false, deleted: 0 });
 
-      const events = listEvents(sessionId);
+      const events = await listEvents(sessionId);
       expect(events.some((e) => e.message === 'Old generated slate')).toBe(false);
       expect(events.some((e) => e.message === 'Pre-existing slate')).toBe(true);
       expect(events.filter((e) => e.message === 'SLATE')).toHaveLength(3);
     },
   );
+});
+
+// session-content-policies D7, D8 (owner decision P1; task 5.1): a regenerate whose member loses
+// the grant after the turn created the replacements still deletes the snapshot it replaces: the
+// delete runs as the reviewed system task `session-undo`, so no doubled set of generated events
+// is left behind.
+describe('regenerate after a revoke (session-content-policies P1)', () => {
+  it('the snapshot delete runs as session-undo after the turn, leaving only the replacements', async () => {
+    const m = await seedAccessMatrix({ categoriesJson: GEN_CATEGORIES_JSON });
+    seededIds.push(m.sessionId);
+    await seedAnchoredTranscript(m.sessionId);
+    await seedAutoSlateEvent(m.sessionId);
+    const gate = sessionGate();
+    try {
+      await gate.registry.get(m.sessionId);
+      const held = gate.holdNext(systemCall('session-undo'));
+      const pending = Promise.resolve(
+        app.request(
+          `/api/sessions/${m.sessionId}/events/generate`,
+          {
+            method: 'POST',
+            headers: { 'content-type': 'application/json', cookie: m.granted.cookie },
+            body: JSON.stringify({ regenerate: true }),
+          },
+          configuredEnv(EVENTS_SUCCESS_FIXTURE, {}, { sessions: gate.registry }),
+        ),
+      );
+      await held.reached;
+      await catalogFor().auth.authRevokeShow(m.granted.id, m.showId);
+      held.release();
+      const res = await pending;
+      expect(res.status, await res.clone().text()).toBe(200);
+      const body = (await res.json()) as { created: number; deleted: number };
+      expect(body.created).toBeGreaterThan(0);
+      expect(body.deleted).toBe(1);
+      const events = await listEvents(m.sessionId);
+      expect(events.some((event) => event.message === 'Old generated slate')).toBe(false);
+      expect(events).toHaveLength(body.created);
+    } finally {
+      await gate.registry.closeAll();
+    }
+  });
 });

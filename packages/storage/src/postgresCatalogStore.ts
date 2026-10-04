@@ -16,6 +16,21 @@
 // `set_config('role', …, true), set_config('app.user_id', …, true)`, pipelined with BEGIN (and at
 // the root with the statement and COMMIT), so a binding adds no round trip. Nothing sets a role or
 // setting beyond one transaction (design D6).
+//
+// Session storage (session-tables D2, ADR 0021 slice 7b-1): a bound handle also runs session write
+// transactions (`sessionTx`: READ COMMITTED, the session's `catalog.sessions` row locked with
+// BEGIN and the preamble, retried on deadlock only) and read snapshots (`snapshot`: REPEATABLE READ
+// READ ONLY, never retried), on a third set of slots, the session slots, so session work never
+// holds a connection the catalog needs. The deadline, statement rules and connection handling are
+// the catalog transaction's.
+//
+// Session content policies (session-content-policies D4, ADR 0021 slice 7b-2): a session call binds
+// its caller, so a user-bound session transaction's row lock and a user-bound snapshot run under the
+// content policies. A refused lock (no row) asks `catalog.session_exists` on the same connection,
+// inside the transaction, to tell no access (`SessionAccessDeniedError`) from no session
+// (`SessionNotFoundError`); a user snapshot pipelines one probe with BEGIN and the preamble, which
+// answers both. Either refusal rejects before the body runs and is never retried; system calls are
+// unchanged.
 
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { CatalogDb, CatalogRoot } from '@autologger/ports';
@@ -25,6 +40,8 @@ import {
   CatalogForbiddenError,
   CatalogTxMisuseError,
   CatalogTxTimeoutError,
+  SessionAccessDeniedError,
+  SessionNotFoundError,
 } from './catalogErrors';
 
 /** The COMMIT was sent but no reply arrived: the transaction may or may not have committed. Never
@@ -93,6 +110,8 @@ export interface PostgresCatalogDbOptions {
   rootMax?: number;
   /** Concurrent transactions; with `rootMax`, 8 of the app role's 20 connections. */
   txSlots?: number;
+  /** Concurrent session transactions and snapshots (session-tables D2); opened on first use. */
+  sessionSlots?: number;
   txTimeoutMs?: number;
   /** Client-side bound on a root statement, queueing included (default 5 000). */
   rootTimeoutMs?: number;
@@ -112,7 +131,8 @@ const unrefSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(res
 /** Full-jitter backoff before re-running after run `n`: below 20 x 2^(n-1) ms. */
 const BACKOFF_BASE_MS = 20;
 
-function connectPostgres(opts: PgClientOptions): PgClient {
+/** The adapter's default `connect`: one postgres.js client per slot. */
+export function connectPostgres(opts: PgClientOptions): PgClient {
   return postgres({
     ...opts,
     types: { bigint: { to: 20, from: [20], parse: Number, serialize: String } },
@@ -122,12 +142,43 @@ function connectPostgres(opts: PgClientOptions): PgClient {
     idle_timeout: 0,
     connect_timeout: 5,
     // The server ends a backend whose client went away even while it runs a statement (A10).
-    connection: { client_connection_check_interval: '1s' },
+    // The image sets extra_float_digits = 0; 1 reads a double precision back exactly
+    // (session-tables A10).
+    connection: { client_connection_check_interval: '1s', extra_float_digits: 1 },
   }) as unknown as PgClient;
 }
 
 const GRACE_MS = 1000;
-const RETRYABLE = new Set(['40001', '40P01']);
+/** What a transaction run is: a catalog transaction, a session write transaction holding the
+ * session's row lock, or a read-only snapshot (session-tables D2). */
+type TxMode =
+  | { kind: 'catalog' }
+  | { kind: 'session'; sessionId: string }
+  | { kind: 'snapshot'; sessionId: string };
+const CATALOG: TxMode = { kind: 'catalog' };
+
+const RETRYABLE: Record<TxMode['kind'], ReadonlySet<string>> = {
+  catalog: new Set(['40001', '40P01']),
+  // READ COMMITTED cannot fail serialization; a read-only snapshot takes no row locks.
+  session: new Set(['40P01']),
+  snapshot: new Set(),
+};
+
+const BEGIN: Record<TxMode['kind'], string> = {
+  catalog: 'BEGIN ISOLATION LEVEL SERIALIZABLE',
+  session: 'BEGIN ISOLATION LEVEL READ COMMITTED',
+  snapshot: 'BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY',
+};
+
+const LOCK_SESSION = 'select 1 as locked from sessions where id = $1 for update';
+/** After a user-bound lock found no row: whether the session exists at all (session-content-policies
+ * D4); sent on the refusal path only. */
+const SESSION_EXISTS = 'select catalog.session_exists($1) as e';
+/** A user-bound snapshot's read check, pipelined with BEGIN and the preamble: `ok` when the session's
+ * show is accessible, and `e` whether the session exists (a read-only snapshot cannot lock, A3). */
+const SNAPSHOT_PROBE =
+  'select exists (select 1 from sessions s where s.id = $1 and s.show_id in ' +
+  '(select catalog.accessible_shows(catalog.app_user_id()))) as ok, catalog.session_exists($1) as e';
 
 const pgText = new Map<string, string>();
 
@@ -322,7 +373,7 @@ function rootOutcome(results: PromiseSettledResult<PgResult>[]): RootOutcome {
 /** What a bound handle calls on its adapter. */
 interface HandleOps {
   root<T>(b: Binding, sql: string, binds: unknown[], map: (r: PgResult) => T): Promise<T>;
-  tx<T>(fn: (t: CatalogDb) => Promise<T>, b: Binding): Promise<T>;
+  tx<T>(fn: (t: CatalogDb) => Promise<T>, b: Binding, mode: TxMode): Promise<T>;
 }
 
 /** The adapter is a `CatalogRoot` only: it has no statement or transaction method of its own, so an
@@ -330,6 +381,8 @@ interface HandleOps {
 export class PostgresCatalogDb implements CatalogRoot {
   private readonly txPool: Pool;
   private readonly rootPool: Pool;
+  private sessionPoolOrNull: Pool | null = null;
+  private readonly sessionSlots: number;
   private readonly retired = new WeakSet<PgClient>();
   private readonly ending = new Set<Promise<void>>();
   private readonly running = new Set<Promise<unknown>>();
@@ -348,6 +401,7 @@ export class PostgresCatalogDb implements CatalogRoot {
     const {
       rootMax = 3,
       txSlots = 5,
+      sessionSlots = 4,
       txTimeoutMs = 10_000,
       rootTimeoutMs = 5_000,
       rootSettleMs = 30_000 + 15_000 + GRACE_MS,
@@ -365,9 +419,10 @@ export class PostgresCatalogDb implements CatalogRoot {
     this.conn = conn;
     this.txTimeoutMs = txTimeoutMs;
     this.maxTries = maxTries;
+    this.sessionSlots = sessionSlots;
     this.ops = {
       root: (b, sql, binds, map) => this.rootQuery(b, sql, binds, map),
-      tx: (fn, b) => this.runTx(fn, b),
+      tx: (fn, b, mode) => this.runTx(fn, b, mode),
     };
     // Root slots first, then transaction slots; each is a `max: 1` client (catalog-roles D5).
     this.rootPool = this.pool(
@@ -384,20 +439,23 @@ export class PostgresCatalogDb implements CatalogRoot {
     );
   }
 
-  /** A handle whose statements run as `catalog_user` with this user's id (catalog-roles D4). */
-  bindUser(userId: string): CatalogDb {
+  /** A handle whose statements run as `catalog_user` with this user's id (catalog-roles D4); it also
+   * runs session transactions and snapshots under the content policies (session-content-policies
+   * D4). */
+  bindUser(userId: string): PostgresBoundHandle {
     if (typeof userId !== 'string' || userId === '') {
       throw new TypeError('bindUser needs a non-empty user id');
     }
-    return new BoundHandle(this.ops, { kind: 'user', userId });
+    return new PostgresBoundHandle(this.ops, { kind: 'user', userId });
   }
 
-  /** A handle whose statements run as `catalog_system` for the named task (catalog-roles D4). */
-  bindSystem(reason: string): CatalogDb {
+  /** A handle whose statements run as `catalog_system` for the named task (catalog-roles D4); it
+   * also runs session transactions and snapshots (session-tables D2). */
+  bindSystem(reason: string): PostgresBoundHandle {
     if (typeof reason !== 'string' || !REASON.test(reason)) {
       throw new TypeError('bindSystem needs a reason matching [a-z][a-z0-9-]*');
     }
-    return new BoundHandle(this.ops, { kind: 'system', reason });
+    return new PostgresBoundHandle(this.ops, { kind: 'system', reason });
   }
 
   /** Rejects waiting and new calls, lets running calls settle on their own bounds, then ends every
@@ -405,15 +463,29 @@ export class PostgresCatalogDb implements CatalogRoot {
   async close(): Promise<void> {
     if (!this.closed) {
       this.closed = true;
-      for (const pool of [this.rootPool, this.txPool]) {
+      for (const pool of this.pools()) {
         for (const w of pool.waiters.splice(0)) w.reject(closedError());
       }
     }
     await Promise.allSettled([...this.running]);
-    for (const slot of [...this.rootPool.slots, ...this.txPool.slots]) {
+    for (const slot of this.pools().flatMap((p) => p.slots)) {
       if (!this.retired.has(slot.client)) this.retire(slot.client);
     }
     await Promise.all([...this.ending]);
+  }
+
+  private pools(): Pool[] {
+    return [this.rootPool, this.txPool, ...(this.sessionPoolOrNull ? [this.sessionPoolOrNull] : [])];
+  }
+
+  /** The session slots, opened on the first session call: a process that runs no session work
+   * holds no session connection. */
+  private get sessionPool(): Pool {
+    this.sessionPoolOrNull ??= this.pool(
+      this.sessionSlots,
+      () => new CatalogTxTimeoutError('session transaction timed out waiting for a connection'),
+    );
+    return this.sessionPoolOrNull;
   }
 
   private pool(size: number, expired: () => Error): Pool {
@@ -427,17 +499,23 @@ export class PostgresCatalogDb implements CatalogRoot {
     return pool;
   }
 
-  private async runTx<T>(fn: (t: CatalogDb) => Promise<T>, binding: Binding): Promise<T> {
+  private async runTx<T>(
+    fn: (t: CatalogDb) => Promise<T>,
+    binding: Binding,
+    mode: TxMode,
+  ): Promise<T> {
     this.guardRoot();
     if (this.closed) throw closedError();
     const deadlineAt = Date.now() + this.txTimeoutMs;
     const run = (async () => {
       for (let n = 1; ; n++) {
         try {
-          return await this.attempt(fn, deadlineAt, binding);
+          return await this.attempt(fn, deadlineAt, binding, mode);
         } catch (error) {
           const code = (error as { code?: unknown } | null)?.code;
-          if (n >= this.maxTries || this.closed || !RETRYABLE.has(code as string)) throw error;
+          if (n >= this.maxTries || this.closed || !RETRYABLE[mode.kind].has(code as string)) {
+            throw error;
+          }
           // catalog-retry-backoff D1/D2: contenders back off instead of re-running in lockstep.
           // attempt() has already released its slot, so the wait holds no connection.
           const left = deadlineAt - Date.now();
@@ -571,8 +649,12 @@ export class PostgresCatalogDb implements CatalogRoot {
     fn: (t: CatalogDb) => Promise<T>,
     deadlineAt: number,
     binding: Binding,
+    mode: TxMode,
   ): Promise<T> {
-    const slot = await this.acquire(this.txPool, deadlineAt);
+    const slot = await this.acquire(
+      mode.kind === 'catalog' ? this.txPool : this.sessionPool,
+      deadlineAt,
+    );
     const label = bindingLabel(binding);
     const a: Attempt = {
       open: true,
@@ -589,18 +671,58 @@ export class PostgresCatalogDb implements CatalogRoot {
     slot.holder = a;
     let timer: NodeJS.Timeout | undefined;
     let confirmed = false; // the server confirmed the transaction ended
+    const sessionId = mode.kind === 'session' ? mode.sessionId : null;
+    // A user snapshot probes its session's access with BEGIN (session-content-policies D4).
+    const probeId = mode.kind === 'snapshot' && binding.kind === 'user' ? mode.sessionId : null;
+    let refused: Error | null = null; // the lock or the probe refused the session
     try {
       try {
         // BEGIN and the preamble go out together: one round trip, as BEGIN alone was
-        // (catalog-roles D4). On a retry this runs again, so the role is re-applied.
-        const begin = handled(slot.client.unsafe('BEGIN ISOLATION LEVEL SERIALIZABLE'));
+        // (catalog-roles D4). On a retry this runs again, so the role is re-applied. A session
+        // transaction sends its row lock with them (session-tables D2); its wait is inside the
+        // deadline.
+        const begin = handled(slot.client.unsafe(BEGIN[mode.kind]));
         const pre = handled(
           slot.client.unsafe(PREAMBLE, preambleBinds(binding), { prepare: true }),
         );
-        await bounded(Promise.all([begin, pre]), deadlineAt - Date.now());
+        const check =
+          sessionId !== null
+            ? handled(slot.client.unsafe(LOCK_SESSION, [sessionId], { prepare: true }))
+            : probeId !== null
+              ? handled(slot.client.unsafe(SNAPSHOT_PROBE, [probeId], { prepare: true }))
+              : null;
+        const replies = await bounded(
+          Promise.all(check ? [begin, pre, check] : [begin, pre]),
+          deadlineAt - Date.now(),
+        );
+        if (sessionId !== null && replies[2]?.length === 0) {
+          // No row locked: under a system binding the session does not exist; under a user binding
+          // ask whether it does, on this connection, before the rollback (session-content-policies
+          // D4). The extra round trip is on the refusal path only.
+          let exists = false;
+          if (binding.kind === 'user') {
+            const r = await bounded(
+              handled(slot.client.unsafe(SESSION_EXISTS, [sessionId], { prepare: true })),
+              deadlineAt - Date.now(),
+            );
+            exists = r[0]?.e === true;
+          }
+          refused = exists
+            ? new SessionAccessDeniedError(sessionId)
+            : new SessionNotFoundError(sessionId);
+        } else if (probeId !== null && replies[2]?.[0]?.ok !== true) {
+          refused =
+            replies[2]?.[0]?.e === true
+              ? new SessionAccessDeniedError(probeId)
+              : new SessionNotFoundError(probeId);
+        }
       } catch (error) {
         if (!(error instanceof BoundExpired)) throw mapForbidden(error, label);
         throw new CatalogTxTimeoutError(`catalog transaction exceeded ${this.txTimeoutMs} ms`);
+      }
+      if (refused) {
+        a.open = false;
+        fail(a, refused);
       }
       const settle = () => {
         a.open = false;
@@ -613,9 +735,9 @@ export class PostgresCatalogDb implements CatalogRoot {
           );
         }
       };
-      const body = current
-        .run(a, async () => fn(new TxHandle(a)))
-        .then(
+      const body = refused
+        ? Promise.resolve(null)
+        : current.run(a, async () => fn(new TxHandle(a))).then(
           async (value) => {
             settle();
             // A statement the body started without awaiting still decides the outcome (A11).
@@ -755,8 +877,9 @@ export class PostgresCatalogDb implements CatalogRoot {
 }
 
 /** A handle bound to a user or a system task (catalog-roles D4): its root statements and
- * transactions run under its binding, on the adapter's connections. */
-class BoundHandle implements CatalogDb {
+ * transactions run under its binding, on the adapter's connections. `sessionTx` and `snapshot` are
+ * off the catalog port: the session adapter's (session-tables D2). */
+export class PostgresBoundHandle implements CatalogDb {
   constructor(
     private readonly ops: HandleOps,
     private readonly binding: Binding,
@@ -775,7 +898,22 @@ class BoundHandle implements CatalogDb {
   }
 
   tx<T>(fn: (t: CatalogDb) => Promise<T>): Promise<T> {
-    return this.ops.tx(fn, this.binding);
+    return this.ops.tx(fn, this.binding, CATALOG);
+  }
+
+  /** A session write transaction: the body runs once `catalog.sessions` row `sessionId` is locked,
+   * and a missing row rejects with `SessionNotFoundError` before it runs (under a user binding, a
+   * row the policies refuse rejects with `SessionAccessDeniedError`). Deadlocks re-run it. */
+  sessionTx<T>(sessionId: string, fn: (t: CatalogDb) => Promise<T>): Promise<T> {
+    return this.ops.tx(fn, this.binding, { kind: 'session', sessionId });
+  }
+
+  /** A read-only snapshot of session `sessionId`: every statement in the body sees one committed
+   * state. Under a user binding a probe sent with BEGIN refuses a session the user cannot access
+   * (`SessionAccessDeniedError`) or that does not exist (`SessionNotFoundError`) before the body
+   * runs (session-content-policies D4); a system snapshot sends no probe. */
+  snapshot<T>(sessionId: string, fn: (t: CatalogDb) => Promise<T>): Promise<T> {
+    return this.ops.tx(fn, this.binding, { kind: 'snapshot', sessionId });
   }
 }
 

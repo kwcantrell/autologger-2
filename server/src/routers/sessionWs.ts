@@ -16,11 +16,13 @@ export function mountSessionWs(app: Hono<AppEnv>, upgradeWebSocket: UpgradeWebSo
       await requireSession(c, c.req.param('sessionId'), { includeHidden: true });
       await next();
     },
-    upgradeWebSocket((c) => {
+    // Hono awaits an async `createEvents` before upgrading, so the hub is opened first
+    // (async-session-hub design D7); the socket callbacks below stay synchronous.
+    upgradeWebSocket(async (c) => {
       const sessionId = c.req.param('sessionId');
       const role =
         new URL(c.req.url).searchParams.get('role') === 'companion' ? 'companion' : 'browser';
-      const hub = c.env.ports.sessions.get(sessionId);
+      const hub = await c.env.ports.sessions.get(sessionId);
       // The admitted user, recorded per socket so losing access closes it (show-grants D20).
       const userId = requireUser(c).id;
       return {

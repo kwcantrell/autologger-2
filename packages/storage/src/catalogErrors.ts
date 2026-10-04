@@ -40,3 +40,23 @@ export class CatalogForbiddenError extends Error {
     this.table_name = table;
   }
 }
+
+/** A session write transaction found no `catalog.sessions` row for its session (session-tables
+ * D2): it was rolled back before its body ran, and is never retried. */
+export class SessionNotFoundError extends Error {
+  override name = 'SessionNotFoundError';
+  constructor(readonly sessionId: string) {
+    super(`session ${sessionId} does not exist`);
+  }
+}
+
+/** A user-bound session transaction or snapshot was refused: the session exists, and the user has
+ * no access to its show (session-content-policies D4). It is raised before the body runs, never
+ * retried, and its message is neutral and names no id (it can reach an AI model or a job line); the
+ * id is the `sessionId` property. */
+export class SessionAccessDeniedError extends Error {
+  override name = 'SessionAccessDeniedError';
+  constructor(readonly sessionId: string) {
+    super('access to the session was refused');
+  }
+}

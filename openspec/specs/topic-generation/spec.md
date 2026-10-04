@@ -163,8 +163,9 @@ unbounded payload, never a silent truncation), regardless of transcript length: 
 tool surface and the delivery guarantee do not vary with transcript size (the model's
 own context ceiling is a documented operational residual, not a delivery limit).
 
-The pages SHALL be computed from a single word list captured once, synchronously,
-before any `await` in the turn path, and no page SHALL be served from a re-read — so a
+The pages SHALL be computed from a single word list captured once, by one hub read whose
+result is materialized as an immutable copy before the turn registers, and no page SHALL be
+served from a re-read — so a
 mid-run transcript replacement or single-word edit cannot shift page content, page
 boundaries, or page count within one run.
 
