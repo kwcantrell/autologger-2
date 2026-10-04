@@ -26,6 +26,7 @@ cd "$ROOT"
 # The caller's shell must not influence the result: every interpolated variable falls back to
 # its compose default, and the placeholder env files below supply any non-default value.
 unset DEV_PORT DEV_COMPANION_PORT STAGE_PORT ROUTER_PORT ROUTER_FRONT_GW ROUTER_BACK_GW \
+  STAGE_WEB_IMAGE STAGE_API_IMAGE STAGE_PUBLIC_BASE_URL STAGE_COOKIE_SECURE STAGE_IMAGE_TAG \
   WEB_TAG API_TAG PUBLIC_BASE_URL HOST TRUST_PROXY \
   IP_ALLOWLIST DATA_DIR PORT 2>/dev/null || true
 # supabase-db D4, supabase-services D4: one sentinel per Supabase secret, so invariant 16 can find
@@ -112,6 +113,14 @@ DATA_DIR=/x
 PORT=1
 EOF
 printf 'STAGE_PORT=18788\n' >"$TMP/stage-custom.env"
+# stage-public-https: what compose-run.mjs sets for STAGE_IMAGE_TAG + an https STAGE_PUBLIC_BASE_URL.
+cat >"$TMP/stage-public.env" <<'EOF'
+STAGE_PORT=18788
+STAGE_WEB_IMAGE=ghcr.io/kwcantrell/autologger-web:0000000000000000000000000000000000000000
+STAGE_API_IMAGE=ghcr.io/kwcantrell/autologger-api:0000000000000000000000000000000000000000
+STAGE_PUBLIC_BASE_URL=https://stage.example.invalid
+STAGE_COOKIE_SECURE=1
+EOF
 printf 'WEB_TAG=abcdef123456\nAPI_TAG=abcdef123456\nPUBLIC_BASE_URL=https://example.invalid\n' >"$TMP/prod.env"
 
 # ---------------------------------------------------------------- shared assertions -----------
@@ -383,15 +392,16 @@ check_stage() {
   resolve "$TMP/stage.json" "stage (defaults)" compose_stage "$TMP/empty.env" || return 0
   resolve "$TMP/stage-c.json" "stage (custom port)" compose_stage "$TMP/stage-custom.env" || return 0
   resolve "$TMP/stage-raw.json" "stage (raw, --no-interpolate)" compose_stage "$TMP/stage-custom.env" --no-interpolate || return 0
+  resolve "$TMP/stage-p.json" "stage (registry images, public https origin)" compose_stage "$TMP/stage-public.env" || return 0
   resolve "$TMP/prod-d.json" "prod (defaults, for the STAGE_PORT != ROUTER_PORT compare)" compose_prod "$TMP/prod.env" || return 0
-  S=$TMP/stage.json; SC=$TMP/stage-c.json; SR=$TMP/stage-raw.json
+  S=$TMP/stage.json; SC=$TMP/stage-c.json; SR=$TMP/stage-raw.json; SP=$TMP/stage-p.json
 
   check_name "$S" stage autologger-stage                               # 9
   check_no_host_priv "$S" stage                                        # 6
   check_no_env_file "$S" stage                                         # 14
   check_container_name "$S" stage api autologger-stage-api            # 6 (container name pinned)
   check_supabase "$S" stage 172.28.22.0/24 172.28.23.0/24 172.28.24.0/24 172.28.25.0/24 172.28.27.0/24 172.28.28.0/24 # 16
-  for f in "$S" "$SC"; do
+  for f in "$S" "$SC" "$SP"; do
     check_loopback_ports "$f" stage                                    # 1
     check_no_8080_numeric "$f" stage                                   # 2
     check_posture_prodlike "$f" stage                                  # 7
@@ -408,6 +418,16 @@ check_stage() {
   fi
   jq_ok 2 "stage: STAGE_PORT does not drive both the published port and PUBLIC_BASE_URL" "$SC" \
     '.services.router.ports[0].published=="18788" and .services.api.environment.PUBLIC_BASE_URL=="http://localhost:18788"'
+  # 7 (stage-public-https): unset, stage is the local one (:local images, plain-http cookie); the
+  # public mode swaps only the images, the origin and COOKIE_SECURE=1, and keeps the loopback port.
+  for f in "$S" "$SC"; do
+    jq_ok 7 "stage: without the public variables, web/api are not the :local images or COOKIE_SECURE is not \"0\"" "$f" \
+      '.services.web.image=="autologger-stage-web:local" and .services.api.image=="autologger-stage-api:local" and .services.api.environment.COOKIE_SECURE=="0"'
+  done
+  jq_ok 7 "stage: the public variables do not set the ghcr images, the https PUBLIC_BASE_URL and COOKIE_SECURE=1 (on the loopback STAGE_PORT)" "$SP" \
+    '.services.web.image=="ghcr.io/kwcantrell/autologger-web:0000000000000000000000000000000000000000" and .services.api.image=="ghcr.io/kwcantrell/autologger-api:0000000000000000000000000000000000000000"
+     and .services.api.environment.PUBLIC_BASE_URL=="https://stage.example.invalid" and .services.api.environment.COOKIE_SECURE=="1"
+     and .services.router.ports[0].published=="18788"'
 
   # 8: stage mounts no host path that is, contains or sits under the home directory (outside the
   # repo), and none from a .claude path. Evaluated per bind source: "/" and any ancestor of

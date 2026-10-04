@@ -1137,6 +1137,8 @@ client ID* → application type **Web application**. Add the **authorized redire
 `${PUBLIC_BASE_URL}/auth/google/callback` (e.g. `https://autologger.nrvo.ai/auth/google/callback`).
 If the OAuth consent screen is in **Testing** mode, add every intended user's Google account
 under *Test users* — anyone else is refused by Google. Put the client ID/secret in OpenBao `prod`. The OAuth client must exist and be ready *before* cutover.
+The stage client is separate (OpenBao `stage`); a public stage needs
+`https://stage.<domain>/auth/google/callback` added to it (see [Public stage](#public-stage-https-edge)).
 Note that the redirect URI is always `${PUBLIC_BASE_URL}/auth/google/callback`: a sign-in
 started on the loopback pre-flight port is sent back to the **public** origin by Google, so the
 full round trip (and the `Secure` session cookie) can only be proven end to end once Pangolin
@@ -1415,8 +1417,9 @@ existing configuration.
 | `make dev-restart` | Restart dev: `app` then `app-gate`, `companion` then `companion-gate` |
 | `make dev-logs` / `make dev-shell` | Follow dev logs / shell in the dev app container |
 | `make dev-reset CONFIRM=yes` | **Destroy** the dev volumes, including Postgres and Supabase storage ([docs/supabase.md](docs/supabase.md) has the Postgres-only re-init) |
-| `make stage-build` | Build the stage images (native arch) |
-| `make stage-up` | Check, then build and start the whole stage stack (incl. Supabase), apply migrations, print the URLs |
+| `make stage-build` | Build the stage images (native arch, tagged `:local`) |
+| `make stage-push STAGE_IMAGE_TAG=<sha>` | Clean tree whose HEAD is `<sha>` (any branch): bake `STAGE_PLATFORMS` (default `linux/amd64`) and push `ghcr.io/kwcantrell/autologger-{web,api}:<sha>` |
+| `make stage-up` | Check, then build and start the whole stage stack (incl. Supabase), apply migrations, print the URLs. With `STAGE_IMAGE_TAG=<sha> STAGE_PUBLIC_BASE_URL=https://<host>` (a tag requires the URL, and the tree must be that commit) it pulls those images instead of building and serves that public origin (see [Public stage](#public-stage-https-edge)) |
 | `make stage-down` / `make stage-logs` | Stop and remove stage containers (volumes kept) / follow logs |
 | `make stage-claude-login` | Interactive Claude login inside the stage api container |
 | `make stage-reset CONFIRM=yes` | **Destroy** the stage volumes, including Postgres and Supabase storage |
@@ -1433,7 +1436,7 @@ existing configuration.
 | Compose project | `autologger-dev` | `autologger-stage` | `autologger` |
 | Files | `docker/compose.dev.yaml` | `compose.yaml` + `docker/compose.stage.yaml` | `compose.yaml` |
 | Secrets | OpenBao `kv/autologger/dev` | OpenBao `kv/autologger/stage` | OpenBao `kv/autologger/prod` |
-| Shape | single-process hot-reload (`npm run dev`), plus Companion | split `web`/`api`/`router`, built locally | split, pinned registry images |
+| Shape | single-process hot-reload (`npm run dev`), plus Companion | split `web`/`api`/`router`, built locally (or pinned registry images with `STAGE_IMAGE_TAG`) | split, pinned registry images |
 | Login | always required: Google sign-in (own dev client) | always required: Google sign-in | always required: Google sign-in |
 | Host port (`127.0.0.1`) | app gate `DEV_PORT` (8787), Companion gate `DEV_COMPANION_PORT` (8000) | router `STAGE_PORT` (8788) | router `ROUTER_PORT` (8080) |
 | Claude login | host `~/.claude/.credentials.json` only (rw bind) | own login in a named volume (`make stage-claude-login`) | own login in the home volume |
@@ -1441,7 +1444,7 @@ existing configuration.
 | Companion | yes (dev only) | no (test the scoped token with `curl`) | your own install |
 | Source | read-only bind mounts (hot reload) | baked into images | baked into images |
 | Subnets | 172.28.30.0/24 | 172.28.20.0/24, 172.28.21.0/24 | 172.28.10.0/24, 172.28.11.0/24 |
-| Cookies | n/a | `COOKIE_SECURE=0`, `SESSION_COOKIE=autologger_stage_sid` | secure |
+| Cookies | n/a | `COOKIE_SECURE=0` (`1` with an https `STAGE_PUBLIC_BASE_URL`), `SESSION_COOKIE=autologger_stage_sid` | secure |
 
 Docker's default address pools include `172.28.0.0/16`; the subnets above are pinned, so
 another compose project that lands in that range will clash.
@@ -1579,12 +1582,96 @@ for AI chat.
 - `API_TOKEN`/`ADMIN_TOKEN` must **differ from prod's** (`openssl rand -hex 32`). `API_TOKEN`
   authenticates only `/api/companion/*`; there is no Companion in stage, so test it with `curl`.
 - The overlay changes only: project name, container name, subnets and gateways, image names,
-  `PUBLIC_BASE_URL`, `COOKIE_SECURE=0`, `SESSION_COOKIE`, and the loopback port. The
+  `PUBLIC_BASE_URL`, `COOKIE_SECURE` (`0` unless public), `SESSION_COOKIE`, and the loopback port. The
   router's trusted-proxy gateways are `ROUTER_FRONT_GW`/`ROUTER_BACK_GW` placeholders in
   `docker/Caddyfile` whose defaults are prod's (checked byte-identical against a committed
   baseline), so stage and prod can run side by side.
 - Residual: `make check` does not enforce a service or capability allowlist for stage
   (`cap_add`, `pid: host`, devices, a `docker.sock` bind); dev does enforce an exact service set.
+
+#### Public stage (HTTPS edge)
+
+Stage can also run on a host with no build toolchain, from pushed images, behind an HTTPS edge
+(for example a Cloudflare Tunnel connector with Cloudflare Access in front) that proxies
+`https://stage.<domain>` to `http://127.0.0.1:<STAGE_PORT>`. Three `make` variables, all
+non-secret and never read from OpenBao, switch it on; without them stage is exactly the local
+one above.
+
+```bash
+# On a build host with the autologger-multi builder and a GHCR login (write:packages):
+make stage-push STAGE_IMAGE_TAG=$(git rev-parse HEAD)            # STAGE_PLATFORMS=linux/amd64 by default
+# On the stage host, in a tree at exactly that commit (GHCR read login in ~/.docker or DOCKER_CONFIG):
+make stage-up STAGE_IMAGE_TAG=<that sha> STAGE_PUBLIC_BASE_URL=https://stage.<domain>
+```
+
+The variables are passed to `compose-run.mjs` by name; every `$(RUN)` target (`stage-up`,
+`stage-down`, `stage-logs`, `stage-reset`) validates and resolves with the same options, and
+`make stage-build` always builds `:local` (it is refused while `STAGE_IMAGE_TAG` is set).
+
+- `STAGE_IMAGE_TAG` is the full 40-character lowercase hex git SHA (never prod-push's 12-char
+  tag, so a single-arch stage push cannot overwrite a multi-arch prod tag). `stage-push` refuses a dirty
+  tree (untracked files count) or a HEAD that is not that SHA, checks `STAGE_PLATFORMS`
+  (`linux/amd64`, `linux/arm64` or both) and the `BUILDER`, then runs the same
+  `docker-bake.hcl` as `prod-push` with `--set *.platform=$STAGE_PLATFORMS --push`, using your
+  docker login (`DOCKER_CONFIG` is honoured). Unlike `prod-push` it works from any branch.
+- With a tag, `stage-up` runs `compose pull web api`, the migrations, then `compose up -d --no-build`;
+  `compose-run.mjs` refuses any build step while a tag is set, and the resolved-config guard
+  checks that `web`/`api` run exactly `ghcr.io/kwcantrell/autologger-{web,api}:<tag>` (or the
+  `:local` images without one).
+- **A tagged run is a public run:** `STAGE_IMAGE_TAG` without `STAGE_PUBLIC_BASE_URL` is refused,
+  so a later run on the public host cannot silently recreate `api` with `COOKIE_SECURE=0` and a
+  localhost redirect while the edge still serves it. An untagged `stage-up`/`stage-build` (any
+  `up`, `build` or `run`) is refused in a pinned tree (a `REVISION` file and no `.git`, as the
+  `~/spark-infra` pinned deploy leaves it); on a public host that is a git checkout, never run an
+  untagged `make stage-up` (it would build and serve the local posture); stop the tunnel first.
+- **The tree must be the tagged commit.** Migrations, `migrate.sh`, the Caddyfiles, init SQL and
+  the compose files come from the tree `make` runs in, not from the images. With a tag,
+  `compose-run.mjs` refuses unless `git rev-parse HEAD` equals it (when `.git` exists), or, in a
+  tree without `.git`, a `REVISION` file at the root holds exactly that SHA. The `~/spark-infra`
+  pinned deploy (`git archive` of the commit, rsync `--delete`) writes that `REVISION` file.
+- `DOCKER_CONFIG` is read only with `STAGE_IMAGE_TAG` (for a private-package pull; ignored
+  otherwise, as for dev and prod). It must be an absolute directory you own that group/others cannot
+  write, not a symlink, and so must its `config.json` if present. compose never sees that directory:
+  a docker config dir can run code next to every stage secret (a `cli-plugins` entry,
+  `cliPluginsExtraDirs`, `currentContext`, `proxies`), so `compose-run.mjs` copies only the inline
+  `auths` of `config.json` into its own temporary 0700 `DOCKER_CONFIG` (removed on exit, also on
+  failure or a signal) and sets `DOCKER_CONTEXT=default`. A `credsStore`/`credHelpers` entry is
+  refused (the credential would be outside `config.json`): `docker login` writes one whenever a
+  `docker-credential-*` helper is on `PATH`, so log in without a helper, or write
+  `{"auths":{"ghcr.io":{"auth":"<base64 user:token>"}}}` yourself (the `~/spark-infra` deploy does).
+  Without `DOCKER_CONFIG`, compose uses your own `~/.docker` as for every other target. CLI plugins
+  (compose itself) then come from the system plugin directories only.
+- `STAGE_PUBLIC_BASE_URL` must be a bare `https://<dns name>` (no port, path, query or user;
+  leave it unset for the local `http://localhost:STAGE_PORT`).
+  It becomes the api's `PUBLIC_BASE_URL` (so the OAuth redirect is
+  `https://stage.<domain>/auth/google/callback`) and sets `COOKIE_SECURE=1`; the guard checks both
+  in the resolved config. `TRUST_PROXY=1` is unchanged, and the router still publishes only
+  `127.0.0.1:STAGE_PORT`: the edge connector must run on the same host and target that loopback port.
+- **Add `https://stage.<domain>/auth/google/callback` to the stage OAuth client's authorized
+  redirect URIs** (keep the localhost one if you still run a local stage). With Cloudflare
+  Access in front, users pass Access first; Google's top-level GET redirect back to the callback
+  then carries the Access cookie, provided the Access application's cookie `SameSite` is `Lax`
+  or `None` (not `Strict`).
+- **Who can get in is decided by the Access policy.** The app's Google sign-in creates a user for
+  any Google account it has not seen (there is no sign-up allowlist), so the Access policy must
+  name the allowed identities. The tunnel connector's `access.required` check (in
+  `~/spark-infra`) refuses requests without a valid Access token for this application.
+- **Do not set `IP_ALLOWLIST` on a public stage, and do not trust its logged client IPs,** until
+  the forwarded-client-IP check (owner task 3.4) has passed both ways: a forged
+  `X-Forwarded-For` is not adopted, and the IP the api logs equals your real public IP (what
+  `CF-Connecting-IP` reports), with and without a forged header. Cloudflare documents only its
+  edge hop, not what `cloudflared` sends the origin.
+- **Rollback on the public host:** `make stage-up STAGE_IMAGE_TAG=<previous sha>
+  STAGE_PUBLIC_BASE_URL=https://stage.<domain>` from a tree at that SHA (the pinned deploy with the
+  previous tag does both). **The previous SHA must itself contain this change**: an older tree's
+  Makefile drops `STAGE_IMAGE_TAG`/`STAGE_PUBLIC_BASE_URL`, builds `:local` and serves
+  `COOKIE_SECURE=0` through the edge (the `~/spark-infra` pinned deploy refuses such a tree and checks
+  the running containers afterwards). Migrations are forward-only: the previous app then runs on the
+  newer schema. If that is not safe, stop the tunnel first.
+- The Supabase gateway, GoTrue (`API_EXTERNAL_URL`, `GOTRUE_SITE_URL`, `GOTRUE_JWT_ISSUER`) and
+  storage (`STORAGE_PUBLIC_URL`) URLs stay `http://localhost:${SUPABASE_PORT}`: no browser code
+  calls them (the web bundle reads no Supabase URL, and the server exchanges the Google ID token
+  with GoTrue over the internal network at `http://auth:9999`), so no public Supabase hostname is needed.
 
 ### Resets, checks and prod guards
 
@@ -1606,6 +1693,9 @@ for AI chat.
   commands) and tags the **local** `main` HEAD, so push `main` first. `make prod-build` only
   tags `:local`, so it never overwrites a pulled release. `prod-up` also needs `WEB_TAG` and
   `API_TAG` pinned in OpenBao `prod`.
+- **`make stage-push`** needs a clean tree whose HEAD is `STAGE_IMAGE_TAG` (any branch) and the
+  same builder; it pushes only `STAGE_PLATFORMS` (default `linux/amd64`), tagged with the full
+  40-char SHA so it never collides with prod's 12-char multi-arch tags in the shared GHCR repositories.
 
 ## Frontend (web/ workspace)
 

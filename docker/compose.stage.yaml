@@ -1,6 +1,8 @@
 # AutoLogger STAGE environment (containerized-dev-env, design D5 / D6 / D7 / D13).
 # An overlay on the production compose.yaml: same images' build, same routing, same posture
-# (TRUST_PROXY=1; login is always required, require-login), served on plain http://localhost:${STAGE_PORT:-8788}.
+# (TRUST_PROXY=1; login is always required, require-login), served on plain http://localhost:${STAGE_PORT:-8788}
+# by default, or behind an HTTPS edge (Cloudflare Tunnel + Access) when the operator passes
+# STAGE_PUBLIC_BASE_URL=https://<host> to make (the tunnel connector proxies to 127.0.0.1:STAGE_PORT).
 #
 # Always invoked from the repo root through the Makefile (docker/scripts/compose-run.mjs), as:
 #   WEB_TAG=stage API_TAG=stage PUBLIC_BASE_URL=http://localhost:8788 \
@@ -17,6 +19,10 @@
 #   * The router publishes ONLY STAGE_PORT on the literal 127.0.0.1; ROUTER_PORT is never used.
 #   * ROUTER_FRONT_GW / ROUTER_BACK_GW must equal the network gateways below (single IPv4 each).
 #   * No Companion service (the scoped token is tested with curl through the router).
+#   * STAGE_WEB_IMAGE, STAGE_API_IMAGE, STAGE_PUBLIC_BASE_URL and STAGE_COOKIE_SECURE are set ONLY
+#     by compose-run.mjs from the validated make variables STAGE_IMAGE_TAG / STAGE_PUBLIC_BASE_URL
+#     (never from OpenBao: they are not in any allowlist). Unset, they fall back to today's stage:
+#     local :local images, http://localhost:STAGE_PORT and COOKIE_SECURE=0.
 
 name: autologger-stage
 
@@ -29,14 +35,14 @@ services:
       - "127.0.0.1:${STAGE_PORT:-8788}:8080"
 
   web:
-    image: autologger-stage-web:local
+    image: ${STAGE_WEB_IMAGE:-autologger-stage-web:local}
 
   api:
-    image: autologger-stage-api:local
+    image: ${STAGE_API_IMAGE:-autologger-stage-api:local}
     container_name: autologger-stage-api
     environment:
-      PUBLIC_BASE_URL: http://localhost:${STAGE_PORT:-8788}
-      COOKIE_SECURE: "0"
+      PUBLIC_BASE_URL: ${STAGE_PUBLIC_BASE_URL:-http://localhost:${STAGE_PORT:-8788}}
+      COOKIE_SECURE: ${STAGE_COOKIE_SECURE:-0}
       SESSION_COOKIE: autologger_stage_sid
 
 networks:

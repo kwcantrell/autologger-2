@@ -4,8 +4,8 @@
 # SUPERSEDED (infisical-secrets, 2026-09-30): envfile, urls, reset and prod-tags now live in
 # docker/scripts/compose-run.mjs, which checks the config it resolves with the stack's OpenBao
 # secrets. The Makefile no longer calls them; they stay until the node-stack-tooling change
-# deletes them. The Makefile still uses creds-exists, creds-inode, prod-git, prod-builder and
-# native-platform (none of which touch secrets).
+# deletes them. The Makefile still uses creds-exists, creds-inode, prod-git, prod-builder,
+# stage-git, stage-platforms and native-platform (none of which touch secrets).
 #
 #   make-guards.sh envfile dev|stage      env file present (names the template) + resolved config safe
 #   make-guards.sh urls dev|stage         print the URLs to use after `up`
@@ -16,6 +16,8 @@
 #   make-guards.sh prod-git               clean working tree AND branch main
 #   make-guards.sh prod-tags              WEB_TAG and API_TAG set (non-empty, not latest) in root .env
 #   make-guards.sh prod-builder BUILDER   buildx builder lists linux/amd64 and linux/arm64
+#   make-guards.sh stage-git TAG          clean working tree AND TAG is HEAD's full 40-hex SHA
+#   make-guards.sh stage-platforms LIST   LIST is linux/amd64, linux/arm64 or both (comma-separated)
 #   make-guards.sh native-platform        print linux/arm64 or linux/amd64 (the docker server's arch)
 #
 # Run from the repo root (the Makefile does). POSIX sh. It reads ONLY tag keys (and COMPOSE_ key
@@ -159,6 +161,25 @@ prod_git() {
   [ "$b" = main ] || die "refusing: on branch '$b', prod targets require main"
 }
 
+# stage-public-https: stage images are pushed from any branch, but only from a clean tree whose
+# HEAD is exactly the tag, so a ghcr :<sha> always holds that commit's sources. Full SHAs only:
+# prod-push tags the 12-char SHA with both arches, and a stage push must never overwrite that tag.
+stage_git() {
+  [ -n "$1" ] || die "refusing: set STAGE_IMAGE_TAG to HEAD's git SHA (make stage-push STAGE_IMAGE_TAG=\$(git rev-parse HEAD))"
+  printf '%s' "$1" | grep -Eqx '[0-9a-f]{40}' ||
+    die "refusing: STAGE_IMAGE_TAG must be the full 40-character lowercase hex git SHA"
+  [ -z "$(git status --porcelain)" ] || die "refusing: working tree is not clean (commit or stash; untracked files count)"
+  head=$(git rev-parse HEAD)
+  [ "$head" = "$1" ] || die "refusing: STAGE_IMAGE_TAG is not HEAD ($head)"
+}
+
+stage_platforms() {
+  case "$1" in
+    linux/amd64|linux/arm64|linux/amd64,linux/arm64|linux/arm64,linux/amd64) ;;
+    *) die "refusing: STAGE_PLATFORMS must be linux/amd64, linux/arm64 or both, comma-separated" ;;
+  esac
+}
+
 prod_tags() {
   [ -f .env ] || die "root .env is missing: cp docker/.env.example .env (README: Container deployment)"
   for k in WEB_TAG API_TAG; do
@@ -199,6 +220,8 @@ case "$cmd" in
   prod-git) prod_git ;;
   prod-tags) prod_tags ;;
   prod-builder) prod_builder "${1:-}" ;;
+  stage-git) stage_git "${1:-}" ;;
+  stage-platforms) stage_platforms "${1:-}" ;;
   native-platform) native_platform ;;
-  *) echo "usage: $0 envfile|urls|creds-exists|creds-inode|reset|prod-git|prod-tags|prod-builder|native-platform" >&2; exit 2 ;;
+  *) echo "usage: $0 envfile|urls|creds-exists|creds-inode|reset|prod-git|prod-tags|prod-builder|stage-git|stage-platforms|native-platform" >&2; exit 2 ;;
 esac
