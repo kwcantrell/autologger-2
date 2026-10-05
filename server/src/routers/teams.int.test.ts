@@ -3,9 +3,10 @@
 // family" + team-management "Team roles: owner, admin and member" / "Self-serve team creation
 // makes the creator owner" / "Owner-anchored team lifecycle" / "Email invites".
 
+import { nowIso } from '@autologger/domain';
 import { describe, expect, it } from 'vitest';
 import { anonApp, env } from '../test/harness';
-import { catalogFor, loginCookie, seedShow, seedStudio, seedUser } from '../test/helpers';
+import { catalogFor, loginCookie, seedShow, seedStudio, seedUser, testDb } from '../test/helpers';
 
 /** catalogFor() constructs a fresh Catalog whose in-memory studio registry
  * starts empty until `.init()` runs (normally done per-request by
@@ -479,9 +480,15 @@ describe('POST /api/teams/:id/invites — email invites', () => {
   it('pending-invite cap: rejects a new pending invite at 200, but a re-invite of an existing pending stays idempotent', async () => {
     const { team, cookie } = await seedTeamWithAdmin();
     const cat = catalogFor();
-    for (let i = 0; i < 200; i += 1) {
-      await cat.auth.authUpsertInvite(team, `pending-${i}@example.com`, 'seed-inviter');
-    }
+    // The 200 pending invites in one statement, the rows `authUpsertInvite` writes: 200 sequential
+    // catalog transactions outlast the 5 s timeout under the full suite (teams-race-invite-seed).
+    await testDb().run(
+      `INSERT INTO team_invites (studio_id, email_norm, invited_by_user_id, invited_at_utc)
+       SELECT ?, 'pending-' || g || '@example.com', ?, ? FROM generate_series(0, 199) AS g`,
+      team,
+      'seed-inviter',
+      nowIso(),
+    );
     const overCap = await req('POST', `/api/teams/${team}/invites`, {
       cookie,
       body: { email: 'one-too-many@example.com' },

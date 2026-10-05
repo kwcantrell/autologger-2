@@ -3,7 +3,7 @@
 // competing request, then lets the first go, and checks the outcome is the one a serial order
 // gives.
 
-import { defaultSettingsBlob, validateSettingsBlob } from '@autologger/domain';
+import { defaultSettingsBlob, nowIso, validateSettingsBlob } from '@autologger/domain';
 import { describe, expect, it } from 'vitest';
 import { GatedCatalog } from '../test/gatedCatalog';
 import { app, env, envWith } from '../test/harness';
@@ -385,9 +385,15 @@ describe('team creation (#9, #18)', () => {
 describe('invite cap (#10)', () => {
   it('two invites for new emails at 199 pending: one recorded, one 400', async () => {
     const { team, ids, cookies } = await teamWithAdmins(2);
-    for (let i = 0; i < 199; i++) {
-      await catalogFor().auth.authUpsertInvite(team, `p${i}@example.com`, ids[0] as string);
-    }
+    // The 199 pending invites in one statement, the rows `authUpsertInvite` writes: 199 sequential
+    // catalog transactions outlast the 5 s timeout under the full suite (teams-race-invite-seed).
+    await testDb().run(
+      `INSERT INTO team_invites (studio_id, email_norm, invited_by_user_id, invited_at_utc)
+       SELECT ?, 'p' || g || '@example.com', ?, ? FROM generate_series(0, 198) AS g`,
+      team,
+      ids[0] as string,
+      nowIso(),
+    );
     const gated = new GatedCatalog(env.ports.catalog);
     const h = gated.holdAfter(/FROM team_invites WHERE studio_id = \?/);
     const a = send(
