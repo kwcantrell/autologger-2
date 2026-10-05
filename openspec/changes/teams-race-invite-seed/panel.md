@@ -16,3 +16,14 @@ Verified by the assumption tester and the failure and abuse reviewer (no finding
 - timing alone: baseline 2.31-3.58 s, prototype 0.49-0.65 s (seed 12 ms), 24/24 in the file.
 
 The full-suite effect is task 1.3.
+
+## Re-panel 2026-10-05
+
+Delta: the scope widened after approval to the same seed loop in `teams.int.test.ts:479-497`
+(task 1.1's baseline full run timed out there, `5598ms`). Three fresh-context reviewers on the delta
+only.
+
+- [x] [major] The approval line on proposal.md covered the one-file scope at f31316e, and no gate would reject it for the widened scope. Found by scope and simplicity. Resolved: no test is edited until the owner re-approves the widened scope with a new dated `Approved-by:` line naming the widening; asked for at hand-off.
+- [x] [major] "Alternatives considered" justified going around `authUpsertInvite` partly because "this file already seeds with raw `testDb().run` inserts", which is true only of `teams.race.int.test.ts`; `teams.int.test.ts` has no `testDb`, and the four-column row copy would now live in two files. Found by scope and simplicity. Resolved: the bullet now says the raw seed is new in `teams.int.test.ts` and that a change to `authUpsertInvite`'s row shape must update both seeds.
+
+Verified (assumption tester; failure and abuse; no findings): the batch writes the same 200 rows as the loop (`SEEDCMP 200 200 true`, probe comparing both seeds); no foreign key on `invited_by_user_id`; the re-invite of `pending-0@example.com` takes the real `ON CONFLICT` path (inviter and timestamp change) and answers `200`; the 201st answers `400`; the count stays 200; no assertion or route reads per-row `invited_at_utc` or order; alone 3,656 ms -> 399-473 ms, the file 65/65; typecheck clean. No other awaited write loop over 100 iterations exists in `server/src` or `packages` tests. Noted for task 1.3: several unrelated tests run 3-4 s under load (`teams.int` admin 403, `isolation.int`, `events.metadataStrip.int`, `authStore.int`); a timeout there is recorded and stops the task, per 1.3.
