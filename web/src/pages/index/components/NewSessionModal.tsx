@@ -321,7 +321,7 @@ export function NewSessionModal({ profile, onClose, onCreated }: Props) {
           </Button>
           {showAdvanced && (
             <div className="flex flex-col gap-3 pl-5">
-              <Field className="min-w-[min(100%,14rem)]">
+              <div className="flex min-w-[min(100%,14rem)] flex-col gap-[0.35rem]">
                 <FieldLabel htmlFor="ns-fps-preset">Frame rate</FieldLabel>
                 <Select
                   id="ns-fps-preset"
@@ -364,7 +364,7 @@ export function NewSessionModal({ profile, onClose, onCreated }: Props) {
                 >
                   NTSC fractional rates use SMPTE-true values.
                 </FieldDescription>
-              </Field>
+              </div>
 
               <Field orientation="horizontal" className={NS_INLINE_FIELD}>
                 <FieldLabel htmlFor="ns-offset" className={NS_INLINE_LABEL}>
