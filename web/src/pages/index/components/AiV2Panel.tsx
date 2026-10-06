@@ -1,5 +1,5 @@
-import clsx from 'clsx';
 import { memo, useEffect, useRef, useState } from 'react';
+import { Button } from '../../../shared/components/ui/button';
 import { AiV2Design, type AiV2Message, type AiV2PendingQuestion } from './AiV2Design';
 import { DashboardEditor } from './aiV2/DashboardEditor';
 import { DashboardGrid } from './aiV2/DashboardGrid';
@@ -11,7 +11,6 @@ import { useAiV2WidgetData } from './aiV2/useAiV2WidgetData';
 import { renderCatalogWidgetPreview } from './aiV2/widgetRegistry';
 import type { DashboardConfig } from './aiV2/widgetTypes';
 import { FEED_SHEET_CLASS } from './FeedShell';
-import { FEED_GLASS_BTN, FEED_GLASS_BTN_PRIMARY } from './FeedTable';
 import {
   FeedToolbarCaption,
   IconCheck,
@@ -222,45 +221,41 @@ export const AiV2Panel = memo(function AiV2Panel({
                   <span className="flex-1">
                     Draft — the agent proposed this dashboard. Keep it to save, or discard it.
                   </span>
-                  <button
-                    type="button"
-                    className={clsx(FEED_GLASS_BTN, FEED_GLASS_BTN_PRIMARY)}
+                  <Button
+                    variant="glass-primary"
                     data-testid="aiv2-dashboard-keep"
                     onClick={keepProposedDashboard}
                   >
                     <FeedToolbarCaption label="Keep" icon={<IconKeep />} />
-                  </button>
-                  <button
-                    type="button"
-                    className={FEED_GLASS_BTN}
+                  </Button>
+                  <Button
+                    variant="glass"
                     data-testid="aiv2-dashboard-discard"
                     onClick={discardProposedDashboard}
                   >
                     <FeedToolbarCaption label="Discard" icon={<IconTrash />} />
-                  </button>
+                  </Button>
                 </div>
               ) : (
                 <div className="flex shrink-0 items-center gap-2">
                   <h2 className="m-0 text-sm font-semibold text-v5-text">Session overview</h2>
                   <span className="ml-auto" />
                   {editingDashboard ? (
-                    <button
-                      type="button"
-                      className={clsx(FEED_GLASS_BTN, FEED_GLASS_BTN_PRIMARY)}
+                    <Button
+                      variant="glass-primary"
                       data-testid="aiv2-dashboard-done"
                       onClick={() => setEditingDashboard(false)}
                     >
                       <FeedToolbarCaption label="Done" icon={<IconCheck />} />
-                    </button>
+                    </Button>
                   ) : (
-                    <button
-                      type="button"
-                      className={FEED_GLASS_BTN}
+                    <Button
+                      variant="glass"
                       data-testid="aiv2-dashboard-edit"
                       onClick={() => setEditingDashboard(true)}
                     >
                       <FeedToolbarCaption label="Edit" icon={<IconPencil />} />
-                    </button>
+                    </Button>
                   )}
                 </div>
               )}
@@ -297,9 +292,8 @@ export const AiV2Panel = memo(function AiV2Panel({
                     record. Design one with AI, or start from a blank grid.
                   </p>
                   <div className="flex gap-2">
-                    <button
-                      type="button"
-                      className={clsx(FEED_GLASS_BTN, FEED_GLASS_BTN_PRIMARY)}
+                    <Button
+                      variant="glass-primary"
                       onClick={() => setPendingStart(STARTER_MESSAGE)}
                     >
                       <FeedToolbarCaption
@@ -307,15 +301,10 @@ export const AiV2Panel = memo(function AiV2Panel({
                         label="Design with AI"
                         icon={<IconSparkles />}
                       />
-                    </button>
-                    <button
-                      type="button"
-                      className={FEED_GLASS_BTN}
-                      data-testid="aiv2-start-blank"
-                      onClick={startBlank}
-                    >
+                    </Button>
+                    <Button variant="glass" data-testid="aiv2-start-blank" onClick={startBlank}>
                       <FeedToolbarCaption alwaysLabel label="Start blank" icon={<IconPlus />} />
-                    </button>
+                    </Button>
                   </div>
                 </>
               )}

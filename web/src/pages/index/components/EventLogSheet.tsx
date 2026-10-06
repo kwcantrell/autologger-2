@@ -47,7 +47,7 @@ import {
   type RowEditValues,
 } from './EventLogRow';
 import { FeedShell } from './FeedShell';
-import { type ColumnDef, FEED_GLASS_BTN, FEED_GLASS_BTN_PRIMARY, FeedTable } from './FeedTable';
+import { type ColumnDef, FeedTable } from './FeedTable';
 import {
   FeedToolbarCaption,
   IconCheck,
@@ -1064,9 +1064,8 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
         }
       />
       {!batchEditMode && (
-        <button
-          type="button"
-          className={FEED_GLASS_BTN}
+        <Button
+          variant="glass"
           disabled={!canBatchEdit}
           title={
             canBatchEdit
@@ -1076,28 +1075,22 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
           onClick={handleEnterBatchEdit}
         >
           <FeedToolbarCaption label="Edit" icon={<IconPencil />} />
-        </button>
+        </Button>
       )}
       {batchEditMode && (
         // `.v5EventFeedToolbarBatch` — its `#v4-log-session` ancestor prefix was a pure
         // specificity hack; the layout applies to the span directly.
         <span className="inline-flex flex-wrap items-center gap-[0.35rem]">
-          <button
-            type="button"
-            className={clsx(FEED_GLASS_BTN, FEED_GLASS_BTN_PRIMARY)}
+          <Button
+            variant="glass-primary"
             disabled={batchSaving}
             onClick={() => handleSaveBatch().catch(() => {})}
           >
             <FeedToolbarCaption label="Save changes" icon={<IconCheck />} />
-          </button>
-          <button
-            type="button"
-            className={FEED_GLASS_BTN}
-            disabled={batchSaving}
-            onClick={handleCancelBatch}
-          >
+          </Button>
+          <Button variant="glass" disabled={batchSaving} onClick={handleCancelBatch}>
             <FeedToolbarCaption label="Cancel" icon={<IconX />} />
-          </button>
+          </Button>
         </span>
       )}
       <TimeDisplayDropdown viewUtc={viewUtc} disabled={batchEditMode} onChange={handleSetViewUtc} />

@@ -2,6 +2,7 @@ import { memo, useMemo } from 'react';
 import { API_ROOT } from '../../../api/client';
 import { useTopics } from '../../../api/hooks/useTopics';
 import { useTranscriptWords } from '../../../api/hooks/useTranscriptWords';
+import { Button } from '../../../shared/components/ui/button';
 import { useTranscriptWordsGate } from '../hooks/TranscriptWordsGateContext';
 import { speakerOffsetFromWords } from '../utils/speakerOffset';
 import { buildTopicsCsv, downloadTopicsCsv } from '../utils/topicsCsv';
@@ -12,8 +13,6 @@ import { FeedToolbarCaption, IconDownload } from './feedToolbarCaption';
 interface Props {
   sessionId: string;
 }
-
-const EXPORT_BTN = 'btn primary inline-flex items-center justify-center gap-2 text-center';
 
 // Render-isolation memo (the WorkspaceStatic/TranscribeRow idiom). INVARIANT: every
 // prop passed here must stay referentially stable across a SessionWorkspace render —
@@ -49,13 +48,15 @@ export const ExportFeed = memo(function ExportFeed({ sessionId }: Props) {
       <p className="m-0 mb-3 text-[0.82rem] leading-[1.45] text-v5-muted">
         Download a CSV for each feed individually.
       </p>
-      <div className="tool-row export-row flex flex-col gap-2 items-stretch max-w-md">
-        <a className={EXPORT_BTN} href={`${base}/export.csv`} download>
-          <FeedToolbarCaption alwaysLabel label="Event feed CSV" icon={<IconDownload />} />
-        </a>
-        <button
-          type="button"
-          className={EXPORT_BTN}
+      {/* shadcn Button (shadcn-port-workspace D6): primary for the three CSVs, outline for the
+          JSONL; the server-side exports stay real <a download> links via asChild. */}
+      <div className="mt-3 flex max-w-md flex-col items-stretch gap-2">
+        <Button asChild>
+          <a href={`${base}/export.csv`} download>
+            <FeedToolbarCaption alwaysLabel label="Event feed CSV" icon={<IconDownload />} />
+          </a>
+        </Button>
+        <Button
           disabled={wordsPending || wordCount === 0}
           onClick={() => {
             if (!words || words.length === 0) return;
@@ -67,10 +68,8 @@ export const ExportFeed = memo(function ExportFeed({ sessionId }: Props) {
             label={`Transcript CSV${wordCount > 0 ? ` (${wordCount})` : ''}`}
             icon={<IconDownload />}
           />
-        </button>
-        <button
-          type="button"
-          className={EXPORT_BTN}
+        </Button>
+        <Button
           disabled={topicsPending || topicCount === 0}
           onClick={() => {
             if (!topics || topics.length === 0) return;
@@ -82,14 +81,12 @@ export const ExportFeed = memo(function ExportFeed({ sessionId }: Props) {
             label={`Topics CSV${topicCount > 0 ? ` (${topicCount})` : ''}`}
             icon={<IconDownload />}
           />
-        </button>
-        <a
-          className="btn inline-flex items-center justify-center gap-2 text-center"
-          href={`${base}/export.jsonl`}
-          download
-        >
-          <FeedToolbarCaption alwaysLabel label="Event feed JSONL" icon={<IconDownload />} />
-        </a>
+        </Button>
+        <Button variant="outline" asChild>
+          <a href={`${base}/export.jsonl`} download>
+            <FeedToolbarCaption alwaysLabel label="Event feed JSONL" icon={<IconDownload />} />
+          </a>
+        </Button>
       </div>
     </FeedShell>
   );

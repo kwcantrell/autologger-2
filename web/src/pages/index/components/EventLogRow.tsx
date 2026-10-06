@@ -1,6 +1,8 @@
 import clsx from 'clsx';
+import { Trash2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import type { Category, LogEvent } from '../../../api/types';
+import { Button } from '../../../shared/components/ui/button';
 import { TableCell, TableRow } from '../../../shared/components/ui/table';
 import { Tooltip } from '../../../shared/ui/Tooltip';
 import {
@@ -749,14 +751,14 @@ export function EventLogRow({
   const rowActions = isAuto ? null : editable && pendingDelete ? (
     <span className={rowActionsCls}>
       <Tooltip content="Restore row">
-        <button
-          type="button"
-          className="btn"
+        <Button
+          variant="outline"
+          size="xs"
           aria-label="Restore row"
           onClick={() => onUndelete(event.event_id)}
         >
           UNDELETE
-        </button>
+        </Button>
       </Tooltip>
     </span>
   ) : (
@@ -768,26 +770,7 @@ export function EventLogRow({
           aria-label="Delete row"
           onClick={() => onDelete(event.event_id)}
         >
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <path d="M4 7H20" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-            <path
-              d="M9 7V5C9 4.44772 9.44772 4 10 4H14C14.5523 4 15 4.44772 15 5V7"
-              stroke="currentColor"
-              strokeWidth="1.8"
-            />
-            <path
-              d="M6.5 7L7.4 19.1C7.44 19.61 7.86 20 8.37 20H15.63C16.14 20 16.56 19.61 16.6 19.1L17.5 7"
-              stroke="currentColor"
-              strokeWidth="1.8"
-              strokeLinecap="round"
-            />
-            <path
-              d="M10 11V16M14 11V16"
-              stroke="currentColor"
-              strokeWidth="1.8"
-              strokeLinecap="round"
-            />
-          </svg>
+          <Trash2 className="size-3" aria-hidden="true" />
         </button>
       </Tooltip>
     </span>

@@ -629,3 +629,20 @@ describe('EventLogRow on the shadcn Table parts', () => {
     for (const td of cells) expect(td.getAttribute('data-slot')).toBe('table-cell');
   });
 });
+
+describe('EventLogRow row actions (shadcn-port-workspace D6)', () => {
+  it('Delete row draws the lucide trash glyph; UNDELETE is a shadcn Button', () => {
+    renderRow({ inlineEdit: true });
+    const del = screen.getByRole('button', { name: 'Delete row' });
+    expect(del.querySelector('svg.lucide-trash-2')).not.toBeNull();
+  });
+
+  it('UNDELETE (pending delete) is an outline Button named Restore row', () => {
+    renderRow({ inlineEdit: true, pendingDelete: true });
+    const restore = screen.getByRole('button', { name: 'Restore row' });
+    // (data-slot is the Tooltip trigger's: the wrapper stamps it onto its asChild child.)
+    expect(restore.getAttribute('data-variant')).toBe('outline');
+    expect(restore.getAttribute('data-size')).toBe('xs');
+    expect(restore.textContent).toBe('UNDELETE');
+  });
+});

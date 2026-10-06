@@ -1,6 +1,5 @@
-import clsx from 'clsx';
 import { type MutableRefObject, useState } from 'react';
-import { FEED_GLASS_BTN, FEED_GLASS_BTN_PRIMARY } from './FeedTable';
+import { Button } from '../../../shared/components/ui/button';
 
 // Shared SSE-turn machinery for the two AI rails (AiChat.tsx and
 // AiV2Design.tsx), consolidated from their formerly duplicated copies
@@ -290,17 +289,13 @@ export function SseTurnComposer({
         }}
       />
       {isStreaming ? (
-        <button type="button" className={FEED_GLASS_BTN} onClick={onStop}>
+        <Button variant="glass" onClick={onStop}>
           Stop
-        </button>
+        </Button>
       ) : (
-        <button
-          type="submit"
-          className={clsx(FEED_GLASS_BTN, FEED_GLASS_BTN_PRIMARY)}
-          disabled={!input.trim()}
-        >
+        <Button type="submit" variant="glass-primary" disabled={!input.trim()}>
           Send
-        </button>
+        </Button>
       )}
     </form>
   );

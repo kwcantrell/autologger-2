@@ -95,17 +95,20 @@
 
 ## 5. Toolbars and icons
 
-- [ ] 5.1 Change `feedToolbarCaption` icons to lucide aliases, and move `GenerateToolbar`, the EventLogSheet toolbar, `AiV2Panel` and `useSseTurn` to `Button variant="glass"`/`"glass-primary"` (D1, D6). Delete `FEED_GLASS_BTN*`.
+- [x] 5.1 Change `feedToolbarCaption` icons to lucide aliases, and move `GenerateToolbar`, the EventLogSheet toolbar, `AiV2Panel` and `useSseTurn` to `Button variant="glass"`/`"glass-primary"` (D1, D6). Delete `FEED_GLASS_BTN*`.
   - Test first: a `GenerateToolbar` case where the default trigger has `data-variant="glass"` and its icon is `svg.lucide-sparkles`, and `grep -rn FEED_GLASS_BTN web/src` returns 0 lines.
   - Verify: the generate, AiV2Panel and Assistant suites pass.
-- [ ] 5.2 `ExportFeed` uses `Button`/`Button asChild` (D6).
+  - Evidence: test first: generateLatch "toolbar buttons are glass Buttons with lucide icons" (Auto Generate + Insert data-variant glass, svg.lucide-sparkles / svg.lucide-plus) for transcribe + topics -> `2 failed | 5 passed (7)`; after feedToolbarCaption Icon* = lucide aliases (Sparkles/Plus/Pencil/Check/X/Clock/Filter/Download/Pin/Trash2) and every FEED_GLASS_BTN(+_PRIMARY) button in GenerateToolbar, EventLogSheet, AiV2Panel, useSseTurn -> Button variant glass/glass-primary; constants deleted from FeedTable -> full `npx vitest run` `Test Files 123 passed (123) Tests 1551 passed (1551)`; `grep -rn FEED_GLASS_BTN web/src` -> 1 line (the history comment in button.tsx); tsc + biome clean
+- [x] 5.2 `ExportFeed` uses `Button`/`Button asChild` (D6).
   - Test first: in `ExportFeed.test.tsx`, the CSV link is still an `<a>` with `download` and `data-slot="button"`.
   - Verify: `ExportFeed.test.tsx` passes.
-- [ ] 5.3 `EventLogRow` UNDELETE becomes `Button` and trash becomes `Trash2`; `JumpToTimeButton` play becomes `Play`; `MaximizeLogStrip` hamburger becomes `Menu` (D6).
+  - Evidence: test first: ExportFeed "server-side exports stay links" extended (Event feed CSV is an <a download> with data-slot button + data-variant default; JSONL outline; Transcript/Topics buttons data-slot button / default) -> `1 failed | 2 passed (3)`; after Button (default) for the three CSVs, Button asChild around both <a download>, JSONL variant outline, legacy `tool-row export-row` -> `mt-3 flex max-w-md flex-col items-stretch gap-2` (export-row margin-top 0.75rem kept) -> `npx vitest run src/pages/index/components/ExportFeed.test.tsx` `Tests 3 passed (3)`; tsc clean
+- [x] 5.3 `EventLogRow` UNDELETE becomes `Button` and trash becomes `Trash2`; `JumpToTimeButton` play becomes `Play`; `MaximizeLogStrip` hamburger becomes `Menu` (D6).
   - Test first:
     - `JumpToTimeButton.test.tsx` asserts `svg.lucide-play`, and keeps its native-button and `aria-disabled`-without-`disabled` cases;
     - `EventLogRow.test.tsx` asserts UNDELETE has `data-slot="button"`.
   - Verify: those suites and `MaximizeLogStrip.test.tsx` pass.
+  - Evidence: test first: JumpToTimeButton "draws the lucide play glyph" (svg.lucide-play aria-hidden inside the native button), MaximizeLogStrip "Open navigation draws the lucide menu glyph", EventLogRow "Delete row draws the lucide trash glyph" + "UNDELETE is an outline Button named Restore row" (data-variant outline, data-size xs; data-slot is the Tooltip trigger's) -> `4 failed | 43 passed (47)`; after lucide Play (fill currentColor, size-3; button stays native aria-disabled), Menu (size-5), Trash2 (size-3), UNDELETE -> Button outline xs -> those suites `Tests 47 passed (47)` incl. the native-button / aria-disabled-without-disabled / shared reason id cases; full `npx vitest run` `Test Files 123 passed (123) Tests 1555 passed (1555)`; tsc clean
 
 ## 6. Integration: QA gate and checks
 

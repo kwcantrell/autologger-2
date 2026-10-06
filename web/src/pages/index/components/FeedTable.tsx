@@ -45,18 +45,6 @@ export const FEED_INLINE_INPUT_MONO = '[font-family:monospace]';
 export const FEED_SUMMARY_TEXTAREA =
   'block box-border min-h-[1.6rem] resize-none overflow-hidden whitespace-pre-wrap [overflow-wrap:anywhere] leading-[1.35]';
 
-// Glass toolbar buttons (Edit / Save / Cancel / dropdown triggers / Auto Generate /
-// Insert), rendered by EventLogSheet, TranscribeFeed, TopicsFeed.
-/** Base glass button. Hover is exclusive of :disabled (was `:hover:not(:disabled)`). */
-// max-md:px-4 (ui-refresh): with five top-level tabs the toolbar trio
-// (Edit / Time Display / Filter) was clipping at the right edge on phones.
-export const FEED_GLASS_BTN =
-  'box-border inline-flex items-center justify-center px-6 py-[0.55rem] font-[family-name:"Inter",var(--font-poppins),ui-sans-serif,system-ui,sans-serif] text-[0.72rem] font-semibold tracking-[0.1em] uppercase rounded-v5-sm border border-solid border-v5-border [background:linear-gradient(165deg,rgba(255,255,255,0.08),rgba(15,23,42,0.45))] text-[rgba(248,250,252,0.92)] cursor-pointer [box-shadow:inset_0_1px_0_rgba(255,255,255,0.06)] [transition:border-color_0.15s_ease,background_0.15s_ease,box-shadow_0.15s_ease,opacity_0.15s_ease] not-disabled:hover-always:border-[color-mix(in_srgb,var(--v5-primary)_45%,var(--v5-border))] not-disabled:hover-always:[background:linear-gradient(165deg,rgba(255,255,255,0.1),rgba(15,23,42,0.5))] disabled:opacity-45 disabled:cursor-not-allowed max-md:min-h-[2.55rem] max-md:min-w-[2.55rem] max-md:px-2.5 max-md:tracking-normal';
-/** Primary glass button — sky accent border/bg/text + exclusive hover. Layer it after
- *  FEED_GLASS_BTN; the accent utilities replace the base border/bg/text. */
-export const FEED_GLASS_BTN_PRIMARY =
-  'border-[rgba(56,189,248,0.35)] [background:linear-gradient(165deg,rgba(56,189,248,0.16),rgba(15,23,42,0.5))] text-v5-primary not-disabled:hover-always:[background:linear-gradient(165deg,rgba(56,189,248,0.24),rgba(15,23,42,0.52))]';
-
 export interface ColumnDef {
   key: string;
   /** Visible header text. Ignored when ariaLabel is set. */

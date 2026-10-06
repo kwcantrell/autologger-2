@@ -1397,7 +1397,7 @@
 
   /* The `.btn` compound family — plain rules, kept together in one layer.
    * ui-refresh: re-skinned from the pre-V5 flat grey chrome to the V5 glass
-   * vocabulary (mirrors FEED_GLASS_BTN in FeedTable.tsx) so the modal/settings
+   * vocabulary (mirrors the `glass` Button variant) so the modal/settings
    * layer speaks the same language as the workspace. Class names unchanged —
    * every legacy consumer converts at once. */
   .btn {

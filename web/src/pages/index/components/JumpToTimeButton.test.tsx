@@ -165,3 +165,13 @@ describe('JumpToTimeButton', () => {
     expect(document.querySelectorAll('#feed-shared-reason')).toHaveLength(0);
   });
 });
+
+describe('JumpToTimeButton glyph (shadcn-port-workspace D6)', () => {
+  it('draws the lucide play glyph, decorative, inside the native button', () => {
+    renderButton();
+    const btn = screen.getByRole('button', { name: /00:12:03:07/ });
+    const svg = btn.querySelector('svg.lucide-play');
+    expect(svg).not.toBeNull();
+    expect(svg?.getAttribute('aria-hidden')).toBe('true');
+  });
+});

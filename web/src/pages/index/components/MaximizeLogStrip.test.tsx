@@ -100,3 +100,11 @@ describe('MaximizeLogStrip session-meta title', () => {
     expect(screen.getByText('HD_260802_002')).not.toBeNull();
   });
 });
+
+describe('MaximizeLogStrip mobile nav glyph (shadcn-port-workspace D6)', () => {
+  it('the Open navigation control draws the lucide menu glyph', () => {
+    renderStrict(<MaximizeLogStrip {...baseProps()} status={null} onOpenMobileNav={() => {}} />);
+    const btn = screen.getByRole('button', { name: 'Open navigation' });
+    expect(btn.querySelector('svg.lucide-menu')).not.toBeNull();
+  });
+});

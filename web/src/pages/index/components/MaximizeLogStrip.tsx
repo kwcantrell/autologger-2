@@ -1,4 +1,5 @@
 import clsx from 'clsx';
+import { Menu } from 'lucide-react';
 import type { LogEvent, SessionStatus } from '../../../api/types';
 import { Tooltip } from '../../../shared/ui/Tooltip';
 import type { AudioClipLite } from '../../../shared/utils/waveformMerge';
@@ -276,11 +277,7 @@ export function MaximizeLogStrip({
             aria-label="Open navigation"
             onClick={onOpenMobileNav}
           >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-              <path d="M4 7H20" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-              <path d="M4 12H20" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-              <path d="M4 17H15" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-            </svg>
+            <Menu className="size-5" aria-hidden="true" />
           </button>
         ) : null}
         <div className="min-w-0 flex-1">{sessionMeta}</div>
