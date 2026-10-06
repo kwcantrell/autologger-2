@@ -56,9 +56,10 @@
   - Test first: the error banner has `role="alert"` (one only), and `#login-btn-create-account` has `data-slot="button"` and is still an `<a>` with the same `href`.
   - Verify `LoginPage.test.tsx` and `contrastTokens.test.ts` pass.
   - Evidence: test first: two LoginPage cases (single alert = #login-error-banner data-slot alert; retry <a> data-slot button; create-account <a> data-slot button + outline; 2 separators; Google button untouched) -> `2 failed` (`expected null to be "alert"`); after Alert/Button asChild/Separator (BTN_CREATE kept, + normal-case) -> LoginPage + contrastTokens + RootGate `Tests 28 passed (28)`; lint clean
-- [ ] 4.2 Teams (D5): `Field`/`Input`, `Button` variants, `Badge`, `Empty`, `Alert` (the no-owner notice as `status`), `Spinner`, and the `Checkbox` picker.
+- [x] 4.2 Teams (D5): `Field`/`Input`, `Button` variants, `Badge`, `Empty`, `Alert` (the no-owner notice as `status`), `Spinner`, and the `Checkbox` picker.
   - Test first: in `TeamCard.test.tsx`, Remove, Delete team and Leave team are `destructive`; the role badge is `data-slot="badge"`; show checkboxes are `data-slot="checkbox"` and toggle. L270–271 move from `.checked` to `aria-checked`.
   - Verify `TeamsRoute`, `TeamCard` and `AppShell.onboarding` pass (exact alert text; buttonless owner row).
+  - Evidence: test first: TeamCard (Button variants incl. destructive Remove/Delete team/Leave team, Badge data-slot, Checkbox data-slot + aria-checked replacing `.checked` L270-271, orphaned notice role status + data-slot alert) and TeamsRoute (Back outline, Input data-slot, Create team default, single Alert) -> `7 failed | 14 passed (21)`; after porting TeamCard/CreateTeamForm/TeamsRoute -> with AppShell.onboarding `Tests 24 passed (24)` (exact alert text, buttonless owner row, getByLabelText); full `npx vitest run` -> `Test Files 122 passed (122) Tests 1530 passed (1530)`; lint/typecheck clean
 
 ## 5. Integration: QA gate and checks
 

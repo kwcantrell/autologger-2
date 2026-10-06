@@ -20,6 +20,13 @@ import type {
   TeamRole,
   TeamRoleChangeBody,
 } from '../../../api/types';
+import { Alert } from '../../../shared/components/ui/alert';
+import { Badge } from '../../../shared/components/ui/badge';
+import { Button } from '../../../shared/components/ui/button';
+import { Checkbox } from '../../../shared/components/ui/checkbox';
+import { Field, FieldLabel, FieldLegend, FieldSet } from '../../../shared/components/ui/field';
+import { Input } from '../../../shared/components/ui/input';
+import { Spinner } from '../../../shared/components/ui/spinner';
 import { useConfirm } from '../../../shared/ui/ConfirmDialog';
 
 // --- TeamCard (teams-self-serve, task 6.2; owner-bootstrap D12) ---
@@ -45,11 +52,23 @@ function errorMessage(err: unknown, fallback: string): string {
   return err instanceof Error ? err.message : fallback;
 }
 
+// shadcn-port-shell D5: section hint text (was `.modal-hint`) and the inline loading line.
+const HINT = 'm-0 mb-1 text-[0.78rem] leading-[1.45] text-v5-muted';
+
+function LoadingLine({ children, className }: { children: ReactNode; className?: string }) {
+  return (
+    <p className={`${HINT} flex items-center gap-2 ${className ?? ''}`} aria-busy="true">
+      <Spinner aria-hidden="true" />
+      {children}
+    </p>
+  );
+}
+
 function RoleBadge({ role }: { role: TeamRole }) {
   return (
-    <span className="ml-2 rounded-v5-sm border border-v5-border-strong bg-white/5 px-2 py-0.5 text-[0.65rem] font-semibold uppercase tracking-[0.08em] text-v5-muted">
+    <Badge variant="outline" className="ml-2">
       {role}
-    </span>
+    </Badge>
   );
 }
 
@@ -68,40 +87,37 @@ function ShowAccessList({
   const setGrant = useSetShowGrant(teamId);
   const granted = new Set(member.show_ids ?? []);
   if (shows.isError) {
-    return (
-      <p role="alert" className="modal-hint text-[#ff8a8a]">
-        Couldn&apos;t load this team&apos;s shows.
-      </p>
-    );
+    return <Alert variant="destructive">Couldn&apos;t load this team&apos;s shows.</Alert>;
   }
   if (!shows.data) {
-    return (
-      <p className="modal-hint" aria-busy="true">
-        Loading shows…
-      </p>
-    );
+    return <LoadingLine>Loading shows…</LoadingLine>;
   }
   const list = shows.data.shows ?? [];
-  if (list.length === 0) return <p className="modal-hint muted">This team has no shows yet.</p>;
+  if (list.length === 0) return <p className={HINT}>This team has no shows yet.</p>;
   return (
-    <fieldset className="m-0 flex flex-wrap gap-x-4 gap-y-1 border-0 p-0">
-      <legend className="sr-only">Show access for {member.email}</legend>
-      {list.map((show) => (
-        <label key={show.id} className="flex items-center gap-2">
-          <input
-            type="checkbox"
-            checked={granted.has(show.id)}
-            onChange={(e) =>
-              setGrant.mutate(
-                { showId: show.id, userId: member.id, granted: e.target.checked },
-                { onError: (err) => onError(errorMessage(err, 'Show access change failed.')) },
-              )
-            }
-          />
-          {show.name}
-        </label>
-      ))}
-    </fieldset>
+    <FieldSet className="m-0 flex-row flex-wrap gap-x-4 gap-y-1 border-0 p-0">
+      <FieldLegend className="sr-only">Show access for {member.email}</FieldLegend>
+      {list.map((show) => {
+        const id = `show-access-${member.id}-${show.id}`;
+        return (
+          <Field key={show.id} orientation="horizontal" className="w-auto items-center gap-2">
+            <Checkbox
+              id={id}
+              checked={granted.has(show.id)}
+              onCheckedChange={(checked) =>
+                setGrant.mutate(
+                  { showId: show.id, userId: member.id, granted: checked === true },
+                  { onError: (err) => onError(errorMessage(err, 'Show access change failed.')) },
+                )
+              }
+            />
+            <FieldLabel htmlFor={id} className="text-v5-text">
+              {show.name}
+            </FieldLabel>
+          </Field>
+        );
+      })}
+    </FieldSet>
   );
 }
 
@@ -117,9 +133,9 @@ function ShowAccessPicker({
   const [open, setOpen] = useState(false);
   return (
     <div className="w-full">
-      <button type="button" className="btn" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+      <Button variant="outline" size="sm" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
         Show access
-      </button>
+      </Button>
       {open && (
         <div className="mt-2" data-testid={`team-show-access-${member.id}`}>
           <ShowAccessList teamId={teamId} member={member} onError={onError} />
@@ -168,23 +184,23 @@ function MemberRow({
         <span className="flex gap-2">
           {canChangeRole &&
             (member.role === 'member' ? (
-              <button type="button" className="btn" disabled={busy} onClick={onPromote}>
+              <Button variant="outline" size="sm" disabled={busy} onClick={onPromote}>
                 Make admin
-              </button>
+              </Button>
             ) : (
-              <button type="button" className="btn" disabled={busy} onClick={onDemote}>
+              <Button variant="outline" size="sm" disabled={busy} onClick={onDemote}>
                 Make member
-              </button>
+              </Button>
             ))}
           {canTransfer && (
-            <button type="button" className="btn" disabled={busy} onClick={onTransfer}>
+            <Button variant="outline" size="sm" disabled={busy} onClick={onTransfer}>
               Transfer ownership
-            </button>
+            </Button>
           )}
           {canRemove && (
-            <button type="button" className="btn danger" disabled={busy} onClick={onRemove}>
+            <Button variant="destructive" size="sm" disabled={busy} onClick={onRemove}>
               Remove
-            </button>
+            </Button>
           )}
         </span>
       )}
@@ -316,30 +332,26 @@ function ManagePanel({ detail, isOwner }: { detail: TeamDetail; isOwner: boolean
       data-testid={isOwner ? `team-owner-panel-${detail.id}` : `team-admin-panel-${detail.id}`}
     >
       {confirmElement}
-      {actionError && (
-        <p role="alert" className="modal-hint text-[#ff8a8a]">
-          {actionError}
-        </p>
-      )}
+      {actionError && <Alert variant="destructive">{actionError}</Alert>}
 
       <form className="flex flex-wrap items-end gap-2" onSubmit={handleRename}>
-        <label className="field">
-          <span>Team name</span>
-          <input
+        <Field className="w-auto min-w-[14rem] flex-1">
+          <FieldLabel htmlFor={`team-name-${detail.id}`}>Team name</FieldLabel>
+          <Input
+            id={`team-name-${detail.id}`}
             type="text"
-            className="profile-select"
             maxLength={200}
             value={name}
             onChange={(e) => setName(e.target.value)}
           />
-        </label>
-        <button type="submit" className="btn primary" disabled={busy || name.trim() === ''}>
+        </Field>
+        <Button type="submit" disabled={busy || name.trim() === ''}>
           {rename.isPending ? 'Saving…' : 'Save name'}
-        </button>
+        </Button>
       </form>
 
       <div>
-        <p className="modal-hint mb-1">Members</p>
+        <p className={HINT}>Members</p>
         <ul className="my-[1em] list-disc pl-10">
           {detail.members.map((m) => {
             // No control ever targets the owner; an admin removes plain members only.
@@ -368,25 +380,25 @@ function ManagePanel({ detail, isOwner }: { detail: TeamDetail; isOwner: boolean
       </div>
 
       <form className="flex flex-wrap items-end gap-2" onSubmit={handleInvite}>
-        <label className="field">
-          <span>Invite by email</span>
-          <input
+        <Field className="w-auto min-w-[14rem] flex-1">
+          <FieldLabel htmlFor={`team-invite-email-${detail.id}`}>Invite by email</FieldLabel>
+          <Input
+            id={`team-invite-email-${detail.id}`}
             type="email"
-            className="profile-select"
             placeholder="person@example.com"
             value={inviteEmail}
             onChange={(e) => setInviteEmail(e.target.value)}
           />
-        </label>
-        <button type="submit" className="btn" disabled={busy || inviteEmail.trim() === ''}>
+        </Field>
+        <Button type="submit" variant="outline" disabled={busy || inviteEmail.trim() === ''}>
           {invite.isPending ? 'Inviting…' : 'Invite'}
-        </button>
+        </Button>
       </form>
 
       <div>
-        <p className="modal-hint mb-1">Pending invites</p>
+        <p className={HINT}>Pending invites</p>
         {(detail.invites ?? []).length === 0 ? (
-          <p className="modal-hint muted">No pending invites.</p>
+          <p className={HINT}>No pending invites.</p>
         ) : (
           <ul className="my-[1em] list-disc pl-10">
             {(detail.invites ?? []).map((inv) => (
@@ -396,14 +408,14 @@ function ManagePanel({ detail, isOwner }: { detail: TeamDetail; isOwner: boolean
                 className="flex items-center justify-between gap-2 border-b border-v5-border py-2 last:border-b-0"
               >
                 <span>{inv.email}</span>
-                <button
-                  type="button"
-                  className="btn"
+                <Button
+                  variant="outline"
+                  size="sm"
                   disabled={revoke.isPending}
                   onClick={() => handleRevoke(inv.email)}
                 >
                   Revoke
-                </button>
+                </Button>
               </li>
             ))}
           </ul>
@@ -411,13 +423,13 @@ function ManagePanel({ detail, isOwner }: { detail: TeamDetail; isOwner: boolean
       </div>
 
       {isOwner ? (
-        <button type="button" className="btn danger" disabled={busy} onClick={handleDelete}>
+        <Button variant="destructive" disabled={busy} onClick={handleDelete}>
           {deleteTeam.isPending ? 'Deleting…' : 'Delete team'}
-        </button>
+        </Button>
       ) : (
-        <button type="button" className="btn danger" disabled={busy} onClick={handleLeave}>
+        <Button variant="destructive" disabled={busy} onClick={handleLeave}>
           {leave.isPending ? 'Leaving…' : 'Leave team'}
-        </button>
+        </Button>
       )}
     </div>
   );
@@ -443,11 +455,7 @@ function MemberPanel({ detail }: { detail: TeamDetail }) {
   return (
     <div className="mt-3 space-y-3" data-testid={`team-member-panel-${detail.id}`}>
       {confirmElement}
-      {error && (
-        <p role="alert" className="modal-hint text-[#ff8a8a]">
-          {error}
-        </p>
-      )}
+      {error && <Alert variant="destructive">{error}</Alert>}
       <ul className="my-[1em] list-disc pl-10">
         {detail.members.map((m) => {
           const label = `${m.given_name} ${m.family_name}`.trim() || m.email;
@@ -465,18 +473,19 @@ function MemberPanel({ detail }: { detail: TeamDetail }) {
           );
         })}
       </ul>
-      <button type="button" className="btn danger" disabled={leave.isPending} onClick={handleLeave}>
+      <Button variant="destructive" disabled={leave.isPending} onClick={handleLeave}>
         {leave.isPending ? 'Leaving…' : 'Leave team'}
-      </button>
+      </Button>
     </div>
   );
 }
 
 function OrphanedNotice() {
   return (
-    <p role="status" className="modal-hint" data-testid="team-orphaned-notice">
+    // An Alert surface that stays a polite status (shadcn-port-shell D5; Alert defaults to alert).
+    <Alert role="status" data-testid="team-orphaned-notice">
       This team has no owner. Contact support.
-    </p>
+    </Alert>
   );
 }
 
@@ -521,19 +530,13 @@ export function TeamCard({ team }: TeamCardProps) {
 
       {expanded && (
         <>
-          {query.isLoading && (
-            <p className="modal-hint mt-3" aria-busy="true">
-              Loading…
-            </p>
-          )}
+          {query.isLoading && <LoadingLine className="mt-3">Loading…</LoadingLine>}
           {query.isError && (
-            <div className="mt-3">
-              <p role="alert" className="modal-hint text-[#ff8a8a]">
-                Couldn&apos;t load this team.
-              </p>
-              <button type="button" className="btn" onClick={() => query.refetch()}>
+            <div className="mt-3 flex flex-col items-start gap-2">
+              <Alert variant="destructive">Couldn&apos;t load this team.</Alert>
+              <Button variant="outline" size="sm" onClick={() => query.refetch()}>
                 Try again
-              </button>
+              </Button>
             </div>
           )}
           {query.data && <TeamView detail={query.data} />}

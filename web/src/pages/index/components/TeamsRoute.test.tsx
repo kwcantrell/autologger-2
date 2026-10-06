@@ -164,6 +164,10 @@ describe('back-to-sessions affordance (spec: "Teams page offers a way back in ev
     renderPage(teamsProfile([{ id: 'team-a', name: 'Team A', role: 'admin' }]));
 
     expect(screen.getByTestId('teams-list')).not.toBeNull();
+    // shadcn-port-shell D5: the shared outline Button.
+    expect(
+      screen.getByRole('button', { name: /back to sessions/i }).getAttribute('data-variant'),
+    ).toBe('outline');
     fireEvent.click(screen.getByRole('button', { name: /back to sessions/i }));
     expect(navRecord).toEqual(['/']);
   });
@@ -333,10 +337,16 @@ describe('create-team form', () => {
 
     renderPage(teamsProfile([]));
 
+    // shadcn-port-shell D5: Field/Input/Button, and the error is the single destructive Alert.
+    expect(screen.getByLabelText('Team id (slug)').getAttribute('data-slot')).toBe('input');
+    expect(screen.getByRole('button', { name: 'Create team' }).getAttribute('data-variant')).toBe(
+      'default',
+    );
     fireEvent.change(screen.getByLabelText('Team id (slug)'), { target: { value: 'my-crew' } });
     fireEvent.change(screen.getByLabelText('Display name'), { target: { value: 'My Crew' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create team' }));
 
+    await waitFor(() => expect(screen.getByRole('alert').getAttribute('data-slot')).toBe('alert'));
     await waitFor(() =>
       expect(screen.getByRole('alert').textContent).toBe(
         'You already own 20 teams; the limit has been reached.',

@@ -1,5 +1,7 @@
 import { useProfile } from '../../../api/hooks/useProfile';
 import type { TeamMembershipBrief } from '../../../api/types';
+import { Button } from '../../../shared/components/ui/button';
+import { Empty, EmptyDescription } from '../../../shared/components/ui/empty';
 import { navigate } from '../navigation';
 // CreateTeamForm moved to its own module (bundle route-splitting, plan C5.3):
 // it is shared with the eagerly-loaded OnboardingPanel, and while it lived in
@@ -26,16 +28,15 @@ const PAGE_WRAP = 'relative z-[1] mx-auto w-full max-w-[48rem] px-5 py-10';
 const PAGE_TITLE =
   'm-0 mb-6 font-league-gothic font-bold text-[2rem] leading-none tracking-[0.02em] uppercase text-v5-text';
 
-// Same STATE_BUTTON idiom as SessionRoute's not-found/error "Back to
-// sessions" control (design D2) — one shared control, present regardless of
-// which state above it rendered.
-const STATE_BUTTON =
-  'box-border flex h-11 w-full cursor-pointer items-center justify-center rounded-v5-sm border border-v5-border-strong bg-[rgba(255,255,255,0.03)] px-4 text-[0.8125rem] font-semibold tracking-[0.04em] text-v5-muted [transition:border-color_0.15s_ease,background_0.15s_ease,color_0.15s_ease] hover-always:bg-[rgba(255,255,255,0.05)] hover-always:text-v5-text';
 const BACK_WRAP = 'relative z-[1] mx-auto w-full max-w-[25rem] px-5 pb-10';
 
 function TeamsList({ teams }: { teams: TeamMembershipBrief[] }) {
   if (teams.length === 0) {
-    return <p className="modal-hint">You&apos;re not on any teams yet.</p>;
+    return (
+      <Empty className="items-start">
+        <EmptyDescription>You&apos;re not on any teams yet.</EmptyDescription>
+      </Empty>
+    );
   }
   return (
     <ul className="space-y-3" data-testid="teams-list">
@@ -70,9 +71,10 @@ export function TeamsRoute() {
               page offers a way back in every state") — present whichever
               state above rendered, not duplicated per branch. */}
           <div className={BACK_WRAP}>
-            <button type="button" className={STATE_BUTTON} onClick={() => navigate('/')}>
+            {/* Same shared outline Button as SessionRoute's states (shadcn-port-shell D2/D5). */}
+            <Button variant="outline" className="h-11 w-full" onClick={() => navigate('/')}>
               Back to sessions
-            </button>
+            </Button>
           </div>
         </>
       )}
