@@ -25,17 +25,21 @@ Batch Import modal.
 - **WHEN** a member whose active team has no show they can access views the rail
 - **THEN** no Batch Import control is shown
 
-### Requirement: Batch Import modal chrome and actions
+### Requirement: Batch Import modal layout and actions
 
 The Batch Import modal SHALL include, in order: a Show dropdown equivalent to New
 Session's show picker; an Import Audio control; an Import Logs control; a Start
-Import control; and a progress region beneath Start Import. Import Logs SHALL not
-perform any import action in this change.
+Import control; and a progress region beneath Start Import. Import Logs SHALL
+collect the public Google Sheets URL for the log import specified by
+sheets-log-import (through a themed text prompt); the import itself SHALL run
+only on Start Import. Import Logs SHALL NOT open a directory picker, import
+audio, or create sessions.
 
-#### Scenario: Import Logs is a no-op
+#### Scenario: Import Logs collects the Sheets URL for the log import
 
 - **WHEN** the user activates Import Logs
-- **THEN** no session is created, no file picker opens, and no import starts
+- **THEN** a themed prompt asks for the public Google Sheets URL, no directory picker
+  opens, and nothing is imported or created until the user activates Start Import
 
 ### Requirement: Folder selection for Import Audio
 
