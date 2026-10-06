@@ -103,6 +103,7 @@ function categoryFixture(): Category {
 
 function logEventFixture(): LogEvent {
   return {
+    version: 1,
     event_id: 'ev-1',
     category: 'general',
     category_label: 'General',
@@ -464,6 +465,7 @@ describe('EventLogSheet marker reveal page growth', () => {
 
   function manyEventsFixture(count: number): LogEvent[] {
     return Array.from({ length: count }, (_, i) => ({
+      version: 1,
       event_id: `ev-${i}`,
       category: 'general',
       category_label: 'General',

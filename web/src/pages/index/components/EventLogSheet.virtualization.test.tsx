@@ -192,6 +192,7 @@ function eventsFixture(count: number): EventsResponse {
   const events: LogEvent[] = Array.from({ length: count }, (_, i) => {
     const n = (i * 7) % count;
     return {
+      version: 1,
       event_id: `ev-${n}`,
       category: 'general',
       category_label: 'General',

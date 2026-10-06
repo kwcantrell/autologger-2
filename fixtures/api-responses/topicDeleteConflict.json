@@ -1,0 +1,13 @@
+{
+  "detail": "Version conflict.",
+  "current": {
+    "id": "########-####-####-####-############",
+    "session_time": "##:##:##:##",
+    "duration_sec": 30,
+    "topic_level": 1,
+    "summary": "Their summary",
+    "ordinal": 0,
+    "created_at_utc": "####-##-##T##:##:##.###Z",
+    "version": 2
+  }
+}

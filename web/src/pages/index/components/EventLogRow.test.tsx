@@ -41,6 +41,7 @@ function categoryFixture(): Category {
 
 function eventFixture(overrides: Partial<LogEvent> = {}): LogEvent {
   return {
+    version: 1,
     event_id: 'ev-1',
     category: 'general',
     category_label: 'General',

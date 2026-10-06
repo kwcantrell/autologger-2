@@ -24,6 +24,7 @@ function wallAt(offsetSec: number): string {
 
 function ev(overrides: Partial<LogEvent>): LogEvent {
   return {
+    version: 1,
     event_id: `ev-${Math.random()}`,
     category: 'internal',
     category_label: 'Internal',

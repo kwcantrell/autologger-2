@@ -144,6 +144,7 @@ function statusFixture(overrides: Partial<SessionStatus> = {}): SessionStatus {
 
 function eventFixture(overrides: Partial<LogEvent> = {}): LogEvent {
   return {
+    version: 1,
     event_id: 'ev-1',
     category: 'general',
     category_label: 'General',
@@ -160,6 +161,7 @@ function eventFixture(overrides: Partial<LogEvent> = {}): LogEvent {
 
 function wordFixture(overrides: Partial<TranscriptWord> = {}): TranscriptWord {
   return {
+    version: 1,
     id: 'w-1',
     session_time: '00:00:10:00',
     speaker: '0',
@@ -173,6 +175,7 @@ function wordFixture(overrides: Partial<TranscriptWord> = {}): TranscriptWord {
 
 function topicFixture(overrides: Partial<SessionTopic> = {}): SessionTopic {
   return {
+    version: 1,
     id: 'topic-1',
     session_time: '00:00:10:00',
     duration_sec: 30,

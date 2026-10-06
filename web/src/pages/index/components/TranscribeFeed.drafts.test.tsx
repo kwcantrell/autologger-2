@@ -103,6 +103,7 @@ function statusFixture(): SessionStatus {
 
 function wordsFixture(count: number): TranscriptWord[] {
   return Array.from({ length: count }, (_, i) => ({
+    version: 1,
     id: `w-${i}`,
     session_time: `00:00:${String(10 + i).padStart(2, '0')}:00`,
     speaker: '0',

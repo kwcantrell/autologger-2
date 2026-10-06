@@ -26,6 +26,7 @@ import {
 
 function ev(partial: Partial<LogEvent>): LogEvent {
   return {
+    version: 1,
     event_id: 'e',
     category: 'internal',
     category_label: 'Internal',

@@ -74,6 +74,7 @@ let seq = 0;
 function ev(partial: Partial<LogEvent>): LogEvent {
   seq += 1;
   return {
+    version: 1,
     event_id: `e${seq}`,
     category: 'take',
     category_label: 'Take',

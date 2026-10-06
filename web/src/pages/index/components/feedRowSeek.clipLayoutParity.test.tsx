@@ -81,6 +81,7 @@ function wallAt(offsetSec: number): string {
 
 function ev(overrides: Partial<LogEvent>): LogEvent {
   return {
+    version: 1,
     event_id: `ev-${Math.random()}`,
     category: 'general',
     category_label: 'General',
@@ -210,6 +211,7 @@ function statusFixture(): SessionStatus {
 
 function wordFixture(overrides: Partial<TranscriptWord> = {}): TranscriptWord {
   return {
+    version: 1,
     id: 'w-1',
     session_time: '00:00:10:00',
     speaker: '0',

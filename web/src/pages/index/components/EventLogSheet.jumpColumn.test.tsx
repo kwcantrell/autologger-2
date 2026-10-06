@@ -92,6 +92,7 @@ function categoryFixture(): Category {
 /** Resolves to exactly 10s: 240 frames / 24fps. */
 function resolvableEventFixture(overrides: Partial<LogEvent> = {}): LogEvent {
   return {
+    version: 1,
     event_id: 'ev-resolvable',
     category: 'general',
     category_label: 'General',
@@ -111,6 +112,7 @@ function resolvableEventFixture(overrides: Partial<LogEvent> = {}): LogEvent {
  *  and is exactly what D4 forbids for event rows). */
 function positionlessEventFixture(overrides: Partial<LogEvent> = {}): LogEvent {
   return {
+    version: 1,
     event_id: 'ev-positionless',
     category: 'general',
     category_label: 'General',
