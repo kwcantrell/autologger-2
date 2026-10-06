@@ -34,7 +34,7 @@ Keep each task's text, and later its `Evidence:`, in one block with no blank lin
 
 ## 2. The migration (design D1, A2, A6)
 
-- [ ] 2.1 Test first, in `server/src/test/pg/catalogSchema.pg.test.ts`:
+- [x] 2.1 Test first, in `server/src/test/pg/catalogSchema.pg.test.ts`:
   - `session_leases` in the table lists, key columns and recorded schema;
   - the RLS matrix admits it with one system policy and four user policies;
   - a new describe "the session leases migration":
@@ -46,7 +46,9 @@ Keep each task's text, and later its `Evidence:`, in one block with no blank lin
     - deleting another user's lease deletes 0 rows;
     - kind `x` fails `23514`.
   Verify: red, recorded.
-- [ ] 2.2 Add `supabase/migrations/20261011000000_session_leases.sql` as design D1 gives it, run as `postgres`. Verify: 2.1 green; the other `pg` files pass apart from D6 category 3 (record each); `sh docker/supabase/test_migrate.sh` passes; the full suites are green.
+  - Evidence: `server/src/test/pg/catalogSchema.pg.test.ts`: `session_leases` in `TABLES`/`KEY_COLUMN`/`EXPECTED_SCHEMA` (columns, key, foreign key, the two named checks), a lease row in the system read/write test, the RLS block (`session_leases_system_all` plus `_user_select|insert|update|delete`, catalog_user holding all four privileges), and the describe "the session leases migration (session-leases D1)" (meta rows kept and table empty after a replay; own insert 1 row, another user's / inaccessible show / null holder `42501`; the D3 claim upsert against a live foreign lease `count 0` with no error and against an expired one `count 1`, holder replaced; update of the holder to another user `42501`; a plain `UPDATE` stealing a live lease `count 1` (accepted, D1); delete of another user's lease `count 0`; kind `x` `23514`). `cd server && npx vitest run --project pg src/test/pg/catalogSchema.pg.test.ts` -> `Tests  10 failed | 13 passed (23)`: `relation "catalog.session_leases" does not exist`, `expected [ 'app_settings', 'kv', …(18) ] to deeply equal [ … …(19) ]`, `ENOENT: … 20261011000000_session_leases.sql`, `expected [ { code: '42P01' } ] to deeply equal [ { count: 1 } ]` (log `8a-2.1-red.log`).
+- [x] 2.2 Add `supabase/migrations/20261011000000_session_leases.sql` as design D1 gives it, run as `postgres`. Verify: 2.1 green; the other `pg` files pass apart from D6 category 3 (record each); `sh docker/supabase/test_migrate.sh` passes; the full suites are green.
+  - Evidence: `supabase/migrations/20261011000000_session_leases.sql` as D1 (the table, the two named checks, RLS with `session_leases_system_all` and `_user_select|insert|update|delete`, USING of the update policy `R` alone; no grants: the `postgres` default privileges give both catalog roles all four, A6). `cd server && npx vitest run --project pg` -> first `Tests  1 failed | 102 passed`: `catalogPolicies.pg.test.ts` "no catalog_user policy is the constant true, and there are 33" (`expected [ … ] to have a length of 33 but got 37`; D6 category 3, the policy count) -> 37 (log `8a-2.2-pg1.log`); then `Test Files  11 passed | 1 skipped (12)`, `Tests  103 passed | 1 skipped (104)`, 2.1 green (log `8a-2.2-green.log`). `sh docker/supabase/test_migrate.sh` -> `test_migrate: 35 passed, 0 failed` (log `8a-2.2-migrate.log`). Full suites: server `Test Files  128 passed | 3 skipped (131)`, `Tests  1576 passed | 4 skipped (1580)` (log `8a-2.2-server.log`); session-core `Tests  33 passed (33)` (log `8a-2.2-session-core.log`); storage first `1 failed | 132 passed`: the deferred "8 contending" test (`expected [ 'repetition 4: 1/8 exhausted' ] to deeply equal []`; recurrence recorded, log `8a-2.2-storage.log`), rerun `Tests  133 passed (133)` (log `8a-2.2-storage2.log`); web `Tests  1685 passed (1685)` (with 6.1's commit; log `8a-2.2-web.log`); `npm run typecheck` exit 0 (log `8a-2.2-typecheck.log`).
 
 ## 3. The lease store (D2, D3, D4, D5)
 

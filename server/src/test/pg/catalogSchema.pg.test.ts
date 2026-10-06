@@ -41,6 +41,8 @@ const TABLES = [
   ...SESSION_TABLES,
   // session-row-versions D1: the overwrite audit (ADR 0021 slice 7c-1).
   'session_overwrites',
+  // session-leases D1: the recording lease (ADR 0021 slice 8a).
+  'session_leases',
 ];
 const KEY_COLUMN: Record<string, string> = {
   users: 'id',
@@ -55,11 +57,13 @@ const KEY_COLUMN: Record<string, string> = {
   show_grants: 'user_id',
   ...Object.fromEntries(SESSION_TABLES.map((t) => [t, 'session_id'])),
   session_overwrites: 'session_id',
+  session_leases: 'session_id',
 };
 const MIGRATIONS = resolve(import.meta.dirname, '../../../../supabase/migrations');
 const MIGRATION = resolve(MIGRATIONS, '20261001000000_catalog_schema.sql');
 const SESSION_TABLES_MIGRATION = '20261008000000_session_tables.sql';
 const ROW_VERSIONS_MIGRATION = '20261010000000_session_row_versions.sql';
+const LEASES_MIGRATION = '20261011000000_session_leases.sql';
 
 const open: postgres.Sql[] = [];
 function connect(o: ConnOptions): postgres.Sql {
@@ -385,9 +389,24 @@ const EXPECTED_SCHEMA: SchemaRecord = {
     primaryKey: ['session_id', 'id'],
     foreignKeys: ['FOREIGN KEY (session_id) REFERENCES catalog.sessions(id)'],
   },
+  // session-leases D1: one row per held lease, keyed by session and kind.
+  session_leases: {
+    columns: [
+      'session_id text collate C not null',
+      'kind text collate C not null',
+      'holder_client_id text collate C not null',
+      'holder_user_id text collate C',
+      'heartbeat_at_ms bigint not null',
+      'expires_at_ms bigint not null',
+    ],
+    primaryKey: ['session_id', 'kind'],
+    foreignKeys: ['FOREIGN KEY (session_id) REFERENCES catalog.sessions(id)'],
+  },
   $unique: ['catalog.users UNIQUE (google_sub)'],
   // owner-bootstrap D1: the role check and at most one owner per team.
   $checks: [
+    "catalog.session_leases session_leases_client_check CHECK (((holder_client_id <> ''::text) AND (length(holder_client_id) <= 256)))",
+    "catalog.session_leases session_leases_kind_check CHECK ((kind = 'recording'::text))",
     "catalog.session_overwrites session_overwrites_table_name_check CHECK ((table_name = ANY (ARRAY['session_events'::text, 'session_transcript_words'::text, 'session_topics'::text])))",
     "catalog.user_studio_memberships user_studio_memberships_role_check CHECK ((role = ANY (ARRAY['owner'::text, 'admin'::text, 'member'::text])))",
   ],
@@ -543,6 +562,8 @@ describe('the app role (design D3)', () => {
     await sql`insert into session_meta (session_id, key, value) values ('se', 'k', 'v')`;
     await sql`insert into session_overwrites (session_id, id, table_name, row_id, user_id, at_utc,
                 replaced_version, before_json) values ('se', 'o', 'session_events', 'e', 'u', ${t}, 1, '{}')`;
+    await sql`insert into session_leases (session_id, kind, holder_client_id, holder_user_id,
+                heartbeat_at_ms, expires_at_ms) values ('se', 'recording', 'c', 'u', 1, 2)`;
     for (const table of TABLES) {
       const n = await sql.unsafe(`select count(*)::int as n from ${table}`);
       expect(n[0]?.n, table).toBeGreaterThan(0);
@@ -699,6 +720,25 @@ describe('row-level security on every catalog table (catalog-roles D1, D2; catal
           expect(r[0]?.p, `session_overwrites ${priv}`).toBe(priv === 'insert');
         }
       }
+      // session-leases D1: the system policy and one user policy per command, and catalog_user
+      // holds all four privileges.
+      if (t.relname === 'session_leases') {
+        const cmds = await sql`select policyname, cmd, roles::text[] as roles from pg_policies
+                               where schemaname = 'catalog' and tablename = 'session_leases'
+                               order by policyname`;
+        expect(cmds.map((p) => [p.policyname, p.cmd, p.roles])).toEqual([
+          ['session_leases_system_all', 'ALL', ['catalog_system']],
+          ['session_leases_user_delete', 'DELETE', ['catalog_user']],
+          ['session_leases_user_insert', 'INSERT', ['catalog_user']],
+          ['session_leases_user_select', 'SELECT', ['catalog_user']],
+          ['session_leases_user_update', 'UPDATE', ['catalog_user']],
+        ]);
+        for (const priv of ['select', 'insert', 'update', 'delete']) {
+          const r =
+            await sql`select has_table_privilege('catalog_user', 'catalog.session_leases', ${priv}) as p`;
+          expect(r[0]?.p, `session_leases ${priv}`).toBe(true);
+        }
+      }
       if (session) {
         expect(policies.map((p) => p.policyname).sort(), t.relname).toEqual([
           `${t.relname}_system_all`,
@@ -758,11 +798,17 @@ describe('row-level security on every catalog table (catalog-roles D1, D2; catal
           table === 'session_transport'
             ? [`delete from session_transport where session_id = 'ss1'`, `${insert} returning 1`]
             : [`${insert} returning 1`];
-        expect(await run(uid, `select 1 from ${table} where session_id = 'ss1'`), `select ${who}`).toEqual({
+        expect(
+          await run(uid, `select 1 from ${table} where session_id = 'ss1'`),
+          `select ${who}`,
+        ).toEqual({
           count: access ? 1 : 0,
         });
         expect(
-          await run(uid, `update ${table} set session_id = session_id where session_id = 'ss1' returning 1`),
+          await run(
+            uid,
+            `update ${table} set session_id = session_id where session_id = 'ss1' returning 1`,
+          ),
           `update ${who}`,
         ).toEqual({ count: access ? 1 : 0 });
         expect(
@@ -910,7 +956,10 @@ describe('the session row versions migration (session-row-versions D1)', () => {
     ]);
     for (const table of ['session_events', 'session_transcript_words', 'session_topics']) {
       const v = await sql.unsafe(`select version::int as v from catalog.${table}`);
-      expect(v.map((r) => r.v), table).toEqual([1]);
+      expect(
+        v.map((r) => r.v),
+        table,
+      ).toEqual([1]);
     }
   });
 
@@ -953,6 +1002,132 @@ describe('the session row versions migration (session-row-versions D1)', () => {
     ]) {
       expect(await run('owner', stmt), stmt).toEqual({ code: '42501' });
     }
+  });
+});
+
+describe('the session leases migration (session-leases D1)', () => {
+  it('creates the table empty and keeps the lease meta rows', async () => {
+    const name = `t_sl_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    // The replay runs the role guards, which a parallel scratch role would trip (roleGuardLock.ts).
+    await holdRoleGuardLock(connect(connOptions('postgres', 'postgres')));
+    const root = connect(connOptions('postgres', 'postgres'));
+    await root.unsafe(`create database ${name} template template0`);
+    const sql = connect(connOptions('postgres', name));
+    const earlier = readdirSync(MIGRATIONS)
+      .filter((f) => f.endsWith('.sql') && f < LEASES_MIGRATION)
+      .sort();
+    expect(earlier.at(-1)).toBe(ROW_VERSIONS_MIGRATION);
+    for (const f of earlier) {
+      const text = readFileSync(resolve(MIGRATIONS, f), 'utf8');
+      await sql.begin((tx) => tx.unsafe(text));
+    }
+    await sql.unsafe(`
+      insert into catalog.sessions (id) values ('a');
+      insert into catalog.session_meta (session_id, key, value)
+        values ('a', 'lease_holder', 'tab-1'), ('a', 'lease_seen_ms', '1234');`);
+    const text = readFileSync(resolve(MIGRATIONS, LEASES_MIGRATION), 'utf8');
+    await sql.begin((tx) => tx.unsafe(text));
+    const meta = await sql`select session_id, key, value from catalog.session_meta order by key`;
+    expect(meta.map((r) => ({ ...r }))).toEqual([
+      { session_id: 'a', key: 'lease_holder', value: 'tab-1' },
+      { session_id: 'a', key: 'lease_seen_ms', value: '1234' },
+    ]);
+    expect((await sql`select count(*)::int as n from catalog.session_leases`)[0]?.n).toBe(0);
+  });
+
+  it('a user binding writes only its own lease on an accessible session; RLS does not bind a live lease (D1, A2)', async () => {
+    const db = await createTestDatabase();
+    await seedPolicyFixture(connect(db.system));
+    const sql = connect(db.app);
+    class Rollback extends Error {}
+    type Out = { count: number } | { code: string };
+    // Each case runs in one transaction that rolls back: `seed` as catalog_system, then `stmts` as
+    // catalog_user for `uid`; the result of each statement (a statement error ends the case).
+    const run = async (uid: string, seed: string[], ...stmts: string[]) => {
+      const out: Out[] = [];
+      await sql
+        .begin(async (tx) => {
+          await tx`select set_config('role', 'catalog_system', true), set_config('app.user_id', '', true)`;
+          for (const s of seed) await tx.unsafe(s);
+          await tx`select set_config('role', 'catalog_user', true), set_config('app.user_id', ${uid}, true)`;
+          for (const stmt of stmts) {
+            try {
+              out.push({ count: (await tx.unsafe(stmt)).count });
+            } catch (e) {
+              out.push({ code: String((e as { code?: unknown }).code) });
+              break;
+            }
+          }
+          throw new Rollback();
+        })
+        .catch((e) => {
+          if (!(e instanceof Rollback)) throw e;
+        });
+      return out;
+    };
+    const lease = (
+      session: string,
+      user: string | null,
+      client = `tab-${user}`,
+      expires = 2000,
+      kind = 'recording',
+    ) =>
+      `insert into session_leases (session_id, kind, holder_client_id, holder_user_id, heartbeat_at_ms, expires_at_ms)
+       values ('${session}', '${kind}', '${client}', ${user === null ? 'null' : `'${user}'`}, 1000, ${expires})`;
+    // The server's claim (design D3) for `user` at time `now`.
+    const claim = (user: string, now: number) =>
+      `insert into session_leases (session_id, kind, holder_client_id, holder_user_id, heartbeat_at_ms, expires_at_ms)
+       values ('ss1', 'recording', 'tab-${user}', '${user}', ${now}, ${now + 40_000})
+       on conflict (session_id, kind) do update set
+         holder_client_id = excluded.holder_client_id, holder_user_id = excluded.holder_user_id,
+         heartbeat_at_ms = excluded.heartbeat_at_ms, expires_at_ms = excluded.expires_at_ms
+       where session_leases.expires_at_ms <= ${now}
+          or (session_leases.holder_client_id = excluded.holder_client_id
+              and session_leases.holder_user_id is not distinct from excluded.holder_user_id)`;
+    const heldBy = (user: string) =>
+      `select 1 from session_leases where session_id = 'ss1' and holder_user_id = '${user}'`;
+    // Session ss1 belongs to show s1 of team T (owner: `owner`; `granted` holds a grant on s1);
+    // `outsider` cannot reach it.
+    expect(await run('owner', [], lease('ss1', 'owner'))).toEqual([{ count: 1 }]);
+    expect(await run('granted', [], lease('ss1', 'granted'))).toEqual([{ count: 1 }]);
+    expect(await run('owner', [], lease('ss1', 'granted'))).toEqual([{ code: '42501' }]);
+    expect(await run('outsider', [], lease('ss1', 'outsider'))).toEqual([{ code: '42501' }]);
+    expect(await run('owner', [], lease('ss1', null))).toEqual([{ code: '42501' }]);
+    // The claim against another user's live lease changes nothing and raises nothing; against an
+    // expired one it takes the lease over (A2: the update policy's USING does not name the holder).
+    const others = [lease('ss1', 'granted', 'tab-granted', 2000)];
+    expect(await run('owner', others, claim('owner', 1999), heldBy('granted'))).toEqual([
+      { count: 0 },
+      { count: 1 },
+    ]);
+    expect(await run('owner', others, claim('owner', 2000), heldBy('owner'))).toEqual([
+      { count: 1 },
+      { count: 1 },
+    ]);
+    // Handing one's own lease to another user is refused.
+    expect(
+      await run(
+        'owner',
+        [lease('ss1', 'owner')],
+        `update session_leases set holder_user_id = 'granted'`,
+      ),
+    ).toEqual([{ code: '42501' }]);
+    // Accepted (D1): a plain UPDATE by a user with access can take another user's live lease;
+    // the server's statements are the only writers and enforce the holder.
+    expect(
+      await run(
+        'owner',
+        others,
+        `update session_leases set holder_user_id = 'owner', holder_client_id = 'tab-owner' where session_id = 'ss1'`,
+      ),
+    ).toEqual([{ count: 1 }]);
+    // Another user's lease cannot be deleted.
+    expect(
+      await run('owner', others, `delete from session_leases where session_id = 'ss1'`),
+    ).toEqual([{ count: 0 }]);
+    expect(await run('owner', [], lease('ss1', 'owner', 'tab-owner', 2000, 'x'))).toEqual([
+      { code: '23514' },
+    ]);
   });
 });
 
