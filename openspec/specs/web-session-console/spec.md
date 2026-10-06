@@ -310,17 +310,18 @@ close without generating.
 
 ### Requirement: Event filter checkmarks
 
-In the event feed Filter popover, each toggled-on category (and Show internal
-events when on) SHALL show a checkmark beside the label. Selected items SHALL
-NOT use the selected background/text highlight tint used elsewhere for
-`PopoverItem selected`.
+In the event feed Filter menu, each toggled-on category (and Show internal
+events when on) SHALL show a checkmark beside the label and SHALL expose its
+state as `aria-checked`. Selected state SHALL be conveyed by the checkmark (and
+`aria-checked`) alone: selected items SHALL NOT use a background or text
+highlight tint, such as the selected tint used elsewhere for highlighted menu
+items.
 
 #### Scenario: Visible category shows checkmark
 
 - **WHEN** a show category is not hidden by the filter
-- **THEN** its filter row shows a checkmark and is not highlighted via the
-  selected tint
-
+- **THEN** its filter row shows a checkmark, reports `aria-checked="true"`, and is
+  not highlighted via a selected background or text tint
 
 ### Requirement: Generated events are visibly marked in the feed
 Event rows whose metadata carries `auto_generated: true` SHALL render with a compact
@@ -848,7 +849,7 @@ computed height, inside the feed's real `<table>`. The feed SHALL NOT be re-expr
 `div` grid — the `<table>`, its `colgroup`, its column widths, and the surrounding sheet chrome
 SHALL be unaffected by virtualization.
 
-The virtualizer's scroll element SHALL be the OverlayScrollbars viewport that `FeedTable`
+The virtualizer's scroll element SHALL be the feed's scroll viewport element that `FeedTable`
 publishes through its `scrollRef` callback, and the total scrollable height SHALL correspond to
 the **full** row count (spacer heights plus mounted rows), not to the mounted subset — so the
 scrollbar, its thumb size, and the reachable scroll extent read the same as an unvirtualized
@@ -918,7 +919,6 @@ never be shown for a fetch that has not settled, and a pending fetch SHALL show 
 - **THEN** the rows are `<tr>`s inside the feed's real `<table>` between two spacer rows, the
   column widths and header chrome are unchanged, and the pagination sentinel still sits at the
   end of the list
-
 
 ### Requirement: Unsaved inline edits survive row unmount
 
