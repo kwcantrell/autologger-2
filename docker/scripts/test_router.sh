@@ -68,9 +68,15 @@ const http = async (method, path, headers, body) => parse(await raw(req(method, 
 const bearer = { Authorization: `Bearer ${API_TOKEN}` };
 
 // ---- Shell served by web
-for (const p of ['/', '/teams', '/sessions/abc', '/sessions/a%2Fb', '/admin/users']) {
+for (const p of ['/', '/teams', '/sessions/abc', '/sessions/a%2Fb']) {
   const r = await http('GET', p);
   check(`shell GET ${p} -> 200 html, no Set-Cookie`, r.status === 200 && (r.h['content-type'] ?? '').includes('text/html') && r.cookies.length === 0, `${r.status} ${r.h['content-type'] ?? '-'} cookies=${r.cookies.length}`);
+}
+// The retired admin page (remove-admin-users-page; spec container-deployment "The retired admin
+// page is not a shell path"): the app's not-found page, 404 html, no Set-Cookie.
+{
+  const r = await http('GET', '/admin/users');
+  check('retired GET /admin/users -> 404 html, no Set-Cookie', r.status === 404 && (r.h['content-type'] ?? '').includes('text/html') && r.cookies.length === 0, `${r.status} ${r.h['content-type'] ?? '-'} cookies=${r.cookies.length}`);
 }
 
 // ---- Dispositions (spec "Differential parity with the single-process server"): status, Set-Cookie
@@ -85,14 +91,17 @@ const HDRS = ['x-powered-by', 'location', 'content-type', 'content-encoding', 'v
 const summary = (r) => [r.status, r.cookies.length ? 'cookie' : '-', ...HDRS.map((k) => r.h[k] ?? '-')].join(' | ');
 const EXPECTED = {
 // Recorded 2026-09-30 with --record against the stage router; edit only deliberately.
+// 2026-10-06 (remove-admin-users-page D5): the two /admin/users rows were deliberately changed from
+// the retired page's `200 … s-maxage=31536000` to the not-found disposition /admin/logs already
+// records (verified byte-identical on a scratch `next start` by the change's panel).
   "GET /": "200 | - | - | - | text/html; charset=utf-8 | - | rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch, Accept-Encoding | private, no-cache, no-store, max-age=0, must-revalidate",
   "HEAD /": "200 | - | - | - | text/html; charset=utf-8 | - | rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch, Accept-Encoding | private, no-cache, no-store, max-age=0, must-revalidate",
   "GET /teams": "200 | - | - | - | text/html; charset=utf-8 | - | rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch, Accept-Encoding | private, no-cache, no-store, max-age=0, must-revalidate",
   "HEAD /teams": "200 | - | - | - | text/html; charset=utf-8 | - | rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch, Accept-Encoding | private, no-cache, no-store, max-age=0, must-revalidate",
   "GET /sessions/abc": "200 | - | - | - | text/html; charset=utf-8 | - | rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch, Accept-Encoding | private, no-cache, no-store, max-age=0, must-revalidate",
   "HEAD /sessions/abc": "200 | - | - | - | text/html; charset=utf-8 | - | rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch, Accept-Encoding | private, no-cache, no-store, max-age=0, must-revalidate",
-  "GET /admin/users": "200 | - | - | - | text/html; charset=utf-8 | - | rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch, Accept-Encoding | s-maxage=31536000",
-  "HEAD /admin/users": "200 | - | - | - | text/html; charset=utf-8 | - | rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch, Accept-Encoding | s-maxage=31536000",
+  "GET /admin/users": "404 | - | - | - | text/html; charset=utf-8 | - | rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch, Accept-Encoding | private, no-cache, no-store, max-age=0, must-revalidate",
+  "HEAD /admin/users": "404 | - | - | - | text/html; charset=utf-8 | - | rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch, Accept-Encoding | private, no-cache, no-store, max-age=0, must-revalidate",
   "GET /admin/logs": "404 | - | - | - | text/html; charset=utf-8 | - | rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch, Accept-Encoding | private, no-cache, no-store, max-age=0, must-revalidate",
   "HEAD /admin/logs": "404 | - | - | - | text/html; charset=utf-8 | - | rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch, Accept-Encoding | private, no-cache, no-store, max-age=0, must-revalidate",
   "GET /teams (RSC)": "200 | - | - | - | text/x-component | - | rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch, Accept-Encoding | private, no-cache, no-store, max-age=0, must-revalidate",
