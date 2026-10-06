@@ -3,7 +3,7 @@
 Tier: 1
 Tier reason: a web-only presentation port onto the shared shadcn layer, inside existing contracts. It touches no `high_risk_paths`, wire format, auth or data. One dependency pair is removed. The spec delta only restates two requirements in implementation-neutral terms; the obligations are unchanged.
 
-Approved-by: Kalen 2026-10-06
+Approved-by: Kalen 2026-10-06 (D8 delta)
 
 ## Why
 
