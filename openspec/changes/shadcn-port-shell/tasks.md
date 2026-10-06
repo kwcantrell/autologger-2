@@ -41,13 +41,14 @@
   - Test first: the New Session button has `data-variant="default"` with no recent session and `"outline"` with one.
   - Verify `HomeRoute.test.tsx` passes.
   - Evidence: test first: HomeRoute CTA `data-variant` default (no recent) / outline (with recent) -> `2 failed | 5 passed (7)`; after Button + lucide Plus/ArrowRight -> HomeRoute + SessionRoute `Tests 20 passed (20)`; typecheck/lint clean
-- [ ] 3.3 RecentSessionsList: the `⋮` menu becomes `DropdownMenu` (D3), and the rename dialog uses `Field`/`Input`/`Button`.
+- [x] 3.3 RecentSessionsList: the `⋮` menu becomes `DropdownMenu` (D3), and the rename dialog uses `Field`/`Input`/`Button`.
   - Test first:
     - the open helper uses `pointerDown`
     - choosing Rename, Archive or Delete by click and by Enter, and pressing Enter on the trigger, never call `onSelectSession` (panel critical finding; fails before the guard)
     - a new case opens the menu with Enter and checks `role="menu"` and the menuitems Rename/Archive/Delete
     - the rename input has the accessible name "Session name"
   - Verify `RecentSessionsList.test.tsx` passes, including the pinned live classes and the buttonless no-access rows.
+  - Evidence: test first: open helper → pointerDown, 3 "never selects the row" cases (Enter on trigger opens role=menu; item click; item Enter), rename input named "Session name" -> on the legacy Popover `10 failed | 8 passed (18)`; after DropdownMenu (non-modal, content stops propagation, row ROW_IGNORE incl. [role=menu]/[role=menuitem]) + Field/Input/Button rename + V5-themed dropdown primitive -> `Tests 18 passed (18)`; guard proof: guard removed -> `2 failed` (item click / item Enter select the row), restored -> 18 passed; full `npx vitest run` -> `Test Files 122 passed (122) Tests 1528 passed (1528)`; lint/typecheck clean
 
 ## 4. Login and Teams
 

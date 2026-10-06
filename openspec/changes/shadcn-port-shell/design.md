@@ -71,6 +71,10 @@ See proposal.md for the motivation. State as of 2026-10-06, from a three-agent r
 - **The row must ignore menu interactions.** Radix `DropdownMenuItem` renders a `<div role="menuitem">`, not a `<button>`. React events bubble through the portal to the row's `onClick`, whose guard is `target.closest('button, a, input, select, textarea')`. That guard doesn't match a div, so choosing Rename, Archive, Delete or Close session would *also* select the row and navigate; on mobile it would close the rail too. Today's `PopoverItem` is a `<button>`, so the guard catches it (panel critical finding).
   - The fix has two layers. `DropdownMenuContent` stops click and keydown propagation. The row's click and keydown guards also skip targets inside `[role="menu"], [role="menuitem"]` and any `button`, which covers Enter or Space on the trigger.
   - Tests: choosing an item by click and by keyboard, and pressing Enter on the trigger, must never call `onSelectSession`.
+- **Added during implementation (task 3.3):**
+  - The `dropdown-menu` primitive is themed to V5 the change-2 way. Its content and item base strings are replaced with the legacy Popover/PopoverItem classes (glass panel, `z-(--z-popover)`, item tints, destructive in red).
+  - The row menu is **non-modal** (`modal={false}`). Its items open dialogs (rename and the themed confirms), and a modal Radix menu closing underneath a just-opened dialog leaves `pointer-events: none` stuck on `<body>`, a known Radix interaction. It is still `role="menu"`, with keyboard navigation and Escape, so `isOverlayOpen()` still sees it.
+  - Proof that the guard matters: with it removed, the item-click and item-Enter tests fail (`2 failed`).
 - Radix DropdownMenu opens on `pointerdown` or the keyboard, not on `click` (assumption B1). `RecentSessionsList.test.tsx`'s single open helper (L187) switches to `pointerDown`, and a new test opens the menu with Enter and checks `role="menu"`.
 - `isOverlayOpen()` (change 2) already covers `role="menu"`, so shortcuts yield while it's open.
 
