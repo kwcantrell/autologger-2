@@ -1,4 +1,4 @@
-import { fireEvent } from '@testing-library/react';
+import { fireEvent, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { LOGIN_RETURN_STASH_KEY } from '../../../shared/utils/loginReturnStash';
 import { renderStrict } from '../../../test/renderStrict';
@@ -53,6 +53,32 @@ describe('LoginPage anchors', () => {
     expect(document.getElementById('login-error-retry')?.getAttribute('href')).toBe(
       '/auth/google/start',
     );
+  });
+
+  // shadcn-port-shell D4: shared components around the same links (ids, hrefs, stash onClick
+  // unchanged); the Google button keeps its own branding.
+  it('the error banner is the single destructive Alert and the retry is a Button-styled link', () => {
+    setLocation('/?login_error=state_invalid');
+    renderStrict(<LoginPage />);
+
+    const alerts = screen.getAllByRole('alert');
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0].id).toBe('login-error-banner');
+    expect(alerts[0].getAttribute('data-slot')).toBe('alert');
+    const retry = document.getElementById('login-error-retry');
+    expect(retry?.tagName).toBe('A');
+    expect(retry?.getAttribute('data-slot')).toBe('button');
+  });
+
+  it('create-account is an outline Button rendered as the same <a>; the divider uses Separators', () => {
+    renderStrict(<LoginPage />);
+
+    const create = document.getElementById('login-btn-create-account');
+    expect(create?.tagName).toBe('A');
+    expect(create?.getAttribute('data-slot')).toBe('button');
+    expect(create?.getAttribute('data-variant')).toBe('outline');
+    expect(document.querySelectorAll('[data-slot="separator"]').length).toBe(2);
+    expect(document.getElementById('login-btn-google')?.getAttribute('data-slot')).toBeNull();
   });
 
   it('Google sign-in click stashes the current deep link', () => {

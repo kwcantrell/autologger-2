@@ -1,4 +1,7 @@
 import brandStripAsset from '../../../assets/logos/logo-autologger-transparent.png';
+import { Alert, AlertDescription } from '../../../shared/components/ui/alert';
+import { Button } from '../../../shared/components/ui/button';
+import { Separator } from '../../../shared/components/ui/separator';
 import { assetSrc } from '../../../shared/utils/assetSrc';
 import { stashLoginReturnPathIfDeepLink } from '../../../shared/utils/loginReturnStash';
 
@@ -73,11 +76,13 @@ const TAGLINE = 'mx-auto mb-0 mt-2 max-w-[19rem] text-[0.9rem] leading-[1.5] tex
 
 // Error banner: danger-tinted glass, house dialog radius. role="alert" lives
 // on the element; the retry link starts a fresh /auth/google/start.
+// shadcn-port-shell D4: the error banner is the destructive Alert (tinted as before); retry is a
+// link-variant Button rendered as the same <a>.
 const ERROR_BANNER =
-  'mt-6 rounded-v5-sm border border-[rgba(248,113,113,0.35)] bg-[rgba(248,113,113,0.1)] px-4 py-3 text-left';
-const ERROR_TEXT = 'm-0 text-[0.85rem] leading-[1.45] text-v5-text';
+  'mt-6 block bg-[rgba(248,113,113,0.1)] border-[rgba(248,113,113,0.35)] text-left';
+const ERROR_TEXT = 'm-0 block text-[0.85rem] leading-[1.45] text-v5-text';
 const ERROR_RETRY =
-  'mt-1 inline-block text-[0.85rem] font-semibold text-v5-primary underline underline-offset-2 hover-always:text-v5-primary2';
+  'mt-1 h-auto p-0 text-[0.85rem] font-semibold normal-case tracking-normal underline underline-offset-2 hover-always:text-v5-primary2';
 
 // Google sign-in: Google's light-surface branding (white face, #747775 hairline,
 // #1f1f1f Roboto label, official G mark) — same recipe the rail button used.
@@ -87,13 +92,13 @@ const BTN_GOOGLE =
 // Create-account section marker: the rail's uppercase tracked label idiom,
 // framed by hairlines.
 const SECTION_ROW = 'mt-6 flex items-center gap-3';
-const SECTION_RULE = 'h-px flex-1 bg-v5-line';
+const SECTION_RULE = 'flex-1 bg-v5-line';
 const SECTION_LABEL =
   'whitespace-nowrap text-[0.625rem] font-semibold tracking-[0.18em] uppercase text-v5-muted';
 
 // Ghost secondary control (RAIL_NAV surface treatment).
 const BTN_CREATE =
-  'mt-4 box-border flex h-11 w-full cursor-pointer items-center justify-center rounded-v5-sm border border-v5-border-strong bg-[rgba(255,255,255,0.03)] px-4 text-[0.8125rem] font-semibold tracking-[0.04em] text-[rgba(229,238,252,0.78)] no-underline [transition:border-color_0.15s_ease,background_0.15s_ease,color_0.15s_ease] hover-always:bg-[rgba(255,255,255,0.05)] hover-always:text-v5-text';
+  'mt-4 box-border flex h-11 w-full cursor-pointer items-center justify-center rounded-v5-sm border border-v5-border-strong bg-[rgba(255,255,255,0.03)] px-4 text-[0.8125rem] font-semibold normal-case tracking-[0.04em] text-[rgba(229,238,252,0.78)] no-underline [transition:border-color_0.15s_ease,background_0.15s_ease,color_0.15s_ease] hover-always:bg-[rgba(255,255,255,0.05)] hover-always:text-v5-text';
 
 const FINE_PRINT = 'mx-auto mb-0 mt-4 max-w-[20rem] text-[0.78rem] leading-[1.5] text-v5-soft';
 
@@ -143,17 +148,20 @@ export function LoginPage() {
         <p className={TAGLINE}>Sign in to open your sessions, markers, and transcripts.</p>
 
         {errorCode !== null && (
-          <div className={ERROR_BANNER} id="login-error-banner" role="alert">
-            <p className={ERROR_TEXT}>{loginErrorMessage(errorCode)}</p>
-            <a
-              className={ERROR_RETRY}
-              href="/auth/google/start"
-              id="login-error-retry"
-              onClick={stashLoginReturnPathIfDeepLink}
-            >
-              Try again
-            </a>
-          </div>
+          <Alert variant="destructive" className={ERROR_BANNER} id="login-error-banner">
+            <AlertDescription className={ERROR_TEXT}>
+              {loginErrorMessage(errorCode)}
+            </AlertDescription>
+            <Button variant="link" asChild className={ERROR_RETRY}>
+              <a
+                href="/auth/google/start"
+                id="login-error-retry"
+                onClick={stashLoginReturnPathIfDeepLink}
+              >
+                Try again
+              </a>
+            </Button>
+          </Alert>
         )}
 
         <a
@@ -167,19 +175,22 @@ export function LoginPage() {
         </a>
 
         <div className={SECTION_ROW} aria-hidden="true">
-          <span className={SECTION_RULE} />
+          <Separator className={SECTION_RULE} />
           <span className={SECTION_LABEL}>New to AutoLogger?</span>
-          <span className={SECTION_RULE} />
+          <Separator className={SECTION_RULE} />
         </div>
 
-        <a
-          className={BTN_CREATE}
-          href="/auth/google/start"
-          id="login-btn-create-account"
-          onClick={stashLoginReturnPathIfDeepLink}
-        >
-          Create an account with Google
-        </a>
+        {/* Outline Button rendered as the same <a> (id/href/stash unchanged); BTN_CREATE keeps the
+            0.78-alpha label the AA floor needs (contrastTokens.test.ts reads this constant). */}
+        <Button variant="outline" asChild className={BTN_CREATE}>
+          <a
+            href="/auth/google/start"
+            id="login-btn-create-account"
+            onClick={stashLoginReturnPathIfDeepLink}
+          >
+            Create an account with Google
+          </a>
+        </Button>
         <p className={FINE_PRINT}>
           Your account is created automatically the first time you sign in with Google. There is no
           separate sign-up form.

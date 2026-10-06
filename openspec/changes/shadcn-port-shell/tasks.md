@@ -52,9 +52,10 @@
 
 ## 4. Login and Teams
 
-- [ ] 4.1 LoginPage (D4): `Alert` error with a link-retry, `Separator` divider, and create-account as `Button outline asChild` keeping `BTN_CREATE`.
+- [x] 4.1 LoginPage (D4): `Alert` error with a link-retry, `Separator` divider, and create-account as `Button outline asChild` keeping `BTN_CREATE`.
   - Test first: the error banner has `role="alert"` (one only), and `#login-btn-create-account` has `data-slot="button"` and is still an `<a>` with the same `href`.
   - Verify `LoginPage.test.tsx` and `contrastTokens.test.ts` pass.
+  - Evidence: test first: two LoginPage cases (single alert = #login-error-banner data-slot alert; retry <a> data-slot button; create-account <a> data-slot button + outline; 2 separators; Google button untouched) -> `2 failed` (`expected null to be "alert"`); after Alert/Button asChild/Separator (BTN_CREATE kept, + normal-case) -> LoginPage + contrastTokens + RootGate `Tests 28 passed (28)`; lint clean
 - [ ] 4.2 Teams (D5): `Field`/`Input`, `Button` variants, `Badge`, `Empty`, `Alert` (the no-owner notice as `status`), `Spinner`, and the `Checkbox` picker.
   - Test first: in `TeamCard.test.tsx`, Remove, Delete team and Leave team are `destructive`; the role badge is `data-slot="badge"`; show checkboxes are `data-slot="checkbox"` and toggle. L270–271 move from `.checked` to `aria-checked`.
   - Verify `TeamsRoute`, `TeamCard` and `AppShell.onboarding` pass (exact alert text; buttonless owner row).
