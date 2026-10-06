@@ -1,0 +1,2 @@
+✓ Images match (0% difference)
+  0 different / 329160 total pixels

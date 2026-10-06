@@ -44,7 +44,9 @@ export function YouTubeImportErrorModal({
       closeOnOverlayClick={false}
       title="YouTube import failed"
     >
-      <p>Could not download audio from the YouTube link. What would you like to do?</p>
+      <p className="my-[1em]">
+        Could not download audio from the YouTube link. What would you like to do?
+      </p>
 
       {showRetryInput && (
         <div className="tool-row mt-3">

@@ -24,7 +24,7 @@ import { TeamCard } from './TeamCard';
 
 const PAGE_WRAP = 'relative z-[1] mx-auto w-full max-w-[48rem] px-5 py-10';
 const PAGE_TITLE =
-  'm-0 mb-6 font-league-gothic text-[2rem] leading-none tracking-[0.02em] uppercase text-v5-text';
+  'm-0 mb-6 font-league-gothic font-bold text-[2rem] leading-none tracking-[0.02em] uppercase text-v5-text';
 
 // Same STATE_BUTTON idiom as SessionRoute's not-found/error "Back to
 // sessions" control (design D2) — one shared control, present regardless of

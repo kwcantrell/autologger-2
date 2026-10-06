@@ -1,0 +1,22 @@
+{
+ "url": "/",
+ "checked": 16,
+ "fails": 1,
+ "approx": 16,
+ "min": 4.15,
+ "failures": [
+  {
+   "el": "textarea.w-full.resize-y.rounded-v5-sm",
+   "kind": "placeholder",
+   "text": "e.g. Log an event whenever any camera cu",
+   "ratio": 4.15,
+   "approx": true,
+   "disabled": false,
+   "bg": [
+    51,
+    58,
+    78
+   ]
+  }
+ ]
+}

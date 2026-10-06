@@ -340,7 +340,7 @@ function ManagePanel({ detail, isOwner }: { detail: TeamDetail; isOwner: boolean
 
       <div>
         <p className="modal-hint mb-1">Members</p>
-        <ul>
+        <ul className="my-[1em] list-disc pl-10">
           {detail.members.map((m) => {
             // No control ever targets the owner; an admin removes plain members only.
             const target = m.role !== 'owner';
@@ -388,7 +388,7 @@ function ManagePanel({ detail, isOwner }: { detail: TeamDetail; isOwner: boolean
         {(detail.invites ?? []).length === 0 ? (
           <p className="modal-hint muted">No pending invites.</p>
         ) : (
-          <ul>
+          <ul className="my-[1em] list-disc pl-10">
             {(detail.invites ?? []).map((inv) => (
               <li
                 key={inv.email}
@@ -448,7 +448,7 @@ function MemberPanel({ detail }: { detail: TeamDetail }) {
           {error}
         </p>
       )}
-      <ul>
+      <ul className="my-[1em] list-disc pl-10">
         {detail.members.map((m) => {
           const label = `${m.given_name} ${m.family_name}`.trim() || m.email;
           return (

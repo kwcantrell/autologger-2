@@ -1,0 +1,22 @@
+{
+ "url": "/sessions/05b37db7-d426-4d6e-8994-3b666ca42e87",
+ "checked": 50,
+ "fails": 1,
+ "approx": 24,
+ "min": 3.64,
+ "failures": [
+  {
+   "el": "span.flex.items-center.gap-2",
+   "kind": "text",
+   "text": "Audio issue",
+   "ratio": 3.64,
+   "approx": true,
+   "disabled": false,
+   "bg": [
+    40,
+    48,
+    68
+   ]
+  }
+ ]
+}

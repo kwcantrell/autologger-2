@@ -343,7 +343,7 @@ export function NewSessionModal({ profile, onClose, onCreated }: Props) {
           {showAdvanced && (
             <div className="flex flex-col gap-3 pl-5">
               <div className="fps-field">
-                {/* Modal reach-in recolored the label var(--color-muted) → var(--v5-muted). */}
+                {/* Modal reach-in recolored the label var(--color-legacy-muted) → var(--v5-muted). */}
                 <span className="fps-field-label text-v5-muted">Frame rate</span>
                 <Select
                   id="ns-fps-preset"

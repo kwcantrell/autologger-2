@@ -48,7 +48,7 @@ export function HomeRoute({ onNewSession }: Props) {
     <div className={HOME_ROUTE} id="home-launch">
       <div className="flex w-full max-w-[26rem] flex-col items-center gap-7">
         <header className="flex flex-col items-center gap-2">
-          <h1 className="m-0 font-league-gothic text-[3.4rem] leading-none tracking-[0.03em] uppercase text-v5-text">
+          <h1 className="m-0 font-league-gothic font-bold text-[3.4rem] leading-none tracking-[0.03em] uppercase text-v5-text">
             AutoLogger
           </h1>
           <p className="m-0 max-w-[20rem] text-[0.9rem] leading-[1.5] text-v5-muted">

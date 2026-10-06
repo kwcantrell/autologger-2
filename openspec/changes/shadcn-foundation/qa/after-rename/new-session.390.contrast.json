@@ -1,0 +1,48 @@
+{
+ "url": "/",
+ "checked": 10,
+ "fails": 3,
+ "approx": 10,
+ "min": 3.46,
+ "failures": [
+  {
+   "el": "button.inline-flex.h-9.w-9",
+   "kind": "text",
+   "text": "×",
+   "ratio": 4.24,
+   "approx": true,
+   "disabled": false,
+   "bg": [
+    48,
+    56,
+    76
+   ]
+  },
+  {
+   "el": "input.bg-[rgba(255,255,255,0.05)].border.border-v5-border-strong",
+   "kind": "placeholder",
+   "text": "Session notes",
+   "ratio": 4.15,
+   "approx": true,
+   "disabled": false,
+   "bg": [
+    51,
+    58,
+    78
+   ]
+  },
+  {
+   "el": "button.btn.primary.rounded-v5-sm",
+   "kind": "text",
+   "text": "Create & open",
+   "ratio": 3.46,
+   "approx": true,
+   "disabled": false,
+   "bg": [
+    45,
+    89,
+    121
+   ]
+  }
+ ]
+}

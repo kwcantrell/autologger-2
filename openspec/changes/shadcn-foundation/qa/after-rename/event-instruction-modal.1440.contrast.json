@@ -1,0 +1,22 @@
+{
+ "url": "/",
+ "checked": 6,
+ "fails": 1,
+ "approx": 6,
+ "min": 4.15,
+ "failures": [
+  {
+   "el": "textarea.w-full.resize-none.overflow-hidden",
+   "kind": "placeholder",
+   "text": "e.g. Log an event each time a new slate ",
+   "ratio": 4.15,
+   "approx": true,
+   "disabled": false,
+   "bg": [
+    51,
+    58,
+    78
+   ]
+  }
+ ]
+}

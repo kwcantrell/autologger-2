@@ -25,7 +25,7 @@ import { Select } from './Select';
  *  CELL_ACTIONS) so the two alignments never collide on one element.
  *  Row height trimmed in steps; another ~30% via tighter py + slight type/icon scale. */
 const CELL_BASE =
-  'px-[0.55rem] py-[0.17rem] text-[0.78rem] leading-none [border-bottom:1px_solid_var(--border)]';
+  'px-[0.55rem] py-[0.17rem] text-[0.78rem] leading-none [border-bottom:1px_solid_var(--legacy-border)]';
 /** Row-hover tint for non-edit cells (was `.sheet tbody tr:hover td`). */
 const CELL_HOVER = '[.group:hover_&]:bg-[rgba(124,183,255,0.06)]';
 /** Timecode cell (was `.sheet .tc`). feed-row-seek, task 6.2: the legacy
@@ -37,7 +37,7 @@ const CELL_HOVER = '[.group:hover_&]:bg-[rgba(124,183,255,0.06)]';
  *  anything rendered inside this cell in the future, so the assertion is
  *  dropped rather than carried forward as dead CSS. */
 const CELL_TC =
-  'text-left align-middle font-[family-name:var(--font-mono)] text-accent whitespace-nowrap';
+  'text-left align-middle font-[family-name:var(--font-mono)] text-legacy-accent whitespace-nowrap';
 /** Category cell (was `.sheetCat`). */
 const CELL_CAT = 'text-left align-middle font-semibold whitespace-nowrap';
 /** Message cell max-width (was `.sheet-dense .msg`, which beat `.sheet .msg`). */

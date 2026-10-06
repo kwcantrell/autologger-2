@@ -22,7 +22,7 @@ const PAGE =
 const PANEL =
   'glass-panel relative box-border w-full max-w-[32rem] rounded-v5-lg px-7 py-9 text-center';
 const TITLE =
-  'm-0 font-league-gothic text-[2rem] leading-none tracking-[0.02em] uppercase text-v5-text';
+  'm-0 font-league-gothic font-bold text-[2rem] leading-none tracking-[0.02em] uppercase text-v5-text';
 const COPY = 'mx-auto mb-6 mt-3 max-w-[24rem] text-[0.9rem] leading-[1.5] text-v5-muted';
 
 export function OnboardingPanel() {
