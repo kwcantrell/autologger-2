@@ -146,3 +146,66 @@ describe('CategoryButtonStrip 1–9 hotkeys', () => {
     expect(badge?.textContent).toBe('1');
   });
 });
+
+// shadcn-port-modals D6: the TEXT note modal and the two-step DROPDOWN modal on the shadcn layer
+// (no tests existed for either).
+describe('CategoryButtonStrip modals', () => {
+  const TEXT_CAT: Category = { ...categoryFixture('cat-t', 'Notes'), type: 'TEXT' };
+  const DROP_CAT: Category = {
+    ...categoryFixture('cat-d', 'Cams'),
+    type: 'DROPDOWN',
+    dropdown_options: [
+      { label: 'Cam A', needs_context: false },
+      { label: 'Cam B', needs_context: true },
+    ],
+  };
+
+  beforeEach(() => {
+    mockedUseShowCategories.mockReturnValue({
+      data: { categories: [TEXT_CAT, DROP_CAT] },
+      isLoading: false,
+    } as unknown as ReturnType<typeof useShowCategories>);
+  });
+
+  it('TEXT opens "Log note" with a labelled Note input; Enter logs the trimmed note', async () => {
+    renderStrip();
+    fireEvent.click(screen.getByRole('button', { name: /Notes/ }));
+    const dialog = await screen.findByRole('dialog', { name: 'Log note' });
+    const input = screen.getByLabelText('Note');
+    expect(input.getAttribute('data-slot')).toBe('input');
+    const log = screen.getByRole('button', { name: 'Log' });
+    expect(log.closest('[data-slot="dialog-actions"]')).not.toBeNull();
+    expect(dialog.contains(log)).toBe(true);
+    fireEvent.change(input, { target: { value: '  boom op  ' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    await waitFor(() =>
+      expect(mutateAsync).toHaveBeenCalledWith(
+        expect.objectContaining({ category: 'cat-t', message: 'boom op' }),
+      ),
+    );
+  });
+
+  it('DROPDOWN steps option → context, Escape steps back, and Log sends "label || context"', async () => {
+    renderStrip();
+    fireEvent.click(screen.getByRole('button', { name: /Cams/ }));
+    const dialog = await screen.findByRole('dialog', { name: 'Choose option' });
+    const camB = screen.getByRole('button', { name: 'Cam B' });
+    expect(camB.getAttribute('data-variant')).toBe('outline');
+    fireEvent.click(camB);
+    await screen.findByRole('dialog', { name: 'Add context' });
+    expect(screen.getByLabelText('Context').getAttribute('data-slot')).toBe('input');
+    // Escape backs out to the option list instead of closing.
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
+    await screen.findByRole('dialog', { name: 'Choose option' });
+    expect(dialog).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Cam B' }));
+    const ctx = await screen.findByLabelText('Context');
+    fireEvent.change(ctx, { target: { value: 'wide' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Log' }));
+    await waitFor(() =>
+      expect(mutateAsync).toHaveBeenCalledWith(
+        expect.objectContaining({ category: 'cat-d', message: 'Cam B || wide' }),
+      ),
+    );
+  });
+});

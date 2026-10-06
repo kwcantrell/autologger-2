@@ -34,11 +34,12 @@
   - Test first: Generate and Cancel are in `[data-slot=dialog-actions]`; Retry is `outline`.
   - Verify: `npx vitest run src/pages/index/components/EventGenerateCustomModal.test.tsx` passes, with the checkbox counts, the `/Cam A/` name and the exact hint copy.
   - Evidence: test first: existing suite extended (Cam A is a Radix checkbox toggling aria-checked; Generate disabled until a selection, default variant, in dialog-actions; Retry outline) -> `2 failed | 7 passed (9)`; after HINT utility (exact curly-apostrophe copy), Checkbox + FieldLabel htmlFor per candidate inside the fieldset/legend, outline Retry, Cancel/Generate Buttons in DialogActions -> EventGenerateCustomModal + eventGenerateLatch `Tests 22 passed (22)` (checkbox counts, /Cam A/ name, offline/error copy unchanged); tsc clean
-- [ ] 3.3 CategoryButtonStrip TextModal and DropdownModal (D6).
+- [x] 3.3 CategoryButtonStrip TextModal and DropdownModal (D6).
   - Test first, in `CategoryButtonStrip.test.tsx` with TEXT and DROPDOWN fixtures:
     - TextModal: "Log note", a labelled Note input, Enter logs the trimmed note, actions in the row.
     - DropdownModal: the options are Buttons; choosing a needs-context option shows the labelled Context input; Escape returns to the options; Log sends `label || context`.
   - Verify: `npx vitest run src/pages/index/components/CategoryButtonStrip.test.tsx` passes, including the hotkey cases.
+  - Evidence: test first: new "CategoryButtonStrip modals" (TEXT -> Log note, labelled Note input data-slot input, Log in dialog-actions, Enter logs trimmed note; DROPDOWN -> outline option Buttons, needs-context -> Add context with labelled Context input, Escape steps back to Choose option, Log sends "Cam B || wide") -> `2 failed | 10 passed (12)` (`expected null to be input` / `outline`); after LEAD utility, Field/FieldLabel/Input with ids category-note-input / category-context-input, outline full-width option Buttons in a flex column, DialogActions, TOUCH_TARGET -> CategoryButtonStrip `Tests 12 passed (12)` (payload asserted with objectContaining: the strip also sends marked_at_utc); full `npx vitest run` `Test Files 127 passed (127) Tests 1584 passed (1584)`; tsc clean
 
 ## 4. Legacy CSS and BTN_PRIMARY_SKY
 
