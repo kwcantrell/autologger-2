@@ -138,10 +138,14 @@ case.
 them.
 
 #### Scenario: Shell served by web
-- **WHEN** `GET /`, `GET /teams`, `GET /sessions/abc`, `GET /sessions/a%2Fb`, or
-  `GET /admin/users` is sent to the router
-- **THEN** the response is `200` with the index or admin shell HTML from `web`, with no
-  `Set-Cookie`
+- **WHEN** `GET /`, `GET /teams`, `GET /sessions/abc`, or `GET /sessions/a%2Fb` is sent to
+  the router
+- **THEN** the response is `200` with the index shell HTML from `web`, with no `Set-Cookie`
+
+#### Scenario: The retired admin page is not a shell path
+- **WHEN** `GET /admin/users` is sent to the router
+- **THEN** the response is `404` with the app's not-found page from `web`, and the
+  `/api/admin/*` routes are unaffected
 
 #### Scenario: Differential parity with the single-process server
 - **WHEN** the same request list is sent to the router, and compared with the dispositions the

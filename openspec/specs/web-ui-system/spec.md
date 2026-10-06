@@ -51,7 +51,7 @@ Destructive or discard-style confirmations SHALL use a shared themed confirm (an
 on desktop and a bottom sheet on mobile, danger-variant confirm action where the action is
 destructive; Escape, overlay dismissal, and mobile sheet drag-dismiss all resolve as decline).
 The frontend SHALL invoke neither `window.confirm`/`window.prompt` nor the bare
-`confirm()`/`prompt()` globals — including the admin-users page and hook-initiated flows.
+`confirm()`/`prompt()` globals — including hook-initiated flows.
 If a pending themed confirmation is replaced by another or unmounted before the user decides,
 the pending decision SHALL resolve as declined (no awaiting flow may hang).
 
@@ -75,7 +75,6 @@ the pending decision SHALL resolve as declined (no awaiting flow may hang).
   (dismissing the dialog) if the orphan no longer exists or the lease is alive; the posted
   `marked_at_utc` is accept-time, and the dialog copy SHALL NOT promise a specific timecode;
   a pending decision SHALL be dismissed (as decline) on session switch
-
 
 ### Requirement: Global single-key handlers yield to dialogs and interactive targets
 Global single-key shortcuts (Space play/pause, `+`/`−` zoom, `1–9` logging, `?`) SHALL NOT
