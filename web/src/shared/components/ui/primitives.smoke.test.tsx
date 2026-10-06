@@ -1,0 +1,242 @@
+import { act, render, screen, waitFor } from '@testing-library/react';
+import { describe, expect, it } from 'vitest';
+import { Alert, AlertDescription, AlertTitle } from './alert';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogTitle,
+} from './alert-dialog';
+import { Badge } from './badge';
+import { Card, CardContent, CardHeader, CardTitle } from './card';
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from './dialog';
+import { Drawer, DrawerContent, DrawerDescription, DrawerTitle } from './drawer';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from './dropdown-menu';
+import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from './empty';
+import { Field, FieldDescription, FieldGroup, FieldLabel } from './field';
+import { Input } from './input';
+import { Label } from './label';
+import { Popover, PopoverContent, PopoverTrigger } from './popover';
+import { RadioGroup, RadioGroupItem } from './radio-group';
+import { ScrollArea } from './scroll-area';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './select';
+import { Separator } from './separator';
+import { Skeleton } from './skeleton';
+import { Toaster } from './sonner';
+import { Spinner } from './spinner';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './table';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from './tabs';
+import { Textarea } from './textarea';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './tooltip';
+
+// shadcn-foundation task 3.2: every added primitive renders and exposes its role / slot.
+// Behaviour of the composed wrappers is change 2's job; this guards the normalized files.
+// Radix popper positions via floating-ui, which constructs a ResizeObserver jsdom lacks
+// (AdminUsersPage.test.tsx / RecentSessionsList.test.tsx idiom).
+class StubResizeObserver {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+if (typeof window !== 'undefined' && typeof window.ResizeObserver === 'undefined') {
+  window.ResizeObserver = StubResizeObserver as unknown as typeof ResizeObserver;
+}
+
+const slot = (name: string) => document.querySelector(`[data-slot="${name}"]`);
+
+describe('shadcn primitives render (normalized, V5-themed)', () => {
+  it('form controls: input, textarea, label, field', () => {
+    render(
+      <FieldGroup>
+        <Field>
+          <FieldLabel htmlFor="n">Name</FieldLabel>
+          <Input id="n" placeholder="Show name" />
+          <FieldDescription>Shown in the rail.</FieldDescription>
+        </Field>
+        <Label htmlFor="t">Notes</Label>
+        <Textarea id="t" />
+      </FieldGroup>,
+    );
+    expect(screen.getByLabelText('Name').tagName).toBe('INPUT');
+    expect(screen.getByLabelText('Notes').tagName).toBe('TEXTAREA');
+    expect(slot('field-group')).not.toBeNull();
+  });
+
+  it('select trigger is a combobox', () => {
+    render(
+      <Select defaultValue="24">
+        <SelectTrigger aria-label="Frame rate">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="24">24</SelectItem>
+        </SelectContent>
+      </Select>,
+    );
+    expect(screen.getByRole('combobox', { name: 'Frame rate' })).toBeTruthy();
+  });
+
+  it('tabs expose tablist / tab / tabpanel', () => {
+    render(
+      <Tabs defaultValue="a">
+        <TabsList>
+          <TabsTrigger value="a">A</TabsTrigger>
+          <TabsTrigger value="b">B</TabsTrigger>
+        </TabsList>
+        <TabsContent value="a">Panel A</TabsContent>
+      </Tabs>,
+    );
+    expect(screen.getByRole('tablist')).toBeTruthy();
+    expect(screen.getByRole('tab', { name: 'A' }).getAttribute('data-state')).toBe('active');
+    expect(screen.getByRole('tabpanel').textContent).toBe('Panel A');
+  });
+
+  it('table, card, badge, alert, skeleton, separator, empty, spinner, scroll-area', () => {
+    render(
+      <div>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Event</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            <TableRow>
+              <TableCell>Scene</TableCell>
+            </TableRow>
+          </TableBody>
+        </Table>
+        <Card>
+          <CardHeader>
+            <CardTitle>Widget</CardTitle>
+          </CardHeader>
+          <CardContent>Body</CardContent>
+        </Card>
+        <Badge>New</Badge>
+        <Alert>
+          <AlertTitle>Heads up</AlertTitle>
+          <AlertDescription>Unsent chunks.</AlertDescription>
+        </Alert>
+        <Skeleton />
+        <Separator />
+        <Empty>
+          <EmptyHeader>
+            <EmptyTitle>No team yet</EmptyTitle>
+            <EmptyDescription>Create one.</EmptyDescription>
+          </EmptyHeader>
+        </Empty>
+        <Spinner />
+        <ScrollArea className="h-10">Scrollable</ScrollArea>
+      </div>,
+    );
+    expect(screen.getByRole('table')).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: 'Event' })).toBeTruthy();
+    expect(screen.getByRole('alert')).toBeTruthy();
+    expect(screen.getByRole('status')).toBeTruthy();
+    for (const s of ['card', 'badge', 'skeleton', 'separator', 'empty', 'scroll-area'])
+      expect(slot(s)).not.toBeNull();
+  });
+
+  // One open overlay per test: an open modal (dropdown menu) aria-hides its siblings.
+  it('tooltip opens as a tooltip', () => {
+    render(
+      <TooltipProvider>
+        <Tooltip open>
+          <TooltipTrigger>Info</TooltipTrigger>
+          <TooltipContent>More detail</TooltipContent>
+        </Tooltip>
+      </TooltipProvider>,
+    );
+    expect(screen.getByRole('tooltip').textContent).toContain('More detail');
+  });
+
+  it('popover opens as a labelled dialog', () => {
+    render(
+      <Popover open>
+        <PopoverTrigger>Open</PopoverTrigger>
+        <PopoverContent aria-label="Options">Popover body</PopoverContent>
+      </Popover>,
+    );
+    expect(screen.getByRole('dialog', { name: 'Options' })).toBeTruthy();
+  });
+
+  it('dropdown menu opens with menu items', () => {
+    render(
+      <DropdownMenu open>
+        <DropdownMenuTrigger>Menu</DropdownMenuTrigger>
+        <DropdownMenuContent>
+          <DropdownMenuItem>Rename</DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>,
+    );
+    expect(screen.getByRole('menuitem', { name: 'Rename' })).toBeTruthy();
+  });
+
+  it('radio group exposes radios', () => {
+    render(
+      <RadioGroup defaultValue="a" aria-label="Kind">
+        <RadioGroupItem value="a" aria-label="A" />
+        <RadioGroupItem value="b" aria-label="B" />
+      </RadioGroup>,
+    );
+    expect(screen.getByRole('radiogroup', { name: 'Kind' })).toBeTruthy();
+    expect(screen.getAllByRole('radio')).toHaveLength(2);
+  });
+
+  it('dialog opens with an accessible name', () => {
+    render(
+      <Dialog open>
+        <DialogContent>
+          <DialogTitle>New session</DialogTitle>
+          <DialogDescription>Pick a show.</DialogDescription>
+        </DialogContent>
+      </Dialog>,
+    );
+    expect(screen.getByRole('dialog', { name: 'New session' })).toBeTruthy();
+  });
+
+  it('drawer opens with an accessible name', () => {
+    render(
+      <Drawer open>
+        <DrawerContent>
+          <DrawerTitle>Mobile sheet</DrawerTitle>
+          <DrawerDescription>Drag to dismiss.</DrawerDescription>
+        </DrawerContent>
+      </Drawer>,
+    );
+    expect(screen.getByRole('dialog', { name: 'Mobile sheet' })).toBeTruthy();
+  });
+
+  it('alert-dialog opens as an alertdialog with an accessible name', () => {
+    render(
+      <AlertDialog open>
+        <AlertDialogContent>
+          <AlertDialogTitle>Delete row?</AlertDialogTitle>
+          <AlertDialogDescription>This cannot be undone.</AlertDialogDescription>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction>Delete</AlertDialogAction>
+        </AlertDialogContent>
+      </AlertDialog>,
+    );
+    expect(screen.getByRole('alertdialog', { name: 'Delete row?' })).toBeTruthy();
+  });
+
+  it('sonner Toaster is fixed to the dark theme (no next-themes)', async () => {
+    const { toast } = await import('sonner');
+    render(<Toaster />);
+    act(() => {
+      toast('Saved');
+    });
+    await waitFor(() => expect(document.querySelector('[data-sonner-toaster]')).not.toBeNull());
+    expect(document.querySelector('[data-sonner-toaster]')?.getAttribute('data-sonner-theme')).toBe(
+      'dark',
+    );
+  });
+});
