@@ -1,6 +1,6 @@
 import { type QueryClient, useQueryClient } from '@tanstack/react-query';
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useReducer, useRef } from 'react';
-import { API_ROOT, apiFetch } from '../../../api/client';
+import { API_ROOT, ApiError, apiFetch } from '../../../api/client';
 import {
   audioSegmentsKeys,
   useAudioSegments,
@@ -24,6 +24,8 @@ import { runMicLevelMeter } from '../utils/micLevelMeter';
 
 const WF_DB_FLOOR = -48;
 const HEARTBEAT_INTERVAL_MS = 8_000;
+/** Shown once per lease loss mid-take (session-leases design D7). */
+const LEASE_LOST_WARNING = 'Another window, tab, or user now holds the recording lease.';
 const WF_BUCKET_COUNT = 800;
 /**
  * Chunk rollover cadence (chunked-live-recording design D2 — the value is
@@ -228,6 +230,15 @@ interface ActiveTake {
   sessionId: string;
   ordinal: number;
   nextChunkIndex: number;
+  /**
+   * Lease mode for this take (session-leases design D7): `holding` ticks send a
+   * heartbeat; `lost` ticks send a claim instead. Capture continues in both.
+   */
+  leaseMode: 'holding' | 'lost';
+  /** The one claim or heartbeat in flight for this take; a tick skips while it is set. */
+  leaseInFlight: Promise<void> | null;
+  /** A re-claim that landed after this take stopped was already released (D7). */
+  leaseReleasedLate: boolean;
 }
 
 /** The active chunk's recorder plus why it is being stopped. `reason` is set immediately before a deliberate `stop()`; an onstop that finds it null is unexpected (mic unplugged, track ended, OS revoked capture). */
@@ -351,6 +362,68 @@ export const AudioRecorder = forwardRef<AudioRecorderHandle, AudioRecorderProps>
       }
     }, [sessionId]);
 
+    /**
+     * Re-claim the lease for `take` with its own client id (session-leases
+     * design D7). The answer is acted on only while that take is still the
+     * capturing one: 200 → holding; 409 → lost (one warning per loss); any
+     * other failure leaves the mode as it was. A claim that succeeds after
+     * its take stopped is released at once, so it never outlives the take.
+     */
+    const reclaimLease = useCallback(
+      async (take: ActiveTake, cid: string) => {
+        const capturing = () => takeRef.current === take && stateRef.current.phase === 'recording';
+        try {
+          await claimLease.mutateAsync({ client_id: cid });
+        } catch (err) {
+          if (!capturing()) return;
+          if (err instanceof ApiError && err.status === 409 && take.leaseMode !== 'lost') {
+            take.leaseMode = 'lost';
+            showToast(LEASE_LOST_WARNING, true);
+          }
+          return;
+        }
+        if (!capturing()) {
+          take.leaseReleasedLate = true;
+          await releaseLeaseQuiet();
+          return;
+        }
+        take.leaseMode = 'holding';
+      },
+      [claimLease, releaseLeaseQuiet, showToast],
+    );
+
+    /**
+     * One 8 s lease tick for `take` (design D7): heartbeat while holding — a
+     * refused heartbeat (`{ok:false}`) re-claims at once — or claim while
+     * lost. At most one request is in flight; a tick skips while one is.
+     * A heartbeat that fails outright keeps the existing behaviour (ignored).
+     */
+    const leaseTick = useCallback(
+      (take: ActiveTake, cid: string) => {
+        if (take.leaseInFlight) return;
+        const run = async () => {
+          if (take.leaseMode === 'lost') {
+            await reclaimLease(take, cid);
+            return;
+          }
+          let res: OkResponse | undefined;
+          try {
+            res = await heartbeat.mutateAsync({ client_id: cid });
+          } catch {
+            return; // best effort, as before D7
+          }
+          if (res?.ok !== false) return;
+          if (takeRef.current !== take || stateRef.current.phase !== 'recording') return;
+          await reclaimLease(take, cid);
+        };
+        const inFlight: Promise<void> = run().finally(() => {
+          if (take.leaseInFlight === inFlight) take.leaseInFlight = null;
+        });
+        take.leaseInFlight = inFlight;
+      },
+      [heartbeat, reclaimLease],
+    );
+
     const updateRecordingDur = useCallback((startMs: number) => {
       const el = document.getElementById('top-bar-recording-dur');
       if (!el) return;
@@ -409,7 +482,11 @@ export const AudioRecorder = forwardRef<AudioRecorderHandle, AudioRecorderProps>
         } catch {
           /* best effort */
         }
-        await releaseLeaseQuiet();
+        // Design D7: let an in-flight claim (or heartbeat) settle first, so a
+        // re-claim can never land after this final release. A re-claim that
+        // landed after the stop already released the lease itself.
+        if (take.leaseInFlight) await take.leaseInFlight;
+        if (!take.leaseReleasedLate) await releaseLeaseQuiet();
 
         // Reset recording-dur display
         const durEl = document.getElementById('top-bar-recording-dur');
@@ -612,7 +689,14 @@ export const AudioRecorder = forwardRef<AudioRecorderHandle, AudioRecorderProps>
 
       mediaStreamRef.current = stream;
       startMicMeter(stream);
-      const take: ActiveTake = { sessionId: recordingSessionId, ordinal, nextChunkIndex: 0 };
+      const take: ActiveTake = {
+        sessionId: recordingSessionId,
+        ordinal,
+        nextChunkIndex: 0,
+        leaseMode: 'holding',
+        leaseInFlight: null,
+        leaseReleasedLate: false,
+      };
       takeRef.current = take;
       // Chunk 1's capture start — also the Started event's wall time below
       // (design D3: actual capture start, not lease-claim time, so the
@@ -626,7 +710,7 @@ export const AudioRecorder = forwardRef<AudioRecorderHandle, AudioRecorderProps>
           stopHeartbeat();
           return;
         }
-        heartbeat.mutate({ client_id: cid });
+        leaseTick(take, cid);
       }, HEARTBEAT_INTERVAL_MS);
 
       // Chunk rollover cadence (design D1/D2).
@@ -683,7 +767,7 @@ export const AudioRecorder = forwardRef<AudioRecorderHandle, AudioRecorderProps>
       claimLease,
       releaseLeaseQuiet,
       logEvent,
-      heartbeat,
+      leaseTick,
       stopHeartbeat,
       clearRolloverTimer,
       startMicMeter,

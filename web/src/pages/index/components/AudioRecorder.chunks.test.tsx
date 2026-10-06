@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, render } from '@testing-library/react';
 import { createRef } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { ApiError } from '../../../api/client';
 import type { LogEvent } from '../../../api/types';
 import { showToast } from '../../../shared/components/Toast';
 import { getChunkUploadQueue, resetChunkUploadQueueForTesting } from '../utils/chunkUploadQueue';
@@ -24,10 +25,15 @@ import { AudioRecorder, deriveNextOrdinal } from './AudioRecorder';
 const h = vi.hoisted(() => ({
   segments: [] as { recording_ordinal: number | null }[],
   events: [] as Partial<LogEvent>[],
-  heartbeatMutate: vi.fn(),
+  // mutateAsync since session-leases D7: the recorder acts on the heartbeat's `{ok}` answer.
+  heartbeatMutate: vi.fn(
+    async (_body: { client_id: string }): Promise<{ ok: boolean }> => ({
+      ok: true,
+    }),
+  ),
   logEventMutateAsync: vi.fn(async (_body: { category: string; message: string }) => ({})),
-  claimMutateAsync: vi.fn(async () => ({})),
-  releaseMutateAsync: vi.fn(async () => ({})),
+  claimMutateAsync: vi.fn(async (_body: { client_id: string }): Promise<unknown> => ({})),
+  releaseMutateAsync: vi.fn(async (_body: { client_id: string }) => ({})),
 }));
 
 vi.mock('../../../api/hooks/useAudio', () => ({
@@ -36,7 +42,7 @@ vi.mock('../../../api/hooks/useAudio', () => ({
   audioSegmentsKeys: { bySession: (id: string | null) => ['audio-segments-mock', id] as const },
   useAudioSegments: () => ({ data: { segments: h.segments } }),
   useClaimAudioLease: () => ({ mutateAsync: h.claimMutateAsync }),
-  useHeartbeatAudioLease: () => ({ mutate: h.heartbeatMutate }),
+  useHeartbeatAudioLease: () => ({ mutateAsync: h.heartbeatMutate }),
   useReleaseAudioLease: () => ({ mutateAsync: h.releaseMutateAsync }),
 }));
 vi.mock('../../../api/hooks/useEvents', () => ({
@@ -905,5 +911,231 @@ describe('beforeunload registration is scoped to an active recording (bfcache)',
     } finally {
       addSpy.mockRestore();
     }
+  });
+});
+
+// --- session-leases D7 (task 6.1): the recorder re-claims a refused heartbeat ---
+
+const LOST_WARNING = 'Another window, tab, or user now holds the recording lease.';
+
+function deferred<T>() {
+  let resolve!: (v: T) => void;
+  let reject!: (e: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+async function flush() {
+  for (let i = 0; i < 20; i += 1) await Promise.resolve();
+}
+
+/** One 8 s heartbeat tick, then let every response chain settle. */
+async function tickLease() {
+  await act(async () => {
+    vi.advanceTimersByTime(8_000);
+    await flush();
+  });
+}
+
+const conflict = () => new ApiError(409, 'Recording lease is held by another client');
+const lostWarnings = () =>
+  vi.mocked(showToast).mock.calls.filter(([msg]) => msg === LOST_WARNING).length;
+
+describe('AudioRecorder lease re-claim (session-leases D7, task 6.1)', () => {
+  const resetLeaseMocks = () => {
+    h.heartbeatMutate.mockReset();
+    h.heartbeatMutate.mockImplementation(async () => ({ ok: true }));
+    h.claimMutateAsync.mockReset();
+    h.claimMutateAsync.mockImplementation(async () => ({}));
+    h.releaseMutateAsync.mockReset();
+    h.releaseMutateAsync.mockImplementation(async () => ({}));
+  };
+  beforeEach(resetLeaseMocks);
+  afterEach(resetLeaseMocks);
+
+  it('a heartbeat answering {ok:false} sends one re-claim with the same client id, and capture continues', async () => {
+    const { ref } = await startRecording();
+    expect(h.claimMutateAsync).toHaveBeenCalledTimes(1);
+    const cid = h.claimMutateAsync.mock.calls[0][0].client_id;
+
+    h.heartbeatMutate.mockResolvedValueOnce({ ok: false });
+    await tickLease();
+    expect(h.heartbeatMutate).toHaveBeenCalledTimes(1);
+    expect(h.claimMutateAsync).toHaveBeenCalledTimes(2);
+    expect(h.claimMutateAsync.mock.calls[1][0]).toEqual({ client_id: cid });
+    expect(ref.current?.isRecording()).toBe(true);
+    expect(FakeMediaRecorder.instances[0].state).toBe('recording');
+    expect(lostWarnings()).toBe(0);
+
+    // Re-claimed: back to heartbeats, no further claims.
+    await tickLease();
+    expect(h.heartbeatMutate).toHaveBeenCalledTimes(2);
+    expect(h.claimMutateAsync).toHaveBeenCalledTimes(2);
+  });
+
+  it('a re-claim answering 409 warns once; later ticks claim instead of heartbeat; repeated 409s do not warn again', async () => {
+    const { ref } = await startRecording();
+    h.heartbeatMutate.mockResolvedValueOnce({ ok: false });
+    h.claimMutateAsync.mockImplementation(async () => {
+      throw conflict();
+    });
+
+    await tickLease();
+    expect(h.claimMutateAsync).toHaveBeenCalledTimes(2);
+    expect(lostWarnings()).toBe(1);
+
+    await tickLease();
+    await tickLease();
+    expect(h.heartbeatMutate).toHaveBeenCalledTimes(1);
+    expect(h.claimMutateAsync).toHaveBeenCalledTimes(4);
+    expect(lostWarnings()).toBe(1);
+    expect(ref.current?.isRecording()).toBe(true);
+    // Capture continues (rollovers at 10 s / 20 s started fresh recorders on the live stream).
+    expect(FakeMediaRecorder.instances.at(-1)?.state).toBe('recording');
+    expect(h.releaseMutateAsync).not.toHaveBeenCalled();
+  });
+
+  it('a later successful claim returns to heartbeats, and a new loss warns again', async () => {
+    await startRecording();
+    h.heartbeatMutate.mockResolvedValueOnce({ ok: false });
+    h.claimMutateAsync.mockImplementation(async () => {
+      throw conflict();
+    });
+    await tickLease(); // loss → warn 1
+    await tickLease(); // lost: claim 409
+    expect(lostWarnings()).toBe(1);
+
+    h.claimMutateAsync.mockImplementation(async () => ({ ok: true }));
+    await tickLease(); // lost: claim 200 → holding
+    expect(h.claimMutateAsync).toHaveBeenCalledTimes(4);
+    await tickLease(); // holding: heartbeat
+    expect(h.heartbeatMutate).toHaveBeenCalledTimes(2);
+    expect(h.claimMutateAsync).toHaveBeenCalledTimes(4);
+
+    h.heartbeatMutate.mockResolvedValueOnce({ ok: false });
+    h.claimMutateAsync.mockImplementation(async () => {
+      throw conflict();
+    });
+    await tickLease(); // second loss
+    expect(h.claimMutateAsync).toHaveBeenCalledTimes(5);
+    expect(lostWarnings()).toBe(2);
+  });
+
+  it('keeps at most one claim or heartbeat in flight; a tick skips while one is pending', async () => {
+    await startRecording();
+    const hb = deferred<{ ok: boolean }>();
+    h.heartbeatMutate.mockImplementationOnce(() => hb.promise);
+    await tickLease();
+    await tickLease();
+    await tickLease();
+    expect(h.heartbeatMutate).toHaveBeenCalledTimes(1);
+    expect(h.claimMutateAsync).toHaveBeenCalledTimes(1);
+
+    // The heartbeat is refused; the re-claim is pending too.
+    const claim = deferred<unknown>();
+    h.claimMutateAsync.mockImplementationOnce(() => claim.promise);
+    await act(async () => {
+      hb.resolve({ ok: false });
+      await flush();
+    });
+    expect(h.claimMutateAsync).toHaveBeenCalledTimes(2);
+    await tickLease();
+    await tickLease();
+    expect(h.heartbeatMutate).toHaveBeenCalledTimes(1);
+    expect(h.claimMutateAsync).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      claim.resolve({ ok: true });
+      await flush();
+    });
+    await tickLease();
+    expect(h.heartbeatMutate).toHaveBeenCalledTimes(2);
+    expect(h.claimMutateAsync).toHaveBeenCalledTimes(2);
+  });
+
+  it('stopping while a re-claim is in flight sends the release only after the claim settles; the lease ends free', async () => {
+    const { ref } = await startRecording();
+    const cid = h.claimMutateAsync.mock.calls[0][0].client_id;
+    const claim = deferred<unknown>();
+    h.heartbeatMutate.mockResolvedValueOnce({ ok: false });
+    h.claimMutateAsync.mockImplementationOnce(() => claim.promise);
+    await tickLease();
+    expect(h.claimMutateAsync).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      await ref.current?.toggle(); // stop
+      await flush();
+    });
+    expect(h.releaseMutateAsync).not.toHaveBeenCalled();
+
+    await act(async () => {
+      claim.resolve({ ok: true });
+      await flush();
+    });
+    // Exactly one release, after the claim settled: the lease ends free.
+    expect(h.releaseMutateAsync).toHaveBeenCalledTimes(1);
+    expect(h.releaseMutateAsync).toHaveBeenCalledWith({ client_id: cid });
+    expect(h.releaseMutateAsync.mock.invocationCallOrder[0]).toBeGreaterThan(
+      h.claimMutateAsync.mock.invocationCallOrder[1],
+    );
+    expect(ref.current?.isRecording()).toBe(false);
+  });
+
+  it('a claim that succeeds after its take stopped is released at once', async () => {
+    const { ref } = await startRecording();
+    const cid = h.claimMutateAsync.mock.calls[0][0].client_id;
+    const claim = deferred<unknown>();
+    h.heartbeatMutate.mockResolvedValueOnce({ ok: false });
+    h.claimMutateAsync.mockImplementationOnce(() => claim.promise);
+    await tickLease();
+
+    // A real MediaRecorder fires onstop asynchronously: hold it back so the
+    // take is stopped (no longer capturing) but not yet finalized.
+    const mr = FakeMediaRecorder.instances[0];
+    const realOnstop = { fire: () => {} };
+    mr.stop = function stop(this: FakeMediaRecorder) {
+      this.state = 'inactive';
+      this.ondataavailable?.({ data: new Blob([new Uint8Array(8)], { type: 'audio/webm' }) });
+      const onstop = this.onstop;
+      realOnstop.fire = () => onstop?.();
+    };
+    await act(async () => {
+      await ref.current?.toggle(); // stop requested; onstop not yet delivered
+      await flush();
+    });
+    expect(ref.current?.isRecording()).toBe(false);
+    expect(h.releaseMutateAsync).not.toHaveBeenCalled();
+
+    await act(async () => {
+      claim.resolve({ ok: true });
+      await flush();
+    });
+    expect(h.releaseMutateAsync).toHaveBeenCalledTimes(1);
+    expect(h.releaseMutateAsync).toHaveBeenCalledWith({ client_id: cid });
+
+    await act(async () => {
+      realOnstop.fire();
+      await flush();
+    });
+    expect(h.releaseMutateAsync).toHaveBeenCalledTimes(1);
+  });
+
+  it('a successful heartbeat sends no claim (and a failed heartbeat keeps the existing behaviour)', async () => {
+    const { ref } = await startRecording();
+    await tickLease();
+    await tickLease();
+    expect(h.heartbeatMutate).toHaveBeenCalledTimes(2);
+    expect(h.claimMutateAsync).toHaveBeenCalledTimes(1);
+
+    h.heartbeatMutate.mockRejectedValueOnce(new Error('network down'));
+    await tickLease();
+    await tickLease();
+    expect(h.heartbeatMutate).toHaveBeenCalledTimes(4);
+    expect(h.claimMutateAsync).toHaveBeenCalledTimes(1);
+    expect(lostWarnings()).toBe(0);
+    expect(ref.current?.isRecording()).toBe(true);
   });
 });

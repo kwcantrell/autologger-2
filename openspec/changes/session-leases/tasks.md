@@ -82,7 +82,7 @@ Keep each task's text, and later its `Evidence:`, in one block with no blank lin
 
 ## 6. The recorder re-claims (D7)
 
-- [ ] 6.1 Test first, in the `AudioRecorder` tests:
+- [x] 6.1 Test first, in the `AudioRecorder` tests:
   - a heartbeat answering `{ok:false}` during capture sends one re-claim with the same client id, and capture continues;
   - a re-claim answering 409 shows one warning toast; later ticks send claims and no heartbeats; repeated 409s show no second toast;
   - a later successful claim returns to heartbeats (and a new loss warns again);
@@ -91,6 +91,7 @@ Keep each task's text, and later its `Evidence:`, in one block with no blank lin
   - a claim that succeeds after its take stopped is released at once;
   - a successful heartbeat sends no claim.
   Red, then `web/src/pages/index/components/AudioRecorder.tsx`. Verify: green; `cd web && npx vitest run` is green; typecheck and biome are clean.
+  - Evidence: red `npx vitest run src/pages/index/components/AudioRecorder` → "Tests  6 failed | 27 passed (33)" (e.g. "expected "vi.fn()" to be called 2 times, but got 1 times"); green → "Tests  36 passed (36)"; `cd web && npx vitest run` → "Test Files  133 passed (133) / Tests  1685 passed (1685)"; `npx tsc --noEmit` exit 0; `npx biome check web/src` → "Checked 333 files … No fixes applied."
 
 ## 7. Docs, measurement and checks
 
