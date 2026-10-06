@@ -1,4 +1,5 @@
-import * as RadixRadioGroup from '@radix-ui/react-radio-group';
+import { RadioGroup as RadioGroupPrimitive } from 'radix-ui';
+import { RadioGroup as RadioGroupRoot } from '@/shared/components/ui/radio-group';
 
 export interface RadioGroupOption {
   value: string;
@@ -15,7 +16,11 @@ interface RadioGroupProps {
   itemClassName?: (value: string, checked: boolean) => string;
 }
 
-/** Accessible radio group (Radix) — roving tabindex + arrow-key nav, styled via caller classNames. */
+/**
+ * Accessible radio group — roving tabindex + looping arrow-key nav, styled via caller classNames.
+ * shadcn-shared-wrappers D5: the shadcn RadioGroup root, with bare primitive items carrying the
+ * label text (the shadcn item's indicator circle would break the caller's pill styling).
+ */
 export function RadioGroup({
   value,
   onChange,
@@ -25,7 +30,7 @@ export function RadioGroup({
   itemClassName,
 }: RadioGroupProps) {
   return (
-    <RadixRadioGroup.Root
+    <RadioGroupRoot
       value={value}
       onValueChange={onChange}
       aria-label={ariaLabel}
@@ -33,15 +38,15 @@ export function RadioGroup({
       loop
     >
       {options.map((opt) => (
-        <RadixRadioGroup.Item
+        <RadioGroupPrimitive.Item
           key={opt.value}
           value={opt.value}
           disabled={opt.disabled}
           className={itemClassName?.(opt.value, opt.value === value)}
         >
           {opt.label}
-        </RadixRadioGroup.Item>
+        </RadioGroupPrimitive.Item>
       ))}
-    </RadixRadioGroup.Root>
+    </RadioGroupRoot>
   );
 }

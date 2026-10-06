@@ -71,9 +71,10 @@
     - `danger` text wins over `selected`
   - Verify that test passes, plus `EventLogSheet`, `AdminUsersPage`, `RecentSessionsList` and `EventButtonsTable`.
   - Evidence: test first: `npx vitest run src/shared/ui/Popover.test.tsx` on the legacy wrapper -> `× renders open content through the shadcn primitive …` (no `data-slot="popover-content"`), `1 failed | 4 passed`; after rebuilding on the shadcn Popover -> with EventLogSheet, AdminUsersPage, RecentSessionsList, EventButtonsTable, eventGenerateLatch: `Tests 60 passed (60)`; lint/typecheck clean
-- [ ] 3.4 `shared/ui/Tooltip.tsx` and `shared/ui/RadioGroup.tsx` on the shadcn primitives (D5).
+- [x] 3.4 `shared/ui/Tooltip.tsx` and `shared/ui/RadioGroup.tsx` on the shadcn primitives (D5).
   - Test first: `Tooltip.test.tsx` (opens on keyboard focus showing `content`; `disabled` renders the children bare) and `RadioGroup.test.tsx` (`radiogroup` named by `ariaLabel`; arrow keys loop; `onChange` fires with the value).
   - Verify those tests plus `TransportControls`, `EventButtonsTable` and `ExportFeed`.
+  - Evidence: test first: `Tooltip.test.tsx` + `RadioGroup.test.tsx` on the legacy wrappers -> `× opens on keyboard focus through the shadcn primitive`, `× is a radiogroup … rendered through the shadcn root` (no shadcn `data-slot`); arrow-loop case passes on legacy and guards `loop` (needs `waitFor`: Radix moves focus async). After rebuilding on the primitives (+ ResizeObserver stub) -> `Tests 6 passed (6)`; TransportControls/EventButtonsTable/ExportFeed/EventLogSheet/MaximizeLogStrip `71 passed`; full `npx vitest run` -> `Test Files 121 passed (121) Tests 1511 passed (1511)`
 - [ ] 3.5 `pages/index/components/Select.tsx` on the shadcn Select. `LazySelect` keeps its contract and the shared trigger classes (D5).
   - Test first: re-point the mount spy in `EventButtonsTable.lazyTypeSelect.test.tsx` to `@/shared/components/ui/select`'s `Select`. It fails while `Select.tsx` still uses `@radix-ui/react-select` (no mounts counted). It passes after the switch.
   - Add a parity case (R13): the inert trigger and the upgraded trigger have equal `className`, role, name, `aria-expanded` and `data-state`, and exactly one `svg` each.

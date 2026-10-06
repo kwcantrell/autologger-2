@@ -1,6 +1,10 @@
-import * as RadixTooltip from '@radix-ui/react-tooltip';
-import clsx from 'clsx';
 import type { ReactNode } from 'react';
+import {
+  TooltipContent,
+  TooltipProvider as TooltipProviderPrimitive,
+  Tooltip as TooltipRoot,
+  TooltipTrigger,
+} from '@/shared/components/ui/tooltip';
 
 interface TooltipProps {
   content: ReactNode;
@@ -15,8 +19,8 @@ interface TooltipProps {
   className?: string;
 }
 
-/** Wrap once at the page root. */
-export const TooltipProvider = RadixTooltip.Provider;
+/** Wrap once at the page root (IndexRoot / AdminRoot pass delayDuration={400}). */
+export const TooltipProvider = TooltipProviderPrimitive;
 
 export function Tooltip({
   content,
@@ -30,23 +34,13 @@ export function Tooltip({
   className,
 }: TooltipProps) {
   if (disabled) return <>{children}</>;
+  // shadcn-shared-wrappers D5: the V5 surface + arrow live in the shadcn primitive (D1).
   return (
-    <RadixTooltip.Root delayDuration={delayDuration}>
-      <RadixTooltip.Trigger asChild={asChild}>{children}</RadixTooltip.Trigger>
-      <RadixTooltip.Portal>
-        <RadixTooltip.Content
-          side={side}
-          align={align}
-          sideOffset={sideOffset}
-          className={clsx(
-            'glass-panel z-(--z-top-float) max-w-[22rem] rounded-v5-sm px-[0.6rem] py-[0.4rem] text-[0.78rem] leading-[1.35] animate-tooltip-fade-in',
-            className,
-          )}
-        >
-          {content}
-          <RadixTooltip.Arrow className="fill-(--v5-glass-strong-bot) stroke-v5-border-strong" />
-        </RadixTooltip.Content>
-      </RadixTooltip.Portal>
-    </RadixTooltip.Root>
+    <TooltipRoot delayDuration={delayDuration}>
+      <TooltipTrigger asChild={asChild}>{children}</TooltipTrigger>
+      <TooltipContent side={side} align={align} sideOffset={sideOffset} className={className}>
+        {content}
+      </TooltipContent>
+    </TooltipRoot>
   );
 }
