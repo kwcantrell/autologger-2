@@ -7,12 +7,13 @@ Keep each task's text, and later its `Evidence:`, in one block with no blank lin
 
 ## 1. Bump
 
-- [ ] 1.1 Before the bump, record:
+- [x] 1.1 Before the bump, record:
   - `npm ls @modelcontextprotocol/sdk` and `npm ls zod`;
   - `GITHUB_BASE_REF=supabase-migration scripts/check-change.sh --only audit` (red: GHSA-6qxp-vccf-f47h);
   - `--only commands` (typecheck and `npm test` counts);
   - `cd server && npx vitest run --project pg` counts.
-- [ ] 1.2 Edit the SDK's lockfile entry as design D1 gives it, then run `npm ci`. Verify:
+  - Evidence: `npm ls @modelcontextprotocol/sdk` -> `@modelcontextprotocol/sdk@1.29.0` (ai-runtime; deduped under claude-agent-sdk@0.3.216 and server); `npm ls zod` -> `zod@3.25.76` everywhere, `invalid: "^4.0.0" from node_modules/@anthropic-ai/claude-agent-sdk` (pre-existing, ELSPROBLEMS); `check-change.sh --only audit` -> `FAIL audit ... @modelcontextprotocol/sdk 1.12.0 - 1.30.1 Severity: high ... GHSA-6qxp-vccf-f47h ... 1 high severity vulnerability`; `check-change.sh --only commands` -> `PASS commands ran ['typecheck', 'test']` (no flake fired); `npm test` counts -> node:test `pass 86 fail 0`; server `Tests 1595 passed | 4 skipped (1599)`, web `1689 passed (1689)`, companion 21, domain 50, contract 60, ports 1, storage 133, catalog 50, session-core 33, transcription 67, media-import `34 passed | 2 skipped (36)`, log-import 32, ai-runtime `181 passed (181)`; `cd server && npx vitest run --project pg` -> `Tests 103 passed | 1 skipped (104)`.
+- [x] 1.2 Edit the SDK's lockfile entry as design D1 gives it, then run `npm ci`. Verify:
   - `git diff --stat` touches only `package-lock.json`, about 8 lines;
   - `npm ls @modelcontextprotocol/sdk` shows 1.32.1;
   - `npm ls zod` matches 1.1;
@@ -20,6 +21,7 @@ Keep each task's text, and later its `Evidence:`, in one block with no blank lin
   - `check-change.sh --only audit` passes;
   - `--only commands` and the `pg` project match 1.1, with known flakes re-run and logged;
   - the MCP/AI integration files (`aiMcpServer`, `mcpTools`, `callers`, `aiV2`) pass by name.
+  - Evidence: edited only the `node_modules/@modelcontextprotocol/sdk` entry (version 1.32.1, resolved sdk-1.32.1.tgz, integrity `sha512-2DdE+SJD...ichPkdw==` from `npm view ... dist.integrity`, `@hono/node-server` `^1.19.9 || ^2.0.5`; other dependencies/peerDependencies/peerDependenciesMeta/engines/license already matched `npm view @modelcontextprotocol/sdk@1.32.1`); `npm ci` -> exit 0, `found 0 vulnerabilities` (better-sqlite3 and esbuild load on host); `git diff --stat` -> `package-lock.json | 8 ++++----`; `npm ls @modelcontextprotocol/sdk` -> `@modelcontextprotocol/sdk@1.32.1` (3 sites); `npm ls zod` diff vs 1.1 -> only the SDK parent label line changed, `zod@3.25.76` unchanged everywhere; `npm install --package-lock-only` -> lockfile sha256 `f2b3a2e9...` before and after, diff stat still 8 lines; `check-change.sh --only audit` -> `PASS audit ran ['audit']`; `check-change.sh --only commands` run 1 -> `FAIL ... postgresCatalogStore.pg.test.ts > 8 contending read-modify-write transactions all commit ... 'repetition 2: 1/8 exhausted'` (known storage flake), and a direct `npm test` in the same run had server `1 failed | 1594 passed` from `aiMcpServer.int.test.ts > Cap holds under concurrent calls ... Test timed out in 5000ms` with `codes ["40001","40001"]` (a serialization-contention timeout under load, not one of the known flakes; it passed when re-run); re-run -> `PASS commands ran ['typecheck', 'test']`, and the direct `npm test` counts are identical to 1.1 (diff empty); `npx vitest run --project pg` -> `Tests 103 passed | 1 skipped (104)` (= 1.1); `npx vitest run --project integration src/test/session/aiMcpServer.int.test.ts src/test/session/mcpTools.int.test.ts src/test/session/callers.int.test.ts src/routers/aiV2.int.test.ts` -> `Test Files 4 passed (4)`, `Tests 150 passed (150)`.
 
 ## 2. Dev stack and checks
 
