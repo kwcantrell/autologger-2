@@ -64,12 +64,13 @@
   - `alert-dialog.tsx` gains an `onOverlayClick` prop on `AlertDialogContent` (D3). The mobile test also asserts focus lands inside the drawer.
   - Verify with those tests plus `EventLogSheet`, `RecentSessionsList`, `eventGenerateLatch`, `TeamCard`, `AdminUsersPage` and `HomeSettingsModal`.
   - Evidence: test first: new ConfirmDialog cases + ChunkRescueBanner queries switched to `alertdialog` -> `6 failed | 17 passed (23)`; after AlertDialog (desktop, `onOverlayClick`) / shared sheet (mobile) -> `23 passed`. Found during implementation: accept also fired `onCancel` (Radix Action closes the dialog); test first `expected [ 1, 1 ] to deeply equal [ 1, +0 ]`; once-per-open guard (design D3 note) -> `Tests 26 passed (26)`; full `npx vitest run` -> `Test Files 118 passed (118) Tests 1500 passed (1500)`; lint/typecheck clean
-- [ ] 3.3 `shared/ui/Popover.tsx` on the shadcn Popover. Keep `PopoverItem` verbatim (D5).
+- [x] 3.3 `shared/ui/Popover.tsx` on the shadcn Popover. Keep `PopoverItem` verbatim (D5).
   - Test first: `shared/ui/Popover.test.tsx`:
     - an open popover is a `dialog` named by `ariaLabel`
     - `PopoverItem` roles and ARIA (`menuitemcheckbox` uses `aria-checked`, `option` uses `aria-selected`)
     - `danger` text wins over `selected`
   - Verify that test passes, plus `EventLogSheet`, `AdminUsersPage`, `RecentSessionsList` and `EventButtonsTable`.
+  - Evidence: test first: `npx vitest run src/shared/ui/Popover.test.tsx` on the legacy wrapper -> `× renders open content through the shadcn primitive …` (no `data-slot="popover-content"`), `1 failed | 4 passed`; after rebuilding on the shadcn Popover -> with EventLogSheet, AdminUsersPage, RecentSessionsList, EventButtonsTable, eventGenerateLatch: `Tests 60 passed (60)`; lint/typecheck clean
 - [ ] 3.4 `shared/ui/Tooltip.tsx` and `shared/ui/RadioGroup.tsx` on the shadcn primitives (D5).
   - Test first: `Tooltip.test.tsx` (opens on keyboard focus showing `content`; `disabled` renders the children bare) and `RadioGroup.test.tsx` (`radiogroup` named by `ariaLabel`; arrow keys loop; `onChange` fires with the value).
   - Verify those tests plus `TransportControls`, `EventButtonsTable` and `ExportFeed`.

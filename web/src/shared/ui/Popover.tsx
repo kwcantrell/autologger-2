@@ -1,6 +1,10 @@
-import * as RadixPopover from '@radix-ui/react-popover';
 import clsx from 'clsx';
 import type { ReactNode } from 'react';
+import {
+  PopoverContent,
+  Popover as PopoverRoot,
+  PopoverTrigger,
+} from '@/shared/components/ui/popover';
 
 interface PopoverProps {
   trigger: ReactNode;
@@ -29,25 +33,23 @@ export function Popover({
   triggerAsChild = true,
   ariaLabel,
 }: PopoverProps) {
+  // shadcn-shared-wrappers D5: the V5 surface lives in the shadcn primitive (D1); this wrapper
+  // only maps its props. Content keeps Radix's role="dialog", so an open popover menu still makes
+  // the global shortcuts yield (isOverlayOpen).
   return (
-    <RadixPopover.Root open={open} onOpenChange={onOpenChange}>
-      <RadixPopover.Trigger asChild={triggerAsChild}>{trigger}</RadixPopover.Trigger>
-      <RadixPopover.Portal>
-        <RadixPopover.Content
-          side={side}
-          align={align}
-          sideOffset={sideOffset}
-          aria-label={ariaLabel}
-          className={clsx(
-            'glass-panel z-(--z-popover) min-w-[11.5rem] rounded-v5-md p-[0.35rem] outline-none animate-popover-fade-in focus-visible:outline-2 focus-visible:outline-v5-primary focus-visible:outline-offset-2',
-            className,
-          )}
-          collisionPadding={8}
-        >
-          {children}
-        </RadixPopover.Content>
-      </RadixPopover.Portal>
-    </RadixPopover.Root>
+    <PopoverRoot open={open} onOpenChange={onOpenChange}>
+      <PopoverTrigger asChild={triggerAsChild}>{trigger}</PopoverTrigger>
+      <PopoverContent
+        side={side}
+        align={align}
+        sideOffset={sideOffset}
+        aria-label={ariaLabel}
+        className={className}
+        collisionPadding={8}
+      >
+        {children}
+      </PopoverContent>
+    </PopoverRoot>
   );
 }
 
