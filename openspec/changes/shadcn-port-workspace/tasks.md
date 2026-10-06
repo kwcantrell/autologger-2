@@ -123,7 +123,7 @@
 
 ## 6. Integration: QA gate and checks
 
-- [ ] 6.1 Copy the walk from `openspec/changes/archive/2026-10-06-shadcn-port-shell/qa/` and add steps for:
+- [x] 6.1 Copy the walk from `openspec/changes/archive/2026-10-06-shadcn-port-shell/qa/` and add steps for:
   - feed tabs by keyboard;
   - the Time display, Filter and Auto generate menus open;
   - Transcript, Topics and Export tabs;
@@ -133,6 +133,7 @@
   - the `reveal-in-feed` screen on a session with internal events, with 0 contrast failures on the Internal rows (D8);
   - at 390×844, an eval that the event feed viewport scrolls (`clientHeight < scrollHeight`) and mounts fewer than all rows;
   - an eval that focusing an inline-edit input and dispatching a real mousedown on the feed scrollbar leaves the input focused.
+  - Evidence: walk copied + auto-generate-menu / ws-tabs-keyboard / reveal-in-feed / ws-transcript-scrolled steps and feedprobe.js + focusprobe.sh on ATS_youtube; both width passes vs archived after-shell -> 70 contrast JSONs, only `filter-menu` `Audio issue 3.64`; event rows 30.44px (A6); transcript 560/70661 (1440) and 591/70660 (390, 70dvh viewport cap) with 39/40 of 2279 rows mounted, sticky offset 0; horizontal reach at 390 278/402 overflow-x scroll; real scrollbar drag keeps focus (`qa-focus`) and scrolls 1200 -> 6412; reveal mounted+flashed. Walk found two defects, both fixed here: Internal rows 1.14:1 (D8/5.4, re-panelled + re-approved; now rgb(154,160,166), 0 failures) and lost mobile horizontal scroll (D3 note). Workspace screens 0.06-1.7%; Settings/modal/New Session diffs are owner data state (Youtube Studio member view), documented in qa/README.md
 
   Run the 1440×900 and 390×844 passes against the archived `after-shell` captures.
   - Verify: contrast shows 0 failures apart from the user-data "Audio issue", and the row height and per-screen diffs are recorded in `qa/README.md`.
