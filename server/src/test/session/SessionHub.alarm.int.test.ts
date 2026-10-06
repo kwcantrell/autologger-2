@@ -5,11 +5,11 @@
 // doubling, capped at the 40 s stale threshold, and a successful run resets it.
 
 import type { AsyncLocalStorage } from 'node:async_hooks';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LeaseStore } from '@autologger/session-core/leaseStore';
 import { SessionHub } from '@autologger/session-core/SessionHub';
-import { type SlowStorage, slowStorage } from './slowStorage';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createSessionRow, DRIVER_SAFE_FAKE_TIMERS, openTestHub, testStorage } from './sessionRows';
+import { type SlowStorage, slowStorage } from './slowStorage';
 
 const unhandled: unknown[] = [];
 const trap = (reason: unknown): void => {
@@ -87,7 +87,13 @@ describe('lease alarm on real timers', () => {
     frames.length = 0;
     time.now = T + STALE + 1;
 
-    type Stores = { core: { metaSet(k: string, v: string): Promise<void> }; lease: LeaseStore };
+    type Stores = {
+      core: {
+        sessionId: string;
+        db: { run(sql: string, ...binds: Array<string | number>): Promise<unknown> };
+      };
+      lease: LeaseStore;
+    };
     const internals = hub as unknown as {
       inTxn<R>(body: (s: Stores) => Promise<R>): Promise<R>;
       runAlarm(): Promise<void>;
@@ -103,7 +109,11 @@ describe('lease alarm on real timers', () => {
     const seenInside: unknown[] = [];
     const held = internals.inTxn(async (s) => {
       // A fresh heartbeat that is never committed: an expiry that read it would keep the lease.
-      await s.core.metaSet('lease_seen_ms', String(time.now));
+      await s.core.db.run(
+        'UPDATE session_leases SET expires_at_ms = ? WHERE session_id = ?',
+        time.now + STALE,
+        s.core.sessionId,
+      );
       entered();
       await gate;
       seenInside.push((await s.lease.leaseStatus()).holder_client_id);

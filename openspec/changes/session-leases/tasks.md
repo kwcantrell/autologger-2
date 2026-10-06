@@ -1,0 +1,122 @@
+# Tasks
+
+**Branch and commits**
+- The first commit on `supabase-8a-session-leases` holds only `openspec/changes/session-leases/`, so
+  the plan is pinned before code.
+- The PR targets `supabase-migration`.
+- The gates run with `GITHUB_BASE_REF=supabase-migration`.
+- One PR (ADR 0024: no size budget).
+
+**Logs and test-first**
+- Keep logs under the session scratchpad as `8a-<task>-<red|green>.log`, and name the log in each
+  `Evidence:` line.
+- Each "test first" item is red before its change. Record the failure line, then the green run.
+- If a new test already passes, record that and why.
+
+**Commands**
+- **Server tiers:** `cd server && npx vitest run --project <unit|integration|pg> <files>`.
+- **The full suites:**
+  - `cd server && npx vitest run --project unit --project integration --project pg`;
+  - `npx vitest run` in `packages/session-core` and `packages/storage`;
+  - `cd web && npx vitest run`;
+  - `npm run typecheck`.
+- **Migrations:** `sh docker/supabase/test_migrate.sh`.
+
+**Changing tests.** Changing an existing test is allowed only for the eight categories in design
+D6. Any other change is a stop: update the artifacts and ask the owner.
+
+Keep each task's text, and later its `Evidence:`, in one block with no blank line.
+
+## 1. Baselines
+
+- [x] 1.1 On the base commit, run the full suites and record the counts. Record the existing tests design D6 expects to change: `grep -rn "lease_holder\|lease_seen_ms\|heartbeatLease\|expireIfStale\|LEASE_STALE_MS\|audio_recording_lease_holder_id" --include=*.test.ts --include=*.test.tsx server/src packages web/src`. Known flake: the storage "8 contending" test (deferred); record any recurrence.
+  - Evidence: base 7d68350 (code = 6ec121c2). Full suites -> server `Test Files  128 passed | 3 skipped (131)`, `Tests  1574 passed | 4 skipped (1578)` (log `8a-1.1-server.log`); session-core `Tests  33 passed (33)`, storage `Tests  133 passed (133)` (no "8 contending" recurrence) (logs `8a-1.1-session-core.log`, `8a-1.1-storage.log`); web `Test Files  133 passed (133)`, `Tests  1678 passed (1678)` (log `8a-1.1-web.log`); `npm run typecheck` exit 0 (log `8a-1.1-typecheck.log`). The grep (log `8a-1.1-grep.log`) hits 28 files; expected to change per D6: `server/src/test/session/leaseStore.int.test.ts` (22 hits; cat. 1 and 4), `retry.int.test.ts:39-40` (`lease_holder` meta row; cat. 1), `SessionHub.alarm.int.test.ts:106` (`metaSet('lease_seen_ms', …)`; cat. 5), `revision.int.test.ts:102` (heartbeat in the +1 list; cat. 2), `isolation.int.test.ts:202` (`TABLES`; cat. 6). Expected unchanged (API calls or `LEASE_STALE_MS` only): `retry.int.test.ts:30`, `SessionHub.alarm.int.test.ts:31`, `alarmAfterCommit.int.test.ts:16`, `callers.int.test.ts:144,146`, `fakeClock.int.test.ts:52`, `session/SessionHub.int.test.ts:113,121,240`, `server/src/test/SessionHub.int.test.ts:127,133` (holder null with no lease); the 18 web hits are status fixtures with `audio_recording_lease_holder_id: null` (unchanged); the `AudioRecorder` tests change under cat. 8 (6.1).
+
+## 2. The migration (design D1, A2, A6)
+
+- [x] 2.1 Test first, in `server/src/test/pg/catalogSchema.pg.test.ts`:
+  - `session_leases` in the table lists, key columns and recorded schema;
+  - the RLS matrix admits it with one system policy and four user policies;
+  - a new describe "the session leases migration":
+    - existing `lease_holder`/`lease_seen_ms` meta rows are unchanged;
+    - a user binding inserts its own lease; one naming another user fails `42501`; one on an inaccessible show fails `42501`; one with a null holder fails `42501`;
+    - the claim upsert against another user's live lease changes 0 rows with no error, and against an expired one replaces the holder;
+    - updating the holder to another user fails `42501`;
+    - a direct `UPDATE` stealing a live lease succeeds (accepted, D1);
+    - deleting another user's lease deletes 0 rows;
+    - kind `x` fails `23514`.
+  Verify: red, recorded.
+  - Evidence: `server/src/test/pg/catalogSchema.pg.test.ts`: `session_leases` in `TABLES`/`KEY_COLUMN`/`EXPECTED_SCHEMA` (columns, key, foreign key, the two named checks), a lease row in the system read/write test, the RLS block (`session_leases_system_all` plus `_user_select|insert|update|delete`, catalog_user holding all four privileges), and the describe "the session leases migration (session-leases D1)" (meta rows kept and table empty after a replay; own insert 1 row, another user's / inaccessible show / null holder `42501`; the D3 claim upsert against a live foreign lease `count 0` with no error and against an expired one `count 1`, holder replaced; update of the holder to another user `42501`; a plain `UPDATE` stealing a live lease `count 1` (accepted, D1); delete of another user's lease `count 0`; kind `x` `23514`). `cd server && npx vitest run --project pg src/test/pg/catalogSchema.pg.test.ts` -> `Tests  10 failed | 13 passed (23)`: `relation "catalog.session_leases" does not exist`, `expected [ 'app_settings', 'kv', …(18) ] to deeply equal [ … …(19) ]`, `ENOENT: … 20261011000000_session_leases.sql`, `expected [ { code: '42P01' } ] to deeply equal [ { count: 1 } ]` (log `8a-2.1-red.log`).
+- [x] 2.2 Add `supabase/migrations/20261011000000_session_leases.sql` as design D1 gives it, run as `postgres`. Verify: 2.1 green; the other `pg` files pass apart from D6 category 3 (record each); `sh docker/supabase/test_migrate.sh` passes; the full suites are green.
+  - Evidence: `supabase/migrations/20261011000000_session_leases.sql` as D1 (the table, the two named checks, RLS with `session_leases_system_all` and `_user_select|insert|update|delete`, USING of the update policy `R` alone; no grants: the `postgres` default privileges give both catalog roles all four, A6). `cd server && npx vitest run --project pg` -> first `Tests  1 failed | 102 passed`: `catalogPolicies.pg.test.ts` "no catalog_user policy is the constant true, and there are 33" (`expected [ … ] to have a length of 33 but got 37`; D6 category 3, the policy count) -> 37 (log `8a-2.2-pg1.log`); then `Test Files  11 passed | 1 skipped (12)`, `Tests  103 passed | 1 skipped (104)`, 2.1 green (log `8a-2.2-green.log`). `sh docker/supabase/test_migrate.sh` -> `test_migrate: 35 passed, 0 failed` (log `8a-2.2-migrate.log`). Full suites: server `Test Files  128 passed | 3 skipped (131)`, `Tests  1576 passed | 4 skipped (1580)` (log `8a-2.2-server.log`); session-core `Tests  33 passed (33)` (log `8a-2.2-session-core.log`); storage first `1 failed | 132 passed`: the deferred "8 contending" test (`expected [ 'repetition 4: 1/8 exhausted' ] to deeply equal []`; recurrence recorded, log `8a-2.2-storage.log`), rerun `Tests  133 passed (133)` (log `8a-2.2-storage2.log`); web `Tests  1685 passed (1685)` (with 6.1's commit; log `8a-2.2-web.log`); `npm run typecheck` exit 0 (log `8a-2.2-typecheck.log`).
+
+## 3. The lease store (D2, D3, D4, D5)
+
+- [x] 3.1 Test first. Rewrite `server/src/test/session/leaseStore.int.test.ts` against `catalog.session_leases` (D6 categories 1 and 4), adding a user-caller option to `boundCore`. It covers:
+  - claim on a free lease;
+  - the same user and client claim again (refreshed);
+  - another client while alive → false, no write, no revision change;
+  - same client, another user while alive → false;
+  - takeover after expiry;
+  - a blank or NUL client id: claim → false, heartbeat → false, release → no-op, nothing bound or stored;
+  - heartbeat by the holder → true and re-armed; by another user or client → false; after expiry (not freed) → false;
+  - release only by the same user and client;
+  - status: alive from `expires_at_ms`, age from `heartbeat_at_ms`, an expired row reports not alive, and the holder id is real only for the holding user (or system/system) and `"another-client"` otherwise;
+  - `expireIfStale`: deletes only expired rows, re-arms at the stored minimum, and a second run is a no-op.
+  In `server/src/test/session/revision.int.test.ts`, remove the heartbeat from the +1 list (D6 category 2) and add: claim +1, heartbeat 0, refused claim 0, foreign release 0, release +1, expiry +1. Verify: red, recorded.
+  - Evidence: `server/src/test/session/leaseStore.int.test.ts` rewritten on `catalog.session_leases` (12 cases: free claim, refresh, other client refused with no write/revision change, same client other user refused, takeover after expiry, blank/NUL ids, strict heartbeat, release by same user+client only, status alive/age sources, D4 masking incl. system/system, `expireIfStale` delete/re-arm at stored min/second-run no-op), `boundCore` gains a `caller` option and `as(caller)`; `revision.int.test.ts` (b) drops the heartbeat and adds (h) claim +1, heartbeat 0, refused claim 0, foreign release 0, release +1, expiry +1. `cd server && npx vitest run --project integration src/test/session/leaseStore.int.test.ts src/test/session/revision.int.test.ts` -> `Tests  12 failed | 7 passed (19)` (e.g. `expected [] to deeply equal [ { kind: 'recording', …(4) } ]`, `CatalogInvalidTextError: Text must not contain NUL characters.`, `heartbeat: expected 2 to be 1`) (log `8a-3.1-red.log`); after 3.2 -> `Tests  19 passed (19)` (log `8a-3.1-green.log`). Consistency-read follow-up: the catalog-database scenario "The server no longer touches the lease keys" in `leaseStore.int.test.ts` (seeds `lease_holder` and `lease_seen_ms` meta rows, then claim, heartbeat and release through a registry hub `.as(userCaller(a))`; both meta rows unchanged, no new `lease%` meta row, the lease table empty). Green first, because 3.2 already stopped writing the keys: `npx vitest run --project integration src/test/session/leaseStore.int.test.ts` → `Tests  12 passed (12)` (log `8a-fix-3.1-first.log`). Can fail: a heartbeat that also writes `metaSet('lease_seen_ms', …)` fails it (`expected [ { key: 'lease_holder', …(1) }, …(1) ] to deeply equal [ … ]`) (log `8a-fix-mutation.log`); restored, `git diff packages/session-core/src/leaseStore.ts` empty; green with 5.1's file → `Tests  27 passed (27)` (log `8a-fix-server-green.log`).
+- [x] 3.2 Add `SessionCore.heartbeatLeaseUncounted` and `SessionCore.callerUserId`, and rewrite `packages/session-core/src/leaseStore.ts` on the table as D3 and D4 give it, with a `LeaseKind` type and a TTL map. Update `retry.int.test.ts:33-40`, `SessionHub.alarm.int.test.ts:100-110` and `isolation.int.test.ts`'s `TABLES` (D6 categories 1, 5 and 6). Verify: 3.1 green; the full suites are green; `grep -rn "lease_holder\|lease_seen_ms" packages server/src --include=*.ts | grep -v test` prints nothing.
+  - Evidence: `packages/session-core/src/leaseStore.ts` rewritten per D3/D4 (`LeaseKind`, `TTL_MS`, `LEASE_STALE_MS` kept, client-id guard incl. NUL, conditional-upsert claim via `db.run` with no `RETURNING`, strict heartbeat, release, `expireIfStale` all kinds + re-arm at `MIN(expires_at_ms)`, status masked as `another-client`); `SessionCore.heartbeatLeaseUncounted` (raw handle) and `SessionCore.callerUserId`; `forSnapshot(t, caller)` so reads know the caller (`SessionHub.ts` passes it). Tests per D6: `retry.int.test.ts` reads `session_leases` (cat. 1), `SessionHub.alarm.int.test.ts` raw `UPDATE session_leases SET expires_at_ms` (cat. 5), `isolation.int.test.ts` `TABLES` + `session_leases` (cat. 6); no cat. 7 change was needed. 3.1 green. Full suites: server `Test Files  128 passed | 3 skipped (131)`, `Tests  1580 passed | 4 skipped (1584)` (log `8a-3.2-server.log`); session-core `Tests  33 passed (33)`; storage `Tests  133 passed (133)` (no "8 contending" recurrence); web `Tests  1685 passed (1685)`; `npm run typecheck` exit 0 (logs `8a-3.2-<session-core|storage|web|typecheck>.log`). The grep prints one line, `server/src/routers/events.ts:154: audio_recording_lease_holder_id: lease.holder_client_id,` (the frozen status field, a substring match); `grep -rn "'lease_holder'\|lease_seen_ms" … | grep -v test` prints nothing (log `8a-3.2-grep.log`).
+
+## 4. Cross-process (D5, D6)
+
+- [x] 4.1 Test first, in a new `server/src/test/session/leaseRace.int.test.ts`: two registries over two adapters with a shared fake time. Cases (a) to (e) are in design D6. Verify: run it on the 3.2 code. Each case is expected green, because the statements decide outcomes on their own. Record each case, and prove the test can fail: temporarily weaken the claim's `WHERE` (for example drop the expiry check) and show case (a) or (b) failing, then restore. Run it three times in a row and record the round counts.
+  - Evidence: `server/src/test/session/leaseRace.int.test.ts` on code 3e9e6533, cases (a)-(e) green; 3 consecutive runs each `Tests  5 passed (5)` (a: 200 rounds, wins a/b 104/96, 93/107, 100/100, 7.9/7.7/7.8 s; b: 200 unordered rounds + committed-winner and rolled-back-winner interleavings, 6.6/6.8/6.8 s; c 0.44/0.41/0.46 s; d 0.49/0.54/0.50 s; e: 5 min fake time, 37 heartbeats, B's alarm ran 9 times, 1.2/1.3/1.3 s) (logs `8a-4.1-run1..3.log`). Can fail: claim WHERE weakened to `(session_leases.expires_at_ms <= ? OR true)` -> `5 tests | 3 failed`, (a) `AssertionError: expected [ 'round 0: a=true b=true', …(199) ] to deeply equal []`, (b) and (c) also failed (log `8a-4.1-mutation.log`); restored, `git diff packages/session-core/src/leaseStore.ts` empty. Full server suites: `Test Files  129 passed | 3 skipped (132)`, `Tests  1593 passed | 4 skipped (1597)` (log `8a-4.1-server.log`).
+
+## 5. Routes (D3, D4)
+
+- [x] 5.1 Test first, in `server/src/test/SessionHub.int.test.ts`, with a second user who has access to the session:
+  - B claims → 409;
+  - B heartbeats with A's client id → `{ok:false}`;
+  - B releases with A's client id → `{ok:true}` and A's status still shows A alive;
+  - B's status shows `another-client`;
+  - A claims with another client → 409;
+  - after A releases, B claims → 200;
+  - a whitespace-only and a NUL client id give 409 / `{ok:false}` / `{ok:true}` and never 500;
+  - the status field names and types are unchanged.
+  Add `GET /api/companion/state` showing `is_recording` true while A holds the lease. Update other status assertions per D6 category 7. Verify: red where the behaviour is new, recorded; then green with no route code change; `apiResponseFixtures.int.test.ts` and `web/src/apiResponseShapes.repo.test.ts` pass unchanged.
+  - Evidence: `server/src/test/SessionHub.int.test.ts` describe "recording lease user binding and holder masking (session-leases D3, D4)": B (an admin of the session's studio, `seedUser` + `loginCookie`) claims with A's and its own id → 409; B heartbeats with A's id → `{ok:false}`; B releases with A's id → `{ok:true}` and A's status still `tab-a` alive; B's status `another-client`; A claims with another client → 409; after A releases, B claims → 200 (A then sees `another-client`); whitespace-only, NUL, padded NUL and inner-NUL ids (JSON `"\u0000"`) → 409 / `{ok:false}` / `{ok:true}`, never 500, lease left free; status keys identical free vs held (A and B) with holder string / alive boolean / age_sec number; `GET /api/companion/state` (`COMPANION_BEARER`) `is_recording` false → true while A holds → false after release. All green first; behaviour already implemented in 3.2 (no red). `cd server && npx vitest run --project integration src/test/SessionHub.int.test.ts` -> `Tests  14 passed (14)` (log `8a-5.1-first.log`). No other status assertion needed D6 category 7 (the only one reads a free lease, `null`). `apiResponseFixtures.int.test.ts` -> `Tests  43 passed (43)` (log `8a-5.1-fixtures.log`); `web/src/apiResponseShapes.repo.test.ts` -> `Tests  48 passed (48)` (log `8a-5.1-webshapes.log`); `git diff supabase-migration...HEAD -- server/src/routers ':!*.test.ts'` empty (log `8a-5.1-routediff.log`). Consistency-read follow-up: the api-contract-freeze scenario "A heartbeat leaves the revision unchanged" over the routes (claim, `GET /status`, three heartbeats each `{ok:true}`, `GET /status`; `events_stream_revision` equal). Green first, as the 3.2 heartbeat is uncounted: `npx vitest run --project integration src/test/SessionHub.int.test.ts` → `Tests  15 passed (15)` (log `8a-fix-5.1-first.log`). Can fail: the same counted `metaSet` mutation fails it (`expected 2 to be 1`) (log `8a-fix-mutation.log`); restored; green → `Tests  27 passed (27)` with 3.1's file (log `8a-fix-server-green.log`).
+
+## 6. The recorder re-claims (D7)
+
+- [x] 6.1 Test first, in the `AudioRecorder` tests:
+  - a heartbeat answering `{ok:false}` during capture sends one re-claim with the same client id, and capture continues;
+  - a re-claim answering 409 shows one warning toast; later ticks send claims and no heartbeats; repeated 409s show no second toast;
+  - a later successful claim returns to heartbeats (and a new loss warns again);
+  - at most one claim or heartbeat is in flight; a tick skips while one is pending;
+  - stopping while a re-claim is in flight sends the release only after the claim settles, and the lease ends free;
+  - a claim that succeeds after its take stopped is released at once;
+  - a successful heartbeat sends no claim.
+  Red, then `web/src/pages/index/components/AudioRecorder.tsx`. Verify: green; `cd web && npx vitest run` is green; typecheck and biome are clean.
+  - Evidence: red `npx vitest run src/pages/index/components/AudioRecorder` → "Tests  6 failed | 27 passed (33)" (e.g. "expected "vi.fn()" to be called 2 times, but got 1 times"); green → "Tests  36 passed (36)"; `cd web && npx vitest run` → "Test Files  133 passed (133) / Tests  1685 passed (1685)"; `npx tsc --noEmit` exit 0; `npx biome check web/src` → "Checked 333 files … No fixes applied." Note: the recorded red ran 33 tests and the green 36, so 3 of the original 6.1 tests were added after that red and have no recorded red of their own. Consistency-read follow-up (lease requests follow the take's session; the final release waits only for a claim): the lease hooks take `sessionId` in their variables (`AudioLeaseVars`), and every claim, heartbeat, re-claim, late release, final release and `pagehide` beacon of a take goes to `take.sessionId`; `finalizeStop` awaits `take.claimInFlight` only, not a heartbeat. 4 new tests (a take started on sess-A with the prop switched to sess-B: heartbeats, re-claim and final release all `{ sessionId: 'sess-A', … }`, nothing to sess-B; a late release goes to sess-A; the `pagehide` beacon goes to `/sessions/sess-A/…/release`; a heartbeat hanging at stop does not delay the release and its late `{ok:false}` sends no claim) and 3 assertions updated to carry `sessionId` (D6 category 8). Red → `Tests  4 failed | 36 passed (40)` (`expected { Object (client_id) } to deeply equal { sessionId: 'sess-A', …(1) }`, `expected '/api/sessions/sess-B/audio-recording-…' to contain '/sessions/sess-A/audio-recording-leas…'`, `expected "vi.fn()" to be called 1 times, but got 0 times`) (log `8a-fix-6.1-red.log`); green → `Tests  40 passed (40)` (log `8a-fix-6.1-green.log`); `cd web && npx vitest run` → `Test Files  133 passed (133)`, `Tests  1689 passed (1689)` (log `8a-fix-web.log`); `npx tsc --noEmit` exit 0; `npx biome check web/src` → `Checked 333 files … No fixes applied.`
+
+## 7. Docs, measurement and checks
+
+- [x] 7.1 README: hub notes (~90, ~487-490), the revision list (~879), and a lease paragraph (user binding, masked holder id, strict heartbeat and re-claim) next to the row-versions block. ADR 0021: under slice 8, add 8a's owner decisions 1-8, its mechanism, the 8b split, and the slice 9 follow-ups (sweeper, cross-process `lease.changed`, Realtime exposure of `holder_user_id`). Verify: `grep -n "session_leases" README.md docs/decisions/0021-migrate-to-self-hosted-supabase.md` shows both.
+  - Evidence: commit 03e49c4e: README hub notes (session_leases row + stored expiry, liveness never depends on the timer), revision list (lease claims/releases/expiries count, heartbeats do not) and a new "The recording lease (session-leases, ADR 0021 slice 8a)" paragraph; ADR 0021 item 8 gains the 8a/8b split, owner decisions 1-8, the mechanism and the slice 9 follow-ups. `grep -c session_leases README.md docs/decisions/0021-migrate-to-self-hosted-supabase.md` -> 2 / 2
+- [x] 7.2 Measure on the dev stack the median claim, heartbeat and status request time, before (base) and after, 500 calls each. Record only; there is no stop rule.
+  - Evidence: dev stack, `spike/benchLease.mts` (500 calls x 3 runs, hub calls as a user), before = base code (log `8a-7.2-before-bench.log`), after = 8a code with migration 20261011000000 applied via `make dev-migrate` (log `8a-7.2-after-bench.log`): median claim 12645.1 -> 11976.8 us, heartbeat 11968.5 -> 11129.5 us, status 1311.3 -> 807.1 us; no regression, slightly faster (the heartbeat no longer advances the revision; status reads one row). Recorded only, no stop rule. `select count(*) from catalog.session_leases` -> 0 after the run (bench cleaned up).
+- [x] 7.3 Live check on the dev stack (owner pass):
+  1. Record in one tab.
+  2. A second user gets the 409, and their status shows `another-client`.
+  3. Stop recording; `catalog.session_leases` is empty.
+  4. Restart the app container for more than 40 s mid-take; the recorder re-claims.
+  5. `catalog.sessions.revision` does not move on heartbeats.
+  - Evidence: owner live check on the dev stack (2026-10-06, migration 20261011000000 applied via `make dev-migrate`, app restarted): second user gets "already recording" and sees `another-client`, the table empties on stop, the recorder re-claims after an app restart longer than 40 s, and heartbeats leave `catalog.sessions.revision` unchanged -> owner: "looks good"
+- [x] 7.4 Checks:
+  - the full suites;
+  - `npm run typecheck` and biome;
+  - `openspec validate --all --strict`;
+  - the tier-2 consistency read;
+  - `GITHUB_BASE_REF=supabase-migration scripts/check-change.sh --stage hook` and `--stage pr`, unless the owner waives it during this change.
+  - Evidence: full suites green per task (server 1593+ passed, web 1689 passed, session-core 33, storage 133); `npm run typecheck` exit 0; biome clean on every touched file; `openspec validate --all --strict` passes. Tier-2 consistency read: no critical; its major (lease requests must follow the take's session) and minors fixed in 8e28e7a9. `GITHUB_BASE_REF=supabase-migration scripts/check-change.sh --stage pr` after merging #74 (log `8a-pr2.log`): PASS openspec, yaml, workflows, skills-sync, guide-size, change (tier 2), risk-floor, approval, panel (14 findings, no open criticals), evidence, artifacts-first, tests-with-code; FAIL tasks (7.3/7.4, ticked here); FAIL commands: one flake in `catalogContention.pg.test.ts` "two owners of different teams both commit through the retry loop" (`expected 5 to be less than 5`), untouched by this branch, re-run alone 3x -> `Tests 1 passed (1)` each (same deferred catalog-contention family; an earlier run hit the storage "8 contending" flake); FAIL audit: pre-existing high advisory GHSA-6qxp-vccf-f47h in `@modelcontextprotocol/sdk` 1.29.0 (via packages/ai-runtime), unrelated to this change, left for a separate dependency bump.

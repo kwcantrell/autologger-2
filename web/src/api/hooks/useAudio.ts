@@ -26,33 +26,43 @@ export function useAudioSegments(sessionId: string | null) {
   });
 }
 
-export function useClaimAudioLease(sessionId: string) {
+/**
+ * Lease request variables: the session travels with each request, not with
+ * the hook, because the recorder is not remounted per session and every lease
+ * request of a take must go to the take's session (session-leases D7). Only
+ * `client_id` is sent as the body.
+ */
+export type AudioLeaseVars = AudioRecordingLeaseBody & { sessionId: string };
+
+export function useClaimAudioLease() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: AudioRecordingLeaseBody) =>
+    mutationFn: ({ sessionId, ...body }: AudioLeaseVars) =>
       apiFetch<OkResponse>(`sessions/${sessionId}/audio-recording-lease`, {
         method: 'POST',
         body: JSON.stringify(body),
       }),
     // Optimistically reflect the lease in the status cache so consumers (e.g.
     // recovery-stop warning) see lease_alive synchronously, ahead of the next poll.
-    onSuccess: (_data, body) => {
-      qc.setQueryData<SessionStatus | undefined>(sessionStatusKeys.bySession(sessionId), (prev) =>
-        prev
-          ? {
-              ...prev,
-              audio_recording_lease_alive: true,
-              audio_recording_lease_holder_id: body.client_id,
-            }
-          : prev,
+    onSuccess: (_data, vars) => {
+      qc.setQueryData<SessionStatus | undefined>(
+        sessionStatusKeys.bySession(vars.sessionId),
+        (prev) =>
+          prev
+            ? {
+                ...prev,
+                audio_recording_lease_alive: true,
+                audio_recording_lease_holder_id: vars.client_id,
+              }
+            : prev,
       );
     },
   });
 }
 
-export function useHeartbeatAudioLease(sessionId: string) {
+export function useHeartbeatAudioLease() {
   return useMutation({
-    mutationFn: (body: AudioRecordingLeaseBody) =>
+    mutationFn: ({ sessionId, ...body }: AudioLeaseVars) =>
       apiFetch<OkResponse>(`sessions/${sessionId}/audio-recording-lease/heartbeat`, {
         method: 'POST',
         body: JSON.stringify(body),
@@ -60,9 +70,9 @@ export function useHeartbeatAudioLease(sessionId: string) {
   });
 }
 
-export function useReleaseAudioLease(sessionId: string) {
+export function useReleaseAudioLease() {
   return useMutation({
-    mutationFn: (body: AudioRecordingLeaseBody) =>
+    mutationFn: ({ sessionId, ...body }: AudioLeaseVars) =>
       apiFetch<OkResponse>(`sessions/${sessionId}/audio-recording-lease/release`, {
         method: 'POST',
         body: JSON.stringify(body),

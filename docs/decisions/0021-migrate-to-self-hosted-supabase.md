@@ -1001,7 +1001,44 @@ Slice order:
      response-shape guard counts typed error bodies as sites.
 
    The server is unchanged.
-8. Session leases.
+8. Session leases. Split (owner, 2026-10-06) into 8a `session-leases` (the recording lease) and 8b
+   (the auto-generate kinds: the shared AI turn slot, transcript generation, YouTube import), each
+   with its own proposal, panel and approval.
+
+   **8a `session-leases`** (owner decisions, 2026-10-06):
+   1. split into 8a and 8b;
+   2. **ready, not on:** leases are correct across processes, but production stays single-process;
+   3. **the lease belongs to a user and a client:** heartbeat and release act only for both; anyone
+      else's heartbeat answers `{ok:false}`, and anyone else's release does nothing;
+   4. **only state changes advance the revision:** claim, release and expiry do, a heartbeat does
+      not;
+   5. no global sweeper (slice 9);
+   6. a reviewed system task may hold a lease (`holder_user_id` null);
+   7. (after the panel) **only the holder sees its tab id:** others get `another-client`, which
+      closes a squatting path;
+   8. (after the panel) **the recorder re-claims a refused heartbeat** and warns once if someone
+      else took the lease.
+
+   **8a's mechanism.**
+   - **The table.** Migration `20261011000000_session_leases.sql` adds `catalog.session_leases`
+     (`session_id`, `kind` checked to `'recording'`, `holder_client_id`, `holder_user_id`,
+     `heartbeat_at_ms`, `expires_at_ms`), primary key `(session_id, kind)`.
+     - Row-level security is system-all plus user policies on accessible shows that write only the
+       user's own id.
+     - The update policy's USING is the access rule alone, because a holder-scoped USING turns an
+       expired-lease takeover into `42501`.
+     - So RLS does not tie a live lease to its holder; the server's statements are the only writers
+       and enforce it.
+   - **The statements.**
+     - A claim is one conditional upsert, so two processes get exactly one winner.
+     - A heartbeat is a strict conditional update that does not count towards the revision.
+     - Liveness is always the stored expiry against the Clock port. Any process's alarm, open, or
+       takeover claim frees an expired lease once.
+   - **The old keys.** The `lease_holder` / `lease_seen_ms` meta rows are left for a later cleanup.
+   - **Follow-ups for slice 9:**
+     - a global expired-lease sweeper;
+     - cross-process `lease.changed` fan-out;
+     - Realtime exposure of `holder_user_id` and of the per-heartbeat UPDATE.
 9. Realtime replaces the WebSocket protocol.
 10. Blobs to Supabase Storage.
 11. The import script, parity check, cutover runbook and rollback plan. It must not import users,

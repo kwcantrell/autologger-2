@@ -6,8 +6,8 @@
 
 import { UI_SNAPSHOT_LABEL_KEY } from '@autologger/domain';
 import type { EventStore } from '@autologger/session-core/eventStore';
+import { LeaseStore } from '@autologger/session-core/leaseStore';
 import { afterEach, describe, expect, it } from 'vitest';
-import { deadlock, type SlowStorage, slowStorage } from './slowStorage';
 import {
   catalogRoot,
   createSessionRow,
@@ -17,6 +17,7 @@ import {
   testRegistry,
   testStorage,
 } from './sessionRows';
+import { deadlock, type SlowStorage, slowStorage } from './slowStorage';
 
 const CTX = { frameRate: 24, startOffsetFrames: 0 };
 const T = '2026-10-10T00:00:00.000Z';
@@ -75,7 +76,7 @@ describe('the session revision (design D2)', () => {
     ]);
   });
 
-  it('(b) a word patch, a topic patch, a dashboard save, a waveform set and a lease heartbeat each advance it by one, with no event.changed', async () => {
+  it('(b) a word patch, a topic patch, a dashboard save, and a waveform set each advance it by one, with no event.changed', async () => {
     const id = await createSessionRow();
     const { hub, eventFrames } = await hubWithFrames(id);
     const word = await hub.insertTranscriptWord({ session_time: '', speaker: 'a', word: 'x' });
@@ -92,14 +93,28 @@ describe('the session revision (design D2)', () => {
       endedAtUtc: T,
       recordingOrdinal: null,
     });
-    expect(await hub.claimLease('client-a')).toBe(true);
     let r = await revision(id);
     const steps: Array<[string, () => Promise<unknown>]> = [
       ['word patch', () => hub.updateTranscriptWord(word.id, { word: 'y' })],
       ['topic patch', () => hub.updateTopic(topic.id, { summary: 't' })],
-      ['dashboard save', () => hub.saveDashboard({ id: 'primary', config: DASHBOARD, createdBy: null, createdByTurnId: null })],
-      ['waveform set', () => hub.setAudioSegmentWaveform({ segmentId: seg.id as string, peaks: new Array(8).fill(0.5) })],
-      ['lease heartbeat', () => hub.heartbeatLease('client-a')],
+      [
+        'dashboard save',
+        () =>
+          hub.saveDashboard({
+            id: 'primary',
+            config: DASHBOARD,
+            createdBy: null,
+            createdByTurnId: null,
+          }),
+      ],
+      [
+        'waveform set',
+        () =>
+          hub.setAudioSegmentWaveform({
+            segmentId: seg.id as string,
+            peaks: new Array(8).fill(0.5),
+          }),
+      ],
     ];
     for (const [name, step] of steps) {
       await step();
@@ -191,8 +206,34 @@ describe('the session revision (design D2)', () => {
     await hub.addEvent(event('one'));
     expect(await revision(id)).toBe(1);
     expect((await hub.statusLive(CTX)).events_stream_revision).toBe(1);
-    expect(await rawRows(storage, 'session_meta', { where: "key = 'events_stream_revision'" })).toEqual([
-      { key: 'events_stream_revision', value: '999' },
-    ]);
+    expect(
+      await rawRows(storage, 'session_meta', { where: "key = 'events_stream_revision'" }),
+    ).toEqual([{ key: 'events_stream_revision', value: '999' }]);
+  });
+
+  it('(h) the lease: a claim, a release and an expiry advance it by one; a heartbeat, a refused claim and a foreign release leave it (session-leases D5)', async () => {
+    const id = await createSessionRow();
+    const time = { now: 1_750_000_000_000 };
+    const hub = await openTestHub(id, testStorage(id), { now: () => time.now });
+    closers.push(() => hub.close());
+    let r = await revision(id);
+    const steps: Array<[string, () => Promise<unknown>, number]> = [
+      ['claim', () => hub.claimLease('client-a'), 1],
+      ['heartbeat', () => hub.heartbeatLease('client-a'), 0],
+      ['refused claim', () => hub.claimLease('client-b'), 0],
+      ['foreign release', () => hub.releaseLease('client-b'), 0],
+      ['release', () => hub.releaseLease('client-a'), 1],
+      ['claim again', () => hub.claimLease('client-a'), 1],
+    ];
+    for (const [name, step, by] of steps) {
+      time.now += 1_000;
+      await step();
+      expect(await revision(id), name).toBe(r + by);
+      r += by;
+    }
+    time.now += LeaseStore.LEASE_STALE_MS;
+    type LeaseHub = { inTxn<R>(fn: (t: { lease: LeaseStore }) => Promise<R>): Promise<R> };
+    await (hub as unknown as LeaseHub).inTxn((s) => s.lease.expireIfStale());
+    expect(await revision(id), 'expiry').toBe(r + 1);
   });
 });
