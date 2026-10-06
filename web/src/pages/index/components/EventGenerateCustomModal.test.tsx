@@ -78,7 +78,16 @@ describe('EventGenerateCustomModal', () => {
     // One checkbox per distinct (category, label) — not one per stored option.
     expect(screen.getAllByRole('checkbox')).toHaveLength(2);
 
-    fireEvent.click(screen.getByRole('checkbox', { name: /Cam A/ }));
+    // shadcn-port-modals D5: Radix checkboxes (aria-checked), named by their labels; Generate
+    // is the primary action in the dialog-actions row and waits for a selection.
+    const camA = screen.getByRole('checkbox', { name: /Cam A/ });
+    expect(camA.getAttribute('aria-checked')).toBe('false');
+    const generate = screen.getByRole('button', { name: 'Generate' }) as HTMLButtonElement;
+    expect(generate.disabled).toBe(true);
+    expect(generate.getAttribute('data-variant')).toBe('default');
+    expect(generate.closest('[data-slot="dialog-actions"]')).not.toBeNull();
+    fireEvent.click(camA);
+    expect(camA.getAttribute('aria-checked')).toBe('true');
     fireEvent.click(screen.getByRole('button', { name: 'Generate' }));
     expect(onSubmit).toHaveBeenCalledExactlyOnceWith([
       { category_id: 'cams', option_label: 'Cam A' },
@@ -132,6 +141,9 @@ describe('EventGenerateCustomModal', () => {
       screen.queryByText('Instructions will load on their own once you’re back online.'),
     ).toBeNull();
 
+    expect(screen.getByRole('button', { name: 'Retry' }).getAttribute('data-variant')).toBe(
+      'outline',
+    );
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     expect(refetch).toHaveBeenCalledTimes(1);
   });

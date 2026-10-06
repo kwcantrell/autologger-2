@@ -7,9 +7,12 @@ import {
   AlertDialogDescription,
   AlertDialogTitle,
 } from '@/shared/components/ui/alert-dialog';
-import { Button } from '@/shared/components/ui/button';
+import { Button, TOUCH_TARGET } from '@/shared/components/ui/button';
 import { useDialogMode } from './breakpoints';
-import { Dialog } from './Dialog';
+import { Dialog, DialogActions } from './Dialog';
+
+// The confirm/prompt lead text (shadcn-port-modals D7): the former `.modal-lead` values.
+const LEAD = 'm-0 mb-4 text-[0.82rem] leading-[1.45] text-legacy-muted';
 
 /**
  * Themed replacement for `window.confirm` (ui-refresh; shadcn-shared-wrappers D3): an alert
@@ -66,15 +69,20 @@ export function ConfirmDialog({
   if (isMobile) {
     return (
       <Dialog open={open} onOpenChange={(o) => !o && cancelOnce()} title={title}>
-        <p className="modal-lead">{message}</p>
-        <div className="modal-actions">
-          <Button type="button" variant="outline" onClick={cancelOnce}>
+        <p className={LEAD}>{message}</p>
+        <DialogActions>
+          <Button type="button" variant="outline" className={TOUCH_TARGET} onClick={cancelOnce}>
             {cancelLabel}
           </Button>
-          <Button type="button" variant={actionVariant} onClick={confirmOnce}>
+          <Button
+            type="button"
+            variant={actionVariant}
+            className={TOUCH_TARGET}
+            onClick={confirmOnce}
+          >
             {confirmLabel}
           </Button>
-        </div>
+        </DialogActions>
       </Dialog>
     );
   }
@@ -84,14 +92,16 @@ export function ConfirmDialog({
       <AlertDialogContent onOverlayClick={cancelOnce}>
         <AlertDialogTitle>{title}</AlertDialogTitle>
         <AlertDialogDescription asChild>
-          <p className="modal-lead">{message}</p>
+          <p className={LEAD}>{message}</p>
         </AlertDialogDescription>
-        <div className="modal-actions">
-          <AlertDialogCancel onClick={cancelOnce}>{cancelLabel}</AlertDialogCancel>
-          <AlertDialogAction variant={actionVariant} onClick={confirmOnce}>
+        <DialogActions>
+          <AlertDialogCancel className={TOUCH_TARGET} onClick={cancelOnce}>
+            {cancelLabel}
+          </AlertDialogCancel>
+          <AlertDialogAction variant={actionVariant} className={TOUCH_TARGET} onClick={confirmOnce}>
             {confirmLabel}
           </AlertDialogAction>
-        </div>
+        </DialogActions>
       </AlertDialogContent>
     </AlertDialog>
   );

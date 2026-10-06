@@ -220,3 +220,21 @@ describe('ConfirmDialog makes exactly one decision per prompt', () => {
     expect(cancels).toBe(1);
   });
 });
+
+// shadcn-port-modals D7: both paths put their actions in the shared dialog-actions row, with the
+// 44px phone floor.
+describe('ConfirmDialog actions row', () => {
+  it.each([
+    false,
+    true,
+  ])('mobile=%s: Cancel and Delete sit in [data-slot=dialog-actions]', async (mobile) => {
+    setMobile(mobile);
+    renderStrict(<DangerProbe onResult={() => {}} />);
+    fireEvent.click(screen.getByText('open'));
+    const del = await screen.findByRole('button', { name: 'Delete' });
+    const row = del.closest('[data-slot="dialog-actions"]') as HTMLElement;
+    expect(row).not.toBeNull();
+    expect(row.querySelectorAll('button')).toHaveLength(2);
+    expect(del.className).toContain('max-md:min-h-11');
+  });
+});

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { API_ROOT } from '../../../api/client';
-import { Dialog } from '../../../shared/ui/Dialog';
+import { Button, TOUCH_TARGET } from '../../../shared/components/ui/button';
+import { Dialog, DialogActions } from '../../../shared/ui/Dialog';
 
 interface Props {
   sessionId: string;
@@ -58,29 +59,23 @@ export function TranscribeModal({ sessionId, onClose }: Props) {
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()} title="Transcribe audio">
       {status === 'loading' && (
-        <p className="modal-transcribe-status my-[1em]">
-          Transcribing… this may take a few minutes.
-        </p>
+        <p className="my-[1em]">Transcribing… this may take a few minutes.</p>
       )}
       {status === 'done' && csvUrl && (
-        <div className="tool-row export-row modal-export-actions">
-          <a
-            className="btn primary"
-            href={csvUrl}
-            download={`transcription_${sessionId.slice(0, 8)}.csv`}
-          >
-            Download CSV
-          </a>
+        <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-3">
+          <Button className={TOUCH_TARGET} asChild>
+            <a href={csvUrl} download={`transcription_${sessionId.slice(0, 8)}.csv`}>
+              Download CSV
+            </a>
+          </Button>
         </div>
       )}
-      {status === 'error' && (
-        <p className="modal-transcribe-error my-[1em]">{errorMsg ?? 'Transcription failed.'}</p>
-      )}
-      <div className="modal-actions">
-        <button type="button" className="btn" onClick={onClose}>
+      {status === 'error' && <p className="my-[1em]">{errorMsg ?? 'Transcription failed.'}</p>}
+      <DialogActions>
+        <Button variant="outline" className={TOUCH_TARGET} onClick={onClose}>
           {status === 'loading' ? 'Cancel' : 'Close'}
-        </button>
-      </div>
+        </Button>
+      </DialogActions>
     </Dialog>
   );
 }

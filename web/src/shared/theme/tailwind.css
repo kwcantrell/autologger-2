@@ -827,10 +827,9 @@
  *     class, not AppShell's local.
  *   - `.v4-log-bottom` is FeedShell-rendered (converted Task 9) — SessionWorkspace
  *     only sizes it structurally; those overrides live here so all emitters resolve.
- *   - The `v5-panel-head` / `-head__main` / `-head__actions` / `-eyebrow` /
- *     `v5-panel-main-title` groups are MULTI-EMITTER (Timeline + SessionWorkspace +
- *     FeedShell all emit them — 3 consumers each), so a single components-layer block
- *     resolves every emitter rather than triplicating utilities across three JSX trees.
+ *   - `v5-panel-head__main` and `v5-panel-main-title` stay as one components-layer
+ *     block (FeedShell / SessionWorkspace emitters); the unused `v5-panel-head`,
+ *     `__actions`, `--controls` and `-eyebrow` rules were deleted (shadcn-port-modals).
  *   - `body[data-v4-transport]` transport-state rules are attribute-ancestor selectors
  *     over many descendants; converted AS-WRITTEN (parity note below).
  *   - `.v3SessionLoading .autologger-loading-video*` targets template-string DOM
@@ -883,16 +882,6 @@
 /* --- Panel heads + eyebrow + main-title (MULTI-EMITTER: Timeline + SessionWorkspace + FeedShell) ---
  * Scoped to #v4-log-session exactly as the deleted rules were. */
 @layer components {
-  #v4-log-session .v5-panel-head {
-    display: flex;
-    flex-direction: row;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 0.5rem 1rem;
-    width: 100%;
-    box-sizing: border-box;
-    margin-bottom: 0.1rem;
-  }
   #v4-log-session .v5-panel-head__main {
     display: flex;
     flex-direction: column;
@@ -900,48 +889,6 @@
     gap: var(--v5-panel-head-main-gap);
     min-width: 0;
     flex: 1 1 auto;
-  }
-  #v4-log-session .v5-panel-head__actions {
-    flex: 0 0 auto;
-    align-self: flex-start;
-    display: flex;
-    flex-direction: row;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: flex-end;
-    gap: 0.35rem;
-  }
-  #v4-log-session .v5-panel-head--controls {
-    width: 100%;
-    flex: 0 0 auto;
-  }
-
-  /* Panel eyebrows straddle the glass top border. */
-  #v4-log-session .v5-session-timeline-panel .v5-panel-eyebrow,
-  #v4-log-session .v5-session-controls-panel .v5-panel-eyebrow,
-  #v4-log-session .v4-log-sheet.v5-event-feed .v5-panel-eyebrow {
-    position: absolute;
-    left: var(--v5-panel-padding);
-    top: 0;
-    transform: translateY(-50%);
-    z-index: 2;
-    margin: 0;
-    width: max-content;
-    max-width: min(calc(100% - 2 * var(--v5-panel-padding)), 22rem);
-    display: block;
-    line-height: 1;
-    padding: 0 0 0 0.28rem;
-    border-radius: 0.125rem;
-    box-sizing: border-box;
-    background: linear-gradient(180deg, rgba(22, 31, 54, 0.98), rgba(22, 31, 54, 0.98));
-    font-family: 'Inter', var(--font-poppins, ui-sans-serif), system-ui, sans-serif;
-    font-size: 0.75rem;
-    font-weight: 500;
-    letter-spacing: 0.28em;
-    text-transform: uppercase;
-    /* ui-refresh: was rgba(255,255,255,0.45) — measured exactly 4.5:1 with zero
-     * margin on the chip background. 0.62 clears AA comfortably in a dim room. */
-    color: rgba(229, 238, 252, 0.62);
   }
 
   /* Shared main-title base (FeedShell's --numeric size delta lives on its own JSX;
@@ -977,21 +924,6 @@
   }
 }
 
-/* --- Retired twin-panel capture / playback deck swap ---
- * Sole fused strip (`MaximizeLogStrip`) stays mounted for every transport state.
- * Rolling/recording swaps the scrubber lane for category buttons in React
- * (`stripLaneSlot`); do NOT hide `.v5-session-timeline-stack` on live-log.
- * Stale `__capture` / `__playback` element classes stay display:none if any
- * leftover DOM still emits them. */
-@layer components {
-  .v4-log-top__capture {
-    display: none;
-  }
-  .v4-log-top__playback {
-    display: none;
-  }
-}
-
 /* --- Loading-video contextual sizing (template-string DOM, loadingVideo.ts) ---
  * The `.autologger-loading-video` / `__media` nodes inside SessionWorkspace's
  * `#v3-session-loading` overlay come from a template string, so these contextual
@@ -1004,32 +936,6 @@
   .v3SessionLoading .autologger-loading-video__media {
     height: 4.5rem;
     max-width: min(50vw, 16rem);
-  }
-}
-
-/* --- `.btn` chrome inside the session (V5 recolor) ---
- * `.v4-log-session .btn` recolors chrome buttons rendered by many child components
- * (TransportControls, etc.), so it's a components-layer context rule, not inline
- * utilities on one JSX tree. `.btn` chrome itself now lives in the page-chrome
- * components block below (Task 11); this session recolor (specificity 0,1,1) still
- * out-specifies the base `.btn` (0,1,0) within the same components layer. */
-@layer components {
-  .v4-log-session .btn {
-    border-radius: var(--v5-radius-sm);
-    border: 1px solid var(--v5-border-strong);
-    background: rgba(255, 255, 255, 0.06);
-    color: rgba(255, 255, 255, 0.88);
-  }
-  .v4-log-session .btn:hover {
-    background: rgba(255, 255, 255, 0.1);
-  }
-  .v4-log-session .btn.primary {
-    border-color: rgba(56, 189, 248, 0.35);
-    background: rgba(56, 189, 248, 0.14);
-    color: var(--v5-primary);
-  }
-  .v4-log-session .btn.primary:hover {
-    background: rgba(56, 189, 248, 0.22);
   }
 }
 
@@ -1284,34 +1190,6 @@
     border-top: 1px solid var(--legacy-border);
   }
 
-  .modal-dropdown-actions {
-    display: flex;
-    flex-direction: column;
-    gap: 0.45rem;
-    margin-bottom: 0.75rem;
-  }
-
-  .modal-lead {
-    margin: 0 0 1rem;
-    font-size: 0.82rem;
-    line-height: 1.45;
-    color: var(--legacy-muted);
-  }
-
-  .modal-hint {
-    margin: 0 0 0.65rem;
-    font-size: 0.78rem;
-    line-height: 1.45;
-    color: var(--legacy-muted);
-  }
-
-  .modal-actions {
-    display: flex;
-    justify-content: flex-end;
-    gap: 0.6rem;
-    margin-top: 1.25rem;
-  }
-
   /* ui-refresh: form controls join the V5 vocabulary (dark glass field). The
    * `.profile-select` < `input[type=text]` specificity relationship below is
    * preserved — both carry the same look now, so cascade order is moot. */
@@ -1367,32 +1245,10 @@
     color: var(--legacy-muted);
   }
 
-  .num {
-    font: inherit;
-    color: var(--v5-text);
-    background: rgba(7, 11, 20, 0.6);
-    border: 1px solid var(--v5-border-strong);
-    border-radius: 0.6rem;
-    padding: 0.55rem 0.65rem;
-    width: 4.5rem;
-    margin-left: 0.35rem;
-  }
-
-  .num.wide {
-    width: 6rem;
-  }
-
   .mono,
   .sheet .mono {
     font-family: var(--font-mono);
     font-size: 0.85rem;
-  }
-
-  .actions {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 0.75rem;
   }
 
   /* The `.btn` compound family — plain rules, kept together in one layer.
@@ -1497,28 +1353,6 @@
     background: linear-gradient(165deg, rgba(255, 255, 255, 0.04), rgba(15, 23, 42, 0.45));
   }
 
-  .tool-row {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 0.75rem 1rem;
-  }
-
-  /* `!important` mirrors `.hidden` (base layer): this global chrome class name
-   * collides with Tailwind's core `.inline{display:inline}` utility in the higher
-   * `utilities` layer, which would otherwise flatten these flex labels. Kept as the
-   * canonical `.inline` chrome hook (NewSessionModal label chips still emit it). */
-  .inline {
-    display: inline-flex !important;
-    align-items: center;
-    font-size: 0.85rem;
-    color: var(--legacy-muted);
-  }
-
-  .export-row {
-    margin-top: 0.75rem;
-  }
-
   .footer {
     margin-top: 2rem;
     padding-top: 1rem;
@@ -1573,66 +1407,6 @@
     color: var(--legacy-muted);
     font-size: 0.8rem;
     word-break: break-all;
-  }
-
-  .new-session-form .field {
-    margin-bottom: 0.75rem;
-  }
-
-  .tool-row-session-opts {
-    align-items: flex-end;
-  }
-
-  .fps-field {
-    display: flex;
-    flex-direction: column;
-    gap: 0.35rem;
-    min-width: min(100%, 14rem);
-  }
-
-  .fps-field-label {
-    font-size: 0.8rem;
-    color: var(--legacy-muted);
-  }
-
-  .fps-select {
-    font: inherit;
-    color: var(--text);
-    background: var(--bg);
-    border: 1px solid var(--legacy-border);
-    border-radius: 8px;
-    padding: 0.5rem 0.65rem;
-    max-width: 100%;
-    cursor: pointer;
-  }
-
-  .fps-select:focus {
-    outline: 2px solid var(--accent-dim);
-    outline-offset: 1px;
-  }
-
-  .fps-custom-wrap {
-    margin-top: 0.15rem;
-  }
-
-  .fps-custom-label {
-    flex-wrap: wrap;
-    align-items: center;
-  }
-
-  .fps-custom-input {
-    min-width: 6rem;
-  }
-
-  .fps-hint {
-    font-size: 0.72rem;
-    color: var(--legacy-muted);
-    line-height: 1.3;
-    max-width: 18rem;
-  }
-
-  .modal-export-actions {
-    margin-top: 0.25rem;
   }
 
   /* Phone-first cutover aligned to the md breakpoint (≤767px = md - 1). */

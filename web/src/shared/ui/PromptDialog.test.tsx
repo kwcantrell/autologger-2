@@ -100,3 +100,16 @@ describe('useTextPrompt (D3b)', () => {
     expect(results).toEqual([['first', null]]);
   });
 });
+
+// shadcn-port-modals D7: Cancel / submit in the shared dialog-actions row, with the phone floor.
+describe('useTextPrompt actions row', () => {
+  it('Cancel and OK sit in [data-slot=dialog-actions]', () => {
+    setup();
+    fireEvent.click(screen.getByText('open-first'));
+    const ok = screen.getByRole('button', { name: 'OK' });
+    const row = ok.closest('[data-slot="dialog-actions"]') as HTMLElement;
+    expect(row).not.toBeNull();
+    expect([...row.querySelectorAll('button')].map((b) => b.textContent)).toEqual(['Cancel', 'OK']);
+    expect(ok.className).toContain('max-md:min-h-11');
+  });
+});

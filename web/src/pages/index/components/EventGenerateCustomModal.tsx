@@ -1,7 +1,14 @@
+import clsx from 'clsx';
 import { useMemo, useState } from 'react';
 import { useShow } from '../../../api/hooks/useShows';
 import type { EventGenerateSelection, ShowCategory } from '../../../api/types';
-import { Dialog } from '../../../shared/ui/Dialog';
+import { Button, TOUCH_TARGET } from '../../../shared/components/ui/button';
+import { Checkbox } from '../../../shared/components/ui/checkbox';
+import { Field, FieldLabel } from '../../../shared/components/ui/field';
+import { Dialog, DialogActions } from '../../../shared/ui/Dialog';
+
+// Hint text: the former `.modal-hint` values (it out-ranked `.muted`, so legacy-muted).
+const HINT = 'm-0 mb-[0.65rem] text-[0.78rem] leading-[1.45] text-legacy-muted';
 
 interface Props {
   showId: string | null;
@@ -144,9 +151,7 @@ export function EventGenerateCustomModal({ showId, onSubmit, onClose }: Props) {
             claim to be loading a show it never requested. `!isPaused` for the
             reason above: an offline hold is not a fetch in flight, and saying
             so would be a claim that never comes true. */}
-        {isPending && !isPaused && showId !== null && (
-          <p className="modal-hint muted">Loading instructions…</p>
-        )}
+        {isPending && !isPaused && showId !== null && <p className={HINT}>Loading instructions…</p>}
         {/* A FAILED fetch is otherwise indistinguishable from a show with no
             auto-instructions at all: `isPending` is false, `candidates` is
             empty, so the modal settles into a blank body with a dead Generate
@@ -162,25 +167,25 @@ export function EventGenerateCustomModal({ showId, onSubmit, onClose }: Props) {
             `HomeSettingsModal`'s shows section. */}
         {unavailable !== null && (
           <div className="flex flex-col items-start gap-2">
-            <p className="modal-hint muted !mb-0">
+            <p className={clsx(HINT, 'mb-0')}>
               {unavailable === 'offline'
                 ? 'You’re offline — can’t load instructions.'
                 : 'Couldn’t load instructions.'}
             </p>
             {unavailable === 'offline' ? (
-              <p className="modal-hint muted !mb-0">
+              <p className={clsx(HINT, 'mb-0')}>
                 Instructions will load on their own once you’re back online.
               </p>
             ) : (
-              <button
-                type="button"
-                className="btn"
+              <Button
+                variant="outline"
+                className={TOUCH_TARGET}
                 onClick={() => {
                   void refetch();
                 }}
               >
                 Retry
-              </button>
+              </Button>
             )}
           </div>
         )}
@@ -196,43 +201,39 @@ export function EventGenerateCustomModal({ showId, onSubmit, onClose }: Props) {
               {group.map((candidate) => {
                 const label = candidate.optionLabel ?? 'Button instruction';
                 return (
-                  <label
-                    key={candidate.key}
-                    className="flex cursor-pointer items-start gap-2 text-[0.82rem] text-v5-text"
-                  >
-                    <input
-                      type="checkbox"
+                  <Field key={candidate.key} orientation="horizontal" className="items-start gap-2">
+                    <Checkbox
+                      id={`custom-gen-${candidate.key}`}
+                      className="mt-0.5"
                       checked={selected.has(candidate.key)}
-                      onChange={(event) => toggle(candidate.key, event.target.checked)}
+                      onCheckedChange={(v) => toggle(candidate.key, v === true)}
                     />
-                    <span>
+                    <FieldLabel
+                      htmlFor={`custom-gen-${candidate.key}`}
+                      className="block cursor-pointer text-[0.82rem] text-v5-text"
+                    >
                       <span className={candidate.optionLabel ? 'pl-3 font-medium' : 'font-medium'}>
                         {label}
                       </span>
                       <span className="mt-0.5 block text-[0.76rem] text-v5-muted">
                         {candidate.instruction}
                       </span>
-                    </span>
-                  </label>
+                    </FieldLabel>
+                  </Field>
                 );
               })}
             </div>
           </fieldset>
         ))}
       </div>
-      <div className="modal-actions">
-        <button type="button" className="btn" onClick={onClose}>
+      <DialogActions>
+        <Button variant="outline" className={TOUCH_TARGET} onClick={onClose}>
           Cancel
-        </button>
-        <button
-          type="button"
-          className="btn primary"
-          disabled={selection.length === 0}
-          onClick={submit}
-        >
+        </Button>
+        <Button className={TOUCH_TARGET} disabled={selection.length === 0} onClick={submit}>
           Generate
-        </button>
-      </div>
+        </Button>
+      </DialogActions>
     </Dialog>
   );
 }

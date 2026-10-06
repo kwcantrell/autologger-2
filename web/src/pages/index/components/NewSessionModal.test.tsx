@@ -29,6 +29,9 @@ vi.mock('../utils/toast', () => ({
 vi.mock('../../../shared/ui/Dialog', () => ({
   Dialog: ({ open, children }: { open?: boolean; children: React.ReactNode }) =>
     open === false ? null : <div role="dialog">{children}</div>,
+  DialogActions: ({ children }: { children: React.ReactNode }) => (
+    <div data-slot="dialog-actions">{children}</div>
+  ),
 }));
 
 vi.mock('./Select', () => ({
@@ -188,5 +191,40 @@ describe('NewSessionModal — the picker lists accessible shows of the active te
     const select = screen.getByLabelText('Show') as HTMLSelectElement;
     expect(Array.from(select.options).map((o) => o.textContent)).toEqual(['Show A (SA)']);
     expect(select.value).toBe('show-a');
+  });
+});
+
+// shadcn-port-modals D1/D2: labelled fields, a real checkbox, disclosures and the actions row.
+describe('NewSessionModal on the shadcn layer', () => {
+  it('fields are labelled, disclosures toggle, publish date is a checkbox, Create & open is the primary action', () => {
+    const epProfile = { ...profile, active_show_id: 'show-ep' } as ProfilePayload;
+    renderStrict(<NewSessionModal profile={epProfile} onClose={vi.fn()} onCreated={vi.fn()} />);
+    expect(screen.getByLabelText('Episode').id).toBe('ns-episode');
+    expect(screen.getByLabelText('Notes (optional)').id).toBe('ns-notes');
+    expect(screen.getAllByRole('button', { name: 'Close' })).toHaveLength(1);
+
+    const yt = document.getElementById('ns-toggle-yt') as HTMLElement;
+    expect(yt.getAttribute('aria-expanded')).toBe('false');
+    fireEvent.click(yt);
+    expect(yt.getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getByLabelText('YouTube video link').id).toBe('ns-yt-url');
+    const publish = screen.getByRole('checkbox', {
+      name: "Use the video's publish date as the session date",
+    });
+    expect(publish.getAttribute('aria-checked')).toBe('false');
+    fireEvent.click(publish);
+    expect(publish.getAttribute('aria-checked')).toBe('true');
+
+    const adv = document.getElementById('ns-toggle-advanced') as HTMLElement;
+    fireEvent.click(adv);
+    expect(adv.getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getByLabelText('Start offset (frames)').id).toBe('ns-offset');
+    fireEvent.change(screen.getByLabelText('Frame rate'), { target: { value: 'other' } });
+    expect(screen.getByLabelText('Custom fps').id).toBe('ns-fps-custom');
+
+    const submit = screen.getByRole('button', { name: 'Create & open' });
+    expect(submit.getAttribute('data-variant')).toBe('default');
+    expect(submit.closest('[data-slot="dialog-actions"]')).not.toBeNull();
+    expect(submit.className).toContain('max-md:min-h-11');
   });
 });

@@ -1,0 +1,8 @@
+{
+ "url": "/sessions/does-not-exist",
+ "checked": 26,
+ "fails": 0,
+ "approx": 25,
+ "min": 5.3,
+ "failures": []
+}

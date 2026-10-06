@@ -70,6 +70,50 @@ describe('shadcn hygiene', () => {
     expect(Object.keys(deps).filter((d) => d.startsWith('overlayscrollbars'))).toEqual([]);
   });
 
+  it('deleted legacy modal classes are never passed as a class again', () => {
+    // shadcn-port-modals D8: the modal chrome these named (`.modal-*`, `.tool-row`, the fps
+    // family, …) was deleted from tailwind.css. Attribute-aware: only class arguments are
+    // scanned — `className="…"`, and string literals inside `cn(…)` / `clsx(…)` — so a kept id
+    // such as `id="new-session-form"` is not a hit. Generic words (`inline`, `num`, `wide`,
+    // `actions`) are deliberately not listed: Tailwind's own `inline` is legitimate again.
+    const DELETED = new Set([
+      'modal-hint',
+      'modal-lead',
+      'modal-actions',
+      'modal-dropdown-actions',
+      'modal-export-actions',
+      'tool-row',
+      'export-row',
+      'tool-row-session-opts',
+      'fps-field',
+      'fps-field-label',
+      'fps-select',
+      'fps-custom-wrap',
+      'fps-custom-label',
+      'fps-custom-input',
+      'fps-hint',
+      'new-session-form',
+      'v5-panel-eyebrow',
+      'v4-log-top__capture',
+      'v4-log-top__playback',
+    ]);
+    const classArgs = (src: string): string[] => {
+      const out: string[] = [];
+      for (const m of src.matchAll(/className=(?:"([^"]*)"|\{\s*['`]([^'`]*)['`]\s*\})/g))
+        out.push(m[1] ?? m[2] ?? '');
+      for (const m of src.matchAll(/\b(?:cn|clsx)\(([^()]*(?:\([^()]*\)[^()]*)*)\)/g))
+        for (const lit of m[1].matchAll(/['"`]([^'"`]*)['"`]/g)) out.push(lit[1]);
+      return out;
+    };
+    const hits: string[] = [];
+    for (const f of files.filter((x) => /\.tsx?$/.test(x))) {
+      for (const arg of classArgs(fs.readFileSync(f, 'utf8')))
+        for (const token of arg.split(/\s+/))
+          if (DELETED.has(token)) hits.push(`${rel(f)}: ${token}`);
+    }
+    expect(hits).toEqual([]);
+  });
+
   it('no shadcn primitive keeps a `dark:` variant', () => {
     expect(scan(isUi, /(^|[\s'"`])dark:/)).toEqual([]);
   });

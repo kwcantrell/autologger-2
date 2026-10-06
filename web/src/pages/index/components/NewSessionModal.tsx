@@ -1,11 +1,15 @@
 import clsx from 'clsx';
+import { ChevronRight, Plus, X } from 'lucide-react';
 import { useState } from 'react';
 import { apiFetch } from '../../../api/client';
 import { useCreateSession } from '../../../api/hooks/useSessions';
 import { showAccessFrom } from '../../../api/hooks/useShowAccess';
 import type { ProfilePayload } from '../../../api/types';
-import { BTN_PRIMARY_SKY } from '../../../shared/theme/classnames';
-import { Dialog } from '../../../shared/ui/Dialog';
+import { Button, TOUCH_TARGET } from '../../../shared/components/ui/button';
+import { Checkbox } from '../../../shared/components/ui/checkbox';
+import { Field, FieldDescription, FieldLabel } from '../../../shared/components/ui/field';
+import { Input } from '../../../shared/components/ui/input';
+import { Dialog, DialogActions } from '../../../shared/ui/Dialog';
 import { showToast } from '../utils/toast';
 import { Select } from './Select';
 
@@ -33,8 +37,14 @@ const NS_INPUT_OVERRIDE =
 
 // Disclosure toggle (ui-refresh progressive disclosure): quiet text affordance
 // with a rotating chevron; aria-expanded carries the state.
+// Disclosure toggles: ghost Buttons reset to the quiet inline-link look (mixed case, no padding).
 const DISCLOSURE_BTN =
-  'inline-flex cursor-pointer items-center gap-[0.4rem] self-start border-0 bg-transparent p-0 text-[0.78rem] font-semibold text-v5-muted [transition:color_0.15s_ease] hover-always:text-v5-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[rgba(56,189,248,0.55)]';
+  'h-auto self-start gap-[0.4rem] border-0 bg-transparent p-0 text-[0.78rem] font-semibold normal-case tracking-normal text-v5-muted hover:bg-transparent hover:text-v5-text';
+// `.profile-select`'s bottom margin (form spacing), now on the shadcn Input.
+const NS_FIELD_INPUT = clsx('mb-4', NS_INPUT_OVERRIDE);
+// The inline label + number input rows (was `.inline` + `.num`).
+const NS_INLINE_FIELD = 'w-fit items-center gap-[0.35rem]';
+const NS_INLINE_LABEL = 'text-[0.85rem] text-legacy-muted';
 
 function fpsFloatMatchesPreset(val: number, presetStr: string): boolean {
   return Math.abs(val - Number.parseFloat(presetStr)) < 0.0001;
@@ -179,18 +189,7 @@ export function NewSessionModal({ profile, onClose, onCreated }: Props) {
     >
       <div className="mb-3 flex items-start justify-between gap-4">
         <div className="flex items-center gap-(--v6-rail-gap)">
-          <svg
-            width="20"
-            height="20"
-            viewBox="0 0 24 24"
-            fill="none"
-            aria-hidden="true"
-            className="shrink-0 text-[rgba(229,238,252,0.72)]"
-          >
-            <title>New session</title>
-            <path d="M12 5V19" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-            <path d="M5 12H19" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-          </svg>
+          <Plus className="size-5 shrink-0 text-[rgba(229,238,252,0.72)]" aria-hidden="true" />
           {/* Both `.v6-new-session-modal__title-row h2` and `.v6-new-session-head h2` matched
               this element at equal specificity; the head-h2 rule came LATER in source so it won:
               1rem / 600 / 0.06em / uppercase / v5-text / margin 0. */}
@@ -198,19 +197,20 @@ export function NewSessionModal({ profile, onClose, onCreated }: Props) {
             New Session
           </h2>
         </div>
-        <button
-          type="button"
-          className="inline-flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-v5-sm border border-v5-border bg-[rgba(255,255,255,0.04)] text-[1.25rem] leading-none text-v5-muted [transition:background_0.12s_ease,color_0.12s_ease,border-color_0.12s_ease] hover-always:border-v5-border-strong hover-always:text-v5-text"
+        <Button
+          variant="outline"
+          size="icon"
+          className={clsx('text-v5-muted hover:text-v5-text', TOUCH_TARGET)}
           aria-label="Close"
           onClick={onClose}
         >
-          &times;
-        </button>
+          <X aria-hidden="true" />
+        </Button>
       </div>
 
-      <form id="new-session-form" className="new-session-form" onSubmit={handleSubmit}>
-        <label className="field" htmlFor="ns-show">
-          <span>Show</span>
+      <form id="new-session-form" className="flex flex-col gap-3" onSubmit={handleSubmit}>
+        <Field>
+          <FieldLabel htmlFor="ns-show">Show</FieldLabel>
           <Select
             id="ns-show"
             ariaLabel="Show"
@@ -223,29 +223,29 @@ export function NewSessionModal({ profile, onClose, onCreated }: Props) {
             }
             disabled={shows.length === 0}
           />
-        </label>
+        </Field>
 
         {/* session-title-suffix (design D6/spec "New Session modal respects suffix"):
             the episode field (and the old Bonus toggle, removed entirely) only applies
             to Episode-suffix shows. Date-suffix shows derive the title server-side. */}
         {isEpisodeMode && (
-          <label className="field" htmlFor="ns-episode">
-            <span>Episode</span>
-            <input
+          <Field>
+            <FieldLabel htmlFor="ns-episode">Episode</FieldLabel>
+            <Input
               type="text"
               id="ns-episode"
-              className={clsx('profile-select', NS_INPUT_OVERRIDE)}
+              className={NS_FIELD_INPUT}
               maxLength={80}
               autoComplete="off"
               value={episode}
               onChange={(e) => setEpisode(e.target.value)}
             />
-          </label>
+          </Field>
         )}
 
-        <label className="field">
-          <span>Notes (optional)</span>
-          <input
+        <Field>
+          <FieldLabel htmlFor="ns-notes">Notes (optional)</FieldLabel>
+          <Input
             type="text"
             id="ns-notes"
             name="notes"
@@ -256,102 +256,77 @@ export function NewSessionModal({ profile, onClose, onCreated }: Props) {
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
           />
-        </label>
+        </Field>
 
         {/* Progressive disclosure (ui-refresh): YouTube import + timecode
             plumbing collapse behind toggles with safe defaults; the summaries
             keep the current values readable while closed. */}
         <div className="mt-1 flex flex-col gap-2">
-          <button
-            type="button"
+          <Button
+            variant="ghost"
             className={DISCLOSURE_BTN}
             id="ns-toggle-yt"
             aria-expanded={showYt}
             onClick={() => setShowYt((v) => !v)}
           >
-            <svg
-              width="12"
-              height="12"
-              viewBox="0 0 24 24"
-              fill="none"
+            <ChevronRight
               aria-hidden="true"
-              className={clsx('[transition:transform_0.15s_ease]', showYt && 'rotate-90')}
-            >
-              <path
-                d="M9 5L16 12L9 19"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
+              className={clsx('size-3 [transition:transform_0.15s_ease]', showYt && 'rotate-90')}
+            />
             Import audio from YouTube{!showYt && ytUrl.trim() ? ' — link added' : ''}
-          </button>
+          </Button>
           {showYt && (
             <div className="flex flex-col gap-2 pl-5">
-              <label className="field">
-                <span>YouTube video link</span>
-                <input
+              <Field>
+                <FieldLabel htmlFor="ns-yt-url">YouTube video link</FieldLabel>
+                <Input
                   type="url"
                   id="ns-yt-url"
-                  className={clsx('profile-select', NS_INPUT_OVERRIDE)}
+                  className={NS_FIELD_INPUT}
                   placeholder="https://www.youtube.com/watch?v=…"
                   autoComplete="off"
                   value={ytUrl}
                   onChange={(e) => setYtUrl(e.target.value)}
                 />
-              </label>
-              <label className="flex flex-row items-center gap-[6px]">
-                <input
-                  type="checkbox"
+              </Field>
+              <Field orientation="horizontal" className="gap-[6px]">
+                <Checkbox
+                  id="ns-yt-publish-date"
                   checked={useYtPublishDate}
-                  onChange={(e) => setUseYtPublishDate(e.target.checked)}
+                  onCheckedChange={(v) => setUseYtPublishDate(v === true)}
                 />
-                <span className="text-[0.85rem] text-v5-muted">
+                <FieldLabel htmlFor="ns-yt-publish-date" className="text-[0.85rem]">
                   Use the video&apos;s publish date as the session date
-                </span>
-              </label>
+                </FieldLabel>
+              </Field>
             </div>
           )}
 
-          <button
-            type="button"
+          <Button
+            variant="ghost"
             className={DISCLOSURE_BTN}
             id="ns-toggle-advanced"
             aria-expanded={showAdvanced}
             onClick={() => setShowAdvanced((v) => !v)}
           >
-            <svg
-              width="12"
-              height="12"
-              viewBox="0 0 24 24"
-              fill="none"
+            <ChevronRight
               aria-hidden="true"
-              className={clsx('[transition:transform_0.15s_ease]', showAdvanced && 'rotate-90')}
-            >
-              <path
-                d="M9 5L16 12L9 19"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
+              className={clsx(
+                'size-3 [transition:transform_0.15s_ease]',
+                showAdvanced && 'rotate-90',
+              )}
+            />
             Timecode settings — {fpsPreset === 'other' ? fpsCustom || '?' : fpsPreset} fps · offset{' '}
             {offset || '0'}
-          </button>
+          </Button>
           {showAdvanced && (
             <div className="flex flex-col gap-3 pl-5">
-              <div className="fps-field">
-                {/* Modal reach-in recolored the label var(--color-legacy-muted) → var(--v5-muted). */}
-                <span className="fps-field-label text-v5-muted">Frame rate</span>
+              <div className="flex min-w-[min(100%,14rem)] flex-col gap-[0.35rem]">
+                <FieldLabel htmlFor="ns-fps-preset">Frame rate</FieldLabel>
                 <Select
                   id="ns-fps-preset"
-                  // Keep the fps trigger inside the .fps-field column (legacy #ns-fps-preset width
-                  // rule). The old .fps-select bg/radius reach-in already lost to the Select
-                  // trigger's own glass utilities, so only the width constraint carries over.
-                  // `.fps-select` retained (chrome styles it elsewhere).
-                  className="fps-select max-w-[14rem] min-w-0"
+                  // Keep the fps trigger compact inside the column.
+                  className="max-w-[14rem] min-w-0"
                   ariaLabel="Frame rate"
                   value={fpsPreset}
                   onChange={setFpsPreset}
@@ -361,56 +336,59 @@ export function NewSessionModal({ profile, onClose, onCreated }: Props) {
                   ]}
                 />
                 {fpsPreset === 'other' && (
-                  <div id="ns-fps-custom-wrap" className="fps-custom-wrap">
-                    <label className="inline fps-custom-label">
+                  <Field
+                    id="ns-fps-custom-wrap"
+                    orientation="horizontal"
+                    className={clsx(NS_INLINE_FIELD, 'mt-[0.15rem] flex-wrap')}
+                  >
+                    <FieldLabel htmlFor="ns-fps-custom" className={NS_INLINE_LABEL}>
                       Custom fps
-                      <input
-                        type="number"
-                        id="ns-fps-custom"
-                        min="1"
-                        max="120"
-                        step="0.001"
-                        className={clsx('num fps-custom-input', NS_INPUT_OVERRIDE)}
-                        placeholder="1–120"
-                        autoFocus
-                        value={fpsCustom}
-                        onChange={(e) => setFpsCustom(e.target.value)}
-                      />
-                    </label>
-                  </div>
+                    </FieldLabel>
+                    <Input
+                      type="number"
+                      id="ns-fps-custom"
+                      min="1"
+                      max="120"
+                      step="0.001"
+                      className={clsx('w-[4.5rem] min-w-24', NS_INPUT_OVERRIDE)}
+                      placeholder="1–120"
+                      autoFocus
+                      value={fpsCustom}
+                      onChange={(e) => setFpsCustom(e.target.value)}
+                    />
+                  </Field>
                 )}
-                <span id="ns-fps-hint" className="fps-hint">
+                <FieldDescription
+                  id="ns-fps-hint"
+                  className="max-w-[18rem] text-[0.72rem] leading-[1.3] text-legacy-muted"
+                >
                   NTSC fractional rates use SMPTE-true values.
-                </span>
+                </FieldDescription>
               </div>
 
-              <label className="inline">
-                Start offset (frames)
-                <input
+              <Field orientation="horizontal" className={NS_INLINE_FIELD}>
+                <FieldLabel htmlFor="ns-offset" className={NS_INLINE_LABEL}>
+                  Start offset (frames)
+                </FieldLabel>
+                <Input
                   type="number"
                   id="ns-offset"
                   value={offset}
                   min="0"
                   step="1"
-                  className={clsx('num wide', NS_INPUT_OVERRIDE)}
+                  className={clsx('w-24', NS_INPUT_OVERRIDE)}
                   onChange={(e) => setOffset(e.target.value)}
                 />
-              </label>
+              </Field>
             </div>
           )}
         </div>
 
-        <div className="modal-actions">
-          <button
-            type="submit"
-            // Modal-scoped .btn.primary sky-tint reach-in (shared BTN_PRIMARY_SKY).
-            className={clsx('btn primary', BTN_PRIMARY_SKY)}
-            id="ns-submit"
-            disabled={isPending}
-          >
+        <DialogActions>
+          <Button type="submit" className={TOUCH_TARGET} id="ns-submit" disabled={isPending}>
             {isPending ? 'Creating…' : 'Create & open'}
-          </button>
-        </div>
+          </Button>
+        </DialogActions>
       </form>
     </Dialog>
   );

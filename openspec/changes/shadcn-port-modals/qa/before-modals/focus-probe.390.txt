@@ -1,0 +1,3 @@
+scrollbar point: 314 410
+activeElement after drag: "qa-focus"
+feed scrollTop after drag: 6126

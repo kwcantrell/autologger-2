@@ -4,10 +4,16 @@ import { useLogEvent } from '../../../api/hooks/useEvents';
 import { useShowCategories } from '../../../api/hooks/useShowCategories';
 import type { Category, DropdownOption } from '../../../api/types';
 import { showToast } from '../../../shared/components/Toast';
-import { Dialog } from '../../../shared/ui/Dialog';
+import { Button, TOUCH_TARGET } from '../../../shared/components/ui/button';
+import { Field, FieldLabel } from '../../../shared/components/ui/field';
+import { Input } from '../../../shared/components/ui/input';
+import { Dialog, DialogActions } from '../../../shared/ui/Dialog';
 import { isOverlayOpen } from '../../../shared/ui/overlayOpen';
 import { AUTOLOGGER_LOADING_VIDEO_SRC } from '../../../shared/utils/loadingVideo';
 import { isTypingTarget } from './ShortcutsDialog';
+
+// Modal lead text: the former `.modal-lead` values (shadcn-port-modals D6).
+const LEAD = 'm-0 mb-4 text-[0.82rem] leading-[1.45] text-legacy-muted';
 
 // --- converted class strings (were CategoryButtonStrip.module.css) ---
 // Two live ancestor contexts drive layout via arbitrary ancestor variants (the
@@ -50,14 +56,12 @@ function TextModal({ category, onLog, onClose }: TextModalProps) {
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()} title="Log note">
-      <p className="modal-lead">
-        Add a note for &ldquo;{category.label}&rdquo;. Press Enter or Log.
-      </p>
-      <label className="field">
-        <span>Note</span>
-        <input
+      <p className={LEAD}>Add a note for &ldquo;{category.label}&rdquo;. Press Enter or Log.</p>
+      <Field>
+        <FieldLabel htmlFor="category-note-input">Note</FieldLabel>
+        <Input
           type="text"
-          className="profile-select"
+          id="category-note-input"
           maxLength={8000}
           autoComplete="off"
           autoFocus
@@ -70,20 +74,15 @@ function TextModal({ category, onLog, onClose }: TextModalProps) {
             }
           }}
         />
-      </label>
-      <div className="modal-actions">
-        <button type="button" className="btn" onClick={onClose}>
+      </Field>
+      <DialogActions>
+        <Button variant="outline" className={TOUCH_TARGET} onClick={onClose}>
           Cancel
-        </button>
-        <button
-          type="button"
-          className="btn primary"
-          onClick={handleSubmit}
-          disabled={!text.trim()}
-        >
+        </Button>
+        <Button className={TOUCH_TARGET} onClick={handleSubmit} disabled={!text.trim()}>
           Log
-        </button>
-      </div>
+        </Button>
+      </DialogActions>
     </Dialog>
   );
 }
@@ -131,12 +130,12 @@ function DropdownModal({ category, markedAt: _markedAt, onLog, onClose }: Dropdo
     >
       {contextOpt ? (
         <>
-          <p className="modal-lead">{contextOpt.label}</p>
-          <label className="field">
-            <span>Context</span>
-            <input
+          <p className={LEAD}>{contextOpt.label}</p>
+          <Field>
+            <FieldLabel htmlFor="category-context-input">Context</FieldLabel>
+            <Input
               type="text"
-              className="profile-select"
+              id="category-context-input"
               maxLength={4000}
               autoComplete="off"
               autoFocus
@@ -146,36 +145,37 @@ function DropdownModal({ category, markedAt: _markedAt, onLog, onClose }: Dropdo
                 if (e.key === 'Enter') handleContextSubmit();
               }}
             />
-          </label>
-          <div className="modal-actions">
-            <button type="button" className="btn" onClick={() => setContextOpt(null)}>
+          </Field>
+          <DialogActions>
+            <Button variant="outline" className={TOUCH_TARGET} onClick={() => setContextOpt(null)}>
               Back
-            </button>
-            <button type="button" className="btn primary" onClick={handleContextSubmit}>
+            </Button>
+            <Button className={TOUCH_TARGET} onClick={handleContextSubmit}>
               Log
-            </button>
-          </div>
+            </Button>
+          </DialogActions>
         </>
       ) : (
         <>
-          <p className="modal-lead">{category.label}</p>
-          <div className="modal-dropdown-actions">
+          <p className={LEAD}>{category.label}</p>
+          {/* The option list (the former `.modal-dropdown-actions` column). */}
+          <div className="mb-3 flex flex-col gap-[0.45rem]">
             {category.dropdown_options.map((opt) => (
-              <button
+              <Button
                 key={opt.label}
-                type="button"
-                className="btn"
+                variant="outline"
+                className={clsx('w-full', TOUCH_TARGET)}
                 onClick={() => handleOption(opt)}
               >
                 {opt.label}
-              </button>
+              </Button>
             ))}
           </div>
-          <div className="modal-actions">
-            <button type="button" className="btn" onClick={onClose}>
+          <DialogActions>
+            <Button variant="outline" className={TOUCH_TARGET} onClick={onClose}>
               Cancel
-            </button>
-          </div>
+            </Button>
+          </DialogActions>
         </>
       )}
     </Dialog>
