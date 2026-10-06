@@ -52,17 +52,19 @@
 
 ## 3. Tables, scrolling and OverlayScrollbars removal
 
-- [ ] 3.1 Port `FeedTable` onto `ScrollArea` and the `Table` parts (D3).
+- [x] 3.1 Port `FeedTable` onto `ScrollArea` and the `Table` parts (D3).
   - Test first: a new `FeedTable.test.tsx` covering:
     - a callback `scrollRef` receives the scroll viewport element;
     - a `columnheader` with `aria-sort` is still sortable by its button;
     - the loading and empty rows render.
   - Verify: `npx vitest run src/pages/index/components/FeedTable.test.tsx src/pages/index/components/EventLogSheet* src/pages/index/components/TranscribeFeed* src/pages/index/components/TopicsFeed* src/pages/index/components/JumpToTimeButton.test.tsx src/pages/index/components/feedRowSeek* src/pages/index/utils/revealEventInFeed.test.ts` passes. The virtualization, reveal, drafts and jump suites stay unchanged.
-- [ ] 3.2 Port `EventLogRow`, `TranscribeRow`, `TopicsRow` and the spacer and sentinel rows onto `TableRow`/`TableCell` (D3).
+  - Evidence: test first: new `FeedTable.test.tsx` (callback scrollRef receives [data-slot=scroll-area-viewport] containing the table; columnheader aria-sort descending + data-slot table-head, sort button calls onSort; loading row XOR empty row) -> on OverlayScrollbars `2 failed | 1 passed (3)`; after FeedTable on ScrollArea (viewportRef=scrollRef, mobile 70dvh cap on the viewport) + Table/TableHeader/TableRow/TableHead/TableBody/TableCell (FEED_TH chrome now the TableHead base) -> FeedTable + EventLogSheet* + TranscribeFeed* + TopicsFeed* + JumpToTimeButton + feedRowSeek* + revealEventInFeed + eventGenerateLatch + generateLatch + feedSortDefaults `Test Files 14 passed (14) Tests 93 passed (93)` (virtualization/reveal/drafts/jump suites unchanged); tsc clean
+- [x] 3.2 Port `EventLogRow`, `TranscribeRow`, `TopicsRow` and the spacer and sentinel rows onto `TableRow`/`TableCell` (D3).
   - Test first:
     - row tests assert `data-slot="table-row"` on `tr[data-event-id]` and `data-slot="table-cell"` on the transcript and topic cells;
     - for one representative cell per row component, the rendered `className` token set equals the pre-port set, captured before the port.
   - Verify: the row suites and the 3.1 set pass. The row height is checked in 6.1.
+  - Evidence: test first: EventLogRow/TranscribeRow/TopicsRow "is a table-row of table-cells with unchanged cell classes" (data-slot table-row/table-cell + snapshot of row+cell classNames written against the raw <tr>/<td> markup) -> `3 failed | 73 passed (76)`, `Snapshots 3 written`; after the three rows plus the EventLogSheet spacer/sentinel and TranscribeFeed spacer rows on TableRow/TableCell (21+10+12 tags; primitives have no visual base) -> snapshots unchanged; full `npx vitest run` `Test Files 123 passed (123) Tests 1546 passed (1546)`; tsc clean. Row height is measured in 6.1
 - [ ] 3.3 Port `#session-list` and `#archived-list` to `ScrollArea` (D4), uninstall `overlayscrollbars` and `overlayscrollbars-react`, and remove their CSS imports, the `.os-rail-sessions` CSS, the test mocks and stale comments (D7).
   - Test first: a `shadcnHygiene.repo.test.ts` case where no file imports `overlayscrollbars` and `web/package.json` doesn't list it. It fails before the removal.
   - Also update the stale OverlayScrollbars comments in `EventLogSheet.tsx`, `TranscribeFeed.tsx` and `EventLogSheet.virtualization.test.tsx`.

@@ -2,6 +2,7 @@ import clsx from 'clsx';
 import { useLayoutEffect, useRef, useState } from 'react';
 import { useUpdateTopic } from '../../../api/hooks/useTopics';
 import type { SessionTopic } from '../../../api/types';
+import { TableCell, TableRow } from '../../../shared/components/ui/table';
 import { sessionTimeToTimelineSec } from '../../../shared/utils/timelineSec';
 import {
   FEED_CELL,
@@ -153,11 +154,11 @@ export function TopicsRow({
   const resolvedSec = topicsRowTimelineSec(row, fps, transcriptAnchored);
 
   return (
-    <tr className={FEED_ROW}>
+    <TableRow className={FEED_ROW}>
       {/* Jump column (feed-row-seek, design D2/D7): its own leading cell,
           never inside the session-time cell — inline editing's contents/
           width/containing block are untouched by this. */}
-      <td className={clsx(FEED_CELL, 'align-top text-center')}>
+      <TableCell className={clsx(FEED_CELL, 'align-top text-center')}>
         <JumpToTimeButton
           resolvedSec={resolvedSec}
           displayTime={row.session_time}
@@ -165,8 +166,8 @@ export function TopicsRow({
           unavailable={jumpUnavailable}
           reasonId={jumpReasonId}
         />
-      </td>
-      <td className={clsx(FEED_CELL, 'align-top', FEED_CELL_TIME)}>
+      </TableCell>
+      <TableCell className={clsx(FEED_CELL, 'align-top', FEED_CELL_TIME)}>
         <input
           className={clsx(FEED_INLINE_INPUT, FEED_INLINE_INPUT_MONO, 'mono')}
           value={vals.session_time}
@@ -174,8 +175,8 @@ export function TopicsRow({
           onChange={(e) => setEdit((p) => (p ? { ...p, session_time: e.target.value } : p))}
           onBlur={(e) => commitField('session_time', e.target.value)}
         />
-      </td>
-      <td className={clsx(FEED_CELL, 'align-top')}>
+      </TableCell>
+      <TableCell className={clsx(FEED_CELL, 'align-top')}>
         <input
           className={clsx(FEED_INLINE_INPUT, FEED_INLINE_INPUT_MONO, 'mono', 'max-w-20')}
           type="number"
@@ -186,8 +187,8 @@ export function TopicsRow({
           onChange={(e) => setEdit((p) => (p ? { ...p, duration_sec: e.target.value } : p))}
           onBlur={(e) => commitField('duration_sec', e.target.value)}
         />
-      </td>
-      <td className={clsx(FEED_CELL, 'align-top')}>
+      </TableCell>
+      <TableCell className={clsx(FEED_CELL, 'align-top')}>
         <input
           className={clsx(FEED_INLINE_INPUT, FEED_INLINE_INPUT_MONO, 'mono', 'max-w-20')}
           type="number"
@@ -199,8 +200,8 @@ export function TopicsRow({
           onChange={(e) => setEdit((p) => (p ? { ...p, topic_level: e.target.value } : p))}
           onBlur={(e) => commitField('topic_level', e.target.value)}
         />
-      </td>
-      <td className={clsx(FEED_CELL, 'align-top')}>
+      </TableCell>
+      <TableCell className={clsx(FEED_CELL, 'align-top')}>
         <textarea
           ref={summaryRef}
           className={clsx(FEED_INLINE_INPUT, FEED_SUMMARY_TEXTAREA)}
@@ -210,7 +211,7 @@ export function TopicsRow({
           onChange={(e) => setEdit((p) => (p ? { ...p, summary: e.target.value } : p))}
           onBlur={(e) => commitField('summary', e.target.value)}
         />
-      </td>
-    </tr>
+      </TableCell>
+    </TableRow>
   );
 }

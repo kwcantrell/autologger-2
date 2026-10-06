@@ -1,6 +1,7 @@
 import clsx from 'clsx';
 import { memo, useState } from 'react';
 import type { TranscriptWord } from '../../../api/types';
+import { TableCell, TableRow } from '../../../shared/components/ui/table';
 import { formatTimelineSec, sessionTimeToTimelineSec } from '../../../shared/utils/timelineSec';
 import type { DraftStore } from '../utils/draftStore';
 import { formatSpeaker, speakerFromInput } from '../utils/speakerOffset';
@@ -224,11 +225,11 @@ export const TranscribeRow = memo(function TranscribeRow({
   const jumpTarget = resolveTranscribeJump(row, fps);
 
   return (
-    <tr className={FEED_ROW}>
+    <TableRow className={FEED_ROW}>
       {/* Jump column (feed-row-seek, design D2/D7): its own leading cell, never
           inside the session-time cell — inline editing's contents/width/
           containing block are untouched by this. */}
-      <td className={clsx(FEED_CELL, 'align-middle text-center')}>
+      <TableCell className={clsx(FEED_CELL, 'align-middle text-center')}>
         <JumpToTimeButton
           resolvedSec={jumpTarget?.sec ?? null}
           displayTime={jumpTarget?.display ?? ''}
@@ -236,8 +237,8 @@ export const TranscribeRow = memo(function TranscribeRow({
           unavailable={jumpUnavailable}
           reasonId={jumpReasonId}
         />
-      </td>
-      <td className={clsx(FEED_CELL, 'align-middle', FEED_CELL_TIME)}>
+      </TableCell>
+      <TableCell className={clsx(FEED_CELL, 'align-middle', FEED_CELL_TIME)}>
         <input
           className={clsx(FEED_INLINE_INPUT, FEED_INLINE_INPUT_MONO, 'mono')}
           value={vals.session_time}
@@ -245,8 +246,8 @@ export const TranscribeRow = memo(function TranscribeRow({
           onChange={(e) => changeField('session_time', e.target.value)}
           onBlur={(e) => commitField('session_time', e.target.value)}
         />
-      </td>
-      <td className={clsx(FEED_CELL, 'align-middle')}>
+      </TableCell>
+      <TableCell className={clsx(FEED_CELL, 'align-middle')}>
         {/* The one display-space control in this row: `formatSpeaker` out,
             `speakerFromInput` back in on BOTH edges, so nothing downstream of
             these handlers ever sees a "Person N" label (see the value-space
@@ -265,8 +266,8 @@ export const TranscribeRow = memo(function TranscribeRow({
             commitField('speaker', speakerFromInput(e.target.value, row.speaker, speakerOffset))
           }
         />
-      </td>
-      <td className={clsx(FEED_CELL, 'align-middle')}>
+      </TableCell>
+      <TableCell className={clsx(FEED_CELL, 'align-middle')}>
         <input
           className={FEED_INLINE_INPUT}
           value={vals.word}
@@ -274,7 +275,7 @@ export const TranscribeRow = memo(function TranscribeRow({
           onChange={(e) => changeField('word', e.target.value)}
           onBlur={(e) => commitField('word', e.target.value)}
         />
-      </td>
-    </tr>
+      </TableCell>
+    </TableRow>
   );
 });

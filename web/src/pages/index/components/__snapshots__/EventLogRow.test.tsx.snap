@@ -1,0 +1,13 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`EventLogRow on the shadcn Table parts > is a table-row of table-cells with unchanged cell classes 1`] = `
+{
+  "cells": [
+    "px-[0.55rem] py-[0.17rem] text-[0.78rem] leading-none [border-bottom:1px_solid_var(--legacy-border)] text-center align-middle",
+    "px-[0.55rem] py-[0.17rem] text-[0.78rem] leading-none [border-bottom:1px_solid_var(--legacy-border)] text-left align-middle font-[family-name:var(--font-mono)] text-legacy-accent whitespace-nowrap [.group:hover_&]:bg-[rgba(124,183,255,0.06)]",
+    "px-[0.55rem] py-[0.17rem] text-[0.78rem] leading-none [border-bottom:1px_solid_var(--legacy-border)] text-left align-middle font-semibold whitespace-nowrap [.group:hover_&]:bg-[rgba(124,183,255,0.06)]",
+    "px-[0.55rem] py-[0.17rem] text-[0.78rem] leading-none [border-bottom:1px_solid_var(--legacy-border)] max-w-[min(28rem,38vw)] relative text-left whitespace-nowrap align-middle leading-none [.group:hover_&]:bg-[rgba(124,183,255,0.06)]",
+  ],
+  "row": "group",
+}
+`;

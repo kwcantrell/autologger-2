@@ -8,6 +8,7 @@ import {
   useTranscriptWords,
   useUpdateTranscriptWord,
 } from '../../../api/hooks/useTranscriptWords';
+import { TableCell, TableRow } from '../../../shared/components/ui/table';
 import { useTranscriptWordsGate } from '../hooks/TranscriptWordsGateContext';
 import { useGatedGenerate } from '../hooks/useGatedGenerate';
 import { useTimelineSeek } from '../hooks/useTimelineSeek';
@@ -246,12 +247,12 @@ export const TranscribeFeed = memo(function TranscribeFeed({ sessionId }: Props)
         scrollRef={setScrollEl}
       >
         {paddingTop > 0 && (
-          <tr>
-            <td
+          <TableRow>
+            <TableCell
               colSpan={COLUMNS.length}
               style={{ height: paddingTop, padding: 0, border: 'none' }}
             />
-          </tr>
+          </TableRow>
         )}
         {sortedWords &&
           virtualItems.map((vRow) => {
@@ -271,12 +272,12 @@ export const TranscribeFeed = memo(function TranscribeFeed({ sessionId }: Props)
             );
           })}
         {paddingBottom > 0 && (
-          <tr>
-            <td
+          <TableRow>
+            <TableCell
               colSpan={COLUMNS.length}
               style={{ height: paddingBottom, padding: 0, border: 'none' }}
             />
-          </tr>
+          </TableRow>
         )}
       </FeedTable>
     </FeedShell>

@@ -1,6 +1,7 @@
 import clsx from 'clsx';
 import { useEffect, useRef, useState } from 'react';
 import type { Category, LogEvent } from '../../../api/types';
+import { TableCell, TableRow } from '../../../shared/components/ui/table';
 import { Tooltip } from '../../../shared/ui/Tooltip';
 import {
   formatTimecodeHMS,
@@ -796,11 +797,11 @@ export function EventLogRow({
   // `[.group:hover_&]:` ancestor variant (replaces `.sheet tbody tr:hover td` / `tr:hover
   // .rowHoverActions`). Editable cells opt out of the tint (they set their own bg).
   return (
-    <tr ref={rowRef} data-event-id={event.event_id} className="group">
+    <TableRow ref={rowRef} data-event-id={event.event_id} className="group">
       {/* Jump column (feed-row-seek, design D2/D7): its own leading cell, never
           inside the timecode cell — inline editing's contents/width/containing
           block are untouched by this. */}
-      <td className={clsx(CELL_BASE, 'text-center align-middle')}>
+      <TableCell className={clsx(CELL_BASE, 'text-center align-middle')}>
         {/* Slight scale so the shared h-6 jump control does not dominate row height. */}
         <span className="inline-flex origin-center scale-[0.75]">
           <JumpToTimeButton
@@ -811,11 +812,11 @@ export function EventLogRow({
             reasonId={jumpReasonId}
           />
         </span>
-      </td>
+      </TableCell>
       {editable ? (
         // `.colTcCellEdit`: centered (was `td.colTcCellEdit { text-align: center }`, the input
         // inherits it) + edit bg + (batch) white text; pending adds strikethrough (left:2rem).
-        <td
+        <TableCell
           className={clsx(
             CELL_BASE,
             CELL_TC,
@@ -826,14 +827,14 @@ export function EventLogRow({
           )}
         >
           {tcStack}
-        </td>
+        </TableCell>
       ) : (
-        <td className={clsx(CELL_BASE, CELL_TC, CELL_HOVER)}>{col1View}</td>
+        <TableCell className={clsx(CELL_BASE, CELL_TC, CELL_HOVER)}>{col1View}</TableCell>
       )}
 
       {editable ? (
         // `.sheetCatEdit`: edit bg; pending → white text + strikethrough (left:0 right:0).
-        <td
+        <TableCell
           className={clsx(
             CELL_BASE,
             CELL_CAT,
@@ -843,16 +844,16 @@ export function EventLogRow({
           style={catStyle}
         >
           {catSelect}
-        </td>
+        </TableCell>
       ) : (
-        <td className={clsx(CELL_BASE, CELL_CAT, CELL_HOVER)} style={catStyle}>
+        <TableCell className={clsx(CELL_BASE, CELL_CAT, CELL_HOVER)} style={catStyle}>
           {event.category_label ?? event.category ?? '—'}
-        </td>
+        </TableCell>
       )}
 
       {editable ? (
         // `.sheetMsgCell`: edit bg; pending strikethrough (right:9.25rem clearance for UNDELETE).
-        <td
+        <TableCell
           className={clsx(
             CELL_BASE,
             CELL_MSG,
@@ -875,9 +876,9 @@ export function EventLogRow({
             msgInput
           )}
           {rowActions}
-        </td>
+        </TableCell>
       ) : (
-        <td
+        <TableCell
           className={clsx(CELL_BASE, CELL_MSG, CELL_ACTIONS, CELL_HOVER)}
           data-event-id={event.event_id}
           style={msgStyle}
@@ -887,8 +888,8 @@ export function EventLogRow({
             {autoMarker}
           </span>
           {rowActions}
-        </td>
+        </TableCell>
       )}
-    </tr>
+    </TableRow>
   );
 }

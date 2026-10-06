@@ -17,6 +17,7 @@ import type {
   SessionStatus,
 } from '../../../api/types';
 import { showToast } from '../../../shared/components/Toast';
+import { TableCell, TableRow } from '../../../shared/components/ui/table';
 import { useConfirm } from '../../../shared/ui/ConfirmDialog';
 import { Popover, PopoverItem } from '../../../shared/ui/Popover';
 import { eventTimelineSec } from '../../../shared/utils/audioClips';
@@ -1235,12 +1236,12 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
         scrollRef={setScrollEl}
       >
         {paddingTop > 0 && (
-          <tr>
-            <td
+          <TableRow>
+            <TableCell
               colSpan={eventColumns.length}
               style={{ height: paddingTop, padding: 0, border: 'none' }}
             />
-          </tr>
+          </TableRow>
         )}
         {virtualItems.map((vRow) => {
           const ev = sorted[vRow.index];
@@ -1268,27 +1269,30 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
           );
         })}
         {paddingBottom > 0 && (
-          <tr>
-            <td
+          <TableRow>
+            <TableCell
               colSpan={eventColumns.length}
               style={{ height: paddingBottom, padding: 0, border: 'none' }}
             />
-          </tr>
+          </TableRow>
         )}
         {/* Sentinel stays AFTER the bottom spacer so it sits at the true end of
             the scroll extent — the IntersectionObserver semantics (grow the
             window when the end comes into view) are unchanged by virtualization. */}
         {events.length < total && (
           // `.logSheetSentinel td` centering/padding + `.sheet .utc` mono styling.
-          <tr ref={sentinelRef} className="[&>td]:text-center [&>td]:px-2 [&>td]:py-[0.55rem]">
-            <td
+          <TableRow
+            ref={sentinelRef}
+            className="[&>td]:text-center [&>td]:px-2 [&>td]:py-[0.55rem]"
+          >
+            <TableCell
               colSpan={eventColumns.length}
               className={clsx(
                 'font-[family-name:var(--font-mono)] text-[0.8rem] text-legacy-muted whitespace-nowrap',
                 'faint',
               )}
             />
-          </tr>
+          </TableRow>
         )}
       </FeedTable>
     </FeedShell>

@@ -537,3 +537,17 @@ describe('TranscribeRow — feed-owned edit drafts', () => {
     expect(drafts.read('w-1')).toEqual({ session_time: '00:00:1' });
   });
 });
+
+// shadcn-port-workspace D3 / task 3.2: the row renders through TableRow / TableCell, and its
+// cells keep exactly the class lists they had before the port (the primitives carry no visual
+// base; the snapshot was written against the raw <tr>/<td> markup).
+describe('TranscribeRow on the shadcn Table parts', () => {
+  it('is a table-row of table-cells with unchanged cell classes', () => {
+    renderRow();
+    const tr = document.querySelector('tbody > tr') as HTMLTableRowElement;
+    const cells = Array.from(tr.querySelectorAll(':scope > td'));
+    expect({ row: tr.className, cells: cells.map((td) => td.className) }).toMatchSnapshot();
+    expect(tr.getAttribute('data-slot')).toBe('table-row');
+    for (const td of cells) expect(td.getAttribute('data-slot')).toBe('table-cell');
+  });
+});
