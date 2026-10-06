@@ -13,7 +13,7 @@
 
 ## 2. Route states and rescue
 
-- [ ] 2.1 Add `pages/index/components/RouteState.tsx` (D2).
+- [x] 2.1 Add `pages/index/components/RouteState.tsx` (D2).
   - Test first: `RouteState.test.tsx` checks that:
     - it renders the given `id` and `role`, and passes `data-testid`/`data-variant` through
     - `frame="route"`/`"gate"` wrap the panel in exactly `ROUTE_STATE_PAGE`/`GATE_PAGE`
@@ -21,9 +21,11 @@
     - actions are buttons
     - `role="status"` never also renders an `alert`
   - Verify with `npx vitest run src/pages/index/components/RouteState.test.tsx`.
-- [ ] 2.2 Port SessionRoute's not-found, error and archived states, RootGate's error, and ChunkLoadBoundary's route variant onto `RouteState`. ChunkLoadBoundary's overlay variant becomes `Alert`.
+  - Evidence: test first: `npx vitest run src/pages/index/components/RouteState.test.tsx` -> `Failed to resolve import "./RouteState"`; after RouteState (Empty panel, <h1>, explicit role, frame prop, rest passthrough) -> with webBoundaries `Tests 114 passed (114)` (id/role, no alert on status, testid/data-variant passthrough, badge, frame classes === ROUTE_STATE_PAGE / GATE_PAGE)
+- [x] 2.2 Port SessionRoute's not-found, error and archived states, RootGate's error, and ChunkLoadBoundary's route variant onto `RouteState`. ChunkLoadBoundary's overlay variant becomes `Alert`.
   - Test first: add role assertions to `SessionRoute.test.tsx` (not-found is `status` with no `alert`; error is `alert`) and to `RootGate.test.tsx` (error is `alert`).
   - Verify those suites and `ChunkLoadBoundary.test.tsx`, `webBoundaries.repo.test.ts` and `AppLoadingSkeleton.test.tsx` pass.
+  - Evidence: test first: SessionRoute (not-found status + data-slot empty + no alert + Button back; error alert + empty), RootGate (#root-gate-error alert + empty, retry Button), ChunkLoadBoundary (route empty+alert, overlay data-slot alert) -> `3 failed | 24 passed` and `2 failed | 5 passed`; after porting to RouteState / Alert / Button -> those + AppLoadingSkeleton + webBoundaries + RouteState `Tests 143 passed (143)`; full `npx vitest run` -> `Test Files 122 passed (122) Tests 1524 passed (1524)`; lint/typecheck clean
 - [ ] 2.3 ChunkRescueBanner becomes a destructive `Alert` with `Button`s (D6).
   - Test first: assert that `Discard` and `Discard remaining` have `data-variant="destructive"` and the other actions are `outline`.
   - Verify `ChunkRescueBanner.test.tsx` passes (exactly one alert; list structure; names).

@@ -208,6 +208,13 @@ describe('SessionRoute resolution states', () => {
     await waitFor(() => expect(stateEl('not-found')).not.toBeNull());
     expect(stateEl('error')).toBeNull();
     expect(workspace()).toBeNull();
+    // shadcn-port-shell D2: the shared RouteState panel — a polite status, never an alert.
+    expect(stateEl('not-found')?.getAttribute('role')).toBe('status');
+    expect(stateEl('not-found')?.getAttribute('data-slot')).toBe('empty');
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(
+      screen.getByRole('button', { name: /back to sessions/i }).getAttribute('data-slot'),
+    ).toBe('button');
     // Resolved deterministically: the masked 404 was not retried.
     expect(detailCalls('ghost-1')).toBe(1);
 
@@ -223,6 +230,8 @@ describe('SessionRoute resolution states', () => {
     await waitFor(() => expect(stateEl('error')).not.toBeNull());
     // A transient failure must never read as a missing session.
     expect(stateEl('not-found')).toBeNull();
+    expect(stateEl('error')?.getAttribute('role')).toBe('alert');
+    expect(stateEl('error')?.getAttribute('data-slot')).toBe('empty');
     expect(workspace()).toBeNull();
 
     const callsAtError = detailCalls('flaky-1');

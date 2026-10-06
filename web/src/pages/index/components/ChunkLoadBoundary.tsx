@@ -8,7 +8,9 @@ import {
   useCallback,
   useState,
 } from 'react';
-import { ROUTE_STATE_PAGE } from './RouteLoadingState';
+import { Alert, AlertDescription, AlertTitle } from '../../../shared/components/ui/alert';
+import { Button } from '../../../shared/components/ui/button';
+import { RouteState } from './RouteState';
 
 // --- ChunkLoadBoundary / LazyChunk (bundle route-splitting, review fix) ---
 //
@@ -67,19 +69,10 @@ export function isChunkLoadError(error: unknown): boolean {
  */
 export type ChunkBoundaryVariant = 'route' | 'overlay';
 
-// Mirrors SessionRoute's own state-panel idioms (STATE_PANEL/TITLE/COPY/BUTTON
-// there). Copied rather than imported: SessionRoute imports THIS module, so
-// exporting them from there would be a cycle, and this module must stay cheap
-// enough to sit in the eagerly-loaded homepage graph (its only import is the
-// page-frame constant, already in that graph).
-const PANEL =
-  'glass-panel relative box-border w-full max-w-[25rem] rounded-v5-lg px-7 py-9 text-center';
-const TITLE =
-  'm-0 font-league-gothic font-bold text-[2.25rem] leading-none tracking-[0.02em] uppercase text-v5-text';
-const COPY = 'mx-auto mb-0 mt-3 max-w-[19rem] text-[0.9rem] leading-[1.5] text-v5-muted';
-const BUTTON =
-  'box-border flex h-11 w-full cursor-pointer items-center justify-center rounded-v5-sm border border-v5-border-strong bg-[rgba(255,255,255,0.03)] px-4 text-[0.8125rem] font-semibold tracking-[0.04em] text-v5-muted [transition:border-color_0.15s_ease,background_0.15s_ease,color_0.15s_ease] hover-always:bg-[rgba(255,255,255,0.05)] hover-always:text-v5-text';
-
+// shadcn-port-shell D2: the route variant renders through the shared RouteState panel and the
+// overlay variant is the shadcn Alert — replacing the panel classes this module used to copy
+// from SessionRoute. RouteState is a leaf (it imports only shared/* and the page-frame constant),
+// so SessionRoute importing this module creates no cycle.
 function reloadPage(): void {
   window.location.reload();
 }
@@ -98,32 +91,27 @@ function ChunkBoundaryFallback({ variant, onRetry, onDismiss, title, copy }: Fal
   const actions = (
     <>
       {onRetry && (
-        <button
-          type="button"
-          className={`${BUTTON} ${variant === 'route' ? 'mt-6' : ''}`}
-          data-testid="chunk-load-retry"
-          onClick={onRetry}
-        >
+        <Button className="h-11 w-full" data-testid="chunk-load-retry" onClick={onRetry}>
           Try again
-        </button>
+        </Button>
       )}
-      <button
-        type="button"
-        className={`${BUTTON} ${variant === 'route' || onRetry ? 'mt-3' : ''}`}
+      <Button
+        variant="outline"
+        className="h-11 w-full"
         data-testid="chunk-load-reload"
         onClick={reloadPage}
       >
         Reload page
-      </button>
+      </Button>
       {onDismiss && (
-        <button
-          type="button"
-          className={`${BUTTON} mt-3`}
+        <Button
+          variant="outline"
+          className="h-11 w-full"
           data-testid="chunk-load-dismiss"
           onClick={onDismiss}
         >
           Dismiss
-        </button>
+        </Button>
       )}
     </>
   );
@@ -133,27 +121,29 @@ function ChunkBoundaryFallback({ variant, onRetry, onDismiss, title, copy }: Fal
     // app's existing "something needs your attention, the page underneath is
     // fine" idiom) — the route below it stays visible and interactive.
     return (
-      <div
-        role="alert"
+      <Alert
         data-testid="chunk-load-error"
         data-variant="overlay"
-        className="glass-face-strong fixed inset-x-0 top-0 z-(--z-toast) mx-auto mt-2 box-border w-[min(28rem,94vw)] rounded-v5-md border border-v5-border-strong p-4 shadow-[0_8px_32px_rgba(0,0,0,0.35)]"
+        className="fixed inset-x-0 top-0 z-(--z-toast) mx-auto mt-2 w-[min(28rem,94vw)] p-4 shadow-[0_8px_32px_rgba(0,0,0,0.35)]"
       >
-        <p className="m-0 text-[0.9rem] font-medium text-v5-text">{title}</p>
-        <p className="m-0 mt-1 text-[0.8rem] leading-[1.45] text-v5-muted">{copy}</p>
-        <div className="mt-3 flex flex-col gap-2">{actions}</div>
-      </div>
+        <AlertTitle>{title}</AlertTitle>
+        <AlertDescription>{copy}</AlertDescription>
+        <div className="col-start-2 mt-3 flex flex-col gap-2">{actions}</div>
+      </Alert>
     );
   }
 
   return (
-    <div className={ROUTE_STATE_PAGE}>
-      <div className={PANEL} role="alert" data-testid="chunk-load-error" data-variant="route">
-        <h1 className={TITLE}>{title}</h1>
-        <p className={COPY}>{copy}</p>
-        {actions}
-      </div>
-    </div>
+    <RouteState
+      frame="route"
+      role="alert"
+      title={title}
+      actions={actions}
+      data-testid="chunk-load-error"
+      data-variant="route"
+    >
+      {copy}
+    </RouteState>
   );
 }
 
