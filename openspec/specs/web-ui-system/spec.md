@@ -17,7 +17,6 @@ has nothing to show rather than sitting on a loading skeleton.
 
 ## Requirements
 
-
 ### Requirement: Single V5 component vocabulary
 The frontend SHALL present one component vocabulary: buttons, form controls, and dialogs render
 in the V5 glass style (glass gradient surfaces, `--v5-border-strong` borders, uppercase tracked
@@ -45,7 +44,6 @@ not change appearance class.
   `--v5-border-strong`-family border, the primary variant sky-tinted and the destructive variant
   red-tinted, and its disabled state shows no hover response
 
-
 ### Requirement: Themed confirmations replace browser chrome
 Destructive or discard-style confirmations SHALL use a shared themed confirm (an alert dialog
 on desktop and a bottom sheet on mobile, danger-variant confirm action where the action is
@@ -54,6 +52,10 @@ The frontend SHALL invoke neither `window.confirm`/`window.prompt` nor the bare
 `confirm()`/`prompt()` globals — including hook-initiated flows.
 If a pending themed confirmation is replaced by another or unmounted before the user decides,
 the pending decision SHALL resolve as declined (no awaiting flow may hang).
+A themed decision MAY be **three-way**: confirm, cancel, and dismiss. In a three-way decision, the
+cancel button is an action of its own, and dismissal (Escape, overlay, drag-dismiss, replacement,
+or unmount) SHALL resolve as **dismiss**, distinct from cancel. Two-way confirmations are
+unchanged. The version-conflict dialog is three-way.
 
 #### Scenario: Deleting a log row
 - **WHEN** the user activates a row's Delete action outside batch-edit mode
@@ -76,6 +78,12 @@ the pending decision SHALL resolve as declined (no awaiting flow may hang).
   `marked_at_utc` is accept-time, and the dialog copy SHALL NOT promise a specific timecode;
   a pending decision SHALL be dismissed (as decline) on session switch
 
+#### Scenario: A three-way decision tells dismissal from cancel
+
+- **WHEN** a three-way themed decision is dismissed by Escape, an overlay click, or unmount
+- **THEN** it resolves as dismiss, not as its cancel action, and two-way confirmations still
+  resolve such dismissal as decline
+
 ### Requirement: Global single-key handlers yield to dialogs and interactive targets
 Global single-key shortcuts (Space play/pause, `+`/`−` zoom, `1–9` logging, `?`) SHALL NOT
 fire while any dialog, alert dialog, or menu is open (`role` `dialog`, `alertdialog`, or `menu`),
@@ -96,7 +104,6 @@ activation always wins over the global handler).
 - **WHEN** a themed confirm is open as an alert dialog and the user presses Space, `+`, a digit
   `1`–`9`, or `?` with focus outside any control that consumes the key
 - **THEN** no global shortcut fires
-
 
 ### Requirement: AA contrast floor on rendered surfaces
 Text and data labels SHALL meet WCAG AA (≥4.5:1, composited over the surface's effective base
@@ -150,7 +157,6 @@ example category colors) are outside this requirement.
 - **THEN** its label contrast against the link surface is at least 4.5:1
   (the prior muted alpha 0.55 = 4.32:1 is a regression)
 
-
 ### Requirement: Reduced-motion alternatives for looping animation
 Every looping or attention-drawing animation SHALL have a `prefers-reduced-motion: reduce`
 alternative. Specifically the timeline marker-message marquee SHALL stop (static, truncating
@@ -160,7 +166,6 @@ presentation) and status-pulse dots SHALL render static under reduced motion.
 - **WHEN** `prefers-reduced-motion: reduce` is set and a marker message overflows its lane
 - **THEN** the marquee animation does not run and the message renders statically (clipped),
   not scrolling
-
 
 ### Requirement: Vector iconography for interactive control glyphs
 State-tinted glyphs on interactive controls (transport tiles, timecode state icons, in-row
@@ -173,7 +178,6 @@ outside this requirement.
 - **WHEN** a transport tile renders in any transport state
 - **THEN** its glyph is an inline SVG inheriting the tile's state accent, and no `<img>`-based
   or emoji glyph remains in the transport, timecode, or row-action components
-
 
 ### Requirement: Honest save model in Settings
 The Settings modal SHALL make its save state legible: Save is disabled (and labeled as saved)
@@ -193,7 +197,6 @@ SHALL match the actual save model (no "auto-saves" claims for draft-then-Save be
 - **WHEN** the user closes the Settings modal (button, Escape, or overlay) with unsaved edits
 - **THEN** a themed discard confirmation intervenes; declining keeps the modal open with edits
   intact
-
 
 ### Requirement: Generation instruction fields in Settings
 The Settings event-buttons table SHALL let the user view and edit each BUTTON,
@@ -235,7 +238,6 @@ fields with the copied buttons.
 #### Scenario: Option-only instructions light the indicator
 - **WHEN** a DROPDOWN button has instructions only on its options
 - **THEN** the table row shows the instruction-bearing indicator
-
 
 ### Requirement: New Session progressive disclosure
 The New Session modal SHALL present the core flow (show, episode, notes, create) directly, with
@@ -283,7 +285,6 @@ under `The playback tick is fenced at named memo boundaries`.
   error modal, closes the settings modal, or toggles the mobile navigation rail, while a session
   workspace is mounted
 - **THEN** the boundary props remain referentially identical across each of those state changes
-
 
 ### Requirement: The Settings modal costs nothing while closed
 While the Settings modal is closed it SHALL perform no form-initialisation work, SHALL issue no
@@ -342,7 +343,6 @@ in the `perf-audit-remediation` proposal, not a property of this requirement.
 - **THEN** the modal opens on the General tab fully initialised, and it stays open and functional
   across the route change exactly as before
 
-
 ### Requirement: Settings modal defers inactive tab content
 The Settings modal SHALL mount a tab panel's content on that tab's first activation, not on modal
 open, and SHALL NOT unmount it on a subsequent tab switch. Each tab control's `aria-controls`
@@ -386,7 +386,6 @@ SHALL NOT by itself make the modal read as dirty.
   closes the modal
 - **THEN** no unsaved-changes confirmation intervenes and the modal closes directly
 
-
 ### Requirement: Event-button rows defer their type control
 Each event-button row's button-type control SHALL NOT mount a listbox-style overlay component
 until the user shows intent to use that control (pointer or keyboard focus). Rendering the row
@@ -421,7 +420,6 @@ When the upgrade is triggered by keyboard focus, focus SHALL end on the upgraded
 - **THEN** focus ends on the upgraded control — not on the document body or the next element — and
   the control exposes the same accessible name, role, and ARIA state as before this change and is
   operable by keyboard without any pointer event
-
 
 ### Requirement: The playback tick is fenced at named memo boundaries
 Audio playback drives a `requestAnimationFrame` loop that pushes the absolute timeline second into
@@ -487,7 +485,6 @@ prop sets will not be caught mechanically.
   new data
 - **THEN** that panel updates to reflect it; the fencing withholds nothing that a changed input
   should produce
-
 
 ### Requirement: The Settings shows section says why it has nothing to show
 
