@@ -25,10 +25,11 @@
 
 ## 3. Smaller modals
 
-- [ ] 3.1 YouTubeImportErrorModal and TranscribeModal (D4).
+- [x] 3.1 YouTubeImportErrorModal and TranscribeModal (D4).
   - Test first, in the new `YouTubeImportErrorModal.test.tsx`: the four actions with their variants; the retry input is named "YouTube video link" once "Try a different link" is chosen.
   - Test first, in the new `TranscribeModal.test.tsx` (`fetch` stubbed): when done, "Download CSV" is an `<a download>` with `data-slot="button"`; Close is in the dialog-actions row.
   - Verify: both suites pass, and `npx vitest run src/apiResponseShapes.repo.test.ts` passes (the pinned call shapes and lines are untouched).
+  - Evidence: test first: new YouTubeImportErrorModal.test.tsx ("offers the three choices with their Button variants"; "Try a different link shows a named link input whose Import retries with the trimmed URL") and TranscribeModal.test.tsx ("Download CSV is an <a download> Button and Close is in the actions row", fetch stubbed) -> `3 failed` (`expected null to be default` / `button`); after YouTube error on Button default/outline/destructive + Input aria-label "YouTube video link" + ROW flex (gap-x-4 gap-y-3 = .tool-row) and Transcribe on Button asChild download + DialogActions -> those + apiResponseShapes.repo `Tests 46 passed (46)`; `git diff -U0 TranscribeModal.tsx | grep -E "transcribe.csv|JSON.parse"` -> nothing (pinned lines untouched); tsc clean
 - [ ] 3.2 EventGenerateCustomModal (D5).
   - Test first: Generate and Cancel are in `[data-slot=dialog-actions]`; Retry is `outline`.
   - Verify: `npx vitest run src/pages/index/components/EventGenerateCustomModal.test.tsx` passes, with the checkbox counts, the `/Cam A/` name and the exact hint copy.

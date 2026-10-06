@@ -1,7 +1,13 @@
+import clsx from 'clsx';
 import { useState } from 'react';
 import { apiFetch } from '../../../api/client';
+import { Button, TOUCH_TARGET } from '../../../shared/components/ui/button';
+import { Input } from '../../../shared/components/ui/input';
 import { Dialog } from '../../../shared/ui/Dialog';
 import { showToast } from '../utils/toast';
+
+// The former `.tool-row`: a wrapping flex row (1rem column / 0.75rem row gaps).
+const ROW = 'flex flex-wrap items-center gap-x-4 gap-y-3';
 
 interface Props {
   sessionId: string;
@@ -49,10 +55,11 @@ export function YouTubeImportErrorModal({
       </p>
 
       {showRetryInput && (
-        <div className="tool-row mt-3">
-          <input
+        <div className={clsx(ROW, 'mt-3')}>
+          <Input
             type="url"
-            className="profile-select"
+            aria-label="YouTube video link"
+            className="min-w-0 flex-1"
             placeholder="Link to YouTube video"
             autoFocus
             value={retryUrl}
@@ -61,29 +68,33 @@ export function YouTubeImportErrorModal({
               if (e.key === 'Enter' && retryUrl.trim()) onRetry(retryUrl.trim());
             }}
           />
-          <button
-            type="button"
-            className="btn primary"
+          <Button
+            className={TOUCH_TARGET}
             disabled={!retryUrl.trim()}
             onClick={() => onRetry(retryUrl.trim())}
           >
             Import
-          </button>
+          </Button>
         </div>
       )}
 
-      <div className="tool-row mt-4 gap-2">
+      <div className={clsx(ROW, 'mt-4 gap-2')}>
         {!showRetryInput && (
-          <button type="button" className="btn primary" onClick={() => setShowRetryInput(true)}>
+          <Button className={TOUCH_TARGET} onClick={() => setShowRetryInput(true)}>
             Try a different link
-          </button>
+          </Button>
         )}
-        <button type="button" className="btn" onClick={onContinue}>
+        <Button variant="outline" className={TOUCH_TARGET} onClick={onContinue}>
           Continue without audio
-        </button>
-        <button type="button" className="btn danger" disabled={cancelling} onClick={handleCancel}>
+        </Button>
+        <Button
+          variant="destructive"
+          className={TOUCH_TARGET}
+          disabled={cancelling}
+          onClick={handleCancel}
+        >
           {cancelling ? 'Deleting…' : "Don't create session"}
-        </button>
+        </Button>
       </div>
     </Dialog>
   );
