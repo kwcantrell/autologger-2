@@ -1,15 +1,15 @@
 import type * as React from 'react';
 import { cn } from '@/shared/lib/utils';
 
+// V5 (shadcn-port-shell D1): base strings replaced with the legacy form vocabulary
+// (.profile-select / .field / .modal-hint), so ported forms match unported ones.
 function Input({ className, type, ...props }: React.ComponentProps<'input'>) {
   return (
     <input
       type={type}
       data-slot="input"
       className={cn(
-        'h-9 w-full min-w-0 rounded-md border border-input px-3 py-1 text-base shadow-xs transition-[color,box-shadow] outline-none selection:bg-primary selection:text-primary-foreground file:inline-flex file:h-7 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50 md:text-sm bg-input/30',
-        'focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50',
-        'aria-invalid:border-destructive aria-invalid:ring-destructive/40',
+        'w-full min-w-0 rounded-[0.6rem] border border-v5-border-strong bg-[rgba(7,11,20,0.6)] px-[0.65rem] py-2 text-v5-text outline-none transition-[border-color,background] duration-150 [font:inherit] placeholder:text-[rgba(229,238,252,0.62)] disabled:cursor-not-allowed disabled:opacity-50 focus-visible:border-[rgba(56,189,248,0.55)] focus-visible:bg-[rgba(7,11,20,0.75)] aria-invalid:border-destructive',
         className,
       )}
       {...props}

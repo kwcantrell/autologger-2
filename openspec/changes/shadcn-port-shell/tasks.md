@@ -2,12 +2,14 @@
 
 ## 1. Content primitives
 
-- [ ] 1.1 Theme `input`, `textarea`, `label`, `field`, `alert`, `badge`, `empty`, `spinner` and `separator` to V5 by replacing their base strings (D1).
+- [x] 1.1 Theme `input`, `textarea`, `label`, `field`, `alert`, `badge`, `empty`, `spinner` and `separator` to V5 by replacing their base strings (D1).
   - Test first: `primitives.smoke.test.tsx` gains a case that these contents keep none of `bg-input/30`, `rounded-md`, `border-dashed` or `line-clamp-1`, and that `Spinner` has `motion-reduce:animate-none`.
   - Verify with `npx vitest run src/shared/components/ui src/shadcnHygiene.repo.test.ts`.
-- [ ] 1.2 Run `npx shadcn@latest add checkbox --dry-run`, then `add checkbox`. Normalize the file (local `cn`, no `dark:`, V5 base) and run `npm uninstall -w web cn` if the CLI re-adds it.
+  - Evidence: test first: smoke case "content primitives keep no shadcn input/radius/dashed/clamp leftovers; spinner honours reduced motion" -> `1 failed` (`slot: "input"`); after replacing input/textarea/label/field/alert/badge/empty/spinner base strings with the legacy V5 form vocabulary -> `npx vitest run src/shared/components/ui src/shadcnHygiene.repo.test.ts` `Tests 29 passed (29)`; full `npx vitest run` green; typecheck clean
+- [x] 1.2 Run `npx shadcn@latest add checkbox --dry-run`, then `add checkbox`. Normalize the file (local `cn`, no `dark:`, V5 base) and run `npm uninstall -w web cn` if the CLI re-adds it.
   - Test first: a smoke case where a `Checkbox` with a `Label` is `role="checkbox"` named by the label, and a click toggles `aria-checked`.
   - Verify the smoke and hygiene tests pass, and that `grep -E '"cn"' web/package.json` prints nothing.
+  - Evidence: test first: smoke "checkbox is a labelled role=checkbox that toggles" -> `Failed to resolve import "./checkbox"`; `npx shadcn@latest add checkbox --yes`, `npm uninstall -w web cn` (CLI re-added it), normalized (local cn, no dark-mode variants, V5 base) -> `npx vitest run src/shared/components/ui src/shadcnHygiene.repo.test.ts` `Tests 30 passed (30)`; `grep -c "\"cn\"" web/package.json` -> `0`; lint/typecheck clean
 
 ## 2. Route states and rescue
 

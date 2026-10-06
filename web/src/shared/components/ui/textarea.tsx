@@ -1,12 +1,15 @@
 import type * as React from 'react';
 import { cn } from '@/shared/lib/utils';
 
+// V5 (shadcn-port-shell D1): base strings replaced with the legacy form vocabulary
+// (.profile-select / .field / .modal-hint), so ported forms match unported ones.
 function Textarea({ className, ...props }: React.ComponentProps<'textarea'>) {
   return (
     <textarea
       data-slot="textarea"
       className={cn(
-        'flex field-sizing-content min-h-16 w-full rounded-md border border-input px-3 py-2 text-base shadow-xs transition-[color,box-shadow] outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 aria-invalid:border-destructive md:text-sm bg-input/30 aria-invalid:ring-destructive/40',
+        'flex field-sizing-content min-h-16 ' +
+          'w-full min-w-0 rounded-[0.6rem] border border-v5-border-strong bg-[rgba(7,11,20,0.6)] px-[0.65rem] py-2 text-v5-text outline-none transition-[border-color,background] duration-150 [font:inherit] placeholder:text-[rgba(229,238,252,0.62)] disabled:cursor-not-allowed disabled:opacity-50 focus-visible:border-[rgba(56,189,248,0.55)] focus-visible:bg-[rgba(7,11,20,0.75)] aria-invalid:border-destructive',
         className,
       )}
       {...props}
