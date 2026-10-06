@@ -54,7 +54,10 @@ import { describe, expect, it } from 'vitest';
 import audioSegmentCreate from '../../../fixtures/api-responses/audioSegmentCreate.json';
 import audioSegmentsList from '../../../fixtures/api-responses/audioSegmentsList.json';
 import eventCreate from '../../../fixtures/api-responses/eventCreate.json';
+import eventDeleteConflict from '../../../fixtures/api-responses/eventDeleteConflict.json';
 import eventsList from '../../../fixtures/api-responses/eventsList.json';
+import eventUpdate from '../../../fixtures/api-responses/eventUpdate.json';
+import eventUpdateConflict from '../../../fixtures/api-responses/eventUpdateConflict.json';
 import logImportJobCreate from '../../../fixtures/api-responses/logImportJobCreate.json';
 import { logImportJobStatus } from '../../../fixtures/api-responses/logImportJobStatus';
 import { profileAuthenticated } from '../../../fixtures/api-responses/profileAuthenticated';
@@ -78,11 +81,17 @@ import teamOwnerTransfer from '../../../fixtures/api-responses/teamOwnerTransfer
 import teamRename from '../../../fixtures/api-responses/teamRename.json';
 import { teamRoleChange } from '../../../fixtures/api-responses/teamRoleChange';
 import topicCreate from '../../../fixtures/api-responses/topicCreate.json';
+import topicDeleteConflict from '../../../fixtures/api-responses/topicDeleteConflict.json';
 import topicsList from '../../../fixtures/api-responses/topicsList.json';
+import topicUpdate from '../../../fixtures/api-responses/topicUpdate.json';
+import topicUpdateConflict from '../../../fixtures/api-responses/topicUpdateConflict.json';
 import { transcriptGenerationStatusBusy } from '../../../fixtures/api-responses/transcriptGenerationStatusBusy';
 import { transcriptGenerationStatusIdle } from '../../../fixtures/api-responses/transcriptGenerationStatusIdle';
 import transcriptWordCreate from '../../../fixtures/api-responses/transcriptWordCreate.json';
+import transcriptWordDeleteConflict from '../../../fixtures/api-responses/transcriptWordDeleteConflict.json';
 import transcriptWordsList from '../../../fixtures/api-responses/transcriptWordsList.json';
+import transcriptWordUpdate from '../../../fixtures/api-responses/transcriptWordUpdate.json';
+import transcriptWordUpdateConflict from '../../../fixtures/api-responses/transcriptWordUpdateConflict.json';
 import transportStart from '../../../fixtures/api-responses/transportStart.json';
 import transportStop from '../../../fixtures/api-responses/transportStop.json';
 import type { LogImportJobStatus } from '../pages/index/batchImport/logImportClient';
@@ -98,6 +107,7 @@ import type {
   AudioSegmentsResponse,
   Category,
   EventsResponse,
+  EventVersionConflict,
   LogEvent,
   ProfilePayload,
   ProfileShow,
@@ -117,7 +127,9 @@ import type {
   TeamOwnerTransferResponse,
   TeamRenameResponse,
   TeamRoleChangeResponse,
+  TopicVersionConflict,
   TranscriptWord,
+  TranscriptWordVersionConflict,
   TransportStartResponse,
   TransportStateSnapshot,
   TransportStopResponse,
@@ -267,6 +279,7 @@ describe('CW-4 — LogEvent declared two unemitted fields and two over-narrow ty
       category: 'deleted-cat',
       message: 'Manually entered',
       metadata: {},
+      version: 1,
       category_label: 'deleted-cat',
       category_color: null,
     };
@@ -312,6 +325,54 @@ describe('CW-6 — SessionTopic declared a `session_id` the topics routes never 
     const word: TranscriptWord = transcriptWordsList.words[0];
     expect('session_id' in word).toBe(false);
     expect('created_at_utc' in word).toBe(false);
+  });
+});
+
+describe('session-edit-conflicts D6 — versioned updates and the version-conflict 409', () => {
+  it('each versioned update body is assignable to its row type and carries the advanced version', () => {
+    const event: LogEvent = eventUpdate;
+    const word: TranscriptWord = transcriptWordUpdate;
+    const topic: SessionTopic = topicUpdate;
+    const versions: number[] = [event.version, word.version, topic.version];
+    expect(versions).toEqual([2, 2, 2]);
+  });
+
+  it('the create rows carry version 1', () => {
+    const event: LogEvent = eventCreate;
+    const word: TranscriptWord = transcriptWordCreate;
+    const topic: SessionTopic = topicCreate;
+    const created: number[] = [event.version, word.version, topic.version];
+    expect(created).toEqual([1, 1, 1]);
+  });
+
+  it('each update and delete 409 body is assignable to its VersionConflict alias', () => {
+    const conflicts: [string, { detail: string; current: { version: number } }][] = [
+      ['eventUpdateConflict', eventUpdateConflict satisfies EventVersionConflict],
+      ['eventDeleteConflict', eventDeleteConflict satisfies EventVersionConflict],
+      [
+        'transcriptWordUpdateConflict',
+        transcriptWordUpdateConflict satisfies TranscriptWordVersionConflict,
+      ],
+      [
+        'transcriptWordDeleteConflict',
+        transcriptWordDeleteConflict satisfies TranscriptWordVersionConflict,
+      ],
+      ['topicUpdateConflict', topicUpdateConflict satisfies TopicVersionConflict],
+      ['topicDeleteConflict', topicDeleteConflict satisfies TopicVersionConflict],
+    ];
+    for (const [name, body] of conflicts) {
+      expect(body.detail, name).toBe('Version conflict.');
+      expect(body.current.version, name).toBe(2);
+    }
+  });
+
+  it("the conflict `current` is the route's own success shape", () => {
+    const event: EventVersionConflict = eventUpdateConflict;
+    const word: TranscriptWordVersionConflict = transcriptWordUpdateConflict;
+    const topic: TopicVersionConflict = topicUpdateConflict;
+    expect(Object.keys(event.current).sort()).toEqual(Object.keys(eventUpdate).sort());
+    expect(Object.keys(word.current).sort()).toEqual(Object.keys(transcriptWordUpdate).sort());
+    expect(Object.keys(topic.current).sort()).toEqual(Object.keys(topicUpdate).sort());
   });
 });
 

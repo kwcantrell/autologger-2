@@ -138,6 +138,7 @@ function wallAt(offsetSec: number): string {
 
 function ev(overrides: Partial<LogEvent>): LogEvent {
   return {
+    version: 1,
     event_id: `ev-${Math.random()}`,
     category: 'general',
     category_label: 'General',
@@ -188,6 +189,7 @@ const SEGMENTS: AudioSegment[] = [
 // Resolves (design D4/D3) to timeline second 30 — inside the recording's real
 // [5, 65) span, so `isCoveredByPlayableClip` must report it covered.
 const COVERED_WORD: TranscriptWord = {
+  version: 1,
   id: 'w-covered',
   session_time: '00:00:30:00',
   speaker: '0',

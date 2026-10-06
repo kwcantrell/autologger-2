@@ -337,6 +337,10 @@ export interface TranscriptWord {
   start_sec: number;
   end_sec: number;
   ordinal: number;
+  /** session-row-versions: the row's version, `1` on create and advanced by every update. The
+   * server always sends it; required so a missing version cannot quietly fall back to
+   * last-writer-wins (session-edit-conflicts D6). */
+  version: number;
 }
 
 /**
@@ -357,6 +361,10 @@ export interface SessionTopic {
   summary: string;
   ordinal: number;
   created_at_utc: string;
+  /** session-row-versions: the row's version, `1` on create and advanced by every update. The
+   * server always sends it; required so a missing version cannot quietly fall back to
+   * last-writer-wins (session-edit-conflicts D6). */
+  version: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -493,6 +501,10 @@ export interface LogEvent {
   frame_rate: number | null;
   wall_time_utc: string | null;
   metadata: Record<string, unknown>;
+  /** session-row-versions: the row's version, `1` on create and advanced by every update. The
+   * server always sends it; required so a missing version cannot quietly fall back to
+   * last-writer-wins (session-edit-conflicts D6). */
+  version: number;
 }
 
 export interface EventsResponse {
@@ -626,7 +638,26 @@ export interface EventUpdateBody {
   message: string;
   wall_time_utc: string;
   timecode_hms: string;
+  /** session-edit-conflicts D1: the version the edit was based on; a stale one answers 409. */
+  version?: number;
+  /** Replace the row even though it changed since `version` (needs `version`). */
+  overwrite?: boolean;
 }
+
+/**
+ * The body of the version-conflict 409 every versioned edit route answers
+ * (`{"detail":"Version conflict.","current":<row>}`), where `current` is the
+ * route's own success shape (session-edit-conflicts D6). Detectors match bare
+ * type names, so each row kind has its own alias.
+ */
+export interface VersionConflict<T> {
+  detail: string;
+  current: T;
+}
+
+export type EventVersionConflict = VersionConflict<LogEvent>;
+export type TranscriptWordVersionConflict = VersionConflict<TranscriptWord>;
+export type TopicVersionConflict = VersionConflict<SessionTopic>;
 
 export interface AudioRecordingLeaseBody {
   client_id: string;

@@ -4,6 +4,9 @@ export class ApiError extends Error {
   constructor(
     public readonly status: number,
     message: string,
+    /** session-edit-conflicts D1: the parsed JSON of a non-2xx response, untyped; `undefined`
+     * when the body was not JSON. `versionConflictOf` (api/versionConflict) narrows it. */
+    public readonly body?: unknown,
   ) {
     super(message);
     this.name = 'ApiError';
@@ -25,14 +28,16 @@ export async function apiFetch<T>(path: string, opts: RequestInit = {}): Promise
 
   if (!res.ok) {
     let detail = res.statusText;
+    let body: unknown;
     try {
-      const j = (await res.json()) as { detail?: unknown; message?: unknown };
+      body = await res.json();
+      const j = body as { detail?: unknown; message?: unknown };
       if (j.detail) detail = typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail);
       else if (typeof j.message === 'string' && j.message.trim()) detail = j.message;
     } catch {
       // ignore parse errors — use statusText
     }
-    throw new ApiError(res.status, detail || `HTTP ${res.status}`);
+    throw new ApiError(res.status, detail || `HTTP ${res.status}`, body);
   }
 
   const ct = res.headers.get('content-type') ?? '';

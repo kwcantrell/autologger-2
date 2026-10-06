@@ -5,10 +5,12 @@ import type {
   EventsGenerateResponse,
   EventsResponse,
   EventUpdateBody,
+  EventVersionConflict,
   LogBody,
   LogEvent,
   OkResponse,
 } from '../types';
+import { guardBody, type VersionGuard, versionConflictOf, versionQuery } from '../versionConflict';
 
 /**
  * Query-key factory for the events domain. Pages cache under `page(...)`;
@@ -83,23 +85,62 @@ export function useLogEvent(sessionId: string) {
   });
 }
 
+/**
+ * session-edit-conflicts D8: on a version-conflict 409 the server's `current` row replaces the
+ * cached row (by `event_id`) in every events page of the session, then the pages are
+ * invalidated. The cache holds server truth; the person's text lives only in their draft. Any
+ * other error leaves the cache alone. The error still reaches the caller either way.
+ */
+function useEventConflictWriter(sessionId: string) {
+  const qc = useQueryClient();
+  return (error: unknown) => {
+    const conflict = versionConflictOf<EventVersionConflict>(error);
+    if (!conflict) return;
+    const { current } = conflict;
+    qc.setQueriesData<EventsResponse>({ queryKey: eventsKeys.all(sessionId) }, (old) =>
+      old?.events
+        ? {
+            ...old,
+            events: old.events.map((e) => (e.event_id === current.event_id ? current : e)),
+          }
+        : old,
+    );
+    // Not awaited: the caller's conflict prompt must not wait for the refetch.
+    void qc.invalidateQueries({ queryKey: eventsKeys.all(sessionId) });
+  };
+}
+
 export function useUpdateEvent(sessionId: string) {
   const qc = useQueryClient();
+  const onConflict = useEventConflictWriter(sessionId);
   return useMutation({
-    mutationFn: ({ eventId, body }: { eventId: string; body: EventUpdateBody }) =>
+    mutationFn: ({
+      eventId,
+      body,
+      guard,
+    }: {
+      eventId: string;
+      body: EventUpdateBody;
+      guard?: VersionGuard;
+    }) =>
       apiFetch<LogEvent>(`sessions/${sessionId}/events/${eventId}`, {
         method: 'PUT',
-        body: JSON.stringify(body),
+        body: JSON.stringify({ ...body, ...guardBody(guard) }),
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: eventsKeys.all(sessionId) }),
+    onError: onConflict,
   });
 }
 
 export function useDeleteEvent(sessionId: string) {
   const qc = useQueryClient();
+  const onConflict = useEventConflictWriter(sessionId);
   return useMutation({
-    mutationFn: (eventId: string) =>
-      apiFetch<OkResponse>(`sessions/${sessionId}/events/${eventId}`, { method: 'DELETE' }),
+    mutationFn: ({ eventId, guard }: { eventId: string; guard?: VersionGuard }) =>
+      apiFetch<OkResponse>(`sessions/${sessionId}/events/${eventId}${versionQuery(guard)}`, {
+        method: 'DELETE',
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: eventsKeys.all(sessionId) }),
+    onError: onConflict,
   });
 }

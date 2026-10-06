@@ -33,6 +33,7 @@ const SESSION_ID = 'sess-recovery-1';
 
 function orphanStartEvent(overrides: Partial<LogEvent> = {}): LogEvent {
   return {
+    version: 1,
     event_id: 'ev-start-1',
     category: 'internal',
     category_label: 'Internal',

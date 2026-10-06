@@ -14,6 +14,7 @@ import {
   parseYmdHmsUtcToIso,
 } from '../../../shared/utils/timecode';
 import type { DraftStore } from '../utils/draftStore';
+import type { SeedStore } from '../utils/seedStore';
 import { JumpToTimeButton } from './JumpToTimeButton';
 import { Select } from './Select';
 
@@ -261,6 +262,15 @@ interface Props {
   /** `EventLogSheet`'s inline-focus record (see `InlineFocusStore`) — likewise
    *  one identity for the whole feed. */
   inlineFocus: InlineFocusStore;
+  /** `EventLogSheet`'s seed store (session-edit-conflicts D3): the server row
+   *  this row's inline controls were last filled from, and the base of every
+   *  inline save. Survives the row's unmount; one identity for the feed.
+   *  Optional only for a row rendered outside a feed (its own tests): with no
+   *  store the row compares against `event`, as before versions existed. */
+  seeds?: SeedStore<LogEvent>;
+  /** A save is in flight or queued for this row (`useVersionedSave.isBusy`).
+   *  Stable identity; reads live state. */
+  rowBusy?: (eventId: string) => boolean;
   onInlineSave: (event: LogEvent, values: RowEditValues) => void;
   onBatchChange: (eventId: string, values: RowEditValues) => void;
   onDelete: (eventId: string) => void;
@@ -287,6 +297,8 @@ export function EventLogRow({
   jumpReasonId,
   inlineDrafts,
   inlineFocus,
+  seeds,
+  rowBusy,
   onInlineSave,
   onBatchChange,
   onDelete,
@@ -301,6 +313,14 @@ export function EventLogRow({
   // render because that is where it is needed: as the `defaultValue` of the
   // uncontrolled controls below, and as the initial inline category.
   const draft = inlineEditable ? inlineDrafts.read(event.event_id) : undefined;
+  // What the inline controls are filled from (session-edit-conflicts D3): the
+  // row's SEED, so a save's base is always the text the operator sees. The
+  // sheet keeps it equal to `event` for every row that holds nothing; it
+  // differs only while the row holds a draft or a save (a dismissed conflict,
+  // a failed save), and then the seed is the row that draft was typed over.
+  // (`?? event` only for a row the sheet has not seeded — the sheet seeds every
+  // row it renders, so this is not a base fallback in practice.)
+  const fill = inlineEditable ? (seeds?.get(event.event_id) ?? event) : event;
   /** Record a keystroke so it survives this row's next unmount. */
   const writeDraft = (patch: InlineDraft) => {
     if (!inlineEditable) return;
@@ -325,7 +345,7 @@ export function EventLogRow({
   const wallRef = useRef<HTMLInputElement>(null);
   const msgRef = useRef<HTMLInputElement>(null);
   // Category is now controlled (Radix Select needs state) but still saves via blur of siblings.
-  const [inlineCategory, setInlineCategory] = useState(draft?.category ?? event.category);
+  const [inlineCategory, setInlineCategory] = useState(draft?.category ?? fill.category);
 
   // Keep inline inputs in sync when event changes (e.g., after save + refetch)
   // but only when not currently focused inside this row
@@ -336,7 +356,11 @@ export function EventLogRow({
   // resetting there would wipe a draft the virtualizer just restored (React
   // StrictMode's second mount pass makes an "is this the first run" flag
   // useless; object identity does not care how many times the effect runs).
-  const syncedEventRef = useRef(event);
+  //
+  // Seeded with the row the controls were filled from (`fill`): when that is an
+  // older seed than `event` (the row remounted while holding a draft), the
+  // first pass reconciles the untouched controls to `event` like any refetch.
+  const syncedEventRef = useRef(fill);
   useEffect(() => {
     if (!inlineEdit) return;
     if (syncedEventRef.current === event) return;
@@ -358,6 +382,12 @@ export function EventLogRow({
     // what it persisted. See `DraftStore#clearMatching`.
     inlineDrafts.clearMatching(event.event_id, server, INLINE_DRAFT_FIELDS);
     const survivors = inlineDrafts.read(event.event_id);
+    // The seed follows the server row only while the row holds nothing
+    // (session-edit-conflicts D3): no surviving draft and no save in flight or
+    // queued. A surviving draft was typed over the OLD seed, so moving the base
+    // under it would turn the other person's write into a silent overwrite; the
+    // untouched controls below are refilled all the same.
+    if (survivors === undefined && !rowBusy?.(event.event_id)) seeds?.set(event.event_id, event);
     // ...and refresh only the controls whose draft did NOT survive. The others
     // are still displaying the operator's text; overwriting them with server
     // values would lose it on screen even though the store kept it.
@@ -369,7 +399,25 @@ export function EventLogRow({
     }
     if (survivors?.category === undefined) setInlineCategory(server.category);
     if (survivors?.message === undefined && msgRef.current) msgRef.current.value = server.message;
-  }, [event, inlineEdit, inlineDrafts]);
+    // `seeds` and `rowBusy` are stable for the feed's lifetime.
+  }, [event, inlineEdit, inlineDrafts, seeds, rowBusy]);
+
+  /** The row's controls hold nothing (no draft, no save, no focus): let them and
+   *  the seed follow the current server row — the D3 follow rule for the moment
+   *  the operator leaves a row whose refetch the focus guard above skipped. */
+  const followServerIfFree = () => {
+    if (rowRef.current?.contains(document.activeElement)) return;
+    if (inlineDrafts.read(event.event_id) !== undefined) return;
+    if (!seeds || rowBusy?.(event.event_id)) return;
+    if (seeds.get(event.event_id) === event && syncedEventRef.current === event) return;
+    seeds.set(event.event_id, event);
+    syncedEventRef.current = event;
+    const server = serverInlineDraft(event);
+    if (tcRef.current) tcRef.current.value = server.timecode_hms;
+    if (wallRef.current) wallRef.current.value = server.wall_text;
+    setInlineCategory(server.category);
+    if (msgRef.current) msgRef.current.value = server.message;
+  };
 
   const inputForField = (field: InlineFocusField): HTMLInputElement | null =>
     field === 'timecode' ? tcRef.current : field === 'wall' ? wallRef.current : msgRef.current;
@@ -454,15 +502,20 @@ export function EventLogRow({
 
   const saveInline = (catOverride?: string) => {
     if (!inlineEdit || isAuto) return;
-    const tc = tcRef.current?.value.trim() ?? formatTimecodeHMS(event.timecode);
-    const wall = buildWallIso(wallRef.current?.value ?? '', event.wall_time_utc);
+    // Compared against the SEED, never the live `event` (session-edit-conflicts
+    // D3): a refetch that landed while this row was focused left the controls
+    // showing the seed, so comparing against the newer row made untouched
+    // controls look like an edit — and silently reverted the other person.
+    const seed = seeds?.get(event.event_id) ?? event;
+    const tc = tcRef.current?.value.trim() ?? formatTimecodeHMS(seed.timecode);
+    const wall = buildWallIso(wallRef.current?.value ?? '', seed.wall_time_utc);
     const cat = catOverride ?? inlineCategory;
-    const msg = (msgRef.current?.value ?? event.message ?? '').trim();
-    const origTc = formatTimecodeHMS(event.timecode);
-    const origWall = normalizeWallIso(event.wall_time_utc);
+    const msg = (msgRef.current?.value ?? seed.message ?? '').trim();
+    const origTc = formatTimecodeHMS(seed.timecode);
+    const origWall = normalizeWallIso(seed.wall_time_utc);
     if (
-      cat === event.category &&
-      msg === (event.message ?? '').trim() &&
+      cat === seed.category &&
+      msg === (seed.message ?? '').trim() &&
       tc === origTc &&
       wall === origWall
     ) {
@@ -481,8 +534,10 @@ export function EventLogRow({
       // (The committed path does NOT clear here: `EventLogSheet` drops it once
       // the save has round-tripped, so a FAILED save leaves the operator's text
       // recoverable rather than silently reverting on the next remount.)
-      // Whole-row reference again, so the covered set is every field.
-      inlineDrafts.clearMatching(event.event_id, serverInlineDraft(event), INLINE_DRAFT_FIELDS);
+      // Whole-row reference again, so the covered set is every field. The
+      // reference is the seed: it is what the controls render from.
+      inlineDrafts.clearMatching(event.event_id, serverInlineDraft(seed), INLINE_DRAFT_FIELDS);
+      followServerIfFree();
       return;
     }
     onInlineSave(event, { category: cat, message: msg, timecode_hms: tc, wall_time_utc: wall });
@@ -580,10 +635,10 @@ export function EventLogRow({
             ? batchValues?.wall_time_utc
               ? formatWallUtcYmdHms(batchValues.wall_time_utc)
               : ''
-            : formatWallUtcYmdHms(event.wall_time_utc);
+            : formatWallUtcYmdHms(fill.wall_time_utc);
           const tcVal = batchEdit
             ? (batchValues?.timecode_hms ?? formatTimecodeHMS(event.timecode))
-            : formatTimecodeHMS(event.timecode);
+            : formatTimecodeHMS(fill.timecode);
           return (
             // `.sheetTcStack.sheetTcStackInline`: flex row, tc + wall side by side.
             <div className="flex flex-row flex-nowrap items-center justify-center gap-[0.35rem] w-full min-h-0">
@@ -638,7 +693,7 @@ export function EventLogRow({
       : (() => {
           const tcVal = batchEdit
             ? (batchValues?.timecode_hms ?? formatTimecodeHMS(event.timecode))
-            : formatTimecodeHMS(event.timecode);
+            : formatTimecodeHMS(fill.timecode);
           return (
             <input
               ref={batchEdit ? undefined : tcRef}
@@ -721,7 +776,7 @@ export function EventLogRow({
       ref={batchEdit ? undefined : msgRef}
       type="text"
       className={CELL_CONTROL}
-      defaultValue={batchEdit ? undefined : (draft?.message ?? event.message ?? '')}
+      defaultValue={batchEdit ? undefined : (draft?.message ?? fill.message ?? '')}
       value={batchEdit ? msgVal : undefined}
       aria-label="Message"
       disabled={dis}

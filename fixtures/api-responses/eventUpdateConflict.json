@@ -1,0 +1,19 @@
+{
+  "detail": "Version conflict.",
+  "current": {
+    "event_id": "########-####-####-####-############",
+    "wall_time_utc": "####-##-##T##:##:##.###Z",
+    "timecode": "##:##:##:##",
+    "frame_rate": 24,
+    "timecode_total_frames": 24,
+    "category": "cam",
+    "message": "Theirs",
+    "metadata": {
+      "al_category_label_snapshot": "Camera",
+      "al_category_color_snapshot": "#112233"
+    },
+    "version": 2,
+    "category_label": "Camera",
+    "category_color": "#112233"
+  }
+}

@@ -1,11 +1,12 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { apiFetch } from '../../../api/client';
+import { ApiError, apiFetch } from '../../../api/client';
 import { WORKSPACE_EVENTS_LIMIT } from '../../../api/hooks/useEvents';
 import type { Category, EventsResponse, LogEvent, SessionStatus } from '../../../api/types';
+import { showToast } from '../../../shared/components/Toast';
 import { TooltipProvider } from '../../../shared/ui/Tooltip';
-import { renderStrict } from '../../../test/renderStrict';
+import { renderStrict, StrictWrapper } from '../../../test/renderStrict';
 import { EventLogSheet } from './EventLogSheet';
 
 // --- EventLogSheet batch-Escape / discard-confirm regression (ui-refresh, phase-2
@@ -68,7 +69,15 @@ vi.mock('@tanstack/react-virtual', async (importOriginal) => ({
   },
 }));
 
+// Observed by the version-conflict suite (batch and delete toasts); nothing else here reads
+// toasts.
+vi.mock('../../../shared/components/Toast', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../shared/components/Toast')>()),
+  showToast: vi.fn(),
+}));
+
 const mockedApiFetch = vi.mocked(apiFetch);
+const mockedShowToast = vi.mocked(showToast);
 
 const SESSION_ID = 'sess-log-sheet-1';
 
@@ -103,6 +112,7 @@ function categoryFixture(): Category {
 
 function logEventFixture(): LogEvent {
   return {
+    version: 1,
     event_id: 'ev-1',
     category: 'general',
     category_label: 'General',
@@ -464,6 +474,7 @@ describe('EventLogSheet marker reveal page growth', () => {
 
   function manyEventsFixture(count: number): LogEvent[] {
     return Array.from({ length: count }, (_, i) => ({
+      version: 1,
       event_id: `ev-${i}`,
       category: 'general',
       category_label: 'General',
@@ -526,5 +537,346 @@ describe('EventLogSheet marker reveal page growth', () => {
         .map((p) => new URLSearchParams(p.split('?')[1] ?? '').get('limit')),
     );
     expect([...eventsLimits]).toEqual([String(WORKSPACE_EVENTS_LIMIT)]);
+  });
+});
+
+// --- Version conflicts on batch save and delete (session-edit-conflicts task 6.2, D3/D9) ---
+//
+// A stateful server of three rows with 7c-1's version check: a stale `version`
+// on PUT, or `?version=` on DELETE, is refused with the 409 carrying `current`.
+// `otherPersonEdits` is another operator's save.
+describe('EventLogSheet batch and delete version conflicts', () => {
+  let rows: LogEvent[] = [];
+  /** Ids whose next PUT/DELETE fails with a plain 500. */
+  let failFor = new Set<string>();
+
+  function rowFixture(n: number): LogEvent {
+    return {
+      ...logEventFixture(),
+      event_id: `ev-${n}`,
+      message: `note ${n}`,
+      timecode: `00:00:1${n}:00`,
+      timecode_total_frames: 240 + n * 24,
+      wall_time_utc: `2026-07-21T00:00:1${n}Z`,
+    };
+  }
+
+  function otherPersonEdits(eventId: string, patch: Partial<LogEvent>) {
+    rows = rows.map((r) =>
+      r.event_id === eventId ? { ...r, ...patch, version: r.version + 1 } : r,
+    );
+  }
+
+  function conflict(current: LogEvent): ApiError {
+    return new ApiError(409, 'Version conflict.', { detail: 'Version conflict.', current });
+  }
+
+  beforeEach(() => {
+    rows = [rowFixture(1), rowFixture(2), rowFixture(3)];
+    failFor = new Set();
+    mockedShowToast.mockReset();
+    mockedApiFetch.mockImplementation(async (path: string, opts: RequestInit = {}) => {
+      if (path.includes('/status')) return statusFixture();
+      if (path.includes('/show-categories')) {
+        return { categories: [categoryFixture()], show_name: '', show_code: '' };
+      }
+      const m = /\/events\/([^?]+)(\?.*)?$/.exec(path);
+      if (m && (opts.method === 'PUT' || opts.method === 'DELETE')) {
+        const eventId = m[1];
+        if (failFor.delete(eventId)) throw new ApiError(500, 'Server exploded.');
+        const current = rows.find((r) => r.event_id === eventId);
+        if (!current) throw new ApiError(404, 'Event not found.', { detail: 'Event not found.' });
+        if (opts.method === 'PUT') {
+          const body = JSON.parse(String(opts.body)) as Partial<LogEvent> & { version?: number };
+          if (body.version !== undefined && body.version !== current.version) {
+            throw conflict(current);
+          }
+          const updated = {
+            ...current,
+            message: body.message ?? current.message,
+            version: current.version + 1,
+          };
+          rows = rows.map((r) => (r.event_id === eventId ? updated : r));
+          return updated;
+        }
+        const q = new URLSearchParams(m[2]?.slice(1) ?? '');
+        const v = q.get('version');
+        if (v !== null && Number(v) !== current.version) throw conflict(current);
+        rows = rows.filter((r) => r.event_id !== eventId);
+        return { ok: true };
+      }
+      if (path.includes('/events')) {
+        return {
+          events: rows,
+          total: rows.length,
+          logged_event_count: rows.length,
+          offset: 0,
+          limit: 200,
+          has_auto_generated: false,
+        };
+      }
+      throw new Error(`unexpected apiFetch call: ${path}`);
+    });
+  });
+
+  function renderWithClient() {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    renderStrict(
+      <QueryClientProvider client={client}>
+        <TooltipProvider delayDuration={400}>
+          <EventLogSheet sessionId={SESSION_ID} />
+        </TooltipProvider>
+      </QueryClientProvider>,
+    );
+    return client;
+  }
+
+  function writes(method: 'PUT' | 'DELETE'): string[] {
+    return mockedApiFetch.mock.calls
+      .filter(([, opts]) => (opts as RequestInit | undefined)?.method === method)
+      .map(([path]) => String(path));
+  }
+
+  function putBodies(): Array<Record<string, unknown>> {
+    return mockedApiFetch.mock.calls
+      .filter(([, opts]) => (opts as RequestInit | undefined)?.method === 'PUT')
+      .map(([, opts]) => JSON.parse(String((opts as RequestInit).body)));
+  }
+
+  function rowEl(eventId: string): HTMLElement {
+    const el = document.querySelector<HTMLElement>(`tr[data-event-id="${eventId}"]`);
+    if (!el) throw new Error(`row ${eventId} is not mounted`);
+    return el;
+  }
+
+  async function enterBatch() {
+    await waitFor(() => expect(rowEl('ev-1')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    await waitFor(() => expect(within(rowEl('ev-1')).getByLabelText('Message')).toBeTruthy());
+  }
+
+  function batchType(eventId: string, value: string) {
+    fireEvent.change(within(rowEl(eventId)).getByLabelText('Message'), { target: { value } });
+  }
+
+  async function saveBatch() {
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    });
+  }
+
+  async function choose(name: 'Overwrite' | 'Keep theirs' | 'Delete anyway') {
+    await screen.findByRole('alertdialog', { name: 'Row changed' });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name }));
+    });
+  }
+
+  async function settle() {
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+  }
+
+  const inBatchMode = () => screen.queryByRole('button', { name: 'Save changes' }) !== null;
+
+  it('a batch of three with a conflict on the second, Keep theirs: the third still saves and batch mode ends', async () => {
+    renderWithClient();
+    await enterBatch();
+    batchType('ev-1', 'mine 1');
+    batchType('ev-2', 'mine 2');
+    batchType('ev-3', 'mine 3');
+    otherPersonEdits('ev-2', { message: 'theirs 2' });
+
+    await saveBatch();
+    await choose('Keep theirs');
+
+    await waitFor(() => expect(inBatchMode()).toBe(false));
+    expect(rows.map((r) => r.message)).toEqual(['mine 1', 'theirs 2', 'mine 3']);
+    expect(putBodies().map((b) => [b.message, b.version])).toEqual([
+      ['mine 1', 1],
+      ['mine 2', 1],
+      ['mine 3', 1],
+    ]);
+    expect(mockedShowToast).toHaveBeenCalledWith('Changes saved, 1 kept theirs.');
+  });
+
+  it('a 500 on the second stops the batch, and a second Save sends only the unsettled rows', async () => {
+    renderWithClient();
+    await enterBatch();
+    batchType('ev-1', 'mine 1');
+    batchType('ev-2', 'mine 2');
+    batchType('ev-3', 'mine 3');
+    failFor.add('ev-2');
+
+    await saveBatch();
+    await waitFor(() => expect(mockedShowToast).toHaveBeenCalledWith('Server exploded.', true));
+    expect(inBatchMode()).toBe(true);
+    expect(writes('PUT')).toHaveLength(2);
+
+    await saveBatch();
+    await waitFor(() => expect(inBatchMode()).toBe(false));
+    const sent = writes('PUT').map((p) => p.split('/events/')[1]);
+    expect(sent).toEqual(['ev-1', 'ev-2', 'ev-2', 'ev-3']);
+    expect(rows.map((r) => r.message)).toEqual(['mine 1', 'mine 2', 'mine 3']);
+  });
+
+  it('dismissing a batch conflict stops the batch and keeps the rest', async () => {
+    renderWithClient();
+    await enterBatch();
+    batchType('ev-1', 'mine 1');
+    batchType('ev-2', 'mine 2');
+    batchType('ev-3', 'mine 3');
+    otherPersonEdits('ev-2', { message: 'theirs 2' });
+
+    await saveBatch();
+    const d = await screen.findByRole('alertdialog', { name: 'Row changed' });
+    await act(async () => {
+      fireEvent.keyDown(d, { key: 'Escape' });
+    });
+    await settle();
+
+    expect(inBatchMode()).toBe(true);
+    expect(writes('PUT')).toHaveLength(2);
+    expect(rows.map((r) => r.message)).toEqual(['mine 1', 'theirs 2', 'note 3']);
+    // The unsettled rows still hold the operator's batch text.
+    expect((within(rowEl('ev-2')).getByLabelText('Message') as HTMLInputElement).value).toBe(
+      'mine 2',
+    );
+    expect((within(rowEl('ev-3')).getByLabelText('Message') as HTMLInputElement).value).toBe(
+      'mine 3',
+    );
+    expect(mockedShowToast).toHaveBeenCalledWith(expect.any(String), true);
+  });
+
+  it('a pending batch delete that conflicts, then Delete anyway, sends ?version=N&overwrite=1', async () => {
+    renderWithClient();
+    await enterBatch();
+    fireEvent.click(within(rowEl('ev-2')).getByRole('button', { name: 'Delete row' }));
+    otherPersonEdits('ev-2', { message: 'theirs 2' });
+
+    await saveBatch();
+    await choose('Delete anyway');
+
+    await waitFor(() => expect(inBatchMode()).toBe(false));
+    expect(writes('DELETE')).toEqual([
+      `sessions/${SESSION_ID}/events/ev-2?version=1`,
+      `sessions/${SESSION_ID}/events/ev-2?version=2&overwrite=1`,
+    ]);
+    expect(rows.map((r) => r.event_id)).toEqual(['ev-1', 'ev-3']);
+  });
+
+  it('a non-batch delete conflict, then Keep theirs: the row stays', async () => {
+    renderWithClient();
+    await screen.findByText('note 2');
+    otherPersonEdits('ev-2', { message: 'theirs 2' });
+
+    fireEvent.click(within(rowEl('ev-2')).getByRole('button', { name: 'Delete row' }));
+    await act(async () => {
+      fireEvent.click(await screen.findByRole('button', { name: 'Delete' }));
+    });
+    await choose('Keep theirs');
+    await settle();
+
+    expect(writes('DELETE')).toEqual([`sessions/${SESSION_ID}/events/ev-2?version=1`]);
+    expect(rows.map((r) => r.event_id)).toEqual(['ev-1', 'ev-2', 'ev-3']);
+    await screen.findByText('theirs 2');
+  });
+
+  it('a non-batch delete conflict, then Delete anyway: ?version=N&overwrite=1 and the row is removed', async () => {
+    renderWithClient();
+    await screen.findByText('note 2');
+    otherPersonEdits('ev-2', { message: 'theirs 2' });
+
+    fireEvent.click(within(rowEl('ev-2')).getByRole('button', { name: 'Delete row' }));
+    await act(async () => {
+      fireEvent.click(await screen.findByRole('button', { name: 'Delete' }));
+    });
+    await choose('Delete anyway');
+    await settle();
+
+    expect(writes('DELETE')).toEqual([
+      `sessions/${SESSION_ID}/events/ev-2?version=1`,
+      `sessions/${SESSION_ID}/events/ev-2?version=2&overwrite=1`,
+    ]);
+    expect(rows.map((r) => r.event_id)).toEqual(['ev-1', 'ev-3']);
+    await waitFor(() => expect(document.querySelector('tr[data-event-id="ev-2"]')).toBeNull());
+  });
+
+  it('a batch interrupted by a session switch shows no "Save stopped" toast', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const tree = (sessionId: string) => (
+      <StrictWrapper>
+        <QueryClientProvider client={client}>
+          <TooltipProvider delayDuration={400}>
+            <EventLogSheet sessionId={sessionId} />
+          </TooltipProvider>
+        </QueryClientProvider>
+      </StrictWrapper>
+    );
+    const { rerender } = render(tree(SESSION_ID));
+    await enterBatch();
+    batchType('ev-1', 'mine 1');
+    batchType('ev-2', 'mine 2');
+    otherPersonEdits('ev-1', { message: 'theirs 1' });
+
+    await saveBatch();
+    await screen.findByRole('alertdialog', { name: 'Row changed' });
+    // The operator switches session with the batch's prompt open.
+    await act(async () => {
+      rerender(tree('sess-other'));
+    });
+    await settle();
+
+    expect(screen.queryByRole('alertdialog', { name: 'Row changed' })).toBeNull();
+    expect(writes('PUT')).toHaveLength(1);
+    expect(mockedShowToast).not.toHaveBeenCalled();
+  });
+
+  it('a delete that 404s shows the existing message and no dialog', async () => {
+    renderWithClient();
+    await screen.findByText('note 2');
+    rows = rows.filter((r) => r.event_id !== 'ev-2');
+
+    fireEvent.click(within(rowEl('ev-2')).getByRole('button', { name: 'Delete row' }));
+    await act(async () => {
+      fireEvent.click(await screen.findByRole('button', { name: 'Delete' }));
+    });
+    await waitFor(() => expect(mockedShowToast).toHaveBeenCalledWith('Event not found.', true));
+    expect(screen.queryByRole('alertdialog', { name: 'Row changed' })).toBeNull();
+  });
+
+  it('another person’s change that lands before the operator touches a row: batch edit, batch delete and non-batch delete send no prompt', async () => {
+    const client = renderWithClient();
+    await screen.findByText('note 1');
+    otherPersonEdits('ev-1', { message: 'theirs 1' });
+    otherPersonEdits('ev-2', { message: 'theirs 2' });
+    otherPersonEdits('ev-3', { message: 'theirs 3' });
+    await act(async () => {
+      await client.invalidateQueries();
+    });
+    await screen.findByText('theirs 3');
+
+    // Non-batch delete of ev-3.
+    fireEvent.click(within(rowEl('ev-3')).getByRole('button', { name: 'Delete row' }));
+    await act(async () => {
+      fireEvent.click(await screen.findByRole('button', { name: 'Delete' }));
+    });
+    await waitFor(() => expect(rows.map((r) => r.event_id)).toEqual(['ev-1', 'ev-2']));
+
+    // Batch edit of ev-1 and batch delete of ev-2.
+    await enterBatch();
+    batchType('ev-1', 'mine 1');
+    fireEvent.click(within(rowEl('ev-2')).getByRole('button', { name: 'Delete row' }));
+    await saveBatch();
+    await waitFor(() => expect(inBatchMode()).toBe(false));
+
+    expect(screen.queryByRole('alertdialog', { name: 'Row changed' })).toBeNull();
+    expect(writes('DELETE')).toEqual([
+      `sessions/${SESSION_ID}/events/ev-3?version=2`,
+      `sessions/${SESSION_ID}/events/ev-2?version=2`,
+    ]);
+    expect(putBodies()).toEqual([expect.objectContaining({ message: 'mine 1', version: 2 })]);
+    expect(rows.map((r) => [r.event_id, r.message])).toEqual([['ev-1', 'mine 1']]);
   });
 });

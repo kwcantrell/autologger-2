@@ -1,0 +1,13 @@
+{
+  "detail": "Version conflict.",
+  "current": {
+    "id": "########-####-####-####-############",
+    "session_time": "##:##:##:##",
+    "speaker": "0",
+    "word": "hullo",
+    "start_sec": 0,
+    "end_sec": 0,
+    "ordinal": 0,
+    "version": 2
+  }
+}

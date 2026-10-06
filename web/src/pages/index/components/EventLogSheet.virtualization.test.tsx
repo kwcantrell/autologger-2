@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { apiFetch } from '../../../api/client';
+import { ApiError, apiFetch } from '../../../api/client';
 import { sessionStatusKeys } from '../../../api/hooks/useSessionStatus';
 import type { Category, EventsResponse, LogEvent, SessionStatus } from '../../../api/types';
 import { TooltipProvider } from '../../../shared/ui/Tooltip';
@@ -192,6 +192,7 @@ function eventsFixture(count: number): EventsResponse {
   const events: LogEvent[] = Array.from({ length: count }, (_, i) => {
     const n = (i * 7) % count;
     return {
+      version: 1,
       event_id: `ev-${n}`,
       category: 'general',
       category_label: 'General',
@@ -227,6 +228,22 @@ let putGate: Promise<void> | null = null;
  *  the operator's draft so the text stays recoverable. */
 let putFails = false;
 
+/** session-edit-conflicts 6.1: ids whose NEXT PUT meets another person's write
+ *  first — the race where someone else saves between the operator's base and
+ *  the request arriving. The id is consumed by that PUT. */
+let conflictFor = new Set<string>();
+
+/** Another person's save: the row moves on the server and its `version`
+ *  advances, exactly as 7c-1's versioned write does. No refetch is triggered —
+ *  a test invalidates when it wants the cache to see it. */
+function otherPersonEdits(eventId: string, patch: Partial<LogEvent>) {
+  const index = serverEvents.findIndex((e) => e.event_id === eventId);
+  if (index < 0) throw new Error(`unknown event: ${eventId}`);
+  const current = serverEvents[index];
+  serverEvents = [...serverEvents];
+  serverEvents[index] = { ...current, ...patch, version: current.version + 1 };
+}
+
 beforeEach(() => {
   virtualMock.first = 0;
   virtualMock.last = Number.POSITIVE_INFINITY;
@@ -235,6 +252,7 @@ beforeEach(() => {
   virtualMock.scrollToIndex.mockReset();
   putGate = null;
   putFails = false;
+  conflictFor = new Set();
   rolling = false;
   serverEvents = eventsFixture(EVENT_COUNT).events;
   mockedApiFetch.mockReset();
@@ -250,13 +268,29 @@ beforeEach(() => {
       const body = JSON.parse(String(opts.body)) as {
         category: string;
         message: string;
+        version?: number;
+        overwrite?: boolean;
       };
+      if (conflictFor.delete(eventId)) {
+        otherPersonEdits(eventId, { message: `theirs before ${body.message}` });
+      }
       const index = serverEvents.findIndex((e) => e.event_id === eventId);
       if (index < 0) throw new Error(`unknown event: ${eventId}`);
+      // 7c-1's version check: a stale `version` (overwrite or not) is refused
+      // with the current row, and nothing is written.
+      const current = serverEvents[index];
+      if (body.version !== undefined && body.version !== current.version) {
+        throw new ApiError(409, 'Version conflict.', { detail: 'Version conflict.', current });
+      }
       // A fresh object for the edited row only, so React Query's structural
       // sharing hands EventLogRow a NEW `event` identity for it and keeps every
       // other row's — exactly what the server round trip produces.
-      const updated = { ...serverEvents[index], category: body.category, message: body.message };
+      const updated = {
+        ...current,
+        category: body.category,
+        message: body.message,
+        version: current.version + 1,
+      };
       serverEvents = [...serverEvents];
       serverEvents[index] = updated;
       return updated;
@@ -1027,5 +1061,362 @@ describe('EventLogSheet abandoned inline-edit focus', () => {
     expect(renderedEventIds()).toContain('ev-0');
 
     handle.remove();
+  });
+});
+
+// --- Version conflicts on the inline edit (session-edit-conflicts task 6.1, D3/D4/D5/D9) ---
+//
+// Every inline save is based on the row's SEED — the server row the controls
+// were filled from — never on the cached row. The PUT mock above checks the
+// version the way 7c-1 does and answers a stale one with the 409 carrying
+// `current`; `otherPersonEdits` is another operator's save.
+describe('EventLogSheet inline edit version conflicts', () => {
+  function putsFor(eventId: string): Array<Record<string, unknown>> {
+    return mockedApiFetch.mock.calls
+      .filter(
+        ([path, opts]) =>
+          path === `sessions/${SESSION_ID}/events/${eventId}` &&
+          (opts as RequestInit | undefined)?.method === 'PUT',
+      )
+      .map(([, opts]) => JSON.parse(String((opts as RequestInit).body)));
+  }
+
+  /** Blur, then let `handleBlur`'s deferred save run. */
+  async function leave(input: HTMLInputElement) {
+    await act(async () => {
+      input.blur();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+  }
+
+  function focus(input: HTMLInputElement) {
+    act(() => {
+      input.focus();
+    });
+  }
+
+  /** The `event.changed` refetch landing — and reaching the rows (React
+   *  Query notifies its observers on a later tick). */
+  async function refetch(client: QueryClient) {
+    await act(async () => {
+      await client.invalidateQueries();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+  }
+
+  const conflictDialog = () => screen.findByRole('alertdialog', { name: 'Row changed' });
+
+  async function choose(name: 'Overwrite' | 'Keep theirs') {
+    await conflictDialog();
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name }));
+    });
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+  }
+
+  async function dismiss() {
+    const d = await conflictDialog();
+    await act(async () => {
+      fireEvent.keyDown(d, { key: 'Escape' });
+    });
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+  }
+
+  /** Unmount the row (past the pin bound) and mount it again. */
+  function remount() {
+    scrollWindowTo(100, 103, 'ev-101');
+    expect(document.querySelector('#v4-log-sheet tr[data-event-id="ev-0"]')).toBeNull();
+    scrollWindowTo(0, 3, 'ev-1');
+  }
+
+  /** Focus ev-0, let another person's change to it land, then type `mine` and
+   *  leave: the save meets the conflict. */
+  async function conflictOnEv0(client: QueryClient, mine = 'mine') {
+    const input = messageInput('ev-0');
+    focus(input);
+    otherPersonEdits('ev-0', { message: 'theirs' });
+    await refetch(client);
+    fireEvent.change(messageInput('ev-0'), { target: { value: mine } });
+    await leave(messageInput('ev-0'));
+    await conflictDialog();
+  }
+
+  it('sends the base version with an inline save', async () => {
+    virtualMock.first = 0;
+    virtualMock.last = 3;
+    await renderRollingSheet();
+
+    const input = messageInput('ev-0');
+    focus(input);
+    fireEvent.change(input, { target: { value: 'versioned' } });
+    await leave(input);
+
+    await waitFor(() => expect(putsFor('ev-0')).toHaveLength(1));
+    expect(putsFor('ev-0')[0]).toMatchObject({ message: 'versioned', version: 1 });
+    expect(putsFor('ev-0')[0]).not.toHaveProperty('overwrite');
+  });
+
+  it('a refetch while the row is focused does not move the base, so the dialog shows', async () => {
+    virtualMock.first = 0;
+    virtualMock.last = 3;
+    const { client } = await renderRollingSheet();
+
+    await conflictOnEv0(client);
+
+    expect(putsFor('ev-0')).toEqual([expect.objectContaining({ message: 'mine', version: 1 })]);
+    // Nothing was written over the other person's change.
+    expect(serverEvents.find((e) => e.event_id === 'ev-0')?.message).toBe('theirs');
+  });
+
+  it('Overwrite resends with current.version and overwrite, and the row keeps the operator text', async () => {
+    serveLongFixture();
+    virtualMock.first = 0;
+    virtualMock.last = 3;
+    await renderRollingSheet();
+
+    // Someone else saves between the operator's base and the request arriving.
+    conflictFor.add('ev-0');
+    const input = messageInput('ev-0');
+    focus(input);
+    fireEvent.change(input, { target: { value: 'mine' } });
+    await leave(input);
+    await choose('Overwrite');
+
+    await waitFor(() => expect(putsFor('ev-0')).toHaveLength(2));
+    expect(putsFor('ev-0')[1]).toMatchObject({ message: 'mine', version: 2, overwrite: true });
+    await waitFor(() =>
+      expect(serverEvents.find((e) => e.event_id === 'ev-0')?.message).toBe('mine'),
+    );
+    await waitFor(() => expect(messageInput('ev-0').value).toBe('mine'));
+    remount();
+    expect(messageInput('ev-0').value).toBe('mine');
+  });
+
+  it('Keep theirs shows theirs, and the draft is gone after a remount', async () => {
+    serveLongFixture();
+    virtualMock.first = 0;
+    virtualMock.last = 3;
+    const { client } = await renderRollingSheet();
+
+    await conflictOnEv0(client);
+    await choose('Keep theirs');
+
+    await waitFor(() => expect(messageInput('ev-0').value).toBe('theirs'));
+    remount();
+    expect(messageInput('ev-0').value).toBe('theirs');
+    expect(putsFor('ev-0')).toHaveLength(1);
+  });
+
+  it('dismissing keeps the draft across a remount', async () => {
+    serveLongFixture();
+    virtualMock.first = 0;
+    virtualMock.last = 3;
+    const { client } = await renderRollingSheet();
+
+    await conflictOnEv0(client);
+    await dismiss();
+
+    remount();
+    expect(messageInput('ev-0').value).toBe('mine');
+    expect(putsFor('ev-0')).toHaveLength(1);
+    expect(serverEvents.find((e) => e.event_id === 'ev-0')?.message).toBe('theirs');
+  });
+
+  it('two consecutive own saves on one row do not conflict, even when the second blur lands in flight', async () => {
+    virtualMock.first = 0;
+    virtualMock.last = 3;
+    await renderRollingSheet();
+
+    let release!: () => void;
+    putGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    focus(messageInput('ev-0'));
+    fireEvent.change(messageInput('ev-0'), { target: { value: 'first' } });
+    await leave(messageInput('ev-0'));
+    // The first PUT is in flight; the operator comes back and commits again.
+    focus(messageInput('ev-0'));
+    fireEvent.change(messageInput('ev-0'), { target: { value: 'second' } });
+    await leave(messageInput('ev-0'));
+    expect(putsFor('ev-0')).toHaveLength(1);
+
+    await act(async () => {
+      release();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    await waitFor(() =>
+      expect(serverEvents.find((e) => e.event_id === 'ev-0')?.message).toBe('second'),
+    );
+    expect(putsFor('ev-0').map((b) => b.version)).toEqual([1, 2]);
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+  });
+
+  it('after an own save that lands with focus back in the row, the next edit is based on the saved version', async () => {
+    virtualMock.first = 0;
+    virtualMock.last = 3;
+    await renderRollingSheet();
+
+    let release!: () => void;
+    putGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    focus(messageInput('ev-0'));
+    fireEvent.change(messageInput('ev-0'), { target: { value: 'first' } });
+    await leave(messageInput('ev-0'));
+    // Back in the row while the save (and its refetch) lands: the row's
+    // server-sync effect skips a focused row.
+    focus(messageInput('ev-0'));
+    await act(async () => {
+      release();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    await waitFor(() =>
+      expect(serverEvents.find((e) => e.event_id === 'ev-0')?.message).toBe('first'),
+    );
+    await act(async () => {});
+
+    fireEvent.change(messageInput('ev-0'), { target: { value: 'first then more' } });
+    await leave(messageInput('ev-0'));
+
+    await waitFor(() => expect(putsFor('ev-0')).toHaveLength(2));
+    expect(putsFor('ev-0')[1]).toMatchObject({ message: 'first then more', version: 2 });
+    await waitFor(() =>
+      expect(serverEvents.find((e) => e.event_id === 'ev-0')?.message).toBe('first then more'),
+    );
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+  });
+
+  it('focusing a row and leaving without typing sends nothing after another person changed it', async () => {
+    virtualMock.first = 0;
+    virtualMock.last = 3;
+    const { client } = await renderRollingSheet();
+
+    focus(messageInput('ev-0'));
+    otherPersonEdits('ev-0', { message: 'theirs' });
+    await refetch(client);
+    // The focused controls still show what the operator was looking at.
+    expect(messageInput('ev-0').value).toBe('note 0');
+    await leave(messageInput('ev-0'));
+    await act(async () => {});
+
+    expect(putsFor('ev-0')).toHaveLength(0);
+    expect(serverEvents.find((e) => e.event_id === 'ev-0')?.message).toBe('theirs');
+    // Leaving the row lets it follow the server again.
+    await waitFor(() => expect(messageInput('ev-0').value).toBe('theirs'));
+  });
+
+  it('a save queued behind a conflicting one is not sent after Keep theirs', async () => {
+    virtualMock.first = 0;
+    virtualMock.last = 3;
+    const { client } = await renderRollingSheet();
+
+    focus(messageInput('ev-0'));
+    otherPersonEdits('ev-0', { message: 'theirs' });
+    await refetch(client);
+    let release!: () => void;
+    putGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    fireEvent.change(messageInput('ev-0'), { target: { value: 'mine' } });
+    await leave(messageInput('ev-0'));
+    focus(messageInput('ev-0'));
+    fireEvent.change(messageInput('ev-0'), { target: { value: 'mine and more' } });
+    await leave(messageInput('ev-0'));
+
+    await act(async () => {
+      release();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    await choose('Keep theirs');
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(putsFor('ev-0')).toHaveLength(1);
+    expect(serverEvents.find((e) => e.event_id === 'ev-0')?.message).toBe('theirs');
+    await waitFor(() => expect(messageInput('ev-0').value).toBe('theirs'));
+  });
+
+  it('Keep theirs refills a copy of the row that virtualization remounted while the prompt was open', async () => {
+    serveLongFixture();
+    virtualMock.first = 0;
+    virtualMock.last = 3;
+    const { client } = await renderRollingSheet();
+
+    await conflictOnEv0(client);
+    // The prompt is open; the row scrolls away and back, remounting from the draft.
+    remount();
+    expect(messageInput('ev-0').value).toBe('mine');
+
+    await choose('Keep theirs');
+
+    await waitFor(() => expect(messageInput('ev-0').value).toBe('theirs'));
+  });
+
+  it('after a dismiss, leaving the row again shows the dialog again (the seed did not follow current)', async () => {
+    virtualMock.first = 0;
+    virtualMock.last = 3;
+    const { client } = await renderRollingSheet();
+
+    await conflictOnEv0(client);
+    await dismiss();
+
+    focus(messageInput('ev-0'));
+    await leave(messageInput('ev-0'));
+    await conflictDialog();
+
+    expect(putsFor('ev-0').map((b) => b.version)).toEqual([1, 1]);
+    expect(serverEvents.find((e) => e.event_id === 'ev-0')?.message).toBe('theirs');
+  });
+
+  it('a draft keeps its base version across a remount while another person’s change lands', async () => {
+    serveLongFixture();
+    virtualMock.first = 0;
+    virtualMock.last = 3;
+    const { client } = await renderRollingSheet();
+
+    // Typed over version 1, then scrolled out before leaving the row.
+    fireEvent.change(messageInput('ev-0'), { target: { value: 'mine' } });
+    scrollWindowTo(100, 103, 'ev-101');
+    expect(document.querySelector('#v4-log-sheet tr[data-event-id="ev-0"]')).toBeNull();
+    // Version 2 reaches the cache while the row is unmounted.
+    otherPersonEdits('ev-0', { message: 'theirs' });
+    await refetch(client);
+    scrollWindowTo(0, 3, 'ev-1');
+
+    expect(messageInput('ev-0').value).toBe('mine');
+    focus(messageInput('ev-0'));
+    await leave(messageInput('ev-0'));
+    await conflictDialog();
+
+    expect(putsFor('ev-0')).toEqual([expect.objectContaining({ message: 'mine', version: 1 })]);
+    expect(serverEvents.find((e) => e.event_id === 'ev-0')?.message).toBe('theirs');
+  });
+
+  it('a failed save, then another person’s change while unfocused, then leaving again is a conflict, not a silent overwrite', async () => {
+    virtualMock.first = 0;
+    virtualMock.last = 3;
+    const { client } = await renderRollingSheet();
+
+    putFails = true;
+    focus(messageInput('ev-0'));
+    fireEvent.change(messageInput('ev-0'), { target: { value: 'mine' } });
+    await leave(messageInput('ev-0'));
+    await waitFor(() => expect(putsFor('ev-0')).toHaveLength(1));
+    await act(async () => {});
+    putFails = false;
+
+    otherPersonEdits('ev-0', { message: 'theirs' });
+    await refetch(client);
+    // The unsaved text survives the refresh.
+    expect(messageInput('ev-0').value).toBe('mine');
+
+    focus(messageInput('ev-0'));
+    await leave(messageInput('ev-0'));
+    await conflictDialog();
+
+    expect(putsFor('ev-0').map((b) => b.version)).toEqual([1, 1]);
+    expect(serverEvents.find((e) => e.event_id === 'ev-0')?.message).toBe('theirs');
   });
 });

@@ -6,6 +6,7 @@ function topic(
   partial: Partial<SessionTopic> & Pick<SessionTopic, 'id' | 'ordinal'>,
 ): SessionTopic {
   return {
+    version: 1,
     session_time: '00:00:01:00',
     duration_sec: 10,
     topic_level: 1,

@@ -6,6 +6,7 @@ function word(
   partial: Partial<TranscriptWord> & Pick<TranscriptWord, 'id' | 'ordinal'>,
 ): TranscriptWord {
   return {
+    version: 1,
     session_time: '00:00:01:00',
     speaker: '0',
     word: 'hello',

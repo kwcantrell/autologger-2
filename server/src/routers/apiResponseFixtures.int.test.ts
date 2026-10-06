@@ -544,6 +544,88 @@ describe('events', () => {
       res,
     );
   });
+  // session-edit-conflicts design D6: the versioned update and the two version-conflict 409s,
+  // captured so the web types `LogEvent` and `EventVersionConflict` are pinned to real bodies.
+  // Each conflict is set up the same way: create (version 1), then an unversioned write moves it
+  // to version 2, so a request carrying version 1 is stale and `current.version` is 2.
+  const eventPut = async (
+    sessionId: string,
+    eventId: string,
+    extra: Record<string, unknown> = {},
+  ): Promise<Response> =>
+    app.request(
+      `/api/sessions/${sessionId}/events/${eventId}`,
+      {
+        method: 'PUT',
+        headers: JSON_HEADERS,
+        body: JSON.stringify({
+          category: 'cam',
+          message: 'Cut to 3',
+          wall_time_utc: '2026-06-25T00:00:05.000Z',
+          timecode_hms: '00:00:01',
+          ...extra,
+        }),
+      },
+      { ...env },
+    );
+  async function seedEvent(): Promise<{ sessionId: string; eventId: string }> {
+    const { sessionId } = await seedActiveChain();
+    const created = await app.request(
+      `/api/sessions/${sessionId}/events`,
+      {
+        method: 'POST',
+        headers: JSON_HEADERS,
+        body: JSON.stringify({ category: 'cam', message: 'Cut to 2' }),
+      },
+      { ...env },
+    );
+    return { sessionId, eventId: ((await created.json()) as { event_id: string }).event_id };
+  }
+
+  it('PUT /api/sessions/:id/events/:eventId with a current version matches the captured fixture', async () => {
+    const { sessionId, eventId } = await seedEvent();
+    const res = await eventPut(sessionId, eventId, { version: 1 });
+    await expectCapturedResponse(
+      { name: 'eventUpdate', endpoint: 'PUT /api/sessions/:id/events/:eventId', format: 'json' },
+      res,
+    );
+  });
+
+  it('PUT …/events/:eventId with a stale version (409) matches the captured fixture', async () => {
+    const { sessionId, eventId } = await seedEvent();
+    expect((await eventPut(sessionId, eventId, { message: 'Theirs' })).status).toBe(200);
+    const res = await eventPut(sessionId, eventId, { version: 1 });
+    const body = await expectCapturedResponse(
+      {
+        name: 'eventUpdateConflict',
+        endpoint: 'PUT /api/sessions/:id/events/:eventId (stale version)',
+        format: 'json',
+        status: 409,
+      },
+      res,
+    );
+    expect(body).toMatchObject({ detail: 'Version conflict.', current: { version: 2 } });
+  });
+
+  it('DELETE …/events/:eventId?version= with a stale version (409) matches the captured fixture', async () => {
+    const { sessionId, eventId } = await seedEvent();
+    expect((await eventPut(sessionId, eventId, { message: 'Theirs' })).status).toBe(200);
+    const res = await app.request(
+      `/api/sessions/${sessionId}/events/${eventId}?version=1`,
+      { method: 'DELETE' },
+      { ...env },
+    );
+    const body = await expectCapturedResponse(
+      {
+        name: 'eventDeleteConflict',
+        endpoint: 'DELETE /api/sessions/:id/events/:eventId?version= (stale version)',
+        format: 'json',
+        status: 409,
+      },
+      res,
+    );
+    expect(body).toMatchObject({ detail: 'Version conflict.', current: { version: 2 } });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -706,6 +788,80 @@ describe('transcript words', () => {
       res,
     );
   });
+  // session-edit-conflicts design D6: the versioned update and the two version-conflict 409s
+  // (create at version 1, an unversioned PATCH to version 2, then a stale request at version 1).
+  const wordCreate = async (): Promise<{ sessionId: string; id: string }> => {
+    const { sessionId } = await seedActiveChain();
+    const created = await app.request(
+      `/api/sessions/${sessionId}/transcript-words`,
+      {
+        method: 'POST',
+        headers: JSON_HEADERS,
+        body: JSON.stringify({ session_time: '00:00:10:00', speaker: '0', word: 'hello' }),
+      },
+      { ...env },
+    );
+    return { sessionId, id: ((await created.json()) as { id: string }).id };
+  };
+  const wordPatch = async (
+    sessionId: string,
+    id: string,
+    body: Record<string, unknown>,
+  ): Promise<Response> =>
+    app.request(
+      `/api/sessions/${sessionId}/transcript-words/${id}`,
+      { method: 'PATCH', headers: JSON_HEADERS, body: JSON.stringify(body) },
+      { ...env },
+    );
+
+  it('PATCH …/transcript-words/:wordId with a current version matches the captured fixture', async () => {
+    const { sessionId, id } = await wordCreate();
+    const res = await wordPatch(sessionId, id, { word: 'hi', version: 1 });
+    await expectCapturedResponse(
+      {
+        name: 'transcriptWordUpdate',
+        endpoint: 'PATCH /api/sessions/:id/transcript-words/:wordId',
+        format: 'json',
+      },
+      res,
+    );
+  });
+
+  it('PATCH …/transcript-words/:wordId with a stale version (409) matches the captured fixture', async () => {
+    const { sessionId, id } = await wordCreate();
+    expect((await wordPatch(sessionId, id, { word: 'hullo' })).status).toBe(200);
+    const res = await wordPatch(sessionId, id, { word: 'hi', version: 1 });
+    const body = await expectCapturedResponse(
+      {
+        name: 'transcriptWordUpdateConflict',
+        endpoint: 'PATCH /api/sessions/:id/transcript-words/:wordId (stale version)',
+        format: 'json',
+        status: 409,
+      },
+      res,
+    );
+    expect(body).toMatchObject({ detail: 'Version conflict.', current: { version: 2 } });
+  });
+
+  it('DELETE …/transcript-words/:wordId?version= with a stale version (409) matches the captured fixture', async () => {
+    const { sessionId, id } = await wordCreate();
+    expect((await wordPatch(sessionId, id, { word: 'hullo' })).status).toBe(200);
+    const res = await app.request(
+      `/api/sessions/${sessionId}/transcript-words/${id}?version=1`,
+      { method: 'DELETE' },
+      { ...env },
+    );
+    const body = await expectCapturedResponse(
+      {
+        name: 'transcriptWordDeleteConflict',
+        endpoint: 'DELETE /api/sessions/:id/transcript-words/:wordId?version= (stale version)',
+        format: 'json',
+        status: 409,
+      },
+      res,
+    );
+    expect(body).toMatchObject({ detail: 'Version conflict.', current: { version: 2 } });
+  });
 });
 
 describe('topics', () => {
@@ -761,6 +917,81 @@ describe('topics', () => {
       { name: 'topicsList', endpoint: 'GET /api/sessions/:id/topics', format: 'json' },
       res,
     );
+  });
+  // session-edit-conflicts design D6: the versioned update and the two version-conflict 409s
+  // (create at version 1, an unversioned PATCH to version 2, then a stale request at version 1).
+  const topicCreate = async (): Promise<{ sessionId: string; id: string }> => {
+    const { sessionId } = await seedActiveChain();
+    const created = await app.request(
+      `/api/sessions/${sessionId}/topics`,
+      {
+        method: 'POST',
+        headers: JSON_HEADERS,
+        body: JSON.stringify({
+          session_time: '00:00:10:00',
+          duration_sec: 30,
+          topic_level: 1,
+          summary: 'A summary',
+        }),
+      },
+      { ...env },
+    );
+    return { sessionId, id: ((await created.json()) as { id: string }).id };
+  };
+  const topicPatch = async (
+    sessionId: string,
+    id: string,
+    body: Record<string, unknown>,
+  ): Promise<Response> =>
+    app.request(
+      `/api/sessions/${sessionId}/topics/${id}`,
+      { method: 'PATCH', headers: JSON_HEADERS, body: JSON.stringify(body) },
+      { ...env },
+    );
+
+  it('PATCH …/topics/:topicId with a current version matches the captured fixture', async () => {
+    const { sessionId, id } = await topicCreate();
+    const res = await topicPatch(sessionId, id, { summary: 'My summary', version: 1 });
+    await expectCapturedResponse(
+      { name: 'topicUpdate', endpoint: 'PATCH /api/sessions/:id/topics/:topicId', format: 'json' },
+      res,
+    );
+  });
+
+  it('PATCH …/topics/:topicId with a stale version (409) matches the captured fixture', async () => {
+    const { sessionId, id } = await topicCreate();
+    expect((await topicPatch(sessionId, id, { summary: 'Their summary' })).status).toBe(200);
+    const res = await topicPatch(sessionId, id, { summary: 'My summary', version: 1 });
+    const body = await expectCapturedResponse(
+      {
+        name: 'topicUpdateConflict',
+        endpoint: 'PATCH /api/sessions/:id/topics/:topicId (stale version)',
+        format: 'json',
+        status: 409,
+      },
+      res,
+    );
+    expect(body).toMatchObject({ detail: 'Version conflict.', current: { version: 2 } });
+  });
+
+  it('DELETE …/topics/:topicId?version= with a stale version (409) matches the captured fixture', async () => {
+    const { sessionId, id } = await topicCreate();
+    expect((await topicPatch(sessionId, id, { summary: 'Their summary' })).status).toBe(200);
+    const res = await app.request(
+      `/api/sessions/${sessionId}/topics/${id}?version=1`,
+      { method: 'DELETE' },
+      { ...env },
+    );
+    const body = await expectCapturedResponse(
+      {
+        name: 'topicDeleteConflict',
+        endpoint: 'DELETE /api/sessions/:id/topics/:topicId?version= (stale version)',
+        format: 'json',
+        status: 409,
+      },
+      res,
+    );
+    expect(body).toMatchObject({ detail: 'Version conflict.', current: { version: 2 } });
   });
 });
 

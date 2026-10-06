@@ -45,6 +45,7 @@ const FPS = 24;
 
 function eventFixture(id: string, totalFrames: number): LogEvent {
   return {
+    version: 1,
     event_id: id,
     category: 'general',
     category_label: 'General',

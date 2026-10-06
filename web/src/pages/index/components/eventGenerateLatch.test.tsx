@@ -122,6 +122,7 @@ function emptyEventsFixture(): EventsResponse {
 
 function autoEventFixture(): LogEvent {
   return {
+    version: 1,
     event_id: 'auto-1',
     category: 'general',
     category_label: 'General',

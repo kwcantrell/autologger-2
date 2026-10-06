@@ -26,6 +26,7 @@ import { type TranscribeDraft, TranscribeRow } from './TranscribeRow';
 
 function wordFixture(overrides: Partial<TranscriptWord> = {}): TranscriptWord {
   return {
+    version: 1,
     id: 'w-1',
     session_time: '00:00:10:00',
     speaker: '0',
