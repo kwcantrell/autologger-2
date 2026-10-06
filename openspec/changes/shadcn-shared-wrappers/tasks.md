@@ -92,9 +92,10 @@
 
 ## 4. Cleanup
 
-- [ ] 4.1 Test first: `shadcnHygiene.repo.test.ts` bans `@radix-ui/react-*` imports. This fails until nothing imports them.
+- [x] 4.1 Test first: `shadcnHygiene.repo.test.ts` bans `@radix-ui/react-*` imports. This fails until nothing imports them.
   - Remove `@radix-ui/react-{dialog,popover,radio-group,select,tooltip}` with `npm uninstall -w web …`.
   - Verify the hygiene test passes, `grep -c '@radix-ui/react-' web/package.json` prints `0`, and `npx vitest run`, `npm run lint` and `npm run typecheck` are green.
+  - Evidence: new shadcnHygiene rule (no `@radix-ui/react-*` imports): with a probe file importing `@radix-ui/react-dialog` -> `+ "file": "__radix_probe.ts"` (fails); probe removed -> `Tests 5 passed (5)`. `npm uninstall -w web @radix-ui/react-{dialog,popover,radio-group,select,tooltip}`; `grep -c @radix-ui/react- web/package.json` -> `0`; `npx vitest run` -> `Test Files 121 passed (121) Tests 1516 passed (1516)`; lint/typecheck clean
 
 ## 5. Integration: QA gate and checks
 
