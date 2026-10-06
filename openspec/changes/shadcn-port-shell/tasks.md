@@ -63,11 +63,12 @@
 
 ## 5. Integration: QA gate and checks
 
-- [ ] 5.1 Copy the walk from the archived `shadcn-shared-wrappers/qa`, adding steps for:
+- [x] 5.1 Copy the walk from the archived `shadcn-shared-wrappers/qa`, adding steps for:
   - the session `⋮` DropdownMenu
   - Teams with a card expanded
   - the login error (`127.0.0.1:8787/?login_error=state_invalid`)
   - route not-found (`/sessions/does-not-exist`)
+  - Evidence: walk copied + teams-expanded / session-not-found / login-error steps; Suffix step hardened (first run: swallowed LazySelect click + Escape closed Settings -> Settings screens showed home); both width passes vs archived after-wrappers -> 62 contrast JSONs, only `filter-menu` `Audio issue 3.64`; max diff teams.390 6.63%, unported screens ≤0.1% at 1440; per-screen table in qa/README.md
 
   Run both width passes against the archived `after-wrappers` captures. Verify contrast is 0 failures apart from the user-data "Audio issue", and record per-screen diffs in `qa/README.md`.
 - [ ] 5.2 The owner reviews the pairs and does a dev-stack pass: the rail at both widths, the session menu by keyboard, the Teams picker, the login error, and the rescue banner if triggerable. Verify the result is recorded in `qa/README.md`.
