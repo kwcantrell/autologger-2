@@ -46,7 +46,7 @@
 
 ## 3. Wrappers (public APIs unchanged)
 
-- [ ] 3.1 `shared/ui/Dialog.tsx` on Dialog (desktop) and Drawer (mobile) (D2).
+- [x] 3.1 `shared/ui/Dialog.tsx` on Dialog (desktop) and Drawer (mobile) (D2).
   - Test first: `shared/ui/Dialog.test.tsx`:
     - desktop: named `dialog`; `hideTitle` keeps the accessible name; `closeOnOverlayClick={false}` ignores outside pointer-down
     - mobile (`matchMedia` matches): named `dialog` from the vaul drawer
@@ -55,6 +55,7 @@
     - the drawer is `handleOnly`, and the handle has `data-vaul-handle`
     - a vetoed close (the parent keeps `open`) leaves the content mounted: same node, child state kept, and the inline transform reset to `translate3d(0,0,0)`
   - Verify that test passes, plus `BatchImportModal`, `EventOptionsModal`, `EventGenerateCustomModal` and `eventGenerateLatch`.
+  - Evidence: test first: `npx vitest run src/shared/ui/Dialog.test.tsx` against the legacy wrapper -> `× renders the vaul drawer … with a drag handle`, `× a vetoed close keeps the same sheet node …` (`2 failed | 5 passed`); after the Dialog/Drawer wrapper (autoFocus, handleOnly, in-place veto reset) -> `Tests 7 passed (7)`; full `npx vitest run` -> `Test Files 118 passed (118) Tests 1492 passed (1492)` (BatchImportModal, EventOptionsModal, EventGenerateCustomModal, eventGenerateLatch included)
 - [ ] 3.2 `shared/ui/ConfirmDialog.tsx` on AlertDialog (desktop) and Drawer (mobile) (D3).
   - Test first: extend `ConfirmDialog.test.tsx`:
     - desktop: `alertdialog` named by the title; Escape and an overlay click each resolve `false`; a `danger` action has `data-variant="destructive"`
