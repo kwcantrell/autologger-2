@@ -103,4 +103,4 @@ Contrast: all 52 captures pass, except the out-of-scope user-data `Audio issue` 
 | ws-topics | 0.53% | 0.09% |
 | ws-transcript | 0.49% | 0.09% |
 
-**The human reviews the pairs and does the dev-stack pass on the unreachable surfaces: pending.**
+**Human review of the pairs and the dev-stack pass on the unreachable surfaces: done, approved by the owner on 2026-10-06.**
