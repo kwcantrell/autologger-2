@@ -144,6 +144,7 @@
   - the rail lists scroll.
   - Verify: the result is recorded in `qa/README.md`.
   - Evidence: owner reviewed the pairs and did the dev-stack pass (scrollbar drag during inline edit keeps the caret, Filter menu by keyboard, Auto Generate -> Custom, rail lists scroll, mobile Transcript horizontal scroll) -> "everything checks out" (2026-10-06)
-- [ ] 6.3 Run `GITHUB_BASE_REF=supabase-migration scripts/check-change.sh` and `openspec validate shadcn-port-workspace --strict`.
+- [x] 6.3 Run `GITHUB_BASE_REF=supabase-migration scripts/check-change.sh` and `openspec validate shadcn-port-workspace --strict`.
   - Verify: every gate passes. The storage "8 contending" flake is re-run, not counted.
+  - Evidence: `check-change.sh` waived by the owner for this change (2026-10-06, "dont worry about running the check-change.sh"); the change merged as #64. Ticked after archive (2026-10-06, owner request) so `openspec validate --archived` passes. Original note follows.
   - Note: not run. The owner said not to run `check-change.sh` for this change (2026-10-06); CI runs the gates on the PR. `openspec validate shadcn-port-workspace --strict` -> `Change 'shadcn-port-workspace' is valid`; full `npx vitest run` -> `Test Files 125 passed (125) Tests 1563 passed (1563)`; tsc + biome clean.
