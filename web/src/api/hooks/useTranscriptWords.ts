@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiFetch } from '../client';
-import type { TranscriptWord } from '../types';
+import type { TranscriptWord, TranscriptWordVersionConflict } from '../types';
+import { guardBody, type VersionGuard, versionConflictOf, versionQuery } from '../versionConflict';
 
 const key = (sessionId: string) => ['transcript-words', sessionId];
 
@@ -59,29 +60,57 @@ export function useInsertTranscriptWord(sessionId: string) {
   });
 }
 
+/**
+ * session-edit-conflicts D8: on a version-conflict 409 the server's `current` row replaces the
+ * cached row (by `id`), then the query is invalidated. The cache holds server truth; the
+ * person's text lives only in their draft. Any other error leaves the cache alone. The error
+ * still reaches the caller either way.
+ */
+function useConflictWriter(sessionId: string) {
+  const qc = useQueryClient();
+  return (error: unknown) => {
+    const conflict = versionConflictOf<TranscriptWordVersionConflict>(error);
+    if (!conflict) return;
+    const { current } = conflict;
+    qc.setQueryData<TranscriptWord[]>(key(sessionId), (old) =>
+      old?.map((r) => (r.id === current.id ? current : r)),
+    );
+    // Not awaited: the caller's conflict prompt must not wait for the refetch.
+    void qc.invalidateQueries({ queryKey: key(sessionId) });
+  };
+}
+
 export function useUpdateTranscriptWord(sessionId: string) {
   const qc = useQueryClient();
+  const onConflict = useConflictWriter(sessionId);
   return useMutation({
     mutationFn: ({
       wordId,
       patch,
+      guard,
     }: {
       wordId: string;
+      guard?: VersionGuard;
       patch: { session_time?: string; speaker?: string; word?: string };
     }) =>
       apiFetch<TranscriptWord>(`sessions/${sessionId}/transcript-words/${wordId}`, {
         method: 'PATCH',
-        body: JSON.stringify(patch),
+        body: JSON.stringify({ ...patch, ...guardBody(guard) }),
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: key(sessionId) }),
+    onError: onConflict,
   });
 }
 
 export function useDeleteTranscriptWord(sessionId: string) {
   const qc = useQueryClient();
+  const onConflict = useConflictWriter(sessionId);
   return useMutation({
-    mutationFn: (wordId: string) =>
-      apiFetch<void>(`sessions/${sessionId}/transcript-words/${wordId}`, { method: 'DELETE' }),
+    mutationFn: ({ wordId, guard }: { wordId: string; guard?: VersionGuard }) =>
+      apiFetch<void>(`sessions/${sessionId}/transcript-words/${wordId}${versionQuery(guard)}`, {
+        method: 'DELETE',
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: key(sessionId) }),
+    onError: onConflict,
   });
 }

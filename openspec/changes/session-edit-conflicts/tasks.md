@@ -51,20 +51,22 @@ Keep each task's text, and later its `Evidence:`, in one block with no blank lin
 
 ## 3. Hooks (D8)
 
-- [ ] 3.1 Test first: new hook tests for events, words and topics (`renderHook` with a QueryClient wrapper, `apiFetch` mocked, the real `ApiError`). They cover:
+- [x] 3.1 Test first: new hook tests for events, words and topics (`renderHook` with a QueryClient wrapper, `apiFetch` mocked, the real `ApiError`). They cover:
   - the update body carries `version`/`overwrite`;
   - the delete URL carries `?version=N[&overwrite=1]`;
   - no guard means a request byte-identical to today's;
   - a version-conflict error writes `current` into every matching cache entry and invalidates.
   Red, then the three hooks. Update `EventLogSheet`'s delete call to the new variables object (D10 category 3).
+  - Evidence: new `web/src/api/hooks/useEvents.test.tsx`, `useTranscriptWords.test.tsx`, `useTopics.test.tsx` (renderHook + QueryClient wrapper, `apiFetch` mocked, real `ApiError`; 7 cases each: update no-guard byte-identical, update body with `version`/`overwrite`, update conflict writes `current` into the cache (events: both `s1` pages, `s2` page untouched) and invalidates, other error leaves cache alone, delete no-guard byte-identical, delete `?version=N[&overwrite=1]`, delete conflict writes `current` and invalidates). Red: `cd web && npx vitest run src/api/hooks/use{Events,TranscriptWords,Topics}.test.tsx` -> `Tests  15 failed | 6 passed (21)`, e.g. `AssertionError: expected "vi.fn()" to be called with arguments: [ 'sessions/s1/events/e1', …(1) ]` (the 6 passing are the update no-guard and other-error cases: today's behaviour). Hooks: `guard?: VersionGuard` on update vars (`{ ...body, ...guardBody(guard) }`), delete vars `{eventId|wordId|topicId, guard?}` (`versionQuery(guard)`), `onError` conflict writer (`setQueriesData` over `eventsKeys.all(sid)` / `setQueryData` on the key, then unawaited invalidate); `EventLogSheet.tsx` delete calls -> `{ eventId: id }` / `{ eventId }` (D10 cat. 3). Green: `Tests  21 passed (21)`; `EventLogSheet*` `Tests  40 passed (40)`; `npm run typecheck` 0 errors.
 
 ## 4. Response-shape guard (D6)
 
-- [ ] 4.1 Test first: in `web/src/apiResponseShapes.repo.test.ts`, add the Detector 8 `errorBody` synthetic cases:
+- [x] 4.1 Test first: in `web/src/apiResponseShapes.repo.test.ts`, add the Detector 8 `errorBody` synthetic cases:
   - an unchecked `versionConflictOf<T>` site fails;
   - a covered one passes;
   - an aliased import is still found.
   Add the canary in `useEvents.ts` and the `errorBody` floor. Red, then the detector. Then re-key the `client.ts` error-probe exemption and the three DELETE URL exemptions (D10 category 4), and re-measure every floor with the arithmetic in the comment. Gate: the file green.
+  - Evidence: `apiResponseShapes.repo.test.ts`: 4 Detector 8 synthetic cases (unchecked `versionConflictOf<BrandNewConflict>(e)` and untyped `versionConflictOf<>(e)` unverified; covered `<EventVersionConflict>` passes with `unverified` empty and the declaring module not a site; aliased `conflictOf<…>` and namespace `vc.versionConflictOf<…>` found; a same-named local function is not a site), canary `api/hooks/useEvents.ts :: versionConflictOf<EventVersionConflict>(error)`, floor `errorBody: 3`. Red: `cd web && npx vitest run src/apiResponseShapes.repo.test.ts` -> `Tests  7 failed | 41 passed (48)` (`AssertionError: expected [] to deeply equal [ [ …(3) ], …(1) ]`, `expected { below: [ [ 'errorBody', 3 ] ], …(1) }`, canary missing, plus the 2 tree tests from 2.1/3.1). Detector 8 (`versionConflictBindings` resolves named/alias/namespace imports from `api/versionConflict`) -> `Tests  2 failed | 46 passed (48)` (only the D10 cat. 4 keys left); re-keyed `api/client.ts :: body = await res.json();` (reason: body stays `unknown` until D2) and the three DELETE keys to `…/<var><var>\`) [DELETE]`; re-measured 150 sites / 97 covered (138+9 conformance+3 errorBody; 85+9+3), floors POPULATION 145, conformanceAssertion 57, COVERED 93, errorBody 3, arithmetic in the measured-numbers comment -> `Tests  48 passed (48)`. Gate: full web suite `Test Files  131 passed (131)`, `Tests  1612 passed (1612)`; `npm run typecheck` exit 0; `npx biome check web/src` no fixes.
 
 ## 5. Shared pieces (D3, D4, D5, D7)
 

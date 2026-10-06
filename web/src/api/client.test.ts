@@ -111,4 +111,56 @@ describe('apiFetch', () => {
       apiFetch('admin/users').catch((e: ApiError) => Promise.reject(e.message)),
     ).rejects.toBe('nope');
   });
+
+  // session-edit-conflicts D1: ApiError keeps the parsed error body.
+  it('a 409 JSON error body is on ApiError.body', async () => {
+    const body = { detail: 'Version conflict.', current: { event_id: 'e1', version: 2 } };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse(body, 409)));
+    const err = await apiFetch('sessions/s/events/e1', { method: 'PUT' }).catch((e) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).status).toBe(409);
+    expect((err as ApiError).body).toEqual(body);
+  });
+
+  it('detail and message are derived exactly as before when the body is kept', async () => {
+    const cases: Array<[unknown, string]> = [
+      [{ detail: 'Version conflict.', current: { version: 2 } }, 'Version conflict.'],
+      [{ detail: [{ loc: ['body'], msg: 'bad' }] }, '[{"loc":["body"],"msg":"bad"}]'],
+      [{ message: 'from message' }, 'from message'],
+      [{ message: '   ' }, 'Conflict'],
+      [{}, 'Conflict'],
+    ];
+    for (const [body, expected] of cases) {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue(
+          new Response(JSON.stringify(body), {
+            status: 409,
+            statusText: 'Conflict',
+            headers: { 'content-type': 'application/json' },
+          }),
+        ),
+      );
+      const err = (await apiFetch('x').catch((e) => e)) as ApiError;
+      expect(err.message).toBe(expected);
+      expect(err.body).toEqual(body);
+    }
+  });
+
+  it('a non-JSON error body leaves ApiError.body undefined', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response('<html>bad gateway</html>', {
+          status: 502,
+          statusText: 'Bad Gateway',
+          headers: { 'content-type': 'text/html' },
+        }),
+      ),
+    );
+    const err = (await apiFetch('x').catch((e) => e)) as ApiError;
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.message).toBe('Bad Gateway');
+    expect(err.body).toBeUndefined();
+  });
 });

@@ -41,7 +41,11 @@ import { afterEach, describe, expect, it } from 'vitest';
 //      `fetch(`, every `Response.json()`, every
 //      `JSON.parse(`, and every raw network primitive (`navigator.sendBeacon`,
 //      `new EventSource`, `new XMLHttpRequest`).
-//      Detector 7 additionally scans the conformance module itself. Anything a
+//      Detector 7 additionally scans the conformance module itself. Detector 8
+//      (`errorBody`, session-edit-conflicts D6) adds every `versionConflictOf<T>(…)`
+//      call bound through an import from `api/versionConflict` (alias and namespace
+//      included): it types the parsed body of a 409, the error-path twin of
+//      `apiFetch<T>`, so its `T` must be fixture-checked too. Anything a
 //      JSON payload can enter web/src through is a site whether or not it looks
 //      like a mistake. Over-matching costs a one-line exemption; under-matching
 //      costs the next outage.
@@ -288,6 +292,10 @@ const CONFORMANCE_MODULE = 'api/types.conformance.test.ts';
  * root. A type name only inherits a conformance check when the site's own file
  * imports it from THIS module — resolved, not merely spelled. */
 const CLIENT_TYPES_MODULE = 'api/types';
+
+/** The module exporting `versionConflictOf` (session-edit-conflicts D2). Detector 8 follows
+ * imports of that name from HERE — resolved, not spelled — so an alias is still a site. */
+const VERSION_CONFLICT_MODULE = 'api/versionConflict';
 
 // ---------------------------------------------------------------------------
 // Filesystem walk
@@ -688,7 +696,8 @@ type Detector =
   | 'jsonBody' // population (d) — Response.json(), wherever it happens
   | 'jsonParse' // population (d) — JSON.parse, incl. SSE frames and WS messages
   | 'beacon' // population (d) — sendBeacon / EventSource / XMLHttpRequest
-  | 'conformanceAssertion'; // the conformance module's own inputs
+  | 'conformanceAssertion' // the conformance module's own inputs
+  | 'errorBody'; // Detector 8 — `versionConflictOf<T>(e)`, a typed read of a 409 error body
 
 interface Site {
   detector: Detector;
@@ -739,6 +748,36 @@ function namespaceBindings(content: string): string[] {
   const re = /import\s+\*\s+as\s+([A-Za-z_$][\w$]*)\s+from\s*['"][^'"]*['"]/g;
   for (let m = re.exec(content); m !== null; m = re.exec(content)) out.add(m[1]);
   return [...out];
+}
+
+/** Detector 8's callees: every local name bound to `versionConflictOf` by a named import (alias
+ * included) whose specifier RESOLVES to `api/versionConflict`, and every namespace binding of
+ * that module (`vc.versionConflictOf<T>(…)`). A same-named function declared or imported from
+ * anywhere else is not this function and binds nothing. The declaring module imports nothing
+ * from itself, so its declaration is not a site. */
+function versionConflictBindings(
+  rel: string,
+  content: string,
+): { names: string[]; nsNames: string[] } {
+  const names = new Set<string>();
+  const imports = /import\s+(?:type\s+)?\{([^}]*)\}\s*from\s*['"]([^'"]*)['"]/g;
+  for (let m = imports.exec(content); m !== null; m = imports.exec(content)) {
+    if (resolveSpecifier(rel, m[2]) !== VERSION_CONFLICT_MODULE) continue;
+    for (const part of m[1].split(',')) {
+      const [original, alias] = part
+        .trim()
+        .replace(/^type\s+/, '')
+        .split(/\s+as\s+/)
+        .map((x) => x.trim());
+      if (original === 'versionConflictOf') names.add(alias ?? original);
+    }
+  }
+  const nsNames = new Set<string>();
+  const ns = /import\s+\*\s+as\s+([A-Za-z_$][\w$]*)\s+from\s*['"]([^'"]*)['"]/g;
+  for (let m = ns.exec(content); m !== null; m = ns.exec(content)) {
+    if (resolveSpecifier(rel, m[2]) === VERSION_CONFLICT_MODULE) nsNames.add(m[1]);
+  }
+  return { names: [...names], nsNames: [...nsNames] };
 }
 
 /** A regex source matching `callee` either bare or qualified by one of this
@@ -922,6 +961,64 @@ function scanFile(
       const names = typeNamesIn(typeExpr);
       const call = `${written}<${typeExpr}>(${normalizeArg(args[0] ?? '')})`;
       push(detector, m.index, withMethod(call, literalMethodOf(args)), names, isCovered(names));
+    }
+  }
+
+  // Detector 8 — `versionConflictOf<T>(e)` (session-edit-conflicts D6). It returns the parsed
+  // body of a version-conflict 409 typed as `T`, which is the same unchecked assertion as
+  // `apiFetch<T>` on the error path, so the site must name a fixture-checked `T` (the
+  // conformance module assigns each `*VersionConflict` alias a captured 409). A call with no
+  // type argument acquires nothing and is uncovered by construction.
+  const vc = versionConflictBindings(rel, content);
+  const vcCallees: { pattern: string }[] = [
+    ...vc.names.map((n) => ({ pattern: `(?<![.\\w$])${n}` })),
+    ...(vc.nsNames.length > 0
+      ? [{ pattern: `(?<![.\\w$])(?:${vc.nsNames.join('|')})\\s*\\.\\s*versionConflictOf` }]
+      : []),
+  ];
+  for (const { pattern } of vcCallees) {
+    const re = new RegExp(`${pattern}\\s*(?=[<(])`, 'g');
+    for (let m = re.exec(content); m !== null; m = re.exec(content)) {
+      if (isProse(masked, m.index)) continue;
+      let cursor = m.index + m[0].length;
+      while (/\s/.test(content[cursor] ?? '')) cursor++;
+      const written = collapse(m[0]).replace(/\s/g, '');
+      let typeExpr = '';
+      if (content[cursor] === '<') {
+        const angles = readAngles(content, cursor);
+        if (!angles) {
+          push(
+            'errorBody',
+            m.index,
+            `${written}<unparsed> ${normalizeArg(lineTextAt(content, m.index))}`,
+            [],
+            false,
+          );
+          continue;
+        }
+        typeExpr = collapse(angles.inner);
+        cursor = angles.end;
+        while (/\s/.test(content[cursor] ?? '')) cursor++;
+      }
+      if (content[cursor] !== '(') {
+        push(
+          'errorBody',
+          m.index,
+          `${written}<unparsed> ${normalizeArg(lineTextAt(content, m.index))}`,
+          [],
+          false,
+        );
+        continue;
+      }
+      const args = readArgs(content, cursor);
+      const names = typeNamesIn(typeExpr);
+      push(
+        'errorBody',
+        m.index,
+        `${written}<${typeExpr}>(${normalizeArg(args[0] ?? '')})`,
+        names,
+        isCovered(names),
+      );
     }
   }
 
@@ -1215,9 +1312,9 @@ const EXEMPTIONS: readonly Exemption[] = [
       'The one global `fetch` inside the shared helper — the seam every typed call goes through. Its shape is whatever the caller asserts, checked at those call sites.',
   },
   {
-    key: 'api/client.ts :: const j = (await res.json()) as { detail?: unknown; message?: unknown };',
+    key: 'api/client.ts :: body = await res.json();',
     reason:
-      'The shared error probe (audit §4, last row). Reads only `detail`/`message` off a non-2xx body and narrows each with a `typeof` check before use; no payload type is asserted.',
+      'The shared error probe (audit §4, last row), re-keyed by session-edit-conflicts D1. The non-2xx body is kept as `unknown` on `ApiError.body`; the probe reads only `detail`/`message` off it and narrows each with a `typeof` check before use, so no payload type is asserted here. The body stays `unknown` until `versionConflictOf<T>` (api/versionConflict, D2) types it, and that typed read is its own Detector 8 (`errorBody`) site.',
   },
   {
     key: "api/client.ts :: if (ct.includes('application/json')) return res.json() as Promise<T>;",
@@ -1254,9 +1351,9 @@ const EXEMPTIONS: readonly Exemption[] = [
       'Same endpoint as audit §5 row 20 (CONFORMS — emits `{ok: true}`, 404 for an unknown segment), called from the chunk pipeline’s per-chunk waveform PUT (chunked-live-recording task 4.2) instead of the useUploadWaveform hook. Result discarded; best-effort by spec.',
   },
   {
-    key: 'api/hooks/useEvents.ts :: apiFetch<OkResponse>(`sessions/<var>/events/<var>`) [DELETE]',
+    key: 'api/hooks/useEvents.ts :: apiFetch<OkResponse>(`sessions/<var>/events/<var><var>`) [DELETE]',
     reason:
-      'audit §5 row 21 CONFORMS — DELETE emits `{ok: true}` (404 if missing); 404 path probed.',
+      'audit §5 row 21 CONFORMS — DELETE emits `{ok: true}` (404 if missing); 404 path probed. Re-keyed by session-edit-conflicts D6: the trailing `<var>` is `versionQuery(guard)` (empty, or `?version=N[&overwrite=1]`); the version-conflict 409 is read by the Detector 8 site in the same file.',
   },
   {
     key: 'api/hooks/useSessions.ts :: apiFetch<OkResponse>(`sessions/<var>/archive`) [POST]',
@@ -1300,13 +1397,14 @@ const EXEMPTIONS: readonly Exemption[] = [
 
   // --- `apiFetch<void>` — the two 204 routes. Audit §5 rows 34 and 37.
   {
-    key: 'api/hooks/useTopics.ts :: apiFetch<void>(`sessions/<var>/topics/<var>`) [DELETE]',
+    key: 'api/hooks/useTopics.ts :: apiFetch<void>(`sessions/<var>/topics/<var><var>`) [DELETE]',
     reason:
-      "audit §5 row 34 CONFORMS — DELETE topic returns 204 with an empty body and no content-type, so `apiFetch` takes its `res.text()` branch and returns `''` as `void`. No JSON payload exists to check.",
+      "audit §5 row 34 CONFORMS — DELETE topic returns 204 with an empty body and no content-type, so `apiFetch` takes its `res.text()` branch and returns `''` as `void`. No JSON payload exists to check. Re-keyed by session-edit-conflicts D6: the trailing `<var>` is `versionQuery(guard)` (empty, or `?version=N[&overwrite=1]`); the version-conflict 409 is read by the Detector 8 site in the same file.",
   },
   {
-    key: 'api/hooks/useTranscriptWords.ts :: apiFetch<void>(`sessions/<var>/transcript-words/<var>`) [DELETE]',
-    reason: 'audit §5 row 37 CONFORMS — DELETE transcript word, identical 204 + empty-body shape.',
+    key: 'api/hooks/useTranscriptWords.ts :: apiFetch<void>(`sessions/<var>/transcript-words/<var><var>`) [DELETE]',
+    reason:
+      'audit §5 row 37 CONFORMS — DELETE transcript word, identical 204 + empty-body shape. Re-keyed by session-edit-conflicts D6: the trailing `<var>` is `versionQuery(guard)` (empty, or `?version=N[&overwrite=1]`); the version-conflict 409 is read by the Detector 8 site in the same file.',
   },
 
   // --- `apiFetch<EventsGenerateResponse>` — auto-generate-event-logs task 5.1.
@@ -1654,6 +1752,26 @@ const WEB_SRC = THIS_DIR;
 // for that reason, NOT as slack — the detector stays covered by its mutation fixtures (see the
 // note at CANARY_SITES).
 //
+// Re-measured 2026-10-06 for session-edit-conflicts (D6, task 4.1): 150 sites — apiFetch 67,
+// wrapper 0, rawFetch 7, jsonBody 5, jsonParse 5, beacon 2, conformanceAssertion 61,
+// errorBody 3 — of which 97 are COVERED. Arithmetic from the 138 / 85 above:
+//   - conformanceAssertion 52 -> 61 (+9, task 1.2): the three versioned-update rows
+//     (`const LogEvent = eventUpdate`, `TranscriptWord = transcriptWordUpdate`,
+//     `SessionTopic = topicUpdate`), the three "create rows carry version 1" re-assignments
+//     (`eventCreate`, `transcriptWordCreate`, `topicCreate`) and the three conflict aliases
+//     (`EventVersionConflict = eventUpdateConflict`, and the word and topic ones). All 9 are
+//     covered, so covered conformance sites 50 -> 59.
+//   - errorBody 0 -> 3 (new Detector 8): one `versionConflictOf<*VersionConflict>(error)` in each
+//     of useEvents.ts, useTranscriptWords.ts and useTopics.ts, all 3 covered by the aliases above.
+//   - apiFetch stays 67 (35 covered): the three DELETE sites were RE-KEYED (their URL gained
+//     `${versionQuery(guard)}`, a second `<var>`), not added. jsonBody stays 5: client.ts's error
+//     probe moved from `const j = (await res.json()) as …` to `body = await res.json();`
+//     (D1), one site re-keyed.
+//   Total 138 + 9 + 3 = 150; covered 85 + 9 + 3 = 97. Floors move by the same deltas, keeping
+//   their slack: POPULATION 133 -> 145, conformanceAssertion 48 -> 57, COVERED 81 -> 93, and
+//   errorBody 3 (equal to today's count: a 3-site detector, like `beacon`, cannot have both
+//   slack and rigour — losing one hook's conflict read is exactly what it should catch).
+//
 // HOW MUCH SLACK EACH FLOOR ALLOWS, stated rather than left to be inferred. A
 // floor far below its count lets a scan regression lose sites silently, which
 // is the same vacuity this block exists to prevent (branch audit, M8): the old
@@ -1662,7 +1780,7 @@ const WEB_SRC = THIS_DIR;
 // sites is not a failure, little enough that a regression is. Deleting more
 // than the slack means re-measuring these numbers deliberately, which is the
 // intended cost.
-const POPULATION_FLOOR = 133; // 138 today; tolerates a 5-site loss
+const POPULATION_FLOOR = 145; // 150 today; tolerates a 5-site loss
 const DETECTOR_FLOORS: Record<Detector, number> = {
   apiFetch: 63, // 67 today
   wrapper: 0, // 0 today — no live wrapper since /admin/users was retired; fixture-covered
@@ -1670,11 +1788,12 @@ const DETECTOR_FLOORS: Record<Detector, number> = {
   jsonBody: 4, // 5 today
   jsonParse: 4, // 5 today
   beacon: 1, // 2 today — a 2-site detector cannot have both slack and rigour
-  conformanceAssertion: 48, // 52 today
+  conformanceAssertion: 57, // 61 today
+  errorBody: 3, // 3 today — one conflict read per row-kind hook; no slack, see above
 };
-/** Today's covered count is 85. Same reasoning as the floors above: a few under today's count,
+/** Today's covered count is 97. Same reasoning as the floors above: a few under today's count,
  * so losing a conformance check or two is not a failure but a real regression is. */
-const COVERED_FLOOR = 81;
+const COVERED_FLOOR = 93;
 
 /** Sites that must be found by name. Each one exercises a different detector
  * path, so an over-narrowed pattern or a broken walk fails here with a
@@ -1700,6 +1819,10 @@ const CANARY_SITES: readonly { key: string; why: string }[] = [
   {
     key: "api/hooks/useCompanionPresence.ts :: navigator.sendBeacon(apiUrl('companion/presence'), b);",
     why: 'population (d): a raw network primitive with no Response object',
+  },
+  {
+    key: 'api/hooks/useEvents.ts :: versionConflictOf<EventVersionConflict>(error)',
+    why: 'Detector 8 (errorBody): a typed read of a 409 error body',
   },
 ];
 
@@ -2346,6 +2469,93 @@ describe('detection predicates (mutation checks — prove the detectors actually
     });
     const sites = scanTree(tmpRoot).sites.filter((s) => s.detector === 'conformanceAssertion');
     expect(sites.map((s) => s.covered)).toEqual([true, false]);
+  });
+
+  // --- Detector 8, `errorBody` (session-edit-conflicts D6). `versionConflictOf<T>(e)` hands the
+  // parsed body of a 409 a client type, so it is a response-consuming site like `apiFetch<T>`.
+  const VC_TYPES_STUB = [
+    TYPES_STUB,
+    'export interface VersionConflict<T> { detail: string; current: T }',
+    'export type EventVersionConflict = VersionConflict<{ version: number }>;',
+    'export type BrandNewConflict = VersionConflict<{ version: number }>;',
+  ].join('\n');
+  const VC_CONFORMANCE = [
+    CONFORMANCE_STUB,
+    "import eventUpdateConflict from '../../../fixtures/api-responses/eventUpdateConflict.json';",
+    "import type { EventVersionConflict } from './types';",
+    'const conflict: EventVersionConflict = eventUpdateConflict;',
+  ].join('\n');
+  const VC_MODULE =
+    "import { ApiError } from './client';\n" +
+    'export function versionConflictOf<C extends { detail: string }>(e: unknown): C | null {\n' +
+    '  return e instanceof ApiError ? (e.body as C) : null;\n' +
+    '}\n';
+  function errorBodySites(files: Record<string, string>): { all: ScanResult; sites: Site[] } {
+    const all = scanResult({
+      'api/types.ts': VC_TYPES_STUB,
+      [CONFORMANCE_MODULE]: VC_CONFORMANCE,
+      'api/versionConflict.ts': VC_MODULE,
+      ...files,
+    });
+    return { all, sites: all.sites.filter((s) => s.detector === 'errorBody') };
+  }
+
+  it('Detector 8: a versionConflictOf<T> site whose T has no conformance check is unverified', () => {
+    const { all, sites } = errorBodySites({
+      'api/hooks/useThing.ts':
+        "import type { BrandNewConflict } from '../types';\n" +
+        "import { versionConflictOf } from '../versionConflict';\n" +
+        'export const onError = (e: unknown) => versionConflictOf<BrandNewConflict>(e);\n' +
+        'export const bare = (e: unknown) => versionConflictOf(e);\n',
+    });
+    expect(sites.map((s) => [s.descriptor, s.typeNames, s.covered])).toEqual([
+      ['versionConflictOf<BrandNewConflict>(e)', ['BrandNewConflict'], false],
+      ['versionConflictOf<>(e)', [], false],
+    ]);
+    expect(all.unverified.filter((s) => s.detector === 'errorBody')).toHaveLength(2);
+  });
+
+  it('Detector 8: a versionConflictOf<T> site whose T IS conformance-checked is covered', () => {
+    const { all, sites } = errorBodySites({
+      'api/hooks/useThing.ts':
+        "import type { EventVersionConflict } from '../types';\n" +
+        "import { versionConflictOf } from '../versionConflict';\n" +
+        'export const onError = (e: unknown) => versionConflictOf<EventVersionConflict>(e);\n',
+    });
+    // The declaration in `api/versionConflict.ts` is not a site: only an IMPORTED binding is.
+    expect(sites).toHaveLength(1);
+    expect(sites[0]).toMatchObject({
+      file: 'api/hooks/useThing.ts',
+      key: 'api/hooks/useThing.ts :: versionConflictOf<EventVersionConflict>(e)',
+      covered: true,
+    });
+    expect(all.unverified).toEqual([]);
+  });
+
+  it('Detector 8: an ALIASED or NAMESPACE import of versionConflictOf is still found', () => {
+    const { sites } = errorBodySites({
+      'pages/Aliased.tsx':
+        "import type { BrandNewConflict } from '../api/types';\n" +
+        "import { versionConflictOf as conflictOf } from '../api/versionConflict';\n" +
+        'export const a = (e: unknown) => conflictOf<BrandNewConflict>(e);\n',
+      'pages/Ns.tsx':
+        "import type { EventVersionConflict } from '../api/types';\n" +
+        "import * as vc from '../api/versionConflict';\n" +
+        'export const b = (e: unknown) => vc.versionConflictOf<EventVersionConflict>(e);\n',
+    });
+    expect(sites.map((s) => [s.file, s.descriptor, s.covered])).toEqual([
+      ['pages/Aliased.tsx', 'conflictOf<BrandNewConflict>(e)', false],
+      ['pages/Ns.tsx', 'vc.versionConflictOf<EventVersionConflict>(e)', true],
+    ]);
+  });
+
+  it('Detector 8: a same-named function NOT imported from api/versionConflict is not a site', () => {
+    const { sites } = errorBodySites({
+      'pages/Local.tsx':
+        'function versionConflictOf<T>(e: unknown): T | null { return null; }\n' +
+        'export const c = (e: unknown) => versionConflictOf<string>(e);\n',
+    });
+    expect(sites).toEqual([]);
   });
 
   it('finds NOTHING in a tree with no response sites (proves it does not just always-fire)', () => {

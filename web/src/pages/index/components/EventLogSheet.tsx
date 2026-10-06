@@ -772,7 +772,7 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
         await updateEvent.mutateAsync({ eventId, body: edit });
       }
       for (const id of pendingDeleteIds) {
-        await deleteEvent.mutateAsync(id);
+        await deleteEvent.mutateAsync({ eventId: id });
       }
       setBatchEditMode(false);
       setBatchEdits(new Map());
@@ -886,7 +886,7 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
       });
       if (!ok) return;
       try {
-        await deleteEvent.mutateAsync(eventId);
+        await deleteEvent.mutateAsync({ eventId });
       } catch (e) {
         showToast(e instanceof Error ? e.message : 'Delete failed.', true);
       }
