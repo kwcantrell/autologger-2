@@ -88,6 +88,9 @@ vi.mock('../../../shared/ui/Dialog', () => ({
     dialogRenderCount.current += 1;
     return open ? <div role="dialog">{children}</div> : null;
   },
+  DialogActions: ({ children }: { children: React.ReactNode }) => (
+    <div data-slot="dialog-actions">{children}</div>
+  ),
 }));
 
 // Wraps the real implementation (not a behavior replacement) purely to count calls —
@@ -737,9 +740,8 @@ describe('HomeSettingsModal Suffix control', () => {
     renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
 
     const fieldsRow = document.getElementById('profile-show-fields');
-    const labels = Array.from(fieldsRow?.querySelectorAll('label') ?? []).map(
-      (l) => l.querySelector('span')?.textContent,
-    );
+    // shadcn-port-settings D2: FieldLabels (no inner span), so read the label text itself.
+    const labels = Array.from(fieldsRow?.querySelectorAll('label') ?? []).map((l) => l.textContent);
     expect(labels).toEqual(['Name:', 'Code:', 'Suffix:', 'Default Frame Rate:']);
 
     expect(screen.queryByText('Next Ep:')).toBeNull();
@@ -1754,5 +1756,56 @@ describe('HomeSettingsModal member view (show-grants D13)', () => {
     const body = mutateAsync.mock.calls[0][0] as Record<string, unknown>;
     expect(body).toHaveProperty('settings');
     expect(body).toHaveProperty('show_updates');
+  });
+});
+
+// shadcn-port-settings D2 / D2b: header, account and Add-Show controls on the shadcn layer.
+describe('HomeSettingsModal controls (shadcn-port-settings)', () => {
+  beforeEach(() => {
+    useProfileWith(profileWithShow, [showWithCategories]);
+  });
+
+  it('Save is the default Button, disabled and "Saved" when clean, with its reason on a hoverable wrapper', () => {
+    renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
+    const save = document.getElementById('profile-save') as HTMLButtonElement;
+    expect(save.textContent).toBe('Saved');
+    expect(save.disabled).toBe(true);
+    expect(save.getAttribute('data-variant')).toBe('default');
+    expect(save.className).toContain('max-md:min-h-11');
+    expect(save.parentElement?.getAttribute('title')).toBe('No unsaved changes');
+    const close = screen.getByRole('button', { name: 'Close' });
+    expect(close.getAttribute('data-variant')).toBe('outline');
+    expect(close.className).toContain('max-md:min-h-11');
+  });
+
+  it('fields are labelled inputs; Log out stays a link rendered as a destructive Button', () => {
+    renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
+    expect((screen.getByLabelText('Name:') as HTMLElement).getAttribute('data-slot')).toBe('input');
+    expect((screen.getByLabelText('Code:') as HTMLElement).id).toBe('profile-show-code');
+  });
+
+  it('Log out stays a link rendered as a destructive Button (signed-in profile)', () => {
+    useProfileWith(profileFull, [showWithCategories]);
+    renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
+    const logout = document.getElementById('profile-account-logout') as HTMLElement;
+    expect(logout.tagName).toBe('A');
+    expect(logout.getAttribute('href')).toBe('/auth/logout');
+    expect(logout.getAttribute('data-variant')).toBe('destructive');
+    expect((screen.getByLabelText('First name') as HTMLElement).getAttribute('data-slot')).toBe(
+      'input',
+    );
+  });
+
+  it('Add show opens a labelled name field with Cancel / Create show in the dialog actions row', () => {
+    renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
+    const add = screen.getByRole('button', { name: /Add New Show/ });
+    expect(add.getAttribute('data-variant')).toBe('outline');
+    fireEvent.click(add);
+    expect((screen.getByLabelText('Show name') as HTMLElement).id).toBe('profile-show-add-name');
+    const row = document.querySelector('[data-slot="dialog-actions"]') as HTMLElement;
+    expect([...row.querySelectorAll('button')].map((b) => b.textContent)).toEqual([
+      'Cancel',
+      'Create show',
+    ]);
   });
 });

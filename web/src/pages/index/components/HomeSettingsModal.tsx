@@ -6,10 +6,12 @@ import { sessionStatusKeys } from '../../../api/hooks/useSessionStatus';
 import { showAccessFrom } from '../../../api/hooks/useShowAccess';
 import { showKeys, useStudioShows } from '../../../api/hooks/useShows';
 import type { ProfilePayload, Show } from '../../../api/types';
+import { Button, TOUCH_TARGET } from '../../../shared/components/ui/button';
+import { Field, FieldDescription, FieldLabel } from '../../../shared/components/ui/field';
+import { Input } from '../../../shared/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../../shared/components/ui/tabs';
-import { BTN_PRIMARY_SKY } from '../../../shared/theme/classnames';
 import { useConfirm } from '../../../shared/ui/ConfirmDialog';
-import { Dialog } from '../../../shared/ui/Dialog';
+import { Dialog, DialogActions } from '../../../shared/ui/Dialog';
 import { normalizePalette9 } from '../utils/palette9';
 import { showToast } from '../utils/toast';
 import type { EventButtonDraft } from './EventButtonsTable';
@@ -28,6 +30,14 @@ const TOOLBAR_SELECT_BOX =
 // width / margin stay from chrome (.profile-select / .num). Same set as NewSessionModal.
 const HS_INPUT_OVERRIDE =
   'bg-[rgba(255,255,255,0.05)] border border-v5-border-strong text-v5-text rounded-[0.5rem]';
+
+// Legacy chrome re-expressed as utilities (shadcn-port-settings D2): the computed values of
+// `.admin-settings-block`, `.settings-subheading`, `.settings-actions` and `.modal-hint`, which stay
+// in tailwind.css for /admin/users until 3c-2. The `mb-4` on inputs is `.profile-select`'s margin.
+const SETTINGS_BLOCK = 'mt-4 mb-5 pb-4 border-b border-legacy-border';
+const SETTINGS_SUBHEAD = 'm-0 text-[1rem] font-semibold text-(--text)';
+const HINT = 'm-0 mb-[0.65rem] text-[0.78rem] leading-[1.45] text-legacy-muted';
+const HS_INPUT = clsx('mb-4', HS_INPUT_OVERRIDE);
 
 // The `--v6-tab-*` cluster (formerly defined on `.settingsPanel`), applied as arbitrary-property
 // utilities on the settings-panel element so its `.options`/`.section` descendants resolve them.
@@ -769,33 +779,35 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
           </div>
         </div>
         <div className="flex flex-nowrap items-center self-center shrink-0 gap-[0.2rem] min-h-[2.5rem]">
-          <button
-            type="button"
-            className={clsx('btn primary', BTN_PRIMARY_SKY)}
-            id="profile-save"
-            // ui-refresh: disabled until something changed, so "is this saved?" is answerable
-            // from the header at a glance (D11).
-            // No `!showsReady` term any more (review finding 2): that made an unavailable
-            // shows query brick account-only saves, which the save handler has always
-            // supported. The property it protected — never submitting a drafts map that
-            // does not belong to the selected studio — now lives in `showsDirty` (which
-            // requires `showsReady`) and in `handleSave`, which omits `show_updates`
-            // entirely rather than posting a partial one.
-            disabled={mutation.isPending || !dirty}
-            title={dirty ? undefined : 'No unsaved changes'}
-            onClick={handleSave}
-          >
-            {mutation.isPending ? 'Saving…' : dirty ? 'Save' : 'Saved'}
-          </button>
+          {/* The reason lives on a wrapper: a disabled Button has pointer events off, so a title
+              on the button itself would never show (shadcn-port-settings D2). */}
+          <span className="inline-flex" title={dirty ? undefined : 'No unsaved changes'}>
+            <Button
+              className={TOUCH_TARGET}
+              id="profile-save"
+              // ui-refresh: disabled until something changed, so "is this saved?" is answerable
+              // from the header at a glance (D11).
+              // No `!showsReady` term any more (review finding 2): that made an unavailable
+              // shows query brick account-only saves, which the save handler has always
+              // supported. The property it protected — never submitting a drafts map that
+              // does not belong to the selected studio — now lives in `showsDirty` (which
+              // requires `showsReady`) and in `handleSave`, which omits `show_updates`
+              // entirely rather than posting a partial one.
+              disabled={mutation.isPending || !dirty}
+              onClick={handleSave}
+            >
+              {mutation.isPending ? 'Saving…' : dirty ? 'Save' : 'Saved'}
+            </Button>
+          </span>
           {/* .toolbarClose had no rule of its own (its only rule was purged in Task 2). */}
-          <button
-            type="button"
-            className="btn"
+          <Button
+            variant="outline"
+            className={TOUCH_TARGET}
             aria-label="Close"
             onClick={() => void handleRequestClose()}
           >
             Close
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -841,40 +853,35 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
               mounts once this tab has been visited and then stays mounted. */}
             {visitedTabs.has('general') && (
               <>
-                {/* Show details. .profileShowFields sets border-b-0 (over admin-settings-block's border). */}
+                {/* Show details (border-b-0 over the settings block's bottom border). */}
                 {isMemberView ? (
-                  <p
-                    className="modal-hint muted"
-                    id="profile-show-fields-member"
-                    style={{ marginBottom: '0.75rem' }}
-                  >
+                  <p className={clsx(HINT, 'mb-3')} id="profile-show-fields-member">
                     Only the team’s owner and admins can edit shows and team defaults.
                   </p>
                 ) : currentDraft ? (
-                  <div id="profile-show-fields" className="admin-settings-block border-b-0">
+                  <div id="profile-show-fields" className={clsx(SETTINGS_BLOCK, 'border-b-0')}>
                     <div className={FIELDS_HEAD}>
-                      {/* .profileShowFieldsHead :global(.settings-subheading) forced margin:0. */}
-                      <h2 className="settings-subheading !m-0">Show Details</h2>
+                      <h2 className={SETTINGS_SUBHEAD}>Show Details</h2>
                     </div>
                     <div className={FIELDS_ROW}>
-                      <label className={clsx('field', FIELD_BASE)}>
-                        <span>Name:</span>
-                        <input
+                      <Field className={FIELD_BASE}>
+                        <FieldLabel htmlFor="profile-show-name">Name:</FieldLabel>
+                        <Input
                           type="text"
                           id="profile-show-name"
-                          className={clsx('profile-select', HS_INPUT_OVERRIDE)}
+                          className={HS_INPUT}
                           maxLength={200}
                           autoComplete="off"
                           value={currentDraft.name}
                           onChange={(e) => updateShowDraft({ name: e.target.value })}
                         />
-                      </label>
-                      <label className={clsx('field', FIELD_CODE)}>
-                        <span>Code:</span>
-                        <input
+                      </Field>
+                      <Field className={FIELD_CODE}>
+                        <FieldLabel htmlFor="profile-show-code">Code:</FieldLabel>
+                        <Input
                           type="text"
                           id="profile-show-code"
-                          className={clsx('profile-select mono', HS_INPUT_OVERRIDE)}
+                          className={clsx(HS_INPUT, 'font-mono')}
                           maxLength={40}
                           autoComplete="off"
                           spellCheck={false}
@@ -883,12 +890,12 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
                             updateShowDraft({ show_code: e.target.value.toUpperCase() })
                           }
                         />
-                      </label>
+                      </Field>
                       {/* session-title-suffix task 2.1: replaces the removed Next Ep counter
                     control. Maps to the show's `title_suffix` preference, which the
                     server uses to derive untitled-create titles (design D5-D8). */}
-                      <label className={clsx('field', FIELD_SUFFIX)} htmlFor="profile-show-suffix">
-                        <span>Suffix:</span>
+                      <Field className={FIELD_SUFFIX}>
+                        <FieldLabel htmlFor="profile-show-suffix">Suffix:</FieldLabel>
                         <LazySelect
                           id="profile-show-suffix"
                           ariaLabel="Suffix"
@@ -901,31 +908,27 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
                             { value: 'episode', label: 'Episode Number' },
                           ]}
                         />
-                      </label>
-                      <label className={clsx('field', FIELD_FPS)} htmlFor="profile-default-fps">
-                        <span>Default Frame Rate:</span>
+                      </Field>
+                      <Field className={FIELD_FPS}>
+                        <FieldLabel htmlFor="profile-default-fps">Default Frame Rate:</FieldLabel>
                         <FpsSelect
                           id="profile-default-fps"
                           value={defaultFps}
                           onChange={setDefaultFps}
                         />
-                      </label>
+                      </Field>
                     </div>
                     {showAcronymWarn && (
-                      <p className="modal-hint" id="profile-show-acronym-warn">
+                      <FieldDescription className="mb-[0.65rem]" id="profile-show-acronym-warn">
                         Tip: show code is usually initials of the show name (e.g.{' '}
                         {currentDraft.name.trim()} &rarr; {currentInitials}). Yours differs — that
                         is fine if intentional.
-                      </p>
+                      </FieldDescription>
                     )}
                   </div>
                 ) : (
                   <>
-                    <p
-                      className="modal-hint muted"
-                      id="profile-show-fields-placeholder"
-                      style={{ marginBottom: '0.75rem' }}
-                    >
+                    <p className={clsx(HINT, 'mb-3')} id="profile-show-fields-placeholder">
                       {showsUnavailable === 'offline'
                         ? 'You’re offline — can’t load shows.'
                         : showsUnavailable === 'error'
@@ -950,24 +953,19 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
                       continues the retryer's paused promise with or without a click,
                       so the honest affordance here is saying so. */}
                     {showsUnavailable === 'error' && (
-                      <button
-                        type="button"
-                        className="btn"
+                      <Button
+                        variant="outline"
+                        className={clsx(TOUCH_TARGET, 'mb-3')}
                         id="profile-shows-retry"
-                        style={{ marginBottom: '0.75rem' }}
                         onClick={() => {
                           void studioShowsQuery.refetch();
                         }}
                       >
                         Retry
-                      </button>
+                      </Button>
                     )}
                     {showsUnavailable === 'offline' && (
-                      <p
-                        className="modal-hint muted"
-                        id="profile-shows-offline-recovery"
-                        style={{ marginBottom: '0.75rem' }}
-                      >
+                      <p className={clsx(HINT, 'mb-3')} id="profile-shows-offline-recovery">
                         Shows will load on their own once you’re back online.
                       </p>
                     )}
@@ -978,52 +976,52 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
                 {profile?.auth.logged_in && profile.auth.user && (
                   <div
                     id="v6-settings-account"
-                    className="admin-settings-block mt-5 pt-4 border-t border-v5-border"
+                    className={clsx(SETTINGS_BLOCK, 'mt-5 pt-4 border-t border-v5-border')}
                   >
                     <div className={FIELDS_HEAD}>
-                      <h2 className="settings-subheading !m-0">Account</h2>
+                      <h2 className={SETTINGS_SUBHEAD}>Account</h2>
                     </div>
                     <div className={FIELDS_ROW}>
-                      <label className={clsx('field', FIELD_BASE)}>
-                        <span>Account</span>
-                        <input
+                      <Field className={FIELD_BASE}>
+                        <FieldLabel htmlFor="profile-account-email">Account</FieldLabel>
+                        <Input
                           type="email"
                           id="profile-account-email"
-                          className={clsx('profile-select', HS_INPUT_OVERRIDE)}
+                          className={HS_INPUT}
                           disabled
                           autoComplete="username"
                           value={profile.auth.user.email}
                           readOnly
                         />
-                      </label>
-                      <label className={clsx('field', FIELD_BASE)}>
-                        <span>First name</span>
-                        <input
+                      </Field>
+                      <Field className={FIELD_BASE}>
+                        <FieldLabel htmlFor="profile-account-given">First name</FieldLabel>
+                        <Input
                           type="text"
                           id="profile-account-given"
-                          className={clsx('profile-select', HS_INPUT_OVERRIDE)}
+                          className={HS_INPUT}
                           maxLength={200}
                           autoComplete="given-name"
                           value={givenName}
                           onChange={(e) => setGivenName(e.target.value)}
                         />
-                      </label>
-                      <label className={clsx('field', FIELD_BASE)}>
-                        <span>Last name</span>
-                        <input
+                      </Field>
+                      <Field className={FIELD_BASE}>
+                        <FieldLabel htmlFor="profile-account-family">Last name</FieldLabel>
+                        <Input
                           type="text"
                           id="profile-account-family"
-                          className={clsx('profile-select', HS_INPUT_OVERRIDE)}
+                          className={HS_INPUT}
                           maxLength={200}
                           autoComplete="family-name"
                           value={familyName}
                           onChange={(e) => setFamilyName(e.target.value)}
                         />
-                      </label>
+                      </Field>
                     </div>
                     {profile.auth.user.teams.length > 0 && (
                       <div className="mt-3">
-                        <span className="muted">Teams you can access</span>
+                        <span className="text-v5-soft">Teams you can access</span>
                         {/* .accountTeamsList: list-disc; color falls back (--v5-fg undefined). */}
                         <ul
                           id="profile-account-teams"
@@ -1036,25 +1034,23 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
                       </div>
                     )}
                     <div className="mt-4 flex justify-end">
-                      {/* .logoutBtn tints the chrome .btn red. */}
-                      <a
-                        href="/auth/logout"
-                        className="btn text-[#fecaca] bg-[rgba(127,29,29,0.45)] border border-[rgba(248,113,113,0.5)] hover-always:bg-[rgba(153,27,27,0.65)]"
-                        id="profile-account-logout"
-                      >
-                        Log out
-                      </a>
+                      {/* A real link (full-page logout), rendered as the destructive Button. */}
+                      <Button variant="destructive" className={TOUCH_TARGET} asChild>
+                        <a href="/auth/logout" id="profile-account-logout">
+                          Log out
+                        </a>
+                      </Button>
                     </div>
                   </div>
                 )}
 
-                {/* Add new show. .addShowActions overrides .settings-actions justify/mt/pt/border-color.
+                {/* Add new show (centered actions row with a top divider).
                   Not rendered in the member view (show-grants D13). */}
                 {!isMemberView && (
-                  <div className="settings-actions justify-center mt-5 pt-4 border-t border-v5-border">
-                    <button
-                      type="button"
-                      className="btn"
+                  <div className="flex flex-wrap items-center justify-center gap-[0.6rem] mt-5 pt-4 border-t border-v5-border">
+                    <Button
+                      variant="outline"
+                      className={TOUCH_TARGET}
                       id="profile-show-add"
                       // `!showsReady` here as well as on `disabled`: the account init now
                       // commits the studio selection immediately (review finding 2), so
@@ -1071,7 +1067,7 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
                       onClick={handleAddShow}
                     >
                       {`Add New Show to ${(profile?.studios ?? []).find((s) => s.id === activeStudioId)?.name ?? 'this team'}`}
-                    </button>
+                    </Button>
                   </div>
                 )}
               </>
@@ -1092,7 +1088,7 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
               mount cost, so this content only mounts once the tab has been activated. */}
             {visitedTabs.has('event-buttons') &&
               (isMemberView ? (
-                <p className="modal-hint muted" id="event-buttons-member">
+                <p className={HINT} id="event-buttons-member">
                   Only the team’s owner and admins can edit event buttons.
                 </p>
               ) : currentDraft ? (
@@ -1101,7 +1097,7 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
                     ui-refresh: the old copy claimed slot colors and drag order "save
                     automatically" — they don't; every edit in this tab is a draft applied by
                     Save (updateShowDraft). Copy now matches the actual save model (D11). */}
-                  <p className="modal-hint mt-0">
+                  <p className={clsx(HINT, 'mt-0')}>
                     Update button colors maps each event&rsquo;s color to the nearest slot color
                     without changing the palette. Drag rows to set session order. Changes here apply
                     when you click <strong>Save</strong>.
@@ -1123,7 +1119,7 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
                   />
                 </>
               ) : (
-                <p className="modal-hint muted">
+                <p className={HINT}>
                   {showsUnavailable === 'offline'
                     ? 'You’re offline — can’t load shows.'
                     : showsUnavailable === 'error'
@@ -1149,9 +1145,9 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
               rather than special-cased per tab (see design D2's alternatives). */}
             {visitedTabs.has('autosync') && (
               <>
-                <p className="modal-hint muted">Coming soon.</p>
+                <p className={HINT}>Coming soon.</p>
                 {/* .autosyncHint: margin-top 0.35rem. */}
-                <p className="modal-hint mt-[0.35rem]">
+                <p className={clsx(HINT, 'mt-[0.35rem]')}>
                   When available, options here will use the team selected in the header above.
                 </p>
               </>
@@ -1172,7 +1168,7 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
             {visitedTabs.has('debug') && (
               <>
                 {/* .sectionLead: margin-top 0, margin-bottom 0.65rem. */}
-                <p className="modal-hint mt-0 mb-[0.65rem]">
+                <p className={clsx(HINT, 'mt-0')}>
                   Lag and layout A/B toggles (saved in this browser).
                 </p>
                 <div id="v6-settings-perf-debug-mount" className="min-w-0" />
@@ -1191,11 +1187,11 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
         title="Add show"
         description="You can update the show code and details after creating it."
       >
-        <label className="field">
-          <span>Show name</span>
-          <input
+        <Field>
+          <FieldLabel htmlFor="profile-show-add-name">Show name</FieldLabel>
+          <Input
             type="text"
-            className={clsx('profile-select', HS_INPUT_OVERRIDE)}
+            className={HS_INPUT_OVERRIDE}
             id="profile-show-add-name"
             maxLength={200}
             autoComplete="off"
@@ -1209,20 +1205,19 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
               }
             }}
           />
-        </label>
-        <div className="modal-actions">
-          <button type="button" className="btn" onClick={() => setAddShowOpen(false)}>
+        </Field>
+        <DialogActions>
+          <Button variant="outline" className={TOUCH_TARGET} onClick={() => setAddShowOpen(false)}>
             Cancel
-          </button>
-          <button
-            type="button"
-            className="btn primary"
+          </Button>
+          <Button
+            className={TOUCH_TARGET}
             disabled={createShow.isPending || newShowName.trim() === ''}
             onClick={() => void submitAddShow()}
           >
             {createShow.isPending ? 'Creating…' : 'Create show'}
-          </button>
-        </div>
+          </Button>
+        </DialogActions>
       </Dialog>
     </Dialog>
   );
