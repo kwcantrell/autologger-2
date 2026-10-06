@@ -55,3 +55,15 @@ reads as "no web production code changes"; no web behaviour, type in `web/src/ap
 response handling changed (7c-2 still owns those). Flagged to the owner.
 Scope change: no. Contract change: no. Accepted risk change: no.
 No findings.
+
+## Consistency read 2026-10-06 (final, task 7.3)
+Edits since the group 4 read: tasks.md ticks 5.1-7.2 with evidence; README (the events, status and
+words/topics rows; the "Row versions and the session revision" paragraph); ADR 0021 (the 7c split,
+the 7c-1 entry with owner decisions 1-5, the mechanism and measurement paragraphs, the latency and
+contention-test revisit items). Checked together: every requirement in the three spec deltas has a
+task and a test (versions: 4.1; checks, order, 409 shape, DELETE query: 5.3; audit: 5.1, 5.3;
+revision: 3.1; atomicity and system overwrite: 5.1; carry-over and audit policies: 2.1); no task
+does what a non-goal excludes (web production code, frames, other tables, audit reader); the design
+and the specs agree after the group 3 and 4 clarifications.
+Scope change: no. Contract change: no. Accepted risk change: no.
+- [x] [major] `npm audit --audit-level=high` fails on 4 advisories in dependencies this change does not touch (`proxy-addr` critical via `@modelcontextprotocol/sdk` → `express`; `source-map-js` high via `next`/`postcss`, tailwind, jsdom; `uuid` moderate via `exceljs`), so task 7.3 cannot verify "all green". Evidence: `npm audit --audit-level=high` -> `4 vulnerabilities (2 moderate, 1 high, 1 critical)` (log `7c1-7.3-audit.log`); `git diff supabase-migration -- package.json package-lock.json` is empty. Resolved: out of 7c-1's scope (no dependency changes); raised to the owner for a separate change; 7.3 stays open until the owner decides.

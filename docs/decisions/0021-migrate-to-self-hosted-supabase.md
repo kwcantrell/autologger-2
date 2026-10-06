@@ -967,9 +967,12 @@ Slice order:
    refuses a system caller's overwrite before any statement. Two processes racing same-version
    updates of one event for 200 rounds get exactly one winner per round.
 
-   **Measurement** (dev stack, `bench7b2.mts`, 3,000 calls x 3 runs; no stop rule):
-   <!-- task 7.2 fills: before (task 1.2) addEvent 18.0 / 21.3 ms, listEvents 5.5 / 7.6 ms, replace
-   0.49 / 0.54 s at ~300 / ~3,000 sessions; after: … -->
+   **Measurement** (dev stack, `bench7b2.mts`, every hub call as a user, 3,000 calls x 3 runs; no
+   stop rule): at about 300 / 3,000 accessible sessions, median `addEvent` 18.0 / 21.3 ms before and
+   16.6 / 21.0 ms after, `listEvents` 5.5 / 7.6 ms before and 5.4 / 8.4 ms after, the 31,621-word
+   replace 0.49 / 0.54 s before and 0.52 / 0.56 s after: no change beyond run-to-run noise. The
+   same code measured 11.9 / 15.5 ms in 7b-2's run on 2026-10-03, so the host's load differs
+   between days; that is what observability should explain.
 8. Session leases.
 9. Realtime replaces the WebSocket protocol.
 10. Blobs to Supabase Storage.
