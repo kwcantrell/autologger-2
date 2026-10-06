@@ -1,7 +1,6 @@
 import type { Metadata, Viewport } from 'next';
 import type { ReactNode } from 'react';
 import '@/shared/theme/tailwind.css';
-import 'overlayscrollbars/overlayscrollbars.css';
 
 // Index root layout (nextjs-frontend-migration, task 2.3; design D4).
 //
@@ -20,11 +19,10 @@ import 'overlayscrollbars/overlayscrollbars.css';
 // closely as the App Router allows:
 //  - `<body data-v4-transport="rolling">` (load-bearing attribute, ported
 //    verbatim from the Vite entry).
-//  - CSS import order is PINNED here (design D5): `tailwind.css` before
-//    `overlayscrollbars.css` -- centralizing both imports in the layout (not
-//    a leaf component) is what pins App Router's otherwise-unspecified CSS
-//    cascade order. The AppShell-level `overlayscrollbars.css` import is
-//    removed by this same task.
+//  - Global CSS is imported here (design D5), centralized in the layout (not
+//    a leaf component) so App Router's cascade order is pinned. (The
+//    OverlayScrollbars stylesheet that once followed it was removed with the
+//    library: shadcn-port-workspace D7.)
 //  - Theme color goes through the `viewport` export, not `metadata`
 //    (Next 15 rejects `themeColor` inside `metadata` -- panel fix,
 //    design D4).

@@ -62,6 +62,14 @@ describe('shadcn hygiene', () => {
     expect(scan(() => true, /from\s+['"]@radix-ui\/react-/)).toEqual([]);
   });
 
+  it('OverlayScrollbars stays removed (shadcn ScrollArea is the one scroll system)', () => {
+    // shadcn-port-workspace D7: feeds and rail lists scroll in the shadcn ScrollArea.
+    expect(scan(() => true, /(from\s+|import\s+|import\()['"]overlayscrollbars/)).toEqual([]);
+    const pkg = JSON.parse(fs.readFileSync(path.join(SRC, '..', 'package.json'), 'utf8'));
+    const deps = { ...pkg.dependencies, ...pkg.devDependencies };
+    expect(Object.keys(deps).filter((d) => d.startsWith('overlayscrollbars'))).toEqual([]);
+  });
+
   it('no shadcn primitive keeps a `dark:` variant', () => {
     expect(scan(isUi, /(^|[\s'"`])dark:/)).toEqual([]);
   });

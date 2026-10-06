@@ -10,11 +10,11 @@ import {
   AlertDialogTitle,
 } from './alert-dialog';
 import { Badge } from './badge';
+import { Button, buttonVariants } from './button';
 import { Card, CardContent, CardHeader, CardTitle } from './card';
 import { Checkbox } from './checkbox';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from './dialog';
 import { Drawer, DrawerContent, DrawerDescription, DrawerTitle } from './drawer';
-import { Button, buttonVariants } from './button';
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,

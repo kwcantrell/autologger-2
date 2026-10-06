@@ -385,10 +385,10 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
   const [viewUtc, setViewUtc] = useState(false);
   const [generateMenuOpen, setGenerateMenuOpen] = useState(false);
   const [customGenerateOpen, setCustomGenerateOpen] = useState(false);
-  // Reactive scroll viewport (the TranscribeFeed idiom): OverlayScrollbars
-  // publishes its viewport via FeedTable's `scrollRef` callback below. Storing
-  // it in state (not a ref) re-renders so useVirtualizer re-attaches the instant
-  // OS initializes, instead of waiting for an unrelated background re-render.
+  // Reactive scroll viewport (the TranscribeFeed idiom): FeedTable publishes its
+  // ScrollArea viewport via the `scrollRef` callback below. Storing it in state
+  // (not a ref) re-renders so useVirtualizer re-attaches the instant the viewport
+  // mounts, instead of waiting for an unrelated background re-render.
   const [scrollEl, setScrollEl] = useState<HTMLDivElement | null>(null);
 
   // --- Batch edit ---
@@ -525,9 +525,9 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
   //
   // But an outside pointerdown is NOT by itself that signal, and treating it as
   // one broke the commonest gesture in this feed: dragging the scrollbar. The
-  // OverlayScrollbars handle and track are ordinary elements outside the <tr>,
-  // and they `preventDefault()` the pointerdown so the focused input KEEPS
-  // focus — the operator is still typing in a row that had just been unpinned,
+  // ScrollArea scrollbar and thumb are ordinary elements outside the <tr>, and
+  // they suppress the focus move (`preventDefault()` on mousedown — see
+  // shared/components/ui/scroll-area.tsx) so the focused input KEEPS focus — the operator is still typing in a row that had just been unpinned,
   // with no record left to restore from. Dragging past the pin bound then
   // unmounts the focused row: no blur fires, so nothing saves, and the draft is
   // dropped wholesale the next time inline edit ends.
@@ -535,7 +535,7 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
   // So a pointerdown only ARMS the question and the answer is read from focus,
   // one tick later (the focus change is the pointerdown's default action, so it
   // has not happened yet while the handler runs; a widget that suppressed it
-  // simply leaves focus where it was). That generalizes past OverlayScrollbars
+  // simply leaves focus where it was). That generalizes past the scrollbar
   // to any preventDefault-ing widget, which a scrollbar-DOM allowlist would
   // not. `focusin` needs no deferral — it IS the focus move, and its target is
   // the newly focused node.

@@ -19,9 +19,8 @@ import { ArchivedSessionsList, RecentSessionsList } from './RecentSessionsList';
 // scaffold are extracted into shared pieces consumed by BOTH card variants;
 // these tests pin each variant's observable behavior through the extraction:
 // mock at the module boundary (the useSessions mutation hooks + toast), keep
-// the cards, Popover, and ConfirmDialog real. `overlayscrollbars-react` is
-// mocked to a plain div (presentational scroll chrome with no jsdom support),
-// same as V6Rail.test.tsx.
+// the cards, Popover, and ConfirmDialog real. the rail lists scroll in the
+// real shadcn ScrollArea.
 
 vi.mock('../../../api/hooks/useSessions', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../../api/hooks/useSessions')>();
@@ -47,22 +46,6 @@ vi.mock('../utils/toast', () => ({
 }));
 
 vi.mock('../../../api/hooks/useProfile', () => ({ useProfile: vi.fn() }));
-
-vi.mock('overlayscrollbars-react', () => ({
-  OverlayScrollbarsComponent: ({
-    children,
-    id,
-    className,
-  }: {
-    children?: React.ReactNode;
-    id?: string;
-    className?: string;
-  }) => (
-    <div id={id} className={className}>
-      {children}
-    </div>
-  ),
-}));
 
 // Radix Popover positions via floating-ui, which constructs a ResizeObserver
 // jsdom doesn't provide (same local stub idiom as TopicsFeed.test.tsx).

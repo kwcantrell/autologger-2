@@ -991,9 +991,8 @@ describe('EventLogSheet abandoned inline-edit focus', () => {
 
   // --- An outside pointerdown that focus does NOT follow (review finding 2) ---
   //
-  // OverlayScrollbars' handle and track are ordinary elements outside the
-  // <tr>, and they `preventDefault()` the pointerdown so the focused input
-  // keeps focus. Treating the bare pointerdown as abandonment unpinned a row
+  // The feed scrollbar's bar and thumb are ordinary elements outside the
+  // <tr>, and they suppress the focus move so the focused input keeps focus. Treating the bare pointerdown as abandonment unpinned a row
   // the operator was still typing in, with no record left to restore from —
   // and dragging the same gesture past the pin bound then unmounted that
   // focused row, where no blur fires and nothing saves.

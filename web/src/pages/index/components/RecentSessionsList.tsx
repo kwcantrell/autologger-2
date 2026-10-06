@@ -1,6 +1,5 @@
 import clsx from 'clsx';
 import { MoreVertical } from 'lucide-react';
-import { OverlayScrollbarsComponent } from 'overlayscrollbars-react';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { useSessionStatus } from '../../../api/hooks/useSessionStatus';
 import {
@@ -20,6 +19,7 @@ import {
 } from '../../../shared/components/ui/dropdown-menu';
 import { Field, FieldLabel } from '../../../shared/components/ui/field';
 import { Input } from '../../../shared/components/ui/input';
+import { ScrollArea } from '../../../shared/components/ui/scroll-area';
 import { type ConfirmOptions, useConfirm } from '../../../shared/ui/ConfirmDialog';
 import { Dialog } from '../../../shared/ui/Dialog';
 import { Tooltip } from '../../../shared/ui/Tooltip';
@@ -76,18 +76,11 @@ const META_ROW =
   'flex min-w-0 flex-[0_0_auto] flex-row items-baseline justify-between gap-[0.25rem]';
 const CARD_META =
   'block min-h-0 min-w-0 flex-[1_1_auto] overflow-hidden text-[0.62rem] leading-[1.2] text-ellipsis whitespace-nowrap text-v5-muted';
-const RAIL_SESSIONS = 'os-rail-sessions min-h-0 flex-[1_1_auto]';
-
-/* Shared OverlayScrollbars config for the rail's two scroll surfaces (recent
- * + archived). Bars auto-hide on pointer leave; theme is the lib's built-in
- * light bar which reads well over the V5 dark glass background. */
-const railOsOptions = {
-  scrollbars: {
-    theme: 'os-theme-light',
-    autoHide: 'leave',
-    autoHideDelay: 250,
-  },
-} as const;
+// The rail's two scroll surfaces (recent + archived) scroll in the shadcn ScrollArea
+// (shadcn-port-workspace D4): bars reveal on hover and fade after 250ms. The session cards stack
+// in a flex column with a 0.45rem gap, applied to the viewport's content wrapper.
+const RAIL_SESSIONS = 'min-h-0 flex-[1_1_auto]';
+const RAIL_SESSIONS_VIEWPORT = '[&>div]:!flex [&>div]:flex-col [&>div]:gap-[0.45rem]';
 
 interface RenameModalProps {
   initialTitle: string;
@@ -548,12 +541,10 @@ export function RecentSessionsList({
   }
 
   return (
-    <OverlayScrollbarsComponent
-      element="div"
+    <ScrollArea
       id="session-list"
       className={RAIL_SESSIONS}
-      defer
-      options={railOsOptions}
+      viewportClassName={RAIL_SESSIONS_VIEWPORT}
     >
       {visible.map((s) =>
         access.canAccessShow(s.show_id) ? (
@@ -568,7 +559,7 @@ export function RecentSessionsList({
           <NoAccessSessionCard key={s.id} session={s} />
         ),
       )}
-    </OverlayScrollbarsComponent>
+    </ScrollArea>
   );
 }
 
@@ -592,12 +583,10 @@ export function ArchivedSessionsList({
   }
 
   return (
-    <OverlayScrollbarsComponent
-      element="div"
+    <ScrollArea
       id="archived-list"
       className={RAIL_SESSIONS}
-      defer
-      options={railOsOptions}
+      viewportClassName={RAIL_SESSIONS_VIEWPORT}
     >
       {visible.map((s) =>
         access.canAccessShow(s.show_id) ? (
@@ -606,6 +595,6 @@ export function ArchivedSessionsList({
           <NoAccessSessionCard key={s.id} session={s} />
         ),
       )}
-    </OverlayScrollbarsComponent>
+    </ScrollArea>
   );
 }

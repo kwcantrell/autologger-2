@@ -19,10 +19,7 @@ import { V6Rail } from './V6Rail';
 // tests below, so the filter/no-match assertions genuinely exercise those
 // components' own `matchesFilter` logic rather than a hand-rolled stand-in —
 // the same "mock at the boundary, not the unit under test" idiom the
-// mounted-hidden AI tab tests use elsewhere. `overlayscrollbars-react` is
-// mocked to a plain div (a presentational scroll-chrome library with no jsdom
-// support for its underlying ResizeObserver usage — irrelevant to what's
-// under test here) and a real `QueryClient` is provided so the session
+// mounted-hidden AI tab tests use elsewhere. the rail lists scroll in the real shadcn ScrollArea, and a real `QueryClient` is provided so the session
 // cards' `useMutation` hooks (archive/delete/restore/rename) don't throw on
 // mount. The button click reaches the shared `navigate` wrapper, which
 // routes through the test-seam impl into the recorded memory location (same
@@ -34,22 +31,6 @@ vi.mock('../../../api/hooks/useSessions', async (importOriginal) => {
 });
 
 vi.mock('../../../api/hooks/useProfile', () => ({ useProfile: vi.fn() }));
-
-vi.mock('overlayscrollbars-react', () => ({
-  OverlayScrollbarsComponent: ({
-    children,
-    id,
-    className,
-  }: {
-    children?: React.ReactNode;
-    id?: string;
-    className?: string;
-  }) => (
-    <div id={id} className={className}>
-      {children}
-    </div>
-  ),
-}));
 
 const mockedUseSessions = vi.mocked(useSessions);
 

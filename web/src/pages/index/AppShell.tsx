@@ -68,11 +68,6 @@ const loadHomeSettingsModal = () =>
 // only evaluates it — it mounts nothing and renders nothing, which
 // `AppShell.test.tsx` pins.
 const SETTINGS_PREFETCH_DELAY_MS = 2500;
-// overlayscrollbars.css import moved to the Next app/ route-group layouts
-// (nextjs-frontend-migration, task 2.3; design D5) -- centralizing both CSS
-// imports in the layout (not a leaf component) pins App Router's otherwise-
-// unspecified cascade order (`tailwind.css` before `overlayscrollbars.css`).
-// See `web/src/app/(index)/layout.page.tsx` / `(admin)/layout.page.tsx`.
 
 export function AppShell() {
   // Active session is URL-derived (design D2): `/sessions/:id` is the session
