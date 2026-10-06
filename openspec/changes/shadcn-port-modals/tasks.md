@@ -2,9 +2,10 @@
 
 ## 1. Shared wrappers
 
-- [ ] 1.1 ConfirmDialog and PromptDialog: `LEAD` utility and `DialogActions` (D7).
+- [x] 1.1 ConfirmDialog and PromptDialog: `LEAD` utility and `DialogActions` (D7).
   - Test first: `ConfirmDialog.test.tsx` (desktop alertdialog and mobile drawer) and `PromptDialog.test.tsx` assert that Cancel and the confirm/submit button sit inside `[data-slot="dialog-actions"]`.
   - Verify: `npx vitest run src/shared/ui` passes, including every existing case.
+  - Evidence: test first: ConfirmDialog "mobile=false|true: Cancel and Delete sit in [data-slot=dialog-actions]" (+ max-md:min-h-11) and PromptDialog "Cancel and OK sit in [data-slot=dialog-actions]" -> `3 failed | 45 passed (48)`; after LEAD utility (former .modal-lead values) + DialogActions on both ConfirmDialog paths (AlertDialogCancel/Action and the Drawer Buttons with TOUCH_TARGET) and PromptDialog -> `npx vitest run src/shared/ui` `Tests 48 passed (48)` (resolve-false, one-decision, Escape/overlay, mobile focus cases unchanged); tsc clean
 
 ## 2. New Session and Batch Import
 

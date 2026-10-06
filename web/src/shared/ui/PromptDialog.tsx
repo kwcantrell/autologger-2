@@ -1,8 +1,8 @@
 import { type ReactNode, useCallback, useEffect, useId, useRef, useState } from 'react';
-import { Button } from '@/shared/components/ui/button';
+import { Button, TOUCH_TARGET } from '@/shared/components/ui/button';
 import { Input } from '@/shared/components/ui/input';
 import { Label } from '@/shared/components/ui/label';
-import { Dialog } from './Dialog';
+import { Dialog, DialogActions } from './Dialog';
 
 /**
  * Themed replacement for `window.prompt` (shadcn-shared-wrappers D3b): a single-line text
@@ -61,14 +61,14 @@ function PromptDialog({
           }}
         />
       </div>
-      <div className="modal-actions">
-        <Button type="button" variant="outline" onClick={onCancel}>
+      <DialogActions>
+        <Button type="button" variant="outline" className={TOUCH_TARGET} onClick={onCancel}>
           {cancelLabel}
         </Button>
-        <Button type="button" onClick={() => onSubmit(value)}>
+        <Button type="button" className={TOUCH_TARGET} onClick={() => onSubmit(value)}>
           {submitLabel}
         </Button>
-      </div>
+      </DialogActions>
     </Dialog>
   );
 }
