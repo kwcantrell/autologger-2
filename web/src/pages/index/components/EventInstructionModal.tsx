@@ -1,5 +1,8 @@
 import { type TextareaHTMLAttributes, useLayoutEffect, useRef, useState } from 'react';
-import { Dialog } from '../../../shared/ui/Dialog';
+import { Button, TOUCH_TARGET } from '../../../shared/components/ui/button';
+import { Field, FieldDescription, FieldLabel } from '../../../shared/components/ui/field';
+import { Textarea } from '../../../shared/components/ui/textarea';
+import { Dialog, DialogActions } from '../../../shared/ui/Dialog';
 
 interface Props {
   /** Event button name — used in the dialog title. */
@@ -31,11 +34,13 @@ function AutoGrowTextarea({
     ro.observe(el);
     return () => ro.disconnect();
   }, [value]);
-  return <textarea ref={ref} value={value} className={className} {...rest} />;
+  return <Textarea ref={ref} value={value} className={className} {...rest} />;
 }
 
+// Over the shadcn Textarea base: one-row start (min-h-0) and JS auto-grow (field-sizing-fixed, so the
+// native content sizing doesn't fight the measured height).
 const TEXTAREA_CLASS =
-  'w-full resize-none overflow-hidden rounded-v5-sm border border-v5-border bg-[rgba(255,255,255,0.05)] px-2 py-1.5 text-[0.85rem] leading-[1.4] text-v5-text [font-family:inherit] focus:border-[rgba(56,189,248,0.5)] focus:outline-none box-border';
+  'min-h-0 field-sizing-fixed w-full resize-none overflow-hidden rounded-v5-sm border border-v5-border bg-[rgba(255,255,255,0.05)] px-2 py-1.5 text-[0.85rem] leading-[1.4] text-v5-text [font-family:inherit] focus:border-[rgba(56,189,248,0.5)] focus:outline-none box-border';
 
 /**
  * Centered modal editor for a button's AUTO GENERATE instruction
@@ -47,15 +52,15 @@ export function EventInstructionModal({ buttonName, initialInstruction, onSave, 
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()} title={title}>
-      <p className="modal-hint">
+      <FieldDescription className="mb-[0.65rem]">
         Tell AUTO GENERATE when to log this event from the transcript. Leave blank to opt out for
         this button.
-      </p>
+      </FieldDescription>
       {/* Explicit htmlFor/id: the control is nested, but it's a custom
           component (AutoGrowTextarea), so the association must be stated
           rather than inferred (a11y pass). */}
-      <label className="field" htmlFor="event-instruction-input">
-        <span>Generation instruction</span>
+      <Field>
+        <FieldLabel htmlFor="event-instruction-input">Generation instruction</FieldLabel>
         <AutoGrowTextarea
           id="event-instruction-input"
           className={TEXTAREA_CLASS}
@@ -65,15 +70,15 @@ export function EventInstructionModal({ buttonName, initialInstruction, onSave, 
           placeholder="e.g. Log an event each time a new slate is called"
           onChange={(e) => setDraft(e.target.value)}
         />
-      </label>
-      <div className="modal-actions">
-        <button type="button" className="btn" onClick={onClose}>
+      </Field>
+      <DialogActions>
+        <Button variant="outline" className={TOUCH_TARGET} onClick={onClose}>
           Cancel
-        </button>
-        <button type="button" className="btn primary" onClick={() => onSave(draft)}>
+        </Button>
+        <Button className={TOUCH_TARGET} onClick={() => onSave(draft)}>
           Save
-        </button>
-      </div>
+        </Button>
+      </DialogActions>
     </Dialog>
   );
 }

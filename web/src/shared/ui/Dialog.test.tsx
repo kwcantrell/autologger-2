@@ -184,3 +184,29 @@ describe('Dialog keeps its open-time mode across a breakpoint change', () => {
     );
   });
 });
+
+// shadcn-port-settings D2: the shared action row (the former `.modal-actions` look).
+describe('DialogActions', () => {
+  it('renders a dialog-actions row with its children in order', async () => {
+    const { DialogActions } = await import('./Dialog');
+    render(
+      <DialogActions>
+        <button type="button">Cancel</button>
+        <button type="button">Save</button>
+      </DialogActions>,
+    );
+    const row = document.querySelector('[data-slot="dialog-actions"]') as HTMLElement;
+    expect(row).not.toBeNull();
+    expect([...row.querySelectorAll('button')].map((b) => b.textContent)).toEqual([
+      'Cancel',
+      'Save',
+    ]);
+  });
+});
+
+describe('TOUCH_TARGET', () => {
+  it('is the 44px mobile floor the legacy .btn had (D2b)', async () => {
+    const { TOUCH_TARGET } = await import('../components/ui/button');
+    expect(TOUCH_TARGET).toBe('max-md:min-h-11');
+  });
+});

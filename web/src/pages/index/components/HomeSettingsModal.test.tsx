@@ -7,6 +7,12 @@ import type { ProfilePayload } from '../../../api/types';
 import { renderStrict, StrictWrapper } from '../../../test/renderStrict';
 import { HomeSettingsModal } from './HomeSettingsModal';
 
+// Radix Tabs activate on mouse-down (and on keyboard focus), not on click (shadcn-port-workspace
+// A1); `@testing-library/user-event` is not a dependency, so drive the real activation event.
+function clickTab(name: string) {
+  fireEvent.mouseDown(screen.getByRole('tab', { name }), { button: 0 });
+}
+
 // --- HomeSettingsModal studio-switch tests (session-deep-links, task 3.3;
 // spec: web-session-routing "Studio-switch close path still works") ---
 //
@@ -82,6 +88,9 @@ vi.mock('../../../shared/ui/Dialog', () => ({
     dialogRenderCount.current += 1;
     return open ? <div role="dialog">{children}</div> : null;
   },
+  DialogActions: ({ children }: { children: React.ReactNode }) => (
+    <div data-slot="dialog-actions">{children}</div>
+  ),
 }));
 
 // Wraps the real implementation (not a behavior replacement) purely to count calls —
@@ -409,7 +418,7 @@ describe('HomeSettingsModal activeTab reset on reopen', () => {
       <HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />,
     );
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Event Buttons' }));
+    clickTab('Event Buttons');
     expect(screen.getByRole('tab', { name: 'Event Buttons' }).getAttribute('aria-selected')).toBe(
       'true',
     );
@@ -565,7 +574,7 @@ describe('HomeSettingsModal category round-trip', () => {
   it('hydrates existing category names (non-blank) from a name-keyed show', () => {
     renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Event Buttons' }));
+    clickTab('Event Buttons');
 
     expect(screen.getByText('Roll Call')).not.toBeNull();
     expect(screen.queryByText('(blank)')).toBeNull();
@@ -675,7 +684,7 @@ describe('HomeSettingsModal category round-trip', () => {
     // trim() — whitespace-only means absent.
     renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Event Buttons' }));
+    clickTab('Event Buttons');
     fireEvent.click(screen.getByRole('button', { name: 'whitespace-instruction-cat-1' }));
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
@@ -690,7 +699,7 @@ describe('HomeSettingsModal category round-trip', () => {
   it('an instruction edit arms Save via the snapshot comparison, and clearing it round-trips clean', () => {
     renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Event Buttons' }));
+    clickTab('Event Buttons');
     expect(screen.getByRole('button', { name: 'Saved' }).hasAttribute('disabled')).toBe(true);
 
     // The mocked table drives the same onChange the real instruction editor calls.
@@ -731,9 +740,8 @@ describe('HomeSettingsModal Suffix control', () => {
     renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
 
     const fieldsRow = document.getElementById('profile-show-fields');
-    const labels = Array.from(fieldsRow?.querySelectorAll('label') ?? []).map(
-      (l) => l.querySelector('span')?.textContent,
-    );
+    // shadcn-port-settings D2: FieldLabels (no inner span), so read the label text itself.
+    const labels = Array.from(fieldsRow?.querySelectorAll('label') ?? []).map((l) => l.textContent);
     expect(labels).toEqual(['Name:', 'Code:', 'Suffix:', 'Default Frame Rate:']);
 
     expect(screen.queryByText('Next Ep:')).toBeNull();
@@ -790,6 +798,38 @@ describe('HomeSettingsModal defers inactive tab content', () => {
     useProfileWith(profileFull, [showWithCategories, secondShow]);
   });
 
+  it('tabs are linked to their panels, unvisited panels are empty, and ArrowRight activates the next tab (shadcn-port-settings D1)', async () => {
+    renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
+    const tablist = screen.getByRole('tablist', { name: 'Settings sections' });
+    const tabs = [...tablist.querySelectorAll('[role="tab"]')] as HTMLElement[];
+    expect(tabs.map((t) => t.id)).toEqual([
+      'v6-settings-tab-general',
+      'v6-settings-tab-event-buttons',
+      'v6-settings-tab-autosync',
+      'v6-settings-tab-debug',
+    ]);
+    for (const tab of tabs) {
+      const panel = document.getElementById(tab.getAttribute('aria-controls') ?? '');
+      expect(panel?.getAttribute('role')).toBe('tabpanel');
+      expect(panel?.getAttribute('aria-labelledby')).toBe(tab.id);
+      expect(panel?.hasAttribute('hidden')).toBe(tab.getAttribute('aria-selected') !== 'true');
+    }
+    // Unvisited panels exist but hold no content yet.
+    expect(document.getElementById('v6-settings-section-autosync')?.childElementCount).toBe(0);
+
+    const general = screen.getByRole('tab', { name: 'General' });
+    general.focus();
+    fireEvent.keyDown(general, { key: 'ArrowRight' });
+    await waitFor(() =>
+      expect(screen.getByRole('tab', { name: 'Event Buttons' }).getAttribute('aria-selected')).toBe(
+        'true',
+      ),
+    );
+    expect(document.activeElement?.id).toBe('v6-settings-tab-event-buttons');
+    // Keyboard activation visits the tab, so its content mounts (StrictMode may double-count).
+    expect(eventButtonsMountCount.current).toBeGreaterThan(0);
+  });
+
   it('opening mounts only General’s content while all four aria-controls targets resolve', () => {
     renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
 
@@ -808,14 +848,14 @@ describe('HomeSettingsModal defers inactive tab content', () => {
     renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
     expect(eventButtonsMountCount.current).toBe(0);
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Event Buttons' }));
+    clickTab('Event Buttons');
     // A real mount happened (StrictMode may double-invoke the mount effect, so the exact
     // count is not pinned to 1 — what matters is that it moved off zero, and stays put).
     expect(eventButtonsMountCount.current).toBeGreaterThan(0);
     const mountedCount = eventButtonsMountCount.current;
     expect(screen.getByTestId('event-buttons-mock')).not.toBeNull();
 
-    fireEvent.click(screen.getByRole('tab', { name: 'General' }));
+    clickTab('General');
     // Switching away and back does not remount it.
     expect(eventButtonsMountCount.current).toBe(mountedCount);
     expect(screen.getByTestId('event-buttons-mock')).not.toBeNull();
@@ -826,7 +866,7 @@ describe('HomeSettingsModal defers inactive tab content', () => {
       <HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />,
     );
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Event Buttons' }));
+    clickTab('Event Buttons');
     const mountedAfterActivation = eventButtonsMountCount.current;
     expect(mountedAfterActivation).toBeGreaterThan(0);
 
@@ -889,7 +929,7 @@ describe('HomeSettingsModal defers inactive tab content', () => {
     const onClose = vi.fn();
     renderStrict(<HomeSettingsModal isOpen onClose={onClose} onCloseSession={vi.fn()} />);
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Event Buttons' }));
+    clickTab('Event Buttons');
     fireEvent.click(screen.getByRole('button', { name: 'Close' }));
 
     expect(onClose).toHaveBeenCalledTimes(1);
@@ -1227,7 +1267,7 @@ describe('HomeSettingsModal shows-fetch failure', () => {
     })) as unknown as typeof useStudioShows);
 
     renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
-    fireEvent.click(screen.getByRole('tab', { name: 'Event Buttons' }));
+    clickTab('Event Buttons');
 
     expect(screen.getAllByText('Couldn’t load shows.').length).toBeGreaterThan(0);
     expect(screen.queryByText('Loading shows…')).toBeNull();
@@ -1275,7 +1315,7 @@ describe('HomeSettingsModal offline-paused shows fetch', () => {
     studioShowsPaused = true;
 
     renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
-    fireEvent.click(screen.getByRole('tab', { name: 'Event Buttons' }));
+    clickTab('Event Buttons');
 
     expect(screen.getAllByText('You’re offline — can’t load shows.').length).toBeGreaterThan(0);
     expect(screen.queryByText('Loading shows…')).toBeNull();
@@ -1685,7 +1725,7 @@ describe('HomeSettingsModal member view (show-grants D13)', () => {
     expect(document.getElementById('profile-account-given')).not.toBeNull();
     expect(screen.getByLabelText('Team')).not.toBeNull();
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Event Buttons' }));
+    clickTab('Event Buttons');
     expect(screen.queryByTestId('event-buttons-mock')).toBeNull();
 
     fireEvent.change(document.getElementById('profile-account-given') as HTMLInputElement, {
@@ -1706,9 +1746,9 @@ describe('HomeSettingsModal member view (show-grants D13)', () => {
 
     expect(document.getElementById('profile-show-fields')).not.toBeNull();
     expect(document.getElementById('profile-show-add')).not.toBeNull();
-    fireEvent.click(screen.getByRole('tab', { name: 'Event Buttons' }));
+    clickTab('Event Buttons');
     expect(screen.getByTestId('event-buttons-mock')).not.toBeNull();
-    fireEvent.click(screen.getByRole('tab', { name: 'General' }));
+    clickTab('General');
 
     fireEvent.change(screen.getByLabelText('Name:'), { target: { value: 'Renamed Show' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
@@ -1716,5 +1756,56 @@ describe('HomeSettingsModal member view (show-grants D13)', () => {
     const body = mutateAsync.mock.calls[0][0] as Record<string, unknown>;
     expect(body).toHaveProperty('settings');
     expect(body).toHaveProperty('show_updates');
+  });
+});
+
+// shadcn-port-settings D2 / D2b: header, account and Add-Show controls on the shadcn layer.
+describe('HomeSettingsModal controls (shadcn-port-settings)', () => {
+  beforeEach(() => {
+    useProfileWith(profileWithShow, [showWithCategories]);
+  });
+
+  it('Save is the default Button, disabled and "Saved" when clean, with its reason on a hoverable wrapper', () => {
+    renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
+    const save = document.getElementById('profile-save') as HTMLButtonElement;
+    expect(save.textContent).toBe('Saved');
+    expect(save.disabled).toBe(true);
+    expect(save.getAttribute('data-variant')).toBe('default');
+    expect(save.className).toContain('max-md:min-h-11');
+    expect(save.parentElement?.getAttribute('title')).toBe('No unsaved changes');
+    const close = screen.getByRole('button', { name: 'Close' });
+    expect(close.getAttribute('data-variant')).toBe('outline');
+    expect(close.className).toContain('max-md:min-h-11');
+  });
+
+  it('fields are labelled inputs; Log out stays a link rendered as a destructive Button', () => {
+    renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
+    expect((screen.getByLabelText('Name:') as HTMLElement).getAttribute('data-slot')).toBe('input');
+    expect((screen.getByLabelText('Code:') as HTMLElement).id).toBe('profile-show-code');
+  });
+
+  it('Log out stays a link rendered as a destructive Button (signed-in profile)', () => {
+    useProfileWith(profileFull, [showWithCategories]);
+    renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
+    const logout = document.getElementById('profile-account-logout') as HTMLElement;
+    expect(logout.tagName).toBe('A');
+    expect(logout.getAttribute('href')).toBe('/auth/logout');
+    expect(logout.getAttribute('data-variant')).toBe('destructive');
+    expect((screen.getByLabelText('First name') as HTMLElement).getAttribute('data-slot')).toBe(
+      'input',
+    );
+  });
+
+  it('Add show opens a labelled name field with Cancel / Create show in the dialog actions row', () => {
+    renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
+    const add = screen.getByRole('button', { name: /Add New Show/ });
+    expect(add.getAttribute('data-variant')).toBe('outline');
+    fireEvent.click(add);
+    expect((screen.getByLabelText('Show name') as HTMLElement).id).toBe('profile-show-add-name');
+    const row = document.querySelector('[data-slot="dialog-actions"]') as HTMLElement;
+    expect([...row.querySelectorAll('button')].map((b) => b.textContent)).toEqual([
+      'Cancel',
+      'Create show',
+    ]);
   });
 });

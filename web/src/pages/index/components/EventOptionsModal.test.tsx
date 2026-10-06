@@ -115,3 +115,42 @@ describe('EventOptionsModal instruction fields', () => {
     });
   });
 });
+
+// shadcn-port-settings D4: the options modal on Field / Input / Textarea / Checkbox / Button and
+// the shared dialog actions row.
+describe('EventOptionsModal on the shadcn layer', () => {
+  it('Needs context is a labelled checkbox that toggles; Remove is destructive; actions sit in the row', () => {
+    const onConfirm = renderModal();
+    const needs = screen.getAllByRole('checkbox', { name: 'Needs context' });
+    expect(needs).toHaveLength(2);
+    expect(needs[0].getAttribute('aria-checked')).toBe('false');
+    fireEvent.click(needs[0]);
+    expect(needs[0].getAttribute('aria-checked')).toBe('true');
+
+    const removes = screen.getAllByRole('button', { name: 'Remove' });
+    expect(removes[0].getAttribute('data-variant')).toBe('destructive');
+    expect(screen.getByRole('button', { name: 'Add option' }).getAttribute('data-variant')).toBe(
+      'outline',
+    );
+    const row = document.querySelector('[data-slot="dialog-actions"]') as HTMLElement;
+    const actions = [...row.querySelectorAll('button')];
+    expect(actions.map((b) => b.textContent)).toEqual(['Close', 'Done']);
+    for (const b of [...actions, removes[0]]) expect(b.className).toContain('max-md:min-h-11');
+
+    expect(screen.getAllByLabelText('Option')[0].getAttribute('data-slot')).toBe('input');
+    expect(screen.getByLabelText('Generation instruction').getAttribute('data-slot')).toBe(
+      'textarea',
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+    const result = onConfirm.mock.calls[0][0] as { options: ShowDropdownOption[] };
+    expect(result.options[0].needs_context).toBe(true);
+  });
+
+  it('ON / OFF labels are labelled inputs', () => {
+    renderModal({ type: 'ON_OFF', onLabel: 'Live', offLabel: 'Off air' });
+    expect((screen.getByLabelText('ON label') as HTMLInputElement).value).toBe('Live');
+    expect((screen.getByLabelText('OFF label') as HTMLInputElement).value).toBe('Off air');
+    expect(screen.getByLabelText('ON label').getAttribute('data-slot')).toBe('input');
+  });
+});

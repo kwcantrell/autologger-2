@@ -344,3 +344,45 @@ describe('EventButtonsTable instruction-bearing indicator', () => {
     expect(screen.queryByRole('button', { name: PLAIN_NAME })).toBeNull();
   });
 });
+
+// shadcn-port-settings D3 / D2b: the table's controls on the shadcn Button, lucide icons, and the
+// 44px mobile touch floor the legacy `.btn` had.
+describe('EventButtonsTable controls (shadcn-port-settings)', () => {
+  it('row actions, toolbar and AI Rules are Buttons with lucide icons and the touch floor', () => {
+    renderTable([makeDraft({ id: 'b1', name: 'Slate' })]);
+    const remove = screen.getByRole('button', { name: 'Remove event' });
+    expect(remove.getAttribute('data-variant')).toBe('destructive');
+    expect(remove.querySelector('svg.lucide-trash-2')).not.toBeNull();
+    const drag = screen.getByRole('button', { name: 'Drag to reorder' });
+    expect(drag.getAttribute('draggable')).toBe('true');
+    expect(drag.querySelector('svg.lucide-grip-vertical')).not.toBeNull();
+    const ai = screen.getByRole('button', { name: 'AI Rules' });
+    expect(ai.getAttribute('data-slot')).toBe('button');
+    expect(screen.getByRole('button', { name: 'Copy' }).getAttribute('data-variant')).toBe(
+      'default',
+    );
+    expect(
+      screen.getByRole('button', { name: 'Add new button' }).getAttribute('data-variant'),
+    ).toBe('default');
+    expect(screen.getByRole('button', { name: 'N/A' }).getAttribute('data-variant')).toBe(
+      'outline',
+    );
+    for (const b of [remove, drag, ai, screen.getByRole('button', { name: 'Copy' })])
+      expect(b.className).toContain('max-md:min-h-11');
+    expect(
+      (screen.getByPlaceholderText('Event name') as HTMLElement).getAttribute('data-slot'),
+    ).toBe('input');
+  });
+
+  it('the AI Rules modal uses the labelled Textarea and the dialog actions row', async () => {
+    renderTable([makeDraft({ id: 'b1', name: 'Slate' })]);
+    fireEvent.click(screen.getByLabelText('AI Rules'));
+    const textarea = await screen.findByLabelText('Generation instruction');
+    expect(textarea.getAttribute('data-slot')).toBe('textarea');
+    const row = document.querySelector('[data-slot="dialog-actions"]') as HTMLElement;
+    expect([...row.querySelectorAll('button')].map((b) => b.textContent)).toEqual([
+      'Cancel',
+      'Save',
+    ]);
+  });
+});
