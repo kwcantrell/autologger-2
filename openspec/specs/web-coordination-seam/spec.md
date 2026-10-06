@@ -20,8 +20,7 @@ including synchronous module-scope code that must observe a call's effect before
 re-renders. `Window` augmentation and global-object coordination writes are banned
 outright across `web/src`, not merely for the seven enumerated handles. The capability
 also covers the web app's internal import-direction rule — production value imports
-flow only `pages → api → shared`, and the `admin-users` and `index` page bundles never
-import from each other — and requires that every check enforcing either rule prove
+flow only `pages → api → shared` — and requires that every check enforcing either rule prove
 itself non-vacuous (self-locating walked root, non-zero file count asserted, a mutation
 pair showing it fires on a violation and passes on conforming input).
 
@@ -359,11 +358,10 @@ feed-jump behavior edits `web-session-console` alone.
   yields the caller's existing fallback
 
 
-### Requirement: The web app's internal import direction is mechanically enforced
+### Requirement: The web app's internal import direction is mechanically enforced across its single entry
 
 Within `web/src`, production **value** imports SHALL flow only downward through
-`pages → api → shared`. `api` and `shared` SHALL NOT value-import from `pages`. The `admin-users`
-page SHALL NOT import from the `index` page, in either direction.
+`pages → api → shared`. `api` and `shared` SHALL NOT value-import from `pages`.
 
 **Type-only upward edges are permitted and SHALL NOT be flagged.** Three exist today —
 `shared/utils/{recording,timecode,audioClips}.ts` each `import type` from `api/types` — and they
@@ -372,9 +370,8 @@ boundary this requirement protects is the runtime and bundle structure, not the 
 Forbidding them would force import rewrites this rule was explicitly adopted to avoid.
 
 This direction already holds; the requirement exists because it held only by convention. `web/`
-builds **two independent entry bundles** — the index island and the admin island — and the smaller
-one depends on none of the larger one's libraries; that independence is the property nothing
-currently protects, and it is unchanged.
+builds a **single entry bundle**, the index island (the admin island was retired with the
+`/admin/users` page).
 
 What has changed is the shape *inside* the index entry: it is no longer a single download. The
 index island is route-split behind `React.lazy`, with at least seven dynamic-import edges below
@@ -443,11 +440,6 @@ one.
 - **THEN** no value import from `api` or `shared` targets `pages`, and the existing type-only
   `shared → api` edges are not reported
 
-#### Scenario: The two entry bundles stay independent
-
-- **WHEN** production files under `web/src/pages/admin-users` are scanned for imports
-- **THEN** none targets `web/src/pages/index`
-
 #### Scenario: Route-split chunks are subject to the same direction rule
 
 - **WHEN** a module reached only through a dynamic `import(...)` below the index entry is scanned
@@ -485,7 +477,6 @@ one.
   imported
 - **THEN** the stated reason reflects a live constraint, and the mirror is identified as permanent
   policy rather than as pending work
-
 
 ### Requirement: Enforcement checks are proven non-vacuous
 

@@ -133,8 +133,8 @@ Next SHALL serve the index shell for exactly the router-known paths — `/`,
 `/sessions/:id` (one non-empty raw segment), `/teams` — via a catch-all that validates
 the segment list the framework provides, treating each raw path segment as exactly one
 entry regardless of any percent-encoded separators it carries — the validator SHALL NOT
-decode-and-re-split segment values — and the admin
-shell at `/admin/users` via a concrete route. The accepted segment shapes SHALL derive
+decode-and-re-split segment values. Any other path, including the retired `/admin/users`,
+SHALL fall through to the not-found page. The accepted segment shapes SHALL derive
 from the shared route-definition module (`web/src/shared/utils/loginReturnPath.ts`) via
 a segment-shape helper added alongside `isRouterKnownPathname`. The module holds two
 predicates with deliberately different domains — the deep-link predicate (excludes `/`)
@@ -170,11 +170,11 @@ at runtime).
 - **THEN** no new files appear under `web/.next`
 
 ### Requirement: Client-island rendering
-The index and admin application trees SHALL render as client-only islands (`ssr: false`
-dynamic imports from client wrapper components): no server-side rendering or hydration
-of the application trees. React StrictMode SHALL remain disabled for the index tree and
-enabled for the admin tree (via an explicit subtree `<StrictMode>`), preserving today's
-per-entry semantics. In-app navigation SHALL continue through the wouter-based
+The index application tree SHALL render as a client-only island (`ssr: false` dynamic
+import from a client wrapper component): no server-side rendering or hydration of the
+application tree. React StrictMode SHALL remain disabled for the index tree, preserving
+today's semantics. (The admin tree and its separate island were retired with the
+`/admin/users` page.) In-app navigation SHALL continue through the wouter-based
 navigation funnel (`web/src/pages/index/navigation.ts`) with its synchronous
 pre-render departure semantics unchanged; the Next layer SHALL NOT remount the island
 across in-app navigations between router-known paths.
@@ -185,8 +185,7 @@ across in-app navigations between router-known paths.
   semantics fire exactly as before this change) and no full document load occurs
 
 ### Requirement: Server-rendered shell
-The documents served for the router-known paths **and for the admin route
-(`/admin/users`)** SHALL contain server-rendered layout chrome (document structure,
+The documents served for the router-known paths SHALL contain server-rendered layout chrome (document structure,
 theme/body attributes, stylesheet and font references, and a static loading skeleton)
 rather than an empty mount node, and the not-found page SHALL be statically rendered.
 The skeleton SHALL contain no user- or session-derived data.
@@ -194,8 +193,7 @@ The skeleton SHALL contain no user- or session-derived data.
 The document for the **router-known paths** SHALL additionally emit `<link rel="preload"
 as="font" type="font/woff2" crossorigin>` for the two font faces on the critical path — the
 deduplicated Inter latin subset and the League Gothic latin subset the loading skeleton itself
-renders in. (This applies to the index route group's layout; the admin route's document is
-unchanged and emits no font preloads.) Because that layout has no `<head>` element and Next's
+renders in. Because that layout has no `<head>` element and Next's
 `metadata` export has no preload API, the links are rendered in the body and hoisted to the
 document head by React 19 — the supported route.
 
