@@ -73,12 +73,13 @@
 
 ## 4. Feed menus
 
-- [ ] 4.1 Time display becomes a `DropdownMenu` with a `RadioGroup` (D5).
+- [x] 4.1 Time display becomes a `DropdownMenu` with a `RadioGroup` (D5).
   - Test first: new `EventLogSheet.test.tsx` cases:
     - opening the "Time Display" trigger by keyboard shows a `menu` named "Time display" with `menuitemradio`s "Session Time" (checked) and "World Clock";
     - choosing World Clock closes the menu and checks `#view-utc-log`.
   - Verify: `npx vitest run src/pages/index/components/EventLogSheet.test.tsx` passes.
-- [ ] 4.2 Filter becomes a `DropdownMenu` with `CheckboxItem`s that stay open (D5).
+  - Evidence: test first: "opens by keyboard as a radio menu and switches the time display" (trigger aria-haspopup menu; Enter opens role=menu; menuitemradio Session Time checked / World Clock unchecked; choosing World Clock closes the menu and checks #view-utc-log) -> on the Popover `Unable to find role="menu"`; after TimeDisplayDropdown = DropdownMenu + RadioGroup (value session|world) on a glass Button trigger -> passes; menus are named by their trigger (Radix aria-labelledby; design D5 note)
+- [x] 4.2 Filter becomes a `DropdownMenu` with `CheckboxItem`s that stay open (D5).
   - Test first: rewrite `EventLogSheet.test.tsx:246-268`'s class and `span.flex` assertions as behaviour:
     - `menuitemcheckbox` with `aria-checked`;
     - `filter-check` only when checked;
@@ -86,9 +87,11 @@
     - the label keeps the category colour.
   - Keep the hide-rows cases (:270-326) and the batch-mode Escape case (:328, A5).
   - Verify: the EventLogSheet suites pass.
-- [ ] 4.3 Auto generate becomes a non-modal `DropdownMenu` (D5).
+  - Evidence: test first: filter test rewritten to behaviour (menuitemcheckbox aria-checked, filter-check only when checked, menu still open after a toggle, label color rgb(68, 136, 255), Internal toggles #show-internal-log) + "Escape in an open menu closes the menu without arming the discard dialog" (A5) -> `4 failed | 5 passed (9)`; after FilterDropdown = DropdownMenuCheckboxItem (onSelect preventDefault, new primitive `indicator` prop -> lucide Check data-testid filter-check) -> `npx vitest run src/pages/index/components/EventLogSheet.test.tsx` passes incl. hide-rows and batch-mode Escape cases
+- [x] 4.3 Auto generate becomes a non-modal `DropdownMenu` (D5).
   - Test first: `eventGenerateLatch.test.tsx`'s `startGenerate` opens with `pointerDown`/keyboard. New: while unavailable, pointer-down and Enter on the trigger don't open a `menu`.
   - Verify: `npx vitest run src/pages/index/components/eventGenerateLatch.test.tsx src/pages/index/components/generateLatch.test.tsx` passes, including Custom → the "Custom event generation" dialog.
+  - Evidence: test first: eventGenerateLatch open helper -> pointerDown (7 call sites) + latched case "openMenu(latched); keyDown Enter -> no role=menu" -> all failing on the Popover trigger; after generateControl = DropdownMenu modal={false}, controlled open gated on !unavailable && !pending, glass Button trigger with aria-disabled/aria-describedby + preventDefault on pointerdown/keydown/click while unavailable, DropdownMenuItem onSelect -> `npx vitest run eventGenerateLatch generateLatch EventLogSheet.test` `Tests 27 passed (27)` (incl. Custom -> "Custom event generation" dialog); full `npx vitest run` `Test Files 123 passed (123) Tests 1549 passed (1549)`; tsc clean
 
 ## 5. Toolbars and icons
 

@@ -83,8 +83,12 @@ function DropdownMenuCheckboxItem({
   className,
   children,
   checked,
+  indicator,
   ...props
-}: React.ComponentProps<typeof DropdownMenuPrimitive.CheckboxItem>) {
+}: React.ComponentProps<typeof DropdownMenuPrimitive.CheckboxItem> & {
+  /** Replaces the default check glyph (rendered only while checked). */
+  indicator?: React.ReactNode;
+}) {
   return (
     <DropdownMenuPrimitive.CheckboxItem
       data-slot="dropdown-menu-checkbox-item"
@@ -94,7 +98,7 @@ function DropdownMenuCheckboxItem({
     >
       <span className={INDICATOR_SLOT}>
         <DropdownMenuPrimitive.ItemIndicator>
-          <CheckIcon className="size-3.5" />
+          {indicator ?? <CheckIcon className="size-3.5" />}
         </DropdownMenuPrimitive.ItemIndicator>
       </span>
       {children}

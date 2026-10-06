@@ -138,6 +138,8 @@ The motivation is in proposal.md. This is the state on 2026-10-06, taken from a 
 
 **All three**
 - `isOverlayOpen()` matches `[role="menu"]`, so the 1–9, Space and ? hotkeys still yield while a menu is open.
+- **Added during implementation (task 4.1):** each menu is named by its trigger ("Time Display", "Filter", "Auto Generate"). Radix sets `aria-labelledby` to the trigger id on the content, and that wins over an `aria-label`. The `aria-label`s the Popovers carried ("Time display", "Filter events", "Auto Generate menu") were dropped rather than fighting the primitive. No test or spec referenced them except this change's own tests.
+- **Added during implementation (task 4.2):** `DropdownMenuCheckboxItem` gained an optional `indicator` prop, which replaces the default check glyph. Filter uses it to put `data-testid="filter-check"` on the lucide `Check`.
 - `EventLogSheet`'s batch-mode Escape handler already skips `defaultPrevented` events, and Radix's Escape handling prevents default on its dismissable layer, so Escape closes the menu without leaving batch mode (A5).
 
 ### D6. Toolbars and icons

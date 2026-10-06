@@ -291,8 +291,13 @@ function generateButton(): HTMLElement {
   return screen.getByRole('button', { name: /Auto Generate|Generating…/ });
 }
 
+// Radix DropdownMenu opens on pointer-down or the keyboard, not on click (shadcn-port-shell B1).
+function openMenu(trigger: HTMLElement) {
+  fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
+}
+
 async function startGenerate(item = 'Generate All') {
-  fireEvent.click(await screen.findByRole('button', { name: 'Auto Generate' }));
+  openMenu(await screen.findByRole('button', { name: 'Auto Generate' }));
   fireEvent.click(await screen.findByRole('menuitem', { name: item }));
 }
 
@@ -332,6 +337,11 @@ describe('event feed — AUTO GENERATE 503 latch (honest capability gating)', ()
     fireEvent.click(latched);
     fireEvent.click(latched);
     expect(calls.count).toBe(1);
+    // Nor does the menu open while latched, by pointer or keyboard (shadcn-port-workspace D5:
+    // Radix opens on pointer-down / Enter, so both are gated).
+    openMenu(latched);
+    fireEvent.keyDown(latched, { key: 'Enter' });
+    expect(screen.queryByRole('menu')).toBeNull();
 
     // The latch is PER MOUNTED PANEL: switching sessions on the same mounted
     // instance keeps it latched, and clicking still never re-calls generate.
@@ -353,7 +363,7 @@ describe('event feed — Auto Generate menu and custom selection', () => {
     const calls = mockRoutes(() => Promise.resolve({ created: 1, cap_hit: false }));
     renderSheet(SESSION_A);
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Auto Generate' }));
+    openMenu(await screen.findByRole('button', { name: 'Auto Generate' }));
     expect(screen.getByRole('menuitem', { name: 'Generate All' })).toBeTruthy();
     expect(screen.getByRole('menuitem', { name: 'Custom' })).toBeTruthy();
     fireEvent.click(screen.getByRole('menuitem', { name: 'Generate All' }));
@@ -376,7 +386,7 @@ describe('event feed — Auto Generate menu and custom selection', () => {
     });
     renderSheet(SESSION_A);
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Auto Generate' }));
+    openMenu(await screen.findByRole('button', { name: 'Auto Generate' }));
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Regenerate All' }));
 
     // Destructive confirm first — nothing posted yet, copy states the
@@ -405,7 +415,7 @@ describe('event feed — Auto Generate menu and custom selection', () => {
     });
     renderSheet(SESSION_A);
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Auto Generate' }));
+    openMenu(await screen.findByRole('button', { name: 'Auto Generate' }));
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Regenerate All' }));
     expect(await screen.findByRole('heading', { name: 'Regenerate all auto events' })).toBeTruthy();
 
@@ -433,7 +443,7 @@ describe('event feed — Auto Generate menu and custom selection', () => {
     });
     renderSheet(SESSION_A);
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Auto Generate' }));
+    openMenu(await screen.findByRole('button', { name: 'Auto Generate' }));
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Regenerate All' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Delete and regenerate' }));
 
@@ -481,7 +491,7 @@ describe('event feed — Auto Generate menu and custom selection', () => {
     });
     renderSheet(SESSION_A);
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Auto Generate' }));
+    openMenu(await screen.findByRole('button', { name: 'Auto Generate' }));
     expect(screen.getByRole('menuitem', { name: 'Generate All' })).toBeTruthy();
     fireEvent.click(screen.getByRole('menuitem', { name: 'Generate All' }));
 
@@ -510,7 +520,7 @@ describe('event feed — Auto Generate menu and custom selection', () => {
     });
     renderSheet(SESSION_A);
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Auto Generate' }));
+    openMenu(await screen.findByRole('button', { name: 'Auto Generate' }));
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Custom' }));
     expect(await screen.findByRole('dialog', { name: 'Custom event generation' })).toBeTruthy();
     expect(calls.count).toBe(0);

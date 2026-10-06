@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, screen } from '@testing-library/react';
+import { act, fireEvent, screen, within } from '@testing-library/react';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { apiFetch } from '../../../api/client';
 import { WORKSPACE_EVENTS_LIMIT } from '../../../api/hooks/useEvents';
@@ -243,11 +243,17 @@ describe('EventLogSheet loading state', () => {
   });
 });
 
+// Radix DropdownMenu opens on pointer-down or the keyboard, not on click (shadcn-port-shell B1).
+function openMenu(trigger: HTMLElement) {
+  fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
+}
+
 describe('EventLogSheet filter checkmarks', () => {
-  it('shows checkmarks for enabled rows without the PopoverItem selected tint', async () => {
+  it('checked state is the checkmark + aria-checked only, and the menu stays open while toggling', async () => {
     renderSheet();
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Filter' }));
+    openMenu(await screen.findByRole('button', { name: 'Filter' }));
+    expect(await screen.findByRole('menu', { name: 'Filter' })).toBeTruthy();
     const general = await screen.findByRole('menuitemcheckbox', { name: 'General' });
     const internal = screen.getByRole('menuitemcheckbox', { name: 'Internal' });
 
@@ -255,16 +261,54 @@ describe('EventLogSheet filter checkmarks', () => {
     expect(internal.getAttribute('aria-checked')).toBe('true');
     expect(general.querySelector('[data-testid="filter-check"]')).toBeTruthy();
     expect(internal.querySelector('[data-testid="filter-check"]')).toBeTruthy();
-    expect(general.className).not.toContain(' bg-[rgba(56,189,248,0.14)]');
-    expect(general.className).toContain('aria-checked:!bg-transparent');
-    // Category label uses the show-category color (fixture General = #4488ff).
-    expect((general.querySelector('span.flex') as HTMLElement | null)?.style.color).toBe(
-      'rgb(68, 136, 255)',
+    // The label keeps the show-category color (fixture General = #4488ff).
+    expect(within(general).getByText('General').getAttribute('style')).toContain(
+      'color: rgb(68, 136, 255)',
     );
 
     fireEvent.click(general);
-    expect(general.getAttribute('aria-checked')).toBe('false');
-    expect(general.querySelector('[data-testid="filter-check"]')).toBeNull();
+    // Still open (toggling several categories is one gesture), now unchecked, no checkmark.
+    expect(screen.getByRole('menu', { name: 'Filter' })).toBeTruthy();
+    const generalAfter = screen.getByRole('menuitemcheckbox', { name: 'General' });
+    expect(generalAfter.getAttribute('aria-checked')).toBe('false');
+    expect(generalAfter.querySelector('[data-testid="filter-check"]')).toBeNull();
+
+    fireEvent.click(screen.getByRole('menuitemcheckbox', { name: 'Internal' }));
+    expect((document.getElementById('show-internal-log') as HTMLInputElement).checked).toBe(false);
+  });
+});
+
+describe('EventLogSheet time display menu', () => {
+  it('opens by keyboard as a radio menu and switches the time display', async () => {
+    renderSheet();
+
+    const trigger = await screen.findByRole('button', { name: 'Time Display' });
+    expect(trigger.getAttribute('aria-haspopup')).toBe('menu');
+    fireEvent.keyDown(trigger, { key: 'Enter' });
+    expect(await screen.findByRole('menu', { name: 'Time Display' })).toBeTruthy();
+    const session = screen.getByRole('menuitemradio', { name: 'Session Time' });
+    const world = screen.getByRole('menuitemradio', { name: 'World Clock' });
+    expect(session.getAttribute('aria-checked')).toBe('true');
+    expect(world.getAttribute('aria-checked')).toBe('false');
+    expect((document.getElementById('view-utc-log') as HTMLInputElement).checked).toBe(false);
+
+    fireEvent.click(world);
+    expect(screen.queryByRole('menu', { name: 'Time Display' })).toBeNull();
+    expect((document.getElementById('view-utc-log') as HTMLInputElement).checked).toBe(true);
+  });
+});
+
+describe('EventLogSheet menu Escape vs batch mode (A5)', () => {
+  it('Escape in an open menu closes the menu without arming the discard dialog', async () => {
+    renderSheet();
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete row' }));
+
+    openMenu(screen.getByRole('button', { name: 'Filter' }));
+    const menu = await screen.findByRole('menu', { name: 'Filter' });
+    fireEvent.keyDown(menu, { key: 'Escape' });
+    expect(screen.queryByRole('menu', { name: 'Filter' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Discard changes' })).toBeNull();
   });
 });
 
@@ -313,7 +357,7 @@ describe('EventLogSheet category filter', () => {
 
     renderSheet();
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Filter' }));
+    openMenu(await screen.findByRole('button', { name: 'Filter' }));
     expect(await screen.findByRole('menuitemcheckbox', { name: 'General' })).toBeTruthy();
     expect(screen.getByRole('menuitemcheckbox', { name: 'Slate' })).toBeTruthy();
     expect(screen.getByText('A logged note')).toBeTruthy();

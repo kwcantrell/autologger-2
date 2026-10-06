@@ -1,5 +1,6 @@
 import { defaultRangeExtractor, type Range, useVirtualizer } from '@tanstack/react-virtual';
 import clsx from 'clsx';
+import { Check } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import {
   useDeleteEvent,
@@ -17,9 +18,18 @@ import type {
   SessionStatus,
 } from '../../../api/types';
 import { showToast } from '../../../shared/components/Toast';
+import { Button } from '../../../shared/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from '../../../shared/components/ui/dropdown-menu';
 import { TableCell, TableRow } from '../../../shared/components/ui/table';
 import { useConfirm } from '../../../shared/ui/ConfirmDialog';
-import { Popover, PopoverItem } from '../../../shared/ui/Popover';
 import { eventTimelineSec } from '../../../shared/utils/audioClips';
 import { isAutomaticLogEvent } from '../../../shared/utils/timecode';
 import { useGatedGenerate } from '../hooks/useGatedGenerate';
@@ -187,6 +197,9 @@ function doSortEvents(
 // Dropdown sub-components
 // ---------------------------------------------------------------------------
 
+// shadcn-port-workspace D5: the feed menus are shadcn DropdownMenus (role="menu" with menu
+// keyboard navigation; `isOverlayOpen()` matches it, so global hotkeys yield while one is open).
+// Each menu is named by its trigger (Radix `aria-labelledby`).
 function TimeDisplayDropdown({
   viewUtc,
   disabled,
@@ -196,46 +209,24 @@ function TimeDisplayDropdown({
   disabled: boolean;
   onChange: (utc: boolean) => void;
 }) {
-  const [open, setOpen] = useState(false);
   return (
-    <Popover
-      open={open}
-      onOpenChange={setOpen}
-      ariaLabel="Time display"
-      trigger={
-        <button
-          type="button"
-          className={FEED_GLASS_BTN}
-          aria-haspopup="listbox"
-          disabled={disabled}
-        >
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="glass" disabled={disabled}>
           <FeedToolbarCaption label="Time Display" icon={<IconClock />} />
-        </button>
-      }
-    >
-      <PopoverItem
-        role="option"
-        ariaSelected={!viewUtc}
-        selected={!viewUtc}
-        onClick={() => {
-          onChange(false);
-          setOpen(false);
-        }}
-      >
-        Session Time
-      </PopoverItem>
-      <PopoverItem
-        role="option"
-        ariaSelected={viewUtc}
-        selected={viewUtc}
-        onClick={() => {
-          onChange(true);
-          setOpen(false);
-        }}
-      >
-        World Clock
-      </PopoverItem>
-    </Popover>
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        {/* A radio group (was a dialog of `option`s: invalid ARIA). Radix closes on select. */}
+        <DropdownMenuRadioGroup
+          value={viewUtc ? 'world' : 'session'}
+          onValueChange={(v) => onChange(v === 'world')}
+        >
+          <DropdownMenuRadioItem value="session">Session Time</DropdownMenuRadioItem>
+          <DropdownMenuRadioItem value="world">World Clock</DropdownMenuRadioItem>
+        </DropdownMenuRadioGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -254,71 +245,47 @@ function FilterDropdown({
   onToggleCategory: (categoryId: string) => void;
   onChange: (show: boolean) => void;
 }) {
-  // Keep selected tint off; leave text color to the per-category style below.
-  const checkedClass = 'aria-checked:!bg-transparent';
-  const label = (checked: boolean, text: string, color?: string) => (
-    <span
-      className="flex items-center gap-2"
-      style={color ? { color } : { color: 'var(--color-legacy-muted)' }}
+  // web-session-console "Event filter checkmarks": checked state is the checkmark and
+  // aria-checked only — the item primitive carries no selected tint. `filter-check` is the
+  // indicator (rendered only when checked); the label keeps the category color.
+  const item = (
+    key: string,
+    checked: boolean,
+    text: string,
+    onToggle: () => void,
+    color?: string,
+  ) => (
+    <DropdownMenuCheckboxItem
+      key={key}
+      checked={checked}
+      onCheckedChange={onToggle}
+      // Stay open: toggling several categories is one gesture.
+      onSelect={(e) => e.preventDefault()}
+      indicator={<Check data-testid="filter-check" aria-hidden="true" className="size-3.5" />}
     >
-      <span aria-hidden="true" className="inline-flex h-3 w-3 shrink-0 items-center justify-center">
-        {checked ? (
-          <svg
-            data-testid="filter-check"
-            aria-hidden="true"
-            width="12"
-            height="12"
-            viewBox="0 0 12 12"
-            fill="none"
-            className="text-current"
-          >
-            <path
-              d="M2.25 6.25L4.75 8.75L9.75 3.25"
-              stroke="currentColor"
-              strokeWidth="1.75"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
-        ) : null}
-      </span>
-      {text}
-    </span>
+      <span style={{ color: color ?? 'var(--color-legacy-muted)' }}>{text}</span>
+    </DropdownMenuCheckboxItem>
   );
   return (
-    <Popover
-      ariaLabel="Filter events"
-      trigger={
-        <button type="button" className={FEED_GLASS_BTN} aria-haspopup="menu" disabled={disabled}>
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="glass" disabled={disabled}>
           <FeedToolbarCaption label="Filter" icon={<IconFilter />} />
-        </button>
-      }
-    >
-      {categories.map((category) => {
-        const checked = !hiddenCategoryIds.has(category.id);
-        return (
-          <PopoverItem
-            key={category.id}
-            role="menuitemcheckbox"
-            ariaChecked={checked}
-            selected={false}
-            className={checkedClass}
-            onClick={() => onToggleCategory(category.id)}
-          >
-            {label(checked, category.label || category.id, category.color)}
-          </PopoverItem>
-        );
-      })}
-      <PopoverItem
-        role="menuitemcheckbox"
-        ariaChecked={showInternal}
-        selected={false}
-        className={checkedClass}
-        onClick={() => onChange(!showInternal)}
-      >
-        {label(showInternal, 'Internal')}
-      </PopoverItem>
-    </Popover>
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        {categories.map((category) =>
+          item(
+            category.id,
+            !hiddenCategoryIds.has(category.id),
+            category.label || category.id,
+            () => onToggleCategory(category.id),
+            category.color,
+          ),
+        )}
+        {item('__internal', showInternal, 'Internal', () => onChange(!showInternal))}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -1029,21 +996,31 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
     </>
   );
   const generateUnavailable = genUnavailable || noInstructions;
+  // shadcn-port-workspace D5: non-modal, because Custom opens a dialog (a modal Radix menu
+  // closing under a newly opened dialog leaves `pointer-events:none` stuck on <body>).
+  // Unavailable or pending: the open gate below ignores opens, and the trigger also prevents
+  // Radix's opening events (pointer-down / Enter / Space) while unavailable.
   const generateControl = (
-    <Popover
+    <DropdownMenu
+      modal={false}
       open={generateMenuOpen}
       onOpenChange={(open) => {
         if (!generateUnavailable && !generatePending) setGenerateMenuOpen(open);
       }}
-      ariaLabel="Auto Generate menu"
-      trigger={
-        <button
-          type="button"
-          className={`${FEED_GLASS_BTN} aria-disabled:pointer-events-none aria-disabled:cursor-not-allowed aria-disabled:opacity-45`}
+    >
+      <DropdownMenuTrigger asChild>
+        <Button
+          variant="glass"
+          className="aria-disabled:pointer-events-none aria-disabled:cursor-not-allowed aria-disabled:opacity-45"
           disabled={generatePending}
           aria-disabled={generateUnavailable || undefined}
           aria-describedby={generateUnavailable ? genReasonId : undefined}
-          aria-haspopup="menu"
+          onPointerDown={(event) => {
+            if (generateUnavailable) event.preventDefault();
+          }}
+          onKeyDown={(event) => {
+            if (generateUnavailable) event.preventDefault();
+          }}
           onClick={(event) => {
             if (generateUnavailable) event.preventDefault();
           }}
@@ -1052,21 +1029,22 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
             label={generatePending ? 'Generating…' : 'Auto Generate'}
             icon={<IconSparkles />}
           />
-        </button>
-      }
-    >
-      <PopoverItem onClick={handleGenerateAllClick}>
-        {hasAutoGeneratedEvents ? 'Regenerate All' : 'Generate All'}
-      </PopoverItem>
-      <PopoverItem
-        onClick={() => {
-          setGenerateMenuOpen(false);
-          setCustomGenerateOpen(true);
-        }}
-      >
-        Custom
-      </PopoverItem>
-    </Popover>
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuItem onSelect={handleGenerateAllClick}>
+          {hasAutoGeneratedEvents ? 'Regenerate All' : 'Generate All'}
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          onSelect={() => {
+            setGenerateMenuOpen(false);
+            setCustomGenerateOpen(true);
+          }}
+        >
+          Custom
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
   const toolbar = (
     <>
