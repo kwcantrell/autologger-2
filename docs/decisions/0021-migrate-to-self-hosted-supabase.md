@@ -973,6 +973,34 @@ Slice order:
    replace 0.49 / 0.54 s before and 0.52 / 0.56 s after: no change beyond run-to-run noise. The
    same code measured 11.9 / 15.5 ms in 7b-2's run on 2026-10-03, so the host's load differs
    between days; that is what observability should explain.
+
+   **7c-2 `session-edit-conflicts`** (owner decisions, 2026-10-06). The web half; with it, 7c is
+   complete:
+   1. **The conflict dialog** offers Overwrite and Keep theirs. It shows theirs next to yours for
+      every field holding the operator's text.
+   2. **A delete conflict** offers Delete anyway and Keep theirs.
+   3. **Dismissing the dialog** saves nothing and discards nothing. The draft keeps its old base,
+      so its next save meets the conflict again.
+   4. **All six requests** carry the version. The dialog is wired for event inline edit, batch
+      save and delete, transcript-word edit and topic edit. Word and topic delete have no UI.
+   5. **Batch save** prompts per conflicting row and continues.
+   6. **Word and topic save failures** are toasted.
+
+   **7c-2's mechanism.**
+   - **The seed.** Each feed keeps a per-row **seed**: the server row the row's controls were
+     filled from. It survives virtualization unmount, and it follows the server only while the
+     row holds no draft, no edit and no save, and is not focused. Saves send the seed's version
+     and compare the controls against the seed, never against the cache. The panel traced every
+     missed conflict and every silent overwrite in the first draft to a cache fallback.
+   - **The save loop.** `useVersionedSave` serializes saves per row and applies each outcome
+     before the next save reads its base. It also:
+     - queues the prompts, so one never replaces another;
+     - settles a row's queued saves without sending them after Keep theirs or a dismissal;
+     - dismisses everything on a session switch, including a conflict that arrives afterwards.
+   - **The `409` body** is typed from captured responses. A new `errorBody` detector in the
+     response-shape guard counts typed error bodies as sites.
+
+   The server is unchanged.
 8. Session leases.
 9. Realtime replaces the WebSocket protocol.
 10. Blobs to Supabase Storage.
