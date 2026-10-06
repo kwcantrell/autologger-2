@@ -5,8 +5,8 @@
 
 import { LeaseStore } from '@autologger/session-core/leaseStore';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { deadlock, type SlowStorage, slowStorage } from './slowStorage';
 import { createSessionRow, rawRows, testRegistry, testStorage } from './sessionRows';
+import { deadlock, type SlowStorage, slowStorage } from './slowStorage';
 
 afterEach(() => vi.restoreAllMocks());
 

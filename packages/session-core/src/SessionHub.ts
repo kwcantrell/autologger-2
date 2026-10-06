@@ -37,6 +37,7 @@ import { timecodeWallAnchors, wallTimeUtcForTimecode } from './eventAnchors';
 import { EventStore } from './eventStore';
 import { FifoLock } from './fifoLock';
 import { LeaseStore } from './leaseStore';
+import { type SessionCaller, systemCaller } from './sessionCaller';
 import type {
   AttachedSocket,
   SessionProjection,
@@ -45,7 +46,6 @@ import type {
   TransportState,
   VersionExpectation,
 } from './sessionCore';
-import { type SessionCaller, systemCaller } from './sessionCaller';
 import { SessionCore } from './sessionCore';
 import type { Topic } from './topicStore';
 import { TopicStore } from './topicStore';
@@ -170,9 +170,9 @@ export interface SessionHubFacade {
    * audited overwrite; only a call that passes it can get a conflict. */
   updateEvent: {
     (input: EventUpdateInput): Promise<{ event: EventRpc; projection: SessionProjection } | null>;
-    (input: EventUpdateInput & { expect: VersionExpectation | undefined }): Promise<
-      { event: EventRpc; projection: SessionProjection } | { conflict: EventRpc } | null
-    >;
+    (
+      input: EventUpdateInput & { expect: VersionExpectation | undefined },
+    ): Promise<{ event: EventRpc; projection: SessionProjection } | { conflict: EventRpc } | null>;
   };
   deleteEvent: {
     (eventId: string): Promise<{ ok: boolean; projection: SessionProjection }>;
@@ -285,9 +285,10 @@ export interface SessionHubFacade {
   };
   deleteTranscriptWord: {
     (wordId: string): Promise<boolean>;
-    (wordId: string, expect: VersionExpectation | undefined): Promise<
-      boolean | { conflict: TranscriptWord }
-    >;
+    (
+      wordId: string,
+      expect: VersionExpectation | undefined,
+    ): Promise<boolean | { conflict: TranscriptWord }>;
   };
   replaceTranscriptWords: (
     words: RemappedTranscript['words'],
@@ -321,7 +322,10 @@ export interface SessionHubFacade {
   };
   deleteTopic: {
     (topicId: string): Promise<boolean>;
-    (topicId: string, expect: VersionExpectation | undefined): Promise<boolean | { conflict: Topic }>;
+    (
+      topicId: string,
+      expect: VersionExpectation | undefined,
+    ): Promise<boolean | { conflict: Topic }>;
   };
   deleteTopics: (ids: string[]) => Promise<void>;
 
@@ -780,7 +784,6 @@ export class SessionHub implements SessionHubEntry {
   broadcastCommand(command: string): void {
     this.core.broadcastCommand(command);
   }
-
 }
 
 /** A hub bound to one caller (session-content-policies D3): every storage member runs as that
@@ -872,7 +875,9 @@ export class SessionHubView implements SessionHubFacade {
   exportEvents() {
     return this.read((s) => s.events.exportEvents());
   }
-  updateEvent(input: EventUpdateInput): Promise<{ event: EventRpc; projection: SessionProjection } | null>;
+  updateEvent(
+    input: EventUpdateInput,
+  ): Promise<{ event: EventRpc; projection: SessionProjection } | null>;
   updateEvent(
     input: EventUpdateInput & { expect: VersionExpectation | undefined },
   ): Promise<{ event: EventRpc; projection: SessionProjection } | { conflict: EventRpc } | null>;
@@ -885,7 +890,9 @@ export class SessionHubView implements SessionHubFacade {
     expect: VersionExpectation | undefined,
   ): Promise<{ ok: boolean; projection: SessionProjection } | { conflict: EventRpc }>;
   deleteEvent(eventId: string, expect?: VersionExpectation) {
-    return this.refusedOverwrite(expect) ?? this.inTxn((s) => s.events.deleteEvent(eventId, expect));
+    return (
+      this.refusedOverwrite(expect) ?? this.inTxn((s) => s.events.deleteEvent(eventId, expect))
+    );
   }
   deleteEventsByIds(ids: string[]) {
     return this.inTxn((s) => s.events.deleteEventsByIds(ids));
@@ -971,7 +978,9 @@ export class SessionHubView implements SessionHubFacade {
       : undefined;
     return this.inTxn(async (s) => {
       if ((await s.core.transportRow()).is_rolling) {
-        throw new ImportWhileRollingError('the transport started rolling before the import was anchored');
+        throw new ImportWhileRollingError(
+          'the transport started rolling before the import was anchored',
+        );
       }
       const { event: started } = await s.events.addEvent({
         category: 'internal',
@@ -1214,9 +1223,14 @@ export class SessionHubView implements SessionHubFacade {
     );
   }
   deleteTopic(topicId: string): Promise<boolean>;
-  deleteTopic(topicId: string, expect: VersionExpectation | undefined): Promise<boolean | { conflict: Topic }>;
+  deleteTopic(
+    topicId: string,
+    expect: VersionExpectation | undefined,
+  ): Promise<boolean | { conflict: Topic }>;
   deleteTopic(topicId: string, expect?: VersionExpectation) {
-    return this.refusedOverwrite(expect) ?? this.inTxn((s) => s.topics.deleteTopic(topicId, expect));
+    return (
+      this.refusedOverwrite(expect) ?? this.inTxn((s) => s.topics.deleteTopic(topicId, expect))
+    );
   }
   /** Bulk delete by id, one transaction (topic-generation design D3's
    * crash-safe swap primitive — NOT clear-all/restore). In-process only, no

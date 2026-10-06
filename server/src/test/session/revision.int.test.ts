@@ -8,7 +8,6 @@ import { UI_SNAPSHOT_LABEL_KEY } from '@autologger/domain';
 import type { EventStore } from '@autologger/session-core/eventStore';
 import { LeaseStore } from '@autologger/session-core/leaseStore';
 import { afterEach, describe, expect, it } from 'vitest';
-import { deadlock, type SlowStorage, slowStorage } from './slowStorage';
 import {
   catalogRoot,
   createSessionRow,
@@ -18,6 +17,7 @@ import {
   testRegistry,
   testStorage,
 } from './sessionRows';
+import { deadlock, type SlowStorage, slowStorage } from './slowStorage';
 
 const CTX = { frameRate: 24, startOffsetFrames: 0 };
 const T = '2026-10-10T00:00:00.000Z';
@@ -97,8 +97,24 @@ describe('the session revision (design D2)', () => {
     const steps: Array<[string, () => Promise<unknown>]> = [
       ['word patch', () => hub.updateTranscriptWord(word.id, { word: 'y' })],
       ['topic patch', () => hub.updateTopic(topic.id, { summary: 't' })],
-      ['dashboard save', () => hub.saveDashboard({ id: 'primary', config: DASHBOARD, createdBy: null, createdByTurnId: null })],
-      ['waveform set', () => hub.setAudioSegmentWaveform({ segmentId: seg.id as string, peaks: new Array(8).fill(0.5) })],
+      [
+        'dashboard save',
+        () =>
+          hub.saveDashboard({
+            id: 'primary',
+            config: DASHBOARD,
+            createdBy: null,
+            createdByTurnId: null,
+          }),
+      ],
+      [
+        'waveform set',
+        () =>
+          hub.setAudioSegmentWaveform({
+            segmentId: seg.id as string,
+            peaks: new Array(8).fill(0.5),
+          }),
+      ],
     ];
     for (const [name, step] of steps) {
       await step();
@@ -190,9 +206,9 @@ describe('the session revision (design D2)', () => {
     await hub.addEvent(event('one'));
     expect(await revision(id)).toBe(1);
     expect((await hub.statusLive(CTX)).events_stream_revision).toBe(1);
-    expect(await rawRows(storage, 'session_meta', { where: "key = 'events_stream_revision'" })).toEqual([
-      { key: 'events_stream_revision', value: '999' },
-    ]);
+    expect(
+      await rawRows(storage, 'session_meta', { where: "key = 'events_stream_revision'" }),
+    ).toEqual([{ key: 'events_stream_revision', value: '999' }]);
   });
 
   it('(h) the lease: a claim, a release and an expiry advance it by one; a heartbeat, a refused claim and a foreign release leave it (session-leases D5)', async () => {

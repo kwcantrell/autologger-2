@@ -5,11 +5,11 @@
 // doubling, capped at the 40 s stale threshold, and a successful run resets it.
 
 import type { AsyncLocalStorage } from 'node:async_hooks';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LeaseStore } from '@autologger/session-core/leaseStore';
 import { SessionHub } from '@autologger/session-core/SessionHub';
-import { type SlowStorage, slowStorage } from './slowStorage';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createSessionRow, DRIVER_SAFE_FAKE_TIMERS, openTestHub, testStorage } from './sessionRows';
+import { type SlowStorage, slowStorage } from './slowStorage';
 
 const unhandled: unknown[] = [];
 const trap = (reason: unknown): void => {

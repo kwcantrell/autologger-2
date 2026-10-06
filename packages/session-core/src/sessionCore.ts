@@ -230,8 +230,12 @@ export class SessionCore {
    * boundary. */
   async eventCounts(): Promise<{ total: number; logged: number }> {
     const total = Number(
-      (await this.first('SELECT COUNT(*) AS c FROM session_events WHERE session_id = ?', this.sessionId))
-        ?.c ?? 0,
+      (
+        await this.first(
+          'SELECT COUNT(*) AS c FROM session_events WHERE session_id = ?',
+          this.sessionId,
+        )
+      )?.c ?? 0,
     );
     const logged = Number(
       (
