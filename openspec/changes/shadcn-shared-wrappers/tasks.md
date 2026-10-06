@@ -31,16 +31,18 @@
 
 ## 2. V5 primitives
 
-- [ ] 2.1 Restyle `shared/components/ui/{dialog,alert-dialog,drawer}.tsx` to V5 (D1): overlay and content z-index variables, glass surface, the legacy `transform` centring with `translate-none`, the legacy keyframes, and `showCloseButton` defaulting to `false`.
+- [x] 2.1 Restyle `shared/components/ui/{dialog,alert-dialog,drawer}.tsx` to V5 (D1): overlay and content z-index variables, glass surface, the legacy `transform` centring with `translate-none`, the legacy keyframes, and `showCloseButton` defaulting to `false`.
   - Base class strings are **replaced**, not appended to (D1).
   - Test first: `primitives.smoke.test.tsx` gains two cases:
     - "dialog renders no Close button by default"
     - "DialogContent with a consumer `md:!w-…` keeps no `max-w-`, `bg-background` or `zoom-in` class"
   - Both fail on the current primitive.
   - Verify with `npx vitest run src/shared/components/ui` and `src/shadcnHygiene.repo.test.ts`.
-- [ ] 2.2 Restyle `shared/components/ui/{popover,tooltip,select}.tsx` to V5 (D1), replacing the base strings with the legacy wrapper classes. `select.tsx` exports `SELECT_TRIGGER_CLASSNAME` and `SelectTriggerIcon` as the single trigger source (D5).
+  - Evidence: test first: 4 new smoke cases (no default Close, no `max-w-`/`bg-background`/`zoom-in`/`translate-x-` on dialog and alert-dialog content with a consumer `md:!w-…`, drawer has `[data-vaul-handle]`) -> `4 failed | 12 passed (16)`; after replacing the base strings with the legacy Dialog classes and `DrawerPrimitive.Handle` -> `npx vitest run src/shared/components/ui src/shadcnHygiene.repo.test.ts` `Tests 24 passed (24)`
+- [x] 2.2 Restyle `shared/components/ui/{popover,tooltip,select}.tsx` to V5 (D1), replacing the base strings with the legacy wrapper classes. `select.tsx` exports `SELECT_TRIGGER_CLASSNAME` and `SelectTriggerIcon` as the single trigger source (D5).
   - Test first: the smoke test asserts each content carries its `data-slot` and stays role-correct after the restyle (`tooltip`, labelled `dialog`, `listbox` opened with `defaultOpen`).
   - Verify with `npx vitest run src/shared/components/ui`.
+  - Evidence: test first: 3 new smoke cases (popover labelled dialog, tooltip, select listbox via defaultOpen; no `z-50`/`zoom-in`/`bg-popover`/`bg-foreground`; trigger class === exported `SELECT_TRIGGER_CLASSNAME`, one svg) -> `3 failed | 16 passed (19)` (`expected z-50 w-72 … not to match`); after replacing popover/tooltip/select base strings with the legacy wrapper classes and exporting `SELECT_TRIGGER_CLASSNAME`/`SELECT_ICON_CLASSNAME`/`SelectTriggerIcon` from select.tsx -> `Tests 27 passed (27)` (with shadcnHygiene); typecheck clean
 
 ## 3. Wrappers (public APIs unchanged)
 

@@ -26,7 +26,14 @@ import { Label } from './label';
 import { Popover, PopoverContent, PopoverTrigger } from './popover';
 import { RadioGroup, RadioGroupItem } from './radio-group';
 import { ScrollArea } from './scroll-area';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './select';
+import {
+  SELECT_TRIGGER_CLASSNAME,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from './select';
 import { Separator } from './separator';
 import { Skeleton } from './skeleton';
 import { Toaster } from './sonner';
@@ -48,6 +55,13 @@ class StubResizeObserver {
 if (typeof window !== 'undefined' && typeof window.ResizeObserver === 'undefined') {
   window.ResizeObserver = StubResizeObserver as unknown as typeof ResizeObserver;
 }
+
+// Radix Select (open) calls pointer-capture and scrollIntoView, which jsdom lacks.
+if (!Element.prototype.hasPointerCapture) {
+  Element.prototype.hasPointerCapture = () => false;
+  Element.prototype.releasePointerCapture = () => {};
+}
+Element.prototype.scrollIntoView ??= () => {};
 
 const slot = (name: string) => document.querySelector(`[data-slot="${name}"]`);
 
@@ -212,6 +226,112 @@ describe('shadcn primitives render (normalized, V5-themed)', () => {
       </Drawer>,
     );
     expect(screen.getByRole('dialog', { name: 'Mobile sheet' })).toBeTruthy();
+  });
+
+  // shadcn-shared-wrappers D1: the primitives carry the V5 look by REPLACING shadcn's base
+  // class strings (twMerge would otherwise keep sm:max-w-lg / bg-background / zoom-in next to
+  // the V5 classes, and sm:max-w-lg caps consumer `md:!w-…` widths). Deliberate class checks.
+  const SHADCN_LEFTOVERS = /(^|\s)(sm:)?max-w-|bg-background|zoom-in|translate-x-/;
+
+  // 2.2: popover / tooltip / select content restyled to V5 (no shadcn z-50 / zoom / popover bg).
+  const SHADCN_OVERLAY_LEFTOVERS = /(^|\s)z-50(\s|$)|zoom-in|bg-popover|bg-foreground/;
+
+  it('popover content is V5 and still a labelled dialog', () => {
+    render(
+      <Popover open>
+        <PopoverTrigger>Open</PopoverTrigger>
+        <PopoverContent aria-label="Options">Body</PopoverContent>
+      </Popover>,
+    );
+    expect(screen.getByRole('dialog', { name: 'Options' })).toBeTruthy();
+    expect(slot('popover-content')?.getAttribute('class') ?? '').not.toMatch(
+      SHADCN_OVERLAY_LEFTOVERS,
+    );
+  });
+
+  it('tooltip content is V5 and still a tooltip', () => {
+    render(
+      <TooltipProvider>
+        <Tooltip open>
+          <TooltipTrigger>Info</TooltipTrigger>
+          <TooltipContent>More</TooltipContent>
+        </Tooltip>
+      </TooltipProvider>,
+    );
+    expect(screen.getByRole('tooltip').textContent).toContain('More');
+    expect(slot('tooltip-content')?.getAttribute('class') ?? '').not.toMatch(
+      SHADCN_OVERLAY_LEFTOVERS,
+    );
+  });
+
+  it('select opens a V5 listbox; the trigger uses the single exported trigger class source', () => {
+    render(
+      <Select defaultOpen defaultValue="24">
+        <SelectTrigger aria-label="Frame rate">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent position="popper">
+          <SelectItem value="24">24</SelectItem>
+          <SelectItem value="30">30</SelectItem>
+        </SelectContent>
+      </Select>,
+    );
+    expect(screen.getByRole('listbox')).toBeTruthy();
+    expect(slot('select-content')?.getAttribute('class') ?? '').not.toMatch(
+      SHADCN_OVERLAY_LEFTOVERS,
+    );
+    expect(slot('select-trigger')?.getAttribute('class')).toBe(SELECT_TRIGGER_CLASSNAME);
+    expect(slot('select-trigger')?.querySelectorAll('svg')).toHaveLength(1);
+  });
+
+  it('dialog renders no Close button by default', () => {
+    render(
+      <Dialog open>
+        <DialogContent>
+          <DialogTitle>Plain</DialogTitle>
+          <DialogDescription>Body.</DialogDescription>
+        </DialogContent>
+      </Dialog>,
+    );
+    expect(screen.queryByRole('button', { name: 'Close' })).toBeNull();
+  });
+
+  it('dialog content with a consumer width override keeps no shadcn sizing/background/zoom', () => {
+    render(
+      <Dialog open>
+        <DialogContent className="md:!w-[min(38rem,96vw)]">
+          <DialogTitle>Wide</DialogTitle>
+          <DialogDescription>Body.</DialogDescription>
+        </DialogContent>
+      </Dialog>,
+    );
+    const cls = slot('dialog-content')?.getAttribute('class') ?? '';
+    expect(cls).toContain('md:!w-[min(38rem,96vw)]');
+    expect(cls).not.toMatch(SHADCN_LEFTOVERS);
+  });
+
+  it('alert-dialog content keeps no shadcn sizing/background/zoom', () => {
+    render(
+      <AlertDialog open>
+        <AlertDialogContent>
+          <AlertDialogTitle>Sure?</AlertDialogTitle>
+          <AlertDialogDescription>Body.</AlertDialogDescription>
+        </AlertDialogContent>
+      </AlertDialog>,
+    );
+    expect(slot('alert-dialog-content')?.getAttribute('class') ?? '').not.toMatch(SHADCN_LEFTOVERS);
+  });
+
+  it('drawer exposes a vaul drag handle', () => {
+    render(
+      <Drawer open>
+        <DrawerContent>
+          <DrawerTitle>Sheet</DrawerTitle>
+          <DrawerDescription>Body.</DrawerDescription>
+        </DrawerContent>
+      </Drawer>,
+    );
+    expect(document.querySelector('[data-vaul-handle]')).not.toBeNull();
   });
 
   it('alert-dialog opens as an alertdialog with an accessible name', () => {
