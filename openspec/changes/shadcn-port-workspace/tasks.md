@@ -110,6 +110,15 @@
   - Verify: those suites and `MaximizeLogStrip.test.tsx` pass.
   - Evidence: test first: JumpToTimeButton "draws the lucide play glyph" (svg.lucide-play aria-hidden inside the native button), MaximizeLogStrip "Open navigation draws the lucide menu glyph", EventLogRow "Delete row draws the lucide trash glyph" + "UNDELETE is an outline Button named Restore row" (data-variant outline, data-size xs; data-slot is the Tooltip trigger's) -> `4 failed | 43 passed (47)`; after lucide Play (fill currentColor, size-3; button stays native aria-disabled), Menu (size-5), Trash2 (size-3), UNDELETE -> Button outline xs -> those suites `Tests 47 passed (47)` incl. the native-button / aria-disabled-without-disabled / shared reason id cases; full `npx vitest run` `Test Files 123 passed (123) Tests 1555 passed (1555)`; tsc clean
 
+## 5b. Internal-event colour (added after the QA walk; re-panelled)
+
+- [ ] 5.4 Add `shared/utils/categoryColor.ts` `resolveCategoryColor` and route every `category_color` reader through it: EventLogRow, TimelineMarkers, Timeline (×3), MarkerNav (D8).
+  - Test first:
+    - `categoryColor.test.ts`: the three bare tokens map to `--legacy-*`, whitespace-tolerant; hex and other `var()`s pass through; empty and null give `undefined`;
+    - EventLogRow: an internal row with `category_color: 'var(--muted)'` renders its category cell with inline `color: var(--legacy-muted)`;
+    - TimelineMarkers: that event's marker has `--mcol: var(--legacy-muted)`.
+  - Verify: those suites pass, and `grep -rn "category_color" web/src --include=*.tsx | grep -v test` shows every read wrapped.
+
 ## 6. Integration: QA gate and checks
 
 - [ ] 6.1 Copy the walk from `openspec/changes/archive/2026-10-06-shadcn-port-shell/qa/` and add steps for:
@@ -119,6 +128,7 @@
   - a scrolled event feed with the sticky header visible;
   - reveal-in-feed from a timeline marker;
   - an eval of event-row height (A6, must be ≤ 31px);
+  - the `reveal-in-feed` screen on a session with internal events, with 0 contrast failures on the Internal rows (D8);
   - at 390×844, an eval that the event feed viewport scrolls (`clientHeight < scrollHeight`) and mounts fewer than all rows;
   - an eval that focusing an inline-edit input and dispatching a real mousedown on the feed scrollbar leaves the input focused.
 

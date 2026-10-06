@@ -60,6 +60,12 @@ A hygiene guard bans any reintroduction.
 
 Every existing element id, test id, label, accessible name and live-region role is preserved.
 
+**Internal-event colour fix** (added 2026-10-06 after the QA walk; owner chose to fold it in).
+- The server sends `category_color: 'var(--muted)'` for internal events (`packages/domain/src/studio.ts:490`).
+- Since change 1 renamed the legacy `--muted` token to `--legacy-muted`, that value resolves to shadcn's `--muted`, a 6% white tint. So the event feed's Internal rows ("Recording 1 Started/Stopped") render at about 1.14:1, and timeline markers and MarkerNav hints for internal events take the same tint.
+- The web now resolves a category colour through one helper. It maps the legacy bare token names (`var(--muted)`, `var(--border)`, `var(--accent)`) to their `--legacy-*` names, at every place a category colour is read: EventLogRow, TimelineMarkers, Timeline (×3) and MarkerNav.
+- The server's wire value is unchanged (frozen contract).
+
 ## Capabilities
 
 ### New Capabilities
@@ -103,4 +109,5 @@ None.
     - smoke tests for the primitives;
     - the hygiene guard.
 - **Dependencies:** `overlayscrollbars` and `overlayscrollbars-react` are removed, and none are added. The dev image needs `make dev-up`.
+- **Internal rows:** visible again, at the legacy muted grey they had before change 1.
 - **Visual:** small drift on the scrollbars (Radix thumb against the OverlayScrollbars theme). The menus now show radio and checkbox indicators. The QA walk compares against the `after-shell` captures.

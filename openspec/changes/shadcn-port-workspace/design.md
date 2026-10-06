@@ -161,6 +161,24 @@ The motivation is in proposal.md. This is the state on 2026-10-06, taken from a 
 - Update the `SessionRoute.tsx:14` comment.
 - `shadcnHygiene.repo.test.ts` gains a case: no source file imports `overlayscrollbars*`, and `web/package.json` doesn't list it.
 
+### D8. Category colours resolve legacy token names (added after the QA walk, re-panelled)
+
+The API sends `category_color` as a CSS colour string. For internal events the domain package sends `var(--muted)` (`packages/domain/src/studio.ts:490`; `fixtures/api-responses/eventsList.json:30`). Change 1 (`shadcn-foundation`) renamed the legacy `--border`/`--muted`/`--accent` tokens to `--legacy-*`, because shadcn owns the bare names now. Its hygiene guard bans the bare names in web source, but this value arrives as data. It therefore resolves to shadcn's `--muted` (`rgba(255,255,255,0.06)`), and Internal rows measure 1.14:1 in the QA walk.
+
+- **New `shared/utils/categoryColor.ts`.** `resolveCategoryColor(raw)` trims the value, then rewrites `var(--muted)`, `var(--border)` and `var(--accent)` (exact match, whitespace-tolerant) to `var(--legacy-muted)`/`var(--legacy-border)`/`var(--legacy-accent)`. Any other value passes through, and empty or null becomes `undefined`, so callers keep their own fallbacks.
+- **Every reader of `category_color` goes through it:**
+  - `EventLogRow` (the category and message inline colour);
+  - `TimelineMarkers` (`--mcol`);
+  - `Timeline` (group markers, nearest-marker colour, marker tooltip colour);
+  - `MarkerNav` (`colorOf`).
+- **Why not fix the server value:** the JSON a client sees is frozen (`api-contract-freeze`), and changing it is tier 2. The web owns the token rename, so the web owns the mapping. A server fix can follow independently, and the helper is harmless either way.
+- **Test:**
+  - a unit test of the mapping;
+  - an EventLogRow internal row whose category cell's inline colour is `var(--legacy-muted)`;
+  - a TimelineMarkers marker whose `--mcol` is `var(--legacy-muted)`.
+
+  QA re-runs the `reveal-in-feed` probe screen, which must show 0 contrast failures on the Internal rows.
+
 ## Assumptions (tested)
 
 **A1. Radix Tabs activate on mouse-down or focus, not click.** `fireEvent.click` tab tests must move to `fireEvent.mouseDown(tab, { button: 0 })`. `@testing-library/user-event` is not installed and isn't added (panel finding). Arrow-key activation runs through roving focus in a `setTimeout`, so keyboard assertions await a tick.
@@ -194,6 +212,10 @@ The motivation is in proposal.md. This is the state on 2026-10-06, taken from a 
 
 **A7. Only these files import OverlayScrollbars.**
 - `grep -rln overlayscrollbars web/src web/package.json` → `web/package.json`, `app/(admin)/layout.page.tsx`, `app/(index)/layout.page.tsx`, `AppShell.tsx` (comment), `FeedTable.tsx`, `RecentSessionsList.tsx`, `RecentSessionsList.test.tsx`, `SessionRoute.tsx` (comment), `V6Rail.test.tsx`, `shared/theme/tailwind.css`.
+
+**A9. The only readers of `category_color` in the web are these six sites.**
+- `grep -rn "category_color" web/src --include=*.ts* | grep -v test` → `Timeline.tsx:408,704,765`, `EventLogRow.tsx:316`, `MarkerNav.tsx:124`, `timeline/TimelineMarkers.tsx:65`, plus the type in `api/types.ts:489`.
+- The internal-row computed colour in the QA walk was `rgba(255, 255, 255, 0.06)`, from inline `style="color: var(--muted);"` (agent-browser eval on ATS_youtube).
 
 **A8. The glass-button constants have exactly four importers.**
 - `grep -n "FEED_GLASS" web/src/pages/index/components/*.tsx | grep import` → `AiV2Panel.tsx:14`, `GenerateToolbar.tsx:2`, `EventLogSheet.tsx:39`, `useSseTurn.tsx:3`.
