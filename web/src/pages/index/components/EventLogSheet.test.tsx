@@ -1,12 +1,12 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError, apiFetch } from '../../../api/client';
 import { WORKSPACE_EVENTS_LIMIT } from '../../../api/hooks/useEvents';
 import type { Category, EventsResponse, LogEvent, SessionStatus } from '../../../api/types';
 import { showToast } from '../../../shared/components/Toast';
 import { TooltipProvider } from '../../../shared/ui/Tooltip';
-import { renderStrict } from '../../../test/renderStrict';
+import { renderStrict, StrictWrapper } from '../../../test/renderStrict';
 import { EventLogSheet } from './EventLogSheet';
 
 // --- EventLogSheet batch-Escape / discard-confirm regression (ui-refresh, phase-2
@@ -781,6 +781,56 @@ describe('EventLogSheet batch and delete version conflicts', () => {
     expect(writes('DELETE')).toEqual([`sessions/${SESSION_ID}/events/ev-2?version=1`]);
     expect(rows.map((r) => r.event_id)).toEqual(['ev-1', 'ev-2', 'ev-3']);
     await screen.findByText('theirs 2');
+  });
+
+  it('a non-batch delete conflict, then Delete anyway: ?version=N&overwrite=1 and the row is removed', async () => {
+    renderWithClient();
+    await screen.findByText('note 2');
+    otherPersonEdits('ev-2', { message: 'theirs 2' });
+
+    fireEvent.click(within(rowEl('ev-2')).getByRole('button', { name: 'Delete row' }));
+    await act(async () => {
+      fireEvent.click(await screen.findByRole('button', { name: 'Delete' }));
+    });
+    await choose('Delete anyway');
+    await settle();
+
+    expect(writes('DELETE')).toEqual([
+      `sessions/${SESSION_ID}/events/ev-2?version=1`,
+      `sessions/${SESSION_ID}/events/ev-2?version=2&overwrite=1`,
+    ]);
+    expect(rows.map((r) => r.event_id)).toEqual(['ev-1', 'ev-3']);
+    await waitFor(() => expect(document.querySelector('tr[data-event-id="ev-2"]')).toBeNull());
+  });
+
+  it('a batch interrupted by a session switch shows no "Save stopped" toast', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const tree = (sessionId: string) => (
+      <StrictWrapper>
+        <QueryClientProvider client={client}>
+          <TooltipProvider delayDuration={400}>
+            <EventLogSheet sessionId={sessionId} />
+          </TooltipProvider>
+        </QueryClientProvider>
+      </StrictWrapper>
+    );
+    const { rerender } = render(tree(SESSION_ID));
+    await enterBatch();
+    batchType('ev-1', 'mine 1');
+    batchType('ev-2', 'mine 2');
+    otherPersonEdits('ev-1', { message: 'theirs 1' });
+
+    await saveBatch();
+    await screen.findByRole('alertdialog', { name: 'Row changed' });
+    // The operator switches session with the batch's prompt open.
+    await act(async () => {
+      rerender(tree('sess-other'));
+    });
+    await settle();
+
+    expect(screen.queryByRole('alertdialog', { name: 'Row changed' })).toBeNull();
+    expect(writes('PUT')).toHaveLength(1);
+    expect(mockedShowToast).not.toHaveBeenCalled();
   });
 
   it('a delete that 404s shows the existing message and no dialog', async () => {

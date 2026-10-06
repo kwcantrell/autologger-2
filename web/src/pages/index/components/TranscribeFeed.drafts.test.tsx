@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError, apiFetch } from '../../../api/client';
 import type { SessionStatus, TranscriptWord } from '../../../api/types';
 import { showToast } from '../../../shared/components/Toast';
-import { renderStrict } from '../../../test/renderStrict';
+import { renderStrict, StrictWrapper } from '../../../test/renderStrict';
 import { TranscribeFeed } from './TranscribeFeed';
 
 // --- TranscribeFeed edit drafts across a virtual unmount (data-loss regression) ---
@@ -590,6 +590,59 @@ describe('TranscribeFeed version conflicts (task 7.1)', () => {
     await blurAndSettle(word);
 
     expect(patchBodies).toEqual([]);
+    expect(serverWords[0].word).toBe('theirs-word');
+  });
+
+  it("a draft keeps its base version across a remount while another person's change lands", async () => {
+    const { queryClient } = await mountWindow();
+    // Typed over version 1, then scrolled out before leaving the field.
+    const { word } = rowInputs('word-0');
+    fireEvent.focus(word);
+    fireEvent.change(word, { target: { value: 'mine' } });
+    scrollWindowTo(10, 13);
+    expect(screen.queryByDisplayValue('mine')).toBeNull();
+    // Version 2 reaches the cache while the row is unmounted.
+    otherPersonEdits(0, { word: 'theirs-word' });
+    await refetch(queryClient);
+    scrollWindowTo(0, 3);
+
+    const again = screen.getByDisplayValue('mine');
+    fireEvent.focus(again);
+    await blurAndSettle(again);
+
+    expect(await screen.findByRole('alertdialog')).toBeTruthy();
+    expect(patchBodies).toEqual([{ word: 'mine', version: 1 }]);
+    expect(serverWords[0].word).toBe('theirs-word');
+  });
+
+  it('a session switch with the conflict dialog open closes it and sends nothing more', async () => {
+    const { queryClient, rerender } = await mountWindow();
+    otherPersonEdits(0, { word: 'theirs-word' });
+    const { word, speaker } = rowInputs('word-0');
+    fireEvent.focus(word);
+    fireEvent.change(word, { target: { value: 'mine' } });
+    await blurAndSettle(word);
+    expect(await screen.findByRole('alertdialog')).toBeTruthy();
+    // A second field commit on the row queues behind the open prompt.
+    fireEvent.focus(speaker);
+    fireEvent.change(speaker, { target: { value: '7' } });
+    await blurAndSettle(speaker);
+    expect(patchBodies).toHaveLength(1);
+
+    // The same tree with another session: the feed stays mounted (it is not keyed per session).
+    rerender(
+      <StrictWrapper>
+        <QueryClientProvider client={queryClient}>
+          <TranscribeFeed sessionId="sess-transcribe-drafts-2" />
+        </QueryClientProvider>
+      </StrictWrapper>,
+    );
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+    expect(conflictDialog()).toBeNull();
+    expect(patchBodies).toEqual([{ word: 'mine', version: 1 }]);
     expect(serverWords[0].word).toBe('theirs-word');
   });
 

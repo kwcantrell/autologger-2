@@ -159,8 +159,8 @@ export const TranscribeRow = memo(function TranscribeRow({
   jumpUnavailable,
   jumpReasonId,
 }: Props) {
-  const ownSeeds = useRowSeeds<TranscriptWord>();
-  const rowSeeds = feedSeeds ?? ownSeeds;
+  // The feed's seeds; a standalone row (unit tests) gets a store of its own.
+  const rowSeeds = useRowSeeds<TranscriptWord>(feedSeeds);
   const { store: seeds, holds } = rowSeeds;
   const trRef = useRef<HTMLTableRowElement>(null);
 

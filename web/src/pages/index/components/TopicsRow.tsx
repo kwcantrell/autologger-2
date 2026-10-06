@@ -165,8 +165,8 @@ export function TopicsRow({
   jumpReasonId,
   transcriptAnchored,
 }: Props) {
-  const ownSeeds = useRowSeeds<SessionTopic>();
-  const rowSeeds = feedSeeds ?? ownSeeds;
+  // The feed's seeds; a standalone row (unit tests) gets a store of its own.
+  const rowSeeds = useRowSeeds<SessionTopic>(feedSeeds);
   const { store: seeds, holds } = rowSeeds;
   const trRef = useRef<HTMLTableRowElement>(null);
 

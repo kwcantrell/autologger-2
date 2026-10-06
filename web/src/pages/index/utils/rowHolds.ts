@@ -94,9 +94,16 @@ export function createRowSeeds<TRow extends { version: number }>(): RowSeeds<TRo
   };
 }
 
-/** One per mounted owner, with an identity stable for its lifetime (rows are `memo`). */
-export function useRowSeeds<TRow extends { version: number }>(): RowSeeds<TRow> {
+/** One per mounted owner, with an identity stable for its lifetime (rows are `memo`).
+ *
+ *  `given` is the feed's seeds when the caller is a row: it is returned as is, and a store of
+ *  the caller's own is created (once, lazily) only when no `given` is passed, which only a row
+ *  rendered standalone in a unit test does. Production rows therefore allocate nothing here. */
+export function useRowSeeds<TRow extends { version: number }>(
+  given?: RowSeeds<TRow>,
+): RowSeeds<TRow> {
   const ref = useRef<RowSeeds<TRow> | null>(null);
+  if (given) return given;
   if (ref.current === null) ref.current = createRowSeeds<TRow>();
   return ref.current;
 }

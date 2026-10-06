@@ -1370,6 +1370,30 @@ describe('EventLogSheet inline edit version conflicts', () => {
     expect(serverEvents.find((e) => e.event_id === 'ev-0')?.message).toBe('theirs');
   });
 
+  it('a draft keeps its base version across a remount while another person’s change lands', async () => {
+    serveLongFixture();
+    virtualMock.first = 0;
+    virtualMock.last = 3;
+    const { client } = await renderRollingSheet();
+
+    // Typed over version 1, then scrolled out before leaving the row.
+    fireEvent.change(messageInput('ev-0'), { target: { value: 'mine' } });
+    scrollWindowTo(100, 103, 'ev-101');
+    expect(document.querySelector('#v4-log-sheet tr[data-event-id="ev-0"]')).toBeNull();
+    // Version 2 reaches the cache while the row is unmounted.
+    otherPersonEdits('ev-0', { message: 'theirs' });
+    await refetch(client);
+    scrollWindowTo(0, 3, 'ev-1');
+
+    expect(messageInput('ev-0').value).toBe('mine');
+    focus(messageInput('ev-0'));
+    await leave(messageInput('ev-0'));
+    await conflictDialog();
+
+    expect(putsFor('ev-0')).toEqual([expect.objectContaining({ message: 'mine', version: 1 })]);
+    expect(serverEvents.find((e) => e.event_id === 'ev-0')?.message).toBe('theirs');
+  });
+
   it('a failed save, then another person’s change while unfocused, then leaving again is a conflict, not a silent overwrite', async () => {
     virtualMock.first = 0;
     virtualMock.last = 3;

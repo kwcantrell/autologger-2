@@ -118,6 +118,10 @@ like the draft store).
 - It survives row unmount, so a remounted row keeps the base its draft was typed over.
 - The feed clears it with its drafts on a session change.
 - The draft store is unchanged; a draft's base is its row's seed.
+- Words and topics wrap it in `createRowSeeds` (`web/src/pages/index/utils/rowHolds.ts`): the
+  store plus counted **holds** (a row registers one while its `edit` exists, so the feed's
+  `followServer` freezes that seed) and a per-row subscription that notifies on every seed
+  change.
 
 **When the seed changes.** The rule is: **the seed follows the server row exactly while the
 row's controls do**. That means the row holds:
@@ -180,7 +184,11 @@ seed (the operator's unsaved text) keeps it. This is a three-way rule: old seed,
 text, new row. It means a one-field word or topic save, or an Overwrite, never leaves a sibling
 control showing stale text that a later blur would send with the newer base (panel finding).
 - For event rows, every inline save submits all four fields, so nothing is left to refill.
-- For words and topics, `edit` is merged that way.
+- For words and topics, `edit` holds only the fields that diverge from the seed; untouched
+  controls render from the row's current seed, read through the `createRowSeeds` subscription.
+  So when the feed rebases the seed, every mounted copy of the row (including one virtualization
+  rebuilt while the save was in flight) shows the saved row, and a later blur of an untouched
+  control sends nothing stale.
 
 **Different rows** still save concurrently.
 
@@ -196,7 +204,7 @@ type SaveOutcome<R, C> =
 useVersionedSave(sessionId: string): {
   run<R, C extends { version: number }>(opts: {
     rowKey: string;
-    baseVersion: () => number;            // reads the seed store; never the cache
+    baseVersion: () => number | undefined; // reads the seed store; never the cache
     send: (guard: VersionGuard) => Promise<R>;
     conflictOf: (e: unknown) => C | null;
     prompt: (current: C) => ChoiceOptions;
@@ -210,7 +218,10 @@ useVersionedSave(sessionId: string): {
 ```
 
 **The loop:**
-1. `send({version: baseVersion()})`.
+1. `send({version: baseVersion()})`. The base fails closed: an unknown base (`undefined`)
+   rejects with an `Error` and sends nothing, never an unguarded last-writer-wins request.
+   Every surface seeds each row it shows before the row can save, so no surface reaches it;
+   the hooks' own optional guard (no guard is last-writer-wins, D8) is unchanged.
 2. On a conflict, prompt:
    - **confirm** → `send({version: current.version, overwrite: true})`. Another conflict prompts
      again with the newer `current`.
@@ -251,7 +262,7 @@ finding 3). Unmount behaves the same way.
 So the row remounts and fills from `current`, which D8 has put into the cache, even if
 virtualization had already remounted it while the prompt was open (panel finding 1c).
 
-**Copy** (`conflictPromptCopy.tsx`):
+**Copy** (new `web/src/shared/hooks/conflictPromptCopy.tsx`):
 - **Edits:** title "Row changed", confirm "Overwrite", cancel "Keep theirs", danger styling.
 - **Deletes:** title "Row changed", the changed-field lines, then "Delete anyway?"; confirm
   "Delete anyway", cancel "Keep theirs".
@@ -292,8 +303,10 @@ They are captured with `npm run fixtures:capture -w server`, never hand-written.
 - A `versionConflictOf<T>(` call is a response-consuming site. The callee name is resolved
   through its import from `api/versionConflict`, so an alias is followed.
 - The site must name a covered `T`.
-- It comes with a floor `errorBody: 3`, a canary in `useEvents.ts`, and synthetic-tree cases: an
-  unchecked `T` fails and a covered `T` passes.
+- It comes with a floor `errorBody: 6` (measured: the three hooks' sites, plus the three feed
+  `conflictOf` sites in `EventLogSheet`, `TranscribeFeed` and `TopicsFeed` added during
+  implementation; the first measure was 3), a canary in `useEvents.ts`, and synthetic-tree
+  cases: an unchecked `T` fails and a covered `T` passes.
 - The three DELETE exemptions whose keys contain the URL template are re-keyed. Floors are
   re-measured, with the arithmetic in comments.
 
@@ -339,8 +352,10 @@ They are captured with `npm run fixtures:capture -w server`, never hand-written.
 - **Event delete (`handleDelete`).** After the sheet's own confirm, `run` with the delete copy and
   the seed version taken at click. Keep theirs and dismiss both leave the row.
 - **Words (`TranscribeFeed`/`TranscribeRow`).**
-  - The feed owns a seed store. `TranscribeRow.startEdit` stamps the seed when it creates `edit`,
-    and keeps an existing seed when `edit` comes from a restored draft.
+  - The feed owns a seed store and holds (`createRowSeeds`, `utils/rowHolds.ts`).
+    `TranscribeRow.startEdit` stamps the seed when it creates `edit`, and keeps an existing seed
+    when `edit` comes from a restored draft. `edit` holds only divergent fields; untouched
+    controls render from the subscribed seed (D4).
   - `onUpdate(wordId, patch)` runs with `baseVersion: () => seeds.get(wordId).version`.
   - `onSaved`: the D4 three-way merge of `edit`, then `clearMatching`.
   - `onKeptTheirs`: the D5 refill (whole-row draft cleared, which the prompt listed).
@@ -349,6 +364,8 @@ They are captured with `npm run fixtures:capture -w server`, never hand-written.
   - `useUpdateTopic`, `useVersionedSave` and the seed store move up into `TopicsFeed`. It passes
     `onUpdate(topicId, patch, handlers)`, whose base is the thunk over the seed store.
   - `startEdit` gains the `prev ??` guard and stamps the seed only when it creates `edit`.
+  - Seeds and holds as for words (`createRowSeeds`); `edit` holds only divergent fields and
+    untouched controls render from the subscribed seed.
   - `commitField` compares against the seed and awaits the outcome:
     - saved: three-way merge of `edit`;
     - keptTheirs: refill;
@@ -392,6 +409,8 @@ and the real `ApiError` (the repo's pattern; there is no msw).
 5. `TopicsRow.test.tsx` cases that assert `apiFetch` PATCH bodies (154-262) move to
    `TopicsFeed.test.tsx` or assert the `onUpdate` prop instead, because the row no longer makes
    the request.
+6. Mock servers in existing surface test files gain version checks and 409 responses, and
+   file-wide mocks (e.g. `Toast`); no existing assertion changes.
 
 ## Risks and trade-offs
 

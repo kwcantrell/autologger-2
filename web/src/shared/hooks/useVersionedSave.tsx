@@ -23,11 +23,12 @@ export type SaveOutcome<R, C> =
 export interface VersionedSaveOptions<R, C extends { version: number }> {
   /** Serialization key: saves with the same key run one after another. */
   rowKey: string;
-  /** The seed's version, read when this save's turn comes (never the cache). `undefined` sends
-   *  no guard (last writer wins). */
+  /** The seed's version, read when this save's turn comes (never the cache). Fails closed: an
+   *  unknown base (`undefined`) rejects with an Error and sends nothing, so a surface can never
+   *  fall back to an unguarded, last-writer-wins request. */
   baseVersion: () => number | undefined;
-  /** Sends the edit or delete with the guard: `{version}`, `{version, overwrite: true}` on an
-   *  Overwrite, or `{}` for an unknown base. */
+  /** Sends the edit or delete with the guard: `{version}`, or `{version, overwrite: true}` on an
+   *  Overwrite. */
   send: (guard: VersionGuard) => Promise<R>;
   /** The conflict's `current` row, or `null` for any other error (which is rethrown). */
   conflictOf: (e: unknown) => C | null;
@@ -204,7 +205,12 @@ export function useVersionedSave(sessionId: string): VersionedSave {
             return done(chain.lastDecision as SaveOutcome<R, C>);
           }
           const base = opts.baseVersion();
-          let guard: VersionGuard = base === undefined ? {} : { version: base };
+          // Fail closed (D5): no base means no guard, and an unguarded save would silently
+          // overwrite whatever the server holds. Every surface seeds a row before it can save.
+          if (base === undefined) {
+            return fail(new Error('Save failed: this row has no base version. Reload and retry.'));
+          }
+          let guard: VersionGuard = { version: base };
           for (;;) {
             let result: R;
             try {

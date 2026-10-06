@@ -123,8 +123,9 @@ None.
 
 - **Web**
   - `web/src/api/{client.ts,types.ts,versionConflict.ts}` and `web/src/api/hooks/{useEvents,useTranscriptWords,useTopics}.ts`.
-  - `web/src/shared/ui/ConfirmDialog.tsx` and the new `web/src/shared/hooks/useVersionedSave.tsx`.
-  - the new `web/src/pages/index/utils/seedStore.ts`.
+  - `web/src/shared/ui/ConfirmDialog.tsx` and the new `web/src/shared/hooks/useVersionedSave.tsx`
+    and `web/src/shared/hooks/conflictPromptCopy.tsx`.
+  - the new `web/src/pages/index/utils/seedStore.ts` and `web/src/pages/index/utils/rowHolds.ts`.
   - `EventLogSheet.tsx`, `EventLogRow.tsx`, `TranscribeFeed.tsx`, `TranscribeRow.tsx`,
     `TopicsFeed.tsx` and `TopicsRow.tsx`.
   - About 31 test files whose row literals gain `version`.

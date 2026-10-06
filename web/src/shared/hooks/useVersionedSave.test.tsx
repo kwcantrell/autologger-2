@@ -109,19 +109,39 @@ describe('useVersionedSave: the save loop (D5)', () => {
     expect(dialog()).toBeNull();
   });
 
-  it('sends no guard when the base is unknown (last writer wins)', async () => {
+  it('fails closed when the base is unknown: rejects with an Error and sends nothing', async () => {
     const h = mount();
     const send = vi.fn(async (_g: VersionGuard) => 'ok');
+    const onSaved = vi.fn();
+    let out!: ReturnType<typeof track<string, Row>>;
+    await act(async () => {
+      out = track(
+        h.api().run<string, Row>({
+          rowKey: 'r1',
+          baseVersion: () => undefined,
+          send,
+          conflictOf,
+          prompt: editPrompt('mine'),
+          onSaved,
+        }),
+      );
+    });
+    await flush();
+    expect(send).not.toHaveBeenCalled();
+    expect(onSaved).not.toHaveBeenCalled();
+    expect(out.error).toBeInstanceOf(Error);
+    expect(h.api().isBusy('r1')).toBe(false);
+    // The row is released: a later save with a known base sends.
     await act(async () => {
       await h.api().run<string, Row>({
         rowKey: 'r1',
-        baseVersion: () => undefined,
+        baseVersion: () => 2,
         send,
         conflictOf,
         prompt: editPrompt('mine'),
       });
     });
-    expect(send.mock.calls).toEqual([[{}]]);
+    expect(send.mock.calls).toEqual([[{ version: 2 }]]);
   });
 
   it('conflict, Overwrite, conflict, Overwrite, then saved: each retry carries the newer version', async () => {

@@ -483,6 +483,10 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
   // row remounts and fills from `current`.
   const seeds = useSeedStore<LogEvent>();
   const versioned = useVersionedSave(sessionId);
+  // The session on screen now, read after an await: a batch whose prompt was
+  // dismissed by a session switch ends quietly (nothing is pending any more).
+  const liveSessionRef = useRef(sessionId);
+  liveSessionRef.current = sessionId;
   const [rowEpochs, setRowEpochs] = useState<Map<string, number>>(new Map());
   // `isBusy` reads live state whatever its identity; a stable wrapper keeps
   // the rows' effects from re-running on every busy tick.
@@ -907,10 +911,18 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
   const handleSaveBatch = async () => {
     setBatchSaving(true);
     let keptTheirs = 0;
-    const stopped = () => showToast('Save stopped. The remaining changes are still pending.', true);
+    const batchSessionId = sessionId;
+    // A session switch dismisses the batch's prompt and resets batch mode, so
+    // there is nothing left pending to tell the operator about.
+    const switchedAway = () => liveSessionRef.current !== batchSessionId;
+    const stopped = () => {
+      if (switchedAway()) return;
+      showToast('Save stopped. The remaining changes are still pending.', true);
+    };
     try {
       // A snapshot: rows leave the live maps as they settle.
       for (const [eventId, edit] of [...batchEdits]) {
+        if (switchedAway()) return;
         if (pendingDeleteIds.has(eventId)) continue;
         const outcome = await versioned.run<LogEvent, LogEvent>({
           rowKey: eventId,
@@ -931,6 +943,7 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
         settleBatchEdit(eventId);
       }
       for (const [eventId, version] of [...pendingDeleteIds]) {
+        if (switchedAway()) return;
         const seed = batchEdits.get(eventId)?.seed ?? seeds.get(eventId);
         const outcome = await versioned.run<unknown, LogEvent>({
           rowKey: eventId,
