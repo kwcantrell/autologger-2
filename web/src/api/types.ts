@@ -664,32 +664,6 @@ export interface ShowCreateBody {
   show_code?: string | null;
 }
 
-// Admin
-export interface AdminStudioCreateBody {
-  id: string;
-  display_name: string;
-}
-
-export interface AdminStudio {
-  id: string;
-  name: string;
-  builtin: boolean;
-}
-
-export interface AdminUser {
-  id: string;
-  email: string;
-  given_name: string;
-  family_name: string;
-  disabled: boolean;
-  studios: StudioBrief[];
-}
-
-export interface AdminDataResponse {
-  studios_catalog: AdminStudio[];
-  users: AdminUser[];
-}
-
 // Companion (Stream Deck) remote control
 export type CompanionCommandType = 'record-start' | 'record-stop' | 'record-toggle' | 'play-toggle';
 
