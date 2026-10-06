@@ -1,8 +1,9 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { apiFetch } from '../../../api/client';
+import { ApiError, apiFetch } from '../../../api/client';
 import type { SessionStatus, TranscriptWord } from '../../../api/types';
+import { showToast } from '../../../shared/components/Toast';
 import { renderStrict } from '../../../test/renderStrict';
 import { TranscribeFeed } from './TranscribeFeed';
 
@@ -23,6 +24,11 @@ import { TranscribeFeed } from './TranscribeFeed';
 vi.mock('../../../api/client', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../../api/client')>();
   return { ...actual, apiFetch: vi.fn() };
+});
+
+vi.mock('../../../shared/components/Toast', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../shared/components/Toast')>();
+  return { ...actual, showToast: vi.fn() };
 });
 
 const virtualMock = vi.hoisted(() => ({
@@ -122,10 +128,20 @@ let serverWords: TranscriptWord[] = [];
  *  deliberately KEEPS the operator's draft so the text stays recoverable. */
 let patchFailsFor = new Set<string>();
 
+/** Every word PATCH body, in send order (session-edit-conflicts 7.1). */
+let patchBodies: Array<Record<string, unknown>> = [];
+
+/** When set, each PATCH waits on it before the server answers, so a test can
+ *  hold a save in flight (session-edit-conflicts 7.1 timing cases). */
+let patchGate: (() => Promise<void>) | null = null;
+
 beforeEach(() => {
   virtualMock.first = 0;
   virtualMock.last = Number.POSITIVE_INFINITY;
   patchFailsFor = new Set();
+  patchBodies = [];
+  patchGate = null;
+  vi.mocked(showToast).mockClear();
   serverWords = wordsFixture(WORD_COUNT);
   mockedApiFetch.mockReset();
   mockedApiFetch.mockImplementation(async (path: string, opts: RequestInit = {}) => {
@@ -133,13 +149,24 @@ beforeEach(() => {
     if (path.includes('/status')) return statusFixture();
     if (path.includes('/transcript-words/') && opts.method === 'PATCH') {
       const wordId = path.split('/transcript-words/')[1];
-      const patch = JSON.parse(String(opts.body)) as Partial<TranscriptWord>;
+      const body = JSON.parse(String(opts.body)) as Partial<TranscriptWord> & {
+        overwrite?: boolean;
+      };
+      patchBodies.push(body);
+      if (patchGate) await patchGate();
+      // The server's version guard (7c-1): a stale `version` is a 409 carrying the current row,
+      // with or without `overwrite`; no `version` is last-writer-wins.
+      const { version, overwrite: _overwrite, ...patch } = body;
       if (Object.keys(patch).some((field) => patchFailsFor.has(field))) {
         throw new Error('save failed');
       }
       const index = serverWords.findIndex((w) => w.id === wordId);
       if (index < 0) throw new Error(`unknown word: ${wordId}`);
-      const updated = { ...serverWords[index], ...patch };
+      const current = serverWords[index];
+      if (version !== undefined && version !== current.version) {
+        throw new ApiError(409, 'Version conflict.', { detail: 'Version conflict.', current });
+      }
+      const updated = { ...current, ...patch, version: current.version + 1 };
       serverWords = [...serverWords];
       serverWords[index] = updated;
       return updated;
@@ -151,11 +178,12 @@ beforeEach(() => {
 
 function renderFeed() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return renderStrict(
+  const utils = renderStrict(
     <QueryClientProvider client={queryClient}>
       <TranscribeFeed sessionId={SESSION_ID} />
     </QueryClientProvider>,
   );
+  return { ...utils, queryClient };
 }
 
 /** Move the rendered window and re-render off it — the mock's stand-in for the
@@ -297,5 +325,249 @@ describe('TranscribeFeed edit drafts', () => {
     scrollWindowTo(0, 3);
 
     expect(screen.getByDisplayValue('failed but kept')).toBeTruthy();
+  });
+});
+
+// --- Version conflicts on word saves (session-edit-conflicts D3/D4/D5/D9, task 7.1) ---
+//
+// Every word save is based on the row's SEED (the server row its controls were filled from) and
+// sends `seed.version`; the server mock above enforces the guard. "Another person's change" is a
+// direct write to `serverWords` that bumps the version: the feed's cache only sees it after a
+// refetch (`refetch`) or through the 409's `current`.
+
+function otherPersonEdits(index: number, fields: Partial<TranscriptWord>) {
+  const cur = serverWords[index];
+  serverWords = [...serverWords];
+  serverWords[index] = { ...cur, ...fields, version: cur.version + 1 };
+}
+
+async function refetch(queryClient: QueryClient) {
+  await act(async () => {
+    await queryClient.invalidateQueries();
+    // React Query notifies observers on a later tick; let the feed render the new rows.
+    await new Promise((r) => setTimeout(r, 0));
+  });
+}
+
+/** The inputs of the row showing `word` (session time, speaker, word), found by display value. */
+function rowInputs(word: string) {
+  const tr = wordInput(word).closest('tr') as HTMLTableRowElement;
+  const [time, speaker, wordEl] = within(tr).getAllByRole('textbox') as HTMLInputElement[];
+  return { tr, time, speaker, word: wordEl };
+}
+
+async function blurAndSettle(el: HTMLElement) {
+  await act(async () => {
+    fireEvent.blur(el);
+  });
+  await act(async () => {});
+}
+
+const conflictDialog = () => screen.queryByRole('alertdialog');
+
+async function choose(name: 'Overwrite' | 'Keep theirs') {
+  const button = await screen.findByRole('button', { name });
+  await act(async () => {
+    fireEvent.click(button);
+  });
+  await act(async () => {});
+}
+
+async function pressEscape() {
+  const d = await screen.findByRole('alertdialog');
+  await act(async () => {
+    fireEvent.keyDown(d, { key: 'Escape' });
+  });
+  await act(async () => {});
+}
+
+async function mountWindow() {
+  virtualMock.first = 0;
+  virtualMock.last = 3;
+  const utils = renderFeed();
+  await waitFor(() => expect(screen.getByDisplayValue('word-0')).toBeTruthy());
+  return utils;
+}
+
+describe('TranscribeFeed version conflicts (task 7.1)', () => {
+  it('a word PATCH carries the base version', async () => {
+    await mountWindow();
+    const { word } = rowInputs('word-0');
+    fireEvent.focus(word);
+    fireEvent.change(word, { target: { value: 'mine' } });
+    await blurAndSettle(word);
+
+    await waitFor(() => expect(serverWords[0].word).toBe('mine'));
+    expect(patchBodies).toEqual([{ word: 'mine', version: 1 }]);
+  });
+
+  it('conflict then Overwrite: the retry carries current.version and overwrite', async () => {
+    await mountWindow();
+    otherPersonEdits(0, { speaker: '5' });
+    const { word } = rowInputs('word-0');
+    fireEvent.focus(word);
+    fireEvent.change(word, { target: { value: 'mine' } });
+    await blurAndSettle(word);
+
+    expect(await screen.findByRole('alertdialog')).toBeTruthy();
+    await choose('Overwrite');
+
+    await waitFor(() => expect(serverWords[0].word).toBe('mine'));
+    expect(patchBodies).toEqual([
+      { word: 'mine', version: 1 },
+      { word: 'mine', version: 2, overwrite: true },
+    ]);
+    expect(conflictDialog()).toBeNull();
+    expect(screen.getByDisplayValue('mine')).toBeTruthy();
+  });
+
+  it('conflict then Keep theirs: the draft is cleared and the row shows theirs', async () => {
+    await mountWindow();
+    otherPersonEdits(0, { word: 'theirs-word' });
+    const { word } = rowInputs('word-0');
+    fireEvent.focus(word);
+    fireEvent.change(word, { target: { value: 'mine' } });
+    await blurAndSettle(word);
+
+    await choose('Keep theirs');
+
+    await waitFor(() => expect(screen.getByDisplayValue('theirs-word')).toBeTruthy());
+    expect(screen.queryByDisplayValue('mine')).toBeNull();
+    expect(patchBodies).toHaveLength(1);
+    // The draft is gone: a remount shows theirs too.
+    scrollWindowTo(10, 13);
+    scrollWindowTo(0, 3);
+    expect(screen.getByDisplayValue('theirs-word')).toBeTruthy();
+    expect(screen.queryByDisplayValue('mine')).toBeNull();
+  });
+
+  it('dismiss keeps the draft, and leaving the row again asks again', async () => {
+    await mountWindow();
+    otherPersonEdits(0, { word: 'theirs-word' });
+    const { word } = rowInputs('word-0');
+    fireEvent.focus(word);
+    fireEvent.change(word, { target: { value: 'mine' } });
+    await blurAndSettle(word);
+
+    await pressEscape();
+
+    expect(conflictDialog()).toBeNull();
+    expect(screen.getByDisplayValue('mine')).toBeTruthy();
+    scrollWindowTo(10, 13);
+    scrollWindowTo(0, 3);
+    const again = screen.getByDisplayValue('mine');
+    fireEvent.focus(again);
+    await blurAndSettle(again);
+
+    expect(await screen.findByRole('alertdialog')).toBeTruthy();
+    expect(patchBodies).toEqual([
+      { word: 'mine', version: 1 },
+      { word: 'mine', version: 1 },
+    ]);
+    expect(serverWords[0].word).toBe('theirs-word');
+  });
+
+  it('two quick field commits on one word do not conflict (the second waits for the first)', async () => {
+    await mountWindow();
+    let releaseFirst!: () => void;
+    const first = new Promise<void>((r) => {
+      releaseFirst = r;
+    });
+    patchGate = () => first;
+    const { word, time } = rowInputs('word-0');
+    fireEvent.focus(word);
+    fireEvent.change(word, { target: { value: 'mine' } });
+    await blurAndSettle(word);
+    expect(patchBodies).toHaveLength(1);
+
+    // The second field commits while the first save is still in flight.
+    fireEvent.focus(time);
+    fireEvent.change(time, { target: { value: '00:01:30:00' } });
+    await blurAndSettle(time);
+    expect(patchBodies).toHaveLength(1);
+
+    patchGate = null;
+    await act(async () => {
+      releaseFirst();
+    });
+    await waitFor(() => expect(serverWords[0].session_time).toBe('00:01:30:00'));
+
+    expect(patchBodies).toEqual([
+      { word: 'mine', version: 1 },
+      { session_time: '00:01:30:00', version: 2 },
+    ]);
+    expect(conflictDialog()).toBeNull();
+  });
+
+  it('a one-field Overwrite, then a blur of an untouched sibling field: no stale text is sent', async () => {
+    await mountWindow();
+    otherPersonEdits(0, { speaker: '5' });
+    const { word, time, speaker } = rowInputs('word-0');
+    fireEvent.focus(word);
+    fireEvent.change(word, { target: { value: 'mine' } });
+    // A sibling holds unsaved operator text, so the row keeps its edit through the save.
+    fireEvent.focus(time);
+    fireEvent.change(time, { target: { value: '00:09:09:00' } });
+    await blurAndSettle(word);
+    await choose('Overwrite');
+    await waitFor(() => expect(serverWords[0].word).toBe('mine'));
+
+    // The untouched speaker control now shows the saved row, not the pre-conflict text.
+    await waitFor(() => expect(speaker.value).toBe('Person 6'));
+    fireEvent.focus(speaker);
+    await blurAndSettle(speaker);
+
+    expect(patchBodies.filter((b) => 'speaker' in b)).toEqual([]);
+    expect(serverWords[0].speaker).toBe('5');
+  });
+
+  it('Keep theirs lists every field that holds operator text', async () => {
+    await mountWindow();
+    otherPersonEdits(0, { word: 'theirs-word' });
+    const { word, speaker } = rowInputs('word-0');
+    fireEvent.focus(speaker);
+    fireEvent.change(speaker, { target: { value: 'Ari' } });
+    fireEvent.focus(word);
+    fireEvent.change(word, { target: { value: 'mine' } });
+    await blurAndSettle(word);
+
+    const d = await screen.findByRole('alertdialog');
+    expect(d.textContent).toContain('Word: theirs “theirs-word”, yours “mine”');
+    expect(d.textContent).toContain('Speaker: theirs “Person 1”, yours “Ari”');
+
+    await choose('Keep theirs');
+    // Every listed field was discarded, and nothing else was.
+    scrollWindowTo(10, 13);
+    scrollWindowTo(0, 3);
+    expect(screen.queryByDisplayValue('Ari')).toBeNull();
+    expect(screen.getByDisplayValue('theirs-word')).toBeTruthy();
+  });
+
+  it("focus and leave without typing after another person's change: nothing is sent", async () => {
+    const { queryClient } = await mountWindow();
+    const { word } = rowInputs('word-0');
+    fireEvent.focus(word);
+    otherPersonEdits(0, { word: 'theirs-word' });
+    await refetch(queryClient);
+
+    await blurAndSettle(word);
+
+    expect(patchBodies).toEqual([]);
+    expect(serverWords[0].word).toBe('theirs-word');
+  });
+
+  it('a server error shows an error toast and keeps the draft', async () => {
+    await mountWindow();
+    patchFailsFor = new Set(['word']);
+    const { word } = rowInputs('word-0');
+    fireEvent.focus(word);
+    fireEvent.change(word, { target: { value: 'mine' } });
+    await blurAndSettle(word);
+
+    await waitFor(() => expect(showToast).toHaveBeenCalledWith('save failed', true));
+    expect(conflictDialog()).toBeNull();
+    scrollWindowTo(10, 13);
+    scrollWindowTo(0, 3);
+    expect(screen.getByDisplayValue('mine')).toBeTruthy();
   });
 });

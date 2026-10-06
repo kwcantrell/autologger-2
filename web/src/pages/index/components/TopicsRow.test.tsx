@@ -1,8 +1,6 @@
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, screen, waitFor } from '@testing-library/react';
+import { fireEvent, screen } from '@testing-library/react';
 import type { ComponentProps } from 'react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { apiFetch } from '../../../api/client';
+import { describe, expect, it, vi } from 'vitest';
 import type { SessionTopic } from '../../../api/types';
 import { renderStrict } from '../../../test/renderStrict';
 import { transcriptWhollyAnchorless } from './TopicsFeed';
@@ -38,10 +36,11 @@ import { TopicsRow } from './TopicsRow';
 //
 // Setup: jsdom has no ResizeObserver, and TopicsRow constructs one
 // unconditionally in a useLayoutEffect (the summary textarea auto-grow) —
-// stub it globally for this file. TopicsRow calls `useUpdateTopic`
-// internally (unlike TranscribeRow, which receives `onUpdate` as a prop), so
-// every render needs a QueryClientProvider, and `apiFetch` is mocked at the
-// module boundary so blur-commits resolve without a real network call.
+// stub it globally for this file. Since session-edit-conflicts (D9, D10
+// category 5) the topic save lives in TopicsFeed, which hands the row an
+// `onUpdate` prop like TranscribeRow's; these cases assert what the row asks
+// `onUpdate` to save, and the request itself (body, version guard) is tested in
+// TopicsFeed.test.tsx.
 
 class StubResizeObserver {
   observe(): void {}
@@ -51,18 +50,6 @@ class StubResizeObserver {
 if (typeof window !== 'undefined' && typeof window.ResizeObserver === 'undefined') {
   window.ResizeObserver = StubResizeObserver as unknown as typeof ResizeObserver;
 }
-
-vi.mock('../../../api/client', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../../api/client')>();
-  return { ...actual, apiFetch: vi.fn() };
-});
-
-const mockedApiFetch = vi.mocked(apiFetch);
-
-beforeEach(() => {
-  mockedApiFetch.mockReset();
-  mockedApiFetch.mockResolvedValue({});
-});
 
 function topicFixture(overrides: Partial<SessionTopic> = {}): SessionTopic {
   return {
@@ -80,26 +67,24 @@ function topicFixture(overrides: Partial<SessionTopic> = {}): SessionTopic {
 
 function renderRow(overrides: Partial<ComponentProps<typeof TopicsRow>> = {}) {
   const onJump = vi.fn();
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const onUpdate = vi.fn(async () => undefined);
   const utils = renderStrict(
-    <QueryClientProvider client={client}>
-      <table>
-        <tbody>
-          <TopicsRow
-            row={topicFixture()}
-            sessionId="sess-1"
-            fps={24}
-            onJump={onJump}
-            jumpUnavailable={false}
-            jumpReasonId="v5-topics-feed-jump-reason"
-            transcriptAnchored={true}
-            {...overrides}
-          />
-        </tbody>
-      </table>
-    </QueryClientProvider>,
+    <table>
+      <tbody>
+        <TopicsRow
+          row={topicFixture()}
+          onUpdate={onUpdate}
+          fps={24}
+          onJump={onJump}
+          jumpUnavailable={false}
+          jumpReasonId="v5-topics-feed-jump-reason"
+          transcriptAnchored={true}
+          {...overrides}
+        />
+      </tbody>
+    </table>,
   );
-  return { ...utils, onJump };
+  return { ...utils, onJump, onUpdate };
 }
 
 describe('TopicsRow — jump control resolution (design D3/D4)', () => {
@@ -141,80 +126,60 @@ describe('TopicsRow — jump control resolution (design D3/D4)', () => {
 });
 
 describe('TopicsRow — inline editing untouched', () => {
-  it('all four fields still focus and commit on blur', async () => {
-    renderRow({ row: topicFixture() });
+  it('all four fields still focus and commit on blur', () => {
+    const { onUpdate } = renderRow({ row: topicFixture() });
 
     const timeInput = screen.getByDisplayValue('00:00:10:00');
     fireEvent.focus(timeInput);
     fireEvent.change(timeInput, { target: { value: '00:00:20:00' } });
     fireEvent.blur(timeInput);
-    await waitFor(() =>
-      expect(mockedApiFetch).toHaveBeenLastCalledWith(
-        'sessions/sess-1/topics/topic-1',
-        expect.objectContaining({
-          method: 'PATCH',
-          body: JSON.stringify({ session_time: '00:00:20:00' }),
-        }),
-      ),
+    expect(onUpdate).toHaveBeenLastCalledWith(
+      'topic-1',
+      { session_time: '00:00:20:00' },
+      expect.any(Function),
     );
 
     const durationInput = screen.getByDisplayValue('30');
     fireEvent.focus(durationInput);
     fireEvent.change(durationInput, { target: { value: '45' } });
     fireEvent.blur(durationInput);
-    await waitFor(() =>
-      expect(mockedApiFetch).toHaveBeenLastCalledWith(
-        'sessions/sess-1/topics/topic-1',
-        expect.objectContaining({
-          method: 'PATCH',
-          body: JSON.stringify({ duration_sec: 45 }),
-        }),
-      ),
+    expect(onUpdate).toHaveBeenLastCalledWith(
+      'topic-1',
+      { duration_sec: 45 },
+      expect.any(Function),
     );
 
     const levelInput = screen.getByDisplayValue('1');
     fireEvent.focus(levelInput);
     fireEvent.change(levelInput, { target: { value: '3' } });
     fireEvent.blur(levelInput);
-    await waitFor(() =>
-      expect(mockedApiFetch).toHaveBeenLastCalledWith(
-        'sessions/sess-1/topics/topic-1',
-        expect.objectContaining({
-          method: 'PATCH',
-          body: JSON.stringify({ topic_level: 3 }),
-        }),
-      ),
-    );
+    expect(onUpdate).toHaveBeenLastCalledWith('topic-1', { topic_level: 3 }, expect.any(Function));
 
     const summaryInput = screen.getByDisplayValue('A summary');
     fireEvent.focus(summaryInput);
     fireEvent.change(summaryInput, { target: { value: 'New summary' } });
     fireEvent.blur(summaryInput);
-    await waitFor(() =>
-      expect(mockedApiFetch).toHaveBeenLastCalledWith(
-        'sessions/sess-1/topics/topic-1',
-        expect.objectContaining({
-          method: 'PATCH',
-          body: JSON.stringify({ summary: 'New summary' }),
-        }),
-      ),
+    expect(onUpdate).toHaveBeenLastCalledWith(
+      'topic-1',
+      { summary: 'New summary' },
+      expect.any(Function),
     );
   });
 
   it('activating the jump control focuses no field and begins no edit', () => {
-    renderRow({ row: topicFixture() });
+    const { onUpdate } = renderRow({ row: topicFixture() });
     const tcInput = screen.getByDisplayValue('00:00:10:00');
 
     fireEvent.click(screen.getByRole('button', { name: /Jump to/ }));
 
     expect(document.activeElement).not.toBe(tcInput);
-    expect(mockedApiFetch).not.toHaveBeenCalled();
+    expect(onUpdate).not.toHaveBeenCalled();
   });
 });
 
 // --- commitField dirty check (feed-row-seek, task 9.2) ---
 //
-// Before this task, `commitField` fired `update.mutate` unconditionally on
+// Before this task, `commitField` fired the save unconditionally on
 // blur — mirrors the same defect fixed in `TranscribeRow`. Mirrors
 // `EventLogRow.handleBlur`'s dirty check (compare the committed/coerced value
 // against the row's current field value; skip the mutation when they match),
@@ -223,52 +188,45 @@ describe('TopicsRow — inline editing untouched', () => {
 // sibling-focus race; each TopicsRow field commits independently on its own
 // blur, so there is no such race here.
 describe('TopicsRow — commitField dirty check (task 9.2)', () => {
-  it('blurring an unchanged session_time field issues no PATCH', async () => {
-    renderRow({ row: topicFixture({ session_time: '00:00:10:00' }) });
+  it('blurring an unchanged session_time field issues no PATCH', () => {
+    const { onUpdate } = renderRow({ row: topicFixture({ session_time: '00:00:10:00' }) });
     const timeInput = screen.getByDisplayValue('00:00:10:00');
 
     fireEvent.focus(timeInput);
     fireEvent.blur(timeInput);
 
-    // A mutation's fetch call lands asynchronously relative to the blur
-    // event (react-query schedules it), so flush before asserting absence —
-    // an immediate synchronous check would pass trivially either way.
-    await new Promise((r) => setTimeout(r, 20));
-    expect(mockedApiFetch).not.toHaveBeenCalled();
+    // `onUpdate` is called synchronously from the blur handler, so absence is
+    // meaningful immediately.
+    expect(onUpdate).not.toHaveBeenCalled();
   });
 
-  it('blurring an unchanged numeric field (duration_sec) issues no PATCH despite Number coercion', async () => {
-    renderRow({ row: topicFixture({ duration_sec: 30 }) });
+  it('blurring an unchanged numeric field (duration_sec) issues no PATCH despite Number coercion', () => {
+    const { onUpdate } = renderRow({ row: topicFixture({ duration_sec: 30 }) });
     const durationInput = screen.getByDisplayValue('30');
 
     fireEvent.focus(durationInput);
     fireEvent.blur(durationInput);
 
-    await new Promise((r) => setTimeout(r, 20));
-    expect(mockedApiFetch).not.toHaveBeenCalled();
+    expect(onUpdate).not.toHaveBeenCalled();
   });
 
-  it('a CHANGED field still commits exactly as before, same PATCH payload', async () => {
-    renderRow({ row: topicFixture({ session_time: '00:00:10:00' }) });
+  it('a CHANGED field still commits exactly as before, same PATCH payload', () => {
+    const { onUpdate } = renderRow({ row: topicFixture({ session_time: '00:00:10:00' }) });
     const timeInput = screen.getByDisplayValue('00:00:10:00');
 
     fireEvent.focus(timeInput);
     fireEvent.change(timeInput, { target: { value: '00:00:20:00' } });
     fireEvent.blur(timeInput);
 
-    await waitFor(() =>
-      expect(mockedApiFetch).toHaveBeenLastCalledWith(
-        'sessions/sess-1/topics/topic-1',
-        expect.objectContaining({
-          method: 'PATCH',
-          body: JSON.stringify({ session_time: '00:00:20:00' }),
-        }),
-      ),
+    expect(onUpdate).toHaveBeenLastCalledWith(
+      'topic-1',
+      { session_time: '00:00:20:00' },
+      expect.any(Function),
     );
   });
 
-  it('focusing a field, changing nothing, then activating the jump fires no PATCH', async () => {
-    const { onJump } = renderRow({ row: topicFixture({ session_time: '00:00:10:00' }) });
+  it('focusing a field, changing nothing, then activating the jump fires no PATCH', () => {
+    const { onJump, onUpdate } = renderRow({ row: topicFixture({ session_time: '00:00:10:00' }) });
     const timeInput = screen.getByDisplayValue('00:00:10:00');
 
     fireEvent.focus(timeInput);
@@ -276,8 +234,7 @@ describe('TopicsRow — commitField dirty check (task 9.2)', () => {
     fireEvent.blur(timeInput);
 
     expect(onJump).toHaveBeenCalledWith(10);
-    await new Promise((r) => setTimeout(r, 20));
-    expect(mockedApiFetch).not.toHaveBeenCalled();
+    expect(onUpdate).not.toHaveBeenCalled();
   });
 });
 

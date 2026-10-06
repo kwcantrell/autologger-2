@@ -1,17 +1,34 @@
-import { memo, useMemo, useReducer } from 'react';
+import { memo, useCallback, useEffect, useMemo, useReducer } from 'react';
 import { useSessionStatus } from '../../../api/hooks/useSessionStatus';
-import { useGenerateTopics, useInsertTopic, useTopics } from '../../../api/hooks/useTopics';
+import {
+  useGenerateTopics,
+  useInsertTopic,
+  useTopics,
+  useUpdateTopic,
+} from '../../../api/hooks/useTopics';
 import { useTranscriptWords } from '../../../api/hooks/useTranscriptWords';
-import type { TranscriptWord } from '../../../api/types';
+import type { SessionTopic, TopicVersionConflict, TranscriptWord } from '../../../api/types';
+import { versionConflictOf } from '../../../api/versionConflict';
+import { showToast } from '../../../shared/components/Toast';
+import { conflictPromptCopy } from '../../../shared/hooks/conflictPromptCopy';
+import { useVersionedSave } from '../../../shared/hooks/useVersionedSave';
 import { useTranscriptWordsGate } from '../hooks/TranscriptWordsGateContext';
 import { useGatedGenerate } from '../hooks/useGatedGenerate';
 import { useTimelineSeek } from '../hooks/useTimelineSeek';
+import { useRowSeeds } from '../utils/rowHolds';
+import { followServer } from '../utils/seedStore';
 import { clickSortReducer } from '../utils/sortReducer';
 import { FeedShell } from './FeedShell';
 import { type ColumnDef, FeedTable } from './FeedTable';
 import { GenerateToolbar } from './GenerateToolbar';
 import { JUMP_COLUMN } from './JumpToTimeButton';
-import { TopicsRow } from './TopicsRow';
+import {
+  TOPIC_EDIT_FIELDS,
+  type TopicEditState,
+  type TopicPatch,
+  type TopicSaveOutcome,
+  TopicsRow,
+} from './TopicsRow';
 
 type SortKey = 'session_time' | 'duration_sec' | 'topic_level' | 'summary';
 const sortReducer = clickSortReducer<SortKey>;
@@ -57,6 +74,13 @@ const COLUMNS: ColumnDef[] = [
   { key: 'topic_level', label: 'Level', sortKey: 'topic_level', thClassName: 'text-left w-16' },
   { key: 'summary', label: 'Summary', sortKey: 'summary', thClassName: 'text-left min-w-56' },
 ];
+
+const FIELD_LABELS: Record<keyof TopicEditState, string> = {
+  session_time: 'Session time',
+  duration_sec: 'Duration (s)',
+  topic_level: 'Level',
+  summary: 'Summary',
+};
 
 interface Props {
   sessionId: string;
@@ -117,6 +141,73 @@ export const TopicsFeed = memo(function TopicsFeed({ sessionId }: Props) {
   function handleInsert() {
     insert.mutate({});
   }
+
+  // --- Versioned saves (session-edit-conflicts D3/D4/D5/D9) ---
+  // The save lives here, not in each row, so one conflict dialog serves the
+  // feed. Every save is based on the row's SEED (`seeds.store`), never the
+  // cached row; `seeds.holds` are the rows whose `edit` freezes their seed.
+  const { mutateAsync: updateTopic } = useUpdateTopic(sessionId);
+  const seeds = useRowSeeds<SessionTopic>();
+  const save = useVersionedSave(sessionId);
+  const { run, isBusy } = save;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: sessionId is a prop, re-run when it changes
+  useEffect(() => {
+    seeds.store.clearAll();
+  }, [sessionId, seeds]);
+  // D3 follow rule: a row's seed is the server row while the row holds nothing
+  // (no edit, no save in flight or queued). Re-run when a save settles too.
+  useEffect(() => {
+    if (!topics) return;
+    followServer(
+      seeds.store,
+      topics,
+      (t) => t.id,
+      (id) => seeds.holds.has(id) || isBusy(id),
+    );
+  }, [topics, isBusy, seeds]);
+
+  const handleUpdate = useCallback(
+    async (
+      topicId: string,
+      patch: TopicPatch,
+      yours: () => Partial<TopicEditState>,
+    ): Promise<TopicSaveOutcome | undefined> => {
+      try {
+        return await run<SessionTopic, SessionTopic>({
+          rowKey: topicId,
+          // The seed, read when this save's turn comes (D4). Never the cache.
+          baseVersion: () => seeds.store.get(topicId)?.version,
+          send: (guard) => updateTopic({ topicId, patch, guard }),
+          conflictOf: (e) => versionConflictOf<TopicVersionConflict>(e)?.current ?? null,
+          // Every field holding operator text in the row, this patch included,
+          // so Keep theirs never discards text the dialog did not show (D5).
+          prompt: (current) => {
+            const mine: Partial<TopicEditState> = { ...yours() };
+            for (const f of TOPIC_EDIT_FIELDS) {
+              const v = patch[f];
+              if (v !== undefined) mine[f] = String(v);
+            }
+            return conflictPromptCopy(
+              'edit',
+              TOPIC_EDIT_FIELDS.filter((f) => mine[f] !== undefined).map((f) => ({
+                label: FIELD_LABELS[f],
+                theirs: String(current[f]),
+                yours: mine[f],
+              })),
+            );
+          },
+          // Inside the row's chain, so a queued save reads this as its base.
+          onSaved: (result) => seeds.store.set(topicId, result),
+          onKeptTheirs: (current) => seeds.store.set(topicId, current),
+        });
+      } catch (e) {
+        // The row keeps its edit, so the text can be saved again.
+        showToast(e instanceof Error ? e.message : 'Saving the topic failed.', true);
+        return undefined;
+      }
+    },
+    [run, updateTopic, seeds],
+  );
 
   const sortedTopics = useMemo(() => {
     if (!topics) return topics;
@@ -197,7 +288,8 @@ export const TopicsFeed = memo(function TopicsFeed({ sessionId }: Props) {
           <TopicsRow
             key={t.id}
             row={t}
-            sessionId={sessionId}
+            onUpdate={handleUpdate}
+            seeds={seeds}
             fps={fps}
             onJump={jump}
             jumpUnavailable={jumpUnavailable}
@@ -206,6 +298,7 @@ export const TopicsFeed = memo(function TopicsFeed({ sessionId }: Props) {
           />
         ))}
       </FeedTable>
+      {save.conflictElement}
     </FeedShell>
   );
 });
