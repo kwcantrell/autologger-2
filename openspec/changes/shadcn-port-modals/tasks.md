@@ -53,7 +53,7 @@
 
 ## 5. Integration: QA gate and checks
 
-- [ ] 5.1 Copy the walk from the archived `shadcn-port-settings/qa`.
+- [x] 5.1 Copy the walk from the archived `shadcn-port-settings/qa`.
   - Add steps:
     - `new-session-advanced`: both disclosures open, with "Other…" fps;
     - `import-logs-prompt`: Batch Import → Import Logs, the PromptDialog;
@@ -61,6 +61,7 @@
     - a 390 touch probe for Create & open, Start Import and the confirm action.
   - Capture `before-modals` on HEAD before the port, and `after-modals` after it, at 1440 and 390.
   - Verify: contrast shows 0 failures apart from "Audio issue"; untouched screens are 0%; the touch probe is ≥ 44px; results are recorded in `qa/README.md`.
+  - Evidence: walk copied + new-session-other-fps / import-logs-prompt / settings-discard-confirm steps + touch probes; before-modals on the unported code, after-modals diffed at 1440 and 390 -> 82 contrast JSONs, only `filter-menu` `Audio issue 3.64`; touch at 390: create 44, start 44, confirm 44 (was 36); changed screens 0.34-6.07% (New Session, Batch Import, prompt, discard confirm), 32 untouched screens 0% incl. admin-users; walk found the inline fps/offset inputs pushed right (Field horizontal flex-auto label + vertical [&>*]:w-full), fixed (w-fit rows, plain-column wrapper) -> live label->input gap 6px at both widths; table in qa/README.md
 - [ ] 5.2 The owner's dev-stack pass:
   - category note and dropdown modals (while rolling);
   - Custom generate;

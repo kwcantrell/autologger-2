@@ -1,2 +1,2 @@
-✗ 0.10% pixels differ
-  1262 different / 1296000 total pixels
+✓ Images match (0% difference)
+  0 different / 1296000 total pixels
