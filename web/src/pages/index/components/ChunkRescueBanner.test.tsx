@@ -119,6 +119,26 @@ describe('ChunkRescueBanner', () => {
   // Once a chunk has genuinely failed, the banner must stay visible through
   // a subsequent retry attempt — it does not flicker off the moment Retry
   // is clicked, only on success/discard (task brief item 1).
+  // shadcn-port-shell D6: the rescue surface is the shadcn destructive Alert (still the one
+  // assertive alert, never a toast); destructive actions use the destructive Button variant.
+  it('renders as the destructive Alert with destructive Discard actions', async () => {
+    const queue = seedQueue();
+    queue.enqueue(chunkInput());
+    await queue.pump();
+
+    render(<ChunkRescueBanner />);
+    const banner = await screen.findByRole('alert');
+    expect(banner.getAttribute('data-slot')).toBe('alert');
+    expect(banner.getAttribute('aria-live')).toBe('assertive');
+    const variant = (name: string) =>
+      screen.getByRole('button', { name }).getAttribute('data-variant');
+    expect(variant('Discard')).toBe('destructive');
+    expect(variant('Discard remaining')).toBe('destructive');
+    expect(variant('Retry')).toBe('outline');
+    expect(variant('Retry all')).toBe('outline');
+    expect(variant('Download')).toBe('outline');
+  });
+
   it('failed-then-retrying: banner stays visible while a retry is in flight', async () => {
     const queue = seedQueue();
     queue.enqueue(chunkInput());

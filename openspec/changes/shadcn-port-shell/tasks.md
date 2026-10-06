@@ -26,9 +26,10 @@
   - Test first: add role assertions to `SessionRoute.test.tsx` (not-found is `status` with no `alert`; error is `alert`) and to `RootGate.test.tsx` (error is `alert`).
   - Verify those suites and `ChunkLoadBoundary.test.tsx`, `webBoundaries.repo.test.ts` and `AppLoadingSkeleton.test.tsx` pass.
   - Evidence: test first: SessionRoute (not-found status + data-slot empty + no alert + Button back; error alert + empty), RootGate (#root-gate-error alert + empty, retry Button), ChunkLoadBoundary (route empty+alert, overlay data-slot alert) -> `3 failed | 24 passed` and `2 failed | 5 passed`; after porting to RouteState / Alert / Button -> those + AppLoadingSkeleton + webBoundaries + RouteState `Tests 143 passed (143)`; full `npx vitest run` -> `Test Files 122 passed (122) Tests 1524 passed (1524)`; lint/typecheck clean
-- [ ] 2.3 ChunkRescueBanner becomes a destructive `Alert` with `Button`s (D6).
+- [x] 2.3 ChunkRescueBanner becomes a destructive `Alert` with `Button`s (D6).
   - Test first: assert that `Discard` and `Discard remaining` have `data-variant="destructive"` and the other actions are `outline`.
   - Verify `ChunkRescueBanner.test.tsx` passes (exactly one alert; list structure; names).
+  - Evidence: test first: "renders as the destructive Alert with destructive Discard actions" (data-slot alert, aria-live assertive, Discard/Discard remaining destructive, Retry/Retry all/Download outline) -> `1 failed | 16 passed (17)`; after Alert variant=destructive (block layout, AlertDescription headline) + Button -> `Tests 17 passed (17)` (one alert, list, names, hideToast persistence); typecheck/lint clean
 
 ## 3. Shell, home, sessions
 
