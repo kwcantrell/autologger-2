@@ -60,4 +60,5 @@
   - on the dev stack, the README curl recipes work: list users; disable then enable a test user (confirm the disabled user's session stops resolving while disabled); add then remove a membership;
   - the PR review and whole-branch audit.
   - Verify: the result is recorded in `qa/README.md`.
-- [ ] 5.3 Run `scripts/check-change.sh` (the tier-2 full gate set), plus the full suite, typecheck, lint and `openspec validate --all --strict`.
+- [x] 5.3 Run `scripts/check-change.sh` (the tier-2 full gate set), plus the full suite, typecheck, lint and `openspec validate --all --strict`.
+  - Evidence: `npx vitest run` -> `Test Files 126 passed (126) Tests 1552 passed (1552)`; `npx tsc --noEmit` clean; `npx biome lint src` -> `Checked 321 files … No fixes applied`; `openspec validate --all --strict` -> `Totals: 28 passed, 0 failed`; `scripts/check-change.sh` NOT run: the owner said not to (2026-10-06), so the full tier-2 gate set runs in CI on the PR
