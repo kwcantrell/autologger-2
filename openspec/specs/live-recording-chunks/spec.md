@@ -5,7 +5,6 @@ Defines how the web client records live audio in chunks: capture rolls over on a
 
 ## Requirements
 
-
 ### Requirement: Chunk rollover bounds capture memory and upload size
 
 While a local recording is active, the recorder SHALL roll the capture over on a fixed
@@ -39,7 +38,6 @@ best-effort (a waveform failure never fails the chunk).
 - **WHEN** a two-chunk recording completes with both uploads succeeding
 - **THEN** both segments carry waveform peaks computed from their own chunk's audio
 
-
 ### Requirement: Recording ordinals derive from prior recordings, never segment counts
 
 A new recording's ordinal (the `N` in `Recording N Started/Stopped` and the uploaded
@@ -61,12 +59,19 @@ consecutively regardless of how many chunk segments each produced.
 - **THEN** the new recording uses ordinal 2 (the `Recording 1` events exist), never
   reusing ordinal 1
 
-
 ### Requirement: One lease and one event pair per recording
 
 Chunk boundaries SHALL be invisible outside the recorder: the client claims the recording
 lease once before capture starts, heartbeats it on the existing cadence for the whole
-take, and releases it once after the final chunk's capture stops; exactly one
+take, and releases it once after the final chunk's capture stops. If a heartbeat is refused
+(`{"ok":false}`, the lease lapsed or was lost) while capture is running, the client SHALL re-claim
+the lease at once with its own client id. While a re-claim is refused with `409`, the client SHALL
+keep capturing (no data is discarded), SHALL show one warning that another window, tab, or user now
+holds the recording lease (not one per attempt), and SHALL send a claim instead of a heartbeat on
+each later tick, returning to heartbeats once a claim succeeds. At most one claim or heartbeat
+SHALL be in flight at a time, and every response SHALL be acted on only for the take that sent it:
+the final release SHALL wait for an in-flight claim to settle, and a claim that succeeds after its
+take stopped SHALL be released at once; exactly one
 `Recording N Started` / `Recording N Stopped` internal event pair is logged per recording
 regardless of chunk count. Mid-take chunk uploads SHALL NOT change the recorder's
 recording phase, interrupt heartbeats, or alter phase-derived UI (recording indication,
@@ -85,6 +90,20 @@ endpoints, statuses, shapes only).
 - **THEN** the recording indication and duration counter stay lit, heartbeats continue,
   and no full-screen saving overlay appears
 
+#### Scenario: A refused heartbeat re-claims the lease
+- **WHEN** a heartbeat answers `{"ok":false}` during capture and the lease is free
+- **THEN** the client claims it again with its own client id, capture continues, and later
+  heartbeats succeed
+
+#### Scenario: A re-claim that loses warns and keeps recording
+- **WHEN** a heartbeat answers `{"ok":false}` during capture, the re-claim answers `409`, the next
+  two ticks' claims answer `409`, and the one after succeeds
+- **THEN** exactly one warning is shown, capture continues throughout, the ticks after the loss send
+  claims and no heartbeats, and heartbeats resume after the successful claim
+
+#### Scenario: Stopping during a re-claim leaves no lease behind
+- **WHEN** the user stops recording while a re-claim is in flight, and the re-claim then succeeds
+- **THEN** the client's release is sent after the claim settles, and the lease ends up free
 
 ### Requirement: Chunk uploads are single-flight and ordered
 
@@ -116,7 +135,6 @@ never duplicates audio.
   chunk is retried
 - **THEN** the client detects the already-persisted segment (same `recording_ordinal` and
   `started_at_utc`) and treats the chunk as uploaded, creating no duplicate
-
 
 ### Requirement: Upload failure is surfaced and recoverable
 
@@ -163,7 +181,6 @@ discards its remainder.
 - **THEN** a confirmation naming the amount of audio (e.g. its duration or chunk count)
   must be accepted before the chunks are discarded, and this confirmed path is the only
   in-page way an un-uploaded chunk is ever discarded
-
 
 ### Requirement: Rescue and uploads are bound to their recording's session and survive component lifecycle
 
