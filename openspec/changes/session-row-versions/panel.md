@@ -29,3 +29,11 @@ not three separate subagents (deviation from CLAUDE.md, disclosed to the owner).
 - [x] [major] The owner's decision did not reach ADR 0021, which still frames latency around the 10 ms rule (revisit item; 7b-2 paragraph), and task 6.1 had no place for it or for the 7.2 numbers. Found by scope and simplicity. Resolved: task 6.1 now records owner decision 5, updates the latency revisit item, and adds the measurement placeholder 7.2 fills.
 
 Verified (no findings): the 7b-1 bench fails on the 7b-2 API (`PostgresSessionDb` takes the catalog root; hub calls need `.as(caller)`); `bench7b2.mts` reports the `addEvent`/`listEvents` medians and the replace time at ~300 and ~3,000 sessions; the revision `UPDATE` runs on the row already locked `FOR UPDATE`, so the removed gate leaves no lock or deadlock risk unguarded; task 7.1 still stops on any interleave difference. A false clause in task 1.2 ("the dropped seed team"; `test-studios` is still seeded) was removed.
+
+## Consistency read 2026-10-06
+Edits since the re-approval (8987007): design.md D7 gains category 6 (catalog-wide inventories
+that grow with the new table or policy: the `catalog_user` policy count 32 -> 33 in
+`catalogPolicies.pg.test.ts`, a direct consequence of catalog-database "Session overwrites are
+recorded in the catalog"); tasks.md ticks 1.2, 2.1 and 2.2 with evidence.
+Scope change: no. Contract change: no. Accepted risk change: no.
+No findings.

@@ -308,6 +308,8 @@ receives the transaction handle per attempt.
      `catalog.sessions.revision`;
   5. call sites of `forTransaction(t)` gaining the caller argument (`boundCore.ts:94`,
      `sessionCore.int.test.ts:200,218,237,252,267,291`).
+  6. catalog-wide inventories that grow with the new table or policy (the `catalog_user` policy
+     count in `catalogPolicies.pg.test.ts`; added by the 2026-10-06 consistency read).
 
   Task 1.1 records the full list from a grep on the base commit. Changing any other existing
   expectation is a stop. Because the seed does not count (D2), revision numbers after event

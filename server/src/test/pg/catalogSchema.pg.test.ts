@@ -39,6 +39,8 @@ const TABLES = [
   'team_invites',
   'show_grants',
   ...SESSION_TABLES,
+  // session-row-versions D1: the overwrite audit (ADR 0021 slice 7c-1).
+  'session_overwrites',
 ];
 const KEY_COLUMN: Record<string, string> = {
   users: 'id',
@@ -52,10 +54,12 @@ const KEY_COLUMN: Record<string, string> = {
   team_invites: 'studio_id',
   show_grants: 'user_id',
   ...Object.fromEntries(SESSION_TABLES.map((t) => [t, 'session_id'])),
+  session_overwrites: 'session_id',
 };
 const MIGRATIONS = resolve(import.meta.dirname, '../../../../supabase/migrations');
 const MIGRATION = resolve(MIGRATIONS, '20261001000000_catalog_schema.sql');
 const SESSION_TABLES_MIGRATION = '20261008000000_session_tables.sql';
+const ROW_VERSIONS_MIGRATION = '20261010000000_session_row_versions.sql';
 
 const open: postgres.Sql[] = [];
 function connect(o: ConnOptions): postgres.Sql {
@@ -203,6 +207,8 @@ const EXPECTED_SCHEMA: SchemaRecord = {
       'current_take bigint not null default 0',
       'transport_elapsed_frames bigint not null default 0',
       'roll_started_at_utc text collate C',
+      // session-row-versions D1.
+      'revision bigint not null default 0',
     ],
     primaryKey: ['id'],
     foreignKeys: ['FOREIGN KEY (show_id) REFERENCES catalog.shows(id)'],
@@ -248,6 +254,7 @@ const EXPECTED_SCHEMA: SchemaRecord = {
       'category text collate C not null',
       'message text collate C not null',
       "metadata_json text collate C not null default '{}'::text",
+      'version bigint not null default 1',
     ],
     primaryKey: ['session_id', 'id'],
     foreignKeys: ['FOREIGN KEY (session_id) REFERENCES catalog.sessions(id)'],
@@ -291,6 +298,7 @@ const EXPECTED_SCHEMA: SchemaRecord = {
       'end_sec double precision not null default 0.0',
       'ordinal bigint not null',
       'created_at_utc text collate C not null',
+      'version bigint not null default 1',
     ],
     primaryKey: ['session_id', 'id'],
     foreignKeys: ['FOREIGN KEY (session_id) REFERENCES catalog.sessions(id)'],
@@ -305,6 +313,7 @@ const EXPECTED_SCHEMA: SchemaRecord = {
       "summary text collate C not null default ''::text",
       'ordinal bigint not null',
       'created_at_utc text collate C not null',
+      'version bigint not null default 1',
     ],
     primaryKey: ['session_id', 'id'],
     foreignKeys: ['FOREIGN KEY (session_id) REFERENCES catalog.sessions(id)'],
@@ -360,9 +369,26 @@ const EXPECTED_SCHEMA: SchemaRecord = {
     primaryKey: ['session_id', 'key'],
     foreignKeys: ['FOREIGN KEY (session_id) REFERENCES catalog.sessions(id)'],
   },
+  // session-row-versions D1: one row per audited overwrite.
+  session_overwrites: {
+    columns: [
+      'session_id text collate C not null',
+      'id text collate C not null',
+      'table_name text not null',
+      'row_id text collate C not null',
+      'user_id text collate C not null',
+      'at_utc text not null',
+      'replaced_version bigint not null',
+      'before_json text not null',
+      'after_json text',
+    ],
+    primaryKey: ['session_id', 'id'],
+    foreignKeys: ['FOREIGN KEY (session_id) REFERENCES catalog.sessions(id)'],
+  },
   $unique: ['catalog.users UNIQUE (google_sub)'],
   // owner-bootstrap D1: the role check and at most one owner per team.
   $checks: [
+    "catalog.session_overwrites session_overwrites_table_name_check CHECK ((table_name = ANY (ARRAY['session_events'::text, 'session_transcript_words'::text, 'session_topics'::text])))",
     "catalog.user_studio_memberships user_studio_memberships_role_check CHECK ((role = ANY (ARRAY['owner'::text, 'admin'::text, 'member'::text])))",
   ],
   $indexes: [
@@ -515,6 +541,8 @@ describe('the app role (design D3)', () => {
     await sql`insert into session_dashboards (session_id, id, config_json, created_at_utc, updated_at_utc)
               values ('se', 'd', '{}', ${t}, ${t})`;
     await sql`insert into session_meta (session_id, key, value) values ('se', 'k', 'v')`;
+    await sql`insert into session_overwrites (session_id, id, table_name, row_id, user_id, at_utc,
+                replaced_version, before_json) values ('se', 'o', 'session_events', 'e', 'u', ${t}, 1, '{}')`;
     for (const table of TABLES) {
       const n = await sql.unsafe(`select count(*)::int as n from ${table}`);
       expect(n[0]?.n, table).toBeGreaterThan(0);
@@ -655,6 +683,22 @@ describe('row-level security on every catalog table (catalog-roles D1, D2; catal
       // holds select, insert, update and delete on it.
       const userPolicies = policies.filter((p) => (p.roles as string[]).includes('catalog_user'));
       expect(userPolicies.length > 0, t.relname).toBe(t.relname !== 'kv');
+      // session-row-versions D1: the audit has the system policy and one user insert policy, and
+      // catalog_user holds the insert privilege only.
+      if (t.relname === 'session_overwrites') {
+        expect(policies.map((p) => p.policyname).sort()).toEqual([
+          'session_overwrites_system_all',
+          'session_overwrites_user_insert',
+        ]);
+        const [cmd] = await sql`select cmd from pg_policies where schemaname = 'catalog'
+                                and policyname = 'session_overwrites_user_insert'`;
+        expect(cmd?.cmd).toBe('INSERT');
+        for (const priv of ['select', 'insert', 'update', 'delete']) {
+          const r =
+            await sql`select has_table_privilege('catalog_user', 'catalog.session_overwrites', ${priv}) as p`;
+          expect(r[0]?.p, `session_overwrites ${priv}`).toBe(priv === 'insert');
+        }
+      }
       if (session) {
         expect(policies.map((p) => p.policyname).sort(), t.relname).toEqual([
           `${t.relname}_system_all`,
@@ -820,6 +864,95 @@ describe('the session tables migration (session-tables D1)', () => {
         roll_started_at_utc: null,
       },
     ]);
+  });
+});
+
+describe('the session row versions migration (session-row-versions D1)', () => {
+  it('carries each revision over, keeps the meta rows and starts every row at version 1', async () => {
+    const name = `t_rv_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    // The replay runs the role guards, which a parallel scratch role would trip (roleGuardLock.ts).
+    await holdRoleGuardLock(connect(connOptions('postgres', 'postgres')));
+    const root = connect(connOptions('postgres', 'postgres'));
+    await root.unsafe(`create database ${name} template template0`);
+    const sql = connect(connOptions('postgres', name));
+    const earlier = readdirSync(MIGRATIONS)
+      .filter((f) => f.endsWith('.sql') && f < ROW_VERSIONS_MIGRATION)
+      .sort();
+    expect(earlier.at(-1)).toBe('20261009000000_session_content_policies.sql');
+    for (const f of earlier) {
+      const text = readFileSync(resolve(MIGRATIONS, f), 'utf8');
+      await sql.begin((tx) => tx.unsafe(text));
+    }
+    const t = '2026-10-10T00:00:00.000Z';
+    await sql.unsafe(`
+      insert into catalog.sessions (id) values ('a'), ('b'), ('c');
+      insert into catalog.session_meta (session_id, key, value)
+        values ('a', 'events_stream_revision', '17'), ('c', 'events_stream_revision', 'x');
+      insert into catalog.session_events (session_id, id, wall_time_utc, frame_rate, category, message)
+        values ('a', 'e', '${t}', 24, 'c', 'm');
+      insert into catalog.session_transcript_words (session_id, id, ordinal, created_at_utc)
+        values ('a', 'w', 0, '${t}');
+      insert into catalog.session_topics (session_id, id, ordinal, created_at_utc)
+        values ('a', 'tp', 0, '${t}');`);
+    const text = readFileSync(resolve(MIGRATIONS, ROW_VERSIONS_MIGRATION), 'utf8');
+    await sql.begin((tx) => tx.unsafe(text));
+    const revs = await sql`select id, revision::int as revision from catalog.sessions order by id`;
+    expect(revs.map((r) => ({ ...r }))).toEqual([
+      { id: 'a', revision: 17 },
+      { id: 'b', revision: 0 },
+      { id: 'c', revision: 0 },
+    ]);
+    const meta = await sql`select session_id, value from catalog.session_meta
+                           where key = 'events_stream_revision' order by session_id`;
+    expect(meta.map((r) => ({ ...r }))).toEqual([
+      { session_id: 'a', value: '17' },
+      { session_id: 'c', value: 'x' },
+    ]);
+    for (const table of ['session_events', 'session_transcript_words', 'session_topics']) {
+      const v = await sql.unsafe(`select version::int as v from catalog.${table}`);
+      expect(v.map((r) => r.v), table).toEqual([1]);
+    }
+  });
+
+  it('a user binding inserts only its own overwrite rows for sessions it can access, and reads or changes none', async () => {
+    const db = await createTestDatabase();
+    await seedPolicyFixture(connect(db.system));
+    const sql = connect(db.app);
+    class Rollback extends Error {}
+    const run = async (uid: string, stmt: string) => {
+      let out!: { count: number } | { code: string };
+      await sql
+        .begin(async (tx) => {
+          await tx`select set_config('role', 'catalog_user', true), set_config('app.user_id', ${uid}, true)`;
+          try {
+            out = { count: (await tx.unsafe(stmt)).count };
+          } catch (e) {
+            out = { code: String((e as { code?: unknown }).code) };
+          }
+          throw new Rollback();
+        })
+        .catch((e) => {
+          if (!(e instanceof Rollback)) throw e;
+        });
+      return out;
+    };
+    const insert = (session: string, user: string) =>
+      `insert into session_overwrites (session_id, id, table_name, row_id, user_id, at_utc,
+         replaced_version, before_json, after_json)
+       values ('${session}', 'o-${user}', 'session_events', 'c', '${user}', '2026-10-10T00:00:00Z', 1, '{}', '{}')`;
+    // Session ss1 belongs to show s1 of team T (owner: `owner`; `granted` holds a grant on s1).
+    expect(await run('owner', insert('ss1', 'owner'))).toEqual({ count: 1 });
+    expect(await run('granted', insert('ss1', 'granted'))).toEqual({ count: 1 });
+    expect(await run('owner', insert('ss1', 'granted'))).toEqual({ code: '42501' });
+    expect(await run('outsider', insert('ss1', 'outsider'))).toEqual({ code: '42501' });
+    await connect(db.system).unsafe(insert('ss1', 'owner'));
+    for (const stmt of [
+      'select * from session_overwrites',
+      `update session_overwrites set after_json = null`,
+      'delete from session_overwrites',
+    ]) {
+      expect(await run('owner', stmt), stmt).toEqual({ code: '42501' });
+    }
   });
 });
 

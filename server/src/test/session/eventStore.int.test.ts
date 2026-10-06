@@ -437,6 +437,7 @@ describe('addEvent over a real core', () => {
         category: 'note',
         message: 'hi',
         metadata_json: '{}',
+        version: 1,
       });
     });
 
@@ -566,6 +567,7 @@ describe('addEvent over a real core', () => {
         category: 'note',
         message: 'generated',
         metadata_json: '{"auto_generated":true}',
+        version: 1,
       });
     });
 
