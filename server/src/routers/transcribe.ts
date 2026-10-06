@@ -11,6 +11,7 @@ import { aiChatTurns } from '@autologger/ai-runtime/aiChatRegistry';
 import { allTranscriptPagesServed } from '@autologger/ai-runtime/aiMcpServer';
 import { generateTopicsTurn } from '@autologger/ai-runtime/topicGenerate';
 import {
+  deleteVersionQuerySchema,
   topicCreateSchema,
   topicUpdateSchema,
   transcriptWordCreateSchema,
@@ -38,10 +39,12 @@ import {
 import { ApiError } from '../httpError';
 import {
   canAccessSession,
+  expectedVersion,
   getSessionHub,
   requireSession,
   sessionCaller,
   timecodeCtx,
+  versionConflict,
 } from './_helpers';
 
 export const transcribeRouter = new Hono<AppEnv>();
@@ -201,19 +204,27 @@ transcribeRouter.patch('/api/sessions/:sessionId/transcript-words/:wordId', asyn
   if (body.session_time != null) patch.session_time = body.session_time;
   if (body.speaker != null) patch.speaker = body.speaker;
   if (body.word != null) patch.word = body.word;
+  // session-row-versions D4: with a version, a stale word answers 409 with its current row.
   const row = await (await getSessionHub(c, sessionId)).updateTranscriptWord(
     c.req.param('wordId'),
     patch,
+    expectedVersion(body),
   );
   if (row === null) throw new ApiError(404, 'Transcript word not found.');
+  if ('conflict' in row) return versionConflict(c, wordApiDict(row.conflict));
   return c.json(wordApiDict(row));
 });
 
 transcribeRouter.delete('/api/sessions/:sessionId/transcript-words/:wordId', async (c) => {
   const sessionId = c.req.param('sessionId');
   await requireSession(c, sessionId);
-  const ok = await (await getSessionHub(c, sessionId)).deleteTranscriptWord(c.req.param('wordId'));
-  if (!ok) throw new ApiError(404, 'Transcript word not found.');
+  const query = deleteVersionQuerySchema.parse(c.req.query());
+  const result = await (await getSessionHub(c, sessionId)).deleteTranscriptWord(
+    c.req.param('wordId'),
+    expectedVersion(query),
+  );
+  if (typeof result === 'object') return versionConflict(c, wordApiDict(result.conflict));
+  if (!result) throw new ApiError(404, 'Transcript word not found.');
   return c.body(null, 204);
 });
 
@@ -368,15 +379,26 @@ transcribeRouter.patch('/api/sessions/:sessionId/topics/:topicId', async (c) => 
   if (body.duration_sec != null) patch.duration_sec = body.duration_sec;
   if (body.topic_level != null) patch.topic_level = body.topic_level;
   if (body.summary != null) patch.summary = body.summary;
-  const row = await (await getSessionHub(c, sessionId)).updateTopic(c.req.param('topicId'), patch);
+  // session-row-versions D4: with a version, a stale topic answers 409 with its current row.
+  const row = await (await getSessionHub(c, sessionId)).updateTopic(
+    c.req.param('topicId'),
+    patch,
+    expectedVersion(body),
+  );
   if (row === null) throw new ApiError(404, 'Topic not found.');
+  if ('conflict' in row) return versionConflict(c, row.conflict);
   return c.json(row);
 });
 
 transcribeRouter.delete('/api/sessions/:sessionId/topics/:topicId', async (c) => {
   const sessionId = c.req.param('sessionId');
   await requireSession(c, sessionId);
-  const ok = await (await getSessionHub(c, sessionId)).deleteTopic(c.req.param('topicId'));
-  if (!ok) throw new ApiError(404, 'Topic not found.');
+  const query = deleteVersionQuerySchema.parse(c.req.query());
+  const result = await (await getSessionHub(c, sessionId)).deleteTopic(
+    c.req.param('topicId'),
+    expectedVersion(query),
+  );
+  if (typeof result === 'object') return versionConflict(c, result.conflict);
+  if (!result) throw new ApiError(404, 'Topic not found.');
   return c.body(null, 204);
 });

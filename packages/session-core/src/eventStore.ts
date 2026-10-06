@@ -13,7 +13,14 @@ import {
   UI_SNAPSHOT_COLOR_KEY,
   UI_SNAPSHOT_LABEL_KEY,
 } from '@autologger/domain';
-import type { Row, SessionCore, SessionProjection, TimecodeCtx } from './sessionCore';
+import type {
+  Row,
+  SessionCore,
+  SessionProjection,
+  TimecodeCtx,
+  VersionExpectation,
+} from './sessionCore';
+import { staleVersion } from './storeHelpers';
 
 /** rowToRpc — pure events-row → RPC mapper. */
 export function eventRowToRpc(r: Row): EventRpc {
@@ -188,7 +195,9 @@ export class EventStore {
 
   /** `mergeMetadata` gets the stored row's `metadata_json` and returns the JSON to store, so the
    * read, the merge and the write are one transaction (async-session-hub design D5, S3). It is
-   * synchronous by type and must stay pure. A missing event returns null without calling it. */
+   * synchronous by type and must stay pure. A missing event returns null without calling it.
+   * With `expect` (session-row-versions D4), a stale version returns the stored event as a
+   * conflict and writes nothing; with `expect.overwrite`, the write is audited (D5). */
   async updateEvent(input: {
     eventId: string;
     category: string;
@@ -196,9 +205,11 @@ export class EventStore {
     wallTimeUtc: string;
     timecodeTotalFrames: number;
     mergeMetadata: (storedMetadataJson: string) => string;
-  }): Promise<{ event: EventRpc; projection: SessionProjection } | null> {
+    expect?: VersionExpectation;
+  }): Promise<{ event: EventRpc; projection: SessionProjection } | { conflict: EventRpc } | null> {
     const old = await this.event(input.eventId);
     if (old === null) return null;
+    if (staleVersion(input.expect, old)) return { conflict: eventRowToRpc(old) };
     const metadataJson = input.mergeMetadata(eventRowToRpc(old).metadata_json);
     await this.core.db.run(
       `UPDATE session_events SET category = ?, message = ?, wall_time_utc = ?,
@@ -214,18 +225,29 @@ export class EventStore {
     );
     this.core.markProjectionDirty();
     this.core.broadcast({ type: 'event.changed', revision: await this.core.revision() });
-    const r = await this.event(input.eventId);
-    return { event: eventRowToRpc(r as Row), projection: await this.core.projection() };
+    const event = eventRowToRpc((await this.event(input.eventId)) as Row);
+    if (input.expect?.overwrite) {
+      await this.core.recordOverwrite({
+        table: 'session_events',
+        rowId: input.eventId,
+        replacedVersion: Number(old.version),
+        before: eventRowToRpc(old),
+        after: event,
+      });
+    }
+    return { event, projection: await this.core.projection() };
   }
 
-  async deleteEvent(eventId: string): Promise<{ ok: boolean; projection: SessionProjection }> {
-    const existed =
-      (await this.core.first(
-        'SELECT 1 AS x FROM session_events WHERE session_id = ? AND id = ?',
-        this.core.sessionId,
-        eventId,
-      )) !== null;
-    if (existed) {
+  /** With `expect` (session-row-versions D4), a stale version returns the stored event as a
+   * conflict and deletes nothing; with `expect.overwrite`, the delete is audited (D5). */
+  async deleteEvent(
+    eventId: string,
+    expect?: VersionExpectation,
+  ): Promise<{ ok: boolean; projection: SessionProjection } | { conflict: EventRpc }> {
+    const row = await this.event(eventId);
+    if (row !== null && staleVersion(expect, row)) return { conflict: eventRowToRpc(row) };
+    const existed = row !== null;
+    if (row !== null) {
       await this.core.db.run(
         'DELETE FROM session_events WHERE session_id = ? AND id = ?',
         this.core.sessionId,
@@ -233,6 +255,15 @@ export class EventStore {
       );
       this.core.markProjectionDirty();
       this.core.broadcast({ type: 'event.changed', revision: await this.core.revision() });
+      if (expect?.overwrite) {
+        await this.core.recordOverwrite({
+          table: 'session_events',
+          rowId: eventId,
+          replacedVersion: Number(row.version),
+          before: eventRowToRpc(row),
+          after: null,
+        });
+      }
     }
     return { ok: existed, projection: await this.core.projection() };
   }

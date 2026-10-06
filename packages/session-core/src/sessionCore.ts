@@ -10,6 +10,7 @@
 
 import type { TransportFields } from '@autologger/domain';
 import type { Clock } from '@autologger/ports';
+import { SessionTxMisuseError } from './asyncSessionSql';
 import type { SessionCaller } from './sessionCaller';
 
 export type SqlValue = string | number | null;
@@ -82,6 +83,16 @@ export interface TransportState {
   stopped?: boolean;
 }
 
+/** An edit's expected version (session-row-versions design D4): the version the client last
+ * read, and whether the edit deliberately overwrites a newer row (audited, D5). */
+export interface VersionExpectation {
+  version: number;
+  overwrite: boolean;
+}
+
+/** The session tables whose rows carry a version (design D3). */
+export type VersionedTable = 'session_events' | 'session_transcript_words' | 'session_topics';
+
 /** A projection-changing write found no row to update (session-tables design D8): the session's
  * transport row is missing. The write fails as a whole. */
 export class SessionProjectionError extends Error {
@@ -96,6 +107,8 @@ export class SessionCore {
   /** The transaction's own handle, for the core's statements that never count as a change: the
    * revision bump, the projection, the hub-open seed and the relink guard (design D2). */
   private raw: SessionSql | null;
+  /** The caller of the transaction this core is bound to, when the hub names it (design D5). */
+  private caller: SessionCaller | null = null;
 
   constructor(
     private ctx: SessionRuntime,
@@ -130,9 +143,10 @@ export class SessionCore {
    * (`flushHeldBroadcasts`, `armHeldAlarm`) or drops them on failure (`discardHeldBroadcasts`,
    * `discardHeldAlarm`), once per attempt. Broadcasts through the root core are never held by it,
    * so a relayed Companion command is sent at once. */
-  forTransaction(t: SessionSql): SessionCore {
+  forTransaction(t: SessionSql, caller: SessionCaller | null = null): SessionCore {
     const bound = new SessionCore(this.ctx, t);
     bound.sql = bound.countingHandle(t);
+    bound.caller = caller;
     bound.broadcastHoldDepth = 1;
     bound.holdsAlarm = true;
     return bound;
@@ -424,6 +438,35 @@ export class SessionCore {
       this.sessionId,
       key,
       value,
+    );
+  }
+
+  /** Records one audited overwrite in this transaction (session-row-versions design D5): who, which
+   * row, when, the version it replaced, and the row before and after (none after a delete), as the
+   * hub's row shapes. Only a signed-in user overwrites; the hub refuses a system caller before the
+   * transaction, and this refuses it again. */
+  async recordOverwrite(input: {
+    table: VersionedTable;
+    rowId: string;
+    replacedVersion: number;
+    before: unknown;
+    after: unknown;
+  }): Promise<void> {
+    if (this.caller?.kind !== 'user') {
+      throw new SessionTxMisuseError('an overwrite is recorded only for a signed-in user');
+    }
+    await this.db.run(
+      `INSERT INTO session_overwrites (session_id, id, table_name, row_id, user_id, at_utc,
+         replaced_version, before_json, after_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      this.sessionId,
+      crypto.randomUUID(),
+      input.table,
+      input.rowId,
+      this.caller.userId,
+      new Date(this.now()).toISOString(),
+      input.replacedVersion,
+      JSON.stringify(input.before),
+      input.after === null ? null : JSON.stringify(input.after),
     );
   }
 

@@ -3,7 +3,13 @@
 // insert-ordinal seed that topicStore and transcriptStore previously each
 // hand-rolled. Internal to the store layer — nothing here is hub RPC surface.
 
-import type { SessionCore, SqlValue } from './sessionCore';
+import type { Row, SessionCore, SqlValue, VersionExpectation } from './sessionCore';
+
+/** Whether an edit's expected version differs from the stored row's (session-row-versions D4). No
+ * expectation is never stale (last writer wins). */
+export function staleVersion(expect: VersionExpectation | undefined, row: Row): boolean {
+  return expect !== undefined && Number(row.version) !== expect.version;
+}
 
 /** Build the UPDATE SET fragments + bind values for a partial patch, in the
  * caller-given key order; keys whose patch value is `undefined` are skipped

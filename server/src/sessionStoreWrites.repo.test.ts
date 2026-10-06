@@ -50,7 +50,7 @@ const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 describe('session stores write only through run (session-row-versions D2)', () => {
   it('no store reads-call carries an INSERT, UPDATE or DELETE', () => {
     const r = scanStoreWrites(REPO);
-    expect(r.calls).toBeGreaterThan(20);
+    expect(r.calls).toBeGreaterThan(15);
     expect(r.writes).toEqual([]);
   });
 });

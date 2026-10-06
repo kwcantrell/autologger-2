@@ -74,12 +74,28 @@ export const logBodySchema = z.object({
 });
 export type LogBody = z.infer<typeof logBodySchema>;
 
-export const eventUpdateBodySchema = z.object({
-  category: z.string().min(1).max(200),
-  message: z.string().min(1).max(8000),
-  wall_time_utc: z.string().min(1).max(80),
-  timecode_hms: z.string().min(8).max(8),
-});
+/** session-row-versions D4: an edit's optional expected version (1 to `Number.MAX_SAFE_INTEGER`)
+ * and overwrite flag. Without a version, an edit is last-writer-wins, as before. */
+const expectedVersionFields = {
+  version: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).optional(),
+  overwrite: z.boolean().optional(),
+};
+const OVERWRITE_NEEDS_VERSION = {
+  message: 'overwrite requires version',
+  path: ['overwrite'],
+};
+const overwriteHasVersion = (b: { version?: number; overwrite?: boolean }) =>
+  !(b.overwrite === true && b.version === undefined);
+
+export const eventUpdateBodySchema = z
+  .object({
+    category: z.string().min(1).max(200),
+    message: z.string().min(1).max(8000),
+    wall_time_utc: z.string().min(1).max(80),
+    timecode_hms: z.string().min(8).max(8),
+    ...expectedVersionFields,
+  })
+  .refine(overwriteHasVersion, OVERWRITE_NEEDS_VERSION);
 export type EventUpdateBody = z.infer<typeof eventUpdateBodySchema>;
 
 export const eventGenerateBodySchema = z
@@ -135,11 +151,14 @@ export const transcriptWordCreateSchema = z.object({
 });
 export type TranscriptWordCreate = z.infer<typeof transcriptWordCreateSchema>;
 
-export const transcriptWordUpdateSchema = z.object({
-  session_time: z.string().max(20).nullish(),
-  speaker: z.string().max(200).nullish(),
-  word: z.string().max(2000).nullish(),
-});
+export const transcriptWordUpdateSchema = z
+  .object({
+    session_time: z.string().max(20).nullish(),
+    speaker: z.string().max(200).nullish(),
+    word: z.string().max(2000).nullish(),
+    ...expectedVersionFields,
+  })
+  .refine(overwriteHasVersion, OVERWRITE_NEEDS_VERSION);
 export type TranscriptWordUpdate = z.infer<typeof transcriptWordUpdateSchema>;
 
 export const topicCreateSchema = z.object({
@@ -150,13 +169,34 @@ export const topicCreateSchema = z.object({
 });
 export type TopicCreate = z.infer<typeof topicCreateSchema>;
 
-export const topicUpdateSchema = z.object({
-  session_time: z.string().max(20).nullish(),
-  duration_sec: z.number().min(0).nullish(),
-  topic_level: z.number().int().min(1).max(10).nullish(),
-  summary: z.string().max(8000).nullish(),
-});
+export const topicUpdateSchema = z
+  .object({
+    session_time: z.string().max(20).nullish(),
+    duration_sec: z.number().min(0).nullish(),
+    topic_level: z.number().int().min(1).max(10).nullish(),
+    summary: z.string().max(8000).nullish(),
+    ...expectedVersionFields,
+  })
+  .refine(overwriteHasVersion, OVERWRITE_NEEDS_VERSION);
 export type TopicUpdate = z.infer<typeof topicUpdateSchema>;
+
+/** session-row-versions D4: a DELETE's expected version, `?version=<n>` (decimal, 1 to
+ * `Number.MAX_SAFE_INTEGER`, no leading zero) and `&overwrite=1`. Other parameters are ignored. */
+export const deleteVersionQuerySchema = z
+  .object({
+    version: z
+      .string()
+      .regex(/^[1-9][0-9]{0,15}$/)
+      .transform(Number)
+      .refine((n) => n <= Number.MAX_SAFE_INTEGER, { message: 'version is too large' })
+      .optional(),
+    overwrite: z
+      .literal('1')
+      .transform(() => true)
+      .optional(),
+  })
+  .refine(overwriteHasVersion, OVERWRITE_NEEDS_VERSION);
+export type DeleteVersionQuery = z.infer<typeof deleteVersionQuerySchema>;
 
 // -- ai-topics-chat: the chat turn request body -------------------------------
 // `message` is 1–8000 chars AFTER trimming (whitespace-only ⇒ invalid); the

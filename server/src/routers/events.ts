@@ -20,6 +20,7 @@ import {
 import { showCategoriesApiShape } from '@autologger/catalog';
 import {
   audioRecordingLeaseBodySchema,
+  deleteVersionQuerySchema,
   type EventGenerateBody,
   eventGenerateBodySchema,
   eventUpdateBodySchema,
@@ -55,11 +56,13 @@ import {
 } from '../env';
 import { ApiError } from '../httpError';
 import {
+  expectedVersion,
   getSessionHub,
   parseOptionalMarkedAt,
   requireSession,
   sessionCaller,
   timecodeCtx,
+  versionConflict,
 } from './_helpers';
 
 /** An undo step's hub (session-content-policies D7, owner decision P1): a request whose later step
@@ -687,6 +690,7 @@ eventsRouter.put('/api/sessions/:sessionId/events/:eventId', async (c) => {
     );
   };
 
+  // session-row-versions D4: with a version, a stale event answers 409 with its current row.
   const result = await (await getSessionHub(c, sessionId)).updateEvent({
     eventId,
     category: body.category,
@@ -694,8 +698,10 @@ eventsRouter.put('/api/sessions/:sessionId/events/:eventId', async (c) => {
     wallTimeUtc: dt,
     timecodeTotalFrames: totalFrames,
     mergeMetadata,
+    expect: expectedVersion(body),
   });
   if (result === null) throw new ApiError(404, 'Event not found.');
+  if ('conflict' in result) return versionConflict(c, enrichEventRpc(result.conflict, profile));
   return c.json(enrichEventRpc(result.event, profile));
 });
 
@@ -703,8 +709,16 @@ eventsRouter.delete('/api/sessions/:sessionId/events/:eventId', async (c) => {
   const sessionId = c.req.param('sessionId');
   const eventId = c.req.param('eventId');
   await requireSession(c, sessionId);
-  const { ok } = await (await getSessionHub(c, sessionId)).deleteEvent(eventId);
-  if (!ok) throw new ApiError(404, 'Event not found.');
+  const query = deleteVersionQuerySchema.parse(c.req.query());
+  const result = await (await getSessionHub(c, sessionId)).deleteEvent(
+    eventId,
+    expectedVersion(query),
+  );
+  if ('conflict' in result) {
+    const profile = await c.get('catalog').sessions.studioProfileForSession(sessionId);
+    return versionConflict(c, enrichEventRpc(result.conflict, profile));
+  }
+  if (!result.ok) throw new ApiError(404, 'Event not found.');
   return c.json({ ok: true });
 });
 

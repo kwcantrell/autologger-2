@@ -1,7 +1,7 @@
 // Shared router helpers — the session and show access gates (_session_access_gate,
 // requireShowAccess, canAccessSession; show-grants D3), closing sockets after access is lost
 // (closeSocketsAfterAccessLoss; show-grants D20), per-session hub resolution, timecode context,
-// and marked-at parsing.
+// marked-at parsing, and the version-check answers (session-row-versions D4).
 
 import type { AuthUser, CatalogFacade, Row } from '@autologger/catalog';
 import {
@@ -9,6 +9,7 @@ import {
   type SessionHubFacade,
   type TimecodeCtx,
   userCaller,
+  type VersionExpectation,
 } from '@autologger/session-core';
 import type { Context } from 'hono';
 import type { AppEnv } from '../appEnv';
@@ -158,4 +159,21 @@ export function parseOptionalMarkedAt(raw: string | null | undefined): string | 
   const ms = Date.parse(String(raw).trim().replace('+00:00', 'Z'));
   if (Number.isNaN(ms)) throw new ApiError(400, 'Invalid marked_at_utc; use ISO-8601.');
   return new Date(ms).toISOString();
+}
+
+/** An edit's expected version from its parsed body or DELETE query (session-row-versions D4):
+ * undefined when it sent none, so the edit stays last-writer-wins. */
+export function expectedVersion(parsed: {
+  version?: number;
+  overwrite?: boolean;
+}): VersionExpectation | undefined {
+  return parsed.version === undefined
+    ? undefined
+    : { version: parsed.version, overwrite: parsed.overwrite === true };
+}
+
+/** The stale-version answer (api-contract-freeze "Opt-in version checks on session content
+ * edits"): `409` with the row as the route's own success response would return it. */
+export function versionConflict(c: Context<AppEnv>, current: unknown): Response {
+  return c.json({ detail: 'Version conflict.', current }, 409);
 }
