@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { Alert, AlertDescription, AlertTitle } from './alert';
 import {
   AlertDialog,
@@ -14,10 +14,14 @@ import { Card, CardContent, CardHeader, CardTitle } from './card';
 import { Checkbox } from './checkbox';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from './dialog';
 import { Drawer, DrawerContent, DrawerDescription, DrawerTitle } from './drawer';
+import { Button, buttonVariants } from './button';
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from './dropdown-menu';
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from './empty';
@@ -26,7 +30,7 @@ import { Input } from './input';
 import { Label } from './label';
 import { Popover, PopoverContent, PopoverTrigger } from './popover';
 import { RadioGroup, RadioGroupItem } from './radio-group';
-import { ScrollArea } from './scroll-area';
+import { ScrollArea, ScrollBar } from './scroll-area';
 import {
   SELECT_TRIGGER_CLASSNAME,
   Select,
@@ -415,6 +419,165 @@ describe('shadcn primitives render (normalized, V5-themed)', () => {
     await waitFor(() => expect(document.querySelector('[data-sonner-toaster]')).not.toBeNull());
     expect(document.querySelector('[data-sonner-toaster]')?.getAttribute('data-sonner-theme')).toBe(
       'dark',
+    );
+  });
+});
+
+// shadcn-port-workspace group 1: the workspace primitives (scroll-area, table, tabs, the rest of
+// dropdown-menu, glass Button variants).
+describe('workspace primitives (shadcn-port-workspace D1)', () => {
+  it('scroll-area publishes its viewport through viewportRef', () => {
+    let vp: HTMLDivElement | null = null;
+    render(
+      <ScrollArea
+        viewportRef={(el) => {
+          vp = el;
+        }}
+        className="h-10"
+      >
+        Scrollable
+      </ScrollArea>,
+    );
+    expect(vp).not.toBeNull();
+    expect(vp).toBe(slot('scroll-area-viewport'));
+  });
+
+  it('scroll-area viewportClassName wins over the default block content wrapper', () => {
+    render(
+      <ScrollArea viewportClassName="[&>div]:!flex" className="h-10">
+        Scrollable
+      </ScrollArea>,
+    );
+    const cls = slot('scroll-area-viewport')?.className ?? '';
+    expect(cls).toContain('[&>div]:!flex');
+    expect(cls).not.toContain('[&>div]:!block');
+  });
+
+  it('scrollbar keeps focus on mousedown but still lets Radix drag on pointerdown', () => {
+    render(
+      <ScrollArea type="always" className="h-10">
+        <input aria-label="edit" />
+      </ScrollArea>,
+    );
+    const bar = slot('scroll-area-scrollbar') as HTMLElement;
+    expect(bar).not.toBeNull();
+    // (b) focus parity: the focus-moving default of mousedown is prevented.
+    const md = new MouseEvent('mousedown', { bubbles: true, cancelable: true });
+    bar.dispatchEvent(md);
+    expect(md.defaultPrevented).toBe(true);
+    // (c) the drag is not cancelled: Radix's pointerdown still captures the pointer.
+    const capture = vi.fn();
+    bar.setPointerCapture = capture;
+    fireEvent.pointerDown(bar, { button: 0, pointerId: 1 });
+    expect(capture).toHaveBeenCalledTimes(1);
+  });
+
+  it('ScrollBar is exported for horizontal use', () => {
+    expect(typeof ScrollBar).toBe('function');
+  });
+
+  it('table container does not scroll; row/cell carry no visual base', () => {
+    render(
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Event</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          <TableRow data-testid="row">
+            <TableCell data-testid="cell">Scene</TableCell>
+          </TableRow>
+        </TableBody>
+      </Table>,
+    );
+    expect(slot('table-container')?.className).not.toContain('overflow');
+    expect(screen.getByRole('table').tagName).toBe('TABLE');
+    expect(screen.getByRole('columnheader', { name: 'Event' })).toBeTruthy();
+    expect(screen.getByRole('cell', { name: 'Scene' })).toBeTruthy();
+    expect(screen.getByTestId('row').className).toBe('');
+    expect(screen.getByTestId('cell').className).toBe('');
+  });
+
+  it('tabs activate on mouse-down and by arrow key', async () => {
+    render(
+      <Tabs defaultValue="a">
+        <TabsList aria-label="Feeds">
+          <TabsTrigger value="a">A</TabsTrigger>
+          <TabsTrigger value="b">B</TabsTrigger>
+          <TabsTrigger value="c">C</TabsTrigger>
+        </TabsList>
+        <TabsContent value="a">Panel A</TabsContent>
+        <TabsContent value="b">Panel B</TabsContent>
+        <TabsContent value="c">Panel C</TabsContent>
+      </Tabs>,
+    );
+    const b = screen.getByRole('tab', { name: 'B' });
+    fireEvent.mouseDown(b, { button: 0 });
+    expect(b.getAttribute('data-state')).toBe('active');
+    expect(b.getAttribute('aria-selected')).toBe('true');
+    b.focus();
+    fireEvent.keyDown(b, { key: 'ArrowRight' });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    const c = screen.getByRole('tab', { name: 'C' });
+    expect(document.activeElement).toBe(c);
+    expect(c.getAttribute('aria-selected')).toBe('true');
+    // V5 lid chrome on the trigger, not shadcn's input-tinted pill.
+    expect(c.className).not.toContain('bg-input/30');
+  });
+
+  it('dropdown checkbox and radio items: indicator, aria state, no selected tint', () => {
+    render(
+      <DropdownMenu open>
+        <DropdownMenuTrigger>Open</DropdownMenuTrigger>
+        <DropdownMenuContent>
+          <DropdownMenuCheckboxItem checked>Scene</DropdownMenuCheckboxItem>
+          <DropdownMenuRadioGroup value="session">
+            <DropdownMenuRadioItem value="session">Session Time</DropdownMenuRadioItem>
+            <DropdownMenuRadioItem value="world">World Clock</DropdownMenuRadioItem>
+          </DropdownMenuRadioGroup>
+        </DropdownMenuContent>
+      </DropdownMenu>,
+    );
+    const cb = screen.getByRole('menuitemcheckbox', { name: 'Scene' });
+    expect(cb.getAttribute('aria-checked')).toBe('true');
+    expect(cb.querySelector('svg')).not.toBeNull();
+    expect(cb.className).not.toMatch(/bg-accent|rounded-sm|text-sm/);
+    const radio = screen.getByRole('menuitemradio', { name: 'Session Time' });
+    expect(radio.getAttribute('aria-checked')).toBe('true');
+    expect(
+      screen.getByRole('menuitemradio', { name: 'World Clock' }).getAttribute('aria-checked'),
+    ).toBe('false');
+    expect(radio.className).not.toMatch(/bg-accent|rounded-sm|text-sm/);
+  });
+
+  it('existing Button variants keep their exact class lists', () => {
+    const variants = ['default', 'destructive', 'outline', 'secondary', 'ghost', 'link'] as const;
+    const sizes = ['default', 'xs', 'sm', 'lg', 'icon', 'icon-xs', 'icon-sm', 'icon-lg'] as const;
+    const out: Record<string, string> = {};
+    for (const v of variants)
+      for (const sz of sizes) out[`${v}/${sz}`] = buttonVariants({ variant: v, size: sz });
+    expect(out).toMatchSnapshot();
+  });
+
+  it('glass Button variants skip the shared base (disabled keeps pointer events and cursor)', () => {
+    render(
+      <>
+        <Button variant="glass" disabled title="why">
+          Edit
+        </Button>
+        <Button variant="glass-primary">Save</Button>
+      </>,
+    );
+    const edit = screen.getByRole('button', { name: 'Edit' });
+    expect(edit.tagName).toBe('BUTTON');
+    expect(edit.getAttribute('data-variant')).toBe('glass');
+    expect(edit.className).not.toContain('disabled:pointer-events-none');
+    expect(edit.className).toContain('disabled:cursor-not-allowed');
+    expect(screen.getByRole('button', { name: 'Save' }).getAttribute('data-variant')).toBe(
+      'glass-primary',
     );
   });
 });

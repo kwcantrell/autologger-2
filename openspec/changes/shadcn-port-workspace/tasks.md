@@ -2,7 +2,7 @@
 
 ## 1. Primitives
 
-- [ ] 1.1 Theme `scroll-area` (D1).
+- [x] 1.1 Theme `scroll-area` (D1).
   - Changes: `viewportRef` and `viewportClassName` (merged last), a block content wrapper, `type="hover"` with a 250 ms hide delay, a V5 thumb, and `ScrollBar` calling `preventDefault` on **mousedown**.
   - Test first, in `primitives.smoke.test.tsx`, rendering with `type="always"`:
     - (a) `viewportRef` receives the `[data-slot=scroll-area-viewport]` element.
@@ -10,27 +10,32 @@
     - (c) A `pointerdown` on the scrollbar still calls the stubbed `setPointerCapture` once, so the drag is not cancelled.
     - (d) `viewportClassName` `[&>div]:!flex` wins over the default `[&>div]:!block`.
   - Verify: `npx vitest run src/shared/components/ui src/shadcnHygiene.repo.test.ts` passes.
-- [ ] 1.2 Theme `table` (D1).
+  - Evidence: test first: smoke "scroll-area publishes its viewport through viewportRef" / "viewportClassName wins…" / "scrollbar keeps focus on mousedown but still lets Radix drag on pointerdown" (type="always"; mousedown defaultPrevented; stubbed setPointerCapture called once) -> `7 failed | 23 passed (30)` with the rest of group 1; after scroll-area (viewportRef, viewportClassName merged last, [&>div]:!block, type hover 250ms, V5 thumb, ScrollBar onMouseDown preventDefault) -> `npx vitest run src/shared/components/ui/primitives.smoke.test.tsx -t scroll` 4 passed
+- [x] 1.2 Theme `table` (D1).
   - Changes: the container has no overflow. `Table` and `TableHead` take the feed table and header chrome, and `TableRow`/`TableCell` have no visual base.
   - Test first: a smoke case checking that:
     - `[data-slot=table-container]` has no `overflow-x-auto` class;
     - the table is a real `<table>` with `columnheader`/`cell` roles;
     - a bare `TableRow`/`TableCell` renders with an empty class list.
   - Verify: the smoke and hygiene tests pass.
-- [ ] 1.3 Theme `tabs` (D1).
+  - Evidence: test first: "table container does not scroll; row/cell carry no visual base" -> `expected 'relative w-full overflow-x-auto' not to contain 'overflow'`; after table.tsx (container relative w-full, Table border-collapse 0.84rem, TableHead = sticky feed header + sort-button reset, TableRow/TableCell className passthrough only) -> `-t table` 2 passed
+- [x] 1.3 Theme `tabs` (D1).
   - Changes: the lid chrome keyed on `data-[state=active]`.
   - Test first: a smoke case where:
     - `fireEvent.mouseDown(trigger, { button: 0 })` on the second trigger gives it `data-state="active"` and `aria-selected="true"`;
     - ArrowRight, after an awaited tick, moves focus and activation.
   - Verify: the smoke tests pass.
-- [ ] 1.4 Theme the rest of `dropdown-menu` (D1): CheckboxItem, RadioItem, Label, Separator, SubTrigger and SubContent.
+  - Evidence: test first: "tabs activate on mouse-down and by arrow key" (mouseDown -> data-state active/aria-selected; ArrowRight + awaited tick -> focus+selection on C; no bg-input/30) failed on the stock trigger; after tabs.tsx (TabsList row, TabsTrigger lid chrome on data-[state=active|inactive], TabsContent focus outline; tabsListVariants dropped, no users) -> `-t tabs` 2 passed
+- [x] 1.4 Theme the rest of `dropdown-menu` (D1): CheckboxItem, RadioItem, Label, Separator, SubTrigger and SubContent.
   - Test first: a smoke case where a checked `DropdownMenuCheckboxItem` has `aria-checked="true"` and an indicator, and its class list has no `bg-accent` or `focus:bg-accent`. A RadioGroup item gets `role="menuitemradio"`.
   - Verify: the smoke and hygiene tests pass.
-- [ ] 1.5 Add `glass` and `glass-primary` Button variants without the cva base (D1).
+  - Evidence: test first: "dropdown checkbox and radio items: indicator, aria state, no selected tint" -> failed (rounded-sm/text-sm/focus:bg-accent); after ITEM_BASE shared by Item/CheckboxItem/RadioItem/SubTrigger with INDICATOR_SLOT, V5 Label/Separator/Shortcut/SubContent -> `npx vitest run src/shared/components/ui` 33 passed, 1 failed (glass, task 1.5)
+- [x] 1.5 Add `glass` and `glass-primary` Button variants without the cva base (D1).
   - Test first:
     - Snapshot `buttonVariants()` for every existing variant × size before the refactor, and assert it is unchanged after.
     - `<Button variant="glass" disabled>` has `data-variant="glass"`, is a `<button>`, has no `disabled:pointer-events-none` and keeps `disabled:cursor-not-allowed`.
   - Verify: the smoke tests pass.
+  - Evidence: test first: snapshot of buttonVariants for 6 variants x 8 sizes written on the pre-refactor primitive (`Snapshots 1 written`); "glass Button variants skip the shared base" failed; after BUTTON_BASE moved into each non-glass variant, cva base empty, glass/glass-primary = former FEED_GLASS_BTN(+_PRIMARY), size null for glass -> `npx vitest run src/shared/components/ui src/shadcnHygiene.repo.test.ts` `Tests 39 passed (39)` (snapshot unchanged); `npx tsc --noEmit` clean; biome lint clean
 
 ## 2. Feed tabs
 
