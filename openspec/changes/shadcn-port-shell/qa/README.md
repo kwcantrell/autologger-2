@@ -54,4 +54,4 @@ The walk (`screens.sh`, `cap.sh`, `contrast.js`) is copied from the archived `sh
 
 Unported screens (Settings, workspace, modals) are at ≤0.1% at 1440. Mobile diffs come from the hamburger becoming a Button and the rail drawer's icons.
 
-**The owner's review and dev-stack pass (task 5.2): pending.**
+**The owner's review and dev-stack pass (task 5.2): done, approved on 2026-10-06 ("looks good").**
