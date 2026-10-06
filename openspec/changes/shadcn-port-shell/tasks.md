@@ -33,12 +33,14 @@
 
 ## 3. Shell, home, sessions
 
-- [ ] 3.1 Rail and mobile nav (D6): lucide icons, plus `Button` for clear-search, the search toggle and the hamburger.
+- [x] 3.1 Rail and mobile nav (D6): lucide icons, plus `Button` for clear-search, the search toggle and the hamburger.
   - Test first: rewrite the Batch Import icon assertion in `V6Rail.test.tsx` to check `svg.lucide-upload`. It fails on the hand SVG.
   - Verify `V6Rail`, `AppShell`, `AppShell.onboarding` and `SessionWorkspace.maximizeLog` pass.
-- [ ] 3.2 HomeRoute: `Button` (`variant` follows whether there's a recent session) with lucide `Plus`/`ArrowRight`.
+  - Evidence: test first: V6Rail Batch Import icon test rewritten to `svg.lucide-upload` (aria-hidden, currentColor) -> `× uses an up-arrow upload icon …` on the hand SVG; after lucide Menu/Plus/Upload/Search/X/Users/Settings, Button ghost for search-toggle/clear and Button outline for the AppShell hamburger -> V6Rail + AppShell* + SessionWorkspace.maximizeLog `Tests 63 passed (63)` (search toggle still a <button>, footer classes, ids); typecheck clean
+- [x] 3.2 HomeRoute: `Button` (`variant` follows whether there's a recent session) with lucide `Plus`/`ArrowRight`.
   - Test first: the New Session button has `data-variant="default"` with no recent session and `"outline"` with one.
   - Verify `HomeRoute.test.tsx` passes.
+  - Evidence: test first: HomeRoute CTA `data-variant` default (no recent) / outline (with recent) -> `2 failed | 5 passed (7)`; after Button + lucide Plus/ArrowRight -> HomeRoute + SessionRoute `Tests 20 passed (20)`; typecheck/lint clean
 - [ ] 3.3 RecentSessionsList: the `⋮` menu becomes `DropdownMenu` (D3), and the rename dialog uses `Field`/`Input`/`Button`.
   - Test first:
     - the open helper uses `pointerDown`

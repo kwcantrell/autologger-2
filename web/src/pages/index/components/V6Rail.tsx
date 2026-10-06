@@ -1,9 +1,11 @@
 import clsx from 'clsx';
+import { Menu, Plus, Search, Settings, Upload, Users, X } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { useRoute } from 'wouter';
 import { useSessions } from '../../../api/hooks/useSessions';
 import { useShowAccess } from '../../../api/hooks/useShowAccess';
 import { APP_VERSION } from '../../../shared/appVersion';
+import { Button } from '../../../shared/components/ui/button';
 import { navigate } from '../navigation';
 import { ArchivedSessionsList, RecentSessionsList } from './RecentSessionsList';
 
@@ -200,11 +202,7 @@ export function V6Rail({
         aria-label="Toggle navigation"
         onClick={handleRailToggle}
       >
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-          <path d="M4 7H20" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-          <path d="M4 12H20" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-          <path d="M4 17H15" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-        </svg>
+        <Menu className="size-5" strokeWidth={1.8} aria-hidden="true" />
       </button>
 
       {/* show-grants D13: New Session and Batch Import only when the active team has a show the
@@ -218,10 +216,7 @@ export function V6Rail({
             onClick={onNewSession}
           >
             <span className={RAIL_PRIMARY_ICON} aria-hidden="true">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                <path d="M12 5V19" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-                <path d="M5 12H19" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-              </svg>
+              <Plus className="size-5" strokeWidth={1.8} aria-hidden="true" />
             </span>
             <span className={RAIL_PRIMARY_LABEL}>New Session</span>
           </button>
@@ -233,17 +228,7 @@ export function V6Rail({
             onClick={onBatchImport}
           >
             <span className={RAIL_PRIMARY_ICON} aria-hidden="true">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                <path d="M12 3V15" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-                <path
-                  d="M7 8L12 3L17 8"
-                  stroke="currentColor"
-                  strokeWidth="1.8"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-                <path d="M4 19H20" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-              </svg>
+              <Upload className="size-5" strokeWidth={1.8} aria-hidden="true" />
             </span>
             <span className={RAIL_PRIMARY_LABEL}>Batch Import</span>
           </button>
@@ -256,8 +241,9 @@ export function V6Rail({
         {/* Real, always-focusable control (not a decorative span) — see
             RAIL_SEARCH_ICON_BTN's comment: this is what makes the collapsed
             state's search affordance keyboard-reachable. */}
-        <button
-          type="button"
+        <Button
+          variant="ghost"
+          size="icon-sm"
           className={RAIL_SEARCH_ICON_BTN}
           aria-label="Search sessions"
           onClick={(e) => {
@@ -265,16 +251,8 @@ export function V6Rail({
             handleSearchBoxClick();
           }}
         >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <circle cx="10.5" cy="10.5" r="6.25" stroke="currentColor" strokeWidth="1.75" />
-            <path
-              d="M15.5 15.5L20 20"
-              stroke="currentColor"
-              strokeWidth="1.75"
-              strokeLinecap="round"
-            />
-          </svg>
-        </button>
+          <Search className="size-5" strokeWidth={1.75} aria-hidden="true" />
+        </Button>
         <input
           ref={searchInputRef}
           type="search"
@@ -292,8 +270,9 @@ export function V6Rail({
           }}
         />
         {searchQuery !== '' && (
-          <button
-            type="button"
+          <Button
+            variant="ghost"
+            size="icon-xs"
             className={RAIL_SEARCH_CLEAR}
             aria-label="Clear search"
             onClick={(e) => {
@@ -302,15 +281,8 @@ export function V6Rail({
               searchInputRef.current?.focus({ preventScroll: true });
             }}
           >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-              <path
-                d="M6 6L18 18M18 6L6 18"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-              />
-            </svg>
-          </button>
+            <X className="size-3" strokeWidth={2} aria-hidden="true" />
+          </Button>
         )}
       </div>
 
@@ -352,39 +324,13 @@ export function V6Rail({
             }}
           >
             <span className={RAIL_NAV_ICON} aria-hidden="true">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                <circle cx="8.5" cy="8" r="2.75" stroke="currentColor" strokeWidth="1.6" />
-                <circle cx="16" cy="9.5" r="2.25" stroke="currentColor" strokeWidth="1.6" />
-                <path
-                  d="M3.75 18.25C3.75 15.35 5.9 13 8.75 13C11.24 13 13.3 14.79 13.66 17.15"
-                  stroke="currentColor"
-                  strokeWidth="1.6"
-                  strokeLinecap="round"
-                />
-                <path
-                  d="M14.25 13.4C16.85 13.7 18.85 15.75 19.05 18.3"
-                  stroke="currentColor"
-                  strokeWidth="1.6"
-                  strokeLinecap="round"
-                />
-              </svg>
+              <Users className="size-5" strokeWidth={1.6} aria-hidden="true" />
             </span>
             <span className={RAIL_NAV_LABEL}>Teams</span>
           </button>
           <button type="button" className={RAIL_NAV} id="v6-btn-settings" onClick={onOpenSettings}>
             <span className={RAIL_NAV_ICON} aria-hidden="true">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                <path
-                  d="M12 15.25C13.7949 15.25 15.25 13.7949 15.25 12C15.25 10.2051 13.7949 8.75 12 8.75C10.2051 8.75 8.75 10.2051 8.75 12C8.75 13.7949 10.2051 15.25 12 15.25Z"
-                  stroke="currentColor"
-                  strokeWidth="1.6"
-                />
-                <path
-                  d="M19.4 15A1.66 1.66 0 0 0 19.73 16.83L19.79 16.89A2 2 0 1 1 16.96 19.72L16.9 19.66A1.66 1.66 0 0 0 15.07 19.33A1.66 1.66 0 0 0 14 20.85V21A2 2 0 1 1 10 21V20.91A1.66 1.66 0 0 0 8.91 19.39A1.66 1.66 0 0 0 7.09 19.72L7.03 19.78A2 2 0 1 1 4.2 16.95L4.26 16.89A1.66 1.66 0 0 0 4.59 15.06A1.66 1.66 0 0 0 3.07 14H3A2 2 0 1 1 3 10H3.09A1.66 1.66 0 0 0 4.61 8.91A1.66 1.66 0 0 0 4.28 7.09L4.22 7.03A2 2 0 1 1 7.05 4.2L7.11 4.26A1.66 1.66 0 0 0 8.94 4.59H9A1.66 1.66 0 0 0 10 3.07V3A2 2 0 1 1 14 3V3.09A1.66 1.66 0 0 0 15.09 4.61A1.66 1.66 0 0 0 16.91 4.28L16.97 4.22A2 2 0 1 1 19.8 7.05L19.74 7.11A1.66 1.66 0 0 0 19.41 8.94V9A1.66 1.66 0 0 0 20.93 10H21A2 2 0 1 1 21 14H20.91A1.66 1.66 0 0 0 19.39 15.09L19.4 15Z"
-                  stroke="currentColor"
-                  strokeWidth="1.3"
-                />
-              </svg>
+              <Settings className="size-5" strokeWidth={1.6} aria-hidden="true" />
             </span>
             <span className={RAIL_NAV_LABEL}>Settings</span>
           </button>

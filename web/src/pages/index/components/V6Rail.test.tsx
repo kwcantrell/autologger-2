@@ -190,13 +190,12 @@ describe('V6Rail Batch Import button', () => {
 
     const batchBtn = document.getElementById('v6-btn-batch-import');
     expect(batchBtn).not.toBeNull();
-    const paths = batchBtn?.querySelectorAll('path') ?? [];
-    const dValues = Array.from(paths).map((p) => p.getAttribute('d'));
-    expect(dValues).toContain('M12 3V15');
-    // Arrow head points UP (apex at y=3), per the gated D8 upload affordance.
-    expect(dValues.some((d) => d?.includes('L12 3'))).toBe(true);
-    expect(dValues.some((d) => d?.includes('L12 15'))).toBe(false);
-    expect(dValues).toContain('M4 19H20');
+    // shadcn-port-shell D6: lucide's Upload icon (an up-arrow over a tray) — the gated D8
+    // "up-arrow (upload) affordance" — decorative, inheriting currentColor.
+    const icon = batchBtn?.querySelector('svg.lucide-upload');
+    expect(icon).not.toBeNull();
+    expect(icon?.getAttribute('aria-hidden')).toBe('true');
+    expect(icon?.getAttribute('stroke')).toBe('currentColor');
   });
 });
 
