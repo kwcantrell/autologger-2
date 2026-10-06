@@ -286,7 +286,7 @@ unmounts the grid in that commit.
   session grid is present because a route-state frame occupies that position instead
 
 #### Scenario: Studio-switch close path still works
-- **WHEN** the settings modal's save handler detects an active-studio change (the sole
-  caller of `window.V3_closeSession` today) while on `/sessions/<id>`
+- **WHEN** the settings modal's save handler detects an active-studio change while on
+  `/sessions/<id>`
 - **THEN** the app navigates to `/` with the same behavior the close-session control
   produces
