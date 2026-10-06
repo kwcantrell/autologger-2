@@ -300,7 +300,9 @@ receives the transaction handle per attempt.
 - **Repo tests:** every `UPDATE` of the three tables advances `version` (D3); no store writes
   through `all(`/`first(` (Risks).
 - **Existing tests that change** (panel F2), and only these categories:
-  1. exact revision numbers after non-event writes or after an import;
+  1. exact revision numbers after non-event writes or after an import, including a test's own
+     setup writes through the bound core's handle, which now count (clarified by the 2026-10-06
+     consistency read);
   2. deep-equal row bodies gaining `version`;
   3. tests calling the retired `bumpRevision()` (`sessionCore.int.test.ts:15`,
      `transportStore.int.test.ts:118`), rewritten to drive the revision through a store write;

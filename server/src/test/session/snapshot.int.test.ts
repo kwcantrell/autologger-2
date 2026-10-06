@@ -40,10 +40,8 @@ describe('a hub read is one snapshot', () => {
                     'cam',
                     'committed elsewhere',
                   );
-                  await t.run(
-                    "UPDATE session_meta SET value = (value::bigint + 1)::text WHERE session_id = ? AND key = 'events_stream_revision'",
-                    id,
-                  );
+                  // session-row-versions D2: the revision is the sessions row's column.
+                  await t.run('UPDATE sessions SET revision = revision + 1 WHERE id = ?', id);
                 }),
               );
             },

@@ -195,8 +195,10 @@ describe('deleteEventsByIds', () => {
     expect(await rawRows(storage, 'session_events', { columns: 'id', orderBy: 'id' })).toEqual([
       { id: 'manual' },
     ]);
-    expect(await read((s) => s.core.revision())).toBe(1); // one bump for the surviving delete
-    expect(broadcasts).toEqual([{ type: 'event.changed', revision: 1 }]);
+    // session-row-versions D2: the simulated manual delete is a changing write too, so the
+    // revision is 2 after it and the surviving delete.
+    expect(await read((s) => s.core.revision())).toBe(2);
+    expect(broadcasts).toEqual([{ type: 'event.changed', revision: 2 }]);
   });
 
   it('an empty id array deletes nothing and does not broadcast', async () => {
@@ -382,6 +384,8 @@ describe('JS↔SQL auto-generated predicate parity (gate ruling E3)', () => {
 describe('addEvent over a real core', () => {
   /** Rolling transport at a known instant: roll started 5s before the fake
    * clock's default now (1_000_000ms), 50 frames already banked. */
+  /** A rolling transport. Its setup write advances the revision to 1 (session-row-versions D2), so
+   * the event under test is revision 2. */
   async function rollingFixture() {
     const rt = await boundCore();
     await rt.run((s) =>
@@ -423,7 +427,7 @@ describe('addEvent over a real core', () => {
       });
       expect(out.projection.event_count).toBe(1);
       expect(out.projection.max_timecode_total_frames).toBe(270);
-      expect(broadcasts).toEqual([{ type: 'event.changed', revision: 1 }]);
+      expect(broadcasts).toEqual([{ type: 'event.changed', revision: 2 }]);
       // Pin the INSERT columns on the raw row, not just the RPC mapping.
       const [r] = await rawRows(storage, 'session_events', {
         where: 'id = ?',
@@ -456,7 +460,7 @@ describe('addEvent over a real core', () => {
       expect(out.event.wall_time_utc).toBe('1970-01-01T00:16:37.000Z');
       expect(out.event.timecode_total_frames).toBe(198);
       expect(out.event.metadata_json).toBe('{"a":1}');
-      expect(broadcasts).toEqual([{ type: 'event.changed', revision: 1 }]);
+      expect(broadcasts).toEqual([{ type: 'event.changed', revision: 2 }]);
     });
   });
 
@@ -486,7 +490,7 @@ describe('addEvent over a real core', () => {
       expect(out.event.frame_rate).toBe(24);
       // But the STORED wall time is the override, not isoZ(now()).
       expect(out.event.wall_time_utc).toBe('2020-01-01T00:00:00.000Z');
-      expect(broadcasts).toEqual([{ type: 'event.changed', revision: 1 }]);
+      expect(broadcasts).toEqual([{ type: 'event.changed', revision: 2 }]);
       const [r] = await rawRows(storage, 'session_events', {
         columns: 'wall_time_utc',
         where: 'id = ?',
@@ -554,7 +558,7 @@ describe('addEvent over a real core', () => {
       });
       expect(out.projection.event_count).toBe(1);
       expect(out.projection.max_timecode_total_frames).toBe(12345);
-      expect(broadcasts).toEqual([{ type: 'event.changed', revision: 1 }]);
+      expect(broadcasts).toEqual([{ type: 'event.changed', revision: 2 }]);
       const [r] = await rawRows(storage, 'session_events', {
         where: 'id = ?',
         binds: [out.event.event_id],

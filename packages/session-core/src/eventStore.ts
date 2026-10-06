@@ -111,7 +111,7 @@ export class EventStore {
       input.message,
       metaJson,
     );
-    await this.core.bumpRevision();
+    this.core.markProjectionDirty();
     if (!input.suppressBroadcast) {
       this.core.broadcast({ type: 'event.changed', revision: await this.core.revision() });
     }
@@ -210,7 +210,7 @@ export class EventStore {
       this.core.sessionId,
       input.eventId,
     );
-    await this.core.bumpRevision();
+    this.core.markProjectionDirty();
     this.core.broadcast({ type: 'event.changed', revision: await this.core.revision() });
     const r = await this.event(input.eventId);
     return { event: eventRowToRpc(r as Row), projection: await this.core.projection() };
@@ -229,7 +229,7 @@ export class EventStore {
         this.core.sessionId,
         eventId,
       );
-      await this.core.bumpRevision();
+      this.core.markProjectionDirty();
       this.core.broadcast({ type: 'event.changed', revision: await this.core.revision() });
     }
     return { ok: existed, projection: await this.core.projection() };
@@ -253,7 +253,7 @@ export class EventStore {
       JSON.stringify(ids),
     );
     if (total > 0) {
-      await this.core.bumpRevision();
+      this.core.markProjectionDirty();
       this.core.broadcast({ type: 'event.changed', revision: await this.core.revision() });
     }
     return total;
@@ -279,8 +279,8 @@ export class EventStore {
   }
 
   /** Relink orphan events to a category id when the snapshot label matches exactly one button.
-   *  Guarded to run at most once per events_stream_revision (the only inputs are events +
-   *  the show categories the router passes in, both of which bump the revision). */
+   *  Guarded to run at most once per session revision; the guard row is bookkeeping and never
+   *  advances the revision (session-row-versions design D2). */
   async maybeRelinkOrphans(input: {
     validIds: string[];
     labelToIds: Record<string, string[]>;
@@ -288,7 +288,7 @@ export class EventStore {
     const rev = await this.core.revision();
     const lastRaw = await this.core.metaGet('relink_checked_rev');
     if (lastRaw !== null && Number(lastRaw) === rev) return 0;
-    await this.core.metaSet('relink_checked_rev', String(rev));
+    await this.core.metaSetUncounted('relink_checked_rev', String(rev));
     // A row whose metadata is not valid JSON is skipped here, as the loop below skips it
     // (SQLite's JSON path lookup threw on it; session-tables D5).
     const hasSnap =
@@ -335,7 +335,7 @@ export class EventStore {
       );
       n += 1;
     }
-    if (n) await this.core.bumpRevision();
+    if (n) this.core.markProjectionDirty();
     return n;
   }
 }

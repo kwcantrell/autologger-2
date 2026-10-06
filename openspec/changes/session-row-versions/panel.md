@@ -37,3 +37,10 @@ that grow with the new table or policy: the `catalog_user` policy count 32 -> 33
 recorded in the catalog"); tasks.md ticks 1.2, 2.1 and 2.2 with evidence.
 Scope change: no. Contract change: no. Accepted risk change: no.
 No findings.
+
+## Consistency read 2026-10-06 (group 3)
+Edits since the previous read: design.md D7 category 1 now names a test's own setup writes through
+the bound core's handle (they count under D2, so revision expectations after them move by one);
+tasks.md ticks 3.1 and 3.2 with evidence.
+Scope change: no. Contract change: no. Accepted risk change: no.
+No findings.

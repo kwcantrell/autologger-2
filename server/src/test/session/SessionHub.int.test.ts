@@ -285,14 +285,15 @@ describe('SessionHub broadcast frame pins (success-path byte-identity gate)', ()
 
   it('composite: anchorImportedTake emits exactly [event.changed(final revision), transport.changed] in that order and NO intermediate store frames', async () => {
     const { hub, frames } = await capturingHub();
-    // Two internal events (Started + Stopped) bump the revision to 2; the two
+    // Two internal events (Started + Stopped) in one transaction advance the revision once, to 1
+    // (session-row-versions D2); the two
     // per-addEvent event.changed frames and stopTakeWithDuration's
     // transport.changed are suppressed inside the txn, and the composite
     // manually emits ONE of each after commit (design D1: atomicity from the
     // queue, frame-count/order from the retained suppressBroadcast flags).
     await hub.anchorImportedTake({ recordingOrdinal: 1, durationS: 5, ctx: CTX });
     expect(frames).toEqual([
-      { type: 'event.changed', revision: 2 },
+      { type: 'event.changed', revision: 1 },
       { type: 'transport.changed', is_rolling: false, current_take: 0 },
     ]);
     await hub.close();

@@ -1,6 +1,6 @@
 // SessionCore — the shared substrate every SessionHub domain store builds on:
-// the session SQL handle + helpers, the WebSocket fan-out, the
-// events_stream_revision counter, the catalog projection, the transport row,
+// the session SQL handle + helpers, the WebSocket fan-out, the session
+// revision (catalog.sessions.revision), the catalog projection, the transport row,
 // and meta key/value + alarm scheduling. Holds the two cross-domain reads
 // (transportRow, projection) so the domain stores never depend on each other.
 // Runtime-agnostic by design: it sees only the structural SessionRuntime seam
@@ -90,17 +90,33 @@ export class SessionProjectionError extends Error {
 
 export class SessionCore {
   /** `sql` is the handle of the transaction or snapshot this core is bound to; the root core
-   * (the hub's) has none. */
+   * (the hub's) has none. On a transaction-bound core it is the counting handle over `raw`
+   * (session-row-versions design D2). */
+  private sql: SessionSql | null;
+  /** The transaction's own handle, for the core's statements that never count as a change: the
+   * revision bump, the projection, the hub-open seed and the relink guard (design D2). */
+  private raw: SessionSql | null;
+
   constructor(
     private ctx: SessionRuntime,
-    private readonly sql: SessionSql | null = null,
-  ) {}
+    sql: SessionSql | null = null,
+  ) {
+    this.sql = sql;
+    this.raw = sql;
+  }
 
   get db(): SessionSql {
     if (this.sql === null) {
       throw new Error('the root session core has no SQL handle; use a transaction or a snapshot');
     }
     return this.sql;
+  }
+
+  private get rawDb(): SessionSql {
+    if (this.raw === null) {
+      throw new Error('the root session core has no SQL handle; use a transaction or a snapshot');
+    }
+    return this.raw;
   }
 
   /** The session every statement is scoped to (session-tables design D4). */
@@ -116,9 +132,26 @@ export class SessionCore {
    * so a relayed Companion command is sent at once. */
   forTransaction(t: SessionSql): SessionCore {
     const bound = new SessionCore(this.ctx, t);
+    bound.sql = bound.countingHandle(t);
     bound.broadcastHoldDepth = 1;
     bound.holdsAlarm = true;
     return bound;
+  }
+
+  /** The handle the stores write through on a transaction-bound core (session-row-versions design
+   * D2): the first statement that changes a session row advances the session's revision, once per
+   * transaction. A joined `tx` keeps counting through this handle. */
+  private countingHandle(t: SessionSql): SessionSql {
+    const handle: SessionSql = {
+      all: (sql, ...binds) => t.all(sql, ...binds),
+      run: async (sql, ...binds) => {
+        const result = await t.run(sql, ...binds);
+        if (result.changes > 0) await this.advanceRevision();
+        return result;
+      },
+      tx: (fn) => t.tx(() => fn(handle)),
+    };
+    return handle;
   }
 
   /** A core bound to snapshot handle `t` (session-tables design D6), for a read's statements. */
@@ -131,15 +164,12 @@ export class SessionCore {
     return this.ctx.clock.now();
   }
 
-  /** The session's seed rows (session-tables design D9): the transport row and the revision
-   * counter, idempotent. The hub runs it when it opens, in a write transaction. */
+  /** The session's seed row (session-tables design D9): the transport row, idempotent. The hub
+   * runs it when it opens, in a write transaction; it is not content, so it never advances the
+   * revision (session-row-versions design D2). */
   async seed(): Promise<void> {
-    await this.db.run(
+    await this.rawDb.run(
       'INSERT INTO session_transport (session_id) VALUES (?) ON CONFLICT DO NOTHING',
-      this.sessionId,
-    );
-    await this.db.run(
-      "INSERT INTO session_meta (session_id, key, value) VALUES (?, 'events_stream_revision', '0') ON CONFLICT DO NOTHING",
       this.sessionId,
     );
   }
@@ -191,22 +221,45 @@ export class SessionCore {
     return { total, logged };
   }
 
-  /** The value is only ever written by this statement and the seed, so the cast cannot fail.
-   * Every events change bumps the revision, so it also marks the projection dirty (design D8). */
-  async bumpRevision(): Promise<void> {
-    this.markProjectionDirty();
-    await this.db.run(
-      "UPDATE session_meta SET value = (value::bigint + 1)::text WHERE session_id = ? AND key = 'events_stream_revision'",
-      this.sessionId,
-    );
+  /** This transaction's advance of the session revision, once started (design D2): held in a box
+   * so concurrent first changes share one bump. */
+  private revisionAdvance: { value: Promise<number> } | null = null;
+
+  /** Advances `catalog.sessions.revision` by one, once per transaction-bound core; later calls
+   * return the same value. */
+  private advanceRevision(): Promise<number> {
+    if (this.revisionAdvance === null) this.revisionAdvance = { value: this.bumpRevisionOnce() };
+    return this.revisionAdvance.value;
   }
 
-  async revision(): Promise<number> {
-    const r = await this.first(
-      "SELECT value FROM session_meta WHERE session_id = ? AND key = 'events_stream_revision'",
+  /** The bump, sent on the raw handle so it does not count itself. */
+  private async bumpRevisionOnce(): Promise<number> {
+    const rows = await this.rawDb.all<{ revision: number }>(
+      // The session's own catalog row, named as `session_id` like every session statement
+      // (session-tables D4's scan).
+      `WITH own (session_id) AS (VALUES (?::text))
+       UPDATE sessions s SET revision = s.revision + 1 FROM own
+       WHERE s.id = own.session_id RETURNING s.revision`,
       this.sessionId,
     );
-    return Number(r?.value ?? 0);
+    if (rows.length !== 1) {
+      throw new SessionProjectionError(
+        `the revision of session ${this.sessionId} changed ${rows.length} rows, not 1`,
+      );
+    }
+    return Number(rows[0].revision);
+  }
+
+  /** The session revision (api-contract-freeze "The session revision advances once per session
+   * write"): in a write transaction that has changed a row, the value it advanced to; otherwise
+   * the committed value. */
+  async revision(): Promise<number> {
+    if (this.revisionAdvance !== null) return this.revisionAdvance.value;
+    const r = await this.first(
+      'SELECT s.revision FROM sessions s JOIN (VALUES (?::text)) AS own (session_id) ON s.id = own.session_id',
+      this.sessionId,
+    );
+    return Number(r?.revision ?? 0);
   }
 
   async projection(): Promise<SessionProjection> {
@@ -242,7 +295,7 @@ export class SessionCore {
    * write fails (`SessionProjectionError`). */
   async writeProjectionIfDirty(): Promise<void> {
     if (!this.projectionDirty) return;
-    const { changes } = await this.db.run(
+    const { changes } = await this.rawDb.run(
       `UPDATE sessions s SET event_count = e.n, max_timecode_total_frames = e.mx,
          is_rolling = t.is_rolling, current_take = t.current_take,
          transport_elapsed_frames = t.elapsed_frames, roll_started_at_utc = t.roll_started_at_utc
@@ -367,6 +420,17 @@ export class SessionCore {
 
   async metaSet(key: string, value: string): Promise<void> {
     await this.db.run(
+      'INSERT INTO session_meta (session_id, key, value) VALUES (?, ?, ?) ON CONFLICT (session_id, key) DO UPDATE SET value = excluded.value',
+      this.sessionId,
+      key,
+      value,
+    );
+  }
+
+  /** `metaSet` for bookkeeping that is not content (the relink guard): it never advances the
+   * revision (session-row-versions design D2). */
+  async metaSetUncounted(key: string, value: string): Promise<void> {
+    await this.rawDb.run(
       'INSERT INTO session_meta (session_id, key, value) VALUES (?, ?, ?) ON CONFLICT (session_id, key) DO UPDATE SET value = excluded.value',
       this.sessionId,
       key,
