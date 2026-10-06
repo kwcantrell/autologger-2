@@ -568,7 +568,7 @@ export class SessionHub implements SessionHubEntry {
         return mode === 'write'
           ? await this.transaction(caller, body)
           : await this.storage.snapshot(caller, (t) =>
-              body(storesFor(this.core.forSnapshot(t))),
+              body(storesFor(this.core.forSnapshot(t, caller))),
             );
       } finally {
         release();

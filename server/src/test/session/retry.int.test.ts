@@ -36,8 +36,8 @@ describe('a hub write retried after a deadlock', () => {
     expect(alarmsArmed()).toBe(1);
     expect(hub.hasArmedAlarm).toBe(true);
     expect(
-      await rawRows(testStorage(id), 'session_meta', { where: "key = 'lease_holder'" }),
-    ).toEqual([{ key: 'lease_holder', value: 'client-a' }]);
+      await rawRows(testStorage(id), 'session_leases', { columns: 'kind, holder_client_id' }),
+    ).toEqual([{ kind: 'recording', holder_client_id: 'client-a' }]);
     await registry.closeAll();
   });
 });

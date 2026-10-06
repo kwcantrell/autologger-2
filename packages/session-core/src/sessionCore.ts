@@ -168,9 +168,18 @@ export class SessionCore {
     return handle;
   }
 
-  /** A core bound to snapshot handle `t` (session-tables design D6), for a read's statements. */
-  forSnapshot(t: SessionSql): SessionCore {
-    return new SessionCore(this.ctx, t);
+  /** A core bound to snapshot handle `t` (session-tables design D6), for a read's statements, run
+   * for `caller` when the hub names it (session-leases D4 masks the lease holder by it). */
+  forSnapshot(t: SessionSql, caller: SessionCaller | null = null): SessionCore {
+    const bound = new SessionCore(this.ctx, t);
+    bound.caller = caller;
+    return bound;
+  }
+
+  /** The user this core's transaction or snapshot runs for (session-leases D3): the user caller's
+   * id; null for a system caller, or when the hub names no caller. */
+  get callerUserId(): string | null {
+    return this.caller?.kind === 'user' ? this.caller.userId : null;
   }
 
   /** Current time from the injected Clock — never Date.now() in domain code. */
@@ -479,6 +488,31 @@ export class SessionCore {
       key,
       value,
     );
+  }
+
+  /** The lease heartbeat (session-leases D3, D5): extends the lease of `kind` held by exactly
+   * `clientId` and `userId` while it has not expired at `nowMs`, on the raw handle, so a heartbeat
+   * never advances the revision (the `metaSetUncounted` precedent). True when it changed the row. */
+  async heartbeatLeaseUncounted(
+    kind: string,
+    clientId: string,
+    userId: string | null,
+    nowMs: number,
+    expiresAtMs: number,
+  ): Promise<boolean> {
+    const { changes } = await this.rawDb.run(
+      `UPDATE session_leases SET heartbeat_at_ms = ?, expires_at_ms = ?
+       WHERE session_id = ? AND kind = ? AND holder_client_id = ?
+         AND holder_user_id IS NOT DISTINCT FROM ? AND expires_at_ms > ?`,
+      nowMs,
+      expiresAtMs,
+      this.sessionId,
+      kind,
+      clientId,
+      userId,
+      nowMs,
+    );
+    return changes === 1;
   }
 
   async metaDelete(key: string): Promise<void> {

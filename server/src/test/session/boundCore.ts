@@ -8,6 +8,7 @@ import { AudioStore } from '@autologger/session-core/audioStore';
 import { DashboardStore } from '@autologger/session-core/dashboardStore';
 import { EventStore } from '@autologger/session-core/eventStore';
 import { LeaseStore } from '@autologger/session-core/leaseStore';
+import type { SessionCaller } from '@autologger/session-core/sessionCaller';
 import type { AttachedSocket, SessionRuntime } from '@autologger/session-core/sessionCore';
 import { SessionCore } from '@autologger/session-core/sessionCore';
 import { TopicStore } from '@autologger/session-core/topicStore';
@@ -36,6 +37,9 @@ export interface BoundCore {
   run<T>(fn: (s: BoundStores) => Promise<T>): Promise<T>;
   /** `fn` over a snapshot-bound core in one read-only snapshot. */
   read<T>(fn: (s: BoundStores) => Promise<T>): Promise<T>;
+  /** `run` and `read` for `caller` (session-leases D3): the storage binds it, and the bound core
+   * names it, so `core.callerUserId` is the user's id. Same runtime, sockets, alarms and time. */
+  as(caller: SessionCaller): Pick<BoundCore, 'run' | 'read'>;
   /** Raw frames sent to the default browser socket, in order. */
   sent: string[];
   /** The same frames, JSON-parsed. */
@@ -60,11 +64,13 @@ function storesOn(core: SessionCore): BoundStores {
 }
 
 /** A bound-core harness over `storage` (session `sessionId`), seeded as a hub open seeds it. The
- * clock reads the mutable `time.now` unless `now` is given. */
+ * clock reads the mutable `time.now` unless `now` is given. `run` and `read` run as `TEST_CALLER`
+ * with no caller on the bound core, unless `caller` is given (then as that caller, named on the
+ * bound core); the seed always runs as `TEST_CALLER`. */
 export async function boundCoreOn(
   storage: TestStorage,
   sessionId: string = storage.sessionId,
-  opts: { now?: () => number } = {},
+  opts: { now?: () => number; caller?: SessionCaller } = {},
 ): Promise<BoundCore> {
   const sent: string[] = [];
   const broadcasts: unknown[] = [];
@@ -85,34 +91,43 @@ export async function boundCoreOn(
     setAlarm: (atMs) => alarms.push(atMs),
   };
   const core = new SessionCore(runtime);
-  const run = async <T>(fn: (s: BoundStores) => Promise<T>): Promise<T> => {
-    let bound: SessionCore | null = null;
-    try {
-      const value = await storage.tx(TEST_CALLER, (t) => {
-        bound?.discardHeldBroadcasts();
-        bound?.discardHeldAlarm();
-        bound = core.forTransaction(t);
-        return fn(storesOn(bound));
-      });
-      const committed = bound as SessionCore | null;
-      committed?.flushHeldBroadcasts();
-      committed?.armHeldAlarm();
-      return value;
-    } catch (err) {
-      const failed = bound as SessionCore | null;
-      failed?.discardHeldBroadcasts();
-      failed?.discardHeldAlarm();
-      throw err;
-    }
-  };
-  const read = <T>(fn: (s: BoundStores) => Promise<T>): Promise<T> =>
-    storage.snapshot(TEST_CALLER, (t) => fn(storesOn(core.forSnapshot(t))));
-  await run((s) => s.core.seed());
-  return { core, storage, run, read, sent, broadcasts, alarms, sockets, time };
+  const runAs =
+    (caller: SessionCaller | null) =>
+    async <T>(fn: (s: BoundStores) => Promise<T>): Promise<T> => {
+      let bound: SessionCore | null = null;
+      try {
+        const value = await storage.tx(caller ?? TEST_CALLER, (t) => {
+          bound?.discardHeldBroadcasts();
+          bound?.discardHeldAlarm();
+          bound = core.forTransaction(t, caller);
+          return fn(storesOn(bound));
+        });
+        const committed = bound as SessionCore | null;
+        committed?.flushHeldBroadcasts();
+        committed?.armHeldAlarm();
+        return value;
+      } catch (err) {
+        const failed = bound as SessionCore | null;
+        failed?.discardHeldBroadcasts();
+        failed?.discardHeldAlarm();
+        throw err;
+      }
+    };
+  const readAs =
+    (caller: SessionCaller | null) =>
+    <T>(fn: (s: BoundStores) => Promise<T>): Promise<T> =>
+      storage.snapshot(caller ?? TEST_CALLER, (t) => fn(storesOn(core.forSnapshot(t, caller))));
+  const as = (caller: SessionCaller) => ({ run: runAs(caller), read: readAs(caller) });
+  const run = runAs(opts.caller ?? null);
+  const read = readAs(opts.caller ?? null);
+  await runAs(null)((s) => s.core.seed());
+  return { core, storage, run, read, as, sent, broadcasts, alarms, sockets, time };
 }
 
 /** A fresh session (its catalog row) with a bound-core harness over it. */
-export async function boundCore(opts: { now?: () => number } = {}): Promise<BoundCore> {
+export async function boundCore(
+  opts: { now?: () => number; caller?: SessionCaller } = {},
+): Promise<BoundCore> {
   const sessionId = await createSessionRow();
   return boundCoreOn(testStorage(sessionId), sessionId, opts);
 }

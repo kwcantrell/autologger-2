@@ -1,6 +1,6 @@
 // Session isolation on Postgres (session-tables design D4 guard 2; core-ports-architecture
 // "Sessions are isolated"): every hub write method runs on session A while session B holds rows in
-// all nine session tables, and B's rows are byte-identical afterwards; no read on A returns a row
+// all ten session tables, and B's rows are byte-identical afterwards; no read on A returns a row
 // of B. A's calls name B's ids wherever they take one.
 
 import { UI_SNAPSHOT_LABEL_KEY } from '@autologger/domain';
@@ -19,6 +19,7 @@ const TABLES: Record<string, string> = {
   session_transcript_sentiment: 'id',
   session_dashboards: 'id',
   session_meta: 'key',
+  session_leases: 'kind',
 };
 
 /** Every row of the session in every session table, read on its own connection. */
@@ -41,7 +42,7 @@ const DASHBOARD = {
 
 /** Rows in every session table: events (one auto-generated, one with a snapshot label), the
  * transport, an audio segment with seam parts, words with enrichment, a topic, a dashboard and the
- * lease's meta keys. Returns the ids A's calls will name. */
+ * lease (session_leases). Returns the ids A's calls will name. */
 async function fill(hub: TestHub, sessionId: string) {
   const { event: plain } = await hub.addEvent({
     category: 'cam',
