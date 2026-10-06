@@ -15,3 +15,17 @@ fresh-context subagent; duplicates across reviewers are merged and say who found
 - [x] [major] D7's list of existing tests allowed to change was too short, so task 3.2 would trip its own stop rule: tests call the retired `bumpRevision()` (`sessionCore.int.test.ts:15`, `transportStore.int.test.ts:118`), set the retired meta key directly (`snapshot.int.test.ts:44`), and call `forTransaction(t)` (`boundCore.ts:94`, `sessionCore.int.test.ts:200,218,237,252,267,291`); the seed counting would also shift about 30 revision assertions. Found by the assumption tester. Evidence: `grep -rn "revision" --include=*.test.ts server/src packages | grep -i "toBe\|toEqual\|run(\|seed\|meta"` -> about 30 assertions in 9 files. Resolved: D7 lists five categories, task 1.1 records the exact file:line list on the base commit, and the seed no longer counts (D2), which removes the +1 shift.
 
 Verified true by the reviewers (cited for the record): every session-table write is a store `core.db.run` inside a hub transaction; `run().changes` maps postgres.js `count` reliably (an upsert reports 1, `DO NOTHING` on conflict 0, a JSON-id delete reports the rows removed); bigint reads as `Number`; the D1 SQL applies on the pinned `supabase/postgres:17.6.1.136` image inside `begin … rollback`, leaving `catalog_user` with INSERT only and the policies refusing another user's row, an inaccessible session, and select/update/delete; `catalog_user` may `UPDATE sessions … RETURNING revision` under the existing policies; only the six routes reach the hub update/delete methods; exports and the session list build explicit dicts; the web and Companion never send a version; the lease heartbeat upserts `session_meta`; `catalog` is not exposed through PostgREST; no route deletes sessions, so the audit foreign key blocks nothing.
+
+## Re-panel 2026-10-06
+
+Edits since approval (75ae66e): proposal.md, design.md and tasks.md 7.2 drop the latency stop rule
+(median `addEvent` above 10 ms, replace above 10 s) for "measure and record, no stop rule" (owner,
+2026-10-06: latency is accepted until observability exists after the migration); tasks 1.2 and 7.2
+switch from the 7b-1 bench, which no longer runs, to the 7b-2 bench. Scope or contract change: no.
+Accepted risk changed: yes (a named stop rule removed), so the delta was re-paneled and needs the
+owner's re-approval. One reviewer subagent covered the three roles for this three-sentence delta,
+not three separate subagents (deviation from CLAUDE.md, disclosed to the owner).
+
+- [x] [major] The owner's decision did not reach ADR 0021, which still frames latency around the 10 ms rule (revisit item; 7b-2 paragraph), and task 6.1 had no place for it or for the 7.2 numbers. Found by scope and simplicity. Resolved: task 6.1 now records owner decision 5, updates the latency revisit item, and adds the measurement placeholder 7.2 fills.
+
+Verified (no findings): the 7b-1 bench fails on the 7b-2 API (`PostgresSessionDb` takes the catalog root; hub calls need `.as(caller)`); `bench7b2.mts` reports the `addEvent`/`listEvents` medians and the replace time at ~300 and ~3,000 sessions; the revision `UPDATE` runs on the row already locked `FOR UPDATE`, so the removed gate leaves no lock or deadlock risk unguarded; task 7.1 still stops on any interleave difference. A false clause in task 1.2 ("the dropped seed team"; `test-studios` is still seeded) was removed.

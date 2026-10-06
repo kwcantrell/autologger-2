@@ -56,7 +56,9 @@ audit reader.
 | A6 | `list_topics` (AI tool) is specified as "the hub row fields", so `version` appearing there is in-spec | `grep -n list_topics openspec/specs/ai-topics-chat/spec.md` | `169:- \`list_topics\` — returns the session's topics with the hub row fields.` |
 | A7 | A caller's kind and user id are readable from the `SessionCaller` value, so the hub can refuse a system overwrite and record the user | `sed -n 10,13p packages/session-core/src/sessionCaller.ts` | `{ readonly kind: 'user'; readonly userId: string; … } \| { readonly kind: 'system'; readonly reason: string; … }` |
 
-The latency stop rule is measured during implementation (task 7.2), not assumed.
+Latency is measured before and after during implementation (tasks 1.2 and 7.2) and recorded, with
+no stop rule (owner, 2026-10-06: latency is accepted until observability exists after the
+migration).
 
 ## D1. Migration
 
@@ -325,7 +327,7 @@ receives the transaction handle per attempt.
   Slice 8 moves leases to their own table, and then can decide.
   → Accepted by owner decision 3.
 - **The extra round trip on non-event writes** (A2): about 0.4 ms per transcript, topic, transport
-  or audio write. → Measured against the stop rule in task 7.2.
+  or audio write. → Measured and recorded in task 7.2; no stop rule (owner, 2026-10-06).
 - **The counting wrapper sees only `run()`**, so a future store that writes a session table
   through `all()` (e.g. `INSERT … RETURNING`) would not advance the revision. → A repo test fails
   when a `packages/session-core/src/*Store.ts` `all(` or `first(` call contains `INSERT`,

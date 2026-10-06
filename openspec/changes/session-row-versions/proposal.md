@@ -8,7 +8,7 @@ a new `409` body carrying the current row, a `version` field on row responses, a
 check and the write share the session's row lock). It touches `supabase/migrations/**`,
 `server/src/routers/**` and `packages/contract/**`, all high-risk paths. ADR 0021 slice 7c-1.
 
-Approved-by: Kalen 2026-10-05
+Approved-by: Kalen 2026-10-05 (no latency stop rule)
 
 ## Why
 
@@ -76,8 +76,9 @@ Plan of record `joyful-sprouting-dove.md`:
 - **Write latency** (design A2, D2): event writes keep one revision statement; it moves from
   `session_meta` to `catalog.sessions`. Writes that did not touch the revision before (transcript,
   topic, transport, audio, dashboard and lease writes) gain one primary-key update per transaction.
-  The stop rule is the owner's current one: a median `addEvent` above 10 ms in the stack, measured
-  as 7b-1 measured it, compared against the 7b-2 baseline.
+  The numbers are measured before and after (tasks 1.2 and 7.2, with the 7b-2 bench) and recorded,
+  with no stop rule: the owner accepts all latency changes until after the migration, when
+  database-side observability exists (owner, 2026-10-06, after approval).
 
 ## What Changes
 
