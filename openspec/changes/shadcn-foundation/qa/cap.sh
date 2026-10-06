@@ -12,7 +12,13 @@ for vp in "1440 900" "390 844"; do
   agent-browser set viewport $vp >/dev/null
   agent-browser mouse move 2 2 >/dev/null; agent-browser wait 700 >/dev/null
   agent-browser screenshot "$out/$name.$w.png" >/dev/null
+  # QA_BASELINE (optional): pixel-diff against <dir>/<name>.<w>.png; result kept as <name>.<w>.diff.txt
+  if [ -n "${QA_BASELINE:-}" ] && [ -f "$QA_BASELINE/$name.$w.png" ]; then
+    agent-browser diff screenshot --baseline "$(realpath "$QA_BASELINE")/$name.$w.png" -o "$out/$name.$w.diff.png" 2>&1 \
+      | grep -E "match|differ|total" > "$out/$name.$w.diff.txt" || true
+  fi
   agent-browser eval "$(cat "$here/contrast.js")" | sed -n '2p' | python3 -c 'import sys,json; print(json.loads(sys.stdin.read()))' > "$out/$name.$w.contrast.json"
   python3 -c "import json;d=json.load(open('$out/$name.$w.contrast.json'));print('$name@$w', 'checked',d['checked'],'fails',d['fails'],'min',d['min'])"
+  [ -f "$out/$name.$w.diff.txt" ] && sed -n 1p "$out/$name.$w.diff.txt"
 done
 agent-browser set viewport 1440 900 >/dev/null

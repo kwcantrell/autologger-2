@@ -2,19 +2,24 @@
 
 ## 1. Tooling and guards
 
-- [ ] 1.1 Write `web/components.json` by hand per design D2. Verify with `npx shadcn@latest info --json`: the output shows `"ui": "@/shared/components/ui"`, `iconLibrary: lucide` and the `@ai-elements` registry.
-- [ ] 1.2 Add `web/src/shared/lib/utils.ts` (`cn` = `twMerge(clsx(...))`) and install `tailwind-merge`, `class-variance-authority`, `lucide-react` and `tw-animate-css`. Test first: `web/src/shared/lib/utils.test.ts` asserts that `cn('px-2','px-4')` is `'px-4'` and that falsy values are dropped. Verify with `npm test -w web -- utils.test`.
-- [ ] 1.3 Test first: `web/src/shadcnHygiene.repo.test.ts` (D2 and D3 guards). It flags:
+- [x] 1.1 Write `web/components.json` by hand per design D2. Verify with `npx shadcn@latest info --json`: the output shows `"ui": "@/shared/components/ui"`, `iconLibrary: lucide` and the `@ai-elements` registry.
+  - Evidence: `npx shadcn@latest info --json` -> `"ui": "@/shared/components/ui"`, `"iconLibrary": "lucide"`, `"@ai-elements": "https://registry.ai-sdk.dev/{name}.json"`
+- [x] 1.2 Add `web/src/shared/lib/utils.ts` (`cn` = `twMerge(clsx(...))`) and install `tailwind-merge`, `class-variance-authority`, `lucide-react` and `tw-animate-css`. Test first: `web/src/shared/lib/utils.test.ts` asserts that `cn('px-2','px-4')` is `'px-4'` and that falsy values are dropped. Verify with `npm test -w web -- utils.test`.
+  - Evidence: test first: `npx vitest run src/shared/lib/utils.test.ts` -> `Error: Cannot find module ./utils`; after `npm install -w web tailwind-merge class-variance-authority lucide-react tw-animate-css` + utils.ts -> `Tests  2 passed (2)`
+- [x] 1.3 Test first: `web/src/shadcnHygiene.repo.test.ts` (D2 and D3 guards). It flags:
   - any import from `"cn"` or `"next-themes"` under `web/src`
   - any `dark:` variant under `shared/components/ui`
   - any `var(--muted)`, `var(--accent)` or bare `text-muted`/`text-accent` outside `shared/components/ui`
+  - Evidence: test first: `npx vitest run src/shadcnHygiene.repo.test.ts` -> `× legacy code never references the bare --border/--muted/--accent tokens` (tailwind.css ×21, EventLogRow, …) `× … text-muted / text-accent / border-border utilities` (FeedTable, EventLogSheet, CategoryButtonStrip, AudioSaveOverlay, SessionWorkspace) `Tests 2 failed | 2 passed (4)`; turns green in 2.1
 
   It fails today on the legacy `var(--muted)` usages. Verify with `npm test -w web -- shadcnHygiene`, which should fail with the legacy usages listed.
-- [ ] 1.4 Add `openspec/changes/**/qa/**/*.png` to the root `.gitignore`. Verify with `git check-ignore openspec/changes/shadcn-foundation/qa/baseline/home.1440.png`, which should print the path.
+- [x] 1.4 Add `openspec/changes/**/qa/**/*.png` to the root `.gitignore`. Verify with `git check-ignore openspec/changes/shadcn-foundation/qa/baseline/home.1440.png`, which should print the path.
+  - Evidence: `git check-ignore -v --no-index openspec/changes/other-change/qa/after/a.png` -> `.gitignore:…:openspec/changes/**/qa/**/*.png` (root rule; this change also has qa/.gitignore)
 
 ## 2. Theme: legacy rename, Preflight and shadcn tokens
 
-- [ ] 2.1 Rename the legacy `--border`, `--muted` and `--accent` tokens, and their `--color-*` twins, to `--legacy-*`, and update every consumer (D3). Verify that `npm test -w web -- shadcnHygiene` passes, that `npm test -w web` is green, and that `QA` `./screens.sh qa/after-rename` shows zero visual change against the baseline (`agent-browser diff screenshot`).
+- [x] 2.1 Rename the legacy `--border`, `--muted` and `--accent` tokens, and their `--color-*` twins, to `--legacy-*`, and update every consumer (D3). Verify that `npm test -w web -- shadcnHygiene` passes, that `npm test -w web` is green, and that `QA` `./screens.sh qa/after-rename` shows zero visual change against the baseline (`agent-browser diff screenshot`).
+  - Evidence: `npx vitest run src/shadcnHygiene.repo.test.ts` -> `Tests 4 passed (4)`; `npx vitest run` -> `Test Files 111 passed (111) Tests 1425 passed (1425)`; `npm run typecheck` clean; `QA_BASELINE=baseline ./screens.sh after-rename` -> 44 `✓ Images match (0% difference)`, 8 at ≤0.07% (focus ring on the last-clicked control, e.g. new-session-expanded frame-rate select; interaction timing, not colour)
 - [ ] 2.2 Test first: `web/src/shared/theme/contrastTokens.test.ts` (D8), with lightest-measured-surface fixtures. It fails on muted 0.55, placeholder 0.55, `BTN_PRIMARY_SKY`'s `text-v5-primary` and the login link's muted. Then apply the D7 token and class edits: muted and placeholder to 0.62, `BTN_PRIMARY_SKY` to `#e0f2fe`, `BTN_CREATE` to 0.78, the "AI Rules" label to `text-v5-muted`, and Timeline drops `opacity-[0.82]`. Verify with `npm test -w web -- contrastTokens`, which should pass.
 - [ ] 2.3 Turn on Preflight (`@import 'tailwindcss/preflight.css' layer(base);`), delete the redundant universal box-sizing rule, and add `@import 'tw-animate-css';` (D4). Verify that `npm test -w web` and `npm run typecheck -w web` are green.
 - [ ] 2.4 Add the full shadcn semantic token set on `:root` plus the `@theme inline` mappings (D5). The test first extends `contrastTokens.test.ts` so that `--muted-foreground` and `--primary-foreground` reach at least 4.5:1 on the same fixtures. Verify with `npm test -w web -- contrastTokens`.

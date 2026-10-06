@@ -100,7 +100,7 @@ export function AudioSaveOverlay({ isUploading }: Props) {
           playsInline
           disablePictureInPicture
         />
-        <p id="autologger-audio-save-title" className="m-0 text-[0.95rem] text-muted">
+        <p id="autologger-audio-save-title" className="m-0 text-[0.95rem] text-legacy-muted">
           Saving Audio...
         </p>
       </div>

@@ -1,0 +1,61 @@
+{
+ "url": "/sessions/05b37db7-d426-4d6e-8994-3b666ca42e87",
+ "checked": 50,
+ "fails": 4,
+ "approx": 24,
+ "min": 3.64,
+ "failures": [
+  {
+   "el": "span.block.min-h-0.min-w-0",
+   "kind": "text",
+   "text": "Oct 6, 2026 · 0 events",
+   "ratio": 4.27,
+   "approx": true,
+   "disabled": false,
+   "bg": [
+    35,
+    57,
+    76
+   ]
+  },
+  {
+   "el": "span.flex-[0_0_auto].text-[0.62rem].font-semibold",
+   "kind": "text",
+   "text": "00:00:00",
+   "ratio": 4.27,
+   "approx": true,
+   "disabled": false,
+   "bg": [
+    35,
+    57,
+    76
+   ]
+  },
+  {
+   "el": "span.text-[0.65rem].font-medium.tracking-[0.04em]",
+   "kind": "text",
+   "text": "/ 00:00:05",
+   "ratio": 4.01,
+   "approx": false,
+   "disabled": false,
+   "bg": [
+    5,
+    9,
+    18
+   ]
+  },
+  {
+   "el": "span.flex.items-center.gap-2",
+   "kind": "text",
+   "text": "Audio issue",
+   "ratio": 3.64,
+   "approx": true,
+   "disabled": false,
+   "bg": [
+    40,
+    48,
+    68
+   ]
+  }
+ ]
+}

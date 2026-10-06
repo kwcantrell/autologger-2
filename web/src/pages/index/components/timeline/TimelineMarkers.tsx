@@ -19,7 +19,7 @@ const MARKER =
   // base hover (big multi-ring glow)
   ' hover-always:opacity-100 hover-always:[transform:translate(-50%,-50%)_scale(1.12)] hover-always:[box-shadow:0_0_8px_color-mix(in_srgb,var(--mcol)_100%,transparent),0_0_18px_color-mix(in_srgb,var(--mcol)_100%,transparent),0_0_30px_color-mix(in_srgb,var(--mcol)_98%,transparent),0_0_46px_color-mix(in_srgb,var(--mcol)_90%,transparent)]' +
   // base focus-visible
-  ' focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-[3px]' +
+  ' focus-visible:outline focus-visible:outline-2 focus-visible:outline-legacy-accent focus-visible:outline-offset-[3px]' +
   // session-context base look
   ' [#v4-log-session_&]:w-[0.92rem] [#v4-log-session_&]:h-[0.92rem] [#v4-log-session_&]:[box-shadow:0_0_16px_color-mix(in_srgb,var(--mcol)_26%,transparent)]' +
   // session-context hover + focus-visible

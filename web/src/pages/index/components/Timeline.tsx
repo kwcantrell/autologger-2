@@ -171,7 +171,7 @@ const ZOOM_TOOLTIP =
 // to the inherited value and inflate the box height, so the final resolved metrics are
 // written directly instead (family Inter, size 0.62rem, weight 600, line-height 1.2).
 const ZOOM_VALUE =
-  'appearance-none leading-[1.2] box-border m-0 flex-[0_0_3.65rem] w-[3.65rem] min-w-[3.65rem] max-w-[3.65rem] [direction:ltr] [text-indent:0] text-center rounded-[0.45rem] border border-v5-border-strong bg-[rgba(7,11,20,0.72)] text-v5-primary [font-family:"Inter",var(--font-poppins),system-ui,sans-serif] text-[0.62rem] font-semibold [font-variant-numeric:tabular-nums] px-[0.2rem] py-[0.1rem] focus:outline focus:outline-1 focus:outline-accent focus:outline-offset-1';
+  'appearance-none leading-[1.2] box-border m-0 flex-[0_0_3.65rem] w-[3.65rem] min-w-[3.65rem] max-w-[3.65rem] [direction:ltr] [text-indent:0] text-center rounded-[0.45rem] border border-v5-border-strong bg-[rgba(7,11,20,0.72)] text-v5-primary [font-family:"Inter",var(--font-poppins),system-ui,sans-serif] text-[0.62rem] font-semibold [font-variant-numeric:tabular-nums] px-[0.2rem] py-[0.1rem] focus:outline focus:outline-1 focus:outline-legacy-accent focus:outline-offset-1';
 // .v4ZoomRange + .timelineZoomRange + `.v4TimelineZoomRail .timelineZoomRange` +
 // #v4-log-session (v5 bg/border, radius). --v4-zoom-handle-h drives min-height.
 const ZOOM_RANGE =

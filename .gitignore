@@ -33,3 +33,6 @@ graphify-out/
 
 # Pre-template lifecycle files, kept locally for reference
 old-lifecycle/
+
+# shadcn-migration QA screenshots (local review only; probes + contrast JSON are tracked)
+openspec/changes/**/qa/**/*.png

@@ -445,7 +445,7 @@ export function SessionWorkspace({ sessionId, ytImportPending, onOpenMobileNav }
             id="v3-session-loading"
             /* `v3SessionLoading` string retained so the loading-video contextual @layer
              * rules (template-string media DOM) target this overlay; box styling inline. */
-            className="v3SessionLoading hidden absolute inset-0 z-30 flex items-center justify-center bg-[rgba(15,17,22,0.56)] rounded-[10px] border border-border text-[0.9rem]"
+            className="v3SessionLoading hidden absolute inset-0 z-30 flex items-center justify-center bg-[rgba(15,17,22,0.56)] rounded-[10px] border border-legacy-border text-[0.9rem]"
             role="status"
             aria-busy={true}
             aria-live="polite"

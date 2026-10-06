@@ -1284,7 +1284,7 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
             <td
               colSpan={eventColumns.length}
               className={clsx(
-                'font-[family-name:var(--font-mono)] text-[0.8rem] text-muted whitespace-nowrap',
+                'font-[family-name:var(--font-mono)] text-[0.8rem] text-legacy-muted whitespace-nowrap',
                 'faint',
               )}
             />
