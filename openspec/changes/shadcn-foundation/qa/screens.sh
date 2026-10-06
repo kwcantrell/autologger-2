@@ -12,7 +12,13 @@ cap(){ "$here/cap.sh" "$out" "$1"; }
 esc(){ ab press Escape; ab wait 500; }
 
 go "$B/";                         cap home
-click button "Session options";   cap session-menu; esc
+# The row's ⋮ is hover-revealed; hover it first, and retry once if the click opened the session.
+for _try in 1 2; do
+  ab hover 'button[aria-label="Session options"]'; ab wait 300; click button "Session options"
+  case "$(agent-browser get url 2>/dev/null)" in */sessions/*) go "$B/";; *) break;; esac
+done
+cap session-menu; esc
+go "$B/"   # re-anchor: each home-based step starts from a fresh home page
 click button "Settings";          cap settings-general
 click tab "EVENT BUTTONS";        cap settings-event-buttons
 click button "AI Rules";          cap event-instruction-modal; esc
@@ -20,8 +26,10 @@ click button "Edit dropdown options"; cap event-options-modal; esc
 click button "Pick button color"; cap color-popover; esc
 click tab "AUTO SYNC";            cap settings-auto-sync
 click tab "DEBUG";                cap settings-debug; esc
+go "$B/"
 click button "New Session";       cap new-session
 click button "Import audio from YouTube"; click button "Timecode settings"; cap new-session-expanded; esc
+go "$B/"
 click button "Batch Import";      cap batch-import; esc
 go "$B/sessions/$SID"
 for t in "EVENT FEED:ws-event-feed" "TRANSCRIPT:ws-transcript" "TOPICS:ws-topics" "ASSISTANT:ws-assistant" "DASHBOARDS:ws-dashboards" "EXPORT:ws-export"; do

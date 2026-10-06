@@ -69,3 +69,38 @@ The review scanned the components listed above for elements that relied on brows
 | SVGs in `MaximizeLogStrip`, `EventLogRow` and `UnavailableState` | no change: each sits inside an `inline-flex`/`flex` parent, so `display:block` doesn't affect layout |
 
 These surfaces still need the owner's dev-stack pass, because the walk can't reach them with the current data.
+
+## Final gate: `after-foundation` vs `baseline` (tasks 5.1/5.2)
+
+Contrast: all 52 captures pass, except the out-of-scope user-data `Audio issue` (3.64). Pixel diffs come from the accepted Preflight normalization (button and input text in Inter instead of Arial, headings and cards a few px taller) and from the contrast fixes. Pairs are in `baseline/<screen>.<w>.png` and `after-foundation/<screen>.<w>.png`, and the diff overlays are in `after-foundation/*.diff.png` (local only).
+
+| Screen | 1440 | 390 |
+| --- | --- | --- |
+| admin-users | 0.61% | 0.09% |
+| batch-import | 0.66% | 1.26% |
+| color-popover | 2.14% | 3.98% |
+| event-instruction-modal | 2.26% | 2.78% |
+| event-options-modal | 2.27% | 0.57% |
+| filter-menu | 0.57% | 0.09% |
+| home | 1.10% | 3.08% |
+| login | 0.05% | 0.20% |
+| new-session-expanded | 1.41% | 4.77% |
+| new-session | 0.95% | 3.95% |
+| not-found | 0% | 0% |
+| session-menu | 1.10% | 2.65% |
+| settings-auto-sync | 0.04% | 0.10% |
+| settings-debug | 0.04% | 0.10% |
+| settings-event-buttons | 1.99% | 3.98% |
+| settings-general | 0.34% | 0.11% |
+| shortcuts | 0.14% | 0.06% |
+| teams | 1.19% | 4.04% |
+| time-display-menu | 0.56% | 0.09% |
+| transcribe-modal | 0.59% | 0.09% |
+| ws-assistant | 0.21% | 0.09% |
+| ws-dashboards | 0.27% | 0.09% |
+| ws-event-feed | 0.42% | 0.09% |
+| ws-export | 0.20% | 0.09% |
+| ws-topics | 0.53% | 0.09% |
+| ws-transcript | 0.49% | 0.09% |
+
+**The human reviews the pairs and does the dev-stack pass on the unreachable surfaces: pending.**

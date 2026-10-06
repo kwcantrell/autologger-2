@@ -43,6 +43,7 @@
 
 ## 5. Integration: QA gate and checks
 
-- [ ] 5.1 Run `qa/screens.sh qa/after-foundation`. Verify that every `*.contrast.json` reports `fails: 0`, apart from the user-data "Audio issue" category label, which `qa/README.md` records as out of scope.
+- [x] 5.1 Run `qa/screens.sh qa/after-foundation`. Verify that every `*.contrast.json` reports `fails: 0`, apart from the user-data "Audio issue" category label, which `qa/README.md` records as out of scope.
+  - Evidence: `QA_BASELINE=baseline ./screens.sh qa/after-foundation` (walk hardened: re-anchor to home between steps; hover + one retry on the hover-revealed row ⋮) -> 52 contrast JSONs, only `filter-menu` fails with the user-data `Audio issue 3.64` (out of scope per README); max pixel diff 4.77% (new-session-expanded.390)
 - [ ] 5.2 Diff each `after-foundation` screenshot against `baseline` (`agent-browser diff screenshot --baseline`). Fix any Preflight drift with local utilities. Record each screen's result in `qa/README.md`. The human reviews the image pairs and does a dev-stack pass on the unreachable surfaces.
 - [ ] 5.3 Run `GITHUB_BASE_REF=supabase-migration scripts/check-change.sh` and `openspec validate shadcn-foundation --strict`. Verify that every gate passes. The known storage "8 contending" flake is re-run, not counted as a failure.

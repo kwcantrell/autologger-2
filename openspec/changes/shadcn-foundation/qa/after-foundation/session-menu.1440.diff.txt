@@ -1,0 +1,2 @@
+✗ 1.10% pixels differ
+  14230 different / 1296000 total pixels
