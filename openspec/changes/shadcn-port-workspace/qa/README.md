@@ -79,3 +79,12 @@ The walk (`screens.sh`, `cap.sh`, `contrast.js`) is copied from the archived `sh
 - The walk did not switch the saved team selection, because that is the owner's preference. 3c re-baselines these screens.
 
 The workspace screens (`ws-*`, the three menus, `roll-tooltip`, `shortcuts`, `transcribe-modal`) stay within 0.06–1.7%. That is scrollbar drift plus the new menu indicators.
+
+## Owner review (task 6.2)
+
+The owner reviewed the pairs and did the dev-stack pass (2026-10-06): "everything checks out".
+- dragging the feed scrollbar during an inline edit;
+- the Filter menu by keyboard;
+- Auto Generate → Custom;
+- the rail lists scrolling;
+- mobile Transcript horizontal scroll.
