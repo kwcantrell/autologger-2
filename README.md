@@ -1393,6 +1393,45 @@ exist only after their first Google sign-in, so an unknown email is reported `PE
 (exit `3`); re-run after they sign in. Exit codes: `0` done, `1` error, `2` usage, `3` pending.
 Because the cutover replaces `catalog.db`, run it again in the window (step 3f).
 
+### Admin API by hand (curl)
+
+There is no admin web page (the `/admin/users` page was retired; `GET /admin/users` is a `404`).
+Every admin operation goes through the `ADMIN_TOKEN`-gated `/api/admin/*` API, which is unchanged.
+The server must have `ADMIN_TOKEN` configured; without it every `/api/admin/*` call is a `503` (the
+dev stack leaves it unset by default).
+Set the token from the environment only, never on a shared command line or in shell history:
+
+```bash
+BASE=http://127.0.0.1:8787              # or the deployment origin
+read -rs ADMIN_TOKEN && export ADMIN_TOKEN   # paste from OpenBao; not echoed
+AUTH="Authorization: Bearer $ADMIN_TOKEN"
+
+# 1. List users and teams; find a user's id by email (needed by every user-scoped call below)
+curl -fsS -H "$AUTH" "$BASE/api/admin/users" | jq '.users[] | {id, email, disabled, studios}'
+USER_ID=$(curl -fsS -H "$AUTH" "$BASE/api/admin/users" | jq -r '.users[] | select(.email=="person@example.com") | .id')
+
+# 2. Create a team (studio): id is the slug, display_name the label
+curl -fsS -H "$AUTH" -H 'Content-Type: application/json' -X POST "$BASE/api/admin/studios" \
+  -d '{"id":"my-team","display_name":"My Team"}'
+
+# 3. Delete a team
+curl -fsS -H "$AUTH" -X DELETE "$BASE/api/admin/studios/my-team"
+
+# 4. Add a membership (role optional: owner | admin | member; "owner" demotes the current owner)
+curl -fsS -H "$AUTH" -H 'Content-Type: application/json' -X POST \
+  "$BASE/api/admin/users/$USER_ID/memberships" -d '{"studio_id":"my-team","role":"member"}'
+
+# 5. Remove a membership
+curl -fsS -H "$AUTH" -X DELETE "$BASE/api/admin/users/$USER_ID/memberships/my-team"
+
+# 6. Disable a user (incident kill switch: their session stops resolving) / 7. re-enable
+curl -fsS -H "$AUTH" -X POST "$BASE/api/admin/users/$USER_ID/disable"
+curl -fsS -H "$AUTH" -X POST "$BASE/api/admin/users/$USER_ID/enable"
+```
+
+Each mutating call returns `{"ok": true}` (team create returns the new `{"studio": …}`). Bulk
+setup is still the membership bootstrap script above.
+
 ### Update order and rollback
 
 - **Update order: `api` first, then `web`.** Set the new `API_TAG` in OpenBao `prod`, then
@@ -1727,9 +1766,10 @@ The React frontend lives in `web/` (Next.js 15 App Router + React 19, Tailwind v
 canonical for this app. `next build` (in the image builds) emits `web/.next/`; the server
 bridges unmatched GET requests to Next (`server/src/node/nextFrontend.ts`, mounted from a Hono
 catch-all — `frontend.handle(...)`) rather than serving prebuilt static files. `GET /`,
-`GET /sessions/:id`, `GET /teams`, and `GET /admin/users` all render through the shell (the API
-root is hardcoded same-origin `/api`; the two route groups share page identity per path, but
-responses are no longer byte-identical — Next embeds the requested route's serialized URL data).
+`GET /sessions/:id`, and `GET /teams` all render through the shell (the API root is hardcoded
+same-origin `/api`; the paths share page identity, but responses are no longer byte-identical —
+Next embeds the requested route's serialized URL data). Any other path, including the retired
+`/admin/users` page, gets the app's not-found page (`404`).
 Hashed bundles are served at `/_next/static/*` (was `/assets/*` under Vite); `/static/*` is
 served straight from `web/public/static/` — the favicon logos, plus the two preloaded font files
 under `static/fonts/` (see **Styling** below). The `/_next/image` optimizer is disabled (`images: { unoptimized: true }` in `web/next.config.ts`) — the app uses
@@ -1781,10 +1821,9 @@ the app stays bfcache-eligible.
 
 ### Styling (Tailwind v4)
 
-All styling lives in one entry, `web/src/shared/theme/tailwind.css`, side-effect imported
-(before `overlayscrollbars/overlayscrollbars.css`, pinned order) from each route group's root
-layout (`web/src/app/(index)/layout.page.tsx`, `web/src/app/(admin)/layout.page.tsx`). No CSS
-Modules, no per-component `*.css` files. Layers, declared in order:
+All styling lives in one entry, `web/src/shared/theme/tailwind.css`, side-effect imported from
+the app's root layout (`web/src/app/(index)/layout.page.tsx`). No CSS Modules, no per-component
+`*.css` files. Layers, declared in order:
 
 - **`theme`** — two `@theme` blocks emit the design-token scale. `@theme inline` holds
   tokens whose only job is generating utilities (`--color-*`, `--radius-*`); `@theme
@@ -1846,7 +1885,7 @@ make dev-restart   # restart app, Companion and both gates (fetches the stack's 
 make dev-logs
 ```
 
-Browse `http://127.0.0.1:8787/`. Deep links (`/sessions/<id>`, `/teams`, `/admin/users`) work
+Browse `http://127.0.0.1:8787/`. Deep links (`/sessions/<id>`, `/teams`) work
 natively — the Next App Router catch-all renders the shell for every router-known path, so no
 dev-only shell middleware is needed (the retired `web/vite.config.ts`'s `sessionDeepLinkDevShell`
 plugin and its `/api`+`/auth` proxy are gone; dev and prod now share one origin and one port).

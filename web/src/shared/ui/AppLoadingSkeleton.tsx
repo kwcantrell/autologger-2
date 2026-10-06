@@ -4,8 +4,7 @@ import type { ReactNode } from 'react';
 //
 // Single-sourced loading placeholder for the Next App Router shell. It is
 // rendered as the `loading` fallback of every `ssr: false` client-island
-// `dynamic()` import under `web/src/app/**` (see `IndexIsland.tsx` /
-// `AdminIsland.tsx`) -- with `ssr: false` on the dynamic import, Next still
+// `dynamic()` import under `web/src/app/**` (see `IndexIsland.tsx`) -- with `ssr: false` on the dynamic import, Next still
 // server-renders the `loading` element itself, so the document served for
 // every router-known path (design D9.1's "Server-rendered shell") contains
 // real layout/skeleton markup instead of an empty mount node.

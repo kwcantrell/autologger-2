@@ -4,8 +4,8 @@ import type { NextConfig } from 'next';
 
 // Panel-decided contents (design.md D1/D6, 2026-08-13):
 // - reactStrictMode: false — the index tree must not double-invoke (load-bearing for the
-//   departure watcher and the coordination registry); AdminRoot restores StrictMode via an
-//   explicit subtree wrapper instead (D4).
+//   departure watcher and the coordination registry). (The retired admin tree restored
+//   StrictMode via a subtree wrapper, D4; it was removed with /admin/users.)
 // - images.unoptimized — no `/_next/image` optimizer; the app uses plain `<img>` and the
 //   optimizer is an unauthenticated compute endpoint with a CVE history (D6.4).
 // - poweredByHeader: false — no `X-Powered-By` egress of framework identity (D6.4).

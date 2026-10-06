@@ -12,9 +12,11 @@ import '@/shared/theme/tailwind.css';
 // un-routed. Every App Router special file under `web/src/app/**` carries the
 // same suffix for the same reason.
 //
-// One of TWO root layouts (route groups `(index)` and `(admin)`) -- there is
-// deliberately no root-level `app/layout.page.tsx`; every route lives inside
-// one of the two groups, so Next never requires one. This layout replicates the
+// The app's root layout, inside the `(index)` route group -- there is
+// deliberately no root-level `app/layout.page.tsx` (every route lives inside
+// this group; the root `not-found.page.tsx` supplies its own document). The
+// second group, `(admin)`, was retired with `/admin/users`
+// (remove-admin-users-page). This layout replicates the
 // head/body output of the retired `web/src/pages/index/index.html` as
 // closely as the App Router allows:
 //  - `<body data-v4-transport="rolling">` (load-bearing attribute, ported

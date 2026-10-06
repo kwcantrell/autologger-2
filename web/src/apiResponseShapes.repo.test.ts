@@ -1210,16 +1210,6 @@ const EXEMPTIONS: readonly Exemption[] = [
       'The declaration of the shared helper itself, not a call. `T` is its type parameter; the sites that resolve it are the call sites below.',
   },
   {
-    key: 'pages/admin-users/AdminUsersPage.tsx :: fetchAdmin<T>(path: string)',
-    reason:
-      'Declaration of the local generic wrapper (audit population (b)). Acquires no shape; its six call sites are enumerated individually.',
-  },
-  {
-    key: 'pages/admin-users/AdminUsersPage.tsx :: apiFetch<T>(path)',
-    reason:
-      "The wrapper's forwarding call — passes its own unresolved `T` through. This is the occurrence `grep 'apiFetch<'` saw instead of the crashing call (design D6).",
-  },
-  {
     key: 'api/client.ts :: fetch(url)',
     reason:
       'The one global `fetch` inside the shared helper — the seam every typed call goes through. Its shape is whatever the caller asserts, checked at those call sites.',
@@ -1411,31 +1401,6 @@ const EXEMPTIONS: readonly Exemption[] = [
     key: 'pages/index/batchImport/runner.ts :: apiFetch<>(`sessions/<var>`) [DELETE]',
     reason:
       'pr-3 remediation — untyped DELETE session on the batch rollback path; emits `{ok: true, hidden: true}` (audit §5 row 24 shape); value unused.',
-  },
-
-  // --- Untyped `fetchAdmin(…)` — population (b)'s five type-argument-free
-  // call sites. Audit §2 and verdict row 39 (CONFORMS vacuously).
-  {
-    key: "pages/admin-users/AdminUsersPage.tsx :: fetchAdmin<>('admin/studios') [POST]",
-    reason:
-      'audit §2/§5 row 39 — no type argument, inferred `unknown`, response discarded. (Handler emits `{studio: {id, name, builtin}}`.)',
-  },
-  {
-    key: 'pages/admin-users/AdminUsersPage.tsx :: fetchAdmin<>(`admin/studios/<var>`) [DELETE]',
-    reason:
-      'audit §2/§5 row 39 — no type argument; response discarded. Handler emits `{ok: true}`.',
-  },
-  {
-    key: 'pages/admin-users/AdminUsersPage.tsx :: fetchAdmin<>(`admin/users/<var>/memberships`) [POST]',
-    reason: 'audit §2/§5 row 39 — no type argument; response discarded.',
-  },
-  {
-    key: 'pages/admin-users/AdminUsersPage.tsx :: fetchAdmin<>(`admin/users/<var>/memberships/<var>`) [DELETE]',
-    reason: 'audit §2/§5 row 39 — no type argument; response discarded.',
-  },
-  {
-    key: 'pages/admin-users/AdminUsersPage.tsx :: fetchAdmin<>(`admin/users/<var>/<var>`) [POST]',
-    reason: 'audit §2/§5 row 39 — disable/enable toggle; no type argument; response discarded.',
   },
 
   // --- Raw `fetch(` call sites — population (d). A request on its own acquires
@@ -1679,19 +1644,15 @@ const WEB_SRC = THIS_DIR;
 // losing a whole detector or an over-narrowed walk is.
 // ---------------------------------------------------------------------------
 
-// Measured after the branch-audit fixes (2026-07-28): 120 sites — apiFetch
-// 52, wrapper 7, rawFetch 8, jsonBody 5, jsonParse 5, beacon 2,
-// conformanceAssertion 41 — of which 68 are COVERED and 52 are EXEMPTED.
-// (Was 117/65/52 when coverage was read off the conformance module's import
-// list; the three added sites are the direct `Show`, `Category` and
-// `ActiveStudioCategory` fixture assignments that the corrected covered-set
-// rule showed were missing.) Neither the second review round's fixes
-// (fixed-point wrapper discovery, resolved type-import specifiers, cast
-// rejection, namespace-qualified callees) nor the branch audit's (semicolon and
-// arrow-typed type arguments, unparsed-site recording, object return-type
-// annotations, the declared-capture cross-check, alias-symmetric coverage) moved
-// any of the four numbers on this tree. That is the expected result — they close
-// shapes the tree does not yet contain — and it is asserted, not assumed.
+// Re-measured 2026-10-06 when the `/admin/users` page was retired (remove-admin-users-page D3):
+// 138 sites — apiFetch 67, wrapper 0, rawFetch 7, jsonBody 5, jsonParse 5, beacon 2,
+// conformanceAssertion 52 — of which 85 are COVERED. (On HEAD before the removal the tree held
+// 150 sites / 90 covered: apiFetch 68, wrapper 7, conformanceAssertion 56; the comment's earlier
+// "120 sites" figure from 2026-07-28 had gone stale as features added sites. The removed sites
+// were the page's 1 apiFetch + 7 wrapper calls and the 4 admin conformance assertions.)
+// `wrapper` is 0 because the page held the tree's only local generic wrapper; its floor is 0
+// for that reason, NOT as slack — the detector stays covered by its mutation fixtures (see the
+// note at CANARY_SITES).
 //
 // HOW MUCH SLACK EACH FLOOR ALLOWS, stated rather than left to be inferred. A
 // floor far below its count lets a scan regression lose sites silently, which
@@ -1701,28 +1662,29 @@ const WEB_SRC = THIS_DIR;
 // sites is not a failure, little enough that a regression is. Deleting more
 // than the slack means re-measuring these numbers deliberately, which is the
 // intended cost.
-const POPULATION_FLOOR = 115; // 120 today; tolerates a 5-site loss
+const POPULATION_FLOOR = 133; // 138 today; tolerates a 5-site loss
 const DETECTOR_FLOORS: Record<Detector, number> = {
-  apiFetch: 48, // 52 today
-  wrapper: 6, // 7 today
-  rawFetch: 7, // 8 today
+  apiFetch: 63, // 67 today
+  wrapper: 0, // 0 today — no live wrapper since /admin/users was retired; fixture-covered
+  rawFetch: 6, // 7 today
   jsonBody: 4, // 5 today
   jsonParse: 4, // 5 today
   beacon: 1, // 2 today — a 2-site detector cannot have both slack and rigour
-  conformanceAssertion: 37, // 41 today
+  conformanceAssertion: 48, // 52 today
 };
-/** Today's covered count is 68. Same reasoning as the floors above: the
- * previous value of 60 tolerated losing eight conformance checks in silence. */
-const COVERED_FLOOR = 64;
+/** Today's covered count is 85. Same reasoning as the floors above: a few under today's count,
+ * so losing a conformance check or two is not a failure but a real regression is. */
+const COVERED_FLOOR = 81;
 
 /** Sites that must be found by name. Each one exercises a different detector
  * path, so an over-narrowed pattern or a broken walk fails here with a
  * specific name rather than by quietly finding nothing. */
+// Population (b) — a call laundered through a local generic wrapper — has no LIVE site since
+// the `/admin/users` page (its `fetchAdmin<AdminDataResponse>('admin/users')` canary) was
+// retired (remove-admin-users-page D3). Until a live wrapper exists again that detector path is
+// fixture-covered only: the "local generic wrapper" mutation cases below (discovery,
+// cross-file, wrapper-over-wrapper, alias, class-method, and the covered typed call).
 const CANARY_SITES: readonly { key: string; why: string }[] = [
-  {
-    key: "pages/admin-users/AdminUsersPage.tsx :: fetchAdmin<AdminDataResponse>('admin/users')",
-    why: 'population (b): the wrapper-laundered call the memberships crash lived in — invisible to `grep apiFetch<`',
-  },
   {
     key: "api/hooks/useProfile.ts :: apiFetch<ProfilePayload>('profile')",
     why: 'population (a): a plain typed hook call',
@@ -1831,6 +1793,24 @@ describe('detection predicates (mutation checks — prove the detectors actually
       "fetchThing<BrandNewResponse>('things')",
     ]);
     expect(wrapperCalls[1].covered).toBe(false);
+  });
+
+  it('a TYPED call through a local generic wrapper whose type IS conformance-checked is covered', () => {
+    // remove-admin-users-page D3: with `/admin/users` gone no LIVE wrapper site exists, so this
+    // fixture (not a canary) is what pins "a wrapper-laundered call is covered, not merely
+    // enumerated" — the property the retired AdminUsersPage canary demonstrated on the live tree.
+    const sites = scanOnly({
+      'api/hooks/useWrapped.ts':
+        IMPORTS_ADMIN +
+        'async function fetchWrapped<T>(p: string): Promise<T> { return apiFetch<T>(p); }\n' +
+        "export const load = () => fetchWrapped<AdminDataResponse>('admin/users');\n",
+    });
+    const wrapperCalls = sites.filter((s) => s.detector === 'wrapper');
+    expect(wrapperCalls.map((s) => s.descriptor)).toEqual([
+      'fetchWrapped<T>(p: string)',
+      "fetchWrapped<AdminDataResponse>('admin/users')",
+    ]);
+    expect(wrapperCalls[1].covered).toBe(true);
   });
 
   // --- MULTI-FILE trees. Every case below was a live false negative until the
@@ -2414,11 +2394,10 @@ describe('web/src — the guard sees the tree it claims to (anti-vacuity)', () =
   it('knows which client types are conformance-checked, and it is not an empty set', () => {
     const covered = result.sites.filter((s) => s.covered);
     expect(covered.length).toBeGreaterThanOrEqual(COVERED_FLOOR);
-    // Population (b)'s one typed call — the endpoint this whole change exists
-    // for — must be COVERED, not merely enumerated.
-    expect(
-      covered.some((s) => s.typeNames.includes('AdminDataResponse') && s.detector === 'wrapper'),
-    ).toBe(true);
+    // (Population (b)'s one typed call — `fetchAdmin<AdminDataResponse>` — was asserted COVERED
+    // here until the `/admin/users` page was retired (remove-admin-users-page D3). No live
+    // wrapper site exists now; "a typed wrapper call is covered" is pinned by the fixture case
+    // "a TYPED call through a local generic wrapper whose type IS conformance-checked is covered".)
   });
 
   it('the fixture directory and the server capture inventory are the same set', () => {

@@ -74,7 +74,7 @@ const TOAST_CLASSNAMES = {
   error: '!border-danger !text-[#ffb4b4]',
 };
 
-/** The toast host (AppShell, AdminUsersPage): sonner's dark Toaster, bottom-right, V5-styled. */
+/** The toast host (AppShell): sonner's dark Toaster, bottom-right, V5-styled. */
 export function Toast() {
   return (
     <Toaster

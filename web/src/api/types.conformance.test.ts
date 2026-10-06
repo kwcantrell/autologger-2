@@ -51,7 +51,6 @@
 // remain the only hand-written values in this file.
 
 import { describe, expect, it } from 'vitest';
-import adminUsers from '../../../fixtures/api-responses/adminUsers.json';
 import audioSegmentCreate from '../../../fixtures/api-responses/audioSegmentCreate.json';
 import audioSegmentsList from '../../../fixtures/api-responses/audioSegmentsList.json';
 import eventCreate from '../../../fixtures/api-responses/eventCreate.json';
@@ -95,9 +94,6 @@ import type {
 } from './hooks/useTranscriptGenerationStatus';
 import type {
   ActiveStudioCategory,
-  AdminDataResponse,
-  AdminStudio,
-  AdminUser,
   AudioSegment,
   AudioSegmentsResponse,
   Category,
@@ -397,7 +393,8 @@ describe('CW-9 — four Session fields are nullable on the wire', () => {
 //
 // Phase 4 captured 26 fixtures but only the CW blocks above consumed them, so
 // nine files were reaching neither this module nor any other `tsc` input:
-// `adminUsers` (typechecked only incidentally, by `AdminUsersPage.test.tsx`),
+// `adminUsers` (its block was later retired with the admin types and the
+// `/admin/users` page — remove-admin-users-page),
 // both remaining `profile*` branches, `showCreate`, all four team responses,
 // and `transcriptWordCreate`. A fixture no `tsc` run reads checks nothing.
 //
@@ -406,51 +403,6 @@ describe('CW-9 — four Session fields are nullable on the wire', () => {
 // the same instrument as the CW blocks, applied to the conforming endpoints so
 // they cannot quietly stop conforming.
 // ---------------------------------------------------------------------------
-
-describe('GET /api/admin/users — the original `memberships` defect', () => {
-  it('the captured body is assignable to AdminDataResponse', () => {
-    // `AdminUsersPage.fetchAdmin<AdminDataResponse>('admin/users', token)` —
-    // the call whose type argument was wrong, laundered through a local generic
-    // wrapper so `grep 'apiFetch<'` never saw it (design D6).
-    const check: AdminDataResponse = adminUsers;
-    expect(check.users.length).toBeGreaterThan(0);
-    expect(check.studios_catalog.length).toBeGreaterThan(0);
-  });
-
-  it('a user row is assignable to AdminUser, with and without memberships', () => {
-    // Two runtime-guarded rows, so a re-capture that drops either shape fails
-    // here rather than silently reducing what the assignments cover.
-    // `.filter(…)[0]` rather than `.find(…)!` or a cast: an assertion would let
-    // a diverging fixture through, which is the one thing this must not do.
-    const populated: AdminUser = adminUsers.users.filter((u) => u.studios.length > 0)[0];
-    const empty: AdminUser = adminUsers.users.filter((u) => u.studios.length === 0)[0];
-    expect(populated.studios[0].name).toBeTruthy();
-    expect(empty.studios).toEqual([]);
-  });
-
-  it('the wire has `studios: [{id, name}]` and no `memberships` key at all', () => {
-    // This is the whole defect, stated against a captured response: the client
-    // declared `memberships: string[]`, the server has never emitted the key,
-    // and `u.memberships.map(…)` unmounted the page. Reintroducing that field
-    // on `AdminUser` makes the assignments above fail with TS2741.
-    const row = adminUsers.users[0];
-    expect('memberships' in row).toBe(false);
-    expect(row.studios.every((s) => typeof s.id === 'string' && typeof s.name === 'string')).toBe(
-      true,
-    );
-    // The fixture's own type has no such property either — this directive goes
-    // unused (a compile error) the moment a re-capture starts emitting one,
-    // which is the signal to re-check `AdminUser`, not to delete this line.
-    // @ts-expect-error `memberships` is not on the captured response
-    const gone = row.memberships;
-    expect(gone).toBeUndefined();
-  });
-
-  it('a studios-catalog row is assignable to AdminStudio', () => {
-    const check: AdminStudio = adminUsers.studios_catalog[0];
-    expect(typeof check.builtin).toBe('boolean');
-  });
-});
 
 describe('GET /api/profile — the two branches with no CW finding', () => {
   it('the logged-in capture is assignable to ProfilePayload', () => {
@@ -775,18 +727,6 @@ type ExpectUndeclared<T, K extends string> = K extends keyof T
   : K;
 
 describe('additive tolerance — captured keys the client does not declare', () => {
-  it('AdminUser tolerates `picture_url` and `created_at_utc`', () => {
-    // `GET /api/admin/users` emits eight keys per user; `AdminUser` declares
-    // six. The assignments in the admin block above compile anyway.
-    const undeclared = ['picture_url', 'created_at_utc'] as const;
-    for (const key of undeclared) {
-      expect(key in adminUsers.users[0]).toBe(true);
-    }
-    const pictureUrl: ExpectUndeclared<AdminUser, 'picture_url'> = 'picture_url';
-    const createdAt: ExpectUndeclared<AdminUser, 'created_at_utc'> = 'created_at_utc';
-    expect([pictureUrl, createdAt]).toEqual(undeclared.slice());
-  });
-
   it('SessionStatus tolerates `audio_recording_lease_age_sec`', () => {
     expect('audio_recording_lease_age_sec' in sessionStatus).toBe(true);
     const ageSec: ExpectUndeclared<SessionStatus, 'audio_recording_lease_age_sec'> =
@@ -796,10 +736,12 @@ describe('additive tolerance — captured keys the client does not declare', () 
 
   it('the helper itself is not vacuous — a DECLARED key does not typecheck', () => {
     // Without this, `ExpectUndeclared` could be broken (or reduced to `K`) and
-    // the two checks above would keep passing. `email` IS declared on
-    // `AdminUser`, so the conditional must resolve to the failure tuple.
-    // @ts-expect-error `email` is declared, so this resolves to the message tuple
-    const declared: ExpectUndeclared<AdminUser, 'email'> = 'email';
-    expect(declared).toBe('email');
+    // the checks above would keep passing. `is_rolling` IS declared on
+    // `SessionStatus`, so the conditional must resolve to the failure tuple.
+    // (Retargeted from `AdminUser`/`email` when the admin types were retired —
+    // remove-admin-users-page D2.)
+    // @ts-expect-error `is_rolling` is declared, so this resolves to the message tuple
+    const declared: ExpectUndeclared<SessionStatus, 'is_rolling'> = 'is_rolling';
+    expect(declared).toBe('is_rolling');
   });
 });

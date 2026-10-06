@@ -19,7 +19,7 @@ interface TooltipProps {
   className?: string;
 }
 
-/** Wrap once at the page root (IndexRoot / AdminRoot pass delayDuration={400}). */
+/** Wrap once at the page root (IndexRoot passes delayDuration={400}). */
 export const TooltipProvider = TooltipProviderPrimitive;
 
 export function Tooltip({
