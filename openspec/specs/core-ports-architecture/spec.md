@@ -1151,7 +1151,7 @@ SHALL guarantee these observables:
 
 #### Scenario: Responses and frames are unchanged for serial requests
 - **WHEN** the existing route, WebSocket and companion test suites run on the Postgres session storage
-- **THEN** they pass with no change to expected status codes, bodies, headers or frames, apart from the failure paths the slice's contract deltas name
+- **THEN** they pass with no change to expected status codes, bodies, headers or frames, apart from the failure paths the slice's contract deltas name, and apart from what the 7c-1 deltas add: the `version` field on event, transcript word and topic bodies, and revision values that advance once per session write (api-contract-freeze "Session content rows carry their version" and "The session revision advances once per session write")
 
 #### Scenario: A read never sees an open or rolled-back write
 - **WHEN** a read on a session is called while a write on that session is open, and the write then commits or rolls back
@@ -1398,3 +1398,48 @@ slice 7b-1) and the `session-hub` reason with the per-call caller (slice 7b-2).
   the session storage, a caller is written as an object literal outside the implementing modules,
   or a system session caller's reason is not a literal or not on the allowlist
 - **THEN** the repository test fails and names the file
+
+### Requirement: Version checks are atomic with the session write
+The session hub's update and delete operations for events, transcript words and topics SHALL take
+an optional expected version and an overwrite flag (ADR 0021 slice 7c-1). When an expected version
+is given, the operation SHALL read the row's version and either write or refuse inside one hub
+write transaction, after the session's row lock is held. A refusal SHALL be a result, not an
+error: it SHALL carry the row as stored and SHALL write nothing, advance nothing and broadcast
+nothing. A missing row SHALL keep each operation's existing not-found result. An operation without
+an expected version SHALL behave exactly as before, apart from advancing the row's version.
+
+An overwrite that passes the check SHALL write its audit row in the same transaction, bound to the
+same user caller. The overwrite flag SHALL be accepted only from a user caller; a system caller
+with an overwrite flag SHALL be refused with a misuse error before any statement runs.
+
+The session's revision SHALL be advanced by the hub's write path, not by each store: once per
+write transaction, by the first store statement of the transaction that changes a session row
+(the hub-open seed and the event list's relink bookkeeping do not count), and every
+frame and result of that transaction that names the revision SHALL carry the advanced value. A
+transaction body that runs more than once (a retried deadlock) SHALL advance it once, for the run
+that committed.
+
+#### Scenario: Concurrent same-version edits from two processes
+- **WHEN** two server processes update one event concurrently, many times, each with the version it
+  last read
+- **THEN** every update either commits and advances the version by one or is refused with the
+  stored row, and the final version equals one plus the number of committed updates
+
+#### Scenario: A refusal writes nothing
+- **WHEN** a versioned topic update is refused
+- **THEN** the topic, the session's revision and the overwrite table are unchanged, and no frame is
+  sent
+
+#### Scenario: A system caller cannot overwrite
+- **WHEN** a hub view bound to a system caller calls an update with the overwrite flag
+- **THEN** it rejects with a misuse error and runs no statement
+
+#### Scenario: One revision per transaction
+- **WHEN** one hub write transaction inserts two events and changes the transport
+- **THEN** the session's revision advances by one, and both `event.changed` frames it sends carry
+  that value
+
+#### Scenario: A retried transaction advances the revision once
+- **WHEN** a hub write's first run advances the revision and fails with a deadlock, and its second
+  run commits
+- **THEN** the session's revision is one more than before the write
