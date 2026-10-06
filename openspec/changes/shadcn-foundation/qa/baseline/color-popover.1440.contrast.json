@@ -1,0 +1,61 @@
+{
+ "url": "/",
+ "checked": 39,
+ "fails": 4,
+ "approx": 39,
+ "min": 2.02,
+ "failures": [
+  {
+   "el": "button.btn.primary.rounded-v5-sm",
+   "kind": "text",
+   "text": "Add new button",
+   "ratio": 4.48,
+   "approx": true,
+   "disabled": false,
+   "bg": [
+    29,
+    73,
+    101
+   ]
+  },
+  {
+   "el": "span.min-w-0.truncate",
+   "kind": "text",
+   "text": "AI Rules",
+   "ratio": 2.8,
+   "approx": true,
+   "disabled": false,
+   "bg": [
+    40,
+    44,
+    55
+   ]
+  },
+  {
+   "el": "span.min-w-0.truncate",
+   "kind": "text",
+   "text": "AI Rules",
+   "ratio": 2.8,
+   "approx": true,
+   "disabled": false,
+   "bg": [
+    40,
+    44,
+    55
+   ]
+  },
+  {
+   "el": "span.min-w-0.truncate",
+   "kind": "text",
+   "text": "AI Rules",
+   "ratio": 2.8,
+   "approx": true,
+   "disabled": false,
+   "bg": [
+    40,
+    44,
+    55
+   ]
+  }
+ ]
+}

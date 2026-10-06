@@ -1,0 +1,22 @@
+{
+ "url": "/",
+ "checked": 8,
+ "fails": 1,
+ "approx": 8,
+ "min": 2.02,
+ "failures": [
+  {
+   "el": "button.inline-flex.h-9.w-9",
+   "kind": "text",
+   "text": "×",
+   "ratio": 4.24,
+   "approx": true,
+   "disabled": false,
+   "bg": [
+    48,
+    56,
+    76
+   ]
+  }
+ ]
+}

@@ -1,0 +1,22 @@
+{
+ "url": "/",
+ "checked": 5,
+ "fails": 1,
+ "approx": 4,
+ "min": 4.32,
+ "failures": [
+  {
+   "el": "a.mt-4.box-border.flex",
+   "kind": "text",
+   "text": "Create an account with Google",
+   "ratio": 4.32,
+   "approx": true,
+   "disabled": false,
+   "bg": [
+    46,
+    54,
+    74
+   ]
+  }
+ ]
+}
