@@ -105,11 +105,12 @@
   - Evidence: `make dev-up`; walk copied plus `suffix-select`/`roll-tooltip` steps; one pass per width (`QA_VP="1440 900"` / `"390 844"`, mobile opens the nav drawer first) -> 56 contrast JSONs, only `filter-menu` `Audio issue 3.64` (out of scope). The walk found a breakpoint remount (Dialog<->Drawer swap closed the nested Event Options dialog), fixed by `useDialogMode` (`40a249c`, unit test failed first) and verified live (both dialogs still open after resizing 1440 -> 390). Per-screen diffs recorded in qa/README.md (max 15.48% at color-popover.390, mostly sheet offset)
 
   Then run `QA_BASELINE=<archived>/qa/after-foundation ./screens.sh qa/after-wrappers` after `make dev-up`. Verify every `*.contrast.json` has `fails: 0` except the user-data "Audio issue", and record the per-screen diffs in `qa/README.md`.
-- [ ] 5.2 The owner reviews the before/after pairs and does a dev-stack pass:
+- [x] 5.2 The owner reviews the before/after pairs and does a dev-stack pass:
   - the mobile (390) Dialog drawer: drag-to-dismiss and its handle
   - a destructive confirm: AlertDialog on desktop, drawer on mobile; Escape, overlay and drag decline
   - Space, `+` and `1–9` yielding while a confirm is open
   - toast stacking
+  - Evidence: per-screen diffs in `qa/README.md`; owner reviewed the pairs and did the dev-stack pass (mobile sheet drag + nested sheets, destructive confirm desktop/mobile, shortcuts yielding, toast stacking) -> "Everything looks good." (2026-10-06); owner confirmed TS_261006_002 is their own session
 
   Verify the result is recorded in `qa/README.md`.
 - [x] 5.3 Run `GITHUB_BASE_REF=supabase-migration scripts/check-change.sh` and `openspec validate shadcn-shared-wrappers --strict`. Verify every gate passes. The known storage "8 contending" flake is re-run, not counted.

@@ -58,4 +58,4 @@ The dev DB gained a second session, `TS_261006_002`, between the end of the `sha
 
 A blank diff means the screen is new (`suffix-select`, `roll-tooltip`), so there's no baseline image for it. The largest diffs are the mobile Settings sheet and its nested sheets. vaul's drawer sits about 6px higher than the legacy sheet, and the nested sheet's spacing differs slightly. The pairs look equivalent.
 
-**The owner's review and dev-stack pass (task 5.2): pending.**
+**The owner's review and dev-stack pass (task 5.2): done, approved on 2026-10-06 ("Everything looks good").** The owner also confirmed that `TS_261006_002` is their own session.
