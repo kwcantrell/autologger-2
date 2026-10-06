@@ -3,7 +3,7 @@ import type * as React from 'react';
 import { cn } from '@/shared/lib/utils';
 
 // V5 (shadcn-port-workspace D1): base strings replaced with the feed-tab "lid" vocabulary that
-// `feedTabButtonClassName` (pages/index/components/feedTabStyles.ts) expresses with a boolean;
+// the retired `feedTabButtonClassName` helper expressed with a boolean;
 // here the active/inactive branches key on Radix's `data-state`. The list is a non-wrapping row
 // (mobile: the caller's wrapper scrolls it horizontally).
 function Tabs({

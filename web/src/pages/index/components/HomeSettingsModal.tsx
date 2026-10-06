@@ -6,6 +6,7 @@ import { sessionStatusKeys } from '../../../api/hooks/useSessionStatus';
 import { showAccessFrom } from '../../../api/hooks/useShowAccess';
 import { showKeys, useStudioShows } from '../../../api/hooks/useShows';
 import type { ProfilePayload, Show } from '../../../api/types';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../../shared/components/ui/tabs';
 import { BTN_PRIMARY_SKY } from '../../../shared/theme/classnames';
 import { useConfirm } from '../../../shared/ui/ConfirmDialog';
 import { Dialog } from '../../../shared/ui/Dialog';
@@ -14,7 +15,6 @@ import { showToast } from '../utils/toast';
 import type { EventButtonDraft } from './EventButtonsTable';
 import { EventButtonsTable } from './EventButtonsTable';
 import { FpsSelect } from './FpsSelect';
-import { feedTabButtonClassName } from './feedTabStyles';
 import { LazySelect } from './LazySelect';
 
 // Compact toolbar-select box (ports the .teamSelect/.showSelect layout): auto width
@@ -187,6 +187,17 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
   // mounted (settings-modal-mount-cost, D2) instead of every tab paying its mount cost up
   // front. Seeded with 'general' since the modal always opens there.
   const [visitedTabs, setVisitedTabs] = useState<Set<TabId>>(() => new Set(['general']));
+  // Activate a tab and record its first visit in one step (click, mouse-down or arrow-key
+  // focus — Radix automatic activation — all land here).
+  const selectTab = (id: TabId) => {
+    setActiveTab(id);
+    setVisitedTabs((prev) => {
+      if (prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.add(id);
+      return next;
+    });
+  };
   const [activeStudioId, setActiveStudioId] = useState('');
   const [activeShowId, setActiveShowId] = useState('');
   const [defaultFps, setDefaultFps] = useState(24);
@@ -789,157 +800,143 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
       </div>
 
       {/* Tabs + content */}
-      <section className={clsx('flex-[1_1_auto] min-h-0 flex flex-col overflow-hidden', TAB_VARS)}>
-        <div
-          // Same stacking/overlap as SessionWorkspace feed tabs: tablist under the panel
-          // (z-0 / z-1). -mb-2 tucks the panel under the tab bottoms. pt ≥ the active tab's
-          // cyan ::before glow (0 0 12px) so overflow-y:hidden doesn't clip it; overflow-x
-          // only on small screens (same as feed) so desktop keeps overflow-y:visible for the
-          // glow — overflow-x:auto would force overflow-y to auto and re-clip.
-          className="relative z-0 flex shrink-0 flex-row flex-nowrap items-end gap-[0.18rem] -mb-2 px-[0.15rem] pt-[14px] max-md:overflow-x-auto max-md:overflow-y-hidden max-md:[-webkit-overflow-scrolling:touch] max-md:[scrollbar-width:none]"
-          role="tablist"
-          aria-label="Settings sections"
+      <Tabs value={activeTab} onValueChange={(v) => selectTab(v as TabId)} asChild>
+        <section
+          className={clsx('flex-[1_1_auto] min-h-0 flex flex-col overflow-hidden', TAB_VARS)}
         >
-          {tabs.map((tab) => {
-            const isActive = activeTab === tab.id;
-            return (
-              <button
+          {/* shadcn Tabs (shadcn-port-settings D1). Same stacking/overlap as the feed tabs:
+            tablist under the panel (z-0 / z-1); -mb-2 tucks the panel under the tab bottoms;
+            pt ≥ the active tab's cyan ::before glow so overflow-y:hidden doesn't clip it;
+            overflow-x only on small screens. The lid chrome is the themed TabsTrigger. The
+            explicit ids / aria-controls keep the v6-settings-* pairing (Radix spreads ours
+            last). */}
+          <TabsList
+            aria-label="Settings sections"
+            className="relative z-0 flex-none shrink-0 gap-[0.18rem] -mb-2 px-[0.15rem] pt-[14px] max-md:overflow-x-auto max-md:overflow-y-hidden max-md:[-webkit-overflow-scrolling:touch] max-md:[scrollbar-width:none]"
+          >
+            {tabs.map((tab) => (
+              <TabsTrigger
                 key={tab.id}
-                type="button"
-                role="tab"
+                value={tab.id}
                 id={`v6-settings-tab-${tab.id}`}
-                // Shared glass-tab chrome with Event Feed / Transcript / … (cyan top stripe,
-                // no bottom border — feedTabStyles).
-                className={feedTabButtonClassName(isActive)}
-                aria-selected={isActive}
                 aria-controls={`v6-settings-section-${tab.id}`}
-                tabIndex={isActive ? 0 : -1}
-                onClick={() => {
-                  setActiveTab(tab.id);
-                  setVisitedTabs((prev) => {
-                    if (prev.has(tab.id)) return prev;
-                    const next = new Set(prev);
-                    next.add(tab.id);
-                    return next;
-                  });
-                }}
               >
                 {tab.label}
-              </button>
-            );
-          })}
-        </div>
+              </TabsTrigger>
+            ))}
+          </TabsList>
 
-        {/* General tab */}
-        <div
-          id="v6-settings-section-general"
-          className={SECTION_CLASS}
-          role="tabpanel"
-          aria-labelledby="v6-settings-tab-general"
-          hidden={activeTab !== 'general'}
-        >
-          {/* Deferred mount (settings-modal-mount-cost, D2): only the wrapper above is
+          {/* General tab */}
+          <TabsContent
+            value="general"
+            forceMount
+            id="v6-settings-section-general"
+            className={SECTION_CLASS}
+            aria-labelledby="v6-settings-tab-general"
+            hidden={activeTab !== 'general'}
+          >
+            {/* Deferred mount (settings-modal-mount-cost, D2): only the wrapper above is
               unconditional (its id/role/aria-labelledby/hidden keep every aria-controls
               target resolvable and this tab's e2e surface intact) — the content below
               mounts once this tab has been visited and then stays mounted. */}
-          {visitedTabs.has('general') && (
-            <>
-              {/* Show details. .profileShowFields sets border-b-0 (over admin-settings-block's border). */}
-              {isMemberView ? (
-                <p
-                  className="modal-hint muted"
-                  id="profile-show-fields-member"
-                  style={{ marginBottom: '0.75rem' }}
-                >
-                  Only the team’s owner and admins can edit shows and team defaults.
-                </p>
-              ) : currentDraft ? (
-                <div id="profile-show-fields" className="admin-settings-block border-b-0">
-                  <div className={FIELDS_HEAD}>
-                    {/* .profileShowFieldsHead :global(.settings-subheading) forced margin:0. */}
-                    <h2 className="settings-subheading !m-0">Show Details</h2>
-                  </div>
-                  <div className={FIELDS_ROW}>
-                    <label className={clsx('field', FIELD_BASE)}>
-                      <span>Name:</span>
-                      <input
-                        type="text"
-                        id="profile-show-name"
-                        className={clsx('profile-select', HS_INPUT_OVERRIDE)}
-                        maxLength={200}
-                        autoComplete="off"
-                        value={currentDraft.name}
-                        onChange={(e) => updateShowDraft({ name: e.target.value })}
-                      />
-                    </label>
-                    <label className={clsx('field', FIELD_CODE)}>
-                      <span>Code:</span>
-                      <input
-                        type="text"
-                        id="profile-show-code"
-                        className={clsx('profile-select mono', HS_INPUT_OVERRIDE)}
-                        maxLength={40}
-                        autoComplete="off"
-                        spellCheck={false}
-                        value={currentDraft.show_code}
-                        onChange={(e) =>
-                          updateShowDraft({ show_code: e.target.value.toUpperCase() })
-                        }
-                      />
-                    </label>
-                    {/* session-title-suffix task 2.1: replaces the removed Next Ep counter
-                    control. Maps to the show's `title_suffix` preference, which the
-                    server uses to derive untitled-create titles (design D5-D8). */}
-                    <label className={clsx('field', FIELD_SUFFIX)} htmlFor="profile-show-suffix">
-                      <span>Suffix:</span>
-                      <LazySelect
-                        id="profile-show-suffix"
-                        ariaLabel="Suffix"
-                        value={currentDraft.title_suffix}
-                        onChange={(v) =>
-                          updateShowDraft({ title_suffix: v === 'episode' ? 'episode' : 'date' })
-                        }
-                        options={[
-                          { value: 'date', label: 'Date' },
-                          { value: 'episode', label: 'Episode Number' },
-                        ]}
-                      />
-                    </label>
-                    <label className={clsx('field', FIELD_FPS)} htmlFor="profile-default-fps">
-                      <span>Default Frame Rate:</span>
-                      <FpsSelect
-                        id="profile-default-fps"
-                        value={defaultFps}
-                        onChange={setDefaultFps}
-                      />
-                    </label>
-                  </div>
-                  {showAcronymWarn && (
-                    <p className="modal-hint" id="profile-show-acronym-warn">
-                      Tip: show code is usually initials of the show name (e.g.{' '}
-                      {currentDraft.name.trim()} &rarr; {currentInitials}). Yours differs — that is
-                      fine if intentional.
-                    </p>
-                  )}
-                </div>
-              ) : (
-                <>
+            {visitedTabs.has('general') && (
+              <>
+                {/* Show details. .profileShowFields sets border-b-0 (over admin-settings-block's border). */}
+                {isMemberView ? (
                   <p
                     className="modal-hint muted"
-                    id="profile-show-fields-placeholder"
+                    id="profile-show-fields-member"
                     style={{ marginBottom: '0.75rem' }}
                   >
-                    {showsUnavailable === 'offline'
-                      ? 'You’re offline — can’t load shows.'
-                      : showsUnavailable === 'error'
-                        ? 'Couldn’t load shows.'
-                        : !showsReady
-                          ? 'Loading shows…'
-                          : showsForStudio.length === 0
-                            ? 'No shows for this team yet. Add one below.'
-                            : 'Select a show above to view details.'}
+                    Only the team’s owner and admins can edit shows and team defaults.
                   </p>
-                  {/* ERROR only. It is the one way out of a FAILED fetch without
+                ) : currentDraft ? (
+                  <div id="profile-show-fields" className="admin-settings-block border-b-0">
+                    <div className={FIELDS_HEAD}>
+                      {/* .profileShowFieldsHead :global(.settings-subheading) forced margin:0. */}
+                      <h2 className="settings-subheading !m-0">Show Details</h2>
+                    </div>
+                    <div className={FIELDS_ROW}>
+                      <label className={clsx('field', FIELD_BASE)}>
+                        <span>Name:</span>
+                        <input
+                          type="text"
+                          id="profile-show-name"
+                          className={clsx('profile-select', HS_INPUT_OVERRIDE)}
+                          maxLength={200}
+                          autoComplete="off"
+                          value={currentDraft.name}
+                          onChange={(e) => updateShowDraft({ name: e.target.value })}
+                        />
+                      </label>
+                      <label className={clsx('field', FIELD_CODE)}>
+                        <span>Code:</span>
+                        <input
+                          type="text"
+                          id="profile-show-code"
+                          className={clsx('profile-select mono', HS_INPUT_OVERRIDE)}
+                          maxLength={40}
+                          autoComplete="off"
+                          spellCheck={false}
+                          value={currentDraft.show_code}
+                          onChange={(e) =>
+                            updateShowDraft({ show_code: e.target.value.toUpperCase() })
+                          }
+                        />
+                      </label>
+                      {/* session-title-suffix task 2.1: replaces the removed Next Ep counter
+                    control. Maps to the show's `title_suffix` preference, which the
+                    server uses to derive untitled-create titles (design D5-D8). */}
+                      <label className={clsx('field', FIELD_SUFFIX)} htmlFor="profile-show-suffix">
+                        <span>Suffix:</span>
+                        <LazySelect
+                          id="profile-show-suffix"
+                          ariaLabel="Suffix"
+                          value={currentDraft.title_suffix}
+                          onChange={(v) =>
+                            updateShowDraft({ title_suffix: v === 'episode' ? 'episode' : 'date' })
+                          }
+                          options={[
+                            { value: 'date', label: 'Date' },
+                            { value: 'episode', label: 'Episode Number' },
+                          ]}
+                        />
+                      </label>
+                      <label className={clsx('field', FIELD_FPS)} htmlFor="profile-default-fps">
+                        <span>Default Frame Rate:</span>
+                        <FpsSelect
+                          id="profile-default-fps"
+                          value={defaultFps}
+                          onChange={setDefaultFps}
+                        />
+                      </label>
+                    </div>
+                    {showAcronymWarn && (
+                      <p className="modal-hint" id="profile-show-acronym-warn">
+                        Tip: show code is usually initials of the show name (e.g.{' '}
+                        {currentDraft.name.trim()} &rarr; {currentInitials}). Yours differs — that
+                        is fine if intentional.
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  <>
+                    <p
+                      className="modal-hint muted"
+                      id="profile-show-fields-placeholder"
+                      style={{ marginBottom: '0.75rem' }}
+                    >
+                      {showsUnavailable === 'offline'
+                        ? 'You’re offline — can’t load shows.'
+                        : showsUnavailable === 'error'
+                          ? 'Couldn’t load shows.'
+                          : !showsReady
+                            ? 'Loading shows…'
+                            : showsForStudio.length === 0
+                              ? 'No shows for this team yet. Add one below.'
+                              : 'Select a show above to view details.'}
+                    </p>
+                    {/* ERROR only. It is the one way out of a FAILED fetch without
                       reopening the modal — `showsLoaded` never flips on an errored
                       query, so nothing else re-arms the section.
 
@@ -952,232 +949,238 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
                       paused query is `onlineManager` firing on reconnect, which
                       continues the retryer's paused promise with or without a click,
                       so the honest affordance here is saying so. */}
-                  {showsUnavailable === 'error' && (
+                    {showsUnavailable === 'error' && (
+                      <button
+                        type="button"
+                        className="btn"
+                        id="profile-shows-retry"
+                        style={{ marginBottom: '0.75rem' }}
+                        onClick={() => {
+                          void studioShowsQuery.refetch();
+                        }}
+                      >
+                        Retry
+                      </button>
+                    )}
+                    {showsUnavailable === 'offline' && (
+                      <p
+                        className="modal-hint muted"
+                        id="profile-shows-offline-recovery"
+                        style={{ marginBottom: '0.75rem' }}
+                      >
+                        Shows will load on their own once you’re back online.
+                      </p>
+                    )}
+                  </>
+                )}
+
+                {/* Account section */}
+                {profile?.auth.logged_in && profile.auth.user && (
+                  <div
+                    id="v6-settings-account"
+                    className="admin-settings-block mt-5 pt-4 border-t border-v5-border"
+                  >
+                    <div className={FIELDS_HEAD}>
+                      <h2 className="settings-subheading !m-0">Account</h2>
+                    </div>
+                    <div className={FIELDS_ROW}>
+                      <label className={clsx('field', FIELD_BASE)}>
+                        <span>Account</span>
+                        <input
+                          type="email"
+                          id="profile-account-email"
+                          className={clsx('profile-select', HS_INPUT_OVERRIDE)}
+                          disabled
+                          autoComplete="username"
+                          value={profile.auth.user.email}
+                          readOnly
+                        />
+                      </label>
+                      <label className={clsx('field', FIELD_BASE)}>
+                        <span>First name</span>
+                        <input
+                          type="text"
+                          id="profile-account-given"
+                          className={clsx('profile-select', HS_INPUT_OVERRIDE)}
+                          maxLength={200}
+                          autoComplete="given-name"
+                          value={givenName}
+                          onChange={(e) => setGivenName(e.target.value)}
+                        />
+                      </label>
+                      <label className={clsx('field', FIELD_BASE)}>
+                        <span>Last name</span>
+                        <input
+                          type="text"
+                          id="profile-account-family"
+                          className={clsx('profile-select', HS_INPUT_OVERRIDE)}
+                          maxLength={200}
+                          autoComplete="family-name"
+                          value={familyName}
+                          onChange={(e) => setFamilyName(e.target.value)}
+                        />
+                      </label>
+                    </div>
+                    {profile.auth.user.teams.length > 0 && (
+                      <div className="mt-3">
+                        <span className="muted">Teams you can access</span>
+                        {/* .accountTeamsList: list-disc; color falls back (--v5-fg undefined). */}
+                        <ul
+                          id="profile-account-teams"
+                          className="mt-[0.35rem] mx-0 mb-0 pl-[1.2rem] list-disc text-[rgba(255,255,255,0.88)]"
+                        >
+                          {profile.auth.user.teams.map((t) => (
+                            <li key={t.id}>{t.name}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    <div className="mt-4 flex justify-end">
+                      {/* .logoutBtn tints the chrome .btn red. */}
+                      <a
+                        href="/auth/logout"
+                        className="btn text-[#fecaca] bg-[rgba(127,29,29,0.45)] border border-[rgba(248,113,113,0.5)] hover-always:bg-[rgba(153,27,27,0.65)]"
+                        id="profile-account-logout"
+                      >
+                        Log out
+                      </a>
+                    </div>
+                  </div>
+                )}
+
+                {/* Add new show. .addShowActions overrides .settings-actions justify/mt/pt/border-color.
+                  Not rendered in the member view (show-grants D13). */}
+                {!isMemberView && (
+                  <div className="settings-actions justify-center mt-5 pt-4 border-t border-v5-border">
                     <button
                       type="button"
                       className="btn"
-                      id="profile-shows-retry"
-                      style={{ marginBottom: '0.75rem' }}
-                      onClick={() => {
-                        void studioShowsQuery.refetch();
-                      }}
+                      id="profile-show-add"
+                      // `!showsReady` here as well as on `disabled`: the account init now
+                      // commits the studio selection immediately (review finding 2), so
+                      // `activeStudioId` alone no longer implies the shows section is usable —
+                      // and offering Add-New-Show over a section that is still loading, or that
+                      // failed to load, would advertise an action that cannot work.
+                      hidden={
+                        !showsReady || !activeStudioId || (profile?.studios ?? []).length === 0
+                      }
+                      // Creating a show while the studio's shows are still in
+                      // flight would land the new draft in a map the rebuild
+                      // effect is about to replace.
+                      disabled={createShow.isPending || !showsReady}
+                      onClick={handleAddShow}
                     >
-                      Retry
+                      {`Add New Show to ${(profile?.studios ?? []).find((s) => s.id === activeStudioId)?.name ?? 'this team'}`}
                     </button>
-                  )}
-                  {showsUnavailable === 'offline' && (
-                    <p
-                      className="modal-hint muted"
-                      id="profile-shows-offline-recovery"
-                      style={{ marginBottom: '0.75rem' }}
-                    >
-                      Shows will load on their own once you’re back online.
-                    </p>
-                  )}
-                </>
-              )}
-
-              {/* Account section */}
-              {profile?.auth.logged_in && profile.auth.user && (
-                <div
-                  id="v6-settings-account"
-                  className="admin-settings-block mt-5 pt-4 border-t border-v5-border"
-                >
-                  <div className={FIELDS_HEAD}>
-                    <h2 className="settings-subheading !m-0">Account</h2>
                   </div>
-                  <div className={FIELDS_ROW}>
-                    <label className={clsx('field', FIELD_BASE)}>
-                      <span>Account</span>
-                      <input
-                        type="email"
-                        id="profile-account-email"
-                        className={clsx('profile-select', HS_INPUT_OVERRIDE)}
-                        disabled
-                        autoComplete="username"
-                        value={profile.auth.user.email}
-                        readOnly
-                      />
-                    </label>
-                    <label className={clsx('field', FIELD_BASE)}>
-                      <span>First name</span>
-                      <input
-                        type="text"
-                        id="profile-account-given"
-                        className={clsx('profile-select', HS_INPUT_OVERRIDE)}
-                        maxLength={200}
-                        autoComplete="given-name"
-                        value={givenName}
-                        onChange={(e) => setGivenName(e.target.value)}
-                      />
-                    </label>
-                    <label className={clsx('field', FIELD_BASE)}>
-                      <span>Last name</span>
-                      <input
-                        type="text"
-                        id="profile-account-family"
-                        className={clsx('profile-select', HS_INPUT_OVERRIDE)}
-                        maxLength={200}
-                        autoComplete="family-name"
-                        value={familyName}
-                        onChange={(e) => setFamilyName(e.target.value)}
-                      />
-                    </label>
-                  </div>
-                  {profile.auth.user.teams.length > 0 && (
-                    <div className="mt-3">
-                      <span className="muted">Teams you can access</span>
-                      {/* .accountTeamsList: list-disc; color falls back (--v5-fg undefined). */}
-                      <ul
-                        id="profile-account-teams"
-                        className="mt-[0.35rem] mx-0 mb-0 pl-[1.2rem] list-disc text-[rgba(255,255,255,0.88)]"
-                      >
-                        {profile.auth.user.teams.map((t) => (
-                          <li key={t.id}>{t.name}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                  <div className="mt-4 flex justify-end">
-                    {/* .logoutBtn tints the chrome .btn red. */}
-                    <a
-                      href="/auth/logout"
-                      className="btn text-[#fecaca] bg-[rgba(127,29,29,0.45)] border border-[rgba(248,113,113,0.5)] hover-always:bg-[rgba(153,27,27,0.65)]"
-                      id="profile-account-logout"
-                    >
-                      Log out
-                    </a>
-                  </div>
-                </div>
-              )}
+                )}
+              </>
+            )}
+          </TabsContent>
 
-              {/* Add new show. .addShowActions overrides .settings-actions justify/mt/pt/border-color.
-                  Not rendered in the member view (show-grants D13). */}
-              {!isMemberView && (
-                <div className="settings-actions justify-center mt-5 pt-4 border-t border-v5-border">
-                  <button
-                    type="button"
-                    className="btn"
-                    id="profile-show-add"
-                    // `!showsReady` here as well as on `disabled`: the account init now
-                    // commits the studio selection immediately (review finding 2), so
-                    // `activeStudioId` alone no longer implies the shows section is usable —
-                    // and offering Add-New-Show over a section that is still loading, or that
-                    // failed to load, would advertise an action that cannot work.
-                    hidden={!showsReady || !activeStudioId || (profile?.studios ?? []).length === 0}
-                    // Creating a show while the studio's shows are still in
-                    // flight would land the new draft in a map the rebuild
-                    // effect is about to replace.
-                    disabled={createShow.isPending || !showsReady}
-                    onClick={handleAddShow}
-                  >
-                    {`Add New Show to ${(profile?.studios ?? []).find((s) => s.id === activeStudioId)?.name ?? 'this team'}`}
-                  </button>
-                </div>
-              )}
-            </>
-          )}
-        </div>
-
-        {/* Event Buttons tab */}
-        <div
-          id="v6-settings-section-event-buttons"
-          className={SECTION_CLASS}
-          role="tabpanel"
-          aria-labelledby="v6-settings-tab-event-buttons"
-          hidden={activeTab !== 'event-buttons'}
-        >
-          {/* Deferred mount (settings-modal-mount-cost, D2/D3): this is the tab the change
+          {/* Event Buttons tab */}
+          <TabsContent
+            value="event-buttons"
+            forceMount
+            id="v6-settings-section-event-buttons"
+            className={SECTION_CLASS}
+            aria-labelledby="v6-settings-tab-event-buttons"
+            hidden={activeTab !== 'event-buttons'}
+          >
+            {/* Deferred mount (settings-modal-mount-cost, D2/D3): this is the tab the change
               exists for — EventButtonsTable's per-row Radix Selects dominate the modal's
               mount cost, so this content only mounts once the tab has been activated. */}
-          {visitedTabs.has('event-buttons') &&
-            (isMemberView ? (
-              <p className="modal-hint muted" id="event-buttons-member">
-                Only the team’s owner and admins can edit event buttons.
-              </p>
-            ) : currentDraft ? (
-              <>
-                {/* .eventsIntro: margin-top 0 over the .modal-hint base.
+            {visitedTabs.has('event-buttons') &&
+              (isMemberView ? (
+                <p className="modal-hint muted" id="event-buttons-member">
+                  Only the team’s owner and admins can edit event buttons.
+                </p>
+              ) : currentDraft ? (
+                <>
+                  {/* .eventsIntro: margin-top 0 over the .modal-hint base.
                     ui-refresh: the old copy claimed slot colors and drag order "save
                     automatically" — they don't; every edit in this tab is a draft applied by
                     Save (updateShowDraft). Copy now matches the actual save model (D11). */}
-                <p className="modal-hint mt-0">
-                  Update button colors maps each event&rsquo;s color to the nearest slot color
-                  without changing the palette. Drag rows to set session order. Changes here apply
-                  when you click <strong>Save</strong>.
+                  <p className="modal-hint mt-0">
+                    Update button colors maps each event&rsquo;s color to the nearest slot color
+                    without changing the palette. Drag rows to set session order. Changes here apply
+                    when you click <strong>Save</strong>.
+                  </p>
+                  <EventButtonsTable
+                    buttons={currentDraft.categories}
+                    palette={currentDraft.event_palette}
+                    palettePreset={currentDraft.event_palette_preset}
+                    paletteCustom={currentDraft.event_palette_custom}
+                    otherShows={otherShows}
+                    onChange={(cats, pal, preset, custom) =>
+                      updateShowDraft({
+                        categories: cats,
+                        event_palette: pal,
+                        event_palette_preset: preset,
+                        event_palette_custom: custom,
+                      })
+                    }
+                  />
+                </>
+              ) : (
+                <p className="modal-hint muted">
+                  {showsUnavailable === 'offline'
+                    ? 'You’re offline — can’t load shows.'
+                    : showsUnavailable === 'error'
+                      ? 'Couldn’t load shows.'
+                      : showsReady
+                        ? 'Select a show above to edit its event buttons.'
+                        : 'Loading shows…'}
                 </p>
-                <EventButtonsTable
-                  buttons={currentDraft.categories}
-                  palette={currentDraft.event_palette}
-                  palettePreset={currentDraft.event_palette_preset}
-                  paletteCustom={currentDraft.event_palette_custom}
-                  otherShows={otherShows}
-                  onChange={(cats, pal, preset, custom) =>
-                    updateShowDraft({
-                      categories: cats,
-                      event_palette: pal,
-                      event_palette_preset: preset,
-                      event_palette_custom: custom,
-                    })
-                  }
-                />
-              </>
-            ) : (
-              <p className="modal-hint muted">
-                {showsUnavailable === 'offline'
-                  ? 'You’re offline — can’t load shows.'
-                  : showsUnavailable === 'error'
-                    ? 'Couldn’t load shows.'
-                    : showsReady
-                      ? 'Select a show above to edit its event buttons.'
-                      : 'Loading shows…'}
-              </p>
-            ))}
-        </div>
+              ))}
+          </TabsContent>
 
-        {/* Auto Sync tab */}
-        <div
-          id="v6-settings-section-autosync"
-          className={SECTION_CLASS}
-          role="tabpanel"
-          aria-labelledby="v6-settings-tab-autosync"
-          hidden={activeTab !== 'autosync'}
-        >
-          {/* Deferred mount (settings-modal-mount-cost, D2): this tab's own content is cheap
+          {/* Auto Sync tab */}
+          <TabsContent
+            value="autosync"
+            forceMount
+            id="v6-settings-section-autosync"
+            className={SECTION_CLASS}
+            aria-labelledby="v6-settings-tab-autosync"
+            hidden={activeTab !== 'autosync'}
+          >
+            {/* Deferred mount (settings-modal-mount-cost, D2): this tab's own content is cheap
               (two <p>s) — deferred anyway so the discipline is uniform across all four tabs
               rather than special-cased per tab (see design D2's alternatives). */}
-          {visitedTabs.has('autosync') && (
-            <>
-              <p className="modal-hint muted">Coming soon.</p>
-              {/* .autosyncHint: margin-top 0.35rem. */}
-              <p className="modal-hint mt-[0.35rem]">
-                When available, options here will use the team selected in the header above.
-              </p>
-            </>
-          )}
-        </div>
+            {visitedTabs.has('autosync') && (
+              <>
+                <p className="modal-hint muted">Coming soon.</p>
+                {/* .autosyncHint: margin-top 0.35rem. */}
+                <p className="modal-hint mt-[0.35rem]">
+                  When available, options here will use the team selected in the header above.
+                </p>
+              </>
+            )}
+          </TabsContent>
 
-        {/* Debug tab */}
-        <div
-          id="v6-settings-section-debug"
-          className={SECTION_CLASS}
-          role="tabpanel"
-          aria-labelledby="v6-settings-tab-debug"
-          hidden={activeTab !== 'debug'}
-        >
-          {/* Deferred mount (settings-modal-mount-cost, D2) — same uniform discipline as the
+          {/* Debug tab */}
+          <TabsContent
+            value="debug"
+            forceMount
+            id="v6-settings-section-debug"
+            className={SECTION_CLASS}
+            aria-labelledby="v6-settings-tab-debug"
+            hidden={activeTab !== 'debug'}
+          >
+            {/* Deferred mount (settings-modal-mount-cost, D2) — same uniform discipline as the
               other three tabs. */}
-          {visitedTabs.has('debug') && (
-            <>
-              {/* .sectionLead: margin-top 0, margin-bottom 0.65rem. */}
-              <p className="modal-hint mt-0 mb-[0.65rem]">
-                Lag and layout A/B toggles (saved in this browser).
-              </p>
-              <div id="v6-settings-perf-debug-mount" className="min-w-0" />
-            </>
-          )}
-        </div>
-      </section>
+            {visitedTabs.has('debug') && (
+              <>
+                {/* .sectionLead: margin-top 0, margin-bottom 0.65rem. */}
+                <p className="modal-hint mt-0 mb-[0.65rem]">
+                  Lag and layout A/B toggles (saved in this browser).
+                </p>
+                <div id="v6-settings-perf-debug-mount" className="min-w-0" />
+              </>
+            )}
+          </TabsContent>
+        </section>
+      </Tabs>
 
       {confirmElement}
 

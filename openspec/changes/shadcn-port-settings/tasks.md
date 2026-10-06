@@ -9,7 +9,7 @@
 
 ## 2. Settings modal
 
-- [ ] 2.1 Settings tabs on controlled shadcn `Tabs`, with explicit ids, `forceMount` plus `hidden`, and the `visitedTabs` gate. Delete `feedTabStyles.ts` (D1).
+- [x] 2.1 Settings tabs on controlled shadcn `Tabs`, with explicit ids, `forceMount` plus `hidden`, and the `visitedTabs` gate. Delete `feedTabStyles.ts` (D1).
   - Test first, in `HomeSettingsModal.test.tsx`:
     - tab switches use `fireEvent.mouseDown` through one helper;
     - new: ArrowRight from General activates Event Buttons after an awaited tick;
@@ -17,6 +17,7 @@
     - an unvisited panel has no children;
     - a visited panel's content survives switching away.
   - Verify: `npx vitest run src/pages/index/components/HomeSettingsModal.test.tsx` passes, and `grep -rn feedTabStyles web/src` prints nothing.
+  - Evidence: test first: 13 tab switches -> clickTab helper (fireEvent.mouseDown button 0) + new "tabs are linked to their panels, unvisited panels are empty, and ArrowRight activates the next tab" (v6-settings-tab-* ids in order, aria-controls -> tabpanel with aria-labelledby, hidden iff unselected, autosync panel 0 children, ArrowRight -> Event Buttons selected+focused+mounted) -> on the hand-built tablist `8 failed | 49 passed (57)`; after controlled Tabs asChild on the <section>, TabsList "Settings sections", TabsTrigger with explicit id/aria-controls, TabsContent forceMount + explicit id/aria-labelledby/hidden, children still gated on visitedTabs via selectTab, prevOpen reset untouched; feedTabStyles.ts deleted -> `npx vitest run src/pages/index/components/HomeSettingsModal.test.tsx` 57 passed; full `npx vitest run` `Test Files 125 passed (125) Tests 1566 passed (1566)`; `grep -rn feedTabStyles web/src` -> nothing; tsc clean
 - [ ] 2.2 Port the fields, hints, section blocks, buttons and Add-Show dialog to `Field`/`FieldLabel`/`Input`/`FieldDescription`/`Button`/`DialogActions` (D2).
   - Test first:
     - rewrite the `label > span` order check (:733) as label-text order inside `#profile-show-fields`;
