@@ -11,7 +11,7 @@ Tier: 2 · Reviewers: assumption tester, failure and abuse, scope and simplicity
 - [x] [major] On the event feed, `saveInline` compared stale focused controls against the live row, so an untyped visit produced a conflict (or today, a silent revert) (assumption tester). Resolved: D3 compares against the seed; spec scenario "Leaving a row without typing sends nothing".
 - [x] [major] Two reseed mechanisms for the event row (the outcome reseed and the "adopt the refetched row while focused" fix) (scope and simplicity). Resolved: the adoption fix is dropped from the design, spec and proposal; the seed rebase on `saved` covers it, and the focus guard is unchanged.
 - [x] [major] Rewriting `TopicsRow.test.tsx` PATCH-body cases fell outside the allowed test-change categories, so the plan's own stop rule would fire (assumption tester). Resolved: D10 category 5 added and task 7.2 reworded.
-- [ ] [major] Task 8.4 skipped `scripts/check-change.sh` citing a standing owner instruction that the record does not show for this change; AGENTS.md phase 8 and CLAUDE.md require it (scope and simplicity). Changed: 8.4 now runs `check-change.sh --stage hook` and `--stage pr`; open for the owner to keep or waive at approval.
+- [x] [major] Task 8.4 skipped `scripts/check-change.sh` citing a standing owner instruction that the record does not show for this change; AGENTS.md phase 8 and CLAUDE.md require it (scope and simplicity). Changed: 8.4 now runs `check-change.sh --stage hook` and `--stage pr`. Declined by human: the owner waived `check-change.sh` for this change on 2026-10-06 ("dont worry about running check-change.sh"); 8.4 records the waiver.
 
 ## Re-panel (2026-10-06, failure and abuse, fresh reviewer, on the revised design)
 

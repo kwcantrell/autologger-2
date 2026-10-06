@@ -347,6 +347,8 @@ They are captured with `npm run fixtures:capture -w server`, never hand-written.
     (functional `setState`), which fixes A7.
   - A `dismissed` prompt or a non-conflict error stops the batch with a toast. The remaining rows
     stay.
+  - A prompt dismissed by a **session switch** ends the batch quietly, with no toast and no
+    further rows: the existing session-change reset clears the batch and its drafts.
   - On full completion, batch mode exits. The toast is "Changes saved." plus ", N kept theirs"
     when N > 0.
 - **Event delete (`handleDelete`).** After the sheet's own confirm, `run` with the delete copy and
