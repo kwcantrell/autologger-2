@@ -1,7 +1,7 @@
 import { act, fireEvent, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { renderStrict } from '../../test/renderStrict';
-import { ConfirmDialog, useConfirm } from './ConfirmDialog';
+import { type Choice, ConfirmDialog, useConfirm } from './ConfirmDialog';
 
 // Dialog (via useIsMobile/breakpoints.ts) reads window.matchMedia, which jsdom
 // does not implement. The shared `matchMedia` stub the plan assigns to task
@@ -236,5 +236,148 @@ describe('ConfirmDialog actions row', () => {
     expect(row).not.toBeNull();
     expect(row.querySelectorAll('button')).toHaveLength(2);
     expect(del.className).toContain('max-md:min-h-11');
+  });
+});
+
+// session-edit-conflicts D7: a three-way decision. `choose()` tells a deliberate Cancel apart from
+// a dismissal (Escape, an overlay click, a sheet drag-dismiss, a replaced prompt, an unmount), so a
+// conflict prompt can map them to Keep theirs and "decide later". `confirm()` is unchanged.
+function ChooseProbe({ onResult }: { onResult: (label: string, value: Choice) => void }) {
+  const { choose, confirmElement } = useConfirm();
+  const open = (label: string) => () => {
+    choose({
+      title: `Row changed ${label}`,
+      message: 'theirs',
+      confirmLabel: 'Overwrite',
+      cancelLabel: 'Keep theirs',
+      danger: true,
+    }).then((v) => onResult(label, v));
+  };
+  return (
+    <div>
+      <button type="button" onClick={open('first')}>
+        choose-first
+      </button>
+      <button type="button" onClick={open('second')}>
+        choose-second
+      </button>
+      {confirmElement}
+    </div>
+  );
+}
+
+describe('useConfirm().choose (D7)', () => {
+  it.each([
+    false,
+    true,
+  ])('mobile=%s: confirm, cancel and Escape resolve confirm, cancel and dismiss', async (mobile) => {
+    setMobile(mobile);
+    const results: Array<[string, Choice]> = [];
+    renderStrict(<ChooseProbe onResult={(label, v) => results.push([label, v])} />);
+
+    fireEvent.click(screen.getByText('choose-first'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Overwrite' }));
+    await waitFor(() => expect(results).toEqual([['first', 'confirm']]));
+
+    fireEvent.click(screen.getByText('choose-first'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Keep theirs' }));
+    await waitFor(() => expect(results.at(-1)).toEqual(['first', 'cancel']));
+
+    fireEvent.click(screen.getByText('choose-first'));
+    const dialog = await screen.findByRole(mobile ? 'dialog' : 'alertdialog', {
+      name: 'Row changed first',
+    });
+    fireEvent.keyDown(dialog, { key: 'Escape' });
+    await waitFor(() => expect(results.at(-1)).toEqual(['first', 'dismiss']));
+    expect(results).toHaveLength(3);
+  });
+
+  it('an overlay click resolves dismiss (desktop)', async () => {
+    setMobile(false);
+    const results: Choice[] = [];
+    renderStrict(<ChooseProbe onResult={(_, v) => results.push(v)} />);
+    fireEvent.click(screen.getByText('choose-first'));
+    const overlay = document.querySelector('[data-slot="alert-dialog-overlay"]');
+    expect(overlay).not.toBeNull();
+    fireEvent.click(overlay as Element);
+    await waitFor(() => expect(results).toEqual(['dismiss']));
+  });
+
+  it('unmounting the owner resolves a pending choose dismiss', async () => {
+    const results: Array<[string, Choice]> = [];
+    const { unmount } = renderStrict(
+      <ChooseProbe onResult={(label, v) => results.push([label, v])} />,
+    );
+    fireEvent.click(screen.getByText('choose-first'));
+    unmount();
+    await act(async () => {});
+    expect(results).toEqual([['first', 'dismiss']]);
+  });
+
+  it('a replaced pending choose resolves dismiss, keeping only the newest dialog open', async () => {
+    const results: Array<[string, Choice]> = [];
+    renderStrict(<ChooseProbe onResult={(label, v) => results.push([label, v])} />);
+    fireEvent.click(screen.getByText('choose-first'));
+    fireEvent.click(screen.getByText('choose-second'));
+    await act(async () => {});
+    expect(results).toEqual([['first', 'dismiss']]);
+    expect(screen.getByText('Row changed second')).toBeTruthy();
+    expect(screen.queryByText('Row changed first')).toBeNull();
+  });
+
+  it('the boolean confirm() still resolves false on Escape', async () => {
+    setMobile(false);
+    const results: boolean[] = [];
+    renderStrict(<DangerProbe onResult={(v) => results.push(v)} />);
+    fireEvent.click(screen.getByText('open'));
+    fireEvent.keyDown(screen.getByRole('alertdialog'), { key: 'Escape' });
+    await waitFor(() => expect(results).toEqual([false]));
+  });
+});
+
+describe('ConfirmDialog onDismiss (D7)', () => {
+  it.each([
+    false,
+    true,
+  ])('mobile=%s: Escape calls onDismiss, not onCancel; the Cancel button still calls onCancel', async (mobile) => {
+    setMobile(mobile);
+    const calls: string[] = [];
+    const { rerender } = renderStrict(
+      <ConfirmDialog
+        open
+        title="t"
+        message="m"
+        onConfirm={() => calls.push('confirm')}
+        onCancel={() => calls.push('cancel')}
+        onDismiss={() => calls.push('dismiss')}
+      />,
+    );
+    const dialog = await screen.findByRole(mobile ? 'dialog' : 'alertdialog', { name: 't' });
+    fireEvent.keyDown(dialog, { key: 'Escape' });
+    await waitFor(() => expect(calls).toEqual(['dismiss']));
+
+    rerender(
+      <ConfirmDialog
+        open={false}
+        title="t"
+        message="m"
+        onConfirm={() => calls.push('confirm')}
+        onCancel={() => calls.push('cancel')}
+        onDismiss={() => calls.push('dismiss')}
+      />,
+    );
+    rerender(
+      <ConfirmDialog
+        open
+        title="t"
+        message="m"
+        onConfirm={() => calls.push('confirm')}
+        onCancel={() => calls.push('cancel')}
+        onDismiss={() => calls.push('dismiss')}
+      />,
+    );
+    fireEvent.click(await screen.findByRole('button', { name: 'Cancel' }));
+    await act(async () => {});
+    expect(calls).toEqual(['dismiss', 'cancel']);
   });
 });

@@ -17,7 +17,8 @@ const LEAD = 'm-0 mb-4 text-[0.82rem] leading-[1.45] text-legacy-muted';
 /**
  * Themed replacement for `window.confirm` (ui-refresh; shadcn-shared-wrappers D3): an alert
  * dialog on desktop and the shared bottom sheet on mobile. Escape, an overlay click, and a sheet
- * drag-dismiss all resolve as decline.
+ * drag-dismiss all resolve as decline — unless the caller passes `onDismiss`
+ * (session-edit-conflicts D7), which then receives them instead of `onCancel`.
  */
 export interface ConfirmOptions {
   title: string;
@@ -34,6 +35,9 @@ interface ConfirmDialogProps extends ConfirmOptions {
   open: boolean;
   onConfirm: () => void;
   onCancel: () => void;
+  /** Called for a dismissal (Escape, an overlay click, a sheet drag-dismiss: any close that is
+   *  not one of the two buttons). Absent, a dismissal calls `onCancel` exactly as before. */
+  onDismiss?: () => void;
 }
 
 export function ConfirmDialog({
@@ -45,6 +49,7 @@ export function ConfirmDialog({
   danger = false,
   onConfirm,
   onCancel,
+  onDismiss,
 }: ConfirmDialogProps) {
   const isMobile = useDialogMode(open);
   const actionVariant = danger ? 'destructive' : 'default';
@@ -65,10 +70,15 @@ export function ConfirmDialog({
     decided.current = true;
     onCancel();
   };
+  const dismissOnce = () => {
+    if (decided.current) return;
+    decided.current = true;
+    (onDismiss ?? onCancel)();
+  };
 
   if (isMobile) {
     return (
-      <Dialog open={open} onOpenChange={(o) => !o && cancelOnce()} title={title}>
+      <Dialog open={open} onOpenChange={(o) => !o && dismissOnce()} title={title}>
         <p className={LEAD}>{message}</p>
         <DialogActions>
           <Button type="button" variant="outline" className={TOUCH_TARGET} onClick={cancelOnce}>
@@ -88,8 +98,8 @@ export function ConfirmDialog({
   }
 
   return (
-    <AlertDialog open={open} onOpenChange={(o) => !o && cancelOnce()}>
-      <AlertDialogContent onOverlayClick={cancelOnce}>
+    <AlertDialog open={open} onOpenChange={(o) => !o && dismissOnce()}>
+      <AlertDialogContent onOverlayClick={dismissOnce}>
         <AlertDialogTitle>{title}</AlertDialogTitle>
         <AlertDialogDescription asChild>
           <p className={LEAD}>{message}</p>
@@ -107,9 +117,15 @@ export function ConfirmDialog({
   );
 }
 
+/** A three-way decision (session-edit-conflicts D7): the confirm button, the cancel button, or a
+ *  dismissal (Escape, overlay, drag-dismiss, a replaced prompt, an unmount). */
+export type Choice = 'confirm' | 'cancel' | 'dismiss';
+
+// Every pending prompt resolves a `Choice`; the boolean `confirm()` maps it to `=== 'confirm'`,
+// so its dismissals still resolve false.
 interface PendingConfirm {
   opts: ConfirmOptions;
-  resolve: (confirmed: boolean) => void;
+  resolve: (choice: Choice) => void;
 }
 
 /**
@@ -126,6 +142,11 @@ interface PendingConfirm {
  * the first was answered) resolves the replaced promise `false`; unmounting
  * this hook's owner while a confirmation is pending (e.g. a session switch)
  * also resolves it `false` via an effect cleanup.
+ *
+ * `choose(opts)` (session-edit-conflicts D7) is the three-way form: it resolves
+ * `'confirm'`, `'cancel'` or `'dismiss'`. The same guarantee holds, as
+ * `'dismiss'`: a replaced or unmounted pending choose never hangs. Both share
+ * the one dialog, so a `choose` replaces a pending `confirm` and vice versa.
  */
 export function useConfirm() {
   const [pending, setPending] = useState<PendingConfirm | null>(null);
@@ -134,23 +155,28 @@ export function useConfirm() {
   const pendingRef = useRef<PendingConfirm | null>(null);
   pendingRef.current = pending;
 
-  const confirm = useCallback(
+  const choose = useCallback(
     (opts: ConfirmOptions) =>
-      new Promise<boolean>((resolve) => {
+      new Promise<Choice>((resolve) => {
         setPending((prev) => {
-          // A second confirm() arriving while one is still pending replaces
-          // it — resolve the replaced promise false instead of leaving its
-          // awaiting caller hung forever.
-          prev?.resolve(false);
+          // A second prompt arriving while one is still pending replaces
+          // it — resolve the replaced promise as a dismissal (false, for
+          // confirm()) instead of leaving its awaiting caller hung forever.
+          prev?.resolve('dismiss');
           return { opts, resolve };
         });
       }),
     [],
   );
 
-  const settle = useCallback((confirmed: boolean) => {
+  const confirm = useCallback(
+    (opts: ConfirmOptions) => choose(opts).then((choice) => choice === 'confirm'),
+    [choose],
+  );
+
+  const settle = useCallback((choice: Choice) => {
     setPending((prev) => {
-      prev?.resolve(confirmed);
+      prev?.resolve(choice);
       return null;
     });
   }, []);
@@ -158,8 +184,8 @@ export function useConfirm() {
   useEffect(() => {
     return () => {
       // Unmounting with a decision still pending (e.g. the consumer unmounts
-      // or the session it belongs to switches away) is a decline, not a hang.
-      pendingRef.current?.resolve(false);
+      // or the session it belongs to switches away) is a dismissal, not a hang.
+      pendingRef.current?.resolve('dismiss');
     };
   }, []);
 
@@ -167,10 +193,11 @@ export function useConfirm() {
     <ConfirmDialog
       open
       {...pending.opts}
-      onConfirm={() => settle(true)}
-      onCancel={() => settle(false)}
+      onConfirm={() => settle('confirm')}
+      onCancel={() => settle('cancel')}
+      onDismiss={() => settle('dismiss')}
     />
   ) : null;
 
-  return { confirm, confirmElement };
+  return { confirm, choose, confirmElement };
 }

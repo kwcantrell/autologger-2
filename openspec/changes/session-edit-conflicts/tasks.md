@@ -36,16 +36,18 @@ Keep each task's text, and later its `Evidence:`, in one block with no blank lin
 
 ## 2. Client and guard helpers (D1, D2)
 
-- [ ] 2.1 Test first: `web/src/api/client.test.ts` gains three cases:
+- [x] 2.1 Test first: `web/src/api/client.test.ts` gains three cases:
   - a 409 JSON body is on `ApiError.body`;
   - `detail`/`message` are unchanged;
   - a non-JSON error leaves `body` undefined.
   Red, then `client.ts`.
-- [ ] 2.2 Test first: `web/src/api/versionConflict.test.ts` covers:
+  - Evidence: `client.test.ts` +3 cases (409 body on `ApiError.body`; detail/message for string, array, message, blank and empty bodies unchanged with body kept; non-JSON 502 leaves `body` undefined). Red: `cd web && npx vitest run src/api/client.test.ts` -> `Tests  2 failed | 10 passed (12)`, `AssertionError: expected undefined to deeply equal { detail: 'Version conflict.', …(1) }` (the non-JSON case passed already: `body` was absent from `ApiError`, so undefined trivially). `client.ts`: third ctor arg `readonly body?: unknown`, parsed JSON kept, detail derivation unchanged -> `Tests  12 passed (12)`.
+- [x] 2.2 Test first: `web/src/api/versionConflict.test.ts` covers:
   - `guardBody`/`versionQuery` for no guard, version only, and version plus overwrite;
   - overwrite without a version throws;
   - `versionConflictOf` matches only the version-conflict 409. It rejects a different 409 detail, a non-`ApiError`, a missing or non-object `current`, and a non-numeric version.
   Red, then the module.
+  - Evidence: `versionConflict.test.ts` (15 cases): `guardBody`/`versionQuery` for no guard, `{}`, version only, version plus overwrite, no-guard body byte-identical; overwrite without version throws; `versionConflictOf` matches the 409 and rejects another detail, another status, non-`ApiError`s, missing body, missing/null/non-object `current`, and `version` undefined/`'2'`/null/NaN. Red: `cd web && npx vitest run src/api/versionConflict.test.ts` -> `Error: Cannot find module './versionConflict'`, `Tests  no tests`. New `web/src/api/versionConflict.ts` (`VersionGuard`, `guardBody`, `versionQuery`, `versionConflictOf<C>`) -> `Tests  15 passed (15)`.
 
 ## 3. Hooks (D8)
 
@@ -66,17 +68,19 @@ Keep each task's text, and later its `Evidence:`, in one block with no blank lin
 
 ## 5. Shared pieces (D3, D4, D5, D7)
 
-- [ ] 5.1 Test first: `seedStore.test.ts` covers:
+- [x] 5.1 Test first: `seedStore.test.ts` covers:
   - `get`, `set` and `clearAll`;
   - the follow rule as a pure helper (`followServer(rows, isHeld)`): a row that is held keeps its seed, and an unheld row takes the server row;
   - an entry survives a consumer unmount;
   - stable callbacks, so a write re-renders nothing.
   Red, then `web/src/pages/index/utils/seedStore.ts` (D3).
-- [ ] 5.2 Test first: `ConfirmDialog.test.tsx` covers `choose()`:
+  - Evidence: `web/src/pages/index/utils/seedStore.test.tsx` (`.tsx`, not `.ts`: the hook cases render a feed, and `.test.ts` runs in the node project with no DOM): get/set/delete/clearAll; `followServer(store, rows, idOf, isHeld)` keeps a held row's seed, moves an unheld row to the server row, and seeds a held row that has none; an entry survives the writing consumer's unmount; stable identity and callbacks, and set/delete/clearAll cause 0 re-renders. Red: `Error: Failed to resolve import "./seedStore" from "src/pages/index/utils/seedStore.test.tsx"`. Then `seedStore.ts` (`createSeedStore`, `followServer`, `useSeedStore`) -> `Tests  5 passed (5)`; biome clean.
+- [x] 5.2 Test first: `ConfirmDialog.test.tsx` covers `choose()`:
   - confirm, cancel and Escape resolve `'confirm'`, `'cancel'` and `'dismiss'`;
   - an overlay click and unmount resolve `'dismiss'`;
   - the boolean `confirm()` still resolves `false` on Escape.
   Red, then `ConfirmDialog.tsx` (`onDismiss`) and `useConfirm().choose`.
+  - Evidence: `ConfirmDialog.test.tsx`: `choose()` confirm/cancel/Escape -> `'confirm'`/`'cancel'`/`'dismiss'` (desktop and mobile), overlay click and unmount -> `'dismiss'`, a replaced choose -> `'dismiss'`, boolean `confirm()` still `false` on Escape, and `ConfirmDialog` with `onDismiss`: Escape calls it (not `onCancel`) while the Cancel button still calls `onCancel` (both modes). Red: `Tests  7 failed | 13 passed (20)`, e.g. `AssertionError: expected [ 'cancel' ] to deeply equal [ 'dismiss' ]` and `Unable to find role="button" and name "Overwrite"` (no `choose`). Then `ConfirmDialog.tsx` (`onDismiss`, exported `Choice`, `useConfirm().choose`; `confirm()` = `choose() === 'confirm'`) -> `Tests  20 passed (20)`; the 9 test files using ConfirmDialog/useConfirm -> `Tests  89 passed (89)`; `npx tsc --noEmit` clean; biome clean.
 - [ ] 5.3 Test first: `useVersionedSave.test.tsx` covers:
   - saved with the base version;
   - conflict, Overwrite, conflict, Overwrite, then saved (each retry carries the newer `current.version` and `overwrite: true`);
