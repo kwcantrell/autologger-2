@@ -102,8 +102,8 @@ live category tiles), digit keys `1`–`9` SHALL trigger the 1st–9th category 
 behavior to clicking, including dropdown/text modal flows), and the first nine live tiles
 SHALL display their digit as a badge (`aria-hidden`). Hotkeys SHALL fire at most once per
 physical keypress (auto-repeat ignored via `event.repeat`), and SHALL NOT fire: while a
-text-entry element (input, textarea, select, contenteditable) has focus; while any
-`[role="dialog"]` is open; or with Ctrl, Meta, or Alt held. Shift is deliberately permitted
+text-entry element (input, textarea, select, contenteditable) has focus; while any dialog,
+alert dialog, or menu is open; or with Ctrl, Meta, or Alt held. Shift is deliberately permitted
 (digits require Shift on some layouts).
 
 #### Scenario: Hotkey logs an event

@@ -47,8 +47,8 @@ not change appearance class.
 
 
 ### Requirement: Themed confirmations replace browser chrome
-Destructive or discard-style confirmations SHALL use a shared themed confirm dialog (built on
-the app's Radix Dialog vocabulary, danger-variant confirm action where the action is
+Destructive or discard-style confirmations SHALL use a shared themed confirm (an alert dialog
+on desktop and a bottom sheet on mobile, danger-variant confirm action where the action is
 destructive; Escape, overlay dismissal, and mobile sheet drag-dismiss all resolve as decline).
 The frontend SHALL invoke neither `window.confirm`/`window.prompt` nor the bare
 `confirm()`/`prompt()` globals — including the admin-users page and hook-initiated flows.
@@ -64,7 +64,7 @@ the pending decision SHALL resolve as declined (no awaiting flow may hang).
 - **WHEN** the web source is checked for invocations of `window.confirm`/`window.prompt` or
   the bare `confirm()`/`prompt()` globals (comment prose and the `useConfirm` hook's own API
   are not matches)
-- **THEN** there are zero occurrences
+- **THEN** there are zero occurrences, and a repo test fails the build on any new occurrence
 
 #### Scenario: Orphan-recording recovery warning is themed and race-safe
 - **WHEN** a session opens with an orphan recording (recording event with no matching stop)
@@ -79,7 +79,8 @@ the pending decision SHALL resolve as declined (no awaiting flow may hang).
 
 ### Requirement: Global single-key handlers yield to dialogs and interactive targets
 Global single-key shortcuts (Space play/pause, `+`/`−` zoom, `1–9` logging, `?`) SHALL NOT
-fire while any `[role="dialog"]` is open, and SHALL NOT intercept a key when the event target
+fire while any dialog, alert dialog, or menu is open (`role` `dialog`, `alertdialog`, or `menu`),
+and SHALL NOT intercept a key when the event target
 is a button or other interactive element that consumes that key (a focused button's Space
 activation always wins over the global handler).
 
@@ -91,6 +92,11 @@ activation always wins over the global handler).
 #### Scenario: Zoom keys ignored behind dialogs
 - **WHEN** any dialog is open and the user presses `+` or `−`
 - **THEN** the timeline zoom does not change
+
+#### Scenario: Shortcuts yield to an open confirm
+- **WHEN** a themed confirm is open as an alert dialog and the user presses Space, `+`, a digit
+  `1`–`9`, or `?` with focus outside any control that consumes the key
+- **THEN** no global shortcut fires
 
 
 ### Requirement: AA contrast floor on rendered surfaces
