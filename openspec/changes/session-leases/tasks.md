@@ -74,7 +74,7 @@ Keep each task's text, and later its `Evidence:`, in one block with no blank lin
 
 ## 5. Routes (D3, D4)
 
-- [ ] 5.1 Test first, in `server/src/test/SessionHub.int.test.ts`, with a second user who has access to the session:
+- [x] 5.1 Test first, in `server/src/test/SessionHub.int.test.ts`, with a second user who has access to the session:
   - B claims → 409;
   - B heartbeats with A's client id → `{ok:false}`;
   - B releases with A's client id → `{ok:true}` and A's status still shows A alive;
@@ -84,6 +84,7 @@ Keep each task's text, and later its `Evidence:`, in one block with no blank lin
   - a whitespace-only and a NUL client id give 409 / `{ok:false}` / `{ok:true}` and never 500;
   - the status field names and types are unchanged.
   Add `GET /api/companion/state` showing `is_recording` true while A holds the lease. Update other status assertions per D6 category 7. Verify: red where the behaviour is new, recorded; then green with no route code change; `apiResponseFixtures.int.test.ts` and `web/src/apiResponseShapes.repo.test.ts` pass unchanged.
+  - Evidence: `server/src/test/SessionHub.int.test.ts` describe "recording lease user binding and holder masking (session-leases D3, D4)": B (an admin of the session's studio, `seedUser` + `loginCookie`) claims with A's and its own id → 409; B heartbeats with A's id → `{ok:false}`; B releases with A's id → `{ok:true}` and A's status still `tab-a` alive; B's status `another-client`; A claims with another client → 409; after A releases, B claims → 200 (A then sees `another-client`); whitespace-only, NUL, padded NUL and inner-NUL ids (JSON `"\u0000"`) → 409 / `{ok:false}` / `{ok:true}`, never 500, lease left free; status keys identical free vs held (A and B) with holder string / alive boolean / age_sec number; `GET /api/companion/state` (`COMPANION_BEARER`) `is_recording` false → true while A holds → false after release. All green first; behaviour already implemented in 3.2 (no red). `cd server && npx vitest run --project integration src/test/SessionHub.int.test.ts` -> `Tests  14 passed (14)` (log `8a-5.1-first.log`). No other status assertion needed D6 category 7 (the only one reads a free lease, `null`). `apiResponseFixtures.int.test.ts` -> `Tests  43 passed (43)` (log `8a-5.1-fixtures.log`); `web/src/apiResponseShapes.repo.test.ts` -> `Tests  48 passed (48)` (log `8a-5.1-webshapes.log`); `git diff supabase-migration...HEAD -- server/src/routers ':!*.test.ts'` empty (log `8a-5.1-routediff.log`).
 
 ## 6. The recorder re-claims (D7)
 

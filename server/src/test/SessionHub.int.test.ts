@@ -11,7 +11,15 @@
 
 import { describe, expect, it } from 'vitest';
 import { app, env } from './harness';
-import { SEED_CATEGORY_ID, seededSession, testDb } from './helpers';
+import {
+  COMPANION_BEARER,
+  loginCookie,
+  SEED_CATEGORY_ID,
+  seededSession,
+  seedUser,
+  setCompanionPresence,
+  testDb,
+} from './helpers';
 
 describe('hub ↔ catalog projection', () => {
   it('logging an event bumps the projected event_count on the catalog row, committed with the write', async () => {
@@ -105,6 +113,153 @@ describe('hub ↔ catalog projection', () => {
     );
     expect(release.status).toBe(200);
     expect((await claim('tab-b')).status).toBe(200);
+  });
+
+  // session-leases task 5.1 (design D3, D4): the lease is bound to the user as well as the client
+  // id, and only the holding user sees its client id. A is the default signed-in user; B is a
+  // second user who also reaches the session (an admin of its studio, show-grants D14).
+  describe('recording lease user binding and holder masking (session-leases D3, D4)', () => {
+    type LeaseStatus = {
+      audio_recording_lease_holder_id: string | null;
+      audio_recording_lease_alive: boolean;
+      audio_recording_lease_age_sec: number | null;
+    } & Record<string, unknown>;
+
+    async function twoUsers(): Promise<{ s: string; bCookie: string }> {
+      const { studioId, sessionId } = await seededSession();
+      const b = await seedUser({ studios: [studioId], role: 'admin' });
+      return { s: sessionId, bCookie: await loginCookie(b) };
+    }
+
+    const post = (s: string, path: string, clientId: string, cookie?: string) =>
+      app.request(
+        `/api/sessions/${s}/audio-recording-lease${path}`,
+        {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            ...(cookie === undefined ? {} : { cookie }),
+          },
+          body: JSON.stringify({ client_id: clientId }),
+        },
+        env,
+      );
+    const claim = (s: string, cid: string, cookie?: string) => post(s, '', cid, cookie);
+    const heartbeat = (s: string, cid: string, cookie?: string) =>
+      post(s, '/heartbeat', cid, cookie);
+    const release = (s: string, cid: string, cookie?: string) => post(s, '/release', cid, cookie);
+    const status = async (s: string, cookie?: string): Promise<LeaseStatus> => {
+      const res = await app.request(
+        `/api/sessions/${s}/status`,
+        cookie === undefined ? {} : { headers: { cookie } },
+        env,
+      );
+      expect(res.status).toBe(200);
+      return (await res.json()) as LeaseStatus;
+    };
+
+    it('B cannot claim, heartbeat or release A’s lease, and sees "another-client"', async () => {
+      const { s, bCookie } = await twoUsers();
+      expect((await claim(s, 'tab-a')).status).toBe(200);
+
+      // B claims with A's own client id, and with its own: both 409.
+      expect((await claim(s, 'tab-a', bCookie)).status).toBe(409);
+      expect((await claim(s, 'tab-b', bCookie)).status).toBe(409);
+
+      // B heartbeats with A's client id: refused.
+      const hb = await heartbeat(s, 'tab-a', bCookie);
+      expect(hb.status).toBe(200);
+      expect(await hb.json()).toEqual({ ok: false });
+
+      // B releases with A's client id: answers ok, but A still holds a live lease.
+      const rel = await release(s, 'tab-a', bCookie);
+      expect(rel.status).toBe(200);
+      expect(await rel.json()).toEqual({ ok: true });
+      const asA = await status(s);
+      expect(asA.audio_recording_lease_holder_id).toBe('tab-a');
+      expect(asA.audio_recording_lease_alive).toBe(true);
+
+      // B's status masks the holder's client id.
+      const asB = await status(s, bCookie);
+      expect(asB.audio_recording_lease_holder_id).toBe('another-client');
+      expect(asB.audio_recording_lease_alive).toBe(true);
+
+      // A's own heartbeat still works.
+      expect(await (await heartbeat(s, 'tab-a')).json()).toEqual({ ok: true });
+    });
+
+    it('A claiming with another client is 409; after A releases, B claims', async () => {
+      const { s, bCookie } = await twoUsers();
+      expect((await claim(s, 'tab-a')).status).toBe(200);
+      expect((await claim(s, 'tab-a2')).status).toBe(409);
+      expect(await (await release(s, 'tab-a')).json()).toEqual({ ok: true });
+      expect((await claim(s, 'tab-b', bCookie)).status).toBe(200);
+      const asB = await status(s, bCookie);
+      expect(asB.audio_recording_lease_holder_id).toBe('tab-b');
+      const asA = await status(s);
+      expect(asA.audio_recording_lease_holder_id).toBe('another-client');
+      expect(asA.audio_recording_lease_alive).toBe(true);
+    });
+
+    it.each([
+      ['whitespace-only', '   '],
+      ['NUL', '\u0000'],
+      ['NUL padded by spaces', ' \u0000 '],
+      ['NUL inside an id', 'tab\u0000a'],
+    ])('a %s client id gives 409 / {ok:false} / {ok:true}, never 500', async (_label, cid) => {
+      const { s } = await twoUsers();
+      const c = await claim(s, cid);
+      expect(c.status).toBe(409);
+      const hb = await heartbeat(s, cid);
+      expect(hb.status).toBe(200);
+      expect(await hb.json()).toEqual({ ok: false });
+      const rel = await release(s, cid);
+      expect(rel.status).toBe(200);
+      expect(await rel.json()).toEqual({ ok: true });
+      const st = await status(s);
+      expect(st.audio_recording_lease_holder_id).toBeNull();
+      expect(st.audio_recording_lease_alive).toBe(false);
+      // The refusals left the lease free.
+      expect((await claim(s, 'tab-a')).status).toBe(200);
+    });
+
+    it('the status field names and lease field types are unchanged', async () => {
+      const { s, bCookie } = await twoUsers();
+      const free = await status(s);
+      expect(free.audio_recording_lease_holder_id).toBeNull();
+      expect(free.audio_recording_lease_alive).toBe(false);
+      expect(free.audio_recording_lease_age_sec).toBeNull();
+      expect((await claim(s, 'tab-a')).status).toBe(200);
+      const asA = await status(s);
+      const asB = await status(s, bCookie);
+      for (const held of [asA, asB]) {
+        expect(Object.keys(held).sort()).toEqual(Object.keys(free).sort());
+        expect(typeof held.audio_recording_lease_holder_id).toBe('string');
+        expect(typeof held.audio_recording_lease_alive).toBe('boolean');
+        expect(typeof held.audio_recording_lease_age_sec).toBe('number');
+      }
+    });
+
+    it('GET /api/companion/state shows is_recording while A holds the lease', async () => {
+      const { s } = await twoUsers();
+      await setCompanionPresence('c1', s, { visible: true });
+      const state = async () => {
+        const res = await app.request(
+          '/api/companion/state',
+          { method: 'GET', headers: COMPANION_BEARER },
+          env,
+        );
+        expect(res.status).toBe(200);
+        return (await res.json()) as { session: { id: string; is_recording: boolean } | null };
+      };
+      expect((await state()).session?.is_recording).toBe(false);
+      expect((await claim(s, 'tab-a')).status).toBe(200);
+      const held = await state();
+      expect(held.session?.id).toBe(s);
+      expect(held.session?.is_recording).toBe(true);
+      expect(await (await release(s, 'tab-a')).json()).toEqual({ ok: true });
+      expect((await state()).session?.is_recording).toBe(false);
+    });
   });
 
   it('status payload exposes event counts, revision, and lease fields (old-suite parity)', async () => {
