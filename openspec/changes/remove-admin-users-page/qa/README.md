@@ -16,3 +16,7 @@ The walk is copied from the archived `shadcn-port-modals/qa`. One step was added
 `/admin/users` now renders the root `app/not-found.page.tsx` document ("404 — Not Found / This page doesn't exist."), the same page `/nope-404` gets. It is its own `<html>`/`<body>`, outside the `(index)` layout (design D1).
 
 **Dev-stack HTTP check** (task 2.3): `GET` and `HEAD /admin/users` → `404 text/html`, with the same status, type and `Cache-Control` as `/admin/logs`. The stage-router run of `docker/scripts/test_router.sh` needs a stage stack and is part of the owner pass.
+
+## Owner review (task 5.2)
+
+The owner reviewed the change and the branch (2026-10-06): "looks good". This covers `/admin/users` showing not-found, the README admin curl recipes, and the router expectations. The PR carries the tier-2 review and the whole-branch audit.

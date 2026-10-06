@@ -55,10 +55,11 @@
     - contrast shows 0 failures apart from "Audio issue";
     - results are recorded in `qa/README.md`.
   - Evidence: walk copied + admin-users-status step; before-admin on HEAD (status "200" at both widths), after-admin diffed at 1440 and 390 -> status "404" at both widths; admin-users screen 99.72% / 98.87% (now the root not-found document, same as /nope-404 whose capture is 0%); all other 36 screens 0% (three ≤ 0.03% noise); 82 contrast JSONs, only `filter-menu` `Audio issue 3.64`; recorded in qa/README.md
-- [ ] 5.2 The owner's pass and review:
+- [x] 5.2 The owner's pass and review:
   - `/admin/users` is not-found in the browser;
   - on the dev stack, the README curl recipes work: list users; disable then enable a test user (confirm the disabled user's session stops resolving while disabled); add then remove a membership;
   - the PR review and whole-branch audit.
   - Verify: the result is recorded in `qa/README.md`.
+  - Evidence: owner reviewed the change (/admin/users not-found, README admin curl recipes, router expectations) and the branch -> "looks good" (2026-10-06); PR review + whole-branch audit on the PR
 - [x] 5.3 Run `scripts/check-change.sh` (the tier-2 full gate set), plus the full suite, typecheck, lint and `openspec validate --all --strict`.
   - Evidence: `npx vitest run` -> `Test Files 126 passed (126) Tests 1552 passed (1552)`; `npx tsc --noEmit` clean; `npx biome lint src` -> `Checked 321 files … No fixes applied`; `openspec validate --all --strict` -> `Totals: 28 passed, 0 failed`; `scripts/check-change.sh` NOT run: the owner said not to (2026-10-06), so the full tier-2 gate set runs in CI on the PR
