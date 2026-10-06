@@ -2,9 +2,10 @@
 
 ## 1. Remove the page
 
-- [ ] 1.1 Delete `web/src/app/(admin)/**` and `web/src/pages/admin-users/**` (D1).
+- [x] 1.1 Delete `web/src/app/(admin)/**` and `web/src/pages/admin-users/**` (D1).
   - The existing `loginReturnPath.test.ts:319` already pins `isShellSegments(['admin','users'])` as false (it can't start red); `app/not-found.page.tsx` keeps its own `<html>`/`<body>` (D1).
   - Verify: `npx vitest run src/shared/utils/loginReturnPath.test.ts` passes; `ls web/src/app` shows only `(index)` plus the root files; `next build` (dev stack rebuild) lists only `/_not-found` and `/[[...path]]`.
+  - Evidence: `git rm -r web/src/app/(admin) web/src/pages/admin-users` -> `ls web/src/app` = `(index) not-found.page.tsx`; existing `loginReturnPath.test.ts:319` pins isShellSegments([admin,users]) false -> `Tests 64 passed (64)`; `npx next build` -> routes `○ /_not-found` + `ƒ /[[...path]]` only (one pre-existing appVersion.ts warning); stale gitignored `web/.next/types` (Oct 1 host build referencing the deleted (admin) files) removed -> `npx tsc --noEmit` exit 0; full run then `4 failed` exactly the apiResponseShapes guards task 2.1 owns (stale exemption, detector floor, canary, AdminDataResponse covered set); webBoundaries passed vacuously as the panel predicted (task 2.2)
 - [ ] 1.2 Comment cleanup across web/src:
   - `next.config.ts`, `(index)/layout.page.tsx`, `app/not-found.page.tsx`;
   - `RootGate.tsx`, `AppLoadingSkeleton(.test).tsx`, `Toast.tsx`, `Tooltip(.test).tsx`, `primitives.smoke.test.tsx`;
