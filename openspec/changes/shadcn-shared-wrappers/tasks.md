@@ -112,4 +112,5 @@
   - toast stacking
 
   Verify the result is recorded in `qa/README.md`.
-- [ ] 5.3 Run `GITHUB_BASE_REF=supabase-migration scripts/check-change.sh` and `openspec validate shadcn-shared-wrappers --strict`. Verify every gate passes. The known storage "8 contending" flake is re-run, not counted.
+- [x] 5.3 Run `GITHUB_BASE_REF=supabase-migration scripts/check-change.sh` and `openspec validate shadcn-shared-wrappers --strict`. Verify every gate passes. The known storage "8 contending" flake is re-run, not counted.
+  - Evidence: `GITHUB_BASE_REF=supabase-migration scripts/check-change.sh` -> PASS openspec, yaml, workflows, skills-sync, guide-size, change (tier 1), risk-floor (0 high-risk), approval, panel (7, no open criticals), evidence, artifacts-first, tests-with-code (22 source / 19 test), commands (typecheck, test), audit; only `tasks` open for 5.2 (owner review pending). `openspec validate shadcn-shared-wrappers --strict` -> valid
