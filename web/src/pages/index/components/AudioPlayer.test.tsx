@@ -191,10 +191,14 @@ describe('AudioPlayer global Space handler', () => {
     expect(ref.current?.isPlaying()).toBe(true);
   });
 
-  it('does not toggle playback while a [role="dialog"] is open', () => {
+  it.each([
+    'dialog',
+    'alertdialog',
+    'menu',
+  ])('does not toggle playback while a [role="%s"] is open', (role) => {
     const ref = renderPlayer();
     const dialog = document.createElement('div');
-    dialog.setAttribute('role', 'dialog');
+    dialog.setAttribute('role', role);
     document.body.appendChild(dialog);
     try {
       fireEvent.keyDown(document.body, { code: 'Space' });

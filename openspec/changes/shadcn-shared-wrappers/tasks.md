@@ -18,12 +18,14 @@
   - The real tree must pass, which relies on 1.1.
   - Verify the fixture assertions fail before the detector exists, then pass: `npx vitest run src/noBrowserDialogs.repo.test.ts`.
   - Evidence: test first: `npx vitest run src/noBrowserDialogs.repo.test.ts` -> `Cannot find module ./test/browserDialogCalls`; with the detector -> `Tests 4 passed (4)`; with the BatchImportModal fix stashed -> `+ "pages/index/components/BatchImportModal.tsx:106"`, `1 failed | 3 passed` (guard catches the old window.prompt)
-- [ ] 1.3 Test first: `web/src/shared/ui/overlayOpen.test.ts` (D4) covers an open `dialog`, `alertdialog` and `menu` (each true), and an empty document (false). It fails on the missing module. Then add `overlayOpen.ts`. Verify with `npx vitest run src/shared/ui/overlayOpen.test.ts`.
-- [ ] 1.4 Test first: add an `alertdialog` case to each handler test:
+- [x] 1.3 Test first: `web/src/shared/ui/overlayOpen.test.ts` (D4) covers an open `dialog`, `alertdialog` and `menu` (each true), and an empty document (false). It fails on the missing module. Then add `overlayOpen.ts`. Verify with `npx vitest run src/shared/ui/overlayOpen.test.ts`.
+  - Evidence: test first: `npx vitest run src/shared/ui/overlayOpen.test.tsx` -> `Cannot find module ./overlayOpen`; after `overlayOpen.ts` -> `Tests 6 passed (6)` (dialog/alertdialog/menu true; empty + unrelated roles false; custom root). (Renamed .ts -> .tsx: the node project has no `document`.)
+- [x] 1.4 Test first: add an `alertdialog` case to each handler test:
   - `CategoryButtonStrip.test.tsx` (digits)
   - `AudioPlayer.test.tsx` (Space)
   - `useZoomRail.test.tsx` (`+`/`−`)
   - a new `SessionWorkspace` `?` case (no test exists today)
+  - Evidence: test first: handler tests parametrized over dialog/alertdialog/menu -> `× … [role="alertdialog"] … × … [role="menu"]` (6 failed | 21 passed: AudioPlayer, useZoomRail, CategoryButtonStrip); new SessionWorkspace "?" tests -> `2 failed | 2 passed` (alertdialog, menu). After the four handlers call `isOverlayOpen()` -> `Tests 53 passed (53)` (incl. overlayOpen); typecheck clean
 
   These fail because the handlers only check `role="dialog"`. Then switch the four handlers to `isOverlayOpen()`. Verify those four tests pass.
 

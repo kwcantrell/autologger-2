@@ -10,6 +10,7 @@ import type { CompanionCommandType } from '../../../api/types';
 import { showToast } from '../../../shared/components/Toast';
 import { useDebugTransportOverride } from '../../../shared/hooks/useDebugTransportOverride';
 import { ConfirmDialog } from '../../../shared/ui/ConfirmDialog';
+import { isOverlayOpen } from '../../../shared/ui/overlayOpen';
 import { AUTOLOGGER_LOADING_VIDEO_SRC } from '../../../shared/utils/loadingVideo';
 import { register, unregister } from '../coordination/registry';
 import { AudioClipsProvider } from '../hooks/AudioClipsContext';
@@ -134,7 +135,7 @@ export function SessionWorkspace({ sessionId, ytImportPending, onOpenMobileNav }
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== '?' || e.metaKey || e.ctrlKey || e.altKey) return;
       if (isTypingTarget(e.target)) return;
-      if (document.querySelector('[role="dialog"]')) return;
+      if (isOverlayOpen()) return;
       e.preventDefault();
       setShowShortcuts(true);
     };

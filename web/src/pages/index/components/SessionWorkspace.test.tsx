@@ -699,3 +699,27 @@ describe('SessionWorkspace Dashboards (AI v2) tab', () => {
     }
   });
 });
+
+// web-session-console "Discoverable keyboard-shortcut reference" + web-ui-system "Global
+// single-key handlers yield to dialogs" (shadcn-shared-wrappers 1.4): `?` opens the shortcut
+// reference, and yields to any open dialog, alert dialog, or menu.
+describe('SessionWorkspace "?" shortcut', () => {
+  it('opens the keyboard-shortcut reference with no overlay open', () => {
+    renderStrict(<SessionWorkspace sessionId="sess-1" />);
+    fireEvent.keyDown(document.body, { key: '?' });
+    expect(screen.getByRole('dialog', { name: 'Keyboard shortcuts' })).toBeTruthy();
+  });
+
+  it.each(['dialog', 'alertdialog', 'menu'])('does nothing while a [role="%s"] is open', (role) => {
+    renderStrict(<SessionWorkspace sessionId="sess-1" />);
+    const overlay = document.createElement('div');
+    overlay.setAttribute('role', role);
+    document.body.appendChild(overlay);
+    try {
+      fireEvent.keyDown(document.body, { key: '?' });
+      expect(screen.queryByRole('dialog', { name: 'Keyboard shortcuts' })).toBeNull();
+    } finally {
+      overlay.remove();
+    }
+  });
+});

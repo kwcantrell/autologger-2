@@ -5,6 +5,7 @@ import { useShowCategories } from '../../../api/hooks/useShowCategories';
 import type { Category, DropdownOption } from '../../../api/types';
 import { showToast } from '../../../shared/components/Toast';
 import { Dialog } from '../../../shared/ui/Dialog';
+import { isOverlayOpen } from '../../../shared/ui/overlayOpen';
 import { AUTOLOGGER_LOADING_VIDEO_SRC } from '../../../shared/utils/loadingVideo';
 import { isTypingTarget } from './ShortcutsDialog';
 
@@ -289,7 +290,7 @@ export function CategoryButtonStrip({ sessionId, isRolling, onOffState, onToggle
       if (e.repeat) return;
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       if (isTypingTarget(e.target)) return;
-      if (document.querySelector('[role="dialog"]')) return;
+      if (isOverlayOpen()) return;
       const n = Number(e.key);
       if (!Number.isInteger(n) || n < 1 || n > 9) return;
       const cat = categoriesForKeys[n - 1];
