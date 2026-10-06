@@ -36,7 +36,11 @@ const isUi = (f: string) => f.startsWith(UI_DIR + path.sep);
 const rel = (f: string) => path.relative(SRC, f);
 
 type Hit = { file: string; line: number; text: string };
-function scan(filter: (f: string) => boolean, re: RegExp, allowLine?: (l: string) => boolean): Hit[] {
+function scan(
+  filter: (f: string) => boolean,
+  re: RegExp,
+  allowLine?: (l: string) => boolean,
+): Hit[] {
   const hits: Hit[] = [];
   for (const f of files.filter(filter)) {
     fs.readFileSync(f, 'utf8')
@@ -63,6 +67,11 @@ describe('shadcn hygiene', () => {
   });
 
   it('legacy code never uses the bare (text|border|outline|bg|ring)-(muted|accent|border) utilities', () => {
-    expect(scan((f) => !isUi(f), /(?<![\w-])(?:text|border|outline|bg|ring)-(?:muted|accent|border)(?![\w-])/)).toEqual([]);
+    expect(
+      scan(
+        (f) => !isUi(f),
+        /(?<![\w-])(?:text|border|outline|bg|ring)-(?:muted|accent|border)(?![\w-])/,
+      ),
+    ).toEqual([]);
   });
 });

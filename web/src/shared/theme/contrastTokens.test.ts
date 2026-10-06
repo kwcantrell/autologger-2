@@ -28,7 +28,10 @@ function parseColor(raw: string): RGBA {
   }
   const m = s.match(/^rgba?\(([^)]+)\)$/);
   if (!m) throw new Error(`unparseable colour: ${raw}`);
-  const p = m[1].split(/[\s,/]+/).filter(Boolean).map(Number);
+  const p = m[1]
+    .split(/[\s,/]+/)
+    .filter(Boolean)
+    .map(Number);
   return [p[0], p[1], p[2], p.length > 3 ? p[3] : 1];
 }
 
@@ -111,7 +114,9 @@ describe('AA contrast floor — source colours over their lightest measured surf
   it('input/textarea placeholder floor on dialog fields', () => {
     const block = CSS.match(/input::placeholder,\s*textarea::placeholder\s*\{\s*color:\s*([^;]+);/);
     expect(block).not.toBeNull();
-    expect(contrast(parseColor((block as RegExpMatchArray)[1]), SURFACE.dialogField)).toBeGreaterThanOrEqual(AA);
+    expect(
+      contrast(parseColor((block as RegExpMatchArray)[1]), SURFACE.dialogField),
+    ).toBeGreaterThanOrEqual(AA);
   });
 
   it('sky primary button label (BTN_PRIMARY_SKY) on its tinted surface', () => {
@@ -120,20 +125,26 @@ describe('AA contrast floor — source colours over their lightest measured surf
   });
 
   it('login secondary link (BTN_CREATE) on its surface', () => {
-    const fg = parseColor(textColour(classConst('pages/index/components/LoginPage.tsx', 'BTN_CREATE')));
+    const fg = parseColor(
+      textColour(classConst('pages/index/components/LoginPage.tsx', 'BTN_CREATE')),
+    );
     expect(contrast(fg, SURFACE.loginLink)).toBeGreaterThanOrEqual(AA);
   });
 
   it('event-button "AI Rules" label without instructions on its row', () => {
-    const m = read('pages/index/components/EventButtonsTable.tsx').match(/bearing \? 'text-v5-primary' : '([^']+)'/);
+    const m = read('pages/index/components/EventButtonsTable.tsx').match(
+      /bearing \? 'text-v5-primary' : '([^']+)'/,
+    );
     expect(m).not.toBeNull();
-    expect(contrast(parseColor(textColour((m as RegExpMatchArray)[1])), SURFACE.eventButtonRow)).toBeGreaterThanOrEqual(AA);
+    expect(
+      contrast(parseColor(textColour((m as RegExpMatchArray)[1])), SURFACE.eventButtonRow),
+    ).toBeGreaterThanOrEqual(AA);
   });
 
   it('timeline total-duration readout carries no extra opacity reduction', () => {
     const line = read('pages/index/components/Timeline.tsx')
       .split('\n')
-      .find((l) => l.includes("text-[0.65rem] font-medium tracking-[0.04em] text-v5-muted"));
+      .find((l) => l.includes('text-[0.65rem] font-medium tracking-[0.04em] text-v5-muted'));
     expect(line).toBeDefined();
     expect(line).not.toMatch(/opacity-\[/);
   });
@@ -147,7 +158,9 @@ describe('shadcn semantic tokens alias V5 values that clear the floor (design D5
   });
 
   it('primary-foreground on the sky-tinted primary surface', () => {
-    expect(contrast(parseColor(resolved('--primary-foreground')), SURFACE.primaryButton)).toBeGreaterThanOrEqual(AA);
+    expect(
+      contrast(parseColor(resolved('--primary-foreground')), SURFACE.primaryButton),
+    ).toBeGreaterThanOrEqual(AA);
   });
 
   it('foreground on background, card and popover', () => {
@@ -158,9 +171,26 @@ describe('shadcn semantic tokens alias V5 values that clear the floor (design D5
   });
 
   it('each shadcn colour token is exposed as a Tailwind colour via @theme inline', () => {
-    for (const t of ['background', 'foreground', 'card', 'card-foreground', 'popover', 'popover-foreground', 'primary',
-      'primary-foreground', 'secondary', 'secondary-foreground', 'muted', 'muted-foreground', 'accent', 'accent-foreground',
-      'destructive', 'border', 'input', 'ring']) {
+    for (const t of [
+      'background',
+      'foreground',
+      'card',
+      'card-foreground',
+      'popover',
+      'popover-foreground',
+      'primary',
+      'primary-foreground',
+      'secondary',
+      'secondary-foreground',
+      'muted',
+      'muted-foreground',
+      'accent',
+      'accent-foreground',
+      'destructive',
+      'border',
+      'input',
+      'ring',
+    ]) {
       expect(token(`--color-${t}`)).toBe(`var(--${t})`);
     }
   });

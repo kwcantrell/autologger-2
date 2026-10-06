@@ -19,7 +19,8 @@ const CLIP_MISSING =
 // so `.timelineClipActive.timelineClipMissingAudio` keeps the red bg (source-order match).
 const CLIP_ACTIVE =
   'timelineClipActive [--timeline-clip-strip-h:max(4px,0.25rem)] h-[calc(var(--timeline-clip-strip-h)*0.8)]';
-const CLIP_ACTIVE_BG = '[background:color-mix(in_srgb,var(--color-legacy-accent)_100%,transparent)]';
+const CLIP_ACTIVE_BG =
+  '[background:color-mix(in_srgb,var(--color-legacy-accent)_100%,transparent)]';
 
 interface Props {
   clips: AudioClipLite[];

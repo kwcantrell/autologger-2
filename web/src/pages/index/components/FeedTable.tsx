@@ -35,7 +35,8 @@ export const FEED_ROW = 'hover-always:bg-[rgba(255,255,255,0.03)]';
 export const FEED_CELL =
   'px-[0.4rem] py-[0.1rem] [border-bottom:1px_solid_rgba(255,255,255,0.04)] text-legacy-muted';
 /** Time column — blue monospaced, mirrors `.sheet .tc`. */
-export const FEED_CELL_TIME = 'font-[family-name:var(--font-mono)] text-legacy-accent whitespace-nowrap';
+export const FEED_CELL_TIME =
+  'font-[family-name:var(--font-mono)] text-legacy-accent whitespace-nowrap';
 /** Inline editable input. `mono` variant swaps the family to `monospace` (was
  *  `.feedInlineInput:global(.mono)` → `var(--mono-font, monospace)`, undefined var →
  *  `monospace`); pass `FEED_INLINE_INPUT_MONO` alongside for those cells. */
