@@ -137,3 +137,15 @@ function SheetDialog({
     </DrawerRoot>
   );
 }
+
+/**
+ * The dialog action row (shadcn-port-settings D2): right-aligned buttons with the spacing the
+ * legacy `.modal-actions` chrome had. Shared by every ported dialog.
+ */
+export function DialogActions({ children }: { children: ReactNode }) {
+  return (
+    <div data-slot="dialog-actions" className="mt-5 flex justify-end gap-[0.6rem]">
+      {children}
+    </div>
+  );
+}

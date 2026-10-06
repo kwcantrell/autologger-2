@@ -2,9 +2,10 @@
 
 ## 1. Shared pieces
 
-- [ ] 1.1 Add `DialogActions` to `shared/ui/Dialog.tsx` (D2), and export `TOUCH_TARGET` from `shared/components/ui/button.tsx` (D2b).
+- [x] 1.1 Add `DialogActions` to `shared/ui/Dialog.tsx` (D2), and export `TOUCH_TARGET` from `shared/components/ui/button.tsx` (D2b).
   - Test first: `shared/ui/Dialog.test.tsx` checks that `DialogActions` renders `data-slot="dialog-actions"` with its children, in order.
   - Verify: `npx vitest run src/shared/ui/Dialog.test.tsx` passes.
+  - Evidence: test first: Dialog.test "DialogActions renders a dialog-actions row with its children in order" + "TOUCH_TARGET is the 44px mobile floor (D2b)" -> `2 failed | 8 passed (10)`; after DialogActions (data-slot dialog-actions, mt-5 flex justify-end gap-[0.6rem]) in shared/ui/Dialog.tsx and TOUCH_TARGET = max-md:min-h-11 exported from button.tsx -> `npx vitest run src/shared/ui/Dialog.test.tsx src/shared/components/ui` `Tests 45 passed (45)` (button variant snapshot unchanged); tsc clean
 
 ## 2. Settings modal
 

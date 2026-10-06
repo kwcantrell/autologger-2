@@ -79,4 +79,11 @@ function Button({
   );
 }
 
-export { Button, buttonVariants };
+/**
+ * Mobile touch-target floor (shadcn-port-settings D2b): the legacy `.btn` was at least 44px tall
+ * below 767px. Ported controls pass this so their phone size is unchanged; it is not in the base
+ * (that would change every existing Button on mobile).
+ */
+const TOUCH_TARGET = 'max-md:min-h-11';
+
+export { Button, buttonVariants, TOUCH_TARGET };
