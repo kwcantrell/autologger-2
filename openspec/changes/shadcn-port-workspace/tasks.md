@@ -117,7 +117,7 @@
     - `categoryColor.test.ts`: the three bare tokens map to `--legacy-*`, whitespace-tolerant; hex and other `var()`s pass through; empty and null give `undefined`;
     - EventLogRow: an internal row with `category_color: 'var(--muted)'` renders its category cell with inline `color: var(--legacy-muted)`;
     - TimelineMarkers: that event's marker has `--mcol: var(--legacy-muted)`.
-  - Verify: those suites pass, and `grep -rn "category_color" web/src --include=*.tsx | grep -v test` shows every read wrapped.
+  - Verify: those suites and `src/shadcnHygiene.repo.test.ts` pass (the helper holds no literal bare-token `var()` string), and `grep -rn "category_color" web/src --include=*.tsx | grep -v test` shows every read wrapped.
 
 ## 6. Integration: QA gate and checks
 
