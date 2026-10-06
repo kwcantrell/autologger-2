@@ -51,7 +51,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './tool
 // shadcn-foundation task 3.2: every added primitive renders and exposes its role / slot.
 // Behaviour of the composed wrappers is change 2's job; this guards the normalized files.
 // Radix popper positions via floating-ui, which constructs a ResizeObserver jsdom lacks
-// (AdminUsersPage.test.tsx / RecentSessionsList.test.tsx idiom).
+// (RecentSessionsList.test.tsx idiom).
 class StubResizeObserver {
   observe() {}
   unobserve() {}

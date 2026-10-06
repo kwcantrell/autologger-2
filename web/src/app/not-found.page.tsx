@@ -5,17 +5,18 @@
 // comment and `(index)/layout.page.tsx`'s header for why every App Router
 // special file under `web/src/app/**` carries the `.page.` suffix.
 //
-// This file lives at the TOP of `app/` (outside both `(index)`/`(admin)`
-// route groups), so it is Next's global not-found boundary -- it answers
-// any request that matches neither group's routes (a genuinely unmatched
-// path, e.g. `/sessions/a/b` or `/does-not-exist`), matching pre-change
-// behavior: status stays `404`, only the body changes to Next's not-found
-// HTML (`api-contract-freeze` delta). Because it sits OUTSIDE both root
-// layouts, it has no parent `<html>`/`<body>` to inherit and must supply
-// its own -- Next.js requires this for a root not-found file when the app
-// has no single root layout (this app deliberately has two, via route
-// groups; see `(index)/layout.page.tsx`'s comment for why there is no root
-// `app/layout.page.tsx`).
+// This file lives at the TOP of `app/` (outside the `(index)` route group),
+// so it is Next's global not-found boundary -- it answers any request the
+// group's routes don't match (a genuinely unmatched path, e.g.
+// `/sessions/a/b`, `/does-not-exist`, or the retired `/admin/users`),
+// matching pre-change behavior: status stays `404`, only the body changes to
+// Next's not-found HTML (`api-contract-freeze` delta). Because it sits
+// OUTSIDE the route group's root layout, it has no parent `<html>`/`<body>`
+// to inherit and must supply its own -- Next.js requires this for a root
+// not-found file when there is no root `app/layout.page.tsx` (the root
+// layout lives inside the `(index)` group; see its comment). The second
+// group, `(admin)`, was retired with the `/admin/users` page
+// (remove-admin-users-page).
 //
 // Statically rendered (design D9.1 -- no dynamic export, no data
 // dependency), and contains no user- or session-derived data.

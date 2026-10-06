@@ -8,7 +8,7 @@ import { AppLoadingSkeleton } from './AppLoadingSkeleton';
 // design D9.1, panel rework 2026-08-13) ---
 //
 // Done-ness gate: a jsdom test asserting the `dynamic()` `loading` fallback
-// (verbatim usage: `IndexIsland.tsx` / `AdminIsland.tsx` both do
+// (verbatim usage: `IndexIsland.tsx` does
 // `loading: () => <AppLoadingSkeleton />`) and the island's own in-app loading
 // branch (`RootGate.tsx`'s `LoadingState`, rendered while `useProfile()` is
 // pending) render the SAME component -- not two hand-maintained copies of the
@@ -52,7 +52,7 @@ describe('AppLoadingSkeleton single-sourcing (task 5.1)', () => {
   });
 
   it('is the exact same component the dynamic()-loading fallback and RootGate loading branch both render', () => {
-    // dynamic() fallback path, verbatim: IndexIsland/AdminIsland's
+    // dynamic() fallback path, verbatim: IndexIsland's
     // `loading: () => <AppLoadingSkeleton />`.
     const fallback = renderStrict(<AppLoadingSkeleton />);
     const fallbackCallCount = mockedAppLoadingSkeleton.mock.calls.length;

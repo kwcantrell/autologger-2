@@ -38,7 +38,7 @@ import { RouteState } from './components/RouteState';
 
 // Single-sourced with the Next `dynamic()` `loading` fallback (task 5.1,
 // design D9.1): this renders the exact same `AppLoadingSkeleton` used by
-// `IndexIsland`/`AdminIsland`, opting into the looping brand video as that
+// `IndexIsland`, opting into the looping brand video as that
 // component's `media` progressive-enhancement slot rather than hand-rolling
 // a second copy of the loading frame.
 function LoadingState() {

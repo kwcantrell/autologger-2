@@ -32,8 +32,8 @@ const HS_INPUT_OVERRIDE =
   'bg-[rgba(255,255,255,0.05)] border border-v5-border-strong text-v5-text rounded-[0.5rem]';
 
 // Legacy chrome re-expressed as utilities (shadcn-port-settings D2): the computed values of
-// `.admin-settings-block`, `.settings-subheading`, `.settings-actions` and `.modal-hint`, which stay
-// in tailwind.css for /admin/users until 3c-2. The `mb-4` on inputs is `.profile-select`'s margin.
+// `.admin-settings-block`, `.settings-subheading`, `.settings-actions` and `.modal-hint` (those
+// rules were since deleted). The `mb-4` on inputs is `.profile-select`'s former margin.
 const SETTINGS_BLOCK = 'mt-4 mb-5 pb-4 border-b border-legacy-border';
 const SETTINGS_SUBHEAD = 'm-0 text-[1rem] font-semibold text-(--text)';
 const HINT = 'm-0 mb-[0.65rem] text-[0.78rem] leading-[1.45] text-legacy-muted';

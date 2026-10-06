@@ -5,7 +5,7 @@ import { Tooltip, TooltipProvider } from './Tooltip';
 // shadcn-shared-wrappers D5: Tooltip rides the shadcn Tooltip primitive; opens on keyboard focus
 // (web-session-console "Transport tooltips"); `disabled` renders the child bare.
 // Radix popper positions via floating-ui, which needs a ResizeObserver jsdom lacks
-// (AdminUsersPage.test.tsx idiom).
+// (the shared local-stub idiom).
 class StubResizeObserver {
   observe() {}
   unobserve() {}
