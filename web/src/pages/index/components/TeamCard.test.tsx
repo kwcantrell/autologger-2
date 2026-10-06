@@ -101,6 +101,17 @@ describe('owner view', () => {
     expect(within(memberRow).getByRole('button', { name: 'Transfer ownership' })).not.toBeNull();
     expect(within(memberRow).getByRole('button', { name: 'Remove' })).not.toBeNull();
     expect(screen.queryByTestId('team-orphaned-notice')).toBeNull();
+
+    // shadcn-port-shell D5: shared Button variants and the Badge.
+    const variant = (scope: HTMLElement, name: string) =>
+      within(scope).getByRole('button', { name }).getAttribute('data-variant');
+    expect(variant(panel, 'Save name')).toBe('default');
+    expect(variant(panel, 'Invite')).toBe('outline');
+    expect(variant(panel, 'Delete team')).toBe('destructive');
+    expect(variant(adminRow, 'Make member')).toBe('outline');
+    expect(variant(adminRow, 'Remove')).toBe('destructive');
+    expect(variant(memberRow, 'Make admin')).toBe('outline');
+    expect(within(row(panel, OWNER)).getByText('owner').getAttribute('data-slot')).toBe('badge');
   });
 
   it('transfers ownership to a member after confirming', async () => {
@@ -173,6 +184,9 @@ describe('admin view', () => {
 
     const notice = screen.getByTestId('team-orphaned-notice');
     expect(notice.textContent).toBe('This team has no owner. Contact support.');
+    // An Alert surface that stays a polite status (shadcn-port-shell D5).
+    expect(notice.getAttribute('role')).toBe('status');
+    expect(notice.getAttribute('data-slot')).toBe('alert');
     // The notice precedes the panel in document order.
     expect(notice.compareDocumentPosition(panel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
@@ -185,6 +199,9 @@ describe('member view', () => {
     const panel = await expand('team-member-panel-team-a');
 
     expect(within(panel).getByRole('button', { name: 'Leave team' })).not.toBeNull();
+    expect(
+      within(panel).getByRole('button', { name: 'Leave team' }).getAttribute('data-variant'),
+    ).toBe('destructive');
     expect(within(panel).queryByRole('button', { name: 'Invite' })).toBeNull();
     expect(within(panel).queryByRole('button', { name: 'Remove' })).toBeNull();
     expect(within(row(panel, OWNER)).getByText('owner')).not.toBeNull();
@@ -267,8 +284,10 @@ describe('show-access picker', () => {
         name: 'Morning News',
       });
       const evening = within(row(panel, MEMBER)).getByRole('checkbox', { name: 'Evening News' });
-      expect((morning as HTMLInputElement).checked).toBe(false);
-      expect((evening as HTMLInputElement).checked).toBe(true);
+      // shadcn-port-shell D5: the shared Checkbox (a button[role=checkbox]) — read aria-checked.
+      expect(morning.getAttribute('data-slot')).toBe('checkbox');
+      expect(morning.getAttribute('aria-checked')).toBe('false');
+      expect(evening.getAttribute('aria-checked')).toBe('true');
     });
   }
 

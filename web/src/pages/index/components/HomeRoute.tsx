@@ -1,5 +1,7 @@
+import { ArrowRight, Plus } from 'lucide-react';
 import { useSessions } from '../../../api/hooks/useSessions';
 import { useShowAccess } from '../../../api/hooks/useShowAccess';
+import { Button } from '../../../shared/components/ui/button';
 import { fmtDateOnly } from '../../../shared/utils/fmtDateOnly';
 import { navigate } from '../navigation';
 
@@ -75,15 +77,7 @@ export function HomeRoute({ onNewSession }: Props) {
                   aria-hidden="true"
                   className="shrink-0 text-v5-muted [transition:transform_0.15s_ease,color_0.15s_ease] group-hover-always:translate-x-[2px] group-hover-always:text-v5-primary"
                 >
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                    <path
-                      d="M5 12H19M19 12L13 6M19 12L13 18"
-                      stroke="currentColor"
-                      strokeWidth="1.8"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
+                  <ArrowRight className="size-4" strokeWidth={1.8} aria-hidden="true" />
                 </span>
               </span>
               <span className="text-[0.72rem] leading-[1.35] text-v5-muted">
@@ -95,22 +89,14 @@ export function HomeRoute({ onNewSession }: Props) {
           )}
 
           {canCreate && (
-            <button
-              type="button"
-              className={recent ? 'btn' : 'btn primary'}
+            <Button
+              variant={recent ? 'outline' : 'default'}
               id="home-new-session"
               onClick={onNewSession}
             >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                <path
-                  d="M12 5V19M5 12H19"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                />
-              </svg>
+              <Plus strokeWidth={2} aria-hidden="true" />
               {recent ? 'New session' : 'Start a session'}
-            </button>
+            </Button>
           )}
         </div>
       </div>

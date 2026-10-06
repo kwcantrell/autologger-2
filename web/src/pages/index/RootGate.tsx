@@ -1,8 +1,10 @@
 import { useProfile } from '../../api/hooks/useProfile';
+import { Button } from '../../shared/components/ui/button';
 import { AppLoadingSkeleton } from '../../shared/ui/AppLoadingSkeleton';
 import { AUTOLOGGER_LOADING_VIDEO_SRC } from '../../shared/utils/loadingVideo';
 import { AppShell } from './AppShell';
 import { LoginPage } from './components/LoginPage';
+import { RouteState } from './components/RouteState';
 
 // --- RootGate (add-login-screen, task 2.2) ---
 // Root switch mounted above `AppShell` (design D2). Runs its own `useProfile()`
@@ -34,9 +36,6 @@ import { LoginPage } from './components/LoginPage';
 // sockets, …), so the loading/error/login states are structurally silent
 // beyond the one anonymous `GET /api/profile` request the query issues.
 
-const GATE_PAGE =
-  'relative z-[1] flex min-h-screen min-h-[100dvh] w-full items-center justify-center px-5 py-10';
-
 // Single-sourced with the Next `dynamic()` `loading` fallback (task 5.1,
 // design D9.1): this renders the exact same `AppLoadingSkeleton` used by
 // `IndexIsland`/`AdminIsland`, opting into the looping brand video as that
@@ -64,30 +63,21 @@ function LoadingState() {
 }
 
 function ErrorState({ onRetry, retrying }: { onRetry: () => void; retrying: boolean }) {
+  // shadcn-port-shell D2: the shared RouteState panel in the gate's viewport frame.
   return (
-    <div className={GATE_PAGE}>
-      <div
-        className="glass-panel relative box-border w-full max-w-[25rem] rounded-v5-lg px-7 py-9 text-center"
-        id="root-gate-error"
-        role="alert"
-      >
-        <h1 className="m-0 font-league-gothic font-bold text-[2.25rem] leading-none tracking-[0.02em] uppercase text-v5-text">
-          AutoLogger
-        </h1>
-        <p className="mx-auto mb-0 mt-3 max-w-[19rem] text-[0.9rem] leading-[1.5] text-v5-muted">
-          Couldn&apos;t reach the server. Check your connection and try again.
-        </p>
-        <button
-          type="button"
-          className="mt-6 box-border flex h-11 w-full cursor-pointer items-center justify-center rounded-v5-sm border border-v5-border-strong bg-[rgba(255,255,255,0.03)] px-4 text-[0.8125rem] font-semibold tracking-[0.04em] text-v5-muted [transition:border-color_0.15s_ease,background_0.15s_ease,color_0.15s_ease] hover-always:bg-[rgba(255,255,255,0.05)] hover-always:text-v5-text disabled:cursor-not-allowed disabled:opacity-50"
-          id="root-gate-retry"
-          disabled={retrying}
-          onClick={onRetry}
-        >
+    <RouteState
+      frame="gate"
+      id="root-gate-error"
+      role="alert"
+      title="AutoLogger"
+      actions={
+        <Button className="h-11 w-full" id="root-gate-retry" disabled={retrying} onClick={onRetry}>
           {retrying ? 'Retrying…' : 'Try again'}
-        </button>
-      </div>
-    </div>
+        </Button>
+      }
+    >
+      Couldn&apos;t reach the server. Check your connection and try again.
+    </RouteState>
   );
 }
 

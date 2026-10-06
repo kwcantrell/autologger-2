@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
+import { Alert, AlertDescription } from '../../../shared/components/ui/alert';
+import { Button } from '../../../shared/components/ui/button';
 import { useConfirm } from '../../../shared/ui/ConfirmDialog';
 // Side-effect import: starts the module-scope queue subscription that covers
 // "queue non-empty or upload in-flight" (design D6) the moment this module is
@@ -201,15 +203,15 @@ function ChunkRow({ chunk, queue, confirm }: ChunkRowProps) {
       </div>
       {detail && <p className="m-0 text-[0.76rem] text-v5-muted wrap-break-word">{detail}</p>}
       <div className="flex flex-wrap gap-2 pt-1">
-        <button type="button" className="btn" onClick={handleDownload}>
+        <Button variant="outline" size="sm" onClick={handleDownload}>
           Download
-        </button>
-        <button type="button" className="btn" onClick={handleRetry}>
+        </Button>
+        <Button variant="outline" size="sm" onClick={handleRetry}>
           Retry
-        </button>
-        <button type="button" className="btn danger" onClick={handleDiscard}>
+        </Button>
+        <Button variant="destructive" size="sm" onClick={handleDiscard}>
           Discard
-        </button>
+        </Button>
       </div>
     </li>
   );
@@ -285,24 +287,27 @@ export function ChunkRescueBanner() {
 
   return (
     <>
-      <div
-        role="alert"
+      {/* shadcn-port-shell D6: the destructive Alert (role="alert" — still the one assertive
+          surface; never a toast, never auto-dismissed). `block` replaces Alert's icon grid so the
+          header row + chunk list lay out as before. */}
+      <Alert
+        variant="destructive"
         aria-live="assertive"
-        className="glass-face-strong fixed inset-x-0 top-0 z-(--z-toast) mx-auto mt-2 w-[min(640px,94vw)] rounded-v5-md border border-danger p-3 shadow-[0_8px_32px_rgba(0,0,0,0.35)]"
+        className="fixed inset-x-0 top-0 z-(--z-toast) mx-auto mt-2 block w-[min(640px,94vw)] shadow-[0_8px_32px_rgba(0,0,0,0.35)]"
       >
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className="m-0 text-[0.85rem] font-medium text-v5-text">
+          <AlertDescription className="m-0 block font-medium">
             {failedChunks.length} recorded audio {failedChunks.length === 1 ? 'chunk' : 'chunks'}{' '}
             could not be uploaded. Keep this tab open until they are retried, downloaded, or
             discarded.
-          </p>
+          </AlertDescription>
           <div className="flex gap-2">
-            <button type="button" className="btn" onClick={handleRetryAll}>
+            <Button variant="outline" size="sm" onClick={handleRetryAll}>
               Retry all
-            </button>
-            <button type="button" className="btn danger" onClick={handleDiscardAll}>
+            </Button>
+            <Button variant="destructive" size="sm" onClick={handleDiscardAll}>
               Discard remaining
-            </button>
+            </Button>
           </div>
         </div>
         <ul className="m-0 mt-2 flex list-none flex-col gap-2 p-0">
@@ -315,7 +320,7 @@ export function ChunkRescueBanner() {
             />
           ))}
         </ul>
-      </div>
+      </Alert>
       {confirmElement}
     </>
   );

@@ -4,7 +4,7 @@ import type * as React from 'react';
 import { cn } from '@/shared/lib/utils';
 
 const badgeVariants = cva(
-  'inline-flex w-fit shrink-0 items-center justify-center gap-1 overflow-hidden rounded-full border border-transparent px-2 py-0.5 text-xs font-medium whitespace-nowrap transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 aria-invalid:border-destructive [&>svg]:pointer-events-none [&>svg]:size-3 aria-invalid:ring-destructive/40',
+  'inline-flex w-fit shrink-0 items-center justify-center gap-1 overflow-hidden rounded-full border border-transparent px-2 py-0.5 text-[0.62rem] font-semibold uppercase tracking-[0.08em] whitespace-nowrap transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 aria-invalid:border-destructive [&>svg]:pointer-events-none [&>svg]:size-3 aria-invalid:ring-destructive/40',
   {
     variants: {
       variant: {
@@ -13,7 +13,7 @@ const badgeVariants = cva(
         destructive:
           'text-white [a&]:hover:bg-destructive/90 bg-destructive/60 focus-visible:ring-destructive/40',
         outline:
-          'border-border text-foreground [a&]:hover:bg-accent [a&]:hover:text-accent-foreground',
+          'border-v5-border-strong text-v5-muted [a&]:hover:bg-accent [a&]:hover:text-accent-foreground',
         ghost: '[a&]:hover:bg-accent [a&]:hover:text-accent-foreground',
         link: 'text-primary underline-offset-4 [a&]:hover:underline',
       },

@@ -2,10 +2,12 @@ import { useEffect } from 'react';
 import { useRestoreSession, useSession } from '../../../api/hooks/useSessions';
 import type { Session } from '../../../api/types';
 import { toast } from '../../../shared/components/Toast';
+import { Button } from '../../../shared/components/ui/button';
 import { navigate } from '../navigation';
 import { LazyChunk } from './ChunkLoadBoundary';
 import { HomeRoute } from './HomeRoute';
-import { ROUTE_STATE_PAGE, RouteLoadingState } from './RouteLoadingState';
+import { RouteLoadingState } from './RouteLoadingState';
+import { RouteState } from './RouteState';
 
 // Workspace code-split behind session resolution (bundle route-splitting, plan
 // C5.2): the whole session workspace — Timeline, feeds, AudioPlayer/Recorder,
@@ -62,59 +64,59 @@ const loadWorkspaceStatic = () =>
 // The page-frame class (height mirror included) and the brand loading treatment
 // both live in `./RouteLoadingState` now — shared with the Suspense fallbacks
 // added by the route split (plan C5.1), so every wait renders identical markup.
-const STATE_PAGE = ROUTE_STATE_PAGE;
-const STATE_PANEL =
-  'glass-panel relative box-border w-full max-w-[25rem] rounded-v5-lg px-7 py-9 text-center';
-const STATE_TITLE =
-  'm-0 font-league-gothic font-bold text-[2.25rem] leading-none tracking-[0.02em] uppercase text-v5-text';
-const STATE_COPY = 'mx-auto mb-0 mt-3 max-w-[19rem] text-[0.9rem] leading-[1.5] text-v5-muted';
-const STATE_BADGE = 'm-0 text-[0.6875rem] font-semibold uppercase tracking-[0.14em] text-v5-muted';
-const STATE_BUTTON =
-  'box-border flex h-11 w-full cursor-pointer items-center justify-center rounded-v5-sm border border-v5-border-strong bg-[rgba(255,255,255,0.03)] px-4 text-[0.8125rem] font-semibold tracking-[0.04em] text-v5-muted [transition:border-color_0.15s_ease,background_0.15s_ease,color_0.15s_ease] hover-always:bg-[rgba(255,255,255,0.05)] hover-always:text-v5-text disabled:cursor-not-allowed disabled:opacity-50';
-
 const LoadingState = RouteLoadingState;
+
+// shadcn-port-shell D2: the three resolution states render through the shared RouteState panel
+// (frame = the height-mirrored ROUTE_STATE_PAGE). Roles stay explicit: not-found and archived are
+// polite `status`, error is `alert` (spec: error is semantically distinct from not-found).
+function BackToSessions() {
+  return (
+    <Button variant="outline" className="h-11 w-full" onClick={() => navigate('/')}>
+      Back to sessions
+    </Button>
+  );
+}
 
 function NotFoundState() {
   // One and the same state for nonexistent, deleted, and unauthorized ids —
   // the copy deliberately confirms nothing about whether the session exists.
   return (
-    <div className={STATE_PAGE}>
-      <div className={STATE_PANEL} id="session-route-not-found" role="status">
-        <h1 className={STATE_TITLE}>Session not found</h1>
-        <p className={STATE_COPY}>
-          There&apos;s no session at this link. It may have been removed, or the link may be wrong.
-        </p>
-        <button type="button" className={`${STATE_BUTTON} mt-6`} onClick={() => navigate('/')}>
-          Back to sessions
-        </button>
-      </div>
-    </div>
+    <RouteState
+      frame="route"
+      id="session-route-not-found"
+      role="status"
+      title="Session not found"
+      actions={<BackToSessions />}
+    >
+      There&apos;s no session at this link. It may have been removed, or the link may be wrong.
+    </RouteState>
   );
 }
 
 function ErrorState({ onRetry, retrying }: { onRetry: () => void; retrying: boolean }) {
   // Distinct from not-found: transient failure, retryable in place.
   return (
-    <div className={STATE_PAGE}>
-      <div className={STATE_PANEL} id="session-route-error" role="alert">
-        <h1 className={STATE_TITLE}>Couldn&apos;t load session</h1>
-        <p className={STATE_COPY}>
-          Something went wrong loading this session. Check your connection and try again.
-        </p>
-        <button
-          type="button"
-          className={`${STATE_BUTTON} mt-6`}
-          id="session-route-retry"
-          disabled={retrying}
-          onClick={onRetry}
-        >
-          {retrying ? 'Retrying…' : 'Try again'}
-        </button>
-        <button type="button" className={`${STATE_BUTTON} mt-3`} onClick={() => navigate('/')}>
-          Back to sessions
-        </button>
-      </div>
-    </div>
+    <RouteState
+      frame="route"
+      id="session-route-error"
+      role="alert"
+      title="Couldn't load session"
+      actions={
+        <>
+          <Button
+            className="h-11 w-full"
+            id="session-route-retry"
+            disabled={retrying}
+            onClick={onRetry}
+          >
+            {retrying ? 'Retrying…' : 'Try again'}
+          </Button>
+          <BackToSessions />
+        </>
+      }
+    >
+      Something went wrong loading this session. Check your connection and try again.
+    </RouteState>
   );
 }
 
@@ -130,29 +132,33 @@ function ArchivedInterstitial({
   // refetch that flips this URL to the workspace.
   const busy = restore.isPending || reResolving;
   return (
-    <div className={STATE_PAGE}>
-      <div className={STATE_PANEL} id="session-route-archived" role="status">
-        <p className={STATE_BADGE}>Archived session</p>
-        <h1 className={`${STATE_TITLE} mt-2`}>{session.title}</h1>
-        <p className={STATE_COPY}>This session is archived. Restore it to open the workspace.</p>
-        <button
-          type="button"
-          className={`${STATE_BUTTON} mt-6`}
-          id="session-route-restore"
-          disabled={busy}
-          onClick={() =>
-            restore.mutate(session.id, {
-              onError: (err) => toast.error(err instanceof Error ? err.message : 'Restore failed.'),
-            })
-          }
-        >
-          {busy ? 'Restoring…' : 'Restore session'}
-        </button>
-        <button type="button" className={`${STATE_BUTTON} mt-3`} onClick={() => navigate('/')}>
-          Back to sessions
-        </button>
-      </div>
-    </div>
+    <RouteState
+      frame="route"
+      id="session-route-archived"
+      role="status"
+      badge="Archived session"
+      title={session.title}
+      actions={
+        <>
+          <Button
+            className="h-11 w-full"
+            id="session-route-restore"
+            disabled={busy}
+            onClick={() =>
+              restore.mutate(session.id, {
+                onError: (err) =>
+                  toast.error(err instanceof Error ? err.message : 'Restore failed.'),
+              })
+            }
+          >
+            {busy ? 'Restoring…' : 'Restore session'}
+          </Button>
+          <BackToSessions />
+        </>
+      }
+    >
+      This session is archived. Restore it to open the workspace.
+    </RouteState>
   );
 }
 

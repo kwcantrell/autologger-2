@@ -95,8 +95,12 @@ describe('RootGate', () => {
 
     expect(container.querySelector('#root-gate-error')).not.toBeNull();
     noSentinels();
+    // shadcn-port-shell D2: the shared RouteState panel (gate frame), still an alert.
+    expect(container.querySelector('#root-gate-error')?.getAttribute('role')).toBe('alert');
+    expect(container.querySelector('#root-gate-error')?.getAttribute('data-slot')).toBe('empty');
 
     const retry = screen.getByRole('button', { name: /try again/i });
+    expect(retry.getAttribute('data-slot')).toBe('button');
     expect(retry.hasAttribute('disabled')).toBe(false);
 
     fireEvent.click(retry);

@@ -67,7 +67,10 @@ describe('LazyChunk chunk-load failure', () => {
       </div>,
     );
 
-    expect(await screen.findByTestId('chunk-load-error')).not.toBeNull();
+    const card = await screen.findByTestId('chunk-load-error');
+    // shadcn-port-shell D2: the route variant is the shared RouteState panel, still an alert.
+    expect(card.getAttribute('role')).toBe('alert');
+    expect(card.getAttribute('data-slot')).toBe('empty');
     // The failure is local: everything outside the boundary survived it. (Before
     // this boundary existed, the throw escaped the island root and unmounted
     // the whole client tree — sibling included.)
@@ -127,6 +130,9 @@ describe('LazyChunk chunk-load failure', () => {
 
     const card = await screen.findByTestId('chunk-load-error');
     expect(card.getAttribute('data-variant')).toBe('overlay');
+    // The overlay variant is the shadcn Alert.
+    expect(card.getAttribute('role')).toBe('alert');
+    expect(card.getAttribute('data-slot')).toBe('alert');
     expect(screen.getByTestId('route-content')).not.toBeNull();
 
     fireEvent.click(screen.getByTestId('chunk-load-dismiss'));

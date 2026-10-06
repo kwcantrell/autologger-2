@@ -133,6 +133,8 @@ describe('HomeRoute', () => {
     expect(screen.queryByRole('button', { name: /jump back in/i })).toBeNull();
     const cta = screen.getByRole('button', { name: /start a session/i });
     expect(cta.textContent?.toLowerCase()).not.toContain('first');
+    // shadcn-port-shell 3.2: the shared Button, primary when nothing can be resumed.
+    expect(cta.getAttribute('data-variant')).toBe('default');
   });
 
   it('activating New Session opens the AppShell-owned modal — scenario "New Session opens the shared modal"', () => {
@@ -151,7 +153,10 @@ describe('HomeRoute', () => {
 
     renderStrict(<HomeRoute onNewSession={onNewSession} />);
 
-    fireEvent.click(screen.getByRole('button', { name: /^new session$/i }));
+    const cta = screen.getByRole('button', { name: /^new session$/i });
+    // Secondary (outline) beside the resume card.
+    expect(cta.getAttribute('data-variant')).toBe('outline');
+    fireEvent.click(cta);
     expect(onNewSession).toHaveBeenCalledTimes(1);
   });
 });

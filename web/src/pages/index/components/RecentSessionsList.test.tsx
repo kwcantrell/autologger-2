@@ -183,9 +183,51 @@ function card(container: HTMLElement, id: string): HTMLElement {
   return el as HTMLElement;
 }
 
+// shadcn-port-shell D3: the row menu is a Radix DropdownMenu, which opens on pointer-down (or
+// the keyboard), not on a synthetic click.
 function openMenu(cardEl: HTMLElement) {
-  fireEvent.click(within(cardEl).getByRole('button', { name: 'Session options' }));
+  fireEvent.pointerDown(within(cardEl).getByRole('button', { name: 'Session options' }), {
+    button: 0,
+    ctrlKey: false,
+    pointerType: 'mouse',
+  });
 }
+
+// shadcn-port-shell D3 (panel critical finding): DropdownMenu items are `div[role=menuitem]`
+// whose events bubble through the portal to the clickable row — choosing an item, or using the
+// menu by keyboard, must never also select (navigate to) the session.
+describe('SessionCard menu never selects the row', () => {
+  it('opens a real menu by keyboard; Enter on the trigger does not select the session', async () => {
+    const onSelectSession = vi.fn();
+    const { container } = renderRecent([sessionFixture()], { onSelectSession });
+    const trigger = within(card(container, 'sess-1')).getByRole('button', {
+      name: 'Session options',
+    });
+    trigger.focus();
+    fireEvent.keyDown(trigger, { key: 'Enter' });
+    expect(await screen.findByRole('menu')).toBeTruthy();
+    expect(screen.getByRole('menuitem', { name: 'Rename' })).toBeTruthy();
+    expect(onSelectSession).not.toHaveBeenCalled();
+  });
+
+  it('choosing an item by click does not select the session', async () => {
+    const onSelectSession = vi.fn();
+    const { container } = renderRecent([sessionFixture()], { onSelectSession });
+    openMenu(card(container, 'sess-1'));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Rename' }));
+    expect(onSelectSession).not.toHaveBeenCalled();
+  });
+
+  it('choosing an item by Enter does not select the session', async () => {
+    const onSelectSession = vi.fn();
+    const { container } = renderRecent([sessionFixture()], { onSelectSession });
+    openMenu(card(container, 'sess-1'));
+    const item = await screen.findByRole('menuitem', { name: 'Archive' });
+    item.focus();
+    fireEvent.keyDown(item, { key: 'Enter' });
+    expect(onSelectSession).not.toHaveBeenCalled();
+  });
+});
 
 describe('SessionCard (active-list variant)', () => {
   it('deletes via ⋮ → Delete → themed confirm, with the success toast', async () => {
@@ -233,6 +275,8 @@ describe('SessionCard (active-list variant)', () => {
     fireEvent.click(await screen.findByText('Rename'));
 
     const input = (await screen.findByDisplayValue('Session One')) as HTMLInputElement;
+    // shadcn-port-shell 3.3: the rename field is labelled (Field + Label).
+    expect(screen.getByRole('textbox', { name: 'Session name' })).toBe(input);
     fireEvent.change(input, { target: { value: 'Renamed' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 

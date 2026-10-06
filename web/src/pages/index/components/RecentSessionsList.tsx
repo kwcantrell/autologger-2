@@ -1,4 +1,5 @@
 import clsx from 'clsx';
+import { MoreVertical } from 'lucide-react';
 import { OverlayScrollbarsComponent } from 'overlayscrollbars-react';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { useSessionStatus } from '../../../api/hooks/useSessionStatus';
@@ -10,9 +11,17 @@ import {
 } from '../../../api/hooks/useSessions';
 import { useShowAccess } from '../../../api/hooks/useShowAccess';
 import type { Session, SessionsResponse } from '../../../api/types';
+import { Button } from '../../../shared/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '../../../shared/components/ui/dropdown-menu';
+import { Field, FieldLabel } from '../../../shared/components/ui/field';
+import { Input } from '../../../shared/components/ui/input';
 import { type ConfirmOptions, useConfirm } from '../../../shared/ui/ConfirmDialog';
 import { Dialog } from '../../../shared/ui/Dialog';
-import { Popover, PopoverItem } from '../../../shared/ui/Popover';
 import { Tooltip } from '../../../shared/ui/Tooltip';
 import { fmtDateOnly } from '../../../shared/utils/fmtDateOnly';
 import { AUTOLOGGER_LOADING_VIDEO_SRC } from '../../../shared/utils/loadingVideo';
@@ -105,25 +114,28 @@ function RenameSessionModal({ initialTitle, isPending, onSave, onClose }: Rename
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()} title="Rename session">
-      <input
-        ref={inputRef}
-        type="text"
-        className="profile-select box-border w-full"
-        maxLength={200}
-        value={title}
-        autoFocus
-        onChange={(e) => setTitle(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') handleSave();
-        }}
-      />
+      <Field className="mb-4">
+        <FieldLabel htmlFor="rename-session-title">Session name</FieldLabel>
+        <Input
+          ref={inputRef}
+          id="rename-session-title"
+          type="text"
+          maxLength={200}
+          value={title}
+          autoFocus
+          onChange={(e) => setTitle(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') handleSave();
+          }}
+        />
+      </Field>
       <div className="flex justify-end gap-2">
-        <button type="button" className="btn" onClick={onClose}>
+        <Button variant="outline" onClick={onClose}>
           Cancel
-        </button>
-        <button type="button" className="btn primary" onClick={handleSave} disabled={isPending}>
+        </Button>
+        <Button onClick={handleSave} disabled={isPending}>
           {isPending ? 'Saving…' : 'Save'}
-        </button>
+        </Button>
       </div>
     </Dialog>
   );
@@ -188,26 +200,32 @@ function SessionCardMenu({
   onOpenChange: (open: boolean) => void;
   children: ReactNode;
 }) {
+  // shadcn-port-shell D3: a shadcn DropdownMenu (role="menu", arrow keys, typeahead). Non-modal
+  // (`modal={false}`): items open dialogs (rename, themed confirms), and a modal Radix menu closing
+  // underneath a just-opened dialog leaves `pointer-events: none` stuck on <body>.
+  // Menu items are `div[role=menuitem]` whose events bubble through the portal to the clickable
+  // row — the content stops click/keydown propagation, and the row's guards skip menu targets.
+  const stop = (e: React.SyntheticEvent) => e.stopPropagation();
   return (
     <div className={DECK_TRAIL}>
-      <Popover
-        open={open}
-        onOpenChange={onOpenChange}
-        ariaLabel="Session options"
-        trigger={
-          <button
-            type="button"
+      <DropdownMenu open={open} onOpenChange={onOpenChange} modal={false}>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon-xs"
             className={RAIL_MENU}
             aria-label="Session options"
             data-open={open || undefined}
-            onClick={(e) => e.stopPropagation()}
+            onClick={stop}
+            onKeyDown={stop}
           >
-            ⋮
-          </button>
-        }
-      >
-        {children}
-      </Popover>
+            <MoreVertical aria-hidden="true" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" sideOffset={6} onClick={stop} onKeyDown={stop}>
+          {children}
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
   );
 }
@@ -234,6 +252,10 @@ function SessionCardMetaRow({
     </div>
   );
 }
+
+/** Row click/keydown targets that must never select the session: real controls and the row's
+ * (portaled) menu — DropdownMenu items are `div[role=menuitem]` (shadcn-port-shell D3). */
+const ROW_IGNORE = 'button, a, input, select, textarea, [role="menu"], [role="menuitem"]';
 
 interface SessionCardProps {
   session: Session;
@@ -262,7 +284,7 @@ function SessionCard({ session: s, isActive, onSelect, onClose }: SessionCardPro
 
   const handleCardClick = (e: React.MouseEvent) => {
     const target = e.target as Element;
-    if (target.closest('button, a, input, select, textarea')) return;
+    if (target.closest(ROW_IGNORE)) return;
     onSelect();
   };
 
@@ -306,6 +328,7 @@ function SessionCard({ session: s, isActive, onSelect, onClose }: SessionCardPro
       data-menu-open={menuOpen || undefined}
       onClick={handleCardClick}
       onKeyDown={(e: React.KeyboardEvent) => {
+        if ((e.target as Element).closest(ROW_IGNORE)) return;
         if (e.key === 'Enter' || e.key === ' ') onSelect();
       }}
     >
@@ -329,40 +352,36 @@ function SessionCard({ session: s, isActive, onSelect, onClose }: SessionCardPro
           </button>
           <SessionCardMenu open={menuOpen} onOpenChange={setMenuOpen}>
             {isActive && (
-              <PopoverItem
-                onClick={() => {
-                  setMenuOpen(false);
+              <DropdownMenuItem
+                onSelect={() => {
                   onClose();
                 }}
               >
                 Close session
-              </PopoverItem>
+              </DropdownMenuItem>
             )}
-            <PopoverItem
-              onClick={() => {
-                setMenuOpen(false);
+            <DropdownMenuItem
+              onSelect={() => {
                 setEditing(true);
               }}
             >
               Rename
-            </PopoverItem>
-            <PopoverItem
-              onClick={() => {
-                setMenuOpen(false);
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onSelect={() => {
                 handleArchive();
               }}
             >
               Archive
-            </PopoverItem>
-            <PopoverItem
-              danger
-              onClick={() => {
-                setMenuOpen(false);
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              variant="destructive"
+              onSelect={() => {
                 handleDelete();
               }}
             >
               Delete
-            </PopoverItem>
+            </DropdownMenuItem>
           </SessionCardMenu>
         </div>
         <SessionCardMetaRow session={s} liveTimecode={liveTimecode} />
@@ -406,23 +425,21 @@ function ArchivedSessionCard({ session: s }: { session: Session }) {
         <div className={DECK_ROW}>
           <span className={DECK_TITLE}>{s.title}</span>
           <SessionCardMenu open={menuOpen} onOpenChange={setMenuOpen}>
-            <PopoverItem
-              onClick={() => {
-                setMenuOpen(false);
+            <DropdownMenuItem
+              onSelect={() => {
                 handleRestore();
               }}
             >
               Restore
-            </PopoverItem>
-            <PopoverItem
-              danger
-              onClick={() => {
-                setMenuOpen(false);
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              variant="destructive"
+              onSelect={() => {
                 handleDelete();
               }}
             >
               Delete
-            </PopoverItem>
+            </DropdownMenuItem>
           </SessionCardMenu>
         </div>
         <SessionCardMetaRow session={s} />

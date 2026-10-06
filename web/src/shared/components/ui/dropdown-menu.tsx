@@ -21,6 +21,8 @@ function DropdownMenuTrigger({
   return <DropdownMenuPrimitive.Trigger data-slot="dropdown-menu-trigger" {...props} />;
 }
 
+// V5 (shadcn-port-shell D3): content + item base strings replaced with the legacy Popover /
+// PopoverItem classes (glass panel, z-popover, item tints; destructive = red text + tint).
 function DropdownMenuContent({
   className,
   sideOffset = 4,
@@ -32,7 +34,7 @@ function DropdownMenuContent({
         data-slot="dropdown-menu-content"
         sideOffset={sideOffset}
         className={cn(
-          'z-50 max-h-(--radix-dropdown-menu-content-available-height) min-w-[8rem] origin-(--radix-dropdown-menu-content-transform-origin) overflow-x-hidden overflow-y-auto rounded-md border bg-popover p-1 text-popover-foreground shadow-md data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95',
+          'glass-panel z-(--z-popover) max-h-(--radix-dropdown-menu-content-available-height) min-w-[11.5rem] overflow-x-hidden overflow-y-auto rounded-v5-md p-[0.35rem] outline-none animate-popover-fade-in',
           className,
         )}
         {...props}
@@ -60,7 +62,7 @@ function DropdownMenuItem({
       data-inset={inset}
       data-variant={variant}
       className={cn(
-        "relative flex cursor-default items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-hidden select-none focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50 data-[inset]:pl-8 data-[variant=destructive]:text-destructive data-[variant=destructive]:focus:text-destructive [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 [&_svg:not([class*='text-'])]:text-muted-foreground data-[variant=destructive]:*:[svg]:text-destructive! data-[variant=destructive]:focus:bg-destructive/20",
+        "relative flex w-full cursor-pointer items-center gap-2 rounded-[calc(var(--v5-radius-md)-6px)] px-[0.55rem] py-[0.45rem] text-left text-[0.78rem] leading-[1.45] font-medium tracking-[0.03em] text-[rgba(248,250,252,0.92)] outline-none select-none data-[highlighted]:bg-[rgba(255,255,255,0.06)] focus-visible:bg-[rgba(56,189,248,0.16)] data-[disabled]:pointer-events-none data-[disabled]:opacity-45 data-[inset]:pl-8 data-[variant=destructive]:text-danger data-[variant=destructive]:data-[highlighted]:bg-[color-mix(in_srgb,var(--danger)_14%,transparent)] [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
         className,
       )}
       {...props}

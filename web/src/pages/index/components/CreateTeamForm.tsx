@@ -1,6 +1,10 @@
 import { useState } from 'react';
 import { ApiError } from '../../../api/client';
 import { useCreateTeam } from '../../../api/hooks/useTeams';
+import { Alert } from '../../../shared/components/ui/alert';
+import { Button } from '../../../shared/components/ui/button';
+import { Field, FieldDescription, FieldLabel } from '../../../shared/components/ui/field';
+import { Input } from '../../../shared/components/ui/input';
 
 // --- CreateTeamForm (teams-self-serve, task 6.1) ---
 //
@@ -50,48 +54,46 @@ export function CreateTeamForm({ onCreated }: { onCreated?: () => void }) {
       data-testid="team-create-form"
       onSubmit={handleSubmit}
     >
+      {/* shadcn-port-shell D5: one destructive Alert (the tests require exactly one alert). */}
       {error && (
-        <p role="alert" className="modal-hint text-[#ff8a8a]">
+        <Alert variant="destructive" className="mb-3">
           {error}
-        </p>
+        </Alert>
       )}
       <div className="flex flex-wrap items-end gap-3">
-        <label className="field">
-          <span>Team id (slug)</span>
-          <input
+        <Field className="w-auto min-w-[10rem] flex-1">
+          <FieldLabel htmlFor="team-create-slug">Team id (slug)</FieldLabel>
+          <Input
             type="text"
             id="team-create-slug"
-            className="profile-select"
             placeholder="my-crew"
             maxLength={63}
             value={slug}
             onChange={(e) => setSlug(e.target.value)}
           />
-        </label>
-        <label className="field">
-          <span>Display name</span>
-          <input
+        </Field>
+        <Field className="w-auto min-w-[10rem] flex-1">
+          <FieldLabel htmlFor="team-create-name">Display name</FieldLabel>
+          <Input
             type="text"
             id="team-create-name"
-            className="profile-select"
             placeholder="My Crew"
             maxLength={200}
             value={displayName}
             onChange={(e) => setDisplayName(e.target.value)}
           />
-        </label>
-        <button
+        </Field>
+        <Button
           type="submit"
-          className="btn primary"
           disabled={create.isPending || slug.trim() === '' || displayName.trim() === ''}
         >
           {create.isPending ? 'Creating…' : 'Create team'}
-        </button>
+        </Button>
       </div>
-      <p className="modal-hint mt-2">
+      <FieldDescription className="mt-2">
         Lowercase, starts with a letter, letters/digits/hyphens only, 2–63 characters. The id
         can&apos;t be changed later.
-      </p>
+      </FieldDescription>
     </form>
   );
 }

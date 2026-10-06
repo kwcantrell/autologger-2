@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { Alert, AlertDescription, AlertTitle } from './alert';
 import {
@@ -11,6 +11,7 @@ import {
 } from './alert-dialog';
 import { Badge } from './badge';
 import { Card, CardContent, CardHeader, CardTitle } from './card';
+import { Checkbox } from './checkbox';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from './dialog';
 import { Drawer, DrawerContent, DrawerDescription, DrawerTitle } from './drawer';
 import {
@@ -282,6 +283,63 @@ describe('shadcn primitives render (normalized, V5-themed)', () => {
     );
     expect(slot('select-trigger')?.getAttribute('class')).toBe(SELECT_TRIGGER_CLASSNAME);
     expect(slot('select-trigger')?.querySelectorAll('svg')).toHaveLength(1);
+  });
+
+  // shadcn-port-shell D1: content primitives themed to V5 (base strings replaced).
+  it('content primitives keep no shadcn input/radius/dashed/clamp leftovers; spinner honours reduced motion', () => {
+    render(
+      <div>
+        <Input aria-label="i" />
+        <Textarea aria-label="t" />
+        <Alert>
+          <AlertTitle>Long headline that must not clamp</AlertTitle>
+          <AlertDescription>d</AlertDescription>
+        </Alert>
+        <Badge variant="outline">owner</Badge>
+        <Empty>
+          <EmptyHeader>
+            <EmptyTitle>t</EmptyTitle>
+          </EmptyHeader>
+        </Empty>
+        <Field>
+          <FieldLabel htmlFor="x">L</FieldLabel>
+          <FieldDescription>hint</FieldDescription>
+        </Field>
+        <Spinner />
+      </div>,
+    );
+    const LEFTOVERS = /bg-input\/30|(^|\s)rounded-md(\s|$)|border-dashed|line-clamp-1/;
+    for (const s of [
+      'input',
+      'textarea',
+      'alert',
+      'alert-title',
+      'badge',
+      'empty',
+      'field-label',
+      'field-description',
+    ]) {
+      expect({ slot: s, cls: slot(s)?.getAttribute('class') ?? '' }).not.toEqual(
+        expect.objectContaining({ cls: expect.stringMatching(LEFTOVERS) }),
+      );
+    }
+    expect(screen.getByRole('status').getAttribute('class') ?? '').toContain(
+      'motion-reduce:animate-none',
+    );
+  });
+
+  it('checkbox is a labelled role=checkbox that toggles', () => {
+    render(
+      <div>
+        <Checkbox id="cb-morning" />
+        <Label htmlFor="cb-morning">Morning News</Label>
+      </div>,
+    );
+    const cb = screen.getByRole('checkbox', { name: 'Morning News' });
+    expect(cb.getAttribute('aria-checked')).toBe('false');
+    fireEvent.click(cb);
+    expect(cb.getAttribute('aria-checked')).toBe('true');
+    expect(cb.getAttribute('data-slot')).toBe('checkbox');
   });
 
   it('dialog renders no Close button by default', () => {
