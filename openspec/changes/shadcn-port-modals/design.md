@@ -59,6 +59,7 @@ The motivation is in proposal.md. This is the state on 2026-10-06, from read-onl
   - hint: `FieldDescription id="ns-fps-hint"`.
 - **Publish date:** `Checkbox id="ns-yt-publish-date"` + `FieldLabel` with the same copy, in a horizontal `Field`.
 - **Unchanged:** episode logic and ids, and `NS_INPUT_OVERRIDE` (it now overrides `Input`).
+- **Added during implementation (task 2.1):** the New Session and Batch Import close control is `Button variant="outline" size="icon"` with lucide `X`, not ghost. The bordered 36px box matches today's × look. Its name stays "Close", and it carries `TOUCH_TARGET`. Form spacing: the `.new-session-form .field` margin and the `.profile-select` bottom margin become `flex flex-col gap-3` on the form plus `mb-4` on the text inputs.
 - **Test environment (panel finding):** a Radix `Checkbox` inside a `<form>` renders a bubble input that calls `useSize`, which needs `ResizeObserver`, and jsdom lacks it. `web/src/test/setup.ts` gains a guarded global stub (`globalThis.ResizeObserver ??= class { observe(){} unobserve(){} disconnect(){} }`). The ~15 suites with their own local stubs keep working, because the stub only fills an absent global.
 
 **D3. Batch Import.** Show `Field` around the existing Select (still labelled "Show" through `aria-label`). Import Audio and Import Logs are outline `Button`s with `self-start`. Start Import is the default `Button` in `DialogActions`, above the progress region, so the spec order holds.

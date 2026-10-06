@@ -9,7 +9,7 @@
 
 ## 2. New Session and Batch Import
 
-- [ ] 2.1 NewSessionModal on Field/Input/Select/Checkbox/Button, lucide icons and `DialogActions` (D1, D2). Add the guarded global `ResizeObserver` stub to `web/src/test/setup.ts` (A7).
+- [x] 2.1 NewSessionModal on Field/Input/Select/Checkbox/Button, lucide icons and `DialogActions` (D1, D2). Add the guarded global `ResizeObserver` stub to `web/src/test/setup.ts` (A7).
   - Test first, in `NewSessionModal.test.tsx`:
     - labels resolve: Show, Episode (episode show), Notes (optional), and, after opening the disclosures, YouTube video link, Frame rate, Custom fps (after choosing Other…) and Start offset (frames);
     - the publish-date control is `role="checkbox"` and toggles `aria-checked`;
@@ -17,6 +17,7 @@
     - "Create & open" is `data-variant="default"` inside `[data-slot=dialog-actions]` and carries `max-md:min-h-11`;
     - exactly one button is named Close.
   - Verify: `npx vitest run src/pages/index/components/NewSessionModal.test.tsx` passes, with the existing bonus, episode and submit cases.
+  - Evidence: test first: "fields are labelled, disclosures toggle, publish date is a checkbox, Create & open is the primary action" (Episode/Notes/YouTube video link/Start offset/Custom fps labels -> ids, one Close, both disclosures aria-expanded, publish date role=checkbox toggling aria-checked, Create & open default in dialog-actions with max-md:min-h-11); Dialog mock gains DialogActions; guarded global ResizeObserver stub in test/setup.ts (A7) -> `1 failed | 8 passed (9)` (`expected null to be false` on the native checkbox); after Field/FieldLabel/Input/Select, Checkbox, ghost-Button disclosures with lucide ChevronRight, labelled number Inputs + FieldDescription hint (.fps-*/.inline/.num dropped), lucide Plus header, outline icon Close with X, Create & open Button in DialogActions, BTN_PRIMARY_SKY dropped -> NewSessionModal suite `Tests 9 passed (9)`; full `npx vitest run` `Test Files 125 passed (125) Tests 1578 passed (1578)`; tsc clean
 - [ ] 2.2 BatchImportModal on Field/Button, lucide `Upload` and `DialogActions` (D1, D3).
   - Test first: Start Import is `data-variant="default"` inside `[data-slot=dialog-actions]`; Import Audio and Import Logs are `outline`; exactly one Close.
   - Verify: `npx vitest run src/pages/index/components/BatchImportModal.test.tsx` passes, with the existing order, prompt and progress cases.

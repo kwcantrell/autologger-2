@@ -69,3 +69,14 @@ afterEach(() => {
 afterEach(() => {
   resetCoordinationRegistry();
 });
+
+// Radix primitives that measure themselves (a Checkbox inside a <form> renders a bubble input
+// whose `useSize` observes it) need ResizeObserver, which jsdom lacks (shadcn-port-modals A7).
+// Guarded: suites that install their own stub keep it.
+if (typeof globalThis.ResizeObserver === 'undefined') {
+  globalThis.ResizeObserver = class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  } as unknown as typeof ResizeObserver;
+}
