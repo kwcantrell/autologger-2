@@ -76,6 +76,10 @@ local generic wrapper functions, calls that take no explicit type argument, and 
 directly from `fetch` rather than through the shared client helper. A count of occurrences of
 any particular call spelling SHALL NOT be treated as evidence that the enumeration is complete.
 
+A client type applied to a **non-2xx error body** (for example the `current` row of a version
+conflict) SHALL count as a response-consuming site too. Its conformance check SHALL use a fixture
+captured from a real non-2xx response.
+
 The verdict record SHALL be a version-controlled artifact that survives the change's archival.
 
 #### Scenario: A wrapper-laundered assertion is enumerated
@@ -96,6 +100,12 @@ The verdict record SHALL be a version-controlled artifact that survives the chan
   about that shape
 - **THEN** the finding is recorded and escalated
 - **AND** no server response shape is modified by this change
+
+#### Scenario: A typed error body is enumerated
+
+- **WHEN** the web gives a client type to the JSON body of a non-2xx response
+- **THEN** that site appears in the enumeration, and its type is checked against a fixture
+  captured from a real response with that status
 
 ### Requirement: The audit's shape authority and the meaning of a verdict are stated
 

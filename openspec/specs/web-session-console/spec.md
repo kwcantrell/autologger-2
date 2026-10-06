@@ -20,8 +20,17 @@ It also owns the console's feed-scale and freshness behavior:
   `Transcript speaker edits stay in raw diarization space`;
 - the cache re-anchoring the client performs whenever the session WebSocket opens —
   `Caches re-anchor when the session socket opens`.
-## Requirements
 
+It also owns how content edits meet concurrent edits:
+
+- every event, transcript-word and topic save is based on the row the edit started from —
+  `Content edits carry the version they were based on`;
+- a version conflict asks before overwriting another person's change —
+  `Version conflicts ask before overwriting`;
+- transcript-word and topic save failures are reported —
+  `Transcript and topic save failures are reported`.
+
+## Requirements
 
 ### Requirement: Workspace tab IA (single owner)
 This capability is the sole owner of the session-workspace tab inventory, order, and labels.
@@ -78,7 +87,6 @@ here so a future reader does not reintroduce them:
   Event Feed is selected
 - **THEN** those panels are present in the DOM and no `transcript-words` request has been issued
 
-
 ### Requirement: Stopped-state logging visibility
 The category button strip SHALL be visible in the stop and play transport states (buttons
 disabled), accompanied by inline hint copy naming why they are disabled and how to enable them
@@ -94,7 +102,6 @@ continue to dock into the live-log panel as before.
 - **WHEN** recorded audio is playing (play transport state)
 - **THEN** the disabled strip and the timeline playback panel are both visible without layout
   breakage
-
 
 ### Requirement: Logging hotkeys 1–9
 While the live dock is shown (rolling or audio-recording — the same condition that enables the
@@ -121,7 +128,6 @@ alert dialog, or menu is open; or with Ctrl, Meta, or Alt held. Shift is deliber
   digit
 - **THEN** no category action fires
 
-
 ### Requirement: Discoverable keyboard-shortcut reference
 The workspace SHALL provide a keyboard-shortcut reference dialog listing the real shortcuts
 with their real scopes (1–9 logging while the live dock is shown; Space play/pause; arrow
@@ -135,7 +141,6 @@ is: not in text entry, no dialog open, no Ctrl/Meta/Alt — **Shift is permitted
   the strip's keyboard-shortcuts button
 - **THEN** the shortcut reference dialog opens listing the shortcuts above
 
-
 ### Requirement: Transport tooltips
 Each transport tile SHALL expose its action as a tooltip (matching its aria-label) on hover
 and on keyboard focus.
@@ -143,7 +148,6 @@ and on keyboard focus.
 #### Scenario: Hovering or focusing an enabled tile
 - **WHEN** the pointer rests on, or keyboard focus reaches, an enabled transport tile
 - **THEN** a tooltip names the action (e.g. "Roll timecode")
-
 
 ### Requirement: Truthful recording indication (two scoped sources)
 Recording indication SHALL be truthful per its scope, and the two indicators have different,
@@ -174,7 +178,6 @@ static under reduced motion.
   mic-level indication stays hidden (this browser's microphone is not recording) — a
   deliberate divergence
 
-
 ### Requirement: Honest capability gating on generation features
 When transcript, topic, or event generation returns HTTP 503 (feature not configured on
 this deployment), the panel SHALL latch that state **per mounted panel** (persisting
@@ -202,7 +205,6 @@ exactly one channel (inline in the panel), not duplicated as toasts.
 - **THEN** the control latches non-actionable for the mounted panel with a
   keyboard-reachable reason naming the missing integration and the reload-after-configuring
   remedy, and manual logging remains available unchanged
-
 
 ### Requirement: AUTO GENERATE affordance on the event feed
 The event feed tab SHALL provide an AUTO GENERATE control that starts one generation
@@ -244,7 +246,6 @@ event-buttons table.
   completes
 - **THEN** session B's feed shows an idle AUTO GENERATE control, and returning to
   session A shows A's outcome (or idle state) without B ever displaying A's run state
-
 
 ### Requirement: Event feed Auto Generate menu
 
@@ -291,7 +292,6 @@ channels SHALL continue to apply to runs started from the menu.
 - **WHEN** the operator chooses Custom
 - **THEN** a selection modal opens and no generate request is sent until submit
 
-
 ### Requirement: Custom generate modal
 
 The Custom modal SHALL list instruction-bearing buttons and, for DROPDOWN
@@ -306,7 +306,6 @@ close without generating.
   instruction and submits
 - **THEN** the client POSTs generate with those two selection entries and
   without `regenerate: true`
-
 
 ### Requirement: Event filter checkmarks
 
@@ -334,7 +333,6 @@ presentation-only: row editing, deletion, jump behavior, and exports are unchang
 - **THEN** the row shows the auto marker with an accessible name, and a manual row
   shows none
 
-
 ### Requirement: Event refetches coalesce during broadcast bursts
 The client SHALL coalesce `event.changed`-driven event refetches during bursts
 (debounced to roughly one refetch per second while frames arrive continuously),
@@ -347,7 +345,6 @@ SHALL still end with a refetch that reflects the final state.
 - **WHEN** 60 `event.changed` frames arrive within a few seconds
 - **THEN** the client issues a bounded number of coalesced refetches (not 60), and
   after the burst ends the feed reflects all 60 events
-
 
 ### Requirement: Caches re-anchor when the session socket opens
 
@@ -406,7 +403,6 @@ re-drive is never left cancelled and unfetched.
 - **THEN** the status and audio-segment caches, last updated before the drop, are invalidated
   on the new connection's open
 
-
 ### Requirement: Feed jump column
 
 The Event Feed, Transcript, and Topics feeds SHALL each present a dedicated jump column whose
@@ -459,7 +455,6 @@ from the accessibility tree.
 - **THEN** each existing column still displays its full content — in particular a session time of
   the form `HH:MM:SS:FF` is not truncated
 
-
 ### Requirement: Inline editing is untouched by the jump column
 
 Adding the jump column SHALL NOT change inline editing in any feed. No editable field SHALL gain,
@@ -494,7 +489,6 @@ on an editable field may ever change for any reason".
   without the row ever unmounting
 - **THEN** the commit is the same request with the same values it would have been before the
   draft store existed, and no additional gesture, control, or confirmation is involved
-
 
 ### Requirement: Feed rows resolve to a timeline second by frame arithmetic
 
@@ -566,7 +560,6 @@ Per feed:
   from that row
 - **THEN** the jump targets the typed time and the playhead is NOT driven to `0`
 
-
 ### Requirement: Rows with no resolvable position
 
 A row whose session time does not resolve to a finite, non-negative timeline second SHALL be
@@ -584,7 +577,6 @@ whose session time is rejected by the converter.
 
 - **WHEN** a Topics row's `session_time` is empty, or is text that does not parse as a timecode
 - **THEN** that row carries no jump control
-
 
 ### Requirement: Topic jumps require an anchored transcript
 
@@ -606,7 +598,6 @@ control while the session's transcript is wholly anchorless, regardless of wheth
 
 - **WHEN** the session's transcript has anchored words
 - **THEN** Topics rows present jump controls according to their own resolvability
-
 
 ### Requirement: Feed jumps are gated to when timecode is not rolling
 
@@ -636,7 +627,6 @@ bulk-editing surface.
 - **WHEN** the session transitions from rolling to not rolling
 - **THEN** jump controls become available without a remount or reload
 
-
 ### Requirement: A feed jump starts playback from that point
 
 Activating a feed jump SHALL start audio playback from the resolved second, so that seeing an
@@ -661,7 +651,6 @@ without altering play state, as it does today.
 - **WHEN** the audio player is paused and the user activates the previous- or next-marker button
 - **THEN** the playhead moves and the player remains paused
 
-
 ### Requirement: A jump with no covering recording moves the playhead only
 
 When no audio clip covers the resolved second — between recordings, past the end of all
@@ -680,7 +669,6 @@ target forward to the next playable clip, or backward to the last one.
 
 - **WHEN** the user jumps to a second past the end of the last recording
 - **THEN** the playhead moves there and the player does not rewind to an earlier recording
-
 
 ### Requirement: Marker navigation behavior is unchanged
 
@@ -705,7 +693,6 @@ feed-row-seek; the not-rolling gate on feed jumps is unchanged.
 - **THEN** the marker prev/next controls are disabled and no scrub, scroll, or seek is
   issued
 
-
 ### Requirement: Sole fused transport strip
 The session workspace SHALL render one fused horizontal transport strip in place of any
 twin glass-panel deck. There SHALL NOT be a Maximize log / Default view layout toggle or a
@@ -723,7 +710,6 @@ the strip with a twin-panel layout.
 #### Scenario: Recording keeps the strip
 - **WHEN** the open session’s recording lease is alive
 - **THEN** the fused strip remains displayed (no twin-panel deck)
-
 
 ### Requirement: Maximize-log fused transport strip
 The strip SHALL include a left controls column and a right timeline column. The left
@@ -758,7 +744,6 @@ active, the strip status area SHALL reveal the mic level meter and recording dur
 - **WHEN** local mic recording is active
 - **THEN** status reads Recording and the status row shows mic level and recording
   duration
-
 
 ### Requirement: Recording intervals lay out multi-chunk segments contiguously
 
@@ -837,7 +822,6 @@ before this change.
 - **WHEN** a feed-row jump resolves to a second covered by a follow-on chunk's clip
 - **THEN** playback starts within that chunk at the correct offset, using the existing
   jump/seek requirements without modification
-
 
 ### Requirement: The event feed renders a windowed row set
 
@@ -962,7 +946,14 @@ reference SHALL be kept, and a field outside `covered` SHALL be left untouched.
 
 A draft SHALL be cleared only once its save has **round-tripped**, never when the save is
 issued, so a **failed** save leaves the operator's text recoverable on the next remount instead
-of silently reverting. The clear SHALL re-read the store at resolution time (never a value
+of silently reverting. Besides that and the existing clears (a draft spent against the server
+row, entry into batch edit, and a session change), the only other clear is the operator's
+explicit **Keep theirs** on a version conflict (`Version conflicts ask before overwriting`). A
+dismissed conflict prompt SHALL NOT clear anything.
+
+A draft's **base** is its row's seed (`Content edits carry the version they were based on`). The
+seed SHALL be feed-owned like the draft and SHALL survive row unmount, so a remounted row's next
+save is based on the row the draft was typed over. The clear SHALL re-read the store at resolution time (never a value
 captured before the await), so keystrokes typed during the round trip survive.
 
 The focus half SHALL be handled too — **in the Event Feed only**. The clauses below are scoped to
@@ -1030,6 +1021,11 @@ re-render the feed), and:
 - **THEN** the typed text is restored from the shared draft store, and the caret is not — the
   focus record and window pin are Event Feed machinery and do not exist in this feed
 
+#### Scenario: A draft's base version survives a remount
+
+- **WHEN** the operator types into a row whose server version is 3, the row unmounts, a refetch
+  brings version 4 into the cache, and the row remounts
+- **THEN** the remounted row shows the typed text, and its next save is based on version 3
 
 ### Requirement: Transcript speaker edits stay in raw diarization space
 
@@ -1102,7 +1098,6 @@ Two consequences are recorded as accepted limits rather than specified away:
 
 - **WHEN** the operator types a name the display transform would never produce
 - **THEN** that text is stored as-is and renders back unchanged, tracking no offset
-
 
 ### Requirement: The transcript-words fetch is deferred until a consumer is shown
 
@@ -1183,3 +1178,181 @@ figures do not subtract to the deferred one.
 - **WHEN** the operator navigates from a session whose gate is open to a different session,
   while a non-words tab is selected
 - **THEN** the new session's gate is closed and no `transcript-words` request is issued for it
+
+### Requirement: Content edits carry the version they were based on
+
+Every save of an event, transcript word or topic from the web SHALL be based on the row's
+**seed**: the server row whose text the row's edit controls were last filled from. A save SHALL
+send the seed's version, and SHALL decide which fields changed by comparing the controls against
+the seed. It SHALL NOT use the cached row's version or text for either purpose. So a refetch that
+lands while the operator edits can neither move the base nor make stale controls look like an
+edit.
+
+**Where the version goes**
+- Event `PUT`, transcript-word `PATCH` and topic `PATCH` SHALL send it as the body field
+  `version`. The three `DELETE`s SHALL send it as the query `?version=N`.
+- The six client mutations SHALL take the guard as an optional input. Omitting it, or giving it
+  no version, SHALL send exactly the request sent before this requirement (last-writer-wins).
+
+**When the seed changes**
+- The seed SHALL be feed-owned and SHALL survive row unmount.
+- It SHALL follow the server row exactly while the row's controls do: the row holds no draft, no
+  batch values and no edit in progress, has no save in flight or queued, and (for an Event Feed
+  inline row) is not focused. This applies in every mode. Otherwise the seed SHALL be frozen; a
+  dismissed conflict or a failed save leaves it at its old value. Starting an edit SHALL keep any
+  text the row already holds.
+- A successful save SHALL make the response row the new seed. Controls that still showed the old
+  seed's text SHALL be refilled from the response row; controls holding the operator's unsaved
+  text SHALL keep it.
+
+**Saves on one row**
+- Saves on one row SHALL run **one at a time**. Each SHALL read its base only after the previous
+  save on that row has settled and its outcome has been applied.
+- Saves on different rows MAY run concurrently.
+
+**Batch and delete**
+- In batch-edit mode, a row's base SHALL be its seed at its first batch change, which is the row
+  the batch values were built from.
+- A delete SHALL use the row's batch base when it has one, and its seed otherwise, taken when
+  Delete is activated. A row nobody has touched therefore deletes against the version it shows,
+  with no false conflict.
+
+#### Scenario: Leaving a row without typing sends nothing
+
+- **WHEN** the operator focuses an event row, another person's change to that row arrives, and
+  the operator leaves the row without typing
+- **THEN** no request is sent, and the other person's change stands
+
+#### Scenario: A refetch during typing does not move the base
+
+- **WHEN** the operator starts editing an event at version 2, another person's save advances it
+  to 3, and the `event.changed` refetch lands before the operator's blur
+- **THEN** the operator's save sends `version: 2` and receives the conflict, rather than silently
+  overwriting version 3
+
+#### Scenario: The operator's own consecutive saves do not conflict
+
+- **WHEN** the operator commits one field of a row and then another field of the same row before
+  the first response returns
+- **THEN** the second save is sent after the first settles, with the version the first returned,
+  and neither save meets a conflict
+
+#### Scenario: Unversioned requests are unchanged
+
+- **WHEN** a client mutation is called without a guard
+- **THEN** the request body and URL are byte-identical to the request sent before versions
+  existed
+
+### Requirement: Version conflicts ask before overwriting
+
+When a save meets `409 {"detail":"Version conflict.","current":<row>}`, the web SHALL ask the
+operator before replacing the other person's change. This covers event inline edit, event batch
+save, event delete, transcript-word edit and topic edit.
+
+**The dialog**
+- It SHALL be the shared themed decision dialog, titled "Row changed".
+- It SHALL list theirs (from `current`) next to yours for every field where the operator's text in
+  that row differs from `current`, including sibling fields the save does not send, so Keep
+  theirs never discards text the dialog did not show.
+- An edit SHALL offer **Overwrite** and **Keep theirs**. A delete SHALL end its message with
+  "delete anyway?" and offer **Delete anyway** and **Keep theirs**.
+- Row text SHALL be rendered as text, never as markup.
+
+**The choices**
+- **Overwrite / Delete anyway** SHALL resend the same edit or delete with `current.version` and the
+  overwrite flag (`overwrite: true`, or `&overwrite=1`). If that meets another conflict, the
+  dialog SHALL be shown again with the newer row.
+- **Keep theirs** SHALL discard the operator's draft for that row, show `current` in the row's
+  controls, and, for a delete, leave the row in place.
+- **Dismissal** (Escape, overlay click or drag-dismiss) SHALL save nothing and discard nothing.
+  The draft stays, with its old base, so its next save meets the conflict again.
+- A decision other than Overwrite SHALL also settle every save still queued on the same row,
+  **without sending it**. After Keep theirs, every mounted copy of the row SHALL show `current`.
+- A **session switch** SHALL dismiss the open prompt and every queued one, and SHALL send no
+  queued save. A conflict that arrives after the switch for a request sent before it SHALL open
+  no prompt and send nothing. Drafts then follow the existing session-change clear.
+
+**Several conflicts**
+- Prompts SHALL be queued and asked one at a time. A prompt SHALL never be replaced by a later
+  one, and SHALL never be resolved as Keep theirs without the operator choosing it.
+
+**Batch save**
+- A conflicting row SHALL prompt, and the batch SHALL then continue with the remaining rows.
+- A dismissed prompt or any non-conflict error SHALL stop the batch with a toast, keeping the
+  unsettled rows.
+- Each row that is saved or kept-theirs SHALL leave the batch at once, so a later retry never
+  resends it.
+
+**Other errors**
+- A `404` for a row that no longer exists SHALL keep its existing error message, with no dialog.
+- After any conflict, the client's cached copy of the row SHALL be the server's `current`.
+
+#### Scenario: Overwrite replaces the other person's change
+
+- **WHEN** an inline event save meets a version conflict and the operator chooses Overwrite
+- **THEN** the edit is resent with `current.version` and `overwrite: true`, and the row shows the
+  operator's text
+
+#### Scenario: Keep theirs shows the other person's change
+
+- **WHEN** a transcript-word save meets a version conflict and the operator chooses Keep theirs
+- **THEN** the operator's draft for that row is gone, and the row shows the server's current text
+
+#### Scenario: Dismissing keeps the draft unsaved
+
+- **WHEN** a topic save meets a version conflict and the operator presses Escape
+- **THEN** nothing is sent, the operator's text is still in the row, and saving it again shows the
+  dialog again
+
+#### Scenario: A dismissed event edit asks again
+
+- **WHEN** an event inline save meets a conflict, the operator dismisses the prompt, and then
+  leaves the row again
+- **THEN** the save is sent with the old base and the dialog shows again, rather than the other
+  person's change being overwritten
+
+#### Scenario: A third writer in between asks again
+
+- **WHEN** the operator chooses Overwrite and another person saves the row before the retry
+  arrives
+- **THEN** the retry meets a conflict, and the dialog shows the newer row
+
+#### Scenario: A queued save after Keep theirs is not sent
+
+- **WHEN** a second save of a row is queued behind one that meets a conflict, and the operator
+  chooses Keep theirs
+- **THEN** the queued save is not sent, and the row shows the other person's version
+
+#### Scenario: A session switch closes the prompt
+
+- **WHEN** a conflict prompt is open and the operator switches to another session
+- **THEN** the prompt closes, and no save for the previous session is sent
+
+#### Scenario: A batch continues past a conflict
+
+- **WHEN** a batch save of three rows meets a conflict on the second and the operator chooses Keep
+  theirs
+- **THEN** the third row is still saved, and batch mode ends
+
+#### Scenario: A failed batch never resends a saved row
+
+- **WHEN** a batch save's second row fails with a server error and the operator presses Save again
+- **THEN** only the unsettled rows are sent
+
+#### Scenario: Deleting a changed row asks first
+
+- **WHEN** the operator confirms deleting a log row that another person changed since it was
+  loaded
+- **THEN** the "Row changed" dialog offers Delete anyway and Keep theirs, Delete anyway sends
+  `?version=N&overwrite=1`, and Keep theirs leaves the row
+
+### Requirement: Transcript and topic save failures are reported
+
+A transcript-word or topic save that fails for any reason other than a version conflict SHALL
+show an error toast carrying the server's message, and SHALL keep the operator's text so it can
+be saved again. Event inline edits already behave this way.
+
+#### Scenario: A failed topic save is visible
+
+- **WHEN** a topic summary save fails with a server error
+- **THEN** an error toast is shown, and the row still holds the operator's text
