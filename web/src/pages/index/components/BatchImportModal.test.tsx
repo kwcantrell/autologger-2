@@ -92,6 +92,21 @@ describe('BatchImportModal', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
+  it('actions are shadcn Buttons: outline imports, Start Import primary in the actions row (shadcn-port-modals D3)', () => {
+    renderWithQueryClient(<BatchImportModal profile={profileFixture()} onClose={() => {}} />);
+    expect(screen.getAllByRole('button', { name: 'Close' })).toHaveLength(1);
+    expect(screen.getByRole('button', { name: 'Import Audio' }).getAttribute('data-variant')).toBe(
+      'outline',
+    );
+    expect(screen.getByRole('button', { name: 'Import Logs' }).getAttribute('data-variant')).toBe(
+      'outline',
+    );
+    const start = screen.getByRole('button', { name: 'Start Import' });
+    expect(start.getAttribute('data-variant')).toBe('default');
+    expect(start.closest('[data-slot="dialog-actions"]')).not.toBeNull();
+    expect(start.className).toContain('max-md:min-h-11');
+  });
+
   it('includes a Show dropdown with the same options pattern as New Session', () => {
     renderWithQueryClient(<BatchImportModal profile={profileFixture()} onClose={() => {}} />);
 

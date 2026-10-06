@@ -1,10 +1,12 @@
 import { useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
+import { Upload, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { showAccessFrom } from '../../../api/hooks/useShowAccess';
 import type { ProfilePayload } from '../../../api/types';
-import { BTN_PRIMARY_SKY } from '../../../shared/theme/classnames';
-import { Dialog } from '../../../shared/ui/Dialog';
+import { Button, TOUCH_TARGET } from '../../../shared/components/ui/button';
+import { Field, FieldLabel } from '../../../shared/components/ui/field';
+import { Dialog, DialogActions } from '../../../shared/ui/Dialog';
 import { useTextPrompt } from '../../../shared/ui/PromptDialog';
 import { type BatchImportProgressState, runBatchImport } from '../batchImport/runner';
 import { Select } from './Select';
@@ -40,28 +42,9 @@ function ProgressBar({ percent }: { percent: number }) {
   );
 }
 
-/** Upload up-arrow icon (D8): rail `#v6-btn-batch-import` + modal header. */
+/** Upload up-arrow icon (D8): rail `#v6-btn-batch-import` + modal header (lucide `Upload`). */
 function BatchImportIcon() {
-  return (
-    <svg
-      width="20"
-      height="20"
-      viewBox="0 0 24 24"
-      fill="none"
-      aria-hidden="true"
-      className="shrink-0 text-[rgba(229,238,252,0.72)]"
-    >
-      <path d="M12 3V15" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-      <path
-        d="M7 8L12 3L17 8"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <path d="M4 19H20" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-    </svg>
-  );
+  return <Upload className="size-5 shrink-0 text-[rgba(229,238,252,0.72)]" aria-hidden="true" />;
 }
 
 const EMPTY_PROGRESS: BatchImportProgressState = { current: null, percent: 0, lines: [] };
@@ -222,19 +205,20 @@ export function BatchImportModal({ profile, onClose }: Props) {
             Batch Import
           </h2>
         </div>
-        <button
-          type="button"
-          className="inline-flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-v5-sm border border-v5-border bg-[rgba(255,255,255,0.04)] text-[1.25rem] leading-none text-v5-muted [transition:background_0.12s_ease,color_0.12s_ease,border-color_0.12s_ease] hover-always:border-v5-border-strong hover-always:text-v5-text"
+        <Button
+          variant="outline"
+          size="icon"
+          className={clsx('text-v5-muted hover:text-v5-text', TOUCH_TARGET)}
           aria-label="Close"
           onClick={handleClose}
         >
-          &times;
-        </button>
+          <X aria-hidden="true" />
+        </Button>
       </div>
 
-      <div className="batch-import-form flex flex-col gap-3">
-        <label className="field" htmlFor="bi-show">
-          <span>Show</span>
+      <div className="flex flex-col gap-3">
+        <Field>
+          <FieldLabel htmlFor="bi-show">Show</FieldLabel>
           <Select
             id="bi-show"
             ariaLabel="Show"
@@ -247,18 +231,18 @@ export function BatchImportModal({ profile, onClose }: Props) {
             }
             disabled={shows.length === 0 || isImporting}
           />
-        </label>
+        </Field>
 
         <div className="flex flex-col gap-1">
-          <button
-            type="button"
-            className="btn self-start"
+          <Button
+            variant="outline"
+            className={clsx('self-start', TOUCH_TARGET)}
             id="bi-import-audio"
             onClick={handleImportAudio}
             disabled={isImporting}
           >
             Import Audio
-          </button>
+          </Button>
           <input
             ref={dirInputRef}
             type="file"
@@ -277,15 +261,15 @@ export function BatchImportModal({ profile, onClose }: Props) {
         </div>
 
         <div className="flex flex-col gap-1">
-          <button
-            type="button"
-            className="btn self-start"
+          <Button
+            variant="outline"
+            className={clsx('self-start', TOUCH_TARGET)}
             id="bi-import-logs"
             onClick={handleImportLogs}
             disabled={isImporting}
           >
             Import Logs
-          </button>
+          </Button>
           {logsUrl ? (
             <span
               className="truncate text-[0.85rem] text-v5-muted"
@@ -296,17 +280,16 @@ export function BatchImportModal({ profile, onClose }: Props) {
           ) : null}
         </div>
 
-        <div className="modal-actions">
-          <button
-            type="button"
-            className={clsx('btn primary', BTN_PRIMARY_SKY)}
+        <DialogActions>
+          <Button
+            className={TOUCH_TARGET}
             id="bi-start-import"
             disabled={!canStart}
             onClick={() => void handleStartImport()}
           >
             {isImporting ? 'Importing…' : 'Start Import'}
-          </button>
-        </div>
+          </Button>
+        </DialogActions>
 
         <div
           id="batch-import-progress"

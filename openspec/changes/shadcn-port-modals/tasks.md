@@ -18,9 +18,10 @@
     - exactly one button is named Close.
   - Verify: `npx vitest run src/pages/index/components/NewSessionModal.test.tsx` passes, with the existing bonus, episode and submit cases.
   - Evidence: test first: "fields are labelled, disclosures toggle, publish date is a checkbox, Create & open is the primary action" (Episode/Notes/YouTube video link/Start offset/Custom fps labels -> ids, one Close, both disclosures aria-expanded, publish date role=checkbox toggling aria-checked, Create & open default in dialog-actions with max-md:min-h-11); Dialog mock gains DialogActions; guarded global ResizeObserver stub in test/setup.ts (A7) -> `1 failed | 8 passed (9)` (`expected null to be false` on the native checkbox); after Field/FieldLabel/Input/Select, Checkbox, ghost-Button disclosures with lucide ChevronRight, labelled number Inputs + FieldDescription hint (.fps-*/.inline/.num dropped), lucide Plus header, outline icon Close with X, Create & open Button in DialogActions, BTN_PRIMARY_SKY dropped -> NewSessionModal suite `Tests 9 passed (9)`; full `npx vitest run` `Test Files 125 passed (125) Tests 1578 passed (1578)`; tsc clean
-- [ ] 2.2 BatchImportModal on Field/Button, lucide `Upload` and `DialogActions` (D1, D3).
+- [x] 2.2 BatchImportModal on Field/Button, lucide `Upload` and `DialogActions` (D1, D3).
   - Test first: Start Import is `data-variant="default"` inside `[data-slot=dialog-actions]`; Import Audio and Import Logs are `outline`; exactly one Close.
   - Verify: `npx vitest run src/pages/index/components/BatchImportModal.test.tsx` passes, with the existing order, prompt and progress cases.
+  - Evidence: test first: "actions are shadcn Buttons: outline imports, Start Import primary in the actions row" (exactly one Close, Import Audio/Logs outline, Start Import default in dialog-actions with max-md:min-h-11) -> `1 failed | 12 passed (13)`; after lucide Upload header icon, outline icon Close with X, Field/FieldLabel Show, outline Import Audio/Logs, Start Import Button in DialogActions above the progress region, BTN_PRIMARY_SKY dropped -> BatchImportModal + V6Rail `Tests 24 passed (24)` (order, prompt, folder, progress, show-grants cases unchanged); tsc clean
 
 ## 3. Smaller modals
 
