@@ -73,6 +73,7 @@ See proposal.md for the motivation. The current state, from the exploration on 2
 - The buttons use the shared `Button` (`variant="outline"` for cancel; `variant="destructive"` when `danger`, otherwise `"default"`).
 - `onOpenChange(false)` calls `onCancel`, so Escape declines. Radix AlertDialog doesn't dismiss on an overlay click, but the spec says overlay dismissal declines. So the overlay gets an `onClick` that calls `onCancel`, which keeps today's behaviour. shadcn's `AlertDialogContent` renders its own overlay with no handler hook, so `alert-dialog.tsx` gains an `onOverlayClick` prop on `AlertDialogContent`, passed to its overlay. The panel verified that the overlay click fires (`pointer-events: auto` on the overlay).
 - On mobile it uses the D2 Drawer with the same body. Drag or Escape calls `onCancel`, which satisfies R2's "mobile sheet drag-dismiss resolves as decline".
+- **Exactly one decision per open.** Radix's Action and Cancel parts also close the dialog, so `onOpenChange(false)` fires right after the click. A `decided` ref, reset whenever the dialog opens, makes sure an accept reports only `onConfirm`, never `onConfirm` and then `onCancel`. This was found during implementation (task 3.2) and matters for the direct `<ConfirmDialog>` in SessionWorkspace's orphan recovery.
 - The `useConfirm` hook body is untouched.
 
 **D3b. `useTextPrompt()`, a shared themed text input.**

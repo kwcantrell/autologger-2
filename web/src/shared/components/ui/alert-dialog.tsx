@@ -41,13 +41,17 @@ function AlertDialogOverlay({
 function AlertDialogContent({
   className,
   size = 'default',
+  onOverlayClick,
   ...props
 }: React.ComponentProps<typeof AlertDialogPrimitive.Content> & {
   size?: 'default' | 'sm';
+  /** Radix AlertDialog never dismisses on an outside click; the app's themed confirm treats an
+   * overlay click as a decline (web-ui-system R2), so the overlay gets a handler hook. */
+  onOverlayClick?: () => void;
 }) {
   return (
     <AlertDialogPortal>
-      <AlertDialogOverlay />
+      <AlertDialogOverlay onClick={onOverlayClick} />
       <AlertDialogPrimitive.Content
         data-slot="alert-dialog-content"
         data-size={size}

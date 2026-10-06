@@ -56,13 +56,14 @@
     - a vetoed close (the parent keeps `open`) leaves the content mounted: same node, child state kept, and the inline transform reset to `translate3d(0,0,0)`
   - Verify that test passes, plus `BatchImportModal`, `EventOptionsModal`, `EventGenerateCustomModal` and `eventGenerateLatch`.
   - Evidence: test first: `npx vitest run src/shared/ui/Dialog.test.tsx` against the legacy wrapper -> `× renders the vaul drawer … with a drag handle`, `× a vetoed close keeps the same sheet node …` (`2 failed | 5 passed`); after the Dialog/Drawer wrapper (autoFocus, handleOnly, in-place veto reset) -> `Tests 7 passed (7)`; full `npx vitest run` -> `Test Files 118 passed (118) Tests 1492 passed (1492)` (BatchImportModal, EventOptionsModal, EventGenerateCustomModal, eventGenerateLatch included)
-- [ ] 3.2 `shared/ui/ConfirmDialog.tsx` on AlertDialog (desktop) and Drawer (mobile) (D3).
+- [x] 3.2 `shared/ui/ConfirmDialog.tsx` on AlertDialog (desktop) and Drawer (mobile) (D3).
   - Test first: extend `ConfirmDialog.test.tsx`:
     - desktop: `alertdialog` named by the title; Escape and an overlay click each resolve `false`; a `danger` action has `data-variant="destructive"`
     - mobile: drawer `dialog`; Escape resolves `false`
   - The existing replace and unmount cases stay unchanged. Update `ChunkRescueBanner.test.tsx` to query `alertdialog`.
   - `alert-dialog.tsx` gains an `onOverlayClick` prop on `AlertDialogContent` (D3). The mobile test also asserts focus lands inside the drawer.
   - Verify with those tests plus `EventLogSheet`, `RecentSessionsList`, `eventGenerateLatch`, `TeamCard`, `AdminUsersPage` and `HomeSettingsModal`.
+  - Evidence: test first: new ConfirmDialog cases + ChunkRescueBanner queries switched to `alertdialog` -> `6 failed | 17 passed (23)`; after AlertDialog (desktop, `onOverlayClick`) / shared sheet (mobile) -> `23 passed`. Found during implementation: accept also fired `onCancel` (Radix Action closes the dialog); test first `expected [ 1, 1 ] to deeply equal [ 1, +0 ]`; once-per-open guard (design D3 note) -> `Tests 26 passed (26)`; full `npx vitest run` -> `Test Files 118 passed (118) Tests 1500 passed (1500)`; lint/typecheck clean
 - [ ] 3.3 `shared/ui/Popover.tsx` on the shadcn Popover. Keep `PopoverItem` verbatim (D5).
   - Test first: `shared/ui/Popover.test.tsx`:
     - an open popover is a `dialog` named by `ariaLabel`
