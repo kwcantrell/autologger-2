@@ -100,7 +100,8 @@ Keep each task's text, and later its `Evidence:`, in one block with no blank lin
 
 ## 7. Docs, measurement and checks
 
-- [ ] 7.1 README: hub notes (~90, ~487-490), the revision list (~879), and a lease paragraph (user binding, masked holder id, strict heartbeat and re-claim) next to the row-versions block. ADR 0021: under slice 8, add 8a's owner decisions 1-8, its mechanism, the 8b split, and the slice 9 follow-ups (sweeper, cross-process `lease.changed`, Realtime exposure of `holder_user_id`). Verify: `grep -n "session_leases" README.md docs/decisions/0021-migrate-to-self-hosted-supabase.md` shows both.
+- [x] 7.1 README: hub notes (~90, ~487-490), the revision list (~879), and a lease paragraph (user binding, masked holder id, strict heartbeat and re-claim) next to the row-versions block. ADR 0021: under slice 8, add 8a's owner decisions 1-8, its mechanism, the 8b split, and the slice 9 follow-ups (sweeper, cross-process `lease.changed`, Realtime exposure of `holder_user_id`). Verify: `grep -n "session_leases" README.md docs/decisions/0021-migrate-to-self-hosted-supabase.md` shows both.
+  - Evidence: commit 03e49c4e: README hub notes (session_leases row + stored expiry, liveness never depends on the timer), revision list (lease claims/releases/expiries count, heartbeats do not) and a new "The recording lease (session-leases, ADR 0021 slice 8a)" paragraph; ADR 0021 item 8 gains the 8a/8b split, owner decisions 1-8, the mechanism and the slice 9 follow-ups. `grep -c session_leases README.md docs/decisions/0021-migrate-to-self-hosted-supabase.md` -> 3 / 2
 - [ ] 7.2 Measure on the dev stack the median claim, heartbeat and status request time, before (base) and after, 500 calls each. Record only; there is no stop rule.
 - [ ] 7.3 Live check on the dev stack (owner pass):
   1. Record in one tab.
