@@ -21,6 +21,7 @@ describe('topicRow', () => {
       summary: 'intro',
       ordinal: 1,
       created_at_utc: '2026-06-25T00:00:00.000Z',
+      version: 1,
     });
   });
 
@@ -33,6 +34,7 @@ describe('topicRow', () => {
       summary: '',
       ordinal: 0,
       created_at_utc: '',
+      version: 1,
     });
   });
 });
@@ -70,7 +72,8 @@ describe('TopicStore over a real core (D12 pins)', () => {
     const updated = await run((s) =>
       s.topics.updateTopic(t.id, { summary: 'edited', duration_sec: 9 }),
     );
-    expect(updated).toEqual({ ...t, summary: 'edited', duration_sec: 9 });
+    // session-row-versions D3: the update advances the version.
+    expect(updated).toEqual({ ...t, summary: 'edited', duration_sec: 9, version: t.version + 1 });
   });
 
   it('updateTopic with an empty patch is a no-op returning the row; unknown id returns null', async () => {

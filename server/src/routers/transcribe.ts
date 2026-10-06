@@ -72,6 +72,7 @@ function wordApiDict(w: TranscriptWord) {
     start_sec: round3(w.start_sec),
     end_sec: round3(w.end_sec),
     ordinal: w.ordinal,
+    version: w.version,
   };
 }
 

@@ -29,6 +29,7 @@ describe('eventRowToRpc', () => {
       category: 'note',
       message: 'hi',
       metadata_json: '{"a":1}',
+      version: 1,
     });
   });
 
@@ -51,6 +52,7 @@ describe('eventRowToRpc', () => {
       category: 'internal',
       message: 'rec start',
       metadata_json: '{}',
+      version: 1,
     });
   });
 });
@@ -424,6 +426,7 @@ describe('addEvent over a real core', () => {
         category: 'note',
         message: 'hi',
         metadata_json: '{}',
+        version: 1,
       });
       expect(out.projection.event_count).toBe(1);
       expect(out.projection.max_timecode_total_frames).toBe(270);
@@ -555,6 +558,7 @@ describe('addEvent over a real core', () => {
         category: 'note',
         message: 'generated',
         metadata_json: '{"auto_generated":true}',
+        version: 1,
       });
       expect(out.projection.event_count).toBe(1);
       expect(out.projection.max_timecode_total_frames).toBe(12345);

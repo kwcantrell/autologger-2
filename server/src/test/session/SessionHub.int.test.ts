@@ -415,6 +415,7 @@ describe('SessionHub.replaceTranscriptWords', () => {
         end_sec: 1.4,
         ordinal: 0,
         created_at_utc: undefined,
+        version: 1,
       },
       {
         id: undefined,
@@ -425,6 +426,7 @@ describe('SessionHub.replaceTranscriptWords', () => {
         end_sec: 2.5,
         ordinal: 1,
         created_at_utc: undefined,
+        version: 1,
       },
     ]);
     expect(await hub.listTranscriptWords()).toEqual(result);

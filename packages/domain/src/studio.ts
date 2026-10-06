@@ -460,6 +460,8 @@ export interface EventRpc {
   category: string;
   message: string;
   metadata_json: string;
+  /** The row's version (session-row-versions D3): 1 when created, plus one per change. */
+  version: number;
 }
 
 /** enrich_event_for_session output: an EventRpc with metadata parsed + label/color. */
@@ -480,6 +482,7 @@ export function enrichEventRpc(ev: EventRpc, profile: StudioProfile): Record<str
     category: ev.category,
     message: ev.message,
     metadata: meta,
+    version: ev.version,
   };
   const cat = profile.categories.find((c) => c.id === ev.category) ?? null;
   if (String(ev.category).toLowerCase() === 'internal') {

@@ -42,6 +42,7 @@ function timedWord(
     end_sec,
     ordinal,
     created_at_utc: '2026-07-21T00:00:00.000Z',
+    version: 1,
   };
 }
 
@@ -105,6 +106,7 @@ function topic(
     summary,
     ordinal,
     created_at_utc: '2026-07-21T00:00:00.000Z',
+    version: 1,
   };
 }
 
@@ -123,6 +125,7 @@ function event(category: string, ordinal: number): EventRpc {
     category,
     message: 'note',
     metadata_json: '{}',
+    version: 1,
   };
 }
 

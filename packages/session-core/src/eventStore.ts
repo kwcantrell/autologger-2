@@ -29,6 +29,7 @@ export function eventRowToRpc(r: Row): EventRpc {
     category: String(r.category),
     message: String(r.message),
     metadata_json: String(r.metadata_json ?? '{}'),
+    version: Number(r.version ?? 1),
   };
 }
 
@@ -201,7 +202,8 @@ export class EventStore {
     const metadataJson = input.mergeMetadata(eventRowToRpc(old).metadata_json);
     await this.core.db.run(
       `UPDATE session_events SET category = ?, message = ?, wall_time_utc = ?,
-         timecode_total_frames = ?, metadata_json = ? WHERE session_id = ? AND id = ?`,
+         timecode_total_frames = ?, metadata_json = ?, version = version + 1
+       WHERE session_id = ? AND id = ?`,
       input.category,
       input.message,
       input.wallTimeUtc,
@@ -327,7 +329,7 @@ export class EventStore {
       delete meta[UI_SNAPSHOT_LABEL_KEY];
       delete meta[UI_SNAPSHOT_COLOR_KEY];
       await this.core.db.run(
-        'UPDATE session_events SET category = ?, metadata_json = ? WHERE session_id = ? AND id = ?',
+        'UPDATE session_events SET category = ?, metadata_json = ?, version = version + 1 WHERE session_id = ? AND id = ?',
         candidates[0],
         JSON.stringify(meta),
         this.core.sessionId,

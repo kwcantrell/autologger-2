@@ -10,6 +10,7 @@
     "al_category_label_snapshot": "Camera",
     "al_category_color_snapshot": "#112233"
   },
+  "version": 1,
   "category_label": "Camera",
   "category_color": "#112233"
 }

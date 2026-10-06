@@ -23,6 +23,7 @@ describe('wordRow', () => {
       end_sec: 2,
       ordinal: 4,
       created_at_utc: '2026-06-25T00:00:00.000Z',
+      version: 1,
     });
   });
 
@@ -36,6 +37,7 @@ describe('wordRow', () => {
       end_sec: 0,
       ordinal: 0,
       created_at_utc: '',
+      version: 1,
     });
   });
 });
@@ -131,7 +133,8 @@ describe('TranscriptStore over a real core (D12 pins)', () => {
     const updated = await run((s) =>
       s.transcript.updateTranscriptWord(w.id, { word: 'edited', speaker: 'B' }),
     );
-    expect(updated).toEqual({ ...w, word: 'edited', speaker: 'B' });
+    // session-row-versions D3: the update advances the version.
+    expect(updated).toEqual({ ...w, word: 'edited', speaker: 'B', version: w.version + 1 });
   });
 
   it('updateTranscriptWord with an empty patch is a no-op returning the row; unknown id returns null', async () => {

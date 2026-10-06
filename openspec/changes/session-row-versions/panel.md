@@ -44,3 +44,14 @@ the bound core's handle (they count under D2, so revision expectations after the
 tasks.md ticks 3.1 and 3.2 with evidence.
 Scope change: no. Contract change: no. Accepted risk change: no.
 No findings.
+
+## Consistency read 2026-10-06 (group 4)
+Edits since the previous read: tasks.md ticks 4.1 and 4.2. Implementation note: the server row types
+(`EventRpc`, `TranscriptWord`, `Topic`) now require `version`, so three hand-built test fixtures of
+those types gained `version: 1`, one of them under `web/src`
+(`clientAggregates.pinning.test.ts`, which builds "full server-shape fixtures" to compare the web's
+mirror of the aggregates with the server's). proposal.md's "`web/src/` is not touched" therefore
+reads as "no web production code changes"; no web behaviour, type in `web/src/api/types.ts` or
+response handling changed (7c-2 still owns those). Flagged to the owner.
+Scope change: no. Contract change: no. Accepted risk change: no.
+No findings.

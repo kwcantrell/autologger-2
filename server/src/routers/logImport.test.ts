@@ -30,6 +30,7 @@ function makeWord(word: string, startSec: number): TranscriptWord {
     end_sec: startSec + 0.3,
     ordinal: 0,
     created_at_utc: '2026-08-07T00:00:00Z',
+    version: 1,
   };
 }
 

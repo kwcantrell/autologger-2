@@ -96,3 +96,63 @@ describe('the scan is mutation-checked against synthetic trees (session-row-vers
     ]);
   });
 });
+
+// --- Every update of a versioned table advances its version (session-row-versions design D3) ---
+// (catalog-database "Session content tables": every statement that updates one of their rows sets
+// its version to the stored version plus one in that same statement.) Every SQL literal in the
+// production sources of `packages/session-core/src` that starts with `UPDATE session_events`,
+// `UPDATE session_transcript_words` or `UPDATE session_topics` must contain `version = version + 1`.
+// Textual, like the scans above; `versions.int.test.ts` is the behavioural backstop.
+
+const VERSIONED_UPDATE = /^\s*UPDATE\s+(session_events|session_transcript_words|session_topics)\b/i;
+const LITERAL = /'(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*"|`(?:[^`\\]|\\.)*`/g;
+
+function scanVersionedUpdates(root: string): { missing: string[]; updates: number } {
+  const dir = path.join(root, 'packages/session-core/src');
+  const missing: string[] = [];
+  let updates = 0;
+  const files = fs.existsSync(dir)
+    ? fs.readdirSync(dir).filter((f) => f.endsWith('.ts') && !f.endsWith('.test.ts')).sort()
+    : [];
+  for (const f of files) {
+    const text = fs.readFileSync(path.join(dir, f), 'utf8');
+    for (const m of text.matchAll(LITERAL)) {
+      const body = m[0].slice(1, -1);
+      if (!VERSIONED_UPDATE.test(body)) continue;
+      updates += 1;
+      if (!/version\s*=\s*version\s*\+\s*1/i.test(body)) {
+        missing.push(`packages/session-core/src/${f}: ${body.trim().split('\n')[0]}`);
+      }
+    }
+  }
+  return { missing, updates };
+}
+
+describe('every update of a versioned table advances version (session-row-versions D3)', () => {
+  it('the session-core sources hold no versioned update without version = version + 1', () => {
+    const r = scanVersionedUpdates(REPO);
+    expect(r.updates).toBe(4);
+    expect(r.missing).toEqual([]);
+  });
+
+  it('the scan is mutation-checked: an update without the increment fails, others pass', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'session-versioned-'));
+    try {
+      fs.mkdirSync(path.join(root, 'packages/session-core/src'), { recursive: true });
+      fs.writeFileSync(
+        path.join(root, 'packages/session-core/src/aStore.ts'),
+        [
+          "db.run('UPDATE session_topics SET summary = ?, version = version + 1 WHERE session_id = ?');",
+          'db.run(`UPDATE session_events SET category = ? WHERE session_id = ? AND id = ?`);',
+          "db.run('UPDATE session_transport SET is_rolling = ? WHERE session_id = ?');",
+        ].join('\n'),
+      );
+      expect(scanVersionedUpdates(root)).toEqual({
+        missing: ['packages/session-core/src/aStore.ts: UPDATE session_events SET category = ? WHERE session_id = ? AND id = ?'],
+        updates: 2,
+      });
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});

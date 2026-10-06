@@ -305,6 +305,7 @@ describe('topics/generate — configured behavior (topic-generation)', () => {
             'summary',
             'ordinal',
             'created_at_utc',
+            'version',
           ].sort(),
         );
       }
@@ -1216,7 +1217,7 @@ describe('transcript generation', () => {
       // The wire projection (`wordApiDict`) is narrower than the stored row:
       // `created_at_utc` and the former `session_id` graft are both absent.
       expect(Object.keys(w).sort()).toEqual(
-        ['end_sec', 'id', 'ordinal', 'session_time', 'speaker', 'start_sec', 'word'].sort(),
+        ['end_sec', 'id', 'ordinal', 'session_time', 'speaker', 'start_sec', 'version', 'word'].sort(),
       );
     }
   });

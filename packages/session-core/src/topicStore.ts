@@ -13,6 +13,8 @@ export interface Topic {
   summary: string;
   ordinal: number;
   created_at_utc: string;
+  /** session-row-versions D3: 1 when created, plus one per change. */
+  version: number;
 }
 
 /** topicRow — pure row → Topic mapper. */
@@ -25,6 +27,7 @@ export function topicRow(r: Row): Topic {
     summary: String(r.summary ?? ''),
     ordinal: Number(r.ordinal ?? 0),
     created_at_utc: String(r.created_at_utc ?? ''),
+    version: Number(r.version ?? 1),
   };
 }
 
@@ -89,7 +92,7 @@ export class TopicStore {
     ] as const);
     if (cols.length) {
       await this.core.db.run(
-        `UPDATE session_topics SET ${cols.join(', ')} WHERE session_id = ? AND id = ?`,
+        `UPDATE session_topics SET ${cols.join(', ')}, version = version + 1 WHERE session_id = ? AND id = ?`,
         ...vals,
         this.core.sessionId,
         topicId,

@@ -14,6 +14,8 @@ export interface TranscriptWord {
   end_sec: number;
   ordinal: number;
   created_at_utc: string;
+  /** session-row-versions D3: 1 when created, plus one per change. */
+  version: number;
 }
 
 /** wordRow — pure row → TranscriptWord mapper. */
@@ -27,6 +29,7 @@ export function wordRow(r: Row): TranscriptWord {
     end_sec: Number(r.end_sec ?? 0),
     ordinal: Number(r.ordinal ?? 0),
     created_at_utc: String(r.created_at_utc ?? ''),
+    version: Number(r.version ?? 1),
   };
 }
 
@@ -162,7 +165,7 @@ export class TranscriptStore {
     const { cols, vals } = buildPatch(patch, ['session_time', 'speaker', 'word'] as const);
     if (cols.length) {
       await this.core.db.run(
-        `UPDATE session_transcript_words SET ${cols.join(', ')} WHERE session_id = ? AND id = ?`,
+        `UPDATE session_transcript_words SET ${cols.join(', ')}, version = version + 1 WHERE session_id = ? AND id = ?`,
         ...vals,
         this.core.sessionId,
         wordId,
