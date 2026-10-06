@@ -240,6 +240,21 @@ describe('hub ↔ catalog projection', () => {
       }
     });
 
+    // api-contract-freeze "A heartbeat leaves the revision unchanged" (session-leases D5).
+    it('a heartbeat leaves the revision unchanged: claim, status, three heartbeats, status', async () => {
+      const { s } = await twoUsers();
+      expect((await claim(s, 'tab-a')).status).toBe(200);
+      const before = await status(s);
+      expect(typeof before.events_stream_revision).toBe('number');
+      for (let i = 0; i < 3; i += 1) {
+        const hb = await heartbeat(s, 'tab-a');
+        expect(hb.status).toBe(200);
+        expect(await hb.json()).toEqual({ ok: true });
+      }
+      const after = await status(s);
+      expect(after.events_stream_revision).toBe(before.events_stream_revision);
+    });
+
     it('GET /api/companion/state shows is_recording while A holds the lease', async () => {
       const { s } = await twoUsers();
       await setCompanionPresence('c1', s, { visible: true });

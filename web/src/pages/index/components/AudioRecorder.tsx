@@ -237,6 +237,11 @@ interface ActiveTake {
   leaseMode: 'holding' | 'lost';
   /** The one claim or heartbeat in flight for this take; a tick skips while it is set. */
   leaseInFlight: Promise<void> | null;
+  /**
+   * The re-claim in flight for this take, if any (a subset of `leaseInFlight`).
+   * The final release waits only for this, never for a heartbeat (D7).
+   */
+  claimInFlight: Promise<void> | null;
   /** A re-claim that landed after this take stopped was already released (D7). */
   leaseReleasedLate: boolean;
 }
@@ -301,9 +306,11 @@ export const AudioRecorder = forwardRef<AudioRecorderHandle, AudioRecorderProps>
     // Same query key as SessionWorkspace's feed query (page(sessionId, 0,
     // WORKSPACE_EVENTS_LIMIT)), so react-query dedupes — no extra fetch.
     const { data: eventsRes } = useEvents(sessionId || null, { limit: WORKSPACE_EVENTS_LIMIT });
-    const claimLease = useClaimAudioLease(sessionId);
-    const releaseLease = useReleaseAudioLease(sessionId);
-    const heartbeat = useHeartbeatAudioLease(sessionId);
+    // Lease requests carry their session per call: every request of a take
+    // goes to `take.sessionId`, since the prop can change mid-take (D7).
+    const claimLease = useClaimAudioLease();
+    const releaseLease = useReleaseAudioLease();
+    const heartbeat = useHeartbeatAudioLease();
     const logEvent = useLogEvent(sessionId);
 
     const showToast = useCallback((msg: string, isError = false) => {
@@ -341,26 +348,32 @@ export const AudioRecorder = forwardRef<AudioRecorderHandle, AudioRecorderProps>
       [stopMicMeter],
     );
 
-    const releaseLeaseQuiet = useCallback(async () => {
-      try {
-        await releaseLease.mutateAsync({ client_id: getClientInstanceId() });
-      } catch {
-        /* best effort */
-      }
-    }, [releaseLease]);
+    const releaseLeaseQuiet = useCallback(
+      async (leaseSessionId: string) => {
+        try {
+          await releaseLease.mutateAsync({
+            sessionId: leaseSessionId,
+            client_id: getClientInstanceId(),
+          });
+        } catch {
+          /* best effort */
+        }
+      },
+      [releaseLease],
+    );
 
-    const beaconRelease = useCallback(() => {
+    const beaconRelease = useCallback((sid: string) => {
       if (typeof navigator.sendBeacon !== 'function') return;
       try {
         const b = new Blob([JSON.stringify({ client_id: getClientInstanceId() })], {
           type: 'application/json',
         });
         // Use raw sendBeacon URL — apiFetch is not available at page hide time
-        navigator.sendBeacon(`${API_ROOT}/sessions/${sessionId}/audio-recording-lease/release`, b);
+        navigator.sendBeacon(`${API_ROOT}/sessions/${sid}/audio-recording-lease/release`, b);
       } catch {
         /* ignore */
       }
-    }, [sessionId]);
+    }, []);
 
     /**
      * Re-claim the lease for `take` with its own client id (session-leases
@@ -368,26 +381,34 @@ export const AudioRecorder = forwardRef<AudioRecorderHandle, AudioRecorderProps>
      * capturing one: 200 → holding; 409 → lost (one warning per loss); any
      * other failure leaves the mode as it was. A claim that succeeds after
      * its take stopped is released at once, so it never outlives the take.
+     * The returned promise (also `take.claimInFlight`) settles after that.
      */
     const reclaimLease = useCallback(
-      async (take: ActiveTake, cid: string) => {
+      (take: ActiveTake, cid: string): Promise<void> => {
         const capturing = () => takeRef.current === take && stateRef.current.phase === 'recording';
-        try {
-          await claimLease.mutateAsync({ client_id: cid });
-        } catch (err) {
-          if (!capturing()) return;
-          if (err instanceof ApiError && err.status === 409 && take.leaseMode !== 'lost') {
-            take.leaseMode = 'lost';
-            showToast(LEASE_LOST_WARNING, true);
+        const run = async () => {
+          try {
+            await claimLease.mutateAsync({ sessionId: take.sessionId, client_id: cid });
+          } catch (err) {
+            if (!capturing()) return;
+            if (err instanceof ApiError && err.status === 409 && take.leaseMode !== 'lost') {
+              take.leaseMode = 'lost';
+              showToast(LEASE_LOST_WARNING, true);
+            }
+            return;
           }
-          return;
-        }
-        if (!capturing()) {
-          take.leaseReleasedLate = true;
-          await releaseLeaseQuiet();
-          return;
-        }
-        take.leaseMode = 'holding';
+          if (!capturing()) {
+            take.leaseReleasedLate = true;
+            await releaseLeaseQuiet(take.sessionId);
+            return;
+          }
+          take.leaseMode = 'holding';
+        };
+        const inFlight: Promise<void> = run().finally(() => {
+          if (take.claimInFlight === inFlight) take.claimInFlight = null;
+        });
+        take.claimInFlight = inFlight;
+        return inFlight;
       },
       [claimLease, releaseLeaseQuiet, showToast],
     );
@@ -408,7 +429,7 @@ export const AudioRecorder = forwardRef<AudioRecorderHandle, AudioRecorderProps>
           }
           let res: OkResponse | undefined;
           try {
-            res = await heartbeat.mutateAsync({ client_id: cid });
+            res = await heartbeat.mutateAsync({ sessionId: take.sessionId, client_id: cid });
           } catch {
             return; // best effort, as before D7
           }
@@ -482,11 +503,13 @@ export const AudioRecorder = forwardRef<AudioRecorderHandle, AudioRecorderProps>
         } catch {
           /* best effort */
         }
-        // Design D7: let an in-flight claim (or heartbeat) settle first, so a
-        // re-claim can never land after this final release. A re-claim that
-        // landed after the stop already released the lease itself.
-        if (take.leaseInFlight) await take.leaseInFlight;
-        if (!take.leaseReleasedLate) await releaseLeaseQuiet();
+        // Design D7: let an in-flight claim settle first, so a re-claim can
+        // never land after this final release. A re-claim that landed after
+        // the stop already released the lease itself. A heartbeat in flight is
+        // not awaited (it has no timeout, and with the take gone it can no
+        // longer turn into a re-claim).
+        if (take.claimInFlight) await take.claimInFlight;
+        if (!take.leaseReleasedLate) await releaseLeaseQuiet(take.sessionId);
 
         // Reset recording-dur display
         const durEl = document.getElementById('top-bar-recording-dur');
@@ -670,7 +693,7 @@ export const AudioRecorder = forwardRef<AudioRecorderHandle, AudioRecorderProps>
       const ordinal = deriveNextOrdinal(segData?.segments, eventsRes?.events, ownSessionOrdinals);
 
       try {
-        await claimLease.mutateAsync({ client_id: cid });
+        await claimLease.mutateAsync({ sessionId: recordingSessionId, client_id: cid });
       } catch (err) {
         showToast(err instanceof Error ? err.message : 'Could not claim recording lease.');
         dispatch({ type: 'ERROR' });
@@ -681,7 +704,7 @@ export const AudioRecorder = forwardRef<AudioRecorderHandle, AudioRecorderProps>
       try {
         stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       } catch (err) {
-        await releaseLeaseQuiet();
+        await releaseLeaseQuiet(recordingSessionId);
         showToast(err instanceof Error ? err.message : 'Microphone access denied.');
         dispatch({ type: 'ERROR' });
         return false;
@@ -695,6 +718,7 @@ export const AudioRecorder = forwardRef<AudioRecorderHandle, AudioRecorderProps>
         nextChunkIndex: 0,
         leaseMode: 'holding',
         leaseInFlight: null,
+        claimInFlight: null,
         leaseReleasedLate: false,
       };
       takeRef.current = take;
@@ -852,11 +876,12 @@ export const AudioRecorder = forwardRef<AudioRecorderHandle, AudioRecorderProps>
       const onHide = () => {
         if (stateRef.current.phase !== 'recording') return;
         stopHeartbeat();
-        beaconRelease();
+        // The take's session, not the prop's: the prop can change mid-take.
+        beaconRelease(takeRef.current?.sessionId ?? sessionId);
       };
       window.addEventListener('pagehide', onHide);
       return () => window.removeEventListener('pagehide', onHide);
-    }, [beaconRelease, stopHeartbeat]);
+    }, [beaconRelease, stopHeartbeat, sessionId]);
 
     // Warn before unload while recording. The listener is registered only for
     // the span of an actual recording, not for the component's whole mount:

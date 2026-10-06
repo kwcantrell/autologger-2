@@ -3,7 +3,7 @@ import { userCaller } from '@autologger/session-core/sessionCaller';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { seedSession, seedShow, seedStudio, seedUser } from '../helpers';
 import { boundCoreOn } from './boundCore';
-import { insertRaw, rawRows, testStorage } from './sessionRows';
+import { insertRaw, rawRows, type TestRegistry, testRegistry, testStorage } from './sessionRows';
 
 // The recording lease on `catalog.session_leases` (session-leases D3, D4, D5), over a REAL core on
 // the bound-core harness. Two users, A and B, both reach the session's show; `A`/`B` run as them,
@@ -254,5 +254,46 @@ describe('LeaseStore on catalog.session_leases (session-leases D3)', () => {
     expect(await revision()).toBe(r + 1);
     // A user caller's claim after that still works (the row is gone, not stuck).
     expect(await A.run((s) => s.lease.claimLease('c2'))).toBe(true);
+  });
+});
+
+describe('the retired lease meta keys (catalog-database: the server no longer touches the lease keys)', () => {
+  const registries: TestRegistry[] = [];
+  afterEach(async () => {
+    for (const r of registries.splice(0)) await r.closeAll();
+  });
+
+  it('a claim, a heartbeat and a release through the hub as a user leave both meta rows and write no new lease meta row', async () => {
+    const studio = await seedStudio();
+    const a = await seedUser({ studios: [studio], role: 'owner' });
+    const show = await seedShow({ studioId: studio });
+    const sessionId = await seedSession({ showId: show });
+    const storage = testStorage(sessionId);
+    await insertRaw(storage, 'session_meta', [
+      { key: 'lease_holder', value: 'old-tab' },
+      { key: 'lease_seen_ms', value: '1750000000000' },
+    ]);
+    const leaseMeta = () =>
+      rawRows(storage, 'session_meta', { where: "key LIKE 'lease%'", orderBy: 'key' });
+    expect(await leaseMeta()).toEqual([
+      { key: 'lease_holder', value: 'old-tab' },
+      { key: 'lease_seen_ms', value: '1750000000000' },
+    ]);
+
+    const registry = testRegistry();
+    registries.push(registry);
+    const hub = (await registry.get(sessionId)).as(userCaller(a));
+    expect(await hub.claimLease('tab-a')).toBe(true);
+    expect(await rawRows(storage, 'session_leases', { columns: 'holder_client_id' })).toEqual([
+      { holder_client_id: 'tab-a' },
+    ]);
+    expect(await hub.heartbeatLease('tab-a')).toBe(true);
+    await hub.releaseLease('tab-a');
+    expect(await rawRows(storage, 'session_leases')).toEqual([]);
+
+    expect(await leaseMeta()).toEqual([
+      { key: 'lease_holder', value: 'old-tab' },
+      { key: 'lease_seen_ms', value: '1750000000000' },
+    ]);
   });
 });

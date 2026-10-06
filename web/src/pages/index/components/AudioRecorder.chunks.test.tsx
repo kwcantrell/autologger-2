@@ -27,13 +27,15 @@ const h = vi.hoisted(() => ({
   events: [] as Partial<LogEvent>[],
   // mutateAsync since session-leases D7: the recorder acts on the heartbeat's `{ok}` answer.
   heartbeatMutate: vi.fn(
-    async (_body: { client_id: string }): Promise<{ ok: boolean }> => ({
+    async (_vars: { sessionId: string; client_id: string }): Promise<{ ok: boolean }> => ({
       ok: true,
     }),
   ),
   logEventMutateAsync: vi.fn(async (_body: { category: string; message: string }) => ({})),
-  claimMutateAsync: vi.fn(async (_body: { client_id: string }): Promise<unknown> => ({})),
-  releaseMutateAsync: vi.fn(async (_body: { client_id: string }) => ({})),
+  claimMutateAsync: vi.fn(
+    async (_vars: { sessionId: string; client_id: string }): Promise<unknown> => ({}),
+  ),
+  releaseMutateAsync: vi.fn(async (_vars: { sessionId: string; client_id: string }) => ({})),
 }));
 
 vi.mock('../../../api/hooks/useAudio', () => ({
@@ -965,7 +967,7 @@ describe('AudioRecorder lease re-claim (session-leases D7, task 6.1)', () => {
     await tickLease();
     expect(h.heartbeatMutate).toHaveBeenCalledTimes(1);
     expect(h.claimMutateAsync).toHaveBeenCalledTimes(2);
-    expect(h.claimMutateAsync.mock.calls[1][0]).toEqual({ client_id: cid });
+    expect(h.claimMutateAsync.mock.calls[1][0]).toEqual({ sessionId: 'sess-A', client_id: cid });
     expect(ref.current?.isRecording()).toBe(true);
     expect(FakeMediaRecorder.instances[0].state).toBe('recording');
     expect(lostWarnings()).toBe(0);
@@ -1077,7 +1079,7 @@ describe('AudioRecorder lease re-claim (session-leases D7, task 6.1)', () => {
     });
     // Exactly one release, after the claim settled: the lease ends free.
     expect(h.releaseMutateAsync).toHaveBeenCalledTimes(1);
-    expect(h.releaseMutateAsync).toHaveBeenCalledWith({ client_id: cid });
+    expect(h.releaseMutateAsync).toHaveBeenCalledWith({ sessionId: 'sess-A', client_id: cid });
     expect(h.releaseMutateAsync.mock.invocationCallOrder[0]).toBeGreaterThan(
       h.claimMutateAsync.mock.invocationCallOrder[1],
     );
@@ -1114,7 +1116,7 @@ describe('AudioRecorder lease re-claim (session-leases D7, task 6.1)', () => {
       await flush();
     });
     expect(h.releaseMutateAsync).toHaveBeenCalledTimes(1);
-    expect(h.releaseMutateAsync).toHaveBeenCalledWith({ client_id: cid });
+    expect(h.releaseMutateAsync).toHaveBeenCalledWith({ sessionId: 'sess-A', client_id: cid });
 
     await act(async () => {
       realOnstop.fire();
@@ -1137,5 +1139,105 @@ describe('AudioRecorder lease re-claim (session-leases D7, task 6.1)', () => {
     expect(h.claimMutateAsync).toHaveBeenCalledTimes(1);
     expect(lostWarnings()).toBe(0);
     expect(ref.current?.isRecording()).toBe(true);
+  });
+
+  // Consistency-read follow-up: the recorder is not remounted per session, so
+  // every lease request of a take goes to the take's session, never the prop's.
+  it("every lease request of a take goes to the take's session after the prop switches", async () => {
+    const { ref, rerenderWith } = await startRecording('sess-A');
+    const cid = h.claimMutateAsync.mock.calls[0][0].client_id;
+    rerenderWith('sess-B');
+    await tickLease(); // heartbeat
+    h.heartbeatMutate.mockResolvedValueOnce({ ok: false });
+    await tickLease(); // refused heartbeat → re-claim
+    expect(h.heartbeatMutate).toHaveBeenCalledTimes(2);
+    expect(h.claimMutateAsync).toHaveBeenCalledTimes(2);
+    await act(async () => {
+      await ref.current?.toggle(); // stop → final release
+      await flush();
+    });
+    expect(h.releaseMutateAsync).toHaveBeenCalledTimes(1);
+    const sent = [
+      ...h.claimMutateAsync.mock.calls,
+      ...h.heartbeatMutate.mock.calls,
+      ...h.releaseMutateAsync.mock.calls,
+    ].map(([vars]) => vars);
+    expect(sent).toHaveLength(5);
+    for (const vars of sent) expect(vars).toEqual({ sessionId: 'sess-A', client_id: cid });
+  });
+
+  it("a late release (claim landing after the take stopped) goes to the take's session", async () => {
+    const { ref, rerenderWith } = await startRecording('sess-A');
+    const cid = h.claimMutateAsync.mock.calls[0][0].client_id;
+    rerenderWith('sess-B');
+    const claim = deferred<unknown>();
+    h.heartbeatMutate.mockResolvedValueOnce({ ok: false });
+    h.claimMutateAsync.mockImplementationOnce(() => claim.promise);
+    await tickLease();
+    const mr = FakeMediaRecorder.instances[0];
+    const held = { fire: () => {} };
+    mr.stop = function stop(this: FakeMediaRecorder) {
+      this.state = 'inactive';
+      this.ondataavailable?.({ data: new Blob([new Uint8Array(8)], { type: 'audio/webm' }) });
+      const onstop = this.onstop;
+      held.fire = () => onstop?.();
+    };
+    await act(async () => {
+      await ref.current?.toggle();
+      await flush();
+    });
+    await act(async () => {
+      claim.resolve({ ok: true });
+      await flush();
+    });
+    expect(h.releaseMutateAsync).toHaveBeenCalledTimes(1);
+    expect(h.releaseMutateAsync).toHaveBeenCalledWith({ sessionId: 'sess-A', client_id: cid });
+    expect(h.claimMutateAsync.mock.calls[1][0]).toEqual({ sessionId: 'sess-A', client_id: cid });
+    await act(async () => {
+      held.fire();
+      await flush();
+    });
+    expect(h.releaseMutateAsync).toHaveBeenCalledTimes(1);
+  });
+
+  it("the pagehide beacon releases the take's session after the prop switches", async () => {
+    const sendBeacon = vi.fn((_url: string, _data?: BodyInit | null) => true);
+    Object.defineProperty(navigator, 'sendBeacon', { configurable: true, value: sendBeacon });
+    try {
+      const { rerenderWith } = await startRecording('sess-A');
+      rerenderWith('sess-B');
+      await act(async () => {
+        window.dispatchEvent(new Event('pagehide'));
+      });
+      expect(sendBeacon).toHaveBeenCalledTimes(1);
+      expect(String(sendBeacon.mock.calls[0][0])).toContain(
+        '/sessions/sess-A/audio-recording-lease/release',
+      );
+    } finally {
+      Object.defineProperty(navigator, 'sendBeacon', { configurable: true, value: undefined });
+    }
+  });
+
+  it('a heartbeat hanging at stop does not delay the final release, and its late answer sends no claim', async () => {
+    const { ref } = await startRecording();
+    const cid = h.claimMutateAsync.mock.calls[0][0].client_id;
+    const hb = deferred<{ ok: boolean }>();
+    h.heartbeatMutate.mockImplementationOnce(() => hb.promise);
+    await tickLease();
+    expect(h.heartbeatMutate).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await ref.current?.toggle(); // stop while the heartbeat hangs
+      await flush();
+    });
+    expect(h.releaseMutateAsync).toHaveBeenCalledTimes(1);
+    expect(h.releaseMutateAsync).toHaveBeenCalledWith({ sessionId: 'sess-A', client_id: cid });
+
+    await act(async () => {
+      hb.resolve({ ok: false });
+      await flush();
+    });
+    expect(h.claimMutateAsync).toHaveBeenCalledTimes(1);
+    expect(h.releaseMutateAsync).toHaveBeenCalledTimes(1);
   });
 });
