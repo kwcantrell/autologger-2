@@ -70,7 +70,7 @@ describe('shadcn hygiene', () => {
     expect(Object.keys(deps).filter((d) => d.startsWith('overlayscrollbars'))).toEqual([]);
   });
 
-  it('deleted legacy modal classes are never passed as a class again', () => {
+  it('deleted legacy chrome classes are never passed as a class again', () => {
     // shadcn-port-modals D8: the modal chrome these named (`.modal-*`, `.tool-row`, the fps
     // family, …) was deleted from tailwind.css. Attribute-aware: only class arguments are
     // scanned — `className="…"`, and string literals inside `cn(…)` / `clsx(…)` — so a kept id
@@ -96,6 +96,26 @@ describe('shadcn hygiene', () => {
       'v5-panel-eyebrow',
       'v4-log-top__capture',
       'v4-log-top__playback',
+      // remove-admin-users-page D6: the page chrome and form/button chrome whose last consumer
+      // was the retired /admin/users page. Generic words (`field`, `primary`, `danger`,
+      // `header`, `main`, `panel`, `footer`, `brand`) stay off the list, as above.
+      'btn',
+      'btn-icon',
+      'profile-select',
+      'admin-settings-block',
+      'settings-subheading',
+      'settings-actions',
+      'settings-panel',
+      'brand-with-logo',
+      'brand-lockup',
+      'brand-logo',
+      'brand-text',
+      'tagline',
+      'developer-footer',
+      'developer-label',
+      'developer-logo',
+      'crumb',
+      'admin-table',
     ]);
     const classArgs = (src: string): string[] => {
       const out: string[] = [];

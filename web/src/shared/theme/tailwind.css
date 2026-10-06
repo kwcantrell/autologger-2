@@ -664,8 +664,6 @@
   }
 
   /* Large panel shadows (less composite work when scrolling). */
-  body.perf-dbg--no-panel-shadows .panel,
-  body.perf-dbg--no-panel-shadows .footer,
   body.perf-dbg--no-panel-shadows .v4-top-bar,
   body.perf-dbg--no-panel-shadows .v4-log-top,
   body.perf-dbg--no-panel-shadows .v4-log-sheet,
@@ -1054,19 +1052,17 @@
 
 /* ============================================================
  * Page chrome (Task 11, slice 6 — ported from the deleted chrome.css).
- * Multi-consumer chrome vocabulary (audit B): shell/header/brand/settings/
- * modal/btn/field/panel/profile-select/tool-row/fps/footer/developer/crumb/…
- * All emitted class strings are unchanged; these named rules live in
- * `@layer components` (below utilities), so per-element utility overrides from
- * earlier slices keep winning. The `.btn` compound family (.btn / .btn.primary /
- * .btn.danger / :disabled / (hover:hover) guards / max-md touch floor) lives here
- * ENTIRELY as plain rules — an @utility+components split would invert layer order
- * and flatten primary/danger to default buttons.
+ * What remains after the shadcn port (changes 3a–3c-2b): `.shell` / `.shell-v3` (AppShell's
+ * root), `.mono` and `.faint`. The rest of the chrome vocabulary — header/brand/settings/modal/btn/
+ * field/panel/profile-select/tool-row/fps/footer/developer/crumb — was deleted once its last
+ * consumer was ported or retired (the `/admin/users` page, remove-admin-users-page D6); the
+ * shadcnHygiene guard keeps those class names from returning.
  * ============================================================ */
 @layer components {
   /* nextjs-frontend-migration (task 4.2 visual-gate fix): `width: 100%`
-   * added. `.shell` is the admin page's sole root element (AdminUsersPage.tsx)
-   * and, under the retired Vite entry, sat inside `<div id="root">` — an
+   * added. (History: `.shell` was then the admin page's sole root element; that page was
+   * retired — remove-admin-users-page — and AppShell's `shell shell-v3` root is the remaining
+   * consumer, where `.shell-v3` overrides the box.) Under the retired Vite entry it sat inside `<div id="root">` — an
    * ordinary block box, so `width: auto` + `margin: 0 auto` filled the
    * available width before `max-width` clamped and centered it (the classic
    * block "auto-margin centering" algorithm). Next's App Router mounts the
@@ -1077,8 +1073,7 @@
    * when an item's cross-axis margins are auto — exactly `.shell`'s
    * `margin: 0 auto` — so without an explicit `width`, the item fell back to
    * fit-content sizing instead of filling the flex line, visibly narrowing
-   * the admin page (caught by the visual-desktop `admin-users.png` gate,
-   * ~7.6k px / 1% diff). `.shell-v3` (AppShell's own root, below) already
+   * the page (caught then by a visual-desktop gate, ~7.6k px / 1% diff). `.shell-v3` (AppShell's own root, below) already
    * sets `width: 100%` explicitly for the same reason — this mirrors that
    * precedent rather than introducing a new pattern. Restores the exact
    * pre-migration blessed baseline (verified zero-diff after this fix).
@@ -1097,310 +1092,10 @@
     padding: 0;
   }
 
-  .header {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 0.8rem;
-    margin-bottom: 1rem;
-    padding-bottom: 0.75rem;
-    border-bottom: 1px solid var(--legacy-border);
-  }
-
-  /* Grid lockup: logo and text column share one row; logo and headline stack share the same vertical midpoint. */
-  .brand-with-logo .brand-lockup {
-    display: grid;
-    grid-template-columns: 6rem minmax(0, 1fr);
-    align-items: center;
-    column-gap: 0;
-    min-height: 0;
-  }
-
-  .brand-logo {
-    grid-column: 1;
-    grid-row: 1 / -1;
-    justify-self: start;
-    align-self: center;
-    z-index: 0;
-    width: 6rem;
-    height: 6rem;
-    max-width: min(6rem, 42vw);
-    max-height: min(6rem, 42vw);
-    margin-left: -0.2rem;
-    object-fit: contain;
-    display: block;
-    pointer-events: none;
-  }
-
-  .brand-with-logo .brand-text {
-    grid-column: 2;
-    grid-row: 1;
-    align-self: stretch;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    position: relative;
-    z-index: 1;
-    min-width: 0;
-    /* Pull text over the right part of the mark (replaces former padding-left on absolute layout). */
-    margin-left: -1.65rem;
-    padding-left: 0;
-  }
-
-  .brand h1 {
-    margin: 0;
-    font-size: 1.3rem;
-    font-weight: 600;
-    letter-spacing: -0.02em;
-  }
-
-  .tagline {
-    margin: 0.18rem 0 0;
-    font-size: 0.78rem;
-    color: var(--legacy-muted);
-    max-width: 28rem;
-  }
-
-  .admin-settings-block {
-    margin: 1rem 0 1.25rem;
-    padding-bottom: 1rem;
-    border-bottom: 1px solid var(--legacy-border);
-  }
-
-  .settings-panel .admin-settings-block {
-    margin-top: 0.5rem;
-  }
-
-  .settings-subheading {
-    margin: 0 0 0.5rem;
-    font-size: 1rem;
-    font-weight: 600;
-    color: var(--text);
-  }
-
-  .settings-actions {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: flex-end;
-    gap: 0.6rem;
-    margin-top: 1.75rem;
-    padding-top: 1.25rem;
-    border-top: 1px solid var(--legacy-border);
-  }
-
-  /* ui-refresh: form controls join the V5 vocabulary (dark glass field). The
-   * `.profile-select` < `input[type=text]` specificity relationship below is
-   * preserved — both carry the same look now, so cascade order is moot. */
-  .profile-select {
-    font: inherit;
-    color: var(--v5-text);
-    background: rgba(7, 11, 20, 0.6);
-    border: 1px solid var(--v5-border-strong);
-    border-radius: 0.6rem;
-    padding: 0.5rem 0.65rem;
-    margin: 0 0 1rem;
-    width: 100%;
-    cursor: pointer;
-    transition: border-color 0.15s ease, background 0.15s ease;
-  }
-
-  .profile-select:focus-visible {
-    border-color: rgba(56, 189, 248, 0.55);
-    outline: none;
-    background: rgba(7, 11, 20, 0.75);
-  }
-
-  .main {
-    display: flex;
-    flex-direction: column;
-    gap: 0.85rem;
-  }
-
-  .panel {
-    background: var(--surface);
-    border: 1px solid var(--legacy-border);
-    border-radius: var(--radius);
-    padding: 0.82rem 0.95rem 0.9rem;
-  }
-
-  .panel h2 {
-    margin: 0 0 1rem;
-    font-size: 0.85rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: var(--legacy-muted);
-  }
-
-  .field {
-    display: flex;
-    flex-direction: column;
-    gap: 0.35rem;
-  }
-
-  .field span {
-    font-size: 0.8rem;
-    color: var(--legacy-muted);
-  }
-
   .mono,
   .sheet .mono {
     font-family: var(--font-mono);
     font-size: 0.85rem;
-  }
-
-  /* The `.btn` compound family — plain rules, kept together in one layer.
-   * ui-refresh: re-skinned from the pre-V5 flat grey chrome to the V5 glass
-   * vocabulary (mirrors the `glass` Button variant) so the modal/settings
-   * layer speaks the same language as the workspace. Class names unchanged —
-   * every legacy consumer converts at once. */
-  .btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 0.4rem;
-    box-sizing: border-box;
-    padding: 0.5rem 1.1rem;
-    font-family: 'Inter', var(--font-poppins, ui-sans-serif), system-ui, sans-serif;
-    font-size: 0.72rem;
-    font-weight: 600;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-    color: rgba(248, 250, 252, 0.92);
-    background: linear-gradient(165deg, rgba(255, 255, 255, 0.08), rgba(15, 23, 42, 0.45));
-    border: 1px solid var(--v5-border-strong);
-    border-radius: var(--radius-v5-sm);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
-    cursor: pointer;
-    text-decoration: none;
-    transition:
-      border-color 0.15s ease,
-      background 0.15s ease,
-      box-shadow 0.15s ease,
-      color 0.15s ease;
-  }
-
-  /* Hover guarded behind `hover: hover` so the style does not latch after a tap
-   * on touch devices (phone-first, Phase 3) — one of only three guarded hovers
-   * in the app (audit G). Focus-visible rings are unaffected. */
-  @media (hover: hover) {
-    .btn:hover:not(:disabled) {
-      border-color: color-mix(in srgb, var(--v5-primary) 45%, var(--v5-border-strong));
-      background: linear-gradient(165deg, rgba(255, 255, 255, 0.1), rgba(15, 23, 42, 0.5));
-      color: #ffffff;
-    }
-  }
-
-  /* Disabled: dimmed glass, no hover response. */
-  .btn:disabled,
-  .btn:disabled:hover {
-    opacity: 0.45;
-    cursor: not-allowed;
-    color: var(--v5-muted);
-    border-color: var(--v5-border);
-    background: linear-gradient(165deg, rgba(255, 255, 255, 0.04), rgba(15, 23, 42, 0.45));
-  }
-
-  .btn.primary {
-    border-color: rgba(56, 189, 248, 0.4);
-    background: linear-gradient(165deg, rgba(56, 189, 248, 0.18), rgba(15, 23, 42, 0.5));
-    color: #e0f2fe;
-    box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.08),
-      0 0 0 1px rgba(56, 189, 248, 0.1);
-  }
-
-  @media (hover: hover) {
-    .btn.primary:hover:not(:disabled) {
-      border-color: rgba(56, 189, 248, 0.6);
-      background: linear-gradient(165deg, rgba(56, 189, 248, 0.26), rgba(15, 23, 42, 0.52));
-      color: #ffffff;
-    }
-  }
-
-  .btn.primary:disabled,
-  .btn.primary:disabled:hover {
-    opacity: 0.45;
-    cursor: not-allowed;
-    color: var(--v5-muted);
-    border-color: var(--v5-border);
-    background: linear-gradient(165deg, rgba(255, 255, 255, 0.04), rgba(15, 23, 42, 0.45));
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
-  }
-
-  .btn.danger {
-    border-color: color-mix(in srgb, var(--danger) 45%, var(--v5-border-strong));
-    background: linear-gradient(165deg, rgba(251, 113, 133, 0.12), rgba(15, 23, 42, 0.5));
-    color: #fda4af;
-  }
-
-  @media (hover: hover) {
-    .btn.danger:hover:not(:disabled) {
-      background: linear-gradient(165deg, rgba(251, 113, 133, 0.2), rgba(15, 23, 42, 0.52));
-      border-color: color-mix(in srgb, var(--danger) 65%, var(--v5-border-strong));
-      color: #fecdd3;
-    }
-  }
-
-  .btn.danger:disabled,
-  .btn.danger:disabled:hover {
-    opacity: 0.45;
-    cursor: not-allowed;
-    color: var(--v5-muted);
-    border-color: var(--v5-border);
-    background: linear-gradient(165deg, rgba(255, 255, 255, 0.04), rgba(15, 23, 42, 0.45));
-  }
-
-  .footer {
-    margin-top: 2rem;
-    padding-top: 1rem;
-    border-top: 1px solid var(--legacy-border);
-    font-size: 0.8rem;
-    color: var(--legacy-muted);
-  }
-
-  .footer .mono {
-    color: var(--legacy-accent);
-  }
-
-  .developer-footer {
-    margin-top: 2rem;
-    padding-top: 1.5rem;
-    border-top: 1px solid var(--legacy-border);
-    text-align: center;
-  }
-
-  .developer-label {
-    margin: 0 0 0.65rem;
-    font-size: 0.72rem;
-    text-transform: uppercase;
-    letter-spacing: 0.14em;
-    color: var(--legacy-muted);
-  }
-
-  .developer-logo {
-    display: block;
-    max-width: min(288px, 92vw);
-    width: auto;
-    height: auto;
-    margin: 0 auto;
-    opacity: 1;
-  }
-
-  .crumb {
-    margin: 0 0 0.35rem;
-    font-size: 0.9rem;
-  }
-
-  .crumb a {
-    color: var(--accent-dim);
-    text-decoration: none;
-  }
-
-  .crumb a:hover {
-    color: var(--legacy-accent);
   }
 
   .faint {
@@ -1409,19 +1104,6 @@
     word-break: break-all;
   }
 
-  /* Phone-first cutover aligned to the md breakpoint (≤767px = md - 1). */
-  @media (max-width: 767px) {
-    .header {
-      flex-direction: column;
-      align-items: stretch;
-    }
-
-    /* Touch-target floor for the app-wide button (covers Dialog/sheet actions
-     * and all chrome forms). */
-    .btn {
-      min-height: 2.75rem;
-    }
-  }
 }
 
 /* Bare form-element baseline (Task 11, from the deleted chrome.css element rules).
