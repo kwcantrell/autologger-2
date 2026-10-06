@@ -12,11 +12,14 @@ import {
 import { useSessionStatus } from '../../../api/hooks/useSessionStatus';
 import { useShowCategories } from '../../../api/hooks/useShowCategories';
 import type {
+  Category,
   EventGenerateSelection,
   EventsGenerateBody,
+  EventVersionConflict,
   LogEvent,
   SessionStatus,
 } from '../../../api/types';
+import { versionConflictOf } from '../../../api/versionConflict';
 import { showToast } from '../../../shared/components/Toast';
 import { Button } from '../../../shared/components/ui/button';
 import {
@@ -29,13 +32,16 @@ import {
   DropdownMenuTrigger,
 } from '../../../shared/components/ui/dropdown-menu';
 import { TableCell, TableRow } from '../../../shared/components/ui/table';
+import { type ConflictField, conflictPromptCopy } from '../../../shared/hooks/conflictPromptCopy';
+import { useVersionedSave } from '../../../shared/hooks/useVersionedSave';
 import { useConfirm } from '../../../shared/ui/ConfirmDialog';
 import { eventTimelineSec } from '../../../shared/utils/audioClips';
-import { isAutomaticLogEvent } from '../../../shared/utils/timecode';
+import { formatWallUtcYmdHms, isAutomaticLogEvent } from '../../../shared/utils/timecode';
 import { useGatedGenerate } from '../hooks/useGatedGenerate';
 import { useTimelineSeek } from '../hooks/useTimelineSeek';
 import { useDraftStore } from '../utils/draftStore';
 import { REVEAL_EVENT } from '../utils/revealEventInFeed';
+import { followServer, useSeedStore } from '../utils/seedStore';
 import { clickSortReducer, type SortState as SharedSortState } from '../utils/sortReducer';
 import { EventGenerateCustomModal } from './EventGenerateCustomModal';
 import {
@@ -45,6 +51,7 @@ import {
   type InlineFocusRecord,
   type InlineFocusStore,
   type RowEditValues,
+  serverInlineDraft,
 } from './EventLogRow';
 import { FeedShell } from './FeedShell';
 import { type ColumnDef, FeedTable } from './FeedTable';
@@ -290,6 +297,60 @@ function FilterDropdown({
 }
 
 // ---------------------------------------------------------------------------
+// Version conflicts (session-edit-conflicts D3/D5/D9)
+// ---------------------------------------------------------------------------
+
+/** The conflict's `current` row, or `null` for any other error. The one
+ *  `versionConflictOf` site in this feed (Detector 8 `errorBody`). */
+function eventConflictOf(e: unknown): LogEvent | null {
+  return versionConflictOf<EventVersionConflict>(e)?.current ?? null;
+}
+
+/** One batch row: the operator's values, and the seed they were built from
+ *  (frozen at the row's first batch change — its base). */
+interface BatchEdit {
+  values: RowEditValues;
+  seed: LogEvent | undefined;
+}
+
+/** The text an inline field shows for a row (or for the values being sent),
+ *  the same display text the controls use, so the prompt lists theirs next to
+ *  yours for every field that differs. */
+function eventFieldText(
+  row: { category: string; message: string; timecode_hms: string; wall_text: string },
+  categories: Category[],
+) {
+  const label = (id: string) => categories.find((c) => c.id === id)?.label || id;
+  return { ...row, category: label(row.category) };
+}
+
+function valuesFieldText(values: RowEditValues) {
+  return {
+    category: values.category,
+    message: values.message,
+    timecode_hms: values.timecode_hms,
+    wall_text: formatWallUtcYmdHms(values.wall_time_utc),
+  };
+}
+
+/** Every inline field, theirs (`current`) next to yours; `conflictPromptCopy`
+ *  lists the ones that differ. */
+function eventConflictFields(
+  current: LogEvent,
+  yours: { category: string; message: string; timecode_hms: string; wall_text: string },
+  categories: Category[],
+): ConflictField[] {
+  const t = eventFieldText(serverInlineDraft(current), categories);
+  const y = eventFieldText(yours, categories);
+  return [
+    { label: 'Category', theirs: t.category, yours: y.category },
+    { label: 'Message', theirs: t.message, yours: y.message },
+    { label: 'Timecode', theirs: t.timecode_hms, yours: y.timecode_hms },
+    { label: 'UTC', theirs: t.wall_text, yours: y.wall_text },
+  ];
+}
+
+// ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
 
@@ -360,8 +421,12 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
 
   // --- Batch edit ---
   const [batchEditMode, setBatchEditMode] = useState(false);
-  const [batchEdits, setBatchEdits] = useState<Map<string, RowEditValues>>(new Map());
-  const [pendingDeleteIds, setPendingDeleteIds] = useState<Set<string>>(new Set());
+  // session-edit-conflicts D3: each batch row carries the seed its values were
+  // built from, and each pending delete the version it was marked against.
+  const [batchEdits, setBatchEdits] = useState<Map<string, BatchEdit>>(new Map());
+  const [pendingDeleteIds, setPendingDeleteIds] = useState<Map<string, number | undefined>>(
+    new Map(),
+  );
   const [batchSaving, setBatchSaving] = useState(false);
 
   // --- Inline edit drafts ---
@@ -409,6 +474,21 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
   // --- Mutations ---
   const updateEvent = useUpdateEvent(sessionId);
   const deleteEvent = useDeleteEvent(sessionId);
+
+  // --- Versioned saves (session-edit-conflicts D3/D4/D5) ---
+  // `seeds`: per row, the server row its controls were filled from — the base
+  // of every save (never the cached row). `versioned`: the per-row save chain
+  // and the one queued "Row changed" prompt. `rowEpochs`: bumped by Keep
+  // theirs and folded into the row's React key, so every mounted copy of the
+  // row remounts and fills from `current`.
+  const seeds = useSeedStore<LogEvent>();
+  const versioned = useVersionedSave(sessionId);
+  const [rowEpochs, setRowEpochs] = useState<Map<string, number>>(new Map());
+  // `isBusy` reads live state whatever its identity; a stable wrapper keeps
+  // the rows' effects from re-running on every busy tick.
+  const isBusyRef = useRef(versioned.isBusy);
+  isBusyRef.current = versioned.isBusy;
+  const rowBusy = useCallback((eventId: string) => isBusyRef.current(eventId), []);
 
   // --- AUTO GENERATE (auto-generate-event-logs design D9) ---
   // Same machinery as Transcribe/Topics: `useGatedGenerate` owns the 503
@@ -636,6 +716,45 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
   });
 
   const virtualItems = virtualizer.getVirtualItems();
+
+  // --- The D3 follow rule (session-edit-conflicts): a row's seed follows the
+  // server row exactly while its controls do — no inline draft, no batch
+  // values, no save in flight or queued. Applied on every render, in every
+  // mode, so batch and delete bases are the row on screen and never cause a
+  // false conflict. It runs in render so a row mounting in this pass already
+  // fills from its seed (rows' effects run before this component's).
+  //
+  // A MOUNTED inline row is the exception: its uncontrolled controls only
+  // change when the row itself refills them (its server-sync effect, which
+  // skips a focused row, and its leave-without-typing path), so only the row
+  // may move its seed — moving it here would leave the controls showing a row
+  // older than their base, and the next blur would send that stale text as an
+  // edit. The row applies the same rule when it refills.
+  const lastSeedSessionRef = useRef(sessionId);
+  if (lastSeedSessionRef.current !== sessionId) {
+    // Nothing may base a save on another session's row.
+    lastSeedSessionRef.current = sessionId;
+    seeds.clearAll();
+  }
+  {
+    const mountedInline = new Set<string>();
+    if (inlineEdit) {
+      for (const v of virtualItems) {
+        const ev = sorted[v.index];
+        if (ev && !isAutomaticLogEvent(ev)) mountedInline.add(ev.event_id);
+      }
+    }
+    followServer(
+      seeds,
+      fetchedEvents,
+      (e) => e.event_id,
+      (id) =>
+        inlineDrafts.read(id) !== undefined ||
+        batchEdits.has(id) ||
+        versioned.isBusy(id) ||
+        mountedInline.has(id),
+    );
+  }
   const totalSize = virtualizer.getTotalSize();
   const paddingTop = virtualItems.length > 0 ? virtualItems[0].start : 0;
   const paddingBottom =
@@ -742,9 +861,10 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
   useEffect(() => {
     setBatchEditMode(false);
     setBatchEdits(new Map());
-    setPendingDeleteIds(new Set());
+    setPendingDeleteIds(new Map());
     inlineDrafts.clearAll();
     inlineFocusRef.current = null;
+    setRowEpochs(new Map());
     setLoadedLimit(200);
     setHiddenCategoryIds(new Set());
     setGenerateMenuOpen(false);
@@ -760,24 +880,81 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
       return;
     }
     setBatchEdits(new Map());
-    setPendingDeleteIds(new Set());
+    setPendingDeleteIds(new Map());
     setBatchEditMode(true);
   };
 
+  /** Drops one settled row from the batch at once (functional, so a later
+   *  retry never resends it — design A7). */
+  const settleBatchEdit = (eventId: string) =>
+    setBatchEdits((prev) => {
+      if (!prev.has(eventId)) return prev;
+      const next = new Map(prev);
+      next.delete(eventId);
+      return next;
+    });
+  const settlePendingDelete = (eventId: string) =>
+    setPendingDeleteIds((prev) => {
+      if (!prev.has(eventId)) return prev;
+      const next = new Map(prev);
+      next.delete(eventId);
+      return next;
+    });
+
+  // session-edit-conflicts D9: each row is sent with its batch seed's version.
+  // A conflict prompts, and the batch goes on past Overwrite or Keep theirs; a
+  // dismissed prompt or any other error stops it with the unsettled rows kept.
   const handleSaveBatch = async () => {
     setBatchSaving(true);
+    let keptTheirs = 0;
+    const stopped = () => showToast('Save stopped. The remaining changes are still pending.', true);
     try {
-      for (const [eventId, edit] of batchEdits) {
+      // A snapshot: rows leave the live maps as they settle.
+      for (const [eventId, edit] of [...batchEdits]) {
         if (pendingDeleteIds.has(eventId)) continue;
-        await updateEvent.mutateAsync({ eventId, body: edit });
+        const outcome = await versioned.run<LogEvent, LogEvent>({
+          rowKey: eventId,
+          baseVersion: () => edit.seed?.version,
+          send: (guard) => updateEvent.mutateAsync({ eventId, body: edit.values, guard }),
+          conflictOf: eventConflictOf,
+          prompt: (current) =>
+            conflictPromptCopy(
+              'edit',
+              eventConflictFields(current, valuesFieldText(edit.values), categories),
+            ),
+        });
+        if (outcome.kind === 'dismissed') {
+          stopped();
+          return;
+        }
+        if (outcome.kind === 'keptTheirs') keptTheirs += 1;
+        settleBatchEdit(eventId);
       }
-      for (const id of pendingDeleteIds) {
-        await deleteEvent.mutateAsync({ eventId: id });
+      for (const [eventId, version] of [...pendingDeleteIds]) {
+        const seed = batchEdits.get(eventId)?.seed ?? seeds.get(eventId);
+        const outcome = await versioned.run<unknown, LogEvent>({
+          rowKey: eventId,
+          baseVersion: () => version,
+          send: (guard) => deleteEvent.mutateAsync({ eventId, guard }),
+          conflictOf: eventConflictOf,
+          prompt: (current) =>
+            conflictPromptCopy(
+              'delete',
+              eventConflictFields(current, serverInlineDraft(seed ?? current), categories),
+            ),
+        });
+        if (outcome.kind === 'dismissed') {
+          stopped();
+          return;
+        }
+        if (outcome.kind === 'keptTheirs') keptTheirs += 1;
+        settlePendingDelete(eventId);
+        settleBatchEdit(eventId);
       }
       setBatchEditMode(false);
       setBatchEdits(new Map());
-      setPendingDeleteIds(new Set());
-      showToast('Changes saved.');
+      setPendingDeleteIds(new Map());
+      showToast(keptTheirs > 0 ? `Changes saved, ${keptTheirs} kept theirs.` : 'Changes saved.');
     } catch (e) {
       showToast(e instanceof Error ? e.message : 'Save failed.', true);
     } finally {
@@ -799,7 +976,7 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
     }
     setBatchEditMode(false);
     setBatchEdits(new Map());
-    setPendingDeleteIds(new Set());
+    setPendingDeleteIds(new Map());
   }, [pendingDeleteIds, batchEdits, confirm]);
 
   // --- Escape to cancel batch ---
@@ -833,49 +1010,88 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
       // divergence for text the operator never touched again.
       const submitted: InlineDraft = { ...inlineDrafts.read(eventId) };
       try {
-        await updateEvent.mutateAsync({ eventId, body: values });
-        // Committed — and `mutateAsync` resolves only after the mutation's
-        // `invalidateQueries` refetch settles, so the row this draft belonged to
-        // is already backed by fresh server state. Dropping the draft here
-        // (rather than when the save is ISSUED) means a failed save leaves the
-        // operator's text recoverable on the next remount instead of silently
-        // reverting.
-        //
-        // But drop ONLY what this save actually persisted. A save round trip is
-        // long enough to type into (blur commits, the operator refocuses the row
-        // and keeps typing) and those keystrokes are in the store — deleting the
-        // row's entry wholesale threw them away, silently, the moment the
-        // virtualizer next unmounted the row: it remounted showing the server
-        // value. Re-read the store HERE, at resolution time (never a value
-        // captured before the await — StrictMode and overlapping saves both
-        // make a captured one stale), and keep any field that has moved on —
-        // the shared draft-space comparison (`DraftStore#clearMatching`) that
-        // EventLogRow's server-sync effect and its nothing-to-commit branch
-        // also go through, so the three cannot disagree about what "this field
-        // is spent" means.
-        //
-        // `INLINE_DRAFT_FIELDS` as the covered set is the literal truth here:
-        // `values` carries all four fields, so this save persisted all four.
-        // (TranscribeFeed's per-field PATCH covers only the field it sent — see
-        // `DraftStore#clearMatching` for why the covered set is stated rather
-        // than inferred from the reference's keys.)
-        inlineDrafts.clearMatching(eventId, submitted, INLINE_DRAFT_FIELDS);
-        showToast('Updated.');
+        // session-edit-conflicts D9: based on the row's seed (read when this
+        // save's turn comes in the row's chain, so a queued save sees the seed
+        // the previous save rebased), never on the cached row.
+        await versioned.run<LogEvent, LogEvent>({
+          rowKey: eventId,
+          baseVersion: () => seeds.get(eventId)?.version,
+          send: (guard) => updateEvent.mutateAsync({ eventId, body: values, guard }),
+          conflictOf: eventConflictOf,
+          prompt: (current) =>
+            conflictPromptCopy(
+              'edit',
+              eventConflictFields(current, valuesFieldText(values), categories),
+            ),
+          onSaved: (saved) => {
+            // Committed — and `mutateAsync` resolves only after the mutation's
+            // `invalidateQueries` refetch settles, so the row this draft belonged to
+            // is already backed by fresh server state. Dropping the draft here
+            // (rather than when the save is ISSUED) means a failed save leaves the
+            // operator's text recoverable on the next remount instead of silently
+            // reverting.
+            //
+            // But drop ONLY what this save actually persisted. A save round trip is
+            // long enough to type into (blur commits, the operator refocuses the row
+            // and keeps typing) and those keystrokes are in the store — deleting the
+            // row's entry wholesale threw them away, silently, the moment the
+            // virtualizer next unmounted the row: it remounted showing the server
+            // value. Re-read the store HERE, at resolution time (never a value
+            // captured before the await — StrictMode and overlapping saves both
+            // make a captured one stale), and keep any field that has moved on —
+            // the shared draft-space comparison (`DraftStore#clearMatching`) that
+            // EventLogRow's server-sync effect and its nothing-to-commit branch
+            // also go through, so the three cannot disagree about what "this field
+            // is spent" means.
+            //
+            // `INLINE_DRAFT_FIELDS` as the covered set is the literal truth here:
+            // `values` carries all four fields, so this save persisted all four.
+            // (TranscribeFeed's per-field PATCH covers only the field it sent — see
+            // `DraftStore#clearMatching` for why the covered set is stated rather
+            // than inferred from the reference's keys.)
+            inlineDrafts.clearMatching(eventId, submitted, INLINE_DRAFT_FIELDS);
+            // D4 rebase: the response row is the new base, inside the row's
+            // chain so a queued save reads it.
+            seeds.set(eventId, saved);
+            showToast('Updated.');
+          },
+          // D5 refill: drop the draft, base on `current`, remount every copy.
+          onKeptTheirs: (current) => {
+            inlineDrafts.clear(eventId);
+            seeds.set(eventId, current);
+            setRowEpochs((prev) => new Map(prev).set(eventId, (prev.get(eventId) ?? 0) + 1));
+          },
+          // Dismissed: nothing. The draft stays with its old base, so the next
+          // save meets the conflict again.
+        });
       } catch (e) {
         showToast(e instanceof Error ? e.message : 'Update failed.', true);
       }
     },
-    [updateEvent, inlineDrafts],
+    [updateEvent, inlineDrafts, versioned, seeds, categories],
   );
 
-  const handleBatchChange = useCallback((eventId: string, values: RowEditValues) => {
-    setBatchEdits((prev) => new Map(prev).set(eventId, values));
-  }, []);
+  const handleBatchChange = useCallback(
+    (eventId: string, values: RowEditValues) => {
+      // The seed is frozen at the row's first batch change: the row these
+      // values were built from (D3), read now rather than inside the updater.
+      const seedNow = seeds.get(eventId);
+      setBatchEdits((prev) =>
+        new Map(prev).set(eventId, { values, seed: prev.get(eventId)?.seed ?? seedNow }),
+      );
+    },
+    [seeds],
+  );
 
   const handleDelete = useCallback(
     async (eventId: string) => {
+      // The base is taken when Delete is activated: the row's batch seed when
+      // it has one, else its seed (D3) — the row the operator is looking at.
+      const seed = batchEdits.get(eventId)?.seed ?? seeds.get(eventId);
       if (batchEditMode) {
-        setPendingDeleteIds((prev) => new Set([...prev, eventId]));
+        setPendingDeleteIds((prev) =>
+          prev.has(eventId) ? prev : new Map(prev).set(eventId, seed?.version),
+        );
         return;
       }
       const ok = await confirm({
@@ -886,17 +1102,29 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
       });
       if (!ok) return;
       try {
-        await deleteEvent.mutateAsync({ eventId });
+        // Keep theirs and dismiss both leave the row; a 404 is not a conflict
+        // and keeps its existing message.
+        await versioned.run<unknown, LogEvent>({
+          rowKey: eventId,
+          baseVersion: () => seed?.version,
+          send: (guard) => deleteEvent.mutateAsync({ eventId, guard }),
+          conflictOf: eventConflictOf,
+          prompt: (current) =>
+            conflictPromptCopy(
+              'delete',
+              eventConflictFields(current, serverInlineDraft(seed ?? current), categories),
+            ),
+        });
       } catch (e) {
         showToast(e instanceof Error ? e.message : 'Delete failed.', true);
       }
     },
-    [batchEditMode, deleteEvent, confirm],
+    [batchEditMode, batchEdits, deleteEvent, confirm, versioned, seeds, categories],
   );
 
   const handleUndelete = useCallback((eventId: string) => {
     setPendingDeleteIds((prev) => {
-      const next = new Set(prev);
+      const next = new Map(prev);
       next.delete(eventId);
       return next;
     });
@@ -1127,6 +1355,7 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
       after={
         <>
           {confirmElement}
+          {versioned.conflictElement}
           {customGenerateOpen && (
             <EventGenerateCustomModal
               showId={status?.show_id ?? null}
@@ -1218,20 +1447,23 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
           const ev = sorted[vRow.index];
           return (
             <EventLogRow
-              key={ev.event_id}
+              // The epoch remounts every copy of the row after Keep theirs (D5).
+              key={`${ev.event_id}:${rowEpochs.get(ev.event_id) ?? 0}`}
               event={ev}
               categories={categories}
               inlineEdit={inlineEdit && !isAutomaticLogEvent(ev)}
               batchEdit={batchEditMode && !isAutomaticLogEvent(ev)}
               pendingDelete={pendingDeleteIds.has(ev.event_id)}
               viewUtc={viewUtc}
-              batchValues={batchEdits.get(ev.event_id) ?? null}
+              batchValues={batchEdits.get(ev.event_id)?.values ?? null}
               resolvedSec={eventRowTimelineSec(ev)}
               onJump={jump}
               jumpUnavailable={jumpUnavailable}
               jumpReasonId={jumpReasonId}
               inlineDrafts={inlineDrafts}
               inlineFocus={inlineFocus}
+              seeds={seeds}
+              rowBusy={rowBusy}
               onInlineSave={handleInlineSave}
               onBatchChange={handleBatchChange}
               onDelete={handleDelete}
