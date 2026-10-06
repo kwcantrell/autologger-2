@@ -11,7 +11,7 @@ import {
   Drawer as DrawerRoot,
   DrawerTitle,
 } from '@/shared/components/ui/drawer';
-import { useIsMobile } from './breakpoints';
+import { useDialogMode } from './breakpoints';
 
 interface DialogProps {
   open: boolean;
@@ -36,7 +36,7 @@ interface DialogProps {
  * applying. Radix renders no Description warning when `aria-describedby` is explicitly unset.
  */
 export function Dialog(props: DialogProps) {
-  const isMobile = useIsMobile();
+  const isMobile = useDialogMode(props.open);
   return isMobile ? <SheetDialog {...props} /> : <CardDialog {...props} />;
 }
 

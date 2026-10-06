@@ -135,3 +135,52 @@ describe('Dialog (mobile bottom sheet)', () => {
     expect(sheet.style.transform).toBe('translate3d(0, 0, 0)');
   });
 });
+
+// A dialog keeps the mode it opened in until it closes (shadcn-shared-wrappers D2): crossing the
+// md breakpoint while open (window resize, tablet rotation) must not swap card ↔ sheet, which
+// would remount the content and drop child state (e.g. Settings' nested Event options dialog).
+describe('Dialog keeps its open-time mode across a breakpoint change', () => {
+  it('stays the same desktop dialog node, with child state, when the viewport goes mobile', async () => {
+    let matches = false;
+    const listeners = new Set<(e: { matches: boolean }) => void>();
+    window.matchMedia = ((query: string) => ({
+      get matches() {
+        return matches;
+      },
+      media: query,
+      onchange: null,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: (_t: string, cb: (e: { matches: boolean }) => void) => listeners.add(cb),
+      removeEventListener: (_t: string, cb: (e: { matches: boolean }) => void) =>
+        listeners.delete(cb),
+      dispatchEvent: () => false,
+    })) as unknown as typeof window.matchMedia;
+
+    function Child() {
+      const [text, setText] = useState('');
+      return <input aria-label="Draft" value={text} onChange={(e) => setText(e.target.value)} />;
+    }
+    render(
+      <Dialog open onOpenChange={() => {}} title="Settings">
+        <Child />
+      </Dialog>,
+    );
+    const card = screen.getByRole('dialog', { name: 'Settings' });
+    fireEvent.change(screen.getByRole('textbox', { name: 'Draft' }), {
+      target: { value: 'edited' },
+    });
+
+    act(() => {
+      matches = true;
+      for (const cb of listeners) cb({ matches: true });
+    });
+
+    const after = screen.getByRole('dialog', { name: 'Settings' });
+    expect(after).toBe(card);
+    expect(after.hasAttribute('data-vaul-drawer')).toBe(false);
+    expect((screen.getByRole('textbox', { name: 'Draft' }) as HTMLInputElement).value).toBe(
+      'edited',
+    );
+  });
+});

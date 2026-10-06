@@ -8,7 +8,7 @@ import {
   AlertDialogTitle,
 } from '@/shared/components/ui/alert-dialog';
 import { Button } from '@/shared/components/ui/button';
-import { useIsMobile } from './breakpoints';
+import { useDialogMode } from './breakpoints';
 import { Dialog } from './Dialog';
 
 /**
@@ -43,7 +43,7 @@ export function ConfirmDialog({
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
-  const isMobile = useIsMobile();
+  const isMobile = useDialogMode(open);
   const actionVariant = danger ? 'destructive' : 'default';
   // Exactly one decision per open: Radix's Action/Cancel parts also close the dialog, which
   // fires onOpenChange(false) right after the click — without this guard an accept would

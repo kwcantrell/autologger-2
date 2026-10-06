@@ -58,6 +58,11 @@ See proposal.md for the motivation. The current state, from the exploration on 2
 
 - The only `closeOnOverlayClick={false}` user is YouTubeImportErrorModal, whose `onOpenChange` is already a no-op, so vaul also blocking Escape when not dismissible changes nothing.
 - `className` passes through to the content, so the consumers' `md:!` and `max-md:!` overrides still apply.
+- **A dialog keeps the mode it opened in until it closes.** `useDialogMode(open)` in `breakpoints.ts` reads the breakpoint synchronously when the dialog opens and holds it. While the dialog is closed, the mode follows the live breakpoint.
+  - The QA walk found the problem this solves: crossing 768px while a dialog was open swapped card ↔ sheet, which remounted the content and closed Settings' nested Event Options dialog.
+  - The legacy wrapper avoided this by keeping one node and only swapping classes.
+  - The synchronous read is safe because both islands are `ssr: false`.
+  - ConfirmDialog uses the same hook.
 - **Focus:** `autoFocus` is set on the Drawer root. vaul defaults it to `false` and calls `preventDefault` on `onOpenAutoFocus`, which leaves focus on the trigger behind the sheet. Enter or Space would then re-fire it, for example opening a second confirm that replaces the first. With `autoFocus` on, mobile behaves like the legacy Radix sheet: focus moves into the dialog.
 - **Handle-only drag:** `handleOnly` is set and the drag handle is vaul's `Drawer.Handle`. This matches the legacy `useSheetDrag`, which only listened on the handle; vaul's default would make the whole sheet draggable. Scrollable sheets such as HomeSettingsModal keep their content scrolling.
 - **Vetoed close resets the sheet in place, with no remount.** If a consumer vetoes `onOpenChange(false)` (HomeSettingsModal's dirty → "Keep editing"), vaul's `closeDrawer()` leaves the sheet at its dragged translate without calling its private `resetDrawer()`. The wrapper does what `resetDrawer()` does: when the drawer reports a close but `open` stays `true`, it sets `transform: translate3d(0,0,0)` with vaul's settle transition on the content ref, then clears it once the transition ends.
