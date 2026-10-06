@@ -37,11 +37,12 @@
 
 ## 4. Docs
 
-- [ ] 4.1 README: add a curl recipe for each of the seven admin operations (list users with the user-id lookup, create and delete a team, add and remove a membership, disable and enable a user), and:
+- [x] 4.1 README: add a curl recipe for each of the seven admin operations (list users with the user-id lookup, create and delete a team, add and remove a membership, disable and enable a user), and:
   - drop `/admin/users` from the shell list (~:1730) and the deep links (~:1849);
   - drop the `(admin)` layout CSS entry (~:1786);
   - note that the admin API is curl / bootstrap-script only.
   - Verify: `grep -n "admin/users" README.md` shows only the `/api/admin/users` API rows.
+  - Evidence: README: shell list (~:1766) now `/`, `/sessions/:id`, `/teams` + "any other path, including the retired `/admin/users` page, gets the app's not-found page (404)"; styling section drops the `(admin)` layout (and the stale overlayscrollbars.css mention from 3b); deep links drop `/admin/users`; new "Admin API by hand (curl)" section with a recipe for all seven operations (list users + email->id lookup, create/delete team, add/remove membership with role, disable/enable) and the 503-when-unset note -> `grep -n "admin/users" README.md` shows only the `/api/admin/users` API row (:823), the curl recipe lines, and the two "retired /admin/users … 404" statements; the read-only recipe could not be exercised here: the dev app has no ADMIN_TOKEN (`unauth GET /api/admin/users -> 503`), so running the recipes is in the owner pass (5.2) against a stack with the token
 
 ## 5. Integration: QA gate and checks
 
