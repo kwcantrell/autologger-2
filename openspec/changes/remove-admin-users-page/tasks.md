@@ -48,12 +48,13 @@
 
 ## 5. Integration: QA gate and checks
 
-- [ ] 5.1 Copy the walk from the archived `shadcn-port-modals/qa`. Capture `before-admin` on HEAD before the change, then `after-admin`, at 1440 and 390.
+- [x] 5.1 Copy the walk from the archived `shadcn-port-modals/qa`. Capture `before-admin` on HEAD before the change, then `after-admin`, at 1440 and 390.
   - Verify:
     - `admin-users` now shows the app's not-found page, and its HTTP status is 404 (agent-browser eval of `fetch('/admin/users').status`);
     - every other screen is 0%;
     - contrast shows 0 failures apart from "Audio issue";
     - results are recorded in `qa/README.md`.
+  - Evidence: walk copied + admin-users-status step; before-admin on HEAD (status "200" at both widths), after-admin diffed at 1440 and 390 -> status "404" at both widths; admin-users screen 99.72% / 98.87% (now the root not-found document, same as /nope-404 whose capture is 0%); all other 36 screens 0% (three ≤ 0.03% noise); 82 contrast JSONs, only `filter-menu` `Audio issue 3.64`; recorded in qa/README.md
 - [ ] 5.2 The owner's pass and review:
   - `/admin/users` is not-found in the browser;
   - on the dev stack, the README curl recipes work: list users; disable then enable a test user (confirm the disabled user's session stops resolving while disabled); add then remove a membership;
