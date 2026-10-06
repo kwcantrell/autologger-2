@@ -1,7 +1,9 @@
 import clsx from 'clsx';
+import { GripVertical, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import type { Show, ShowDropdownOption } from '../../../api/types';
-import { BTN_PRIMARY_SKY } from '../../../shared/theme/classnames';
+import { Button, TOUCH_TARGET } from '../../../shared/components/ui/button';
+import { Input } from '../../../shared/components/ui/input';
 import { Popover } from '../../../shared/ui/Popover';
 import { RadioGroup } from '../../../shared/ui/RadioGroup';
 import { DEFAULT_PALETTE, normalizePalette9, PALETTE_SLOT_INDICES } from '../utils/palette9';
@@ -33,8 +35,9 @@ const ROW_CONTROL = '!m-0 !box-border !h-6 !max-h-6 !min-h-0 !py-0 !leading-none
 // Event name + button type: h-6 + 0.5rem. min-w-0 so grid/minmax columns can clip cleanly.
 const ROW_FIELD =
   '!m-0 !box-border !h-[2rem] !max-h-[2rem] !min-w-0 !max-w-full !py-0 !leading-none align-middle';
-const ROW_ICON_BTN =
-  'btn btn-icon p-0 min-w-0 w-[1.45rem] h-6 max-h-6 inline-flex items-center justify-center align-middle';
+// Row icon buttons (drag / delete) on the shadcn icon-xs Button: 1.45rem × h-6 as before, plus
+// the 44px phone floor the legacy `.btn` gave them (shadcn-port-settings D2b).
+const ROW_ICON_BTN = clsx('p-0 min-w-0 w-[1.45rem] h-6 align-middle', TOUCH_TARGET);
 
 // Column floors (px): name 300 + type 120 + color 55 + options 300 + auto 148 + delete 55.
 // Type floor fits "DROPDOWN" + chevron; table scrolls only below drag + these floors.
@@ -153,24 +156,6 @@ function onOffSummary(onLabel: string, offLabel: string): string {
 /** Per-option chip in the Options column — width follows the label text. */
 const OPTION_BUBBLE =
   'inline-flex w-fit max-w-full shrink-0 items-center rounded-full border border-[rgba(255,255,255,0.18)] bg-[rgba(255,255,255,0.08)] px-[0.45rem] py-[0.12rem] text-[0.65rem] font-semibold leading-none tracking-[0.04em] text-[rgba(229,238,252,0.9)]';
-
-const DragGrip = () => (
-  <svg
-    xmlns="http://www.w3.org/2000/svg"
-    width="14"
-    height="14"
-    viewBox="0 0 24 24"
-    fill="currentColor"
-    aria-hidden="true"
-  >
-    <circle cx="9" cy="6" r="1.5" />
-    <circle cx="15" cy="6" r="1.5" />
-    <circle cx="9" cy="12" r="1.5" />
-    <circle cx="15" cy="12" r="1.5" />
-    <circle cx="9" cy="18" r="1.5" />
-    <circle cx="15" cy="18" r="1.5" />
-  </svg>
-);
 
 // ── Main component ────────────────────────────────────────────────────────────
 
@@ -299,9 +284,8 @@ export function EventButtonsTable({
   return (
     <div>
       {/* Palette section */}
-      <div className="admin-settings-block mb-4 pb-3 border-b border-v5-border">
-        {/* .eventsSubheading overrides settings-subheading font-size/color, adds spacing/caps. */}
-        <h3 className="settings-subheading m-0 mb-2 text-[0.78rem] tracking-[0.06em] uppercase text-[rgba(229,238,252,0.72)]">
+      <div className="mt-4 mb-4 pb-3 border-b border-v5-border">
+        <h3 className="m-0 mb-2 text-[0.78rem] font-semibold tracking-[0.06em] uppercase text-[rgba(229,238,252,0.72)]">
           Event colors
         </h3>
         <div className="flex flex-row flex-wrap items-center justify-start gap-x-[0.85rem] gap-y-[0.6rem] w-full box-border">
@@ -370,19 +354,13 @@ export function EventButtonsTable({
               label: s.name || s.show_code || s.id,
             }))}
           />
-          {/* .headNewBtn had no live rule; sky-tint comes from the dialog .btn.primary reach-in. */}
-          <button
-            type="button"
-            className={clsx('btn primary', BTN_PRIMARY_SKY)}
-            disabled={!copyFromId}
-            onClick={copyFromShow}
-          >
+          <Button className={TOUCH_TARGET} disabled={!copyFromId} onClick={copyFromShow}>
             Copy
-          </button>
+          </Button>
         </div>
-        <button type="button" className={clsx('btn primary', BTN_PRIMARY_SKY)} onClick={addButton}>
+        <Button className={TOUCH_TARGET} onClick={addButton}>
           Add new button
-        </button>
+        </Button>
       </div>
 
       {/* Event buttons table — CSS grid + minmax so column floors hold while width:100%
@@ -460,8 +438,9 @@ export function EventButtonsTable({
                       'min-w-0 justify-center px-[0.1rem] !text-center bg-[rgba(255,255,255,0.04)] rounded-l-[0.65rem]',
                     )}
                   >
-                    <button
-                      type="button"
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
                       className={clsx(
                         ROW_ICON_BTN,
                         'cursor-grab text-[rgba(229,238,252,0.55)] active:cursor-grabbing',
@@ -473,17 +452,17 @@ export function EventButtonsTable({
                         setDragIdx(idx);
                       }}
                     >
-                      <DragGrip />
-                    </button>
+                      <GripVertical className="size-3.5" aria-hidden="true" />
+                    </Button>
                   </td>
 
                   {/* colNameWrap (2nd child): card cell, text-left, extra left padding. */}
                   {/* pl-2 (0.5rem, was td:nth-child(2)) must beat TD_CARD's px-[0.4rem] left;
                     same-property utilities resolve by CSS order, so force it with `!`. */}
                   <td className={clsx(TD_BASE, TD_CARD, rowDim, 'min-w-0 text-left !pl-2')}>
-                    <input
+                    <Input
                       type="text"
-                      className={clsx('profile-select', ROW_FIELD, '!w-full !px-2')}
+                      className={clsx(ROW_FIELD, '!w-full !px-2')}
                       value={btn.name}
                       maxLength={200}
                       placeholder="Event name"
@@ -575,12 +554,8 @@ export function EventButtonsTable({
                       <button
                         type="button"
                         aria-label="Edit dropdown options"
-                        className={clsx(
-                          'btn !m-0 !box-border !h-auto !min-h-0 !max-h-none !w-auto !max-w-full',
-                          '!border-0 !bg-transparent !p-0 !shadow-none !normal-case !tracking-normal',
-                          'inline-flex flex-wrap items-center justify-start gap-[0.3rem] align-middle',
-                          'hover-always:!bg-transparent',
-                        )}
+                        // A chip container, not a styled button: unstyled, the chips carry the look.
+                        className="m-0 box-border inline-flex w-auto max-w-full flex-wrap items-center justify-start gap-[0.3rem] border-0 bg-transparent p-0 align-middle cursor-pointer rounded-v5-sm focus-visible:outline-2 focus-visible:outline-v5-primary"
                         onClick={() => setEditingOptsFor(btn.id)}
                       >
                         {btn.dropdown_options.length ? (
@@ -595,18 +570,15 @@ export function EventButtonsTable({
                         )}
                       </button>
                     ) : (
-                      <button
-                        type="button"
-                        className={clsx(
-                          'btn',
-                          ROW_CONTROL,
-                          '!w-auto !px-2 !text-[0.65rem] inline-flex items-center justify-center',
-                        )}
+                      <Button
+                        variant="outline"
+                        size="xs"
+                        className={clsx(ROW_CONTROL, '!w-auto !px-2 !text-[0.65rem]', TOUCH_TARGET)}
                         disabled={!canEditOpts}
                         onClick={() => canEditOpts && setEditingOptsFor(btn.id)}
                       >
                         {btn.type === 'ON_OFF' ? onOffSummary(btn.on_label, btn.off_label) : 'N/A'}
-                      </button>
+                      </Button>
                     )}
                   </td>
 
@@ -629,23 +601,26 @@ export function EventButtonsTable({
                         —
                       </span>
                     ) : (
-                      <button
-                        type="button"
+                      <Button
+                        variant="outline"
+                        size="xs"
                         // The aria-label wins the accessible-name computation, so the
                         // bearing state must live IN the label — a sibling sr-only
                         // span would never be announced (color alone isn't state).
                         aria-label={bearing ? 'AI Rules (has instructions)' : 'AI Rules'}
                         title="AI Rules"
                         className={clsx(
-                          'btn !m-0 !box-border !h-[1.7rem] !max-h-[1.7rem] !min-h-0 !min-w-0 !py-0 !leading-none',
-                          '!w-full !px-1 !text-[0.55rem] !tracking-[0.04em] inline-flex items-center justify-center align-middle',
+                          '!m-0 !box-border !h-[1.7rem] !max-h-[1.7rem] !min-w-0 !py-0 !leading-none',
+                          '!w-full !px-1 !text-[0.55rem] !tracking-[0.04em] align-middle',
                           'overflow-hidden',
+                          TOUCH_TARGET,
+                          // contrastTokens.test.ts regex-reads this expression: keep it verbatim.
                           bearing ? 'text-v5-primary' : 'text-v5-muted',
                         )}
                         onClick={() => setOpenInstructionFor(btn.id)}
                       >
                         <span className="min-w-0 truncate">AI Rules</span>
-                      </button>
+                      </Button>
                     )}
                   </td>
 
@@ -659,35 +634,15 @@ export function EventButtonsTable({
                     )}
                   >
                     {/* .colDelete: only the svg display:block/shrink-0 rule survived. */}
-                    <button
-                      type="button"
-                      className={clsx(
-                        ROW_ICON_BTN,
-                        'danger !flex !items-center !justify-center !gap-0 !p-0 !leading-none',
-                      )}
+                    <Button
+                      variant="destructive"
+                      size="icon-xs"
+                      className={ROW_ICON_BTN}
                       aria-label="Remove event"
                       onClick={() => deleteButton(btn.id)}
                     >
-                      {/* 16px → 12.8px (−20%); block + shrink-0 so flex centering is exact. */}
-                      <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        width="12.8"
-                        height="12.8"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        aria-hidden="true"
-                        className="block shrink-0"
-                      >
-                        <polyline points="3 6 5 6 21 6" />
-                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                        <line x1="10" y1="11" x2="10" y2="17" />
-                        <line x1="14" y1="11" x2="14" y2="17" />
-                      </svg>
-                    </button>
+                      <Trash2 className="size-[0.8rem]" aria-hidden="true" />
+                    </Button>
                   </td>
                 </tr>
               );

@@ -27,7 +27,7 @@
 
 ## 3. Event-buttons table and its modals
 
-- [ ] 3.1 Port the `EventButtonsTable` controls (D3).
+- [x] 3.1 Port the `EventButtonsTable` controls (D3).
   - Test first, in `EventButtonsTable.test.tsx`:
     - "Remove event" is `data-variant="destructive"` with `svg.lucide-trash-2`;
     - "Drag to reorder" has `svg.lucide-grip-vertical` and is still `draggable`;
@@ -35,6 +35,7 @@
     - Copy and Add are `data-variant="default"`;
     - every ported table button carries `max-md:min-h-11` (D2b).
   - Verify: `npx vitest run src/pages/index/components/EventButtonsTable src/shared/theme/contrastTokens.test.ts` passes. The lazy-type-select parity test and the AI Rules contrast regex stay green.
+  - Evidence: test first: "row actions, toolbar and AI Rules are Buttons with lucide icons and the touch floor" (Remove event destructive + svg.lucide-trash-2, Drag to reorder draggable + svg.lucide-grip-vertical, AI Rules data-slot button, Copy/Add new button default, N/A outline, max-md:min-h-11 on each, name field data-slot input) -> failed on the legacy .btn table; after Button (default Copy/Add; ghost icon-xs drag with GripVertical; destructive icon-xs Remove with Trash2; outline xs N/A and AI Rules with the bearing expression kept verbatim), Input name field, unstyled chip button for options, utility palette block/heading, TOUCH_TARGET on every ported button, BTN_PRIMARY_SKY import dropped -> `npx vitest run src/pages/index/components/EventButtonsTable src/shared/theme/contrastTokens.test.ts` 31 passed (the lazy-type-select parity test and the AI Rules contrast regex green; the 1 failure is the 3.2 modal test); grep for btn/btn-icon/profile-select/admin-settings-block/settings-subheading/inline <svg> in EventButtonsTable.tsx -> none; tsc clean
 - [ ] 3.2 Port `EventInstructionModal` and `EventOptionsModal` (D4).
   - Test first:
     - both modals: every action button carries `max-md:min-h-11` (D2b);
