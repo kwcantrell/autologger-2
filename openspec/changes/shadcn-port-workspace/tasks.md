@@ -112,12 +112,13 @@
 
 ## 5b. Internal-event colour (added after the QA walk; re-panelled)
 
-- [ ] 5.4 Add `shared/utils/categoryColor.ts` `resolveCategoryColor` and route every `category_color` reader through it: EventLogRow, TimelineMarkers, Timeline (×3), MarkerNav (D8).
+- [x] 5.4 Add `shared/utils/categoryColor.ts` `resolveCategoryColor` and route every `category_color` reader through it: EventLogRow, TimelineMarkers, Timeline (×3), MarkerNav (D8).
   - Test first:
     - `categoryColor.test.ts`: the three bare tokens map to `--legacy-*`, whitespace-tolerant; hex and other `var()`s pass through; empty and null give `undefined`;
     - EventLogRow: an internal row with `category_color: 'var(--muted)'` renders its category cell with inline `color: var(--legacy-muted)`;
     - TimelineMarkers: that event's marker has `--mcol: var(--legacy-muted)`.
   - Verify: those suites and `src/shadcnHygiene.repo.test.ts` pass (the helper holds no literal bare-token `var()` string), and `grep -rn "category_color" web/src --include=*.tsx | grep -v test` shows every read wrapped.
+  - Evidence: test first: new categoryColor.test.ts (3 bare tokens -> --legacy-*, whitespace-tolerant, hex/other var() pass through, empty/null -> undefined), new timeline/TimelineMarkers.test.tsx (internal --mcol var(--legacy-muted), hex passthrough), EventLogRow internal row colour -> `Cannot find module './categoryColor'` + `2 failed | 34 passed (36)`; after shared/utils/categoryColor.ts (pattern match, template-built replacement, no literal) routed through EventLogRow, TimelineMarkers, Timeline x3, MarkerNav -> those + shadcnHygiene + MarkerNav + Timeline* `Tests 54 passed (54)`; full `npx vitest run` `Test Files 125 passed (125) Tests 1561 passed (1561)`; every non-test `category_color` read wrapped (grep: MarkerNav:125, EventLogRow:317, Timeline:409/705/766, TimelineMarkers:66); live dev stack internal-row computed colour `rgb(154, 160, 166)` (was rgba(255,255,255,0.06))
 
 ## 6. Integration: QA gate and checks
 

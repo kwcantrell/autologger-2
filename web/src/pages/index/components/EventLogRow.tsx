@@ -5,6 +5,7 @@ import type { Category, LogEvent } from '../../../api/types';
 import { Button } from '../../../shared/components/ui/button';
 import { TableCell, TableRow } from '../../../shared/components/ui/table';
 import { Tooltip } from '../../../shared/ui/Tooltip';
+import { resolveCategoryColor } from '../../../shared/utils/categoryColor';
 import {
   formatTimecodeHMS,
   formatWallUtcYmdHms,
@@ -313,7 +314,7 @@ export function EventLogRow({
       auto
     </span>
   ) : null;
-  const color = event.category_color || undefined;
+  const color = resolveCategoryColor(event.category_color);
   const isInternal = event.category.toLowerCase() === 'internal';
 
   const catStyle = color ? { color } : undefined;

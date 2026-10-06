@@ -3,6 +3,7 @@ import type { CSSProperties, MouseEventHandler } from 'react';
 import { memo, useMemo } from 'react';
 import type { LogEvent, SessionStatus } from '../../../../api/types';
 import { eventTimelineSec, safeTimelineSec } from '../../../../shared/utils/audioClips';
+import { resolveCategoryColor } from '../../../../shared/utils/categoryColor';
 
 // --- converted class strings (were Timeline.module.css) ---
 // TWO-MODE: base = standalone marker (0.62rem, big glow on hover); `[#v4-log-session_&]:`
@@ -62,7 +63,7 @@ export const TimelineMarkers = memo(function TimelineMarkers({
     return events.map((e) => {
       const sec = safeTimelineSec(eventTimelineSec(e, status), 0);
       const pct = Math.max(0, Math.min(100, (sec / totalSec) * 100));
-      const color = e.category_color || 'var(--color-legacy-accent)';
+      const color = resolveCategoryColor(e.category_color) ?? 'var(--color-legacy-accent)';
       const cat = String(e.category_label || e.category || '—');
       return { event: e, pct, color, cat };
     });

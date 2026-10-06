@@ -646,3 +646,20 @@ describe('EventLogRow row actions (shadcn-port-workspace D6)', () => {
     expect(restore.textContent).toBe('UNDELETE');
   });
 });
+
+describe('EventLogRow internal category colour (shadcn-port-workspace D8)', () => {
+  it('an internal row resolves var(--muted) to the legacy muted grey', () => {
+    renderRow({
+      event: eventFixture({
+        category: 'internal',
+        category_label: 'Internal',
+        category_color: 'var(--muted)',
+      }),
+    });
+    const styled = [...document.querySelectorAll('tbody td[style], tbody td [style]')].map(
+      (el) => (el as HTMLElement).style.color,
+    );
+    expect(styled).toContain('var(--legacy-muted)');
+    expect(styled).not.toContain('var(--muted)');
+  });
+});
