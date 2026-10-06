@@ -52,3 +52,20 @@ These need a code review for Preflight drift (task 4.1) and a human dev-stack pa
 - SVGs are blocks
 
 Only the League Gothic titles get an explicit `font-bold` back. Expect `after-*` diffs of roughly 0.1–5% against `baseline` from this.
+
+## Preflight drift review of unreachable surfaces (task 4.1)
+
+The review scanned the components listed above for elements that relied on browser defaults, which Preflight now resets: bare `p`, headings and lists, class-less `button`/`input`, and inline `svg`.
+
+| Finding | Action |
+| --- | --- |
+| `YouTubeImportErrorModal` bare `<p>` lost its 1em margins | `my-[1em]` |
+| `TranscribeModal` `.modal-transcribe-status` / `-error` `<p>` (no CSS margin) | `my-[1em]` |
+| `TeamCard` three bare `<ul>` (members, invites, read-only members) lost bullets, 40px indent and 1em margins | `my-[1em] list-disc pl-10` |
+| `ConfirmDialog .modal-lead`, `TeamCard`/`EventGenerateCustomModal .modal-hint` | no change: the legacy CSS sets the margins |
+| `MaximizeLogStrip` session-meta `<p>` | no change: it already has `m-0` |
+| Checkboxes (`EventGenerateCustomModal`, `TeamCard`) lose the browser's 3–4px margin | accepted as part of the normalization |
+| Inputs and buttons in `EventLogRow`, `TranscribeRow`, `DashboardEditor`, `AiV2Design` and `CatalogPicker` | no change: they set explicit classes (the scanner had cut off at `=>`) |
+| SVGs in `MaximizeLogStrip`, `EventLogRow` and `UnavailableState` | no change: each sits inside an `inline-flex`/`flex` parent, so `display:block` doesn't affect layout |
+
+These surfaces still need the owner's dev-stack pass, because the walk can't reach them with the current data.

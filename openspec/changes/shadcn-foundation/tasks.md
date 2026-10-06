@@ -38,7 +38,8 @@
 
 ## 4. Preflight drift review
 
-- [ ] 4.1 For the components the walk can't reach (listed in `qa/README.md`), grep for bare `h1`–`h6`, `p`, `ul`, `ol`, `button`, `img`, `hr`, `input` and `textarea`. Wherever one relied on a browser margin, list style or font size, add explicit utilities that restore the pre-Preflight look. Verify with a list of the findings and edits in `qa/README.md`, and keep their existing component tests green with `npm test -w web`.
+- [x] 4.1 For the components the walk can't reach (listed in `qa/README.md`), grep for bare `h1`–`h6`, `p`, `ul`, `ol`, `button`, `img`, `hr`, `input` and `textarea`. Wherever one relied on a browser margin, list style or font size, add explicit utilities that restore the pre-Preflight look. Verify with a list of the findings and edits in `qa/README.md`, and keep their existing component tests green with `npm test -w web`.
+  - Evidence: scan of the unreachable components for `p/h*/ul/ol/button/input/svg` relying on UA defaults -> findings and edits tabled in `qa/README.md` (YouTubeImportErrorModal + TranscribeModal `<p>` `my-[1em]`; TeamCard 3× `<ul>` `my-[1em] list-disc pl-10`; svgs all in flex parents). `npx vitest run src/pages/index/components/{TeamCard,TranscribeModal,YouTubeImportErrorModal,TeamsRoute}` -> `Tests 21 passed (21)`; `npm run lint` -> `Checked 310 files … No fixes applied`
 
 ## 5. Integration: QA gate and checks
 
