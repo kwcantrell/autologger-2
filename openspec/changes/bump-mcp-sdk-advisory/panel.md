@@ -1,0 +1,10 @@
+# Panel: bump-mcp-sdk-advisory
+Tier: 2 · Reviewers: assumption tester, failure and abuse, scope and simplicity · Date: 2026-10-06
+
+- [x] [critical] D1's method (`npm update`) is unsafe: it also resolves the Agent SDK's unmet peers, moving zod 3.25.76 → 4.6.5 with nested zod@3 copies across workspaces (113-line lockfile diff) (assumption tester). Resolved: D1 is now a targeted edit of the SDK's lockfile entry, verified by `npm ci`; the observed 8-line diff keeps zod unchanged; the zod peer problem is a recorded follow-up.
+- [x] [critical] With that `npm update` lockfile, typecheck fails (`TS2589`, `TS2741 Property '_zod' is missing`) (assumption tester). Resolved: the targeted edit keeps typecheck green (exit 0), recorded in A1.
+- [x] [critical] With that `npm update` lockfile, invalid AI v2 bodies answer 500 instead of 422, because `ZodError` across zod copies fails `instanceof` (a frozen-contract status code) (assumption tester). Resolved: the targeted edit keeps one zod. The MCP/AI integration files pass 150/150 with it (A4), and task 1.2 requires them by name.
+- [x] [major] The proposal misstated the advisory range (1.12.0 - 1.30.1; GitHub says `>= 1.12.0, < 1.31.0`, patched in 1.31.0) (assumption tester). Resolved: corrected in the proposal and A2.
+- [x] [major] The tests pair our server with the SDK's own bumped client, so a break against the real Claude CLI's MCP client would go unseen (failure and abuse). Resolved: D3 and task 2.1 require one dev-stack turn with the pinned CLI that calls an MCP tool, with evidence of the tool call (or an owner waiver if the CLI can't authenticate).
+- [x] [major] Assumptions A2-A4 had no command or observed output, as `openspec/config.yaml` requires (scope and simplicity). Resolved: A1-A4 now carry the tests and outputs from the panel's runs.
+- [x] [major] The verification skipped `packages/ai-runtime`'s own suite and ran gates by hand rather than through `check-change.sh` (scope and simplicity). Resolved: D2 and tasks 1.1/1.2 run `check-change.sh --only audit` and `--only commands` (`npm test` covers every workspace), plus the pg project.
