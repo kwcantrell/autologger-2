@@ -6,7 +6,7 @@ turns' loopback tool server (`packages/ai-runtime/src/aiMcpServer.ts`). The prec
 `fix-dependency-vulns`, was tier 2. The owner chose a lean tier 2 (2026-10-06): no spec delta, and
 a three-reviewer panel.
 
- Approved-by: Kalen 2026-10-06
+Approved-by: Kalen 2026-10-06
 
 ## Why
 
