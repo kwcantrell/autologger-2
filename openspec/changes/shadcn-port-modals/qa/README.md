@@ -36,3 +36,12 @@ A fresh **`before-modals`** baseline was captured on the unported code (`supabas
 - the YouTube error.
 
 Unit tests cover them (task 3.x), and the owner's dev-stack pass covers them live.
+
+## Owner review (task 5.2)
+
+The owner did the dev-stack pass and reviewed the pairs (2026-10-06): "looks good".
+- the category note and dropdown modals while rolling;
+- Custom generate;
+- Transcribe;
+- a session-row Delete confirm;
+- a YouTube import failure.

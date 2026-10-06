@@ -62,11 +62,13 @@
   - Capture `before-modals` on HEAD before the port, and `after-modals` after it, at 1440 and 390.
   - Verify: contrast shows 0 failures apart from "Audio issue"; untouched screens are 0%; the touch probe is ≥ 44px; results are recorded in `qa/README.md`.
   - Evidence: walk copied + new-session-other-fps / import-logs-prompt / settings-discard-confirm steps + touch probes; before-modals on the unported code, after-modals diffed at 1440 and 390 -> 82 contrast JSONs, only `filter-menu` `Audio issue 3.64`; touch at 390: create 44, start 44, confirm 44 (was 36); changed screens 0.34-6.07% (New Session, Batch Import, prompt, discard confirm), 32 untouched screens 0% incl. admin-users; walk found the inline fps/offset inputs pushed right (Field horizontal flex-auto label + vertical [&>*]:w-full), fixed (w-fit rows, plain-column wrapper) -> live label->input gap 6px at both widths; table in qa/README.md
-- [ ] 5.2 The owner's dev-stack pass:
+- [x] 5.2 The owner's dev-stack pass:
   - category note and dropdown modals (while rolling);
   - Custom generate;
   - Transcribe;
   - a session-row Delete confirm;
   - a YouTube import failure, if reproducible.
   - Verify: the result is recorded in `qa/README.md`.
-- [ ] 5.3 Run the full suite, typecheck, lint and `openspec validate --all --strict`.
+  - Evidence: owner did the dev-stack pass (category note/dropdown modals while rolling, Custom generate, Transcribe, session-row Delete confirm, YouTube import failure) and reviewed the pairs -> "looks good" (2026-10-06)
+- [x] 5.3 Run the full suite, typecheck, lint and `openspec validate --all --strict`.
+  - Evidence: `npx vitest run` -> `Test Files 127 passed (127) Tests 1584 passed (1584)`; `npx tsc --noEmit` clean; `npx biome lint src` -> `Checked 327 files … No fixes applied`; `openspec validate --all --strict` -> `Totals: 28 passed, 0 failed`; check-change.sh not requested by the owner
