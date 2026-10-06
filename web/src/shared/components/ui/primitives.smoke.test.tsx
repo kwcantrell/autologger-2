@@ -472,6 +472,26 @@ describe('workspace primitives (shadcn-port-workspace D1)', () => {
     expect(capture).toHaveBeenCalledTimes(1);
   });
 
+  it('scroll-area renders a horizontal scrollbar only when asked (scrollbars="both")', () => {
+    const { unmount } = render(
+      <ScrollArea type="always" className="h-10">
+        Scrollable
+      </ScrollArea>,
+    );
+    expect(document.querySelectorAll('[data-slot=scroll-area-scrollbar]')).toHaveLength(1);
+    unmount();
+    render(
+      <ScrollArea type="always" scrollbars="both" className="h-10">
+        Scrollable
+      </ScrollArea>,
+    );
+    const bars = [...document.querySelectorAll('[data-slot=scroll-area-scrollbar]')];
+    expect(bars.map((b) => b.getAttribute('data-orientation')).sort()).toEqual([
+      'horizontal',
+      'vertical',
+    ]);
+  });
+
   it('ScrollBar is exported for horizontal use', () => {
     expect(typeof ScrollBar).toBe('function');
   });

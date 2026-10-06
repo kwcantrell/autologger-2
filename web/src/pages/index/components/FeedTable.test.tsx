@@ -30,6 +30,19 @@ describe('FeedTable (shadcn-port-workspace D3)', () => {
     expect((el as unknown as HTMLElement).contains(screen.getByRole('table'))).toBe(true);
   });
 
+  it('scrolls on both axes, like OverlayScrollbars did (a wide table is reachable on phones)', () => {
+    render(
+      <FeedTable columns={COLUMNS}>
+        <tr>
+          <td>row</td>
+        </tr>
+      </FeedTable>,
+    );
+    const vp = document.querySelector('[data-slot=scroll-area-viewport]') as HTMLElement;
+    expect(vp.style.overflowX).toBe('scroll');
+    expect(vp.style.overflowY).toBe('scroll');
+  });
+
   it('keeps sortable headers: aria-sort on the sorted column, its button calls onSort', () => {
     const onSort = vi.fn();
     render(

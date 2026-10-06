@@ -12,6 +12,7 @@
   const heights = rows.map((r) => Math.round(r.getBoundingClientRect().height * 100) / 100);
   return JSON.stringify({
     panel: panel.getAttribute('aria-label'),
+    overflowX: getComputedStyle(vp).overflowX, vpClientW: vp.clientWidth, vpScrollW: vp.scrollWidth,
     vpClientH: vp.clientHeight, vpScrollH: vp.scrollHeight, scrolls: vp.clientHeight < vp.scrollHeight,
     scrollTop: vp.scrollTop,
     stickyOffset: th ? Math.round(th.getBoundingClientRect().top - vp.getBoundingClientRect().top) : null,

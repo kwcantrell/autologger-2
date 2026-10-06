@@ -15,12 +15,16 @@ function ScrollArea({
   children,
   viewportRef,
   viewportClassName,
+  scrollbars = 'vertical',
   type = 'hover',
   scrollHideDelay = 250,
   ...props
 }: React.ComponentProps<typeof ScrollAreaPrimitive.Root> & {
   viewportRef?: React.Ref<HTMLDivElement>;
   viewportClassName?: string;
+  /** `both` adds the horizontal bar. Radix sets `overflow-x: hidden` unless a horizontal bar is
+   * mounted, so wide content (feed tables on phones) needs it to stay reachable. */
+  scrollbars?: 'vertical' | 'both';
 }) {
   return (
     <ScrollAreaPrimitive.Root
@@ -41,6 +45,7 @@ function ScrollArea({
         {children}
       </ScrollAreaPrimitive.Viewport>
       <ScrollBar />
+      {scrollbars === 'both' && <ScrollBar orientation="horizontal" />}
       <ScrollAreaPrimitive.Corner />
     </ScrollAreaPrimitive.Root>
   );

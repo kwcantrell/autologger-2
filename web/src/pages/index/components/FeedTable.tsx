@@ -101,6 +101,8 @@ export function FeedTable({
       className="min-h-0 flex-[1_1_0] max-md:flex-[0_0_auto]"
       viewportClassName="max-md:h-auto max-md:max-h-[70dvh]"
       viewportRef={scrollRef}
+      // Both axes, as OverlayScrollbars had: on phones the table is wider than the viewport.
+      scrollbars="both"
     >
       <Table className={tableClassName}>
         {colgroup}

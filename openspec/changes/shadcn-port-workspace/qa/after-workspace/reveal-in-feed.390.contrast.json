@@ -1,61 +1,8 @@
 {
  "url": "/sessions/0c8aaf43-d37f-425c-a415-b10c28596c48",
  "checked": 65,
- "fails": 4,
+ "fails": 0,
  "approx": 43,
- "min": 1.14,
- "failures": [
-  {
-   "el": "td.px-[0.55rem].py-[0.17rem].text-[0.78rem]",
-   "kind": "text",
-   "text": "Internal",
-   "ratio": 1.14,
-   "approx": true,
-   "disabled": false,
-   "bg": [
-    9,
-    13,
-    25
-   ]
-  },
-  {
-   "el": "span.block",
-   "kind": "text",
-   "text": "Recording 1 Started",
-   "ratio": 1.14,
-   "approx": true,
-   "disabled": false,
-   "bg": [
-    9,
-    13,
-    25
-   ]
-  },
-  {
-   "el": "td.px-[0.55rem].py-[0.17rem].text-[0.78rem]",
-   "kind": "text",
-   "text": "Internal",
-   "ratio": 1.19,
-   "approx": true,
-   "disabled": false,
-   "bg": [
-    16,
-    39,
-    57
-   ]
-  },
-  {
-   "el": "span.block",
-   "kind": "text",
-   "text": "Recording 1 Stopped",
-   "ratio": 1.19,
-   "approx": true,
-   "disabled": false,
-   "bg": [
-    16,
-    39,
-    57
-   ]
-  }
- ]
+ "min": 3.79,
+ "failures": []
 }

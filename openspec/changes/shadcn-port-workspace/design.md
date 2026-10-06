@@ -112,6 +112,7 @@ The motivation is in proposal.md. This is the state on 2026-10-06, taken from a 
 - **Rows.** `TranscribeRow` and `TopicsRow` keep passing `FEED_ROW`/`FEED_CELL` plus their alignment and time-column additions. `EventLogRow` keeps passing its `CELL_*` strings. The `TableRow`/`TableCell` base is visually empty (D1), so the class lists each cell ends up with are unchanged from today.
   - Test: for one representative cell per row component, the rendered `className` token set equals the pre-port token set.
   - The browser row-height check (A6) stays as a belt-and-braces measurement.
+- **Added during implementation (QA, task 6.1): both axes scroll.** Radix ScrollArea sets `overflow-x: hidden` unless a horizontal scrollbar is mounted, while OverlayScrollbars scrolled both axes. At 390px the transcript table is 402px wide inside a 278px viewport, so its right columns became unreachable. `ScrollArea` therefore gained `scrollbars="both"`, and FeedTable uses it. The rail lists stay vertical-only, because their cards truncate. Tests: a smoke case checks that both bars render only when asked, and a FeedTable case checks the viewport is `overflow-x: scroll`. Live at 390 the viewport scrolls 124px sideways; at 1440 there's no overflow.
 - **Spacer and sentinel rows** become `TableRow`/`TableCell` with inline `height`, `padding:0` and `border:none`, as today. The spacer `TableRow` gets `className="hover:bg-transparent"`, so a hover tint doesn't flash on the spacer.
 
 ### D4. Rail session lists on ScrollArea
