@@ -87,8 +87,9 @@ refactor of this one.
   `sessions` index (metadata + a small live projection) so listing + status + cheap
   rolling-timecode never wake a session's hub.
 - **One SessionHub per session** (in-process, keyed by session id) = the live spine: events,
-  transport, audio-segment metadata, recording lease (in-hub state + a timer-driven
-  auto-expiry), transcript words, topics, and the WebSocket fan-out. Single writer per
+  transport, audio-segment metadata, recording lease (a `catalog.session_leases` row with a
+  stored expiry; the hub's lease alarm frees it once expired), transcript words, topics, and the
+  WebSocket fan-out. Single writer per
   session, so the Python `RLock` and `events_stream_revision` polling machinery disappear —
   the hub broadcasts instead. Its rows live in the session tables of schema `catalog`; every
   write locks the session's `catalog.sessions` row first, and a write that changes the events or
@@ -486,8 +487,10 @@ DATA_DIR/
   transaction that locks the session's `catalog.sessions` row first.
 - **Idle hubs are evicted and reopen lazily** — a hub with no attached sockets and
   no armed lease timer is evicted after an idle window (it holds no connection; eviction frees
-  memory); `SessionHubRegistry#get()` reopens it on next access. `expireIfStale()` re-checks
-  the recording lease on reopen.
+  memory); `SessionHubRegistry#get()` reopens it on next access. `expireIfStale()` frees an
+  expired recording lease on reopen. Liveness never depends on the timer: every read and claim
+  judges the lease by its stored expiry, so a lease whose process stopped already reads as not
+  alive and can be taken over.
 
 ## Source layout
 
@@ -876,10 +879,24 @@ each committed change, whoever makes it. The CSV/JSONL exports carry none.
 - **The revision.** `events_stream_revision` (in `GET …/status`, `GET /api/companion/state` and
   the event list) and the `revision` of `event.changed` are the session's revision,
   `catalog.sessions.revision`: it advances by exactly one per committed session write that changes
-  a row (transport, audio, transcript, topic, dashboard and lease writes included), never on a
-  read. Only increase is promised.
+  a row (transport, audio, transcript, topic and dashboard writes, and lease claims, releases
+  and expiries, included), never on a read or a lease heartbeat. Only increase is promised.
 - Companion routes, the generate routes and every other writer take no version and never answer
   this 409.
+
+**The recording lease (session-leases, ADR 0021 slice 8a).** `POST …/audio-recording-lease`
+(claim), `…/heartbeat` and `…/release` take `{"client_id": …}`, the browser tab's id. The lease is
+stored in `catalog.session_leases` and belongs to the signed-in user *and* that client id.
+- **Claim:** succeeds when the lease is free, expired, or already held by the same user and client;
+  otherwise **409** `Another window, tab, or user is already recording audio for this session.`
+- **Heartbeat:** extends it only for the same user and client, and only while it has not expired;
+  anything else answers `{"ok":false}` and changes nothing. The recorder re-claims after a refused
+  heartbeat, warns once if someone else now holds the lease, and keeps recording.
+- **Release:** frees it only for the same user and client; it always answers `{"ok":true}`.
+- **Expiry:** 40 s after the last claim or heartbeat. A client id that is blank after trimming, or
+  contains NUL, never matches (409 / `{"ok":false}` / `{"ok":true}`).
+- **Status:** `audio_recording_lease_holder_id` is the real client id only for the holding user;
+  everyone else sees `another-client`. Alive and age are unchanged.
 
 ## Security notes
 
