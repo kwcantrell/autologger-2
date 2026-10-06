@@ -3,11 +3,14 @@ import {
   adminStudioCreateBodySchema,
   audioSegmentWaveformBodySchema,
   companionCommandBodySchema,
+  deleteVersionQuerySchema,
   eventGenerateBodySchema,
   eventUpdateBodySchema,
   logBodySchema,
   MAX_METADATA_BYTES,
   newSessionBodySchema,
+  topicUpdateSchema,
+  transcriptWordUpdateSchema,
   validateYoutubeImportUrl,
   youtubeImportBodySchema,
 } from './schemas';
@@ -193,5 +196,51 @@ describe('validateYoutubeImportUrl (design D6 — exact-hostname allowlist)', ()
   it('rejects an unparseable URL', () => {
     expect(validateYoutubeImportUrl('not a url').ok).toBe(false);
     expect(validateYoutubeImportUrl('').ok).toBe(false);
+  });
+});
+
+// session-row-versions design D4: the optional expected version and overwrite flag on the three
+// update bodies, and the DELETE query.
+describe('expected versions (session-row-versions D4)', () => {
+  const event = { category: 'c', message: 'm', wall_time_utc: 'x', timecode_hms: '00:00:01' };
+  const bodies = [
+    ['eventUpdateBodySchema', eventUpdateBodySchema, event],
+    ['transcriptWordUpdateSchema', transcriptWordUpdateSchema, { word: 'w' }],
+    ['topicUpdateSchema', topicUpdateSchema, { summary: 's' }],
+  ] as const;
+
+  for (const [name, schema, base] of bodies) {
+    it(`${name}: version is optional, a positive safe integer, and overwrite needs it`, () => {
+      expect(schema.safeParse(base).success).toBe(true);
+      expect(schema.parse({ ...base, version: 3 })).toMatchObject({ version: 3 });
+      expect(schema.parse({ ...base, version: 3, overwrite: true })).toMatchObject({ version: 3, overwrite: true });
+      expect(schema.safeParse({ ...base, version: Number.MAX_SAFE_INTEGER }).success).toBe(true);
+      for (const bad of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, '3', null]) {
+        expect(schema.safeParse({ ...base, version: bad }).success, String(bad)).toBe(false);
+      }
+      expect(schema.safeParse({ ...base, overwrite: true }).success).toBe(false);
+      expect(schema.safeParse({ ...base, version: 1, overwrite: 'yes' }).success).toBe(false);
+    });
+  }
+
+  it('deleteVersionQuerySchema: decimal version from 1, overwrite only as "1" and only with a version', () => {
+    expect(deleteVersionQuerySchema.parse({})).toEqual({});
+    expect(deleteVersionQuerySchema.parse({ version: '7' })).toEqual({ version: 7 });
+    expect(deleteVersionQuerySchema.parse({ version: '7', overwrite: '1' })).toEqual({ version: 7, overwrite: true });
+    expect(deleteVersionQuerySchema.parse({ version: String(Number.MAX_SAFE_INTEGER) })).toEqual({
+      version: Number.MAX_SAFE_INTEGER,
+    });
+    for (const bad of [
+      { version: 'abc' },
+      { version: '0' },
+      { version: '07' },
+      { version: '-1' },
+      { version: '1.5' },
+      { version: '9007199254740992' },
+      { overwrite: '1' },
+      { version: '1', overwrite: 'true' },
+    ]) {
+      expect(deleteVersionQuerySchema.safeParse(bad).success, JSON.stringify(bad)).toBe(false);
+    }
   });
 });

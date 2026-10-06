@@ -8,11 +8,12 @@ import { boundCore } from './boundCore';
 import { catalogRoot, insertRaw, rawRows } from './sessionRows';
 
 describe('SessionCore on a test runtime', () => {
-  it('the seed is idempotent and seeds the revision counter', async () => {
+  it('the seed is idempotent and leaves the revision; a changing write advances it', async () => {
     const { run } = await boundCore();
     await run((s) => s.core.seed()); // second run must not throw
     expect(await run((s) => s.core.revision())).toBe(0);
-    await run((s) => s.core.bumpRevision());
+    // session-row-versions D2: the revision advances with a store write, not a core call.
+    await run((s) => s.core.metaSet('k', 'v'));
     expect(await run((s) => s.core.revision())).toBe(1);
   });
 

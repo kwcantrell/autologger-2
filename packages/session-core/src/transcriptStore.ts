@@ -2,8 +2,8 @@
 // (generation is stubbed in the router). Moved verbatim out of the original single-file session spine.
 
 import { isoZ } from '@autologger/domain';
-import type { Row, SessionCore } from './sessionCore';
-import { buildPatch, nextOrdinal } from './storeHelpers';
+import type { Row, SessionCore, VersionExpectation } from './sessionCore';
+import { buildPatch, nextOrdinal, staleVersion } from './storeHelpers';
 
 export interface TranscriptWord {
   id: string;
@@ -14,6 +14,8 @@ export interface TranscriptWord {
   end_sec: number;
   ordinal: number;
   created_at_utc: string;
+  /** session-row-versions D3: 1 when created, plus one per change. */
+  version: number;
 }
 
 /** wordRow — pure row → TranscriptWord mapper. */
@@ -27,6 +29,7 @@ export function wordRow(r: Row): TranscriptWord {
     end_sec: Number(r.end_sec ?? 0),
     ordinal: Number(r.ordinal ?? 0),
     created_at_utc: String(r.created_at_utc ?? ''),
+    version: Number(r.version ?? 1),
   };
 }
 
@@ -149,35 +152,70 @@ export class TranscriptStore {
     return wordRow((await this.word(id)) as Row);
   }
 
+  /** With `expect` (session-row-versions D4), a stale version returns the stored word as a
+   * conflict and writes nothing; with `expect.overwrite`, a patch that changes the row is audited
+   * (D5). A patch with no fields writes nothing and records nothing. */
   async updateTranscriptWord(
     wordId: string,
     patch: { session_time?: string; speaker?: string; word?: string },
-  ): Promise<TranscriptWord | null> {
-    const existing = await this.core.first(
-      'SELECT 1 AS x FROM session_transcript_words WHERE session_id = ? AND id = ?',
+    expect?: VersionExpectation,
+  ): Promise<TranscriptWord | { conflict: TranscriptWord } | null> {
+    const existing = await this.word(wordId);
+    if (existing === null) return null;
+    if (staleVersion(expect, existing)) return { conflict: wordRow(existing) };
+    const { cols, vals } = buildPatch(patch, ['session_time', 'speaker', 'word'] as const);
+    if (cols.length === 0) return wordRow(existing);
+    await this.core.db.run(
+      `UPDATE session_transcript_words SET ${cols.join(', ')}, version = version + 1 WHERE session_id = ? AND id = ?`,
+      ...vals,
       this.core.sessionId,
       wordId,
     );
-    if (existing === null) return null;
-    const { cols, vals } = buildPatch(patch, ['session_time', 'speaker', 'word'] as const);
-    if (cols.length) {
-      await this.core.db.run(
-        `UPDATE session_transcript_words SET ${cols.join(', ')} WHERE session_id = ? AND id = ?`,
-        ...vals,
+    const fresh = wordRow((await this.word(wordId)) as Row);
+    if (expect?.overwrite) {
+      await this.core.recordOverwrite({
+        table: 'session_transcript_words',
+        rowId: wordId,
+        replacedVersion: Number(existing.version),
+        before: wordRow(existing),
+        after: fresh,
+      });
+    }
+    return fresh;
+  }
+
+  /** With `expect` (session-row-versions D4), a stale version returns the stored word as a
+   * conflict and deletes nothing; with `expect.overwrite`, the delete is audited (D5). */
+  async deleteTranscriptWord(
+    wordId: string,
+    expect?: VersionExpectation,
+  ): Promise<boolean | { conflict: TranscriptWord }> {
+    if (expect === undefined) {
+      const r = await this.core.db.run(
+        'DELETE FROM session_transcript_words WHERE session_id = ? AND id = ?',
         this.core.sessionId,
         wordId,
       );
+      return r.changes > 0;
     }
-    return wordRow((await this.word(wordId)) as Row);
-  }
-
-  async deleteTranscriptWord(wordId: string): Promise<boolean> {
-    const r = await this.core.db.run(
+    const existing = await this.word(wordId);
+    if (existing === null) return false;
+    if (staleVersion(expect, existing)) return { conflict: wordRow(existing) };
+    await this.core.db.run(
       'DELETE FROM session_transcript_words WHERE session_id = ? AND id = ?',
       this.core.sessionId,
       wordId,
     );
-    return r.changes > 0;
+    if (expect.overwrite) {
+      await this.core.recordOverwrite({
+        table: 'session_transcript_words',
+        rowId: wordId,
+        replacedVersion: Number(existing.version),
+        before: wordRow(existing),
+        after: null,
+      });
+    }
+    return true;
   }
 
   /** Replace the entire transcript-words set **and its persisted

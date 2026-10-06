@@ -305,7 +305,13 @@ Slice order:
        2026-10-03);
      - the 7b-2 user-bound session path (median `addEvent` 11.9-15.5 ms against 7b-1's 5.3-5.4 ms,
        above the 10 ms stop rule, accepted by the owner 2026-10-03): investigate once database-side
-       observability exists (per-statement timings, plans), not before;
+       observability exists (per-statement timings, plans), not before. Since 7c-1 (owner,
+       2026-10-06) no slice has a latency stop rule: latency changes are measured and recorded, and
+       accepted until observability exists after the migration;
+     - (7c-1, owner 2026-10-06) the storage test "8 contending read-modify-write transactions all
+       commit" fails intermittently: about 0.5% of eight same-row `SERIALIZABLE` writers exhaust
+       five runs (41/7,200 on the current code, 33/7,200 at the retry-backoff merge, so not a
+       regression of the role or policy slices); revisit the retry budget with observability;
      - (5a) a foreign key from `catalog.users` to `auth.users`;
      - (5a) an egress allowlist for GoTrue: `auth-egress` reaches the internet, the LAN and the
        host's bridge address, while GoTrue holds `JWT_SECRET` and its database password;
@@ -747,7 +753,9 @@ Slice order:
        2026-10-03 on `supabase-7b2-session-content-policies`; the merge and the live dev and stage
        checks are pending.
    - 7c: `sessions.revision`, per-row versions, opt-in version checks, `409` with the current row,
-     the overwrite dialog and the audit. A contract delta; Companion routes stay unchecked.
+     the overwrite dialog and the audit. A contract delta; Companion routes stay unchecked. Split
+     (owner, 2026-10-05) into 7c-1 `session-row-versions` (the server) and 7c-2 (the web's `409`
+     handling and the overwrite dialog), each with its own proposal, panel and approval.
 
    Owner decisions (owner, 2026-10-03):
    1. **split 7a / 7b / 7c, async first:** 7a converts the call graph while the store is still
@@ -930,6 +938,41 @@ Slice order:
    31,621-word replace 0.50 s and 0.49 s. This trips the 10 ms stop rule. The owner accepted it
    without investigating (2026-10-03): performance work waits for database-side observability, so
    it is measured rather than guessed. The cause is not yet known.
+
+   **7c-1 `session-row-versions`** (owner decisions, 2026-10-05):
+   1. **scope:** versions and opt-in checks on the hand-edited rows only (events `PUT`/`DELETE`,
+      transcript words and topics `PATCH`/`DELETE`); every other writer advances versions and is
+      never checked; Companion routes stay unchecked;
+   2. **split 7c** into 7c-1 (server) and 7c-2 (web);
+   3. **unify the revision:** `events_stream_revision` becomes `catalog.sessions.revision`,
+      advanced by every session write; the wire names stay and their meaning widens;
+   4. **an overwrite is a retry with the fresh version** plus `overwrite: true`; the check still
+      runs, and a passing overwrite is audited;
+   5. (2026-10-06, after approval) **no latency stop rule** until observability exists after the
+      migration; the numbers are measured and recorded.
+
+   **7c-1's mechanism.** Migration `20261010000000_session_row_versions.sql` adds `version` (default
+   1) to `session_events`, `session_transcript_words` and `session_topics`, `revision` (default 0,
+   carried over from each session's meta value, whose rows stay for a later cleanup) to
+   `catalog.sessions`, and `catalog.session_overwrites` with an allow-all system policy and an
+   insert-only user policy (own user id, accessible show). A transaction-bound `SessionCore`
+   writes through a counting handle: the first store statement that changes a row advances the
+   revision once (`UPDATE sessions … RETURNING revision`, cached for the transaction's frames); the
+   hub-open seed and the relink guard row go through the raw handle and never count, so reads never
+   advance it. Every update of the three tables sets `version = version + 1` (a repo scan checks
+   it). The six operations take an optional expected version and compare it under the session row
+   lock: a stale one returns the stored row and the routes answer `409 {"detail":"Version
+   conflict.","current":<row>}` with the route's own success shape; a passing overwrite that
+   changes the row writes its audit row in the same transaction, as the signed-in user, and the hub
+   refuses a system caller's overwrite before any statement. Two processes racing same-version
+   updates of one event for 200 rounds get exactly one winner per round.
+
+   **Measurement** (dev stack, `bench7b2.mts`, every hub call as a user, 3,000 calls x 3 runs; no
+   stop rule): at about 300 / 3,000 accessible sessions, median `addEvent` 18.0 / 21.3 ms before and
+   16.6 / 21.0 ms after, `listEvents` 5.5 / 7.6 ms before and 5.4 / 8.4 ms after, the 31,621-word
+   replace 0.49 / 0.54 s before and 0.52 / 0.56 s after: no change beyond run-to-run noise. The
+   same code measured 11.9 / 15.5 ms in 7b-2's run on 2026-10-03, so the host's load differs
+   between days; that is what observability should explain.
 8. Session leases.
 9. Realtime replaces the WebSocket protocol.
 10. Blobs to Supabase Storage.

@@ -5,5 +5,6 @@
   "word": "hello",
   "start_sec": 0,
   "end_sec": 0,
-  "ordinal": 0
+  "ordinal": 0,
+  "version": 1
 }

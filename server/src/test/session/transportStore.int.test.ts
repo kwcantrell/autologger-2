@@ -113,15 +113,17 @@ describe('TransportStore', () => {
   it('statusLive reports event counts and revision', async () => {
     const { run, read, storage } = await setup({ is_rolling: true, current_take: 3 });
     // Real rows behind the same numbers the old stubs returned: 3 events of
-    // which 2 are logged (one `internal`), and a revision bumped to 7.
+    // which 2 are logged (one `internal`), and a revision advanced to 7 by seven changing writes
+    // (session-row-versions D2).
     await seedEvents(storage, ['mark', 'note', 'internal']);
-    for (let i = 0; i < 7; i += 1) await run((t) => t.core.bumpRevision());
+    const before = await read((t) => t.core.revision());
+    for (let i = 0; i < 7; i += 1) await run((t) => t.core.metaSet('k', String(i)));
     const s = await read((t) => t.transport.statusLive(CTX));
     expect(s.is_rolling).toBe(true);
     expect(s.current_take).toBe(3);
     expect(s.event_count).toBe(3);
     expect(s.logged_event_count).toBe(2);
-    expect(s.events_stream_revision).toBe(7);
+    expect(s.events_stream_revision).toBe(before + 7);
   });
 });
 

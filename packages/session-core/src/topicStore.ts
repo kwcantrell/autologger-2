@@ -2,8 +2,8 @@
 // the original single-file session spine.
 
 import { isoZ } from '@autologger/domain';
-import type { Row, SessionCore } from './sessionCore';
-import { buildPatch, nextOrdinal } from './storeHelpers';
+import type { Row, SessionCore, VersionExpectation } from './sessionCore';
+import { buildPatch, nextOrdinal, staleVersion } from './storeHelpers';
 
 export interface Topic {
   id: string;
@@ -13,6 +13,8 @@ export interface Topic {
   summary: string;
   ordinal: number;
   created_at_utc: string;
+  /** session-row-versions D3: 1 when created, plus one per change. */
+  version: number;
 }
 
 /** topicRow — pure row → Topic mapper. */
@@ -25,6 +27,7 @@ export function topicRow(r: Row): Topic {
     summary: String(r.summary ?? ''),
     ordinal: Number(r.ordinal ?? 0),
     created_at_utc: String(r.created_at_utc ?? ''),
+    version: Number(r.version ?? 1),
   };
 }
 
@@ -71,40 +74,72 @@ export class TopicStore {
     return topicRow((await this.topic(id)) as Row);
   }
 
+  /** With `expect` (session-row-versions D4), a stale version returns the stored topic as a
+   * conflict and writes nothing; with `expect.overwrite`, a patch that changes the row is audited
+   * (D5). A patch with no fields writes nothing and records nothing. */
   async updateTopic(
     topicId: string,
     patch: { session_time?: string; duration_sec?: number; topic_level?: number; summary?: string },
-  ): Promise<Topic | null> {
-    const existing = await this.core.first(
-      'SELECT 1 AS x FROM session_topics WHERE session_id = ? AND id = ?',
-      this.core.sessionId,
-      topicId,
-    );
+    expect?: VersionExpectation,
+  ): Promise<Topic | { conflict: Topic } | null> {
+    const existing = await this.topic(topicId);
     if (existing === null) return null;
+    if (staleVersion(expect, existing)) return { conflict: topicRow(existing) };
     const { cols, vals } = buildPatch(patch, [
       'session_time',
       'duration_sec',
       'topic_level',
       'summary',
     ] as const);
-    if (cols.length) {
-      await this.core.db.run(
-        `UPDATE session_topics SET ${cols.join(', ')} WHERE session_id = ? AND id = ?`,
-        ...vals,
+    if (cols.length === 0) return topicRow(existing);
+    await this.core.db.run(
+      `UPDATE session_topics SET ${cols.join(', ')}, version = version + 1 WHERE session_id = ? AND id = ?`,
+      ...vals,
+      this.core.sessionId,
+      topicId,
+    );
+    const fresh = topicRow((await this.topic(topicId)) as Row);
+    if (expect?.overwrite) {
+      await this.core.recordOverwrite({
+        table: 'session_topics',
+        rowId: topicId,
+        replacedVersion: Number(existing.version),
+        before: topicRow(existing),
+        after: fresh,
+      });
+    }
+    return fresh;
+  }
+
+  /** With `expect` (session-row-versions D4), a stale version returns the stored topic as a
+   * conflict and deletes nothing; with `expect.overwrite`, the delete is audited (D5). */
+  async deleteTopic(topicId: string, expect?: VersionExpectation): Promise<boolean | { conflict: Topic }> {
+    if (expect === undefined) {
+      const r = await this.core.db.run(
+        'DELETE FROM session_topics WHERE session_id = ? AND id = ?',
         this.core.sessionId,
         topicId,
       );
+      return r.changes > 0;
     }
-    return topicRow((await this.topic(topicId)) as Row);
-  }
-
-  async deleteTopic(topicId: string): Promise<boolean> {
-    const r = await this.core.db.run(
+    const existing = await this.topic(topicId);
+    if (existing === null) return false;
+    if (staleVersion(expect, existing)) return { conflict: topicRow(existing) };
+    await this.core.db.run(
       'DELETE FROM session_topics WHERE session_id = ? AND id = ?',
       this.core.sessionId,
       topicId,
     );
-    return r.changes > 0;
+    if (expect.overwrite) {
+      await this.core.recordOverwrite({
+        table: 'session_topics',
+        rowId: topicId,
+        replacedVersion: Number(existing.version),
+        before: topicRow(existing),
+        after: null,
+      });
+    }
+    return true;
   }
 
   /** Bulk delete by id (topic-generation design D3's crash-safe swap

@@ -13,7 +13,14 @@ import {
   UI_SNAPSHOT_COLOR_KEY,
   UI_SNAPSHOT_LABEL_KEY,
 } from '@autologger/domain';
-import type { Row, SessionCore, SessionProjection, TimecodeCtx } from './sessionCore';
+import type {
+  Row,
+  SessionCore,
+  SessionProjection,
+  TimecodeCtx,
+  VersionExpectation,
+} from './sessionCore';
+import { staleVersion } from './storeHelpers';
 
 /** rowToRpc — pure events-row → RPC mapper. */
 export function eventRowToRpc(r: Row): EventRpc {
@@ -29,6 +36,7 @@ export function eventRowToRpc(r: Row): EventRpc {
     category: String(r.category),
     message: String(r.message),
     metadata_json: String(r.metadata_json ?? '{}'),
+    version: Number(r.version ?? 1),
   };
 }
 
@@ -111,7 +119,7 @@ export class EventStore {
       input.message,
       metaJson,
     );
-    await this.core.bumpRevision();
+    this.core.markProjectionDirty();
     if (!input.suppressBroadcast) {
       this.core.broadcast({ type: 'event.changed', revision: await this.core.revision() });
     }
@@ -187,7 +195,9 @@ export class EventStore {
 
   /** `mergeMetadata` gets the stored row's `metadata_json` and returns the JSON to store, so the
    * read, the merge and the write are one transaction (async-session-hub design D5, S3). It is
-   * synchronous by type and must stay pure. A missing event returns null without calling it. */
+   * synchronous by type and must stay pure. A missing event returns null without calling it.
+   * With `expect` (session-row-versions D4), a stale version returns the stored event as a
+   * conflict and writes nothing; with `expect.overwrite`, the write is audited (D5). */
   async updateEvent(input: {
     eventId: string;
     category: string;
@@ -195,13 +205,16 @@ export class EventStore {
     wallTimeUtc: string;
     timecodeTotalFrames: number;
     mergeMetadata: (storedMetadataJson: string) => string;
-  }): Promise<{ event: EventRpc; projection: SessionProjection } | null> {
+    expect?: VersionExpectation;
+  }): Promise<{ event: EventRpc; projection: SessionProjection } | { conflict: EventRpc } | null> {
     const old = await this.event(input.eventId);
     if (old === null) return null;
+    if (staleVersion(input.expect, old)) return { conflict: eventRowToRpc(old) };
     const metadataJson = input.mergeMetadata(eventRowToRpc(old).metadata_json);
     await this.core.db.run(
       `UPDATE session_events SET category = ?, message = ?, wall_time_utc = ?,
-         timecode_total_frames = ?, metadata_json = ? WHERE session_id = ? AND id = ?`,
+         timecode_total_frames = ?, metadata_json = ?, version = version + 1
+       WHERE session_id = ? AND id = ?`,
       input.category,
       input.message,
       input.wallTimeUtc,
@@ -210,27 +223,47 @@ export class EventStore {
       this.core.sessionId,
       input.eventId,
     );
-    await this.core.bumpRevision();
+    this.core.markProjectionDirty();
     this.core.broadcast({ type: 'event.changed', revision: await this.core.revision() });
-    const r = await this.event(input.eventId);
-    return { event: eventRowToRpc(r as Row), projection: await this.core.projection() };
+    const event = eventRowToRpc((await this.event(input.eventId)) as Row);
+    if (input.expect?.overwrite) {
+      await this.core.recordOverwrite({
+        table: 'session_events',
+        rowId: input.eventId,
+        replacedVersion: Number(old.version),
+        before: eventRowToRpc(old),
+        after: event,
+      });
+    }
+    return { event, projection: await this.core.projection() };
   }
 
-  async deleteEvent(eventId: string): Promise<{ ok: boolean; projection: SessionProjection }> {
-    const existed =
-      (await this.core.first(
-        'SELECT 1 AS x FROM session_events WHERE session_id = ? AND id = ?',
-        this.core.sessionId,
-        eventId,
-      )) !== null;
-    if (existed) {
+  /** With `expect` (session-row-versions D4), a stale version returns the stored event as a
+   * conflict and deletes nothing; with `expect.overwrite`, the delete is audited (D5). */
+  async deleteEvent(
+    eventId: string,
+    expect?: VersionExpectation,
+  ): Promise<{ ok: boolean; projection: SessionProjection } | { conflict: EventRpc }> {
+    const row = await this.event(eventId);
+    if (row !== null && staleVersion(expect, row)) return { conflict: eventRowToRpc(row) };
+    const existed = row !== null;
+    if (row !== null) {
       await this.core.db.run(
         'DELETE FROM session_events WHERE session_id = ? AND id = ?',
         this.core.sessionId,
         eventId,
       );
-      await this.core.bumpRevision();
+      this.core.markProjectionDirty();
       this.core.broadcast({ type: 'event.changed', revision: await this.core.revision() });
+      if (expect?.overwrite) {
+        await this.core.recordOverwrite({
+          table: 'session_events',
+          rowId: eventId,
+          replacedVersion: Number(row.version),
+          before: eventRowToRpc(row),
+          after: null,
+        });
+      }
     }
     return { ok: existed, projection: await this.core.projection() };
   }
@@ -253,7 +286,7 @@ export class EventStore {
       JSON.stringify(ids),
     );
     if (total > 0) {
-      await this.core.bumpRevision();
+      this.core.markProjectionDirty();
       this.core.broadcast({ type: 'event.changed', revision: await this.core.revision() });
     }
     return total;
@@ -279,8 +312,8 @@ export class EventStore {
   }
 
   /** Relink orphan events to a category id when the snapshot label matches exactly one button.
-   *  Guarded to run at most once per events_stream_revision (the only inputs are events +
-   *  the show categories the router passes in, both of which bump the revision). */
+   *  Guarded to run at most once per session revision; the guard row is bookkeeping and never
+   *  advances the revision (session-row-versions design D2). */
   async maybeRelinkOrphans(input: {
     validIds: string[];
     labelToIds: Record<string, string[]>;
@@ -288,7 +321,7 @@ export class EventStore {
     const rev = await this.core.revision();
     const lastRaw = await this.core.metaGet('relink_checked_rev');
     if (lastRaw !== null && Number(lastRaw) === rev) return 0;
-    await this.core.metaSet('relink_checked_rev', String(rev));
+    await this.core.metaSetUncounted('relink_checked_rev', String(rev));
     // A row whose metadata is not valid JSON is skipped here, as the loop below skips it
     // (SQLite's JSON path lookup threw on it; session-tables D5).
     const hasSnap =
@@ -327,7 +360,7 @@ export class EventStore {
       delete meta[UI_SNAPSHOT_LABEL_KEY];
       delete meta[UI_SNAPSHOT_COLOR_KEY];
       await this.core.db.run(
-        'UPDATE session_events SET category = ?, metadata_json = ? WHERE session_id = ? AND id = ?',
+        'UPDATE session_events SET category = ?, metadata_json = ?, version = version + 1 WHERE session_id = ? AND id = ?',
         candidates[0],
         JSON.stringify(meta),
         this.core.sessionId,
@@ -335,7 +368,7 @@ export class EventStore {
       );
       n += 1;
     }
-    if (n) await this.core.bumpRevision();
+    if (n) this.core.markProjectionDirty();
     return n;
   }
 }
