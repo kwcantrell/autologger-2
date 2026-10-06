@@ -801,12 +801,12 @@ Content-coding is transport applied above the frozen representation: the decoded
 | `GET /auth/google/start` · `/callback` · `GET\|POST /auth/logout` | `routers/auth.py` |
 | `GET /api/studio` · `GET\|PUT /api/profile` (profile `shows[]` is the **brief** shape `{id, studio_id, name, show_code, title_suffix}` plus `can_access` (whether the caller can open the show's sessions) — no `categories`, no palette fields; `POST /api/shows` and a profile `PUT` with `settings` or `show_updates` are **403** `Admin role required.` for a member) · `GET\|POST /api/shows` · `GET /api/shows/{showId}` → **200** `{show}` in the full show shape (the brief five plus `categories`, `event_palette`, `event_palette_preset`, `event_palette_custom`); an unknown id and a non-member of the show's studio both get an identical **404** `{detail}`, so the route is no existence oracle | `routers/profile.py`, `shows.py` |
 | `GET\|POST /api/sessions` · `GET\|PUT\|DELETE /api/sessions/{id}` · `…/archive\|restore` | `routers/sessions.py` |
-| `GET\|POST /api/sessions/{id}/events` (GET adds `has_auto_generated`, whole-session; POST silently strips the reserved `auto_generated`/`auto_generate_run_id` metadata keys from client input) · `PUT\|DELETE …/events/{eid}` | `routers/events.py` |
-| `GET …/status` · `POST …/transport/start\|stop` · `GET …/show-categories` | `routers/events.py` |
+| `GET\|POST /api/sessions/{id}/events` (GET adds `has_auto_generated`, whole-session; POST silently strips the reserved `auto_generated`/`auto_generate_run_id` metadata keys from client input) · `PUT\|DELETE …/events/{eid}` (optional `version`/`overwrite`; a stale version is **409** `{detail: "Version conflict.", current}`; see "Row versions" below) | `routers/events.py` |
+| `GET …/status` (`events_stream_revision` is the session revision, advanced by every session write; see "Row versions" below) · `POST …/transport/start\|stop` · `GET …/show-categories` | `routers/events.py` |
 | `…/audio-recording-lease` (claim/heartbeat/release) · `GET …/ws` | `routers/events.py` |
 | `POST …/events/generate` → **503** unconfigured · **409** concurrent-turn/at-capacity · **400** no-transcript/no-anchors/no-instructions/over-instruction-bound/malformed-body/`regenerate`+`selection` combo/selection-matches-no-instructions · **200** `{created, cap_hit}` configured success, plus `deleted` when `regenerate:true` (append-only; regenerate deletes the prior `auto_generated` snapshot only after a successful run creates ≥1 event — zero-created success and `502` leave prior rows intact, `deleted` reflects the post-success removal) · **502** CLI-turn-failure (already-inserted events persist) (see "Event auto-generation" above) | `routers/events.ts` (new, auto-generate-event-logs + event-generate-menu) |
 | `GET\|POST …/audio/segments` · `POST …/segments/sync-from-disk` · range `GET …/segments/{id}` · `PUT …/waveform` | `routers/audio.py` |
-| `GET\|POST\|PATCH\|DELETE …/transcript-words` · `…/topics` | `routers/transcribe.py` |
+| `GET\|POST\|PATCH\|DELETE …/transcript-words` · `…/topics` (`PATCH`/`DELETE …/{id}` take an optional `version`/`overwrite`; a stale version is **409**; see "Row versions" below) | `routers/transcribe.py` |
 | `GET /api/transcript-generation/status` → **200** `{in_flight:false}` idle · **200** busy fields when held (`session_id`, `session_title`, `started_at`) | `routers/transcribe.py` |
 | `…/transcript-words/generate` → **503** unconfigured · **200** `{words}` configured (see "Transcript generation" above) | `routers/transcribe.py` |
 | `POST …/topics/generate` → **503** unconfigured · **409** concurrent-turn/at-capacity · **400** no-transcript · **200** `{topics}` configured success (crash-safe replace-all) · **502** CLI-turn-failure/zero-topics (prior topics unchanged) (see "AI chat (Claude CLI)" below) | `routers/transcribe.py` |
@@ -856,6 +856,30 @@ long-poll are deleted. A single slow status poll (~1.2 s) runs **only while roll
 to advance the live timecode; the WS drives every discrete change. The `commands/wait` endpoint
 still returns an immediate empty list so any stale client degrades to a slow poll instead of a
 tight loop.
+
+**Row versions and the session revision (session-row-versions, ADR 0021 slice 7c-1).** Every
+event, transcript word and topic in a JSON response carries `version`: 1 when created, plus one for
+each committed change, whoever makes it. The CSV/JSONL exports carry none.
+- **Opt-in checks.** `PUT`/`DELETE …/events/{eid}` and `PATCH`/`DELETE …/transcript-words/{id}` and
+  `…/topics/{id}` accept the version the client last read: `version` (an integer from 1) and
+  `overwrite` (boolean) in the body, or `?version=<n>&overwrite=1` on `DELETE`. Without `version`
+  an edit is last-writer-wins, as before; `overwrite` without `version` is **422**.
+- **Answers, in order:** **404** `Session not found` · **422** invalid body or query · the event
+  update's **400**s · **404** for a missing row · **409** `{"detail":"Version conflict.",
+  "current":<row>}` when the row has moved on, where `<row>` is the route's own success body.
+  Nothing is written on a 409. Of two edits sent with the same current version, one wins and the
+  other gets the 409.
+- **Overwrites.** To keep their change after a 409, the client re-sends with `current.version`
+  and `overwrite: true`; the check still runs. A passing overwrite that changes the row is recorded
+  in `catalog.session_overwrites` (user, row, time, the replaced version, the row before and after)
+  in the same transaction. Users can only insert their own records; nothing reads them yet.
+- **The revision.** `events_stream_revision` (in `GET …/status`, `GET /api/companion/state` and
+  the event list) and the `revision` of `event.changed` are the session's revision,
+  `catalog.sessions.revision`: it advances by exactly one per committed session write that changes
+  a row (transport, audio, transcript, topic, dashboard and lease writes included), never on a
+  read. Only increase is promised.
+- Companion routes, the generate routes and every other writer take no version and never answer
+  this 409.
 
 ## Security notes
 
