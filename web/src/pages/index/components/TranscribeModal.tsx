@@ -70,11 +70,7 @@ export function TranscribeModal({ sessionId, onClose }: Props) {
           </Button>
         </div>
       )}
-      {status === 'error' && (
-        <p className="my-[1em]">
-          {errorMsg ?? 'Transcription failed.'}
-        </p>
-      )}
+      {status === 'error' && <p className="my-[1em]">{errorMsg ?? 'Transcription failed.'}</p>}
       <DialogActions>
         <Button variant="outline" className={TOUCH_TARGET} onClick={onClose}>
           {status === 'loading' ? 'Cancel' : 'Close'}

@@ -43,12 +43,13 @@
 
 ## 4. Legacy CSS and BTN_PRIMARY_SKY
 
-- [ ] 4.1 Delete the listed rules from `tailwind.css` and `shared/theme/classnames.ts`, drop the redundant contrast block, and add the `DELETED_LEGACY_CLASSES` guard to `shadcnHygiene.repo.test.ts` (D8).
+- [x] 4.1 Delete the listed rules from `tailwind.css` and `shared/theme/classnames.ts`, drop the redundant contrast block, and add the `DELETED_LEGACY_CLASSES` guard to `shadcnHygiene.repo.test.ts` (D8).
   - Test first: the attribute-aware guard (class arguments only, distinctive names only) fails while any ported file still uses one of the classes (run before the ports land, or against a temporarily reverted file), and does not flag `id="new-session-form"`.
   - Verify:
     - `npx vitest run src/shadcnHygiene.repo.test.ts src/shared/theme/contrastTokens.test.ts` passes;
     - `grep -rn "classnames'" web/src` prints nothing;
     - the full `npx vitest run` passes.
+  - Evidence: test first: attribute-aware guard "deleted legacy modal classes are never passed as a class again" (className="…" / className={…} literals + cn()/clsx() string args; 19 distinctive names) proven against a probe file `<div id="new-session-form" className="modal-actions tool-row" />` + `clsx("a","fps-hint")` -> `1 failed` listing modal-actions, tool-row, fps-hint and NOT the id; after deleting 31 rule blocks from tailwind.css (213 lines: .modal-*, .tool-row, .export-row, .fps-*, .inline, .num/.num.wide, .new-session-form .field, .actions, .tool-row-session-opts, .v4-log-session .btn*, #v4-log-session .v5-panel-head/__actions/--controls, the .v5-panel-eyebrow rules, .v4-log-top__capture/__playback; .v5-panel-head__main kept) plus their orphaned comment headers, `git rm shared/theme/classnames.ts`, and the redundant BTN_PRIMARY_SKY contrast block -> `npx vitest run` `Test Files 127 passed (127) Tests 1584 passed (1584)` (shadcnHygiene + contrastTokens green); no remaining import of shared/theme/classnames in web/src; tsc clean
 
 ## 5. Integration: QA gate and checks
 

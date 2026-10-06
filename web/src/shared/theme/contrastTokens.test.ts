@@ -119,11 +119,6 @@ describe('AA contrast floor — source colours over their lightest measured surf
     ).toBeGreaterThanOrEqual(AA);
   });
 
-  it('sky primary button label (BTN_PRIMARY_SKY) on its tinted surface', () => {
-    const fg = parseColor(textColour(classConst('shared/theme/classnames.ts', 'BTN_PRIMARY_SKY')));
-    expect(contrast(fg, SURFACE.primaryButton)).toBeGreaterThanOrEqual(AA);
-  });
-
   it('login secondary link (BTN_CREATE) on its surface', () => {
     const fg = parseColor(
       textColour(classConst('pages/index/components/LoginPage.tsx', 'BTN_CREATE')),
@@ -157,7 +152,9 @@ describe('shadcn semantic tokens alias V5 values that clear the floor (design D5
     expect(contrast(fg, parseColor(resolved('--card')))).toBeGreaterThanOrEqual(AA);
   });
 
-  it('primary-foreground on the sky-tinted primary surface', () => {
+  // Also covers the former BTN_PRIMARY_SKY label (#e0f2fe): the default Button renders
+  // `text-primary-foreground` on this surface (shadcn-port-modals D8).
+  it('primary-foreground on the sky-tinted primary surface (default Button label, e.g. Create & open)', () => {
     expect(
       contrast(parseColor(resolved('--primary-foreground')), SURFACE.primaryButton),
     ).toBeGreaterThanOrEqual(AA);
