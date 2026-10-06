@@ -30,9 +30,10 @@
   - Test first, in the new `TranscribeModal.test.tsx` (`fetch` stubbed): when done, "Download CSV" is an `<a download>` with `data-slot="button"`; Close is in the dialog-actions row.
   - Verify: both suites pass, and `npx vitest run src/apiResponseShapes.repo.test.ts` passes (the pinned call shapes and lines are untouched).
   - Evidence: test first: new YouTubeImportErrorModal.test.tsx ("offers the three choices with their Button variants"; "Try a different link shows a named link input whose Import retries with the trimmed URL") and TranscribeModal.test.tsx ("Download CSV is an <a download> Button and Close is in the actions row", fetch stubbed) -> `3 failed` (`expected null to be default` / `button`); after YouTube error on Button default/outline/destructive + Input aria-label "YouTube video link" + ROW flex (gap-x-4 gap-y-3 = .tool-row) and Transcribe on Button asChild download + DialogActions -> those + apiResponseShapes.repo `Tests 46 passed (46)`; `git diff -U0 TranscribeModal.tsx | grep -E "transcribe.csv|JSON.parse"` -> nothing (pinned lines untouched); tsc clean
-- [ ] 3.2 EventGenerateCustomModal (D5).
+- [x] 3.2 EventGenerateCustomModal (D5).
   - Test first: Generate and Cancel are in `[data-slot=dialog-actions]`; Retry is `outline`.
   - Verify: `npx vitest run src/pages/index/components/EventGenerateCustomModal.test.tsx` passes, with the checkbox counts, the `/Cam A/` name and the exact hint copy.
+  - Evidence: test first: existing suite extended (Cam A is a Radix checkbox toggling aria-checked; Generate disabled until a selection, default variant, in dialog-actions; Retry outline) -> `2 failed | 7 passed (9)`; after HINT utility (exact curly-apostrophe copy), Checkbox + FieldLabel htmlFor per candidate inside the fieldset/legend, outline Retry, Cancel/Generate Buttons in DialogActions -> EventGenerateCustomModal + eventGenerateLatch `Tests 22 passed (22)` (checkbox counts, /Cam A/ name, offline/error copy unchanged); tsc clean
 - [ ] 3.3 CategoryButtonStrip TextModal and DropdownModal (D6).
   - Test first, in `CategoryButtonStrip.test.tsx` with TEXT and DROPDOWN fixtures:
     - TextModal: "Log note", a labelled Note input, Enter logs the trimmed note, actions in the row.
