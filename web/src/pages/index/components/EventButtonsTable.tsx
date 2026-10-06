@@ -640,7 +640,7 @@ export function EventButtonsTable({
                           'btn !m-0 !box-border !h-[1.7rem] !max-h-[1.7rem] !min-h-0 !min-w-0 !py-0 !leading-none',
                           '!w-full !px-1 !text-[0.55rem] !tracking-[0.04em] inline-flex items-center justify-center align-middle',
                           'overflow-hidden',
-                          bearing ? 'text-v5-primary' : 'text-[rgba(229,238,252,0.35)]',
+                          bearing ? 'text-v5-primary' : 'text-v5-muted',
                         )}
                         onClick={() => setOpenInstructionFor(btn.id)}
                       >

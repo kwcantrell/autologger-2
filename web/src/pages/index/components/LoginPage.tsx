@@ -67,7 +67,7 @@ const BRAND_STRIP_IMG = 'block h-24 w-full max-w-none object-cover';
 // Wordmark in the brand's own display face (League Gothic drives the category
 // buttons in-session; here it carries the name).
 const WORDMARK =
-  'm-0 font-league-gothic text-[2.75rem] leading-none tracking-[0.02em] uppercase text-v5-text max-md:text-[2.4rem]';
+  'm-0 font-league-gothic font-bold text-[2.75rem] leading-none tracking-[0.02em] uppercase text-v5-text max-md:text-[2.4rem]';
 
 const TAGLINE = 'mx-auto mb-0 mt-2 max-w-[19rem] text-[0.9rem] leading-[1.5] text-v5-muted';
 
@@ -93,7 +93,7 @@ const SECTION_LABEL =
 
 // Ghost secondary control (RAIL_NAV surface treatment).
 const BTN_CREATE =
-  'mt-4 box-border flex h-11 w-full cursor-pointer items-center justify-center rounded-v5-sm border border-v5-border-strong bg-[rgba(255,255,255,0.03)] px-4 text-[0.8125rem] font-semibold tracking-[0.04em] text-v5-muted no-underline [transition:border-color_0.15s_ease,background_0.15s_ease,color_0.15s_ease] hover-always:bg-[rgba(255,255,255,0.05)] hover-always:text-v5-text';
+  'mt-4 box-border flex h-11 w-full cursor-pointer items-center justify-center rounded-v5-sm border border-v5-border-strong bg-[rgba(255,255,255,0.03)] px-4 text-[0.8125rem] font-semibold tracking-[0.04em] text-[rgba(229,238,252,0.78)] no-underline [transition:border-color_0.15s_ease,background_0.15s_ease,color_0.15s_ease] hover-always:bg-[rgba(255,255,255,0.05)] hover-always:text-v5-text';
 
 const FINE_PRINT = 'mx-auto mb-0 mt-4 max-w-[20rem] text-[0.78rem] leading-[1.5] text-v5-soft';
 

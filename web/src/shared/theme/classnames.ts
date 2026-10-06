@@ -8,4 +8,4 @@
  * submit, EventButtonsTable, HomeSettingsModal). Unguarded hover → hover-always.
  */
 export const BTN_PRIMARY_SKY =
-  'rounded-v5-sm border-[rgba(56,189,248,0.35)] bg-[rgba(56,189,248,0.14)] text-v5-primary hover-always:bg-[rgba(56,189,248,0.22)]';
+  'rounded-v5-sm border-[rgba(56,189,248,0.35)] bg-[rgba(56,189,248,0.14)] text-[#e0f2fe] hover-always:bg-[rgba(56,189,248,0.22)]';

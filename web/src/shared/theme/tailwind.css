@@ -2,12 +2,15 @@
  * Tailwind v4 entry. Layer order (low → high): theme, base, components,
  * utilities. The migration's `legacy` layer is gone — all former legacy CSS
  * (tokens/baseline/chrome/bgGlow) now lives in these Tailwind layers or the
- * :root token blocks below. No Preflight (our @layer base carries the reset).
+ * :root token blocks below. Preflight is imported into the base layer (shadcn-foundation D4);
+ * our own @layer base rules come later in the same layer, so they win.
  */
 @layer theme, base, components, utilities;
 
 @import 'tailwindcss/theme.css' layer(theme);
+@import 'tailwindcss/preflight.css' layer(base);
 @import 'tailwindcss/utilities.css' layer(utilities);
+@import 'tw-animate-css';
 
 @theme {
   /* md boundary matches the repo's single 767px breakpoint (max-md: ≡ max-width:767.9px). */
@@ -186,7 +189,7 @@
   --color-danger: #ff6b6b;
   --color-v5-bg: #070b14;
   --color-v5-text: #e5eefc;
-  --color-v5-muted: rgba(229, 238, 252, 0.55);
+  --color-v5-muted: rgba(229, 238, 252, 0.62);
   --color-v5-soft: #94a3b8;
   --color-v5-primary: #38bdf8;
   --color-v5-primary2: #22d3ee;
@@ -243,7 +246,7 @@
   /* V5 design tokens (formerly scoped under body.v5-ui; promoted to :root in v1.15.0). */
   --v5-bg: #070b14;
   --v5-text: #e5eefc;
-  --v5-muted: rgba(229, 238, 252, 0.55);
+  --v5-muted: rgba(229, 238, 252, 0.62);
   --v5-soft: #94a3b8;
   --v5-primary: #38bdf8;
   --v5-primary2: #22d3ee;
@@ -1632,10 +1635,11 @@
   }
 
   /* Placeholder floor (AA): the app-wide default placeholder used to bottom out
-   * near 35% alpha; 55% of the V5 text color clears 4.5:1 on the dark fields. */
+   * near 35% alpha; 62% of the V5 text color clears 4.5:1 on the lightest dialog
+   * field the QA probe measured (shadcn-foundation D7). */
   input::placeholder,
   textarea::placeholder {
-    color: rgba(229, 238, 252, 0.55);
+    color: rgba(229, 238, 252, 0.62);
     opacity: 1;
   }
 
@@ -1826,13 +1830,6 @@
     font-display: swap;
     src: url("../../assets/fonts/roboto-500.woff2") format('woff2');
     unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
-  }
-
-  /* Universal box-sizing reset (formerly duplicated in tokens.css + baseline.css). */
-  *,
-  *::before,
-  *::after {
-    box-sizing: border-box;
   }
 
   /* Cross-browser normalization (Phase 2): suppress the mobile tap-highlight;

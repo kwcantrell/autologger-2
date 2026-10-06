@@ -1031,7 +1031,7 @@ export function Timeline({
                       {fmtHmsFromSec(activeSec)}
                     </span>
                     <span
-                      className="text-[0.65rem] font-medium tracking-[0.04em] text-v5-muted opacity-[0.82]"
+                      className="text-[0.65rem] font-medium tracking-[0.04em] text-v5-muted"
                       id="timeline-readout-total"
                     >
                       {` / ${fmtHmsFromSec(rollingSec)}`}

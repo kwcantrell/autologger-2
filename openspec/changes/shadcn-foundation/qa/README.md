@@ -43,3 +43,12 @@ These need a code review for Preflight drift (task 4.1) and a human dev-stack pa
 | 4.27 | recent-session details and duration | all workspace screens | fix (D7) |
 | 4.32 | "Create an account with Google" | login | fix (D7) |
 | 4.48 | "Add new button" primary label | settings-event-buttons | fix (D7) |
+
+## Preflight (task 2.3)
+
+`preflight-drift.js` lists every element whose computed style Preflight changes: it removes Preflight's rules live and diffs the result. **The owner accepted the normalization on 2026-10-06** (design D4). Because of it:
+- button and input text uses Inter, not the browser's Arial
+- headings inherit their weight
+- SVGs are blocks
+
+Only the League Gothic titles get an explicit `font-bold` back. Expect `after-*` diffs of roughly 0.1–5% against `baseline` from this.

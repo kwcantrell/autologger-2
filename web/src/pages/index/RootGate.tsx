@@ -71,7 +71,7 @@ function ErrorState({ onRetry, retrying }: { onRetry: () => void; retrying: bool
         id="root-gate-error"
         role="alert"
       >
-        <h1 className="m-0 font-league-gothic text-[2.25rem] leading-none tracking-[0.02em] uppercase text-v5-text">
+        <h1 className="m-0 font-league-gothic font-bold text-[2.25rem] leading-none tracking-[0.02em] uppercase text-v5-text">
           AutoLogger
         </h1>
         <p className="mx-auto mb-0 mt-3 max-w-[19rem] text-[0.9rem] leading-[1.5] text-v5-muted">

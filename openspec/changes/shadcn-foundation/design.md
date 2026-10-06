@@ -64,6 +64,15 @@ The current setup:
   - Reachable screens are checked by the QA diff.
   - Unreachable ones are checked by a grep of bare elements in the components listed in `qa/README.md` (YouTubeImportErrorModal, TranscribeModal, EventGenerateCustomModal, MaximizeLogStrip, TeamCard, ChunkRescueBanner, ConfirmDialog, AudioSaveOverlay). Wherever one relied on a browser margin or list style, it gets explicit utilities.
 
+- **Owner decision, 2026-10-06, after the first Preflight QA pass:** accept Preflight's normalization instead of reproducing the browser defaults that used to leak through.
+  - Measured with `qa/preflight-drift.js`, the browser defaults were:
+    - Arial 13.33px with normal line height in `button`/`input` wherever a class didn't set the font
+    - bold `h1`–`h6`
+    - inline SVG
+    - button padding of 1px 6px
+  - With Preflight, those controls inherit the app font (Inter 15px, line height 1.45). That changes the type in many buttons and makes some cards a few px taller, and that change is accepted.
+  - Only clearly intended styling is restored: the League Gothic titles, which relied on the browser's synthesized bold, get an explicit `font-bold`. Those are HomeRoute, RootGate, AppLoadingSkeleton, LoginPage `WORDMARK`, OnboardingPanel, ChunkLoadBoundary, TeamsRoute and SessionRoute.
+
 **D5. shadcn tokens alias V5 variables on `:root`. Dark only. Full set.**
 
 | Token | Value |

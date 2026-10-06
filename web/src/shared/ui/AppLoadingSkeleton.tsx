@@ -39,7 +39,7 @@ export function AppLoadingSkeleton({ id, media }: AppLoadingSkeletonProps = {}) 
     >
       {media ?? (
         <div className="glass-panel relative box-border w-full max-w-[25rem] rounded-v5-lg px-7 py-9 text-center">
-          <h1 className="m-0 font-league-gothic text-[2.25rem] leading-none tracking-[0.02em] uppercase text-v5-text">
+          <h1 className="m-0 font-league-gothic font-bold text-[2.25rem] leading-none tracking-[0.02em] uppercase text-v5-text">
             AutoLogger
           </h1>
         </div>

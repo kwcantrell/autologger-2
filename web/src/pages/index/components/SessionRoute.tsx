@@ -66,7 +66,7 @@ const STATE_PAGE = ROUTE_STATE_PAGE;
 const STATE_PANEL =
   'glass-panel relative box-border w-full max-w-[25rem] rounded-v5-lg px-7 py-9 text-center';
 const STATE_TITLE =
-  'm-0 font-league-gothic text-[2.25rem] leading-none tracking-[0.02em] uppercase text-v5-text';
+  'm-0 font-league-gothic font-bold text-[2.25rem] leading-none tracking-[0.02em] uppercase text-v5-text';
 const STATE_COPY = 'mx-auto mb-0 mt-3 max-w-[19rem] text-[0.9rem] leading-[1.5] text-v5-muted';
 const STATE_BADGE = 'm-0 text-[0.6875rem] font-semibold uppercase tracking-[0.14em] text-v5-muted';
 const STATE_BUTTON =
