@@ -56,11 +56,13 @@
   - After the port, run the same walk at 1440×900 and 390×844 against `before-settings`.
   - Verify: contrast shows 0 failures apart from "Audio issue"; at 390 an eval measures Save and a row "Remove event" button at ≥ 44px tall (D2b); per-screen diffs are recorded in `qa/README.md`.
   - Evidence: walk copied + Settings member capture, Team switch to Test Team (owner view, never saved), settings-tabs-keyboard, add-show-dialog, touch-probe; before-settings captured on the unported code, after-settings diffed against it at 1440 and 390 -> 76 contrast JSONs, only `filter-menu` `Audio issue 3.64`; touch-probe 390 `{save:44, remove:44}` (D2b holds); changed screens 0.04-9.3% (largest = intended ArrowRight tab activation and the options-modal Checkbox/Textarea), every untouched surface 0-0.01%; per-screen table in qa/README.md
-- [ ] 4.2 The owner reviews the pairs and does a dev-stack pass:
+- [x] 4.2 The owner reviews the pairs and does a dev-stack pass:
   - tabs by keyboard;
   - edit a field (Save arms), then close (the discard confirm appears);
   - AI Rules and options modals (Needs context);
   - colour picker;
   - Add show (cancel).
   - Verify: the result is recorded in `qa/README.md`.
-- [ ] 4.3 Run the full suite, typecheck, lint and `openspec validate --all --strict`. Run `scripts/check-change.sh` if the owner asks.
+  - Evidence: owner reviewed the pairs and did the dev-stack pass (tabs by keyboard, Save arms + discard confirm on close, AI Rules and options modals incl. Needs context, colour picker, Add show cancel) -> "looks good" (2026-10-06)
+- [x] 4.3 Run the full suite, typecheck, lint and `openspec validate --all --strict`. Run `scripts/check-change.sh` if the owner asks.
+  - Evidence: `npx vitest run` -> `Test Files 125 passed (125) Tests 1574 passed (1574)`; `npx tsc --noEmit` clean; `npx biome lint src` -> `Checked 326 files … No fixes applied`; `openspec validate --all --strict` -> `Totals: 28 passed, 0 failed`; check-change.sh not requested by the owner

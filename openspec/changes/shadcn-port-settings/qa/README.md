@@ -38,3 +38,12 @@ A fresh **`before-settings`** baseline was captured on the unported code (`supab
 | every other screen (home, rail, workspace, menus, teams, login, route states, admin, New Session, Batch Import) | 0–0.01% | 0% | untouched surfaces are unchanged |
 
 **Noted, not changed:** at 390 the Settings header's team/show row shows a native horizontal scrollbar behind open sheets. It is present in `before-settings` too, so it predates this change.
+
+## Owner review (task 4.2)
+
+The owner reviewed the pairs and did the dev-stack pass (2026-10-06): "looks good".
+- Settings tabs by keyboard;
+- Save arms on edit, and closing shows the discard confirm;
+- the AI Rules and options modals, including Needs context;
+- the colour picker;
+- Add show, then cancel.
