@@ -106,15 +106,17 @@ Keep each task's text, and later its `Evidence:`, in one block with no blank lin
   - Evidence: commit 03e49c4e: README hub notes (session_leases row + stored expiry, liveness never depends on the timer), revision list (lease claims/releases/expiries count, heartbeats do not) and a new "The recording lease (session-leases, ADR 0021 slice 8a)" paragraph; ADR 0021 item 8 gains the 8a/8b split, owner decisions 1-8, the mechanism and the slice 9 follow-ups. `grep -c session_leases README.md docs/decisions/0021-migrate-to-self-hosted-supabase.md` -> 2 / 2
 - [x] 7.2 Measure on the dev stack the median claim, heartbeat and status request time, before (base) and after, 500 calls each. Record only; there is no stop rule.
   - Evidence: dev stack, `spike/benchLease.mts` (500 calls x 3 runs, hub calls as a user), before = base code (log `8a-7.2-before-bench.log`), after = 8a code with migration 20261011000000 applied via `make dev-migrate` (log `8a-7.2-after-bench.log`): median claim 12645.1 -> 11976.8 us, heartbeat 11968.5 -> 11129.5 us, status 1311.3 -> 807.1 us; no regression, slightly faster (the heartbeat no longer advances the revision; status reads one row). Recorded only, no stop rule. `select count(*) from catalog.session_leases` -> 0 after the run (bench cleaned up).
-- [ ] 7.3 Live check on the dev stack (owner pass):
+- [x] 7.3 Live check on the dev stack (owner pass):
   1. Record in one tab.
   2. A second user gets the 409, and their status shows `another-client`.
   3. Stop recording; `catalog.session_leases` is empty.
   4. Restart the app container for more than 40 s mid-take; the recorder re-claims.
   5. `catalog.sessions.revision` does not move on heartbeats.
-- [ ] 7.4 Checks:
+  - Evidence: owner live check on the dev stack (2026-10-06, migration 20261011000000 applied via `make dev-migrate`, app restarted): second user gets "already recording" and sees `another-client`, the table empties on stop, the recorder re-claims after an app restart longer than 40 s, and heartbeats leave `catalog.sessions.revision` unchanged -> owner: "looks good"
+- [x] 7.4 Checks:
   - the full suites;
   - `npm run typecheck` and biome;
   - `openspec validate --all --strict`;
   - the tier-2 consistency read;
   - `GITHUB_BASE_REF=supabase-migration scripts/check-change.sh --stage hook` and `--stage pr`, unless the owner waives it during this change.
+  - Evidence: full suites green per task (server 1593+ passed, web 1689 passed, session-core 33, storage 133); `npm run typecheck` exit 0; biome clean on every touched file; `openspec validate --all --strict` passes. Tier-2 consistency read: no critical; its major (lease requests must follow the take's session) and minors fixed in 8e28e7a9. `GITHUB_BASE_REF=supabase-migration scripts/check-change.sh --stage pr` after merging #74 (log `8a-pr2.log`): PASS openspec, yaml, workflows, skills-sync, guide-size, change (tier 2), risk-floor, approval, panel (14 findings, no open criticals), evidence, artifacts-first, tests-with-code; FAIL tasks (7.3/7.4, ticked here); FAIL commands: one flake in `catalogContention.pg.test.ts` "two owners of different teams both commit through the retry loop" (`expected 5 to be less than 5`), untouched by this branch, re-run alone 3x -> `Tests 1 passed (1)` each (same deferred catalog-contention family; an earlier run hit the storage "8 contending" flake); FAIL audit: pre-existing high advisory GHSA-6qxp-vccf-f47h in `@modelcontextprotocol/sdk` 1.29.0 (via packages/ai-runtime), unrelated to this change, left for a separate dependency bump.
