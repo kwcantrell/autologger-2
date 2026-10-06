@@ -80,7 +80,7 @@
   - Add a parity case (R13): the inert trigger and the upgraded trigger have equal `className`, role, name, `aria-expanded` and `data-state`, and exactly one `svg` each.
   - Verify `lazyTypeSelect`, `BatchImportModal` (real options), `EventButtonsTable`, `EventLogRow`-based tests and `HomeSettingsModal`.
   - Evidence: test first: spy re-pointed to `../../../shared/components/ui/select` `Select` -> `expected 0 to be greater than 0` (4 spy-based cases fail while Select.tsx still used `@radix-ui/react-select`); parity case (className/role/name/aria-expanded/data-state/one svg) passes on the legacy pair and guards the rewrite. After Select on the shadcn primitive (re-exported `SELECT_TRIGGER_CLASSNAME`/`SELECT_ICON_CLASSNAME`/`SelectChevronIcon`) and LazySelect merging with `cn` -> lazyTypeSelect, BatchImportModal, EventButtonsTable, HomeSettingsModal, EventLogSheet*, ui: `Tests 149 passed (149)`; full `npx vitest run` -> `Test Files 121 passed (121) Tests 1512 passed (1512)`; lint/typecheck clean
-- [ ] 3.6 `shared/components/Toast.tsx` as a sonner facade with an unchanged API (D6).
+- [x] 3.6 `shared/components/Toast.tsx` as a sonner facade with an unchanged API (D6).
   - Test first: rewrite `Toast.test.tsx` against the sonner DOM:
     - a toast queued before the host mounts shows
     - `hideToast` removes the newest persistent toast and keeps an error toast
@@ -88,6 +88,7 @@
     - `toast.persistent` returns a number that `toast.dismiss` removes
     - a persistent toast created after other plain toasts isn't overwritten, and `hideToast` removes the right one (the panel's id-collision case)
   - Verify that test plus every suite that mocks `Toast` or `utils/toast` (they keep mocking the same module API).
+  - Evidence: test first: `Toast.test.tsx` rewritten against the sonner DOM (queued-before-mount, error `data-type`, hideToast newest persistent, no-op, persistent→dismiss number, id-collision case) -> `6 failed (6)` on the legacy store; after the sonner facade (sonner-returned ids mapped to facade numbers; onDismiss cleanup) -> `Tests 6 passed (6)`; full `npx vitest run` -> `Test Files 121 passed (121) Tests 1515 passed (1515)` (all Toast/utils-toast mocks unchanged); lint/typecheck clean
 
 ## 4. Cleanup
 
