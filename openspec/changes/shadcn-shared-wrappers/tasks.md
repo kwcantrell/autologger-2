@@ -2,7 +2,7 @@
 
 ## 1. Text prompt and guards
 
-- [ ] 1.1 `shared/ui/PromptDialog.tsx` exports `useTextPrompt()` (design D3b), built on the existing `Dialog` API. Switch `BatchImportModal.handleImportLogs` from `window.prompt` to it.
+- [x] 1.1 `shared/ui/PromptDialog.tsx` exports `useTextPrompt()` (design D3b), built on the existing `Dialog` API. Switch `BatchImportModal.handleImportLogs` from `window.prompt` to it.
   - Test first, `shared/ui/PromptDialog.test.tsx`:
     - `requestText` shows a named `dialog` with a labelled textbox
     - Submit and Enter resolve the typed string
@@ -11,11 +11,13 @@
     - unmounting resolves `null`
   - Rewrite `BatchImportModal.test.tsx`'s two `window.prompt` spies so they type the URL into the dialog and submit, then `await` the stored URL, since it now arrives after the promise resolves. They fail until the modal uses the hook.
   - Verify with `npx vitest run src/shared/ui/PromptDialog.test.tsx src/pages/index/components/BatchImportModal.test.tsx`.
-- [ ] 1.2 Test first: `web/src/noBrowserDialogs.repo.test.ts` (D7).
+  - Evidence: test first: `npx vitest run src/shared/ui/PromptDialog.test.tsx` -> `Failed to resolve import "./PromptDialog"`; rewritten BatchImportModal tests -> `× Import Logs prompts … × Start Import is enabled …` (2 failed); after `useTextPrompt` + BatchImportModal switch -> `Tests 19 passed (19)` (7 prompt + 12 BatchImportModal; `window.prompt` spy not called)
+- [x] 1.2 Test first: `web/src/noBrowserDialogs.repo.test.ts` (D7).
   - Fixtures that must be flagged: `window.confirm(`, `window.prompt(`, `prompt(`, and a bare `confirm(` in a file without `useConfirm`.
   - Fixtures that must not be flagged: comments, and a file with `const { confirm, confirmElement } = useConfirm()`.
   - The real tree must pass, which relies on 1.1.
   - Verify the fixture assertions fail before the detector exists, then pass: `npx vitest run src/noBrowserDialogs.repo.test.ts`.
+  - Evidence: test first: `npx vitest run src/noBrowserDialogs.repo.test.ts` -> `Cannot find module ./test/browserDialogCalls`; with the detector -> `Tests 4 passed (4)`; with the BatchImportModal fix stashed -> `+ "pages/index/components/BatchImportModal.tsx:106"`, `1 failed | 3 passed` (guard catches the old window.prompt)
 - [ ] 1.3 Test first: `web/src/shared/ui/overlayOpen.test.ts` (D4) covers an open `dialog`, `alertdialog` and `menu` (each true), and an empty document (false). It fails on the missing module. Then add `overlayOpen.ts`. Verify with `npx vitest run src/shared/ui/overlayOpen.test.ts`.
 - [ ] 1.4 Test first: add an `alertdialog` case to each handler test:
   - `CategoryButtonStrip.test.tsx` (digits)

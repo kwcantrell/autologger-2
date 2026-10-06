@@ -5,6 +5,7 @@ import { showAccessFrom } from '../../../api/hooks/useShowAccess';
 import type { ProfilePayload } from '../../../api/types';
 import { BTN_PRIMARY_SKY } from '../../../shared/theme/classnames';
 import { Dialog } from '../../../shared/ui/Dialog';
+import { useTextPrompt } from '../../../shared/ui/PromptDialog';
 import { type BatchImportProgressState, runBatchImport } from '../batchImport/runner';
 import { Select } from './Select';
 
@@ -69,6 +70,7 @@ export function BatchImportModal({ profile, onClose }: Props) {
   // show-grants D13: the picker lists the active team's shows the user can access.
   const shows = showAccessFrom(profile).accessibleShows(profile?.active_studio_id);
   const activeShowId = profile?.active_show_id ?? '';
+  const { requestText, promptElement } = useTextPrompt();
   const defaultShowId = shows.some((s) => s.id === activeShowId) ? activeShowId : '';
   const queryClient = useQueryClient();
 
@@ -102,8 +104,14 @@ export function BatchImportModal({ profile, onClose }: Props) {
     dirInputRef.current?.click();
   };
 
-  const handleImportLogs = () => {
-    const raw = window.prompt('Paste a public Google Sheets URL (anyone with the link can view):');
+  // Themed text prompt (shadcn-shared-wrappers D3b), not browser chrome.
+  const handleImportLogs = async () => {
+    const raw = await requestText({
+      title: 'Import logs',
+      label: 'Public Google Sheets URL (anyone with the link can view)',
+      placeholder: 'https://docs.google.com/spreadsheets/d/…',
+      submitLabel: 'Use URL',
+    });
     if (raw === null) return;
     const trimmed = raw.trim();
     setLogsUrl(trimmed || null);
@@ -330,6 +338,7 @@ export function BatchImportModal({ profile, onClose }: Props) {
           ) : null}
         </div>
       </div>
+      {promptElement}
     </Dialog>
   );
 }
