@@ -4,6 +4,12 @@ import { renderStrict, StrictWrapper } from '../../../test/renderStrict';
 import { useTranscriptWordsGate } from '../hooks/TranscriptWordsGateContext';
 import { SessionWorkspace } from './SessionWorkspace';
 
+// Radix Tabs activate on mouse-down (and on keyboard focus), not on click (shadcn-port-workspace
+// A1); `@testing-library/user-event` is not a dependency, so drive the real activation event.
+function clickTab(name: string | RegExp) {
+  fireEvent.mouseDown(screen.getByRole('tab', { name }), { button: 0 });
+}
+
 // --- SessionWorkspace tests (mounted-hidden tab discipline) ---
 //
 // SessionWorkspace only ever mounts with a session id now (design D10,
@@ -159,6 +165,35 @@ function isHidden(el: Element | null): boolean {
 }
 
 describe('SessionWorkspace tab restructure', () => {
+  it('feed tabs: arrow keys move activation, tabs control their panels, inactive panels are hidden', async () => {
+    renderStrict(<SessionWorkspace sessionId="sess-1" />);
+    const tabs = within(screen.getByRole('tablist', { name: 'Feed tabs' })).getAllByRole('tab');
+    // Every tab is linked to its (mounted) panel; exactly one panel is visible.
+    for (const tab of tabs) {
+      const panel = document.getElementById(tab.getAttribute('aria-controls') ?? '');
+      expect(panel?.getAttribute('role')).toBe('tabpanel');
+      expect(panel?.hasAttribute('hidden')).toBe(tab.getAttribute('aria-selected') !== 'true');
+    }
+    const eventPanel = screen.getByTestId('event-log-sheet-stub').closest('[role="tabpanel"]');
+    const first = screen.getByRole('tab', { name: 'Event Feed' });
+    first.focus();
+    fireEvent.keyDown(first, { key: 'ArrowRight' });
+    await waitFor(() =>
+      expect(screen.getByRole('tab', { name: 'Transcript' }).getAttribute('aria-selected')).toBe(
+        'true',
+      ),
+    );
+    expect(document.activeElement).toBe(screen.getByRole('tab', { name: 'Transcript' }));
+    expect(isHidden(screen.getByTestId('transcribe-feed-stub').closest('[role="tabpanel"]'))).toBe(
+      false,
+    );
+    // Same node, now hidden: switching never unmounts a panel.
+    expect(screen.getByTestId('event-log-sheet-stub').closest('[role="tabpanel"]')).toBe(
+      eventPanel,
+    );
+    expect(isHidden(eventPanel)).toBe(true);
+  });
+
   it('renders the six top-level tabs and defaults to Event Feed', () => {
     renderStrict(<SessionWorkspace sessionId="sess-1" />);
 
@@ -186,7 +221,7 @@ describe('SessionWorkspace tab restructure', () => {
   it('opening Assistant shows the chat, with Transcript/Topics mounted-hidden beside it', () => {
     renderStrict(<SessionWorkspace sessionId="sess-1" />);
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Assistant' }));
+    clickTab('Assistant');
 
     expect(screen.getByRole('tab', { name: 'Assistant' }).getAttribute('aria-selected')).toBe(
       'true',
@@ -204,15 +239,15 @@ describe('SessionWorkspace tab restructure', () => {
 
   it('feed presence: switching to the Transcript/Topics tabs reveals the unchanged feeds', () => {
     renderStrict(<SessionWorkspace sessionId="sess-1" />);
-    fireEvent.click(screen.getByRole('tab', { name: 'Assistant' }));
+    clickTab('Assistant');
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Transcript' }));
+    clickTab('Transcript');
     expect(isHidden(screen.getByTestId('transcribe-feed-stub').closest('[role="tabpanel"]'))).toBe(
       false,
     );
     expect(isHidden(screen.getByTestId('ai-chat-panel').closest('[role="tabpanel"]'))).toBe(true);
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Topics' }));
+    clickTab('Topics');
     expect(isHidden(screen.getByTestId('topics-feed-stub').closest('[role="tabpanel"]'))).toBe(
       false,
     );
@@ -232,20 +267,20 @@ describe('SessionWorkspace tab restructure', () => {
   // shape, which is the one the spec requires.
   it('keeps the same Chat DOM node mounted across data-tab switches (no unmount)', () => {
     const { container } = renderStrict(<SessionWorkspace sessionId="sess-1" />);
-    fireEvent.click(screen.getByRole('tab', { name: 'Assistant' }));
+    clickTab('Assistant');
 
     const chatNodeOnChat = container.querySelector('[data-testid="ai-chat-panel"]');
     expect(chatNodeOnChat).not.toBeNull();
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Topics' }));
+    clickTab('Topics');
     const chatNodeOnTopics = container.querySelector('[data-testid="ai-chat-panel"]');
     expect(chatNodeOnTopics).toBe(chatNodeOnChat); // same node object => never unmounted
     expect(isHidden(chatNodeOnTopics?.closest('[role="tabpanel"]') ?? null)).toBe(true);
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Transcript' }));
+    clickTab('Transcript');
     expect(container.querySelector('[data-testid="ai-chat-panel"]')).toBe(chatNodeOnChat);
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Assistant' }));
+    clickTab('Assistant');
     const chatNodeBack = container.querySelector('[data-testid="ai-chat-panel"]');
     expect(chatNodeBack).toBe(chatNodeOnChat);
     expect(isHidden(chatNodeBack?.closest('[role="tabpanel"]') ?? null)).toBe(false);
@@ -256,17 +291,17 @@ describe('SessionWorkspace tab restructure', () => {
   // and back, not just switching among the other tabs.
   it('keeps the same Chat DOM node mounted across the Event Feed <-> Assistant switch', () => {
     const { container } = renderStrict(<SessionWorkspace sessionId="sess-1" />);
-    fireEvent.click(screen.getByRole('tab', { name: 'Assistant' }));
+    clickTab('Assistant');
     const chatNode = container.querySelector('[data-testid="ai-chat-panel"]');
     expect(chatNode).not.toBeNull();
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Event Feed' }));
+    clickTab('Event Feed');
     expect(container.querySelector('[data-testid="ai-chat-panel"]')).toBe(chatNode);
     expect(isHidden(screen.getByTestId('event-log-sheet-stub').closest('[role="tabpanel"]'))).toBe(
       false,
     );
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Assistant' }));
+    clickTab('Assistant');
     const chatNodeReturned = container.querySelector('[data-testid="ai-chat-panel"]');
     expect(chatNodeReturned).toBe(chatNode);
     expect(isHidden(chatNodeReturned?.closest('[role="tabpanel"]') ?? null)).toBe(false);
@@ -308,24 +343,24 @@ describe('SessionWorkspace deferred transcript-words gate', () => {
     expect(transcriptWordsSpy).toHaveBeenCalled();
     expect(transcriptWordsSpy.mock.calls.every(([, opts]) => opts?.enabled === false)).toBe(true);
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Transcript' }));
+    clickTab('Transcript');
     expect(gateOnStub()).toBe('true');
     expect(transcriptWordsSpy).toHaveBeenCalledWith('sess-1', { enabled: true });
 
     // Sticky: leaving the tab must not cancel/re-issue the fetch.
-    fireEvent.click(screen.getByRole('tab', { name: 'Event Feed' }));
+    clickTab('Event Feed');
     expect(gateOnStub()).toBe('true');
 
     // Topics and Export are words-dependent too; Assistant/Dashboards are not,
     // but the latch is one-way so they cannot shut it either.
-    fireEvent.click(screen.getByRole('tab', { name: 'Assistant' }));
+    clickTab('Assistant');
     expect(gateOnStub()).toBe('true');
   });
 
   it.each([['Topics'], ['Export']])('opens on first activation of the %s tab', (tabName) => {
     renderStrict(<SessionWorkspace sessionId="sess-1" />);
     expect(gateOnStub()).toBe('false');
-    fireEvent.click(screen.getByRole('tab', { name: tabName }));
+    clickTab(tabName);
     expect(gateOnStub()).toBe('true');
   });
 
@@ -340,8 +375,8 @@ describe('SessionWorkspace deferred transcript-words gate', () => {
   // regardless of the reset.
   it('resets the latch when the session changes without a remount', () => {
     const { rerender } = renderStrict(<SessionWorkspace sessionId="sess-a" />);
-    fireEvent.click(screen.getByRole('tab', { name: 'Transcript' }));
-    fireEvent.click(screen.getByRole('tab', { name: 'Event Feed' }));
+    clickTab('Transcript');
+    clickTab('Event Feed');
     expect(gateOnStub()).toBe('true');
 
     rerender(
@@ -358,7 +393,7 @@ describe('SessionWorkspace deferred transcript-words gate', () => {
   // is active, so the words really are needed.
   it('re-opens immediately for the next session when a words tab is still selected', () => {
     const { rerender } = renderStrict(<SessionWorkspace sessionId="sess-a" />);
-    fireEvent.click(screen.getByRole('tab', { name: 'Transcript' }));
+    clickTab('Transcript');
     expect(gateOnStub()).toBe('true');
 
     rerender(
@@ -419,13 +454,13 @@ describe('SessionWorkspace deferred transcript-words gate', () => {
       expect(wordsEverEnabled()).toBe(false);
 
       // Showing the tab is what needs the payload.
-      fireEvent.click(screen.getByRole('tab', { name: 'Dashboards' }));
+      clickTab('Dashboards');
       expect(wordsEverEnabled()).toBe(true);
 
       // Sticky: leaving the tab must not cancel/re-issue the fetch. (The tab
       // latch itself stays shut — Dashboards is not a words-dependent TAB.)
       transcriptWordsSpy.mockClear();
-      fireEvent.click(screen.getByRole('tab', { name: 'Event Feed' }));
+      clickTab('Event Feed');
       expect(gateOnStub()).toBe('false');
       expect(transcriptWordsSpy.mock.calls.every(([, opts]) => opts?.enabled === true)).toBe(true);
 
@@ -451,7 +486,7 @@ describe('SessionWorkspace deferred transcript-words gate', () => {
       renderStrict(<SessionWorkspace sessionId="sess-a" />);
       await waitFor(() => expect(screen.getByTestId('aiv2-dashboard-grid')).toBeTruthy());
 
-      fireEvent.click(screen.getByRole('tab', { name: 'Dashboards' }));
+      clickTab('Dashboards');
       expect(gateOnStub()).toBe('false');
       expect(wordsEverEnabled()).toBe(false);
     } finally {
@@ -467,7 +502,7 @@ describe('SessionWorkspace Dashboards (AI v2) tab', () => {
     expect(screen.getByRole('tab', { name: 'Dashboards' }).getAttribute('aria-selected')).toBe(
       'false',
     );
-    fireEvent.click(screen.getByRole('tab', { name: 'Dashboards' }));
+    clickTab('Dashboards');
     expect(screen.getByRole('tab', { name: 'Dashboards' }).getAttribute('aria-selected')).toBe(
       'true',
     );
@@ -481,18 +516,18 @@ describe('SessionWorkspace Dashboards (AI v2) tab', () => {
   // mounted-hidden implementation.
   it('keeps the same Dashboards design-rail DOM node mounted across tab switches (no unmount)', () => {
     const { container } = renderStrict(<SessionWorkspace sessionId="sess-1" />);
-    fireEvent.click(screen.getByRole('tab', { name: 'Dashboards' }));
+    clickTab('Dashboards');
     const railNode = container.querySelector('[data-testid="aiv2-design-rail"]');
     expect(railNode).not.toBeNull();
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Event Feed' }));
+    clickTab('Event Feed');
     expect(container.querySelector('[data-testid="aiv2-design-rail"]')).toBe(railNode);
     expect(isHidden(railNode?.closest('[role="tabpanel"]') ?? null)).toBe(true);
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Assistant' }));
+    clickTab('Assistant');
     expect(container.querySelector('[data-testid="aiv2-design-rail"]')).toBe(railNode);
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Dashboards' }));
+    clickTab('Dashboards');
     expect(container.querySelector('[data-testid="aiv2-design-rail"]')).toBe(railNode);
     expect(isHidden(railNode?.closest('[role="tabpanel"]') ?? null)).toBe(false);
   });
@@ -570,7 +605,7 @@ describe('SessionWorkspace Dashboards (AI v2) tab', () => {
       };
 
       renderStrict(<SessionWorkspace sessionId="sess-1" />);
-      fireEvent.click(screen.getByRole('tab', { name: 'Dashboards' }));
+      clickTab('Dashboards');
 
       const textarea = screen.getByPlaceholderText(/ask for a starting dashboard/i);
       fireEvent.change(textarea, { target: { value: 'Give me an overview' } });
@@ -581,11 +616,11 @@ describe('SessionWorkspace Dashboards (AI v2) tab', () => {
       expect(capturedSignal?.aborted).toBe(false);
 
       // Switch away mid-stream.
-      fireEvent.click(screen.getByRole('tab', { name: 'Event Feed' }));
+      clickTab('Event Feed');
       expect(capturedSignal?.aborted).toBe(false);
 
       // Switch back: conversation intact, not reset to empty.
-      fireEvent.click(screen.getByRole('tab', { name: 'Dashboards' }));
+      clickTab('Dashboards');
       expect(screen.getByText('Give me an overview')).toBeTruthy();
       expect(screen.getByText('Built an overview.')).toBeTruthy();
 
@@ -659,7 +694,7 @@ describe('SessionWorkspace Dashboards (AI v2) tab', () => {
     );
     try {
       const { rerender } = renderStrict(<SessionWorkspace sessionId="sess-a" />);
-      fireEvent.click(screen.getByRole('tab', { name: 'Dashboards' }));
+      clickTab('Dashboards');
 
       const textarea = screen.getByPlaceholderText(/ask for a starting dashboard/i);
       fireEvent.change(textarea, { target: { value: 'Give me an overview' } });

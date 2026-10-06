@@ -1,5 +1,4 @@
 import { useQueryClient } from '@tanstack/react-query';
-import clsx from 'clsx';
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { apiFetch } from '../../../api/client';
 import { useCompanionPresence } from '../../../api/hooks/useCompanionPresence';
@@ -8,6 +7,7 @@ import { useSessionSocket } from '../../../api/hooks/useSessionSocket';
 import { useSessionStatus } from '../../../api/hooks/useSessionStatus';
 import type { CompanionCommandType } from '../../../api/types';
 import { showToast } from '../../../shared/components/Toast';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../../shared/components/ui/tabs';
 import { useDebugTransportOverride } from '../../../shared/hooks/useDebugTransportOverride';
 import { ConfirmDialog } from '../../../shared/ui/ConfirmDialog';
 import { isOverlayOpen } from '../../../shared/ui/overlayOpen';
@@ -30,7 +30,6 @@ import { AudioSaveOverlay } from './AudioSaveOverlay';
 import { ChunkRescueBanner } from './ChunkRescueBanner';
 import { EventLogSheet } from './EventLogSheet';
 import { ExportFeed } from './ExportFeed';
-import { feedTabButtonClassName } from './feedTabStyles';
 import { MaximizeLogStrip } from './MaximizeLogStrip';
 import { isTypingTarget, ShortcutsDialog } from './ShortcutsDialog';
 import { TopicsFeed } from './TopicsFeed';
@@ -524,31 +523,23 @@ export function SessionWorkspace({ sessionId, ytImportPending, onOpenMobileNav }
                   // v5FeedTabsPanel literal retained: the sheet-corner-flatten rule
                   // (reaches into FeedShell's `.v4-log-sheet.v5-event-feed`) is an
                   // @layer components rule scoped by this ancestor class.
-                  <div className="v5FeedTabsPanel flex flex-col flex-[1_1_0] min-h-0">
+                  // shadcn Tabs (shadcn-port-workspace D2), controlled by `feedTab`. Radix adds
+                  // arrow/Home/End keys (automatic activation) and tab↔panel id linking.
+                  <Tabs
+                    value={feedTab}
+                    onValueChange={(v) => setFeedTab(v as FeedTabId)}
+                    className="v5FeedTabsPanel flex-[1_1_0] min-h-0"
+                  >
                     {/* Tabs share the sheet's mx-4 edge — no extra pad — so the lid
                         aligns with the feed container. */}
                     <div className="relative z-0 mx-4 flex shrink-0 items-end pt-[0.3rem] max-md:overflow-x-auto max-md:overflow-y-hidden max-md:[-webkit-overflow-scrolling:touch] max-md:[scrollbar-width:none]">
-                      <div
-                        className="flex min-w-0 flex-1 flex-nowrap items-end gap-[0.12rem]"
-                        role="tablist"
-                        aria-label="Feed tabs"
-                      >
-                        {FEED_TABS.map((tab) => {
-                          const active = feedTab === tab.id;
-                          return (
-                            <button
-                              key={tab.id}
-                              type="button"
-                              role="tab"
-                              aria-selected={active}
-                              className={feedTabButtonClassName(active)}
-                              onClick={() => setFeedTab(tab.id)}
-                            >
-                              {tab.label}
-                            </button>
-                          );
-                        })}
-                      </div>
+                      <TabsList aria-label="Feed tabs">
+                        {FEED_TABS.map((tab) => (
+                          <TabsTrigger key={tab.id} value={tab.id}>
+                            {tab.label}
+                          </TabsTrigger>
+                        ))}
+                      </TabsList>
                     </div>
                     {/* All six top-level panels stay mounted (hidden via the
                       `hidden` attribute) — memoized above, so mounted no longer
@@ -559,24 +550,25 @@ export function SessionWorkspace({ sessionId, ytImportPending, onOpenMobileNav }
                       workspace" — a conditional mount here would abort an
                       in-flight turn per the subprocess lifecycle rule).
                       Transcript/Topics/Export inherit the same discipline so their
-                      fetch state stays warm across switches. */}
+                      fetch state stays warm across switches.
+                      `forceMount` keeps every panel mounted; Radix then computes
+                      `hidden={false}` for all of them, so the explicit `hidden`
+                      (spread after Radix's) restores the attribute. */}
                     {FEED_TABS.map((tab) => (
-                      <div
+                      <TabsContent
                         key={tab.id}
-                        className={clsx(
-                          // Stack above the tablist so tabs tuck behind the feed
-                          // sheet edge (tablist is z-0; sheet CSS also uses z-1).
-                          'relative z-[1] flex flex-col flex-1 min-h-0',
-                          feedTab !== tab.id && 'hidden',
-                        )}
+                        value={tab.id}
+                        forceMount
                         hidden={feedTab !== tab.id}
-                        role="tabpanel"
                         aria-label={tab.label}
+                        // Stack above the tablist so tabs tuck behind the feed
+                        // sheet edge (tablist is z-0; sheet CSS also uses z-1).
+                        className="relative z-[1] flex flex-col flex-1 min-h-0"
                       >
                         {feedPanels[tab.id]}
-                      </div>
+                      </TabsContent>
                     ))}
-                  </div>
+                  </Tabs>
                 )}
               </section>
             </div>

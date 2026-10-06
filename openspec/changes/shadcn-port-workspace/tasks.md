@@ -39,7 +39,7 @@
 
 ## 2. Feed tabs
 
-- [ ] 2.1 Port SessionWorkspace's tablist to controlled `Tabs`, with `forceMount` plus an explicit `hidden` on each `TabsContent` (D2).
+- [x] 2.1 Port SessionWorkspace's tablist to controlled `Tabs`, with `forceMount` plus an explicit `hidden` on each `TabsContent` (D2).
   - Test first, in `SessionWorkspace.test.tsx` and `SessionWorkspace.audioClipsSeam.test.tsx`:
     - tab switches move from `fireEvent.click` to `fireEvent.mouseDown(tab, { button: 0 })`, through one shared helper;
     - new cases:
@@ -48,6 +48,7 @@
       - inactive panels have the `hidden` attribute;
       - panel nodes keep their identity (`toBe`) across switches.
   - Verify: `npx vitest run src/pages/index/components/SessionWorkspace*` passes, including the words-gate and Dashboards cases.
+  - Evidence: test first: 31 tab switches moved to a clickTab helper (fireEvent.mouseDown button 0) + new "feed tabs: arrow keys move activation, tabs control their panels, inactive panels are hidden" (aria-controls -> tabpanel, hidden iff unselected, ArrowRight activates+focuses Transcript, event panel same node and hidden) -> on the hand-built tablist `16 failed | 17 passed (33)`; after controlled Tabs/TabsList aria-label "Feed tabs"/TabsTrigger + TabsContent forceMount with explicit hidden, panels still the sessionId-memoised feedPanels -> `npx vitest run src/pages/index/components/SessionWorkspace` `Tests 33 passed (33)`; full `npx vitest run` `Test Files 122 passed (122) Tests 1540 passed (1540)`; tsc clean
 
 ## 3. Tables, scrolling and OverlayScrollbars removal
 
