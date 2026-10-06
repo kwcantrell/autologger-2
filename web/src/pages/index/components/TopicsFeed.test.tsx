@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError, apiFetch } from '../../../api/client';
 import type { SessionStatus, SessionTopic } from '../../../api/types';
@@ -271,6 +271,28 @@ describe('TopicsFeed version conflicts (task 7.2)', () => {
       { summary: 'Mine', version: 1 },
     ]);
     expect(serverTopics[0].summary).toBe('Theirs');
+  });
+
+  it('an Overwrite that pulled in a sibling change, then a blur of that untouched sibling: nothing stale is sent', async () => {
+    renderFeed();
+    const summary = await screen.findByDisplayValue('A summary');
+    const time = within(summary.closest('tr') as HTMLElement).getByDisplayValue('00:00:10:00');
+    otherPersonEditsTopic('topic-1', { duration_sec: 99 });
+    fireEvent.focus(summary);
+    fireEvent.change(summary, { target: { value: 'Mine' } });
+    // A sibling holds unsaved text, so the row keeps its edit through the save.
+    fireEvent.focus(time);
+    fireEvent.change(time, { target: { value: '00:09:09:00' } });
+    await blurTopicField(summary);
+    await chooseTopic('Overwrite');
+    await waitFor(() => expect(serverTopics[0].summary).toBe('Mine'));
+
+    const duration = await screen.findByDisplayValue('99');
+    fireEvent.focus(duration);
+    await blurTopicField(duration);
+
+    expect(topicPatches.filter((p) => 'duration_sec' in p.body)).toEqual([]);
+    expect(serverTopics[0].duration_sec).toBe(99);
   });
 
   it('a server error shows a toast and keeps the edit', async () => {

@@ -37,16 +37,66 @@ export function createRowHolds(): RowHolds {
   };
 }
 
-/** A feed's seeds and the holds that freeze them, handed to each row as one stable prop. */
+/** A feed's seeds and the holds that freeze them, handed to each row as one stable prop.
+ *
+ *  The store notifies per row: a row renders its untouched controls from its CURRENT seed
+ *  (never a snapshot frozen into row state), so when the feed rebases a seed after a save,
+ *  every mounted copy of that row, including one virtualization rebuilt mid-save, re-renders
+ *  with the saved row's text. A control frozen at the old seed's text would otherwise be sent
+ *  on its next blur against the newer base: a silent revert. */
 export interface RowSeeds<TRow extends { version: number }> {
   store: SeedStore<TRow>;
   holds: RowHolds;
+  /** Calls `onChange` whenever row `id`'s seed changes; returns the unsubscribe. */
+  subscribe: (id: string, onChange: () => void) => () => void;
 }
 
-/** One pair per mounted owner, with an identity stable for its lifetime (rows are `memo`). */
+export function createRowSeeds<TRow extends { version: number }>(): RowSeeds<TRow> {
+  const inner = createSeedStore<TRow>();
+  const listeners = new Map<string, Set<() => void>>();
+  const notify = (id: string) => {
+    for (const l of [...(listeners.get(id) ?? [])]) l();
+  };
+  const store: SeedStore<TRow> = {
+    get: inner.get,
+    set: (id, seed) => {
+      if (inner.get(id) === seed) return;
+      inner.set(id, seed);
+      notify(id);
+    },
+    delete: (id) => {
+      if (inner.get(id) === undefined) return;
+      inner.delete(id);
+      notify(id);
+    },
+    clearAll: () => {
+      inner.clearAll();
+      for (const id of [...listeners.keys()]) notify(id);
+    },
+  };
+  return {
+    store,
+    holds: createRowHolds(),
+    subscribe: (id, onChange) => {
+      let set = listeners.get(id);
+      if (!set) {
+        set = new Set();
+        listeners.set(id, set);
+      }
+      set.add(onChange);
+      return () => {
+        const s = listeners.get(id);
+        if (!s) return;
+        s.delete(onChange);
+        if (s.size === 0) listeners.delete(id);
+      };
+    },
+  };
+}
+
+/** One per mounted owner, with an identity stable for its lifetime (rows are `memo`). */
 export function useRowSeeds<TRow extends { version: number }>(): RowSeeds<TRow> {
   const ref = useRef<RowSeeds<TRow> | null>(null);
-  if (ref.current === null)
-    ref.current = { store: createSeedStore<TRow>(), holds: createRowHolds() };
+  if (ref.current === null) ref.current = createRowSeeds<TRow>();
   return ref.current;
 }

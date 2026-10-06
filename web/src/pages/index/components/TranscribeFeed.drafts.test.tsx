@@ -521,6 +521,43 @@ describe('TranscribeFeed version conflicts (task 7.1)', () => {
     expect(serverWords[0].speaker).toBe('5');
   });
 
+  it('a row remounted while an Overwrite is in flight shows the saved sibling, and its blur sends nothing stale', async () => {
+    await mountWindow();
+    otherPersonEdits(0, { speaker: '5' });
+    const { word } = rowInputs('word-0');
+    fireEvent.focus(word);
+    fireEvent.change(word, { target: { value: 'mine' } });
+    await blurAndSettle(word);
+    await screen.findByRole('alertdialog');
+
+    // Hold the Overwrite in flight, and let virtualization drop and rebuild the row meanwhile.
+    let release!: () => void;
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
+    patchGate = () => held;
+    await choose('Overwrite');
+    expect(patchBodies).toHaveLength(2);
+    scrollWindowTo(10, 13);
+    scrollWindowTo(0, 3);
+    patchGate = null;
+    await act(async () => {
+      release();
+    });
+    await waitFor(() => expect(serverWords[0].word).toBe('mine'));
+    await act(async () => {});
+
+    // The remounted copy's untouched speaker shows the saved row (Person 6), not the
+    // pre-conflict text, so leaving it sends nothing.
+    const { speaker } = rowInputs('mine');
+    await waitFor(() => expect(speaker.value).toBe('Person 6'));
+    fireEvent.focus(speaker);
+    await blurAndSettle(speaker);
+
+    expect(patchBodies.filter((b) => 'speaker' in b)).toEqual([]);
+    expect(serverWords[0].speaker).toBe('5');
+  });
+
   it('Keep theirs lists every field that holds operator text', async () => {
     await mountWindow();
     otherPersonEdits(0, { word: 'theirs-word' });

@@ -1,5 +1,5 @@
 import clsx from 'clsx';
-import { memo, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { TranscriptWord } from '../../../api/types';
 import { TableCell, TableRow } from '../../../shared/components/ui/table';
 import type { SaveOutcome } from '../../../shared/hooks/useVersionedSave';
@@ -45,31 +45,23 @@ export type TranscribeDraftStore = DraftStore<TranscribeDraft>;
 
 type EditField = keyof TranscribeDraft;
 
-/** A row's whole edit: every control's raw text. */
-type TranscribeEdit = Required<TranscribeDraft>;
-
-function editOf(w: TranscriptWord): TranscribeEdit {
-  return { session_time: w.session_time, speaker: w.speaker, word: w.word };
-}
-
-/** The D4 three-way rebase of a settled save: a control still showing the old seed's text is
- *  refilled from the response row; a control holding other text (the operator's) keeps it. */
-function rebaseEdit(
-  edit: TranscribeEdit,
-  oldSeed: TranscriptWord,
-  saved: TranscriptWord,
-): TranscribeEdit {
-  const next = { ...edit };
+/** The edit with the fields that no longer diverge from `seed` removed. */
+function divergent(edit: TranscribeDraft, seed: TranscriptWord): TranscribeDraft {
+  const next: TranscribeDraft = {};
   for (const f of TRANSCRIBE_DRAFT_FIELDS) {
-    if (edit[f] === oldSeed[f]) next[f] = saved[f];
+    const v = edit[f];
+    if (v !== undefined && v !== seed[f]) next[f] = v;
   }
   return next;
 }
 
+const isEmpty = (d: TranscribeDraft) => TRANSCRIBE_DRAFT_FIELDS.every((f) => d[f] === undefined);
+
 export type WordSaveOutcome = SaveOutcome<TranscriptWord, TranscriptWord>;
 
 /** Saves one field. `TranscribeFeed` resolves the outcome of its versioned save (`undefined`
- *  after a failure it has already reported); the row rebases its controls on `saved`. */
+ *  after a failure it has already reported). The row needs no step of its own on the outcome:
+ *  the feed rebases the seed and the draft, and the row renders from both. */
 type UpdateFn = (
   wordId: string,
   patch: { session_time?: string; speaker?: string; word?: string },
@@ -168,27 +160,61 @@ export const TranscribeRow = memo(function TranscribeRow({
   jumpReasonId,
 }: Props) {
   const ownSeeds = useRowSeeds<TranscriptWord>();
-  const { store: seeds, holds } = feedSeeds ?? ownSeeds;
+  const rowSeeds = feedSeeds ?? ownSeeds;
+  const { store: seeds, holds } = rowSeeds;
   const trRef = useRef<HTMLTableRowElement>(null);
-  // Seeded from the feed-owned store, so a row remounting after the virtualizer
-  // dropped it comes back holding what was typed into it rather than the server
-  // text. The controls it did not touch show its SEED (the row the draft was
-  // typed over), not the live row. `null` = no edit: the controls show the row.
-  const [edit, setEdit] = useState<TranscribeEdit | null>(() => {
-    const draft = drafts.read(row.id);
-    return draft ? { ...editOf(seeds.get(row.id) ?? row), ...draft } : null;
-  });
+
+  // The row's CURRENT seed (session-edit-conflicts D3/D4), re-read whenever the
+  // feed changes it. Untouched controls render from it while the row has an
+  // edit, so every mounted copy, including one the virtualizer rebuilt while a
+  // save was in flight, shows the saved row once the feed rebases the seed. A
+  // snapshot of the seed frozen into row state would keep the old text, and a
+  // later blur would send it against the newer base: a silent revert.
+  const subscribeSeed = useCallback(
+    (onChange: () => void) => rowSeeds.subscribe(row.id, onChange),
+    [rowSeeds, row.id],
+  );
+  const readSeed = useCallback(() => rowSeeds.store.get(row.id), [rowSeeds, row.id]);
+  const seed = useSyncExternalStore(subscribeSeed, readSeed, readSeed);
+
+  // Only the fields the operator changed (diverging from the seed); `null` = no
+  // edit, the controls show the row. Seeded from the feed-owned draft store, so
+  // a row remounting after the virtualizer dropped it comes back holding what
+  // was typed into it rather than the server text.
+  const [edit, setEdit] = useState<TranscribeDraft | null>(() => drafts.read(row.id) ?? null);
 
   // While this row has an edit its seed is frozen (session-edit-conflicts D3): the feed's
   // follow rule skips held rows.
   const editing = edit !== null;
   useEffect(() => (editing ? holds.hold(row.id) : undefined), [editing, holds, row.id]);
 
+  function focusIn(target: EventTarget | null): boolean {
+    return target instanceof Node && trRef.current?.contains(target) === true;
+  }
+
+  // D4 three-way rebase, in every mounted copy: when the seed moves (a settled
+  // save), a field still reading as the old seed is not the operator's text and
+  // now shows the new seed; a field already reading as the new seed is spent.
+  // An edit left with nothing, no draft and no focus releases the row.
+  const prevSeedRef = useRef(seed);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: runs on a seed change only
+  useEffect(() => {
+    const prev = prevSeedRef.current;
+    prevSeedRef.current = seed;
+    if (!prev || !seed || prev === seed) return;
+    const stay = typeof document !== 'undefined' && focusIn(document.activeElement);
+    setEdit((p) => {
+      if (!p) return p;
+      const next = divergent(divergent(p, prev), seed);
+      return isEmpty(next) && !stay && drafts.read(row.id) === undefined ? null : next;
+    });
+  }, [seed]);
+
   /** The seed this row's controls were filled from. Every row the feed shows has one; a row
    *  without (rendered on its own) takes the row it shows. */
   function seedOf(): TranscriptWord {
-    const seed = seeds.get(row.id);
-    if (seed) return seed;
+    const current = seeds.get(row.id);
+    if (current) return current;
     seeds.set(row.id, row);
     return row;
   }
@@ -196,18 +222,11 @@ export const TranscribeRow = memo(function TranscribeRow({
   function startEdit() {
     // Preserve an edit already in progress (a restored draft, another field of
     // this row typed a moment ago, or text a dismissed conflict kept). Only a
-    // row with nothing to preserve fills its edit from the row it shows, and
-    // that row becomes its seed (D3: editing starts, the seed freezes).
+    // row with nothing to preserve starts one, and the row it shows becomes its
+    // seed (D3: editing starts, the seed freezes).
     if (edit !== null) return;
     seeds.set(row.id, row);
-    setEdit(editOf(row));
-  }
-
-  /** No edit, no draft and focus has left the row: the controls follow the server again. */
-  function releaseIfIdle(focusNext: EventTarget | null) {
-    if (drafts.read(row.id) !== undefined) return;
-    if (focusNext instanceof Node && trRef.current?.contains(focusNext)) return;
-    setEdit(null);
+    setEdit({});
   }
 
   // --- Value-space invariant ---
@@ -248,8 +267,8 @@ export const TranscribeRow = memo(function TranscribeRow({
    *  what survives this row's next unmount. Takes RAW text (see the invariant
    *  above). */
   function changeField(field: EditField, value: string) {
-    const base = edit ?? editOf(seedOf());
-    setEdit((prev) => ({ ...(prev ?? base), [field]: value }));
+    if (edit === null) seeds.set(row.id, row);
+    setEdit((prev) => ({ ...(prev ?? {}), [field]: value }));
     drafts.write(row.id, { [field]: value });
   }
 
@@ -271,35 +290,42 @@ export const TranscribeRow = memo(function TranscribeRow({
   // sent the old text back over theirs.
   function commitField(field: EditField, value: string, focusNext: EventTarget | null) {
     if (!edit) return;
-    setEdit((p) => (p ? { ...p, [field]: value } : p));
-    const seed = seedOf();
-    if (value === seed[field]) {
+    const current = seedOf();
+    if (value === current[field]) {
       // Nothing to commit for this field: its text is already exactly what the
       // controls were filled from, so its draft entry is spent. This clear
       // covers THIS field only — a sibling field's uncommitted text is outside
-      // what the blur speaks for and stays alive.
+      // what the blur speaks for and stays alive. With nothing left, no draft
+      // and focus gone from the row, the edit ends.
       drafts.clearMatching(row.id, { [field]: value }, [field]);
-      releaseIfIdle(focusNext);
+      const leaving = !focusIn(focusNext);
+      setEdit((p) => {
+        if (!p) return p;
+        const { [field]: _spent, ...rest } = p;
+        return isEmpty(rest) && leaving && drafts.read(row.id) === undefined ? null : rest;
+      });
       return;
     }
-    const pending = onUpdate(row.id, { [field]: value });
-    if (!pending) return;
-    void pending.then((outcome) => {
-      if (outcome?.kind !== 'saved') return;
-      // D4: controls still showing the old seed's text take the saved row's
-      // (an Overwrite may have brought in another person's sibling fields).
-      setEdit((p) => (p ? rebaseEdit(p, seed, outcome.result) : p));
-      if (typeof document !== 'undefined') releaseIfIdle(document.activeElement);
-    });
+    setEdit((p) => (p ? { ...p, [field]: value } : p));
+    onUpdate(row.id, { [field]: value });
   }
+
+  // What the controls were filled from: the seed while editing, else the row.
+  const base = edit ? (seed ?? row) : row;
 
   // The speaker control's pinned committed identity (see `speakerFromInput`):
-  // the text the control was filled from, so the seed's while editing.
+  // the text the control was filled from.
   function speakerPin(): string {
-    return edit ? seedOf().speaker : row.speaker;
+    return base.speaker;
   }
 
-  const vals = edit ?? editOf(row);
+  // `??` per field: an edit carries only the fields the operator changed, and
+  // an empty string is a real edited value.
+  const vals = {
+    session_time: edit?.session_time ?? base.session_time,
+    speaker: edit?.speaker ?? base.speaker,
+    word: edit?.word ?? base.word,
+  };
   const jumpTarget = resolveTranscribeJump(row, fps);
 
   return (

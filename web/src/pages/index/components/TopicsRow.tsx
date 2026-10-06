@@ -1,5 +1,12 @@
 import clsx from 'clsx';
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react';
 import type { SessionTopic } from '../../../api/types';
 import { TableCell, TableRow } from '../../../shared/components/ui/table';
 import type { SaveOutcome } from '../../../shared/hooks/useVersionedSave';
@@ -71,16 +78,17 @@ function sameAs(field: keyof EditState, value: string, t: SessionTopic): boolean
   return patchFor(field, value)[field] === t[field];
 }
 
-/** The D4 three-way rebase of a settled save: a control still meaning the old seed's value is
- *  refilled from the response row; a control holding other text (the operator's) keeps it. */
-function rebaseEdit(edit: EditState, oldSeed: SessionTopic, saved: SessionTopic): EditState {
-  const fresh = editOf(saved);
-  const next = { ...edit };
+/** The edit with the fields that no longer diverge from `t` removed. */
+function divergent(edit: Partial<EditState>, t: SessionTopic): Partial<EditState> {
+  const next: Partial<EditState> = {};
   for (const f of TOPIC_EDIT_FIELDS) {
-    if (sameAs(f, edit[f], oldSeed)) next[f] = fresh[f];
+    const v = edit[f];
+    if (v !== undefined && !sameAs(f, v, t)) next[f] = v;
   }
   return next;
 }
+
+const isEmpty = (e: Partial<EditState>) => TOPIC_EDIT_FIELDS.every((f) => e[f] === undefined);
 
 interface Props {
   row: SessionTopic;
@@ -158,10 +166,25 @@ export function TopicsRow({
   transcriptAnchored,
 }: Props) {
   const ownSeeds = useRowSeeds<SessionTopic>();
-  const { store: seeds, holds } = feedSeeds ?? ownSeeds;
+  const rowSeeds = feedSeeds ?? ownSeeds;
+  const { store: seeds, holds } = rowSeeds;
   const trRef = useRef<HTMLTableRowElement>(null);
-  // `null` = no edit: the controls show the row.
-  const [edit, setEdit] = useState<EditState | null>(null);
+
+  // The row's CURRENT seed (session-edit-conflicts D3/D4), re-read whenever the
+  // feed changes it. Untouched controls render from it while the row has an
+  // edit, so a settled save (an Overwrite may bring in another person's sibling
+  // fields) shows the saved row with no row-local step; a snapshot frozen into
+  // row state would keep the old text and a later blur would send it.
+  const subscribeSeed = useCallback(
+    (onChange: () => void) => rowSeeds.subscribe(row.id, onChange),
+    [rowSeeds, row.id],
+  );
+  const readSeed = useCallback(() => rowSeeds.store.get(row.id), [rowSeeds, row.id]);
+  const seed = useSyncExternalStore(subscribeSeed, readSeed, readSeed);
+
+  // Only the fields the operator changed (diverging from the seed); `null` = no
+  // edit, the controls show the row.
+  const [edit, setEdit] = useState<Partial<EditState> | null>(null);
   // The latest edit, for `onUpdate`'s `yours` (read when a conflict is prompted).
   const editRef = useRef(edit);
   useLayoutEffect(() => {
@@ -173,11 +196,33 @@ export function TopicsRow({
   const editing = edit !== null;
   useEffect(() => (editing ? holds.hold(row.id) : undefined), [editing, holds, row.id]);
 
+  function focusIn(target: EventTarget | null): boolean {
+    return target instanceof Node && trRef.current?.contains(target) === true;
+  }
+
+  // D4 three-way rebase: when the seed moves (a settled save), a field still
+  // meaning the old seed's value is not the operator's text and now shows the
+  // new seed; a field already meaning the new seed's value is spent. An edit
+  // left with nothing, with focus gone from the row, releases the row.
+  const prevSeedRef = useRef(seed);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: runs on a seed change only
+  useEffect(() => {
+    const prev = prevSeedRef.current;
+    prevSeedRef.current = seed;
+    if (!prev || !seed || prev === seed) return;
+    const stay = typeof document !== 'undefined' && focusIn(document.activeElement);
+    setEdit((p) => {
+      if (!p) return p;
+      const next = divergent(divergent(p, prev), seed);
+      return isEmpty(next) && !stay ? null : next;
+    });
+  }, [seed]);
+
   /** The seed this row's controls were filled from. Every row the feed shows has one; a row
    *  without (rendered on its own) takes the row it shows. */
   function seedOf(): SessionTopic {
-    const seed = seeds.get(row.id);
-    if (seed) return seed;
+    const current = seeds.get(row.id);
+    if (current) return current;
     seeds.set(row.id, row);
     return row;
   }
@@ -187,21 +232,11 @@ export function TopicsRow({
     // moment ago, or text a dismissed conflict or a failed save kept
     // (session-edit-conflicts panel finding 2: re-snapshotting the row here
     // replaced the operator's text with theirs, and the next blur sent nothing).
-    // Only a row with nothing to keep fills its edit from the row it shows, and
-    // that row becomes its seed (D3: editing starts, the seed freezes).
+    // Only a row with nothing to keep starts one, and the row it shows becomes
+    // its seed (D3: editing starts, the seed freezes).
     if (edit !== null) return;
     seeds.set(row.id, row);
-    setEdit(editOf(row));
-  }
-
-  function focusIn(target: EventTarget | null): boolean {
-    return target instanceof Node && trRef.current?.contains(target) === true;
-  }
-
-  /** Every control means its seed value again and focus has left the row: the controls follow
-   *  the server again. */
-  function idle(e: EditState, seed: SessionTopic, focusNext: EventTarget | null): boolean {
-    return !focusIn(focusNext) && TOPIC_EDIT_FIELDS.every((f) => sameAs(f, e[f], seed));
+    setEdit({});
   }
 
   // feed-row-seek, task 9.2: dirty check (see the fuller rationale in
@@ -213,44 +248,41 @@ export function TopicsRow({
   // session-edit-conflicts D3: the comparison is against the SEED, not the live
   // `row`, so focusing and leaving without typing sends nothing even after a
   // refetch brought in another person's write; and D9: the save is the feed's
-  // versioned save, whose outcome this row applies to its edit.
+  // versioned save. Keep theirs ends the edit; dismissal or a failure keeps it,
+  // so saving again asks again; a save rebases through the seed (above).
   function commitField(field: keyof EditState, value: string, focusNext: EventTarget | null) {
     if (!edit) return;
-    const next = { ...edit, [field]: value };
-    setEdit((p) => (p ? { ...p, [field]: value } : p));
-    const seed = seedOf();
+    const current = seedOf();
     const patch = patchFor(field, value);
-    if (patch[field] === seed[field]) {
-      if (idle(next, seed, focusNext)) setEdit(null);
+    if (patch[field] === current[field]) {
+      const leaving = !focusIn(focusNext);
+      setEdit((p) => {
+        if (!p) return p;
+        const { [field]: _spent, ...rest } = p;
+        return isEmpty(rest) && leaving ? null : rest;
+      });
       return;
     }
-    const pending = onUpdate(row.id, patch, () => {
-      const cur = editRef.current ?? next;
-      const base = seeds.get(row.id) ?? seed;
-      const yours: Partial<EditState> = {};
-      for (const f of TOPIC_EDIT_FIELDS) if (!sameAs(f, cur[f], base)) yours[f] = cur[f];
-      return yours;
-    });
+    setEdit((p) => (p ? { ...p, [field]: value } : p));
+    const committed = { ...edit, [field]: value };
+    const pending = onUpdate(row.id, patch, () =>
+      divergent(editRef.current ?? committed, seeds.get(row.id) ?? current),
+    );
     if (!pending) return;
     void pending.then((outcome) => {
-      if (outcome?.kind === 'saved') {
-        // D4: controls still meaning the old seed's value take the saved row's.
-        const stay = typeof document !== 'undefined' ? document.activeElement : null;
-        setEdit((p) => {
-          if (!p) return p;
-          const merged = rebaseEdit(p, seed, outcome.result);
-          return idle(merged, outcome.result, stay) ? null : merged;
-        });
-      } else if (outcome?.kind === 'keptTheirs') {
-        // The feed made `current` the seed and the cache holds it: show it.
-        setEdit(null);
-      }
-      // Dismissed, or failed (the feed showed a toast): keep the edit, so
-      // saving again asks again.
+      // The feed made `current` the seed and the cache holds it: show it.
+      if (outcome?.kind === 'keptTheirs') setEdit(null);
     });
   }
 
-  const vals = edit ?? editOf(row);
+  // What the controls were filled from: the seed while editing, else the row.
+  const base = editOf(edit ? (seed ?? row) : row);
+  const vals: EditState = {
+    session_time: edit?.session_time ?? base.session_time,
+    duration_sec: edit?.duration_sec ?? base.duration_sec,
+    topic_level: edit?.topic_level ?? base.topic_level,
+    summary: edit?.summary ?? base.summary,
+  };
 
   // Auto-grow the summary textarea so long topic summaries wrap and are fully
   // visible instead of being clipped inside a single-line field. Re-fits on
