@@ -43,7 +43,7 @@ const DISCLOSURE_BTN =
 // `.profile-select`'s bottom margin (form spacing), now on the shadcn Input.
 const NS_FIELD_INPUT = clsx('mb-4', NS_INPUT_OVERRIDE);
 // The inline label + number input rows (was `.inline` + `.num`).
-const NS_INLINE_FIELD = 'items-center gap-[0.35rem]';
+const NS_INLINE_FIELD = 'w-fit items-center gap-[0.35rem]';
 const NS_INLINE_LABEL = 'text-[0.85rem] text-legacy-muted';
 
 function fpsFloatMatchesPreset(val: number, presetStr: string): boolean {
