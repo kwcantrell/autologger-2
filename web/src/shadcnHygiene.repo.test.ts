@@ -57,9 +57,9 @@ describe('shadcn hygiene', () => {
     expect(scan(isUi, /(^|[\s'"`])dark:/)).toEqual([]);
   });
 
-  it('legacy code never references the bare --border/--muted/--accent tokens', () => {
+  it('legacy code never references the bare --border/--muted/--accent tokens (or their --color-* twins)', () => {
     const mapping = (l: string) => /^\s*--color-(border|muted|accent):\s*var\(--\1\);/.test(l);
-    expect(scan((f) => !isUi(f), /var\(--(border|muted|accent)\)/, mapping)).toEqual([]);
+    expect(scan((f) => !isUi(f), /var\(--(color-)?(border|muted|accent)\)/, mapping)).toEqual([]);
   });
 
   it('legacy code never uses the bare (text|border|outline|bg|ring)-(muted|accent|border) utilities', () => {

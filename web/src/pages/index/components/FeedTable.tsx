@@ -31,7 +31,7 @@ export const FEED_ROW = 'hover-always:bg-[rgba(255,255,255,0.03)]';
 /** Feed body cell. `vertical-align` is intentionally NOT set here — callers add
  *  `align-middle` (Transcribe) or `align-top` (Topics tall-summary rows) so the two
  *  don't collide on one element (generated-order, not class-order, decides). Default
- *  grey mirrors Event Feed's internal-row `color: var(--color-muted)`. */
+ *  grey mirrors Event Feed's internal-row `color: var(--color-legacy-muted)`. */
 export const FEED_CELL =
   'px-[0.4rem] py-[0.1rem] [border-bottom:1px_solid_rgba(255,255,255,0.04)] text-legacy-muted';
 /** Time column — blue monospaced, mirrors `.sheet .tc`. */

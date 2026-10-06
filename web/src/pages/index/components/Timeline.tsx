@@ -138,7 +138,7 @@ const TIMELINE_TRACK_LAYERS =
 
 // .timelineHoverPlayhead + #v4-log-session visible color. Visible modifier via clsx.
 const TIMELINE_HOVER_PLAYHEAD =
-  'absolute top-1/2 bottom-auto left-0 w-px h-[calc(100%-0.85rem)] m-0 rounded-[999px] [background:color-mix(in_srgb,var(--color-muted)_72%,transparent)] -translate-x-1/2 -translate-y-1/2 z-[3] pointer-events-none opacity-0 [transition:opacity_0.1s_ease]';
+  'absolute top-1/2 bottom-auto left-0 w-px h-[calc(100%-0.85rem)] m-0 rounded-[999px] [background:color-mix(in_srgb,var(--color-legacy-muted)_72%,transparent)] -translate-x-1/2 -translate-y-1/2 z-[3] pointer-events-none opacity-0 [transition:opacity_0.1s_ease]';
 const TIMELINE_HOVER_PLAYHEAD_VISIBLE = 'opacity-55 bg-[rgba(229,238,252,0.28)]';
 // .timelineMarkerPlayheadGlow base (big glow shadow) + #v4-log-session (smaller v5 shadow).
 // --marker-glow-col is runtime-set. base opacity/transform driven by JS inline styles.
@@ -151,14 +151,14 @@ const TIMELINE_PLAYHEAD =
 // .timelineMarkerTooltip (fixed, v5 glass-face-aside — the second .timelineMarkerTooltip
 // block wins in source order). Visible modifier toggles opacity/visibility.
 const MARKER_TOOLTIP =
-  'timelineMarkerTooltip fixed z-[10060] max-w-[min(72vw,440px)] px-[0.55rem] py-[0.4rem] rounded-lg border border-v5-border glass-face-aside text-v5-text text-[0.76rem] leading-[1.35] pointer-events-none panel-elevate [white-space:pre-line] [overflow-wrap:anywhere] opacity-0 invisible [transition:opacity_0.16s_ease]';
+  'timelineMarkerTooltip fixed z-[10060] max-w-[min(72vw,440px)] px-[0.55rem] py-[0.4rem] rounded-[0.5rem] border border-v5-border glass-face-aside text-v5-text text-[0.76rem] leading-[1.35] pointer-events-none panel-elevate [white-space:pre-line] [overflow-wrap:anywhere] opacity-0 invisible [transition:opacity_0.16s_ease]';
 const MARKER_TOOLTIP_VISIBLE = 'opacity-100 visible';
 const MARKER_TOOLTIP_CAT = 'block text-v5-muted font-semibold mb-[0.12rem]';
 const MARKER_TOOLTIP_MSG = 'block text-v5-text';
 
 // :global(.timeline-hover-tooltip) — base + v5 override (glass-face-aside). Timeline-emitted.
 const HOVER_TOOLTIP =
-  'timeline-hover-tooltip fixed z-[10055] max-w-[min(72vw,280px)] px-[0.5rem] py-[0.35rem] rounded-lg border border-v5-border glass-face-aside text-v5-text text-[0.78rem] font-mono [font-variant-numeric:tabular-nums] leading-[1.35] pointer-events-none panel-elevate';
+  'timeline-hover-tooltip fixed z-[10055] max-w-[min(72vw,280px)] px-[0.5rem] py-[0.35rem] rounded-[0.5rem] border border-v5-border glass-face-aside text-v5-text text-[0.78rem] font-mono [font-variant-numeric:tabular-nums] leading-[1.35] pointer-events-none panel-elevate';
 
 // ---- zoom rail ----
 // .timelineZoomTooltip (v4 variant) + #v4-log-session (v5 glass). Positioned above rail.
@@ -701,7 +701,7 @@ export function Timeline({
       const d = Math.abs(sec - activeSec);
       if (d < bestDist) {
         bestDist = d;
-        best = { sec, col: String(e.category_color || '').trim() || 'var(--color-accent)' };
+        best = { sec, col: String(e.category_color || '').trim() || 'var(--color-legacy-accent)' };
       }
     }
     if (!best) {

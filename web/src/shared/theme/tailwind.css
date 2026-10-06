@@ -376,6 +376,61 @@
 @custom-variant hover-always (&:hover);
 
 /* Compound tokens that can't be single-property utilities (audit K). */
+/* ============================================================
+ * shadcn semantic tokens (shadcn-foundation design D5). Dark-only: the shadcn names alias V5
+ * values on :root (no .dark block, no light theme). The legacy --border/--muted/--accent names
+ * were renamed to --legacy-* first (design D3), so these never repaint legacy surfaces.
+ * `@theme inline` exposes them as Tailwind colours (`bg-background`, `text-muted-foreground`…).
+ * --radius (10px) is shared with legacy and equals shadcn's 0.625rem default.
+ * ============================================================ */
+:root {
+  --background: var(--v5-bg);
+  --foreground: var(--v5-text);
+  /* V5 strong glass top (rgba(22,31,54,.94)) composited over --v5-bg, as a solid. */
+  --card: #151e34;
+  --card-foreground: var(--v5-text);
+  --popover: #151e34;
+  --popover-foreground: var(--v5-text);
+  --primary: var(--v5-primary);
+  --primary-foreground: #e0f2fe;
+  /* V5 raised/hover surface: a faint white wash over glass. */
+  --secondary: rgba(255, 255, 255, 0.06);
+  --secondary-foreground: var(--v5-text);
+  --muted: rgba(255, 255, 255, 0.06);
+  --muted-foreground: var(--v5-muted);
+  --accent: rgba(255, 255, 255, 0.06);
+  --accent-foreground: var(--v5-text);
+  --destructive: var(--v5-danger);
+  --border: var(--v5-border-strong);
+  --input: var(--v5-border-strong);
+  --ring: var(--v5-primary);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
 @utility glass-face {
   background: var(--v5-glass-face);
 }

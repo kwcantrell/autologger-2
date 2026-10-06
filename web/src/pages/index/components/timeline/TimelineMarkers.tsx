@@ -62,7 +62,7 @@ export const TimelineMarkers = memo(function TimelineMarkers({
     return events.map((e) => {
       const sec = safeTimelineSec(eventTimelineSec(e, status), 0);
       const pct = Math.max(0, Math.min(100, (sec / totalSec) * 100));
-      const color = e.category_color || 'var(--color-accent)';
+      const color = e.category_color || 'var(--color-legacy-accent)';
       const cat = String(e.category_label || e.category || '—');
       return { event: e, pct, color, cat };
     });

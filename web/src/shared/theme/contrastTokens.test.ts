@@ -58,6 +58,17 @@ function token(name: string): string {
   return m[1].trim();
 }
 
+/** A custom property's value with `var(--x)` references followed to a literal. */
+function resolved(name: string): string {
+  let v = token(name);
+  for (let i = 0; i < 5; i++) {
+    const ref = v.match(/^var\((--[a-z0-9-]+)\)$/);
+    if (!ref) return v;
+    v = token(ref[1]);
+  }
+  throw new Error(`var() chain too deep for ${name}`);
+}
+
 /** Resolves the text colour a class string applies: `text-v5-x` tokens or `text-[<colour>]`. */
 function textColour(classes: string): string {
   for (const raw of classes.split(/\s+/)) {
@@ -125,5 +136,32 @@ describe('AA contrast floor — source colours over their lightest measured surf
       .find((l) => l.includes("text-[0.65rem] font-medium tracking-[0.04em] text-v5-muted"));
     expect(line).toBeDefined();
     expect(line).not.toMatch(/opacity-\[/);
+  });
+});
+
+describe('shadcn semantic tokens alias V5 values that clear the floor (design D5)', () => {
+  it('muted-foreground on the lightest dialog field and card surfaces', () => {
+    const fg = parseColor(resolved('--muted-foreground'));
+    expect(contrast(fg, SURFACE.dialogField)).toBeGreaterThanOrEqual(AA);
+    expect(contrast(fg, parseColor(resolved('--card')))).toBeGreaterThanOrEqual(AA);
+  });
+
+  it('primary-foreground on the sky-tinted primary surface', () => {
+    expect(contrast(parseColor(resolved('--primary-foreground')), SURFACE.primaryButton)).toBeGreaterThanOrEqual(AA);
+  });
+
+  it('foreground on background, card and popover', () => {
+    const fg = parseColor(resolved('--foreground'));
+    for (const surface of ['--background', '--card', '--popover']) {
+      expect(contrast(fg, parseColor(resolved(surface)))).toBeGreaterThanOrEqual(AA);
+    }
+  });
+
+  it('each shadcn colour token is exposed as a Tailwind colour via @theme inline', () => {
+    for (const t of ['background', 'foreground', 'card', 'card-foreground', 'popover', 'popover-foreground', 'primary',
+      'primary-foreground', 'secondary', 'secondary-foreground', 'muted', 'muted-foreground', 'accent', 'accent-foreground',
+      'destructive', 'border', 'input', 'ring']) {
+      expect(token(`--color-${t}`)).toBe(`var(--${t})`);
+    }
   });
 });

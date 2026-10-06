@@ -258,7 +258,7 @@ function FilterDropdown({
   const label = (checked: boolean, text: string, color?: string) => (
     <span
       className="flex items-center gap-2"
-      style={color ? { color } : { color: 'var(--color-muted)' }}
+      style={color ? { color } : { color: 'var(--color-legacy-muted)' }}
     >
       <span aria-hidden="true" className="inline-flex h-3 w-3 shrink-0 items-center justify-center">
         {checked ? (
