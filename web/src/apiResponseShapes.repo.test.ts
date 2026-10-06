@@ -1772,12 +1772,14 @@ const WEB_SRC = THIS_DIR;
 //   errorBody 3 (equal to today's count: a 3-site detector, like `beacon`, cannot have both
 //   slack and rigour — losing one hook's conflict read is exactly what it should catch).
 //
-// Re-measured 2026-10-06 for session-edit-conflicts tasks 7.1-7.2: 152 sites — errorBody 3 -> 5,
-// every other detector unchanged — of which 99 are COVERED. The two new sites are the feeds'
-// `conflictOf` reads, `versionConflictOf<TranscriptWordVersionConflict>(e)` in TranscribeFeed.tsx
-// and `versionConflictOf<TopicVersionConflict>(e)` in TopicsFeed.tsx, both covered by the
-// conformance aliases. Total 150 + 2 = 152; covered 97 + 2 = 99. Floors move by the same +2:
-// POPULATION 145 -> 147, COVERED 93 -> 95, errorBody 3 -> 5 (still no slack, as above).
+// Re-measured 2026-10-06 for session-edit-conflicts tasks 6.1-7.2: 153 sites — errorBody 3 -> 6,
+// every other detector unchanged — of which 100 are COVERED. The three new sites are the feeds'
+// `conflictOf` reads: `versionConflictOf<EventVersionConflict>(e)` in EventLogSheet.tsx
+// (`eventConflictOf`), `versionConflictOf<TranscriptWordVersionConflict>(e)` in
+// TranscribeFeed.tsx and `versionConflictOf<TopicVersionConflict>(e)` in TopicsFeed.tsx, all
+// covered by the conformance aliases. Total 150 + 3 = 153; covered 97 + 3 = 100. Floors move by
+// the same +3: POPULATION 145 -> 148, COVERED 93 -> 96, errorBody 3 -> 6 (still no slack, as
+// above).
 //
 // HOW MUCH SLACK EACH FLOOR ALLOWS, stated rather than left to be inferred. A
 // floor far below its count lets a scan regression lose sites silently, which
@@ -1787,7 +1789,7 @@ const WEB_SRC = THIS_DIR;
 // sites is not a failure, little enough that a regression is. Deleting more
 // than the slack means re-measuring these numbers deliberately, which is the
 // intended cost.
-const POPULATION_FLOOR = 147; // 152 today; tolerates a 5-site loss
+const POPULATION_FLOOR = 148; // 153 today; tolerates a 5-site loss
 const DETECTOR_FLOORS: Record<Detector, number> = {
   apiFetch: 63, // 67 today
   wrapper: 0, // 0 today — no live wrapper since /admin/users was retired; fixture-covered
@@ -1796,11 +1798,11 @@ const DETECTOR_FLOORS: Record<Detector, number> = {
   jsonParse: 4, // 5 today
   beacon: 1, // 2 today — a 2-site detector cannot have both slack and rigour
   conformanceAssertion: 57, // 61 today
-  errorBody: 5, // 5 today — one per row-kind hook plus the word and topic feeds; no slack
+  errorBody: 6, // 6 today — one per row-kind hook plus one per feed; no slack
 };
-/** Today's covered count is 99. Same reasoning as the floors above: a few under today's count,
+/** Today's covered count is 100. Same reasoning as the floors above: a few under today's count,
  * so losing a conformance check or two is not a failure but a real regression is. */
-const COVERED_FLOOR = 95;
+const COVERED_FLOOR = 96;
 
 /** Sites that must be found by name. Each one exercises a different detector
  * path, so an over-narrowed pattern or a broken walk fails here with a
