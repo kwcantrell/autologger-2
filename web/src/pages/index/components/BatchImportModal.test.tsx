@@ -101,28 +101,36 @@ describe('BatchImportModal', () => {
     expect(screen.getByText('Your Mom (YMH)')).not.toBeNull();
   });
 
-  it('Import Logs prompts for a Sheets URL and stores it', () => {
-    const prompt = vi
-      .spyOn(window, 'prompt')
-      .mockReturnValue('https://docs.google.com/spreadsheets/d/abc123/edit');
+  // Import Logs asks for the URL in the themed text prompt (shadcn-shared-wrappers D3b), never
+  // `window.prompt`; the URL lands after the prompt's promise resolves, hence the awaits.
+  async function enterLogsUrl(url: string) {
+    fireEvent.click(screen.getByRole('button', { name: 'Import Logs' }));
+    const field = await screen.findByRole('textbox', { name: /Google Sheets URL/ });
+    fireEvent.change(field, { target: { value: url } });
+    fireEvent.click(screen.getByRole('button', { name: 'Use URL' }));
+  }
+
+  it('Import Logs prompts for a Sheets URL and stores it', async () => {
+    const prompt = vi.spyOn(window, 'prompt');
     renderWithQueryClient(<BatchImportModal profile={profileFixture()} onClose={() => {}} />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Import Logs' }));
+    await enterLogsUrl(' https://docs.google.com/spreadsheets/d/abc123/edit ');
 
-    expect(prompt).toHaveBeenCalled();
-    expect(screen.getByTestId('batch-import-logs-url').textContent).toContain('abc123');
+    await waitFor(() =>
+      expect(screen.getByTestId('batch-import-logs-url').textContent).toContain('abc123'),
+    );
+    expect(prompt).not.toHaveBeenCalled();
     prompt.mockRestore();
   });
 
-  it('Start Import is enabled when only a logs URL is set', () => {
-    vi.spyOn(window, 'prompt').mockReturnValue(
-      'https://docs.google.com/spreadsheets/d/abc123/edit',
-    );
+  it('Start Import is enabled when only a logs URL is set', async () => {
     renderWithQueryClient(<BatchImportModal profile={profileFixture()} onClose={() => {}} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Import Logs' }));
-    expect(
-      (screen.getByRole('button', { name: 'Start Import' }) as HTMLButtonElement).disabled,
-    ).toBe(false);
+    await enterLogsUrl('https://docs.google.com/spreadsheets/d/abc123/edit');
+    await waitFor(() =>
+      expect(
+        (screen.getByRole('button', { name: 'Start Import' }) as HTMLButtonElement).disabled,
+      ).toBe(false),
+    );
   });
 
   it('shows the folder name after simulating a directory file input change', () => {

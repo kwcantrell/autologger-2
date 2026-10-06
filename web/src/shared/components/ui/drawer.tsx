@@ -18,6 +18,8 @@ function DrawerClose({ ...props }: React.ComponentProps<typeof DrawerPrimitive.C
   return <DrawerPrimitive.Close data-slot="drawer-close" {...props} />;
 }
 
+// V5 (shadcn-shared-wrappers D1/D2): the app's mobile bottom sheet — legacy shared/ui/Dialog sheet
+// classes; vaul owns the slide/drag transform, so no `[transform:none]` / slide keyframe here.
 function DrawerOverlay({
   className,
   ...props
@@ -26,7 +28,7 @@ function DrawerOverlay({
     <DrawerPrimitive.Overlay
       data-slot="drawer-overlay"
       className={cn(
-        'fixed inset-0 z-50 bg-black/50 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:animate-in data-[state=open]:fade-in-0',
+        'fixed inset-0 z-(--z-dialog-overlay) bg-[rgba(8,10,14,0.72)] animate-overlay-fade-in',
         className,
       )}
       {...props}
@@ -45,16 +47,15 @@ function DrawerContent({
       <DrawerPrimitive.Content
         data-slot="drawer-content"
         className={cn(
-          'group/drawer-content fixed z-50 flex h-auto flex-col bg-background',
-          'data-[vaul-drawer-direction=top]:inset-x-0 data-[vaul-drawer-direction=top]:top-0 data-[vaul-drawer-direction=top]:mb-24 data-[vaul-drawer-direction=top]:max-h-[80vh] data-[vaul-drawer-direction=top]:rounded-b-lg data-[vaul-drawer-direction=top]:border-b',
-          'data-[vaul-drawer-direction=bottom]:inset-x-0 data-[vaul-drawer-direction=bottom]:bottom-0 data-[vaul-drawer-direction=bottom]:mt-24 data-[vaul-drawer-direction=bottom]:max-h-[80vh] data-[vaul-drawer-direction=bottom]:rounded-t-lg data-[vaul-drawer-direction=bottom]:border-t',
-          'data-[vaul-drawer-direction=right]:inset-y-0 data-[vaul-drawer-direction=right]:right-0 data-[vaul-drawer-direction=right]:w-3/4 data-[vaul-drawer-direction=right]:border-l data-[vaul-drawer-direction=right]:sm:max-w-sm',
-          'data-[vaul-drawer-direction=left]:inset-y-0 data-[vaul-drawer-direction=left]:left-0 data-[vaul-drawer-direction=left]:w-3/4 data-[vaul-drawer-direction=left]:border-r data-[vaul-drawer-direction=left]:sm:max-w-sm',
+          'glass-face-strong fixed inset-x-0 top-auto bottom-0 z-(--z-dialog-content) flex h-auto w-full max-h-[88dvh] flex-col overflow-y-auto rounded-t-v5-md panel-elevate border border-v5-border-strong border-b-0 px-[1.15rem] pt-2 pb-[calc(1.4rem+env(safe-area-inset-bottom))] text-v5-text outline-none focus-visible:outline-2 focus-visible:outline-v5-primary focus-visible:-outline-offset-4',
           className,
         )}
         {...props}
       >
-        <div className="mx-auto mt-4 hidden h-2 w-[100px] shrink-0 rounded-full bg-muted group-data-[vaul-drawer-direction=bottom]/drawer-content:block" />
+        {/* vaul's own handle (data-vaul-handle): the only drag surface when the root is
+            `handleOnly` (shadcn-shared-wrappers D2). vaul injects its size/shape; the V5 colour
+            and spacing come from here. */}
+        <DrawerPrimitive.Handle className="mt-1 mb-3 bg-v5-border-strong" />
         {children}
       </DrawerPrimitive.Content>
     </DrawerPortal>
@@ -88,7 +89,7 @@ function DrawerTitle({ className, ...props }: React.ComponentProps<typeof Drawer
   return (
     <DrawerPrimitive.Title
       data-slot="drawer-title"
-      className={cn('font-semibold text-foreground', className)}
+      className={cn('mx-0 mt-0 mb-3 text-[1.05rem] font-semibold text-v5-text', className)}
       {...props}
     />
   );
@@ -101,7 +102,10 @@ function DrawerDescription({
   return (
     <DrawerPrimitive.Description
       data-slot="drawer-description"
-      className={cn('text-sm text-muted-foreground', className)}
+      className={cn(
+        'mx-0 mt-0 mb-[0.85rem] text-[0.85rem] leading-[1.45] text-v5-muted',
+        className,
+      )}
       {...props}
     />
   );

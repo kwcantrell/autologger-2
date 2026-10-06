@@ -57,6 +57,11 @@ describe('shadcn hygiene', () => {
     expect(scan(() => true, /from\s+['"](cn|next-themes)['"]/)).toEqual([]);
   });
 
+  it('no source imports the retired per-primitive @radix-ui/react-* packages', () => {
+    // shadcn-shared-wrappers 4.1: the shadcn primitives use the `radix-ui` umbrella package.
+    expect(scan(() => true, /from\s+['"]@radix-ui\/react-/)).toEqual([]);
+  });
+
   it('no shadcn primitive keeps a `dark:` variant', () => {
     expect(scan(isUi, /(^|[\s'"`])dark:/)).toEqual([]);
   });

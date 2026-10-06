@@ -107,10 +107,14 @@ describe('CategoryButtonStrip 1–9 hotkeys', () => {
     }
   });
 
-  it('ignores digits while any [role="dialog"] is open', () => {
+  it.each([
+    'dialog',
+    'alertdialog',
+    'menu',
+  ])('ignores digits while any [role="%s"] is open', (role) => {
     renderStrip();
     const dialog = document.createElement('div');
-    dialog.setAttribute('role', 'dialog');
+    dialog.setAttribute('role', role);
     document.body.appendChild(dialog);
     try {
       fireEvent.keyDown(document.body, { key: '2' });

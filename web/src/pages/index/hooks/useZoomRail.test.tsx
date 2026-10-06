@@ -82,10 +82,14 @@ describe('useZoomRail global +/- handler', () => {
     expect(getZoom()).toBeGreaterThan(1);
   });
 
-  it('does not zoom while a [role="dialog"] is open', () => {
+  it.each([
+    'dialog',
+    'alertdialog',
+    'menu',
+  ])('does not zoom while a [role="%s"] is open', (role) => {
     renderStrict(<Harness />);
     const dialog = document.createElement('div');
-    dialog.setAttribute('role', 'dialog');
+    dialog.setAttribute('role', role);
     document.body.appendChild(dialog);
     try {
       fireEvent.keyDown(document.body, { code: 'Equal' });

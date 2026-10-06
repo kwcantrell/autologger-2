@@ -194,7 +194,7 @@ describe('ChunkRescueBanner', () => {
     fireEvent.click(within(rows[0]).getByRole('button', { name: 'Discard' }));
     // Confirmation dialog appears — its own "Discard" button is distinct
     // from the row's, so disambiguate by dialog role.
-    const dialog = await screen.findByRole('dialog');
+    const dialog = await screen.findByRole('alertdialog');
     fireEvent.click(within(dialog).getByRole('button', { name: 'Discard' }));
 
     await waitFor(() => {
@@ -213,10 +213,10 @@ describe('ChunkRescueBanner', () => {
     await screen.findByRole('alert');
 
     fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
-    const dialog = await screen.findByRole('dialog');
+    const dialog = await screen.findByRole('alertdialog');
     fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
 
-    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
     expect(queue.getSnapshot().chunks).toHaveLength(1); // nothing left the queue
   });
 
@@ -239,7 +239,7 @@ describe('ChunkRescueBanner', () => {
     await screen.findByRole('alert');
 
     fireEvent.click(screen.getByRole('button', { name: 'Discard remaining' }));
-    const dialog = await screen.findByRole('dialog');
+    const dialog = await screen.findByRole('alertdialog');
     expect(within(dialog).getByText(/2 chunks/)).toBeTruthy();
     fireEvent.click(within(dialog).getByRole('button', { name: 'Discard all' }));
 

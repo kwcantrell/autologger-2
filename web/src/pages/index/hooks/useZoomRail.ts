@@ -3,6 +3,7 @@
 
 import { type RefObject, useEffect, useRef } from 'react';
 import { toast } from '../../../shared/components/Toast';
+import { isOverlayOpen } from '../../../shared/ui/overlayOpen';
 import { isTypingTarget } from '../components/ShortcutsDialog';
 import { register, unregister } from '../coordination/registry';
 import { TIMELINE_ZOOM_EVENT } from '../utils/timelineZoomEvent';
@@ -789,7 +790,7 @@ export function useZoomRail(
       if (isTypingTarget(ev.target)) return;
       if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
       if (ev.defaultPrevented) return;
-      if (document.querySelector('[role="dialog"]')) return;
+      if (isOverlayOpen()) return;
       if (ev.code === 'Equal' || ev.code === 'NumpadAdd') {
         ev.preventDefault();
         changeTimelineZoom.current(TIMELINE_ZOOM_KEY_FACT);

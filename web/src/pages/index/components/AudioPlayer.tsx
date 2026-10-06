@@ -9,6 +9,7 @@ import {
 } from 'react';
 import type { AudioSegment } from '../../../api/types';
 import { toast } from '../../../shared/components/Toast';
+import { isOverlayOpen } from '../../../shared/ui/overlayOpen';
 import type { AudioClipLite } from '../../../shared/utils/waveformMerge';
 import { isTypingTarget } from './ShortcutsDialog';
 
@@ -364,7 +365,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(funct
       if (e.code !== 'Space' || e.metaKey || e.ctrlKey || e.altKey) return;
       if (e.defaultPrevented) return;
       if (isTypingTarget(document.activeElement)) return;
-      if (document.querySelector('[role="dialog"]')) return;
+      if (isOverlayOpen()) return;
       if (isKeyConsumingInteractiveTarget(e.target)) return;
       if (validSegments.length === 0) return;
       e.preventDefault();

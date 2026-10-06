@@ -1,10 +1,20 @@
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogTitle,
+} from '@/shared/components/ui/alert-dialog';
+import { Button } from '@/shared/components/ui/button';
+import { useDialogMode } from './breakpoints';
 import { Dialog } from './Dialog';
 
 /**
- * Themed replacement for `window.confirm` (ui-refresh): destructive and
- * discard-style confirmations render in the app's own Dialog vocabulary
- * instead of browser chrome tearing through the glass theme.
+ * Themed replacement for `window.confirm` (ui-refresh; shadcn-shared-wrappers D3): an alert
+ * dialog on desktop and the shared bottom sheet on mobile. Escape, an overlay click, and a sheet
+ * drag-dismiss all resolve as decline.
  */
 export interface ConfirmOptions {
   title: string;
@@ -33,18 +43,57 @@ export function ConfirmDialog({
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
+  const isMobile = useDialogMode(open);
+  const actionVariant = danger ? 'destructive' : 'default';
+  // Exactly one decision per open: Radix's Action/Cancel parts also close the dialog, which
+  // fires onOpenChange(false) right after the click — without this guard an accept would
+  // report onConfirm AND onCancel.
+  const decided = useRef(false);
+  useEffect(() => {
+    if (open) decided.current = false;
+  }, [open]);
+  const confirmOnce = () => {
+    if (decided.current) return;
+    decided.current = true;
+    onConfirm();
+  };
+  const cancelOnce = () => {
+    if (decided.current) return;
+    decided.current = true;
+    onCancel();
+  };
+
+  if (isMobile) {
+    return (
+      <Dialog open={open} onOpenChange={(o) => !o && cancelOnce()} title={title}>
+        <p className="modal-lead">{message}</p>
+        <div className="modal-actions">
+          <Button type="button" variant="outline" onClick={cancelOnce}>
+            {cancelLabel}
+          </Button>
+          <Button type="button" variant={actionVariant} onClick={confirmOnce}>
+            {confirmLabel}
+          </Button>
+        </div>
+      </Dialog>
+    );
+  }
+
   return (
-    <Dialog open={open} onOpenChange={(o) => !o && onCancel()} title={title}>
-      <p className="modal-lead">{message}</p>
-      <div className="modal-actions">
-        <button type="button" className="btn" onClick={onCancel}>
-          {cancelLabel}
-        </button>
-        <button type="button" className={danger ? 'btn danger' : 'btn primary'} onClick={onConfirm}>
-          {confirmLabel}
-        </button>
-      </div>
-    </Dialog>
+    <AlertDialog open={open} onOpenChange={(o) => !o && cancelOnce()}>
+      <AlertDialogContent onOverlayClick={cancelOnce}>
+        <AlertDialogTitle>{title}</AlertDialogTitle>
+        <AlertDialogDescription asChild>
+          <p className="modal-lead">{message}</p>
+        </AlertDialogDescription>
+        <div className="modal-actions">
+          <AlertDialogCancel onClick={cancelOnce}>{cancelLabel}</AlertDialogCancel>
+          <AlertDialogAction variant={actionVariant} onClick={confirmOnce}>
+            {confirmLabel}
+          </AlertDialogAction>
+        </div>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
 

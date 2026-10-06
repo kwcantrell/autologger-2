@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderStrict } from '../../../test/renderStrict';
 import type { EventButtonDraft } from './EventButtonsTable';
@@ -34,21 +34,21 @@ if (typeof Element !== 'undefined' && !Element.prototype.scrollIntoView) {
   Element.prototype.scrollIntoView = () => {};
 }
 
-// Spies on `@radix-ui/react-select`'s `Root` — the outermost component every Select
-// instance renders through — so the tests can tell "a listbox-style overlay component
-// mounted" apart from "the DOM happens to contain no visible listbox" (a closed real
-// Select still mounts its whole item tree, just portalled into a detached
-// `DocumentFragment` that `document.querySelector` cannot see — see design.md D3's
-// measured-context section). Counting `Root` renders catches that regardless.
+// Spies on the shadcn Select primitive's root (`@/shared/components/ui/select` `Select`) — the
+// outermost component every Select instance renders through (shadcn-shared-wrappers 3.5; it
+// used to be `@radix-ui/react-select`'s `Root`) — so the tests can tell "a listbox-style overlay
+// component mounted" apart from "the DOM happens to contain no visible listbox" (a closed real
+// Select still mounts its whole item tree, just portalled into a detached `DocumentFragment`
+// that `document.querySelector` cannot see — see design.md D3's measured-context section).
 let selectRootMounts = 0;
-vi.mock('@radix-ui/react-select', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@radix-ui/react-select')>();
+vi.mock('../../../shared/components/ui/select', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../shared/components/ui/select')>();
   function RootSpy(props: Record<string, unknown>) {
     selectRootMounts += 1;
     // biome-ignore lint/suspicious/noExplicitAny: passthrough wrapper around the real Root
-    return <actual.Root {...(props as any)} />;
+    return <actual.Select {...(props as any)} />;
   }
-  return { ...actual, Root: RootSpy };
+  return { ...actual, Select: RootSpy };
 });
 
 function makeDraft(over: Partial<EventButtonDraft> & { id: string }): EventButtonDraft {
@@ -101,6 +101,34 @@ function mountedRootCountFor(n: number): number {
   cleanup();
   return count;
 }
+
+// web-ui-system "Event-button rows defer their type control": the inert trigger is
+// indistinguishable from the mounted control (shadcn-shared-wrappers D5 parity case).
+describe('EventButtonsTable — inert vs upgraded trigger parity', () => {
+  it('has the same classes, role, name, ARIA state, and exactly one icon before and after the upgrade', async () => {
+    renderTable(makeButtons(1));
+    const snapshot = (el: HTMLElement) => ({
+      className: el.className,
+      role: el.getAttribute('role'),
+      name: el.getAttribute('aria-label'),
+      expanded: el.getAttribute('aria-expanded'),
+      state: el.getAttribute('data-state'),
+      svgs: el.querySelectorAll('svg').length,
+    });
+    const inert = screen.getByRole('combobox', { name: 'Button type' });
+    const before = snapshot(inert);
+    act(() => {
+      inert.focus(); // keyboard focus upgrades closed and keeps focus on the real trigger
+    });
+    const upgraded = await waitFor(() => {
+      const el = screen.getByRole('combobox', { name: 'Button type' });
+      expect(el).not.toBe(inert);
+      return el;
+    });
+    expect(snapshot(upgraded)).toEqual(before);
+    expect(before.svgs).toBe(1);
+  });
+});
 
 describe('EventButtonsTable — lazy button-type control (scenario a)', () => {
   it('mounts no per-row listbox-style overlay component, and the count does not grow with row count', () => {
