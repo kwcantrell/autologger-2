@@ -1,5 +1,5 @@
-import clsx from 'clsx';
 import { useRef, useState } from 'react';
+import { cn } from '@/shared/lib/utils';
 import {
   SELECT_ICON_CLASSNAME,
   SELECT_TRIGGER_CLASSNAME,
@@ -107,7 +107,9 @@ export function LazySelect({
       // attribute alone; mirror it so SELECT_TRIGGER_CLASSNAME's `data-disabled:` rules
       // apply identically before and after the upgrade.
       data-disabled={disabled ? '' : undefined}
-      className={clsx(SELECT_TRIGGER_CLASSNAME, className)}
+      // Same merge as the primitive's SelectTrigger (`cn`), so both triggers render the
+      // identical class string (parity, web-ui-system R13).
+      className={cn(SELECT_TRIGGER_CLASSNAME, className)}
       onPointerDown={() => {
         pointerActiveRef.current = true;
       }}
