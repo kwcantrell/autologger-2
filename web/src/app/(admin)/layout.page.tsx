@@ -1,7 +1,6 @@
 import type { Metadata, Viewport } from 'next';
 import type { ReactNode } from 'react';
 import '@/shared/theme/tailwind.css';
-import 'overlayscrollbars/overlayscrollbars.css';
 
 // Admin root layout (nextjs-frontend-migration, task 2.3; design D4).
 //
@@ -14,9 +13,8 @@ import 'overlayscrollbars/overlayscrollbars.css';
 // `app/layout.page.tsx`. Replicates the head output of the retired
 // `web/src/pages/admin-users/index.html`: no `data-v4-transport` body
 // attribute (that's index-only), its own title, and its own theme color.
-// CSS import order pinned identically to the index layout (design D5):
-// `tailwind.css` before `overlayscrollbars.css`, centralized here rather
-// than at a leaf component.
+// Global CSS is imported here, as in the index layout (design D5),
+// centralized rather than at a leaf component.
 export const metadata: Metadata = {
   title: 'AutoLogger — Admin Users',
   icons: {

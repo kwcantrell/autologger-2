@@ -20,6 +20,7 @@ import {
   safeTimelineSec,
   sessionFrameRate,
 } from '../../../shared/utils/audioClips';
+import { resolveCategoryColor } from '../../../shared/utils/categoryColor';
 import { fmtHmsFromSec } from '../../../shared/utils/timecode';
 import type { AudioClipLite } from '../../../shared/utils/waveformMerge';
 import { clipIndexContainingTimelineSec } from '../../../shared/utils/waveformSvg';
@@ -405,7 +406,7 @@ export function Timeline({
       sec,
       cat: String(e.category_label || e.category || '—'),
       msg: String(e.message || '—'),
-      col: String(e.category_color || '').trim() || '#6b7280',
+      col: resolveCategoryColor(e.category_color) ?? '#6b7280',
       isInternal,
     }));
     if (!marks.length) return null;
@@ -701,7 +702,7 @@ export function Timeline({
       const d = Math.abs(sec - activeSec);
       if (d < bestDist) {
         bestDist = d;
-        best = { sec, col: String(e.category_color || '').trim() || 'var(--color-legacy-accent)' };
+        best = { sec, col: resolveCategoryColor(e.category_color) ?? 'var(--color-legacy-accent)' };
       }
     }
     if (!best) {
@@ -762,7 +763,7 @@ export function Timeline({
     : '';
   const markerTipMsg = markerTipEvent ? markerTipEvent.message || '—' : '';
   const markerTipCol = markerTipEvent
-    ? String(markerTipEvent.category_color || '').trim() || '#bfc5cd'
+    ? (resolveCategoryColor(markerTipEvent.category_color) ?? '#bfc5cd')
     : '#bfc5cd';
 
   const markerReadout = (

@@ -11,7 +11,7 @@ import { RouteState } from './RouteState';
 
 // Workspace code-split behind session resolution (bundle route-splitting, plan
 // C5.2): the whole session workspace — Timeline, feeds, AudioPlayer/Recorder,
-// react-virtual, overlayscrollbars — leaves the homepage graph and is fetched
+// react-virtual — leaves the homepage graph and is fetched
 // only once an id actually resolves to a live session. The `<Suspense>`
 // fallback (inside `LazyChunk`) is the SAME `RouteLoadingState` the pending
 // branch renders, so resolution -> chunk-fetch is one continuous, non-shifting

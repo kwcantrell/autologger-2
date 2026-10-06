@@ -1,7 +1,11 @@
 import clsx from 'clsx';
+import { Trash2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import type { Category, LogEvent } from '../../../api/types';
+import { Button } from '../../../shared/components/ui/button';
+import { TableCell, TableRow } from '../../../shared/components/ui/table';
 import { Tooltip } from '../../../shared/ui/Tooltip';
+import { resolveCategoryColor } from '../../../shared/utils/categoryColor';
 import {
   formatTimecodeHMS,
   formatWallUtcYmdHms,
@@ -310,7 +314,7 @@ export function EventLogRow({
       auto
     </span>
   ) : null;
-  const color = event.category_color || undefined;
+  const color = resolveCategoryColor(event.category_color);
   const isInternal = event.category.toLowerCase() === 'internal';
 
   const catStyle = color ? { color } : undefined;
@@ -748,14 +752,14 @@ export function EventLogRow({
   const rowActions = isAuto ? null : editable && pendingDelete ? (
     <span className={rowActionsCls}>
       <Tooltip content="Restore row">
-        <button
-          type="button"
-          className="btn"
+        <Button
+          variant="outline"
+          size="xs"
           aria-label="Restore row"
           onClick={() => onUndelete(event.event_id)}
         >
           UNDELETE
-        </button>
+        </Button>
       </Tooltip>
     </span>
   ) : (
@@ -767,26 +771,7 @@ export function EventLogRow({
           aria-label="Delete row"
           onClick={() => onDelete(event.event_id)}
         >
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <path d="M4 7H20" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-            <path
-              d="M9 7V5C9 4.44772 9.44772 4 10 4H14C14.5523 4 15 4.44772 15 5V7"
-              stroke="currentColor"
-              strokeWidth="1.8"
-            />
-            <path
-              d="M6.5 7L7.4 19.1C7.44 19.61 7.86 20 8.37 20H15.63C16.14 20 16.56 19.61 16.6 19.1L17.5 7"
-              stroke="currentColor"
-              strokeWidth="1.8"
-              strokeLinecap="round"
-            />
-            <path
-              d="M10 11V16M14 11V16"
-              stroke="currentColor"
-              strokeWidth="1.8"
-              strokeLinecap="round"
-            />
-          </svg>
+          <Trash2 className="size-3" aria-hidden="true" />
         </button>
       </Tooltip>
     </span>
@@ -796,11 +781,11 @@ export function EventLogRow({
   // `[.group:hover_&]:` ancestor variant (replaces `.sheet tbody tr:hover td` / `tr:hover
   // .rowHoverActions`). Editable cells opt out of the tint (they set their own bg).
   return (
-    <tr ref={rowRef} data-event-id={event.event_id} className="group">
+    <TableRow ref={rowRef} data-event-id={event.event_id} className="group">
       {/* Jump column (feed-row-seek, design D2/D7): its own leading cell, never
           inside the timecode cell — inline editing's contents/width/containing
           block are untouched by this. */}
-      <td className={clsx(CELL_BASE, 'text-center align-middle')}>
+      <TableCell className={clsx(CELL_BASE, 'text-center align-middle')}>
         {/* Slight scale so the shared h-6 jump control does not dominate row height. */}
         <span className="inline-flex origin-center scale-[0.75]">
           <JumpToTimeButton
@@ -811,11 +796,11 @@ export function EventLogRow({
             reasonId={jumpReasonId}
           />
         </span>
-      </td>
+      </TableCell>
       {editable ? (
         // `.colTcCellEdit`: centered (was `td.colTcCellEdit { text-align: center }`, the input
         // inherits it) + edit bg + (batch) white text; pending adds strikethrough (left:2rem).
-        <td
+        <TableCell
           className={clsx(
             CELL_BASE,
             CELL_TC,
@@ -826,14 +811,14 @@ export function EventLogRow({
           )}
         >
           {tcStack}
-        </td>
+        </TableCell>
       ) : (
-        <td className={clsx(CELL_BASE, CELL_TC, CELL_HOVER)}>{col1View}</td>
+        <TableCell className={clsx(CELL_BASE, CELL_TC, CELL_HOVER)}>{col1View}</TableCell>
       )}
 
       {editable ? (
         // `.sheetCatEdit`: edit bg; pending → white text + strikethrough (left:0 right:0).
-        <td
+        <TableCell
           className={clsx(
             CELL_BASE,
             CELL_CAT,
@@ -843,16 +828,16 @@ export function EventLogRow({
           style={catStyle}
         >
           {catSelect}
-        </td>
+        </TableCell>
       ) : (
-        <td className={clsx(CELL_BASE, CELL_CAT, CELL_HOVER)} style={catStyle}>
+        <TableCell className={clsx(CELL_BASE, CELL_CAT, CELL_HOVER)} style={catStyle}>
           {event.category_label ?? event.category ?? '—'}
-        </td>
+        </TableCell>
       )}
 
       {editable ? (
         // `.sheetMsgCell`: edit bg; pending strikethrough (right:9.25rem clearance for UNDELETE).
-        <td
+        <TableCell
           className={clsx(
             CELL_BASE,
             CELL_MSG,
@@ -875,9 +860,9 @@ export function EventLogRow({
             msgInput
           )}
           {rowActions}
-        </td>
+        </TableCell>
       ) : (
-        <td
+        <TableCell
           className={clsx(CELL_BASE, CELL_MSG, CELL_ACTIONS, CELL_HOVER)}
           data-event-id={event.event_id}
           style={msgStyle}
@@ -887,8 +872,8 @@ export function EventLogRow({
             {autoMarker}
           </span>
           {rowActions}
-        </td>
+        </TableCell>
       )}
-    </tr>
+    </TableRow>
   );
 }

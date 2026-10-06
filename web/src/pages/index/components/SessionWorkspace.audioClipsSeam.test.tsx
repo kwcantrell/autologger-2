@@ -14,6 +14,12 @@ import { renderStrict } from '../../../test/renderStrict';
 import { register } from '../coordination/registry';
 import { SessionWorkspace } from './SessionWorkspace';
 
+// Radix Tabs activate on mouse-down (and on keyboard focus), not on click (shadcn-port-workspace
+// A1); `@testing-library/user-event` is not a dependency, so drive the real activation event.
+function clickTab(name: string | RegExp) {
+  fireEvent.mouseDown(screen.getByRole('tab', { name }), { button: 0 });
+}
+
 // --- IMPORTANT-1 fix (feed-row-seek fix wave 2): the C1 fix's structural
 // guarantee — that `SessionWorkspace` publishes ONE `useAudioClips` layout
 // through `AudioClipsContext` for every feed's jump coverage check to read —
@@ -277,7 +283,7 @@ describe('SessionWorkspace real audio-clips seam (feed-row-seek fix wave 2, IMPO
     const seekAndPlay = vi.fn();
     register('seekAudioAndPlay', seekAndPlay);
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Transcript' }));
+    clickTab('Transcript');
 
     const jumpBtn = await screen.findByRole('button', { name: /Jump to/ });
     fireEvent.click(jumpBtn);

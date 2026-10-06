@@ -114,6 +114,17 @@ const CASES: FeedCase[] = [
 ];
 
 describe.each(CASES)('$feed feed — generate 503 latch (ui-refresh D9)', ({ feed, reasonText }) => {
+  it('toolbar buttons are glass Buttons with lucide icons (shadcn-port-workspace D6)', async () => {
+    mockRoutes(() => new ApiError(503, 'Service Unavailable'), { count: 0 });
+    renderFeed(feed);
+    const gen = await screen.findByRole('button', { name: 'Auto Generate' });
+    expect(gen.getAttribute('data-variant')).toBe('glass');
+    expect(gen.querySelector('svg.lucide-sparkles')).not.toBeNull();
+    const insert = screen.getByRole('button', { name: 'Insert' });
+    expect(insert.getAttribute('data-variant')).toBe('glass');
+    expect(insert.querySelector('svg.lucide-plus')).not.toBeNull();
+  });
+
   it('latches on the first 503: aria-disabled + visible reason, further clicks never re-call generate', async () => {
     const calls = { count: 0 };
     mockRoutes(() => new ApiError(503, 'Service Unavailable'), calls);

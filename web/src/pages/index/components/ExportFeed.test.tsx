@@ -105,6 +105,14 @@ describe('ExportFeed', () => {
     expect(eventCsv.getAttribute('href')).toContain(`/sessions/${SESSION_ID}/export.csv`);
     const eventJsonl = screen.getByRole('link', { name: /Event feed JSONL/ });
     expect(eventJsonl.getAttribute('href')).toContain(`/sessions/${SESSION_ID}/export.jsonl`);
+    // shadcn-port-workspace D6: the links stay real <a download> elements, rendered as Buttons.
+    expect(eventCsv.tagName).toBe('A');
+    expect(eventCsv.hasAttribute('download')).toBe(true);
+    expect(eventCsv.getAttribute('data-slot')).toBe('button');
+    expect(eventCsv.getAttribute('data-variant')).toBe('default');
+    expect(eventJsonl.getAttribute('data-variant')).toBe('outline');
+    expect(transcriptBtn().getAttribute('data-slot')).toBe('button');
+    expect(topicsBtn().getAttribute('data-variant')).toBe('default');
   });
 
   it('downloads the transcript CSV with the shared speaker offset (0-based → +1)', async () => {

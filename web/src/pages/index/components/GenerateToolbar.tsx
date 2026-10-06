@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { FEED_GLASS_BTN } from './FeedTable';
+import { Button } from '../../../shared/components/ui/button';
 import { FeedToolbarCaption, IconPlus, IconSparkles } from './feedToolbarCaption';
 
 interface Props {
@@ -87,9 +87,9 @@ export function GenerateToolbar({
         </span>
       )}
       {generateControl ?? (
-        <button
-          type="button"
-          className={`${FEED_GLASS_BTN} aria-disabled:pointer-events-none aria-disabled:cursor-not-allowed aria-disabled:opacity-45`}
+        <Button
+          variant="glass"
+          className="aria-disabled:pointer-events-none aria-disabled:cursor-not-allowed aria-disabled:opacity-45"
           disabled={generatePending}
           aria-disabled={genUnavailable || undefined}
           aria-describedby={genUnavailable ? reasonId : undefined}
@@ -102,7 +102,7 @@ export function GenerateToolbar({
             label={generatePending ? 'Generating…' : 'Auto Generate'}
             icon={<IconSparkles />}
           />
-        </button>
+        </Button>
       )}
       {genUnavailable && (
         <span
@@ -115,14 +115,9 @@ export function GenerateToolbar({
         </span>
       )}
       {onInsert && (
-        <button
-          type="button"
-          className={FEED_GLASS_BTN}
-          disabled={insertPending}
-          onClick={onInsert}
-        >
+        <Button variant="glass" disabled={insertPending} onClick={onInsert}>
           <FeedToolbarCaption label="Insert" icon={<IconPlus />} />
-        </button>
+        </Button>
       )}
     </>
   );

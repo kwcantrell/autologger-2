@@ -1,3 +1,4 @@
+import { Play } from 'lucide-react';
 import type { ColumnDef } from './FeedTable';
 
 // --- feed-row-seek: the shared jump control (design D2, D7) ---
@@ -111,9 +112,7 @@ export function JumpToTimeButton({
       aria-describedby={unavailable ? reasonId : undefined}
       onClick={activate}
     >
-      <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-        <path d="M6 4L20 12L6 20V4Z" />
-      </svg>
+      <Play className="size-3" fill="currentColor" aria-hidden="true" />
     </button>
   );
 }

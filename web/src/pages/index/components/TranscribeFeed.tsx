@@ -8,6 +8,7 @@ import {
   useTranscriptWords,
   useUpdateTranscriptWord,
 } from '../../../api/hooks/useTranscriptWords';
+import { TableCell, TableRow } from '../../../shared/components/ui/table';
 import { useTranscriptWordsGate } from '../hooks/TranscriptWordsGateContext';
 import { useGatedGenerate } from '../hooks/useGatedGenerate';
 import { useTimelineSeek } from '../hooks/useTimelineSeek';
@@ -85,9 +86,9 @@ export const TranscribeFeed = memo(function TranscribeFeed({ sessionId }: Props)
   // Default direction is oldest-first across all three feeds (owner decision
   // 2026-08-06, PR#4 review) — the log reads top-down like a sheet.
   const [sort, dispatchSort] = useReducer(sortReducer, { key: 'session_time', dir: 'asc' });
-  // Reactive scroll viewport: OverlayScrollbars publishes its viewport via the
+  // Reactive scroll viewport: FeedTable publishes its ScrollArea viewport via the
   // `scrollRef` callback below. Storing it in state (not a ref) re-renders so
-  // useVirtualizer re-attaches the instant OS initializes, instead of waiting
+  // useVirtualizer re-attaches the instant the viewport mounts, instead of waiting
   // for an unrelated background re-render (~1.5–2 s later).
   const [scrollEl, setScrollEl] = useState<HTMLDivElement | null>(null);
 
@@ -246,12 +247,12 @@ export const TranscribeFeed = memo(function TranscribeFeed({ sessionId }: Props)
         scrollRef={setScrollEl}
       >
         {paddingTop > 0 && (
-          <tr>
-            <td
+          <TableRow>
+            <TableCell
               colSpan={COLUMNS.length}
               style={{ height: paddingTop, padding: 0, border: 'none' }}
             />
-          </tr>
+          </TableRow>
         )}
         {sortedWords &&
           virtualItems.map((vRow) => {
@@ -271,12 +272,12 @@ export const TranscribeFeed = memo(function TranscribeFeed({ sessionId }: Props)
             );
           })}
         {paddingBottom > 0 && (
-          <tr>
-            <td
+          <TableRow>
+            <TableCell
               colSpan={COLUMNS.length}
               style={{ height: paddingBottom, padding: 0, border: 'none' }}
             />
-          </tr>
+          </TableRow>
         )}
       </FeedTable>
     </FeedShell>

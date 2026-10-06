@@ -545,18 +545,6 @@
   }
 }
 
-/* RecentSessionsList's OverlayScrollbars viewport — the flex/gap layout for the
- * session cards must live on the library-generated [data-overlayscrollbars-viewport]
- * inner element, which is not a JSX node and so can't carry utilities. Scoped to the
- * rail scroll host (#session-list / #archived-list both emit `os-rail-sessions`). */
-@layer components {
-  .os-rail-sessions > [data-overlayscrollbars-viewport] {
-    display: flex;
-    flex-direction: column;
-    gap: 0.45rem;
-  }
-}
-
 /* Floating-panel chrome shared by the Radix wrappers (Dialog/Popover/Tooltip
  * content + the index-local Select dropdown). Ported verbatim from the deleted
  * `.glassPanel` (glass.module.css) — a compound of four properties, so it can't
@@ -1409,7 +1397,7 @@
 
   /* The `.btn` compound family — plain rules, kept together in one layer.
    * ui-refresh: re-skinned from the pre-V5 flat grey chrome to the V5 glass
-   * vocabulary (mirrors FEED_GLASS_BTN in FeedTable.tsx) so the modal/settings
+   * vocabulary (mirrors the `glass` Button variant) so the modal/settings
    * layer speaks the same language as the workspace. Class names unchanged —
    * every legacy consumer converts at once. */
   .btn {

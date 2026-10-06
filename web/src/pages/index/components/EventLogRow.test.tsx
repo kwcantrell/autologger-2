@@ -615,3 +615,51 @@ describe('EventLogRow — serverInlineDraft mirrors what the controls render', (
     });
   });
 });
+
+// shadcn-port-workspace D3 / task 3.2: the row renders through TableRow / TableCell, and its
+// cells keep exactly the class lists they had before the port (the primitives carry no visual
+// base; the snapshot was written against the raw <tr>/<td> markup).
+describe('EventLogRow on the shadcn Table parts', () => {
+  it('is a table-row of table-cells with unchanged cell classes', () => {
+    renderRow();
+    const tr = document.querySelector('tbody > tr') as HTMLTableRowElement;
+    const cells = Array.from(tr.querySelectorAll(':scope > td'));
+    expect({ row: tr.className, cells: cells.map((td) => td.className) }).toMatchSnapshot();
+    expect(tr.getAttribute('data-slot')).toBe('table-row');
+    for (const td of cells) expect(td.getAttribute('data-slot')).toBe('table-cell');
+  });
+});
+
+describe('EventLogRow row actions (shadcn-port-workspace D6)', () => {
+  it('Delete row draws the lucide trash glyph; UNDELETE is a shadcn Button', () => {
+    renderRow({ inlineEdit: true });
+    const del = screen.getByRole('button', { name: 'Delete row' });
+    expect(del.querySelector('svg.lucide-trash-2')).not.toBeNull();
+  });
+
+  it('UNDELETE (pending delete) is an outline Button named Restore row', () => {
+    renderRow({ inlineEdit: true, pendingDelete: true });
+    const restore = screen.getByRole('button', { name: 'Restore row' });
+    // (data-slot is the Tooltip trigger's: the wrapper stamps it onto its asChild child.)
+    expect(restore.getAttribute('data-variant')).toBe('outline');
+    expect(restore.getAttribute('data-size')).toBe('xs');
+    expect(restore.textContent).toBe('UNDELETE');
+  });
+});
+
+describe('EventLogRow internal category colour (shadcn-port-workspace D8)', () => {
+  it('an internal row resolves var(--muted) to the legacy muted grey', () => {
+    renderRow({
+      event: eventFixture({
+        category: 'internal',
+        category_label: 'Internal',
+        category_color: 'var(--muted)',
+      }),
+    });
+    const styled = [...document.querySelectorAll('tbody td[style], tbody td [style]')].map(
+      (el) => (el as HTMLElement).style.color,
+    );
+    expect(styled).toContain('var(--legacy-muted)');
+    expect(styled).not.toContain('var(--muted)');
+  });
+});

@@ -1,25 +1,23 @@
 import clsx from 'clsx';
-import type { OverlayScrollbars } from 'overlayscrollbars';
-import { OverlayScrollbarsComponent } from 'overlayscrollbars-react';
-import type { MutableRefObject, ReactNode, Ref } from 'react';
-import { useCallback } from 'react';
+import type { ReactNode, Ref } from 'react';
+import { ScrollArea } from '../../../shared/components/ui/scroll-area';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '../../../shared/components/ui/table';
 
-// Sticky feed header cell. Matches Transcribe/Topics' legacy `.feedTh`. Text-align is
-// NOT set here — the standalone feeds pass `text-left` per column; the Event Feed passes
-// `text-center` (its legacy `.sheet th` centered headers, still in @layer legacy through
-// this slice) so only one alignment utility lands on each <th> (no order collision).
-const FEED_TH =
-  // Cool translucent navy (not warm --surface-raised grey) so headers match V5 glass.
-  'sticky top-0 z-[1] px-[0.55rem] py-[0.38rem] text-[0.84rem] font-semibold tracking-[0.05em] uppercase whitespace-nowrap bg-[rgba(19,27,48,0.72)] [border-bottom:1px_solid_var(--v5-line)] text-v5-muted';
+// The sticky feed header chrome and the sort-button reset are the shadcn `TableHead` base
+// (shadcn-port-workspace D1). Text-align is NOT set there — the standalone feeds pass
+// `text-left` per column; the Event Feed passes `text-center` — so only one alignment utility
+// lands on each <th> (no order collision).
 // Sort glyphs: the sorted header's button gets a ' ↑'/' ↓' `::after` (leading space
 // preserved via Tailwind's `_`→space conversion in the arbitrary content value).
 const FEED_TH_SORT_ASC = "[&_button]:after:content-['_↑'] [&_button]:after:text-v5-primary";
 const FEED_TH_SORT_DESC = "[&_button]:after:content-['_↓'] [&_button]:after:text-v5-primary";
-// Header sort button reset + hover. `font: inherit` doesn't cover letter-spacing (not part
-// of the font shorthand) and native buttons reset it to `normal`, so restore the inherited
-// tracking explicitly (was `letter-spacing: inherit` in the legacy `.feedTh button` reset).
-const FEED_TH_BUTTON =
-  '[&_button]:appearance-none [&_button]:bg-transparent [&_button]:border-none [&_button]:text-inherit [&_button]:[font:inherit] [&_button]:[letter-spacing:inherit] [&_button]:cursor-pointer [&_button]:p-0 [&_button]:text-left [&_button]:w-full [&_button]:hover-always:text-v5-primary';
 // Empty-state cell. Anchored via table specificity in legacy; as a utility it wins by layer.
 const FEED_EMPTY =
   'px-4 py-[1.35rem] text-center text-[0.85rem] not-italic text-v5-muted border border-solid border-v5-border rounded-v5-md bg-[rgba(0,0,0,0.22)]';
@@ -47,18 +45,6 @@ export const FEED_INLINE_INPUT_MONO = '[font-family:monospace]';
 export const FEED_SUMMARY_TEXTAREA =
   'block box-border min-h-[1.6rem] resize-none overflow-hidden whitespace-pre-wrap [overflow-wrap:anywhere] leading-[1.35]';
 
-// Glass toolbar buttons (Edit / Save / Cancel / dropdown triggers / Auto Generate /
-// Insert), rendered by EventLogSheet, TranscribeFeed, TopicsFeed.
-/** Base glass button. Hover is exclusive of :disabled (was `:hover:not(:disabled)`). */
-// max-md:px-4 (ui-refresh): with five top-level tabs the toolbar trio
-// (Edit / Time Display / Filter) was clipping at the right edge on phones.
-export const FEED_GLASS_BTN =
-  'box-border inline-flex items-center justify-center px-6 py-[0.55rem] font-[family-name:"Inter",var(--font-poppins),ui-sans-serif,system-ui,sans-serif] text-[0.72rem] font-semibold tracking-[0.1em] uppercase rounded-v5-sm border border-solid border-v5-border [background:linear-gradient(165deg,rgba(255,255,255,0.08),rgba(15,23,42,0.45))] text-[rgba(248,250,252,0.92)] cursor-pointer [box-shadow:inset_0_1px_0_rgba(255,255,255,0.06)] [transition:border-color_0.15s_ease,background_0.15s_ease,box-shadow_0.15s_ease,opacity_0.15s_ease] not-disabled:hover-always:border-[color-mix(in_srgb,var(--v5-primary)_45%,var(--v5-border))] not-disabled:hover-always:[background:linear-gradient(165deg,rgba(255,255,255,0.1),rgba(15,23,42,0.5))] disabled:opacity-45 disabled:cursor-not-allowed max-md:min-h-[2.55rem] max-md:min-w-[2.55rem] max-md:px-2.5 max-md:tracking-normal';
-/** Primary glass button — sky accent border/bg/text + exclusive hover. Layer it after
- *  FEED_GLASS_BTN; the accent utilities replace the base border/bg/text. */
-export const FEED_GLASS_BTN_PRIMARY =
-  'border-[rgba(56,189,248,0.35)] [background:linear-gradient(165deg,rgba(56,189,248,0.16),rgba(15,23,42,0.5))] text-v5-primary not-disabled:hover-always:[background:linear-gradient(165deg,rgba(56,189,248,0.24),rgba(15,23,42,0.52))]';
-
 export interface ColumnDef {
   key: string;
   /** Visible header text. Ignored when ariaLabel is set. */
@@ -84,7 +70,7 @@ interface Props {
   tableClassName?: string;
   /** Optional <colgroup> for column width constraints. */
   colgroup?: ReactNode;
-  /** Ref forwarded to the scrollable wrapper div (used by virtualizers). */
+  /** Receives the scroll viewport element (the virtualizers' scroll element). */
   scrollRef?: Ref<HTMLDivElement>;
 }
 
@@ -103,54 +89,34 @@ export function FeedTable({
 }: Props) {
   const colSpan = columns.length;
 
-  /* OverlayScrollbars creates its own scroll viewport inside the host element;
-   * publish that viewport to scrollRef so TranscribeFeed's react-virtual call
-   * (getScrollElement: () => scrollRef.current) continues to work. */
-  const handleOsInit = useCallback(
-    (instance: OverlayScrollbars) => {
-      if (!scrollRef) return;
-      const viewport = instance.elements().viewport as HTMLDivElement;
-      if (typeof scrollRef === 'function') scrollRef(viewport);
-      else (scrollRef as MutableRefObject<HTMLDivElement | null>).current = viewport;
-    },
-    [scrollRef],
-  );
-
   return (
-    // OverlayScrollbars host element. Native overflow/scrollbar styling is owned by
-    // the library — we only set box sizing (flex-basis:0 so the feed scrolls
-    // internally; phone-first max-height cap so a long feed scrolls rather than
-    // burying the end of the stacked page). The `.v5-transcribe-feed`/`.v5-topics-feed`
-    // panel wrappers carry the matching flex-column layout via ancestor variants in
-    // TranscribeFeed/TopicsFeed.
-    <OverlayScrollbarsComponent
-      className="min-h-0 flex-[1_1_0] max-md:flex-[0_0_auto] max-md:max-h-[70dvh]"
-      defer
-      options={{
-        scrollbars: {
-          theme: 'os-theme-light',
-          autoHide: 'leave',
-          autoHideDelay: 250,
-        },
-      }}
-      events={{ initialized: handleOsInit }}
+    // shadcn ScrollArea (shadcn-port-workspace D3). The viewport is the scroll element the
+    // virtualizers read (`scrollRef` -> `viewportRef`: a callback ref fires on mount, a ref object
+    // is filled). Box sizing: flex-basis 0 so the feed scrolls internally; on phones the root
+    // sizes to content and the 70dvh cap sits on the VIEWPORT (a percentage height would not
+    // resolve against a max-height-capped auto root — the viewport would never scroll). The
+    // `.v5-transcribe-feed`/`.v5-topics-feed` panel wrappers carry the matching flex-column
+    // layout via ancestor variants in TranscribeFeed/TopicsFeed.
+    <ScrollArea
+      className="min-h-0 flex-[1_1_0] max-md:flex-[0_0_auto]"
+      viewportClassName="max-md:h-auto max-md:max-h-[70dvh]"
+      viewportRef={scrollRef}
+      // Both axes, as OverlayScrollbars had: on phones the table is wider than the viewport.
+      scrollbars="both"
     >
-      <table className={clsx('w-full border-collapse text-[0.84rem]', tableClassName)}>
+      <Table className={tableClassName}>
         {colgroup}
-        <thead>
-          <tr>
+        <TableHeader>
+          <TableRow>
             {columns.map((col) => {
               const isSorted = col.sortKey && sortKey === col.sortKey;
-              const thCls = clsx(
-                FEED_TH,
-                FEED_TH_BUTTON,
-                col.thClassName,
-                isSorted && (sortDir === 'asc' ? FEED_TH_SORT_ASC : FEED_TH_SORT_DESC),
-              );
               return (
-                <th
+                <TableHead
                   key={col.key}
-                  className={thCls}
+                  className={clsx(
+                    col.thClassName,
+                    isSorted && (sortDir === 'asc' ? FEED_TH_SORT_ASC : FEED_TH_SORT_DESC),
+                  )}
                   aria-label={col.ariaLabel}
                   aria-sort={
                     isSorted ? (sortDir === 'asc' ? 'ascending' : 'descending') : undefined
@@ -163,29 +129,29 @@ export function FeedTable({
                   ) : col.ariaLabel ? null : (
                     col.label
                   )}
-                </th>
+                </TableHead>
               );
             })}
-          </tr>
-        </thead>
-        <tbody>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
           {isLoading && (
-            <tr>
-              <td colSpan={colSpan} className={FEED_EMPTY}>
+            <TableRow>
+              <TableCell colSpan={colSpan} className={FEED_EMPTY}>
                 Loading…
-              </td>
-            </tr>
+              </TableCell>
+            </TableRow>
           )}
           {!isLoading && isEmpty && (
-            <tr>
-              <td colSpan={colSpan} className={FEED_EMPTY}>
+            <TableRow>
+              <TableCell colSpan={colSpan} className={FEED_EMPTY}>
                 {emptyMessage}
-              </td>
-            </tr>
+              </TableCell>
+            </TableRow>
           )}
           {!isLoading && !isEmpty && children}
-        </tbody>
-      </table>
-    </OverlayScrollbarsComponent>
+        </TableBody>
+      </Table>
+    </ScrollArea>
   );
 }

@@ -4,6 +4,7 @@ import { useEvents, WORKSPACE_EVENTS_LIMIT } from '../../../api/hooks/useEvents'
 import { useSessionStatus } from '../../../api/hooks/useSessionStatus';
 import type { LogEvent } from '../../../api/types';
 import { parseSmpteToSec, sessionFrameRate } from '../../../shared/utils/audioClips';
+import { resolveCategoryColor } from '../../../shared/utils/categoryColor';
 import { groupTimelineMarkers, type TimelineMarkerGroup } from '../utils/markerGrouping';
 import { jumpTimelineToSec } from '../utils/timelineJump';
 import { TIMELINE_SEC_EVENT } from '../utils/timelineSecEvent';
@@ -121,8 +122,7 @@ export function MarkerNav({ sessionId, disabled = false, ungrouped = false }: Pr
   );
 
   const colorOf = (ev: LogEvent | null): string => {
-    const raw = String(ev?.category_color ?? '').trim();
-    return raw || '#6b7280';
+    return resolveCategoryColor(ev?.category_color) ?? '#6b7280';
   };
 
   const handleJump = (direction: -1 | 1) => {
