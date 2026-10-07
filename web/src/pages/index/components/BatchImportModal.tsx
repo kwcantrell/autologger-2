@@ -169,9 +169,10 @@ export function BatchImportModal({ profile, onClose }: Props) {
         err && typeof err === 'object' && 'status' in err && typeof err.status === 'number'
           ? err.status
           : null;
+      // A job 404 means its record expired or never existed (shared-request-state D1).
       const hint =
         status === 404
-          ? ' (API route missing — restart the Node server on the sheets-log-import branch, then retry)'
+          ? ' (The import job was not found. It may have expired; start the import again.)'
           : '';
       setProgress((prev) => ({
         ...prev,

@@ -272,6 +272,31 @@ describe('BatchImportModal', () => {
     expect(screen.getByRole('button', { name: 'Start Import' }).textContent).toBe('Start Import');
   });
 
+  // shared-request-state D1: a job 404 means the job record expired or never existed (any
+  // server process answers the poll now), not a missing API route.
+  it('a log-import job 404 says the job was not found and to start again', async () => {
+    mockedApiFetch.mockImplementation(async (path) => {
+      if (path === 'shows/show-1/log-import') return { job_id: 'job-1' };
+      if (path === 'log-import/job-1') {
+        throw Object.assign(new Error('Log import job not found.'), { status: 404 });
+      }
+      throw new Error(`unexpected ${path}`);
+    });
+    renderWithQueryClient(<BatchImportModal profile={profileFixture()} onClose={() => {}} />);
+    await enterLogsUrl('https://docs.google.com/spreadsheets/d/abc123/edit');
+    await waitFor(() =>
+      expect(
+        (screen.getByRole('button', { name: 'Start Import' }) as HTMLButtonElement).disabled,
+      ).toBe(false),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Start Import' }));
+    const line = await screen.findByText(/HTTP 404/);
+    expect(line.textContent).toBe(
+      'Failed: HTTP 404 — Log import job not found. (The import job was not found. It may have expired; start the import again.)',
+    );
+    expect(screen.queryByText(/API route missing/)).toBeNull();
+  });
+
   it('abort on close clears progress on remount', async () => {
     let resolveStitch:
       | ((v: { blob: Blob; durationS: number; partDurationsS: number[] }) => void)
