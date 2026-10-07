@@ -41,17 +41,16 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
-import { SessionHubView } from '@autologger/session-core';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { SessionIndexStore } from '@autologger/catalog';
 import {
   MEDIA_IMPORT_FIXTURES_DIR,
-  YOUTUBE_IMPORT_MAX_CONCURRENT,
   YOUTUBE_IMPORT_TMP_PREFIX,
   youtubeImportGuard,
 } from '@autologger/media-import';
 import type { Clock } from '@autologger/ports';
+import { SessionHubView } from '@autologger/session-core';
 import { recordingStartAnchors } from '@autologger/transcription';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Bindings } from '../appEnv';
@@ -66,9 +65,9 @@ import {
   observeRunLeases,
   runLeaseRows,
 } from '../test/runLeases';
-import { slowStorage } from '../test/session/slowStorage';
 import { nthUserCall, sessionGate } from '../test/session/sessionGate';
 import { harnessHub, testRegistry } from '../test/session/sessionRows';
+import { slowStorage } from '../test/session/slowStorage';
 
 const FIXTURE_PATH = join(MEDIA_IMPORT_FIXTURES_DIR, 'fake-ytdlp.mjs');
 
@@ -80,8 +79,6 @@ const BAD_BODY_DETAIL = 'Invalid youtube-import request body.';
 const BAD_URL_DETAIL =
   'url must be an http(s) link to youtube.com, youtu.be, or music.youtube.com.';
 const SESSION_BUSY_DETAIL = 'An import is already in progress for this session.';
-const AT_CAPACITY_DETAIL =
-  'The server is already running the maximum number of concurrent YouTube imports; try again shortly.';
 const TRANSCRIPTION_UNAVAILABLE_DETAIL = 'Transcription is unavailable on this deployment.';
 const IMPORT_ROLLING_DETAIL =
   'YouTube import is refused while this session is actively recording; stop the recording and try again.';
@@ -420,23 +417,6 @@ describe('concurrency guards through the real route (matrix: both 409 causes; Ph
       expect(neverSpawned(markerPath)).toBe(true);
     } finally {
       lease?.release();
-    }
-  });
-
-  it('409 at-capacity when the GLOBAL ceiling is reached by OTHER (distinct) sessions, no spawn', async () => {
-    const session = (await seededSession()).sessionId;
-    const { binaryPath, markerPath } = freshBinary();
-    const held = Array.from({ length: YOUTUBE_IMPORT_MAX_CONCURRENT }, (_, i) =>
-      youtubeImportGuard.tryAcquire(`ceiling-other-${i}`),
-    );
-    expect(held.every((l) => l !== null)).toBe(true);
-    try {
-      const res = await postImport(session, VALID_BODY, configuredEnv(binaryPath));
-      expect(res.status).toBe(409);
-      expect(await res.json()).toEqual({ detail: AT_CAPACITY_DETAIL });
-      expect(neverSpawned(markerPath)).toBe(true);
-    } finally {
-      for (const l of held) l?.release();
     }
   });
 });

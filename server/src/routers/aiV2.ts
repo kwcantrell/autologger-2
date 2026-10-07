@@ -231,7 +231,7 @@ aiV2Router.post('/api/sessions/:sessionId/ai/v2/design', async (c) => {
   // Acquired BEFORE any spawn and held across the whole turn; released in the
   // stream's `finally` on every exit path (task 2.7 refines the acquisition
   // semantics; the hold-and-release lifecycle is real here).
-  const proc = aiChatTurns.tryAcquire(sessionId, 2); // the old default; run-status-and-sweeper D2 drops it
+  const proc = aiChatTurns.tryAcquire(sessionId);
   if (!proc.ok) {
     throw new ApiError(
       409,

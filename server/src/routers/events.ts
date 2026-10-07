@@ -522,7 +522,7 @@ eventsRouter.post('/api/sessions/:sessionId/events/generate', async (c) => {
   // 6. Single-flight (per session) + process-wide ceiling — 409, spawning
   // nothing. Same registry as AI chat/AI v2/topics; released in this
   // handler's own finally (release BEFORE the projection — see the finally).
-  const proc = aiChatTurns.tryAcquire(sessionId, 2); // the old default; run-status-and-sweeper D2 drops it
+  const proc = aiChatTurns.tryAcquire(sessionId);
   if (!proc.ok) {
     throw new ApiError(
       409,

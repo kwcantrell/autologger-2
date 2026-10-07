@@ -260,7 +260,7 @@ describe('topics/generate — configured behavior (topic-generation)', () => {
   it('configured + concurrency: a turn already holding the session slot → 409, no spawn', async () => {
     const s = await newSession();
     await seedTranscript(s);
-    const slot = aiChatTurns.tryAcquire(s, 2);
+    const slot = aiChatTurns.tryAcquire(s);
     expect(slot.ok).toBe(true);
     try {
       const res = await generateReq(s, claudeConfiguredEnv(SUCCESS_STREAM_FIXTURE));
@@ -1315,7 +1315,16 @@ describe('transcript generation', () => {
       // The wire projection (`wordApiDict`) is narrower than the stored row:
       // `created_at_utc` and the former `session_id` graft are both absent.
       expect(Object.keys(w).sort()).toEqual(
-        ['end_sec', 'id', 'ordinal', 'session_time', 'speaker', 'start_sec', 'version', 'word'].sort(),
+        [
+          'end_sec',
+          'id',
+          'ordinal',
+          'session_time',
+          'speaker',
+          'start_sec',
+          'version',
+          'word',
+        ].sort(),
       );
     }
   });

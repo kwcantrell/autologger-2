@@ -444,7 +444,7 @@ describe('events/generate — guard ladder', () => {
   it('7. shared AI slot held → 409 naming the full holder set incl. event generation, no spawn', async () => {
     const { sessionId } = await newSession();
     await seedAnchoredTranscript(sessionId);
-    const slot = aiChatTurns.tryAcquire(sessionId, 2);
+    const slot = aiChatTurns.tryAcquire(sessionId);
     expect(slot.ok).toBe(true);
     try {
       const res = await generateReq(sessionId, configuredEnv(EVENTS_SUCCESS_FIXTURE));
@@ -458,33 +458,12 @@ describe('events/generate — guard ladder', () => {
     }
   });
 
-  it('7b. process-wide ceiling reached → 409 with the distinct at-capacity detail naming event generation', async () => {
-    const other = (await newSession()).sessionId;
-    const { sessionId } = await newSession();
-    await seedAnchoredTranscript(sessionId);
-    const slot = aiChatTurns.tryAcquire(other, 1);
-    expect(slot.ok).toBe(true);
-    try {
-      const res = await generateReq(
-        sessionId,
-        configuredEnv(EVENTS_SUCCESS_FIXTURE, { AI_CHAT_MAX_CONCURRENT: '1' }),
-      );
-      expect(res.status).toBe(409);
-      const detail = await detailOf(res);
-      expect(detail).toMatch(/concurrency limit/i);
-      expect(detail).toMatch(/event generation/);
-      expect(neverSpawned(sessionId)).toBe(true);
-    } finally {
-      if (slot.ok) slot.release();
-    }
-  });
-
   it('cross-direction: ai/chat blocked while the slot is held names event generation among possible holders', async () => {
     const { sessionId } = await newSession();
     // A generate run in flight is indistinguishable from any other holder at
     // the registry — the CHAT route's reworded shared detail must name event
     // generation so a user who pressed AUTO GENERATE understands the 409.
-    const slot = aiChatTurns.tryAcquire(sessionId, 2);
+    const slot = aiChatTurns.tryAcquire(sessionId);
     expect(slot.ok).toBe(true);
     try {
       const res = await app.request(
@@ -678,7 +657,7 @@ describe('events/generate — optional body, regenerate, and selection', () => {
     const { sessionId } = await newSession();
     await seedAnchoredTranscript(sessionId);
     await seedAutoSlateEvent(sessionId);
-    const slot = aiChatTurns.tryAcquire(sessionId, 2);
+    const slot = aiChatTurns.tryAcquire(sessionId);
     expect(slot.ok).toBe(true);
     try {
       const res = await generateReq(sessionId, configuredEnv(EVENTS_SUCCESS_FIXTURE), {

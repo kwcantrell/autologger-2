@@ -150,7 +150,7 @@ aiRouter.post('/api/sessions/:sessionId/ai/chat', async (c) => {
   // 5. Single-flight (per session) + process-wide concurrency ceiling — 409,
   // spawning nothing. The slot is held for the whole turn and released when the
   // stream ends.
-  const proc = aiChatTurns.tryAcquire(sessionId, 2); // the old default; run-status-and-sweeper D2 drops it
+  const proc = aiChatTurns.tryAcquire(sessionId);
   if (!proc.ok) {
     throw new ApiError(
       409,

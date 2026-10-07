@@ -213,7 +213,7 @@ describe('ai/v2/design — session resolution masks before 503/409', () => {
     // A turn is "in flight" for this session AND the feature is unconfigured:
     // if the config/slot gates ran before session scoping we'd see 503/409
     // instead of 404, leaking either signal to a caller with no access.
-    aiChatTurns.tryAcquire(s, 2);
+    aiChatTurns.tryAcquire(s);
     const res = await post(s, { message: 'hi' }, envWith({ AI_V2_ENABLED: '', HOST: '0.0.0.0' }), {
       ...J,
       Cookie: await loginCookie(outsider),
@@ -389,7 +389,7 @@ describe('ai/v2/design — body validation (422 / 400), spawning nothing', () =>
 
   it('422 (invalid body) wins over 409 (slot busy) — body validation runs before the slot check', async () => {
     const s = (await seededSession()).sessionId;
-    const slot = aiChatTurns.tryAcquire(s, 2);
+    const slot = aiChatTurns.tryAcquire(s);
     expect(slot.ok).toBe(true);
     try {
       const res = await post(s, {}, loopbackEnv());
@@ -404,28 +404,12 @@ describe('ai/v2/design — body validation (422 / 400), spawning nothing', () =>
 describe('ai/v2/design — turn slot (409), shared with the AI chat registry by design', () => {
   it('409 when a turn is already in flight for the same session (session-busy)', async () => {
     const s = (await seededSession()).sessionId;
-    const slot = aiChatTurns.tryAcquire(s, 2);
+    const slot = aiChatTurns.tryAcquire(s);
     expect(slot.ok).toBe(true);
     try {
       const res = await post(s, { message: 'hi' }, loopbackEnv());
       expect(res.status).toBe(409);
       expect(((await res.json()) as { detail: string }).detail).toMatch(/in progress|already/i);
-      expect(spawnSpy).not.toHaveBeenCalled();
-    } finally {
-      if (slot.ok) slot.release();
-    }
-  });
-
-  it('409 when the process-wide ceiling is reached, with a distinct detail', async () => {
-    const other = (await seededSession()).sessionId;
-    const s = (await seededSession()).sessionId;
-    const slot = aiChatTurns.tryAcquire(other, 1);
-    expect(slot.ok).toBe(true);
-    try {
-      const res = await post(s, { message: 'hi' }, loopbackEnv({ AI_CHAT_MAX_CONCURRENT: '1' }));
-      expect(res.status).toBe(409);
-      const detail = ((await res.json()) as { detail: string }).detail;
-      expect(detail).toMatch(/capacity|concurrent|limit|busy/i);
       expect(spawnSpy).not.toHaveBeenCalled();
     } finally {
       if (slot.ok) slot.release();

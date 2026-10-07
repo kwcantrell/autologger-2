@@ -261,7 +261,7 @@ describe('ai/chat — session resolution masks before 503/409', () => {
     const outsider = await seedUser({ studios: [outsiderStudio] });
     // A turn is "in flight" for this session AND the feature is unconfigured: if
     // the config/single-flight gates ran before session scoping we'd see 503/409.
-    aiChatTurns.tryAcquire(s, 2);
+    aiChatTurns.tryAcquire(s);
     const res = await post(
       s,
       { message: 'hi' },
@@ -719,30 +719,12 @@ describe('ai/chat — resume binding per session and user, with the exact conver
 describe('ai/chat — single-flight & concurrency (409)', () => {
   it('409 when a turn is already in flight for the same session (session-busy)', async () => {
     const s = await seededSession();
-    const slot = aiChatTurns.tryAcquire(s, 2);
+    const slot = aiChatTurns.tryAcquire(s);
     expect(slot.ok).toBe(true);
     try {
       const res = await post(s, { message: 'hi' }, fixtureEnv());
       expect(res.status).toBe(409);
       expect(((await res.json()) as { detail: string }).detail).toMatch(/in progress|already/i);
-      expect(spawnSpy).not.toHaveBeenCalled();
-      expect(neverSpawned(s)).toBe(true);
-    } finally {
-      if (slot.ok) slot.release();
-    }
-  });
-
-  it('409 when the process-wide ceiling is reached, with a distinct detail', async () => {
-    const other = await seededSession();
-    const s = await seededSession();
-    // Ceiling of 1, already consumed by a different session.
-    const slot = aiChatTurns.tryAcquire(other, 1);
-    expect(slot.ok).toBe(true);
-    try {
-      const res = await post(s, { message: 'hi' }, fixtureEnv({ AI_CHAT_MAX_CONCURRENT: '1' }));
-      expect(res.status).toBe(409);
-      const detail = ((await res.json()) as { detail: string }).detail;
-      expect(detail).toMatch(/capacity|concurrent|limit|busy/i);
       expect(spawnSpy).not.toHaveBeenCalled();
       expect(neverSpawned(s)).toBe(true);
     } finally {
