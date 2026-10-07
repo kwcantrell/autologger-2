@@ -119,7 +119,8 @@ Keep each task's text, and later its `Evidence:`, in one block with no blank lin
 
 ## 6. Docs
 
-- [ ] 6.1 README: the `aiChatTurns`, `transcriptGenerationLock` and `youtubeImportGuard` paragraphs and the leases section name the run kinds, the 10 s/40 s renewal, the per-process ceilings, and the up-to-40 s restart window. ADR 0021: an 8b entry. Rollback note (design Rollback) under the ADR entry.
+- [x] 6.1 README: the `aiChatTurns`, `transcriptGenerationLock` and `youtubeImportGuard` paragraphs and the leases section name the run kinds, the 10 s/40 s renewal, the per-process ceilings, and the up-to-40 s restart window. ADR 0021: an 8b entry. Rollback note (design Rollback) under the ADR entry.
+  - Evidence: README: transcript generation (one run per session across processes, generic in-flight `409`), YouTube import (`409` from this or another process, the ceiling per process), the shared AI-slot paragraph (`ai-turn` lease, `AI_CHAT_MAX_CONCURRENT` per process), the tree entries `_aiSlot.ts`, `runLease.ts`, `transcriptGenerationLock.ts`, `youtubeImportGuard.ts`, `aiChatRegistry.ts`, the revision bullet (run-lease writes never count), and a new "Run leases (session-run-leases, ADR 0021 slice 8b)" paragraph after the recording lease (order, holder, 40 s lease renewed every 10 s by a same-holder re-claim, silent, per-process ceilings and status, the up-to-40 s restart window). The endpoint table is unchanged: `git diff README.md | grep -c '^[-+]|'` -> `0`. ADR 0021 item 8 gains "8b `session-run-leases`": owner decisions 1-4, the mechanism, the accepted restart window, the design Rollback note and the slice 9 follow-ups. `grep -n "Run leases (session-run-leases\|8b \`session-run-leases\`\|\*\*Rollback.\*\*" README.md docs/decisions/0021-*.md` -> `README.md:917`, `0021…md:1043`, `0021…md:1072`.
 
 ## 7. Verify
 

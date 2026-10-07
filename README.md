@@ -135,7 +135,8 @@ or no readable segments (`400`, distinct details), a run that succeeds upstream 
 speech (`400`, existing transcript untouched), the request aborted before any provider call
 (`400`, no spend), a concurrent run already in flight (`409`, no spend), and upstream
 failure/timeout or a group over DeepGram's 2 GB upload limit (`502`). At most one generation
-run is in flight per process at a time.
+run is in flight per process at a time, and at most one per session across processes: a run
+held in another process gets the generic in-flight `409` (see "Run leases" below).
 
 **Setting `DEEPGRAM_API_KEY` sends recorded session audio to DeepGram's cloud API and enables
 billed, metered calls — every generate request is a paid request.** Any signed-in member of
@@ -154,10 +155,11 @@ video's best supported-container audio into an isolated temp dir, attaches it as
 segment on the session (rolling back the metadata row if the blob write fails), and — when
 `use_publish_date` is set and the video reports an upload date — writes the session's
 `episode_date`. Responses: `400 {detail}` for a malformed or non-allowlisted URL (no spawn);
-`409 {detail}` when another import for the same session is already running or the global
-concurrency ceiling is reached (no spawn); `502 {detail}` for a download/extraction failure,
-hang timeout, over the byte-size or 4-hour duration cap, a live/unknown-duration stream, or an
-unsupported produced container (no segment attached); `200 {ok: true}` on success.
+`409 {detail}` when another import for the same session is already running (in this or another
+server process) or this process's concurrency ceiling is reached (no spawn); `502 {detail}` for
+a download/extraction failure, hang timeout, over the byte-size or 4-hour duration cap, a
+live/unknown-duration stream, or an unsupported produced container (no segment attached);
+`200 {ok: true}` on success.
 
 **Egress and spend disclosure.** Enabling this (by either route — configured path or bare
 `PATH`) makes the server issue outbound HTTP requests to YouTube and download third-party
@@ -383,7 +385,9 @@ detail carrying no raw subprocess output, with events inserted before the failur
 persisted (and reported nowhere in the error body). **The shared AI-slot `409` busy details
 are reworded** (authorized by the same delta) to name event generation among the possible
 holders — the `ai/chat`, AI v2, and `topics/generate` busy/at-capacity strings now all read
-"AI chat, AI v2, topic generation, or event generation".
+"AI chat, AI v2, topic generation, or event generation". The shared slot is also held as the
+session's `ai-turn` run lease, so a turn running in another server process gets the same
+session-busy `409`; `AI_CHAT_MAX_CONCURRENT` still counts per process (see "Run leases" below).
 
 **Egress and spend disclosure.** Like `topics/generate`, a run is a real, billed Anthropic
 API call over the operator's own `claude login` credentials — the transcript and the
@@ -560,6 +564,8 @@ server/src/
   routers/
     _helpers.ts              session access gate, hub lookup, timecode context, marked-at
                               parsing (ApiError moved to httpError.ts at app root)
+    _aiSlot.ts               claimAiLease: the shared AI slot's ai-turn run lease, claimed
+                              after aiChatTurns and released before it
     auth.ts                  /auth/google/start|callback, /auth/logout
     profile.ts               GET /api/studio, GET|PUT /api/profile
     shows.ts                 GET|POST /api/shows, GET /api/shows/:showId (full show shape)
@@ -619,6 +625,8 @@ packages/                 Source-only npm workspace packages (no build step; ser
     eventStore.ts / transportStore.ts / audioStore.ts / leaseStore.ts / transcriptStore.ts /
     topicStore.ts / dashboardStore.ts / eventAnchors.ts / audioSeamParts.ts / storeHelpers.ts
                             Domain stores built on SessionCore                (← storage/db.py)
+    runLease.ts              holdRunLease: claims a run lease and renews it every 10 s until
+                             released; newRunHolderId (srv:<boot id>:<uuid>)
   catalog/src/             @autologger/catalog — the global catalog query layer (L1; deps:
                            domain, ports only — no better-sqlite3, speaks the CatalogDb port)
                            moved from server/src/db/ (persistence-package-extraction task 3.2)
@@ -658,7 +666,9 @@ packages/                 Source-only npm workspace packages (no build step; ser
                              Date.now() default formats the frozen GET
                              /api/transcript-generation/status started_at field — nothing
                              branches, expires, orders, or persists on the value, but it is
-                             contract-bearing, so it stays a display timestamp, not a Clock read
+                             contract-bearing, so it stays a display timestamp, not a Clock read.
+                             It counts per process; generateTranscript.ts then claims the
+                             session's transcript-generation run lease for the cross-process check
     generateTranscript.ts    Orchestrating entry point both the HTTP generate route and
                              log-import's ensureTimedTranscript coordinator call; imports
                              BlobStore directly from @autologger/ports (no appEnv/Bindings escape)
@@ -672,7 +682,9 @@ packages/                 Source-only npm workspace packages (no build step; ser
                            server/src/node/ (feature-service-packages task 3.1)
     ytdlp.ts                 yt-dlp spawn + lockdown + bounds; exports YtDlpError, matched by
                              instanceof at routers/sessions.ts
-    youtubeImportGuard.ts    Per-session + global concurrency guard (singleton)
+    youtubeImportGuard.ts    Per-session + process-wide concurrency guard (singleton); the
+                             ceiling counts per process, and routers/sessions.ts then claims the
+                             session's youtube-import run lease for the cross-process check
     youtubeImportScratch.ts  Startup sweep of stale per-request temp dirs
     index.ts                 Package barrel; exports MEDIA_IMPORT_FIXTURES_DIR
   media-import/fixtures/   fake-ytdlp.mjs, moved from server/src/test/fixtures/ (design D4).
@@ -736,7 +748,10 @@ packages/                 Source-only npm workspace packages (no build step; ser
     aiChatRelay.ts            JSONL→SSE stream relay: maps the CLI's stream-json stdout to the
                                frozen delta/tool/done/error SSE vocabulary
     aiChatRegistry.ts         Shared per-session AI turn registry: per-session single-flight +
-                               process-wide concurrency ceiling (the aiChatTurns singleton)
+                               process-wide concurrency ceiling (the aiChatTurns singleton); the
+                               ceiling counts per process, and the routes then claim the session's
+                               ai-turn run lease (server routers/_aiSlot.ts) for the cross-process
+                               check
     aiV2PendingQuestions.ts   Pending-question registry for the AskUserQuestion round trip on
                                v2 design turns, keyed and principal-bound
     topicGenerate.ts          One-shot topics/generate turn driver (crash-safe replace-all)
@@ -879,8 +894,9 @@ each committed change, whoever makes it. The CSV/JSONL exports carry none.
 - **The revision.** `events_stream_revision` (in `GET …/status`, `GET /api/companion/state` and
   the event list) and the `revision` of `event.changed` are the session's revision,
   `catalog.sessions.revision`: it advances by exactly one per committed session write that changes
-  a row (transport, audio, transcript, topic and dashboard writes, and lease claims, releases
-  and expiries, included), never on a read or a lease heartbeat. Only increase is promised.
+  a row (transport, audio, transcript, topic and dashboard writes, and recording-lease claims,
+  releases and expiries, included), never on a read, a recording-lease heartbeat or a run-lease
+  write. Only increase is promised.
 - Companion routes, the generate routes and every other writer take no version and never answer
   this 409.
 
@@ -897,6 +913,25 @@ stored in `catalog.session_leases` and belongs to the signed-in user *and* that 
   contains NUL, never matches (409 / `{"ok":false}` / `{"ok":true}`).
 - **Status:** `audio_recording_lease_holder_id` is the real client id only for the holding user;
   everyone else sees `another-client`. Alive and age are unchanged.
+
+**Run leases (session-run-leases, ADR 0021 slice 8b).** Three per-session single-flight slots are
+also rows in `catalog.session_leases`, one kind each: `ai-turn` (shared by AI chat, AI v2, topic
+generation and event generation), `transcript-generation` and `youtube-import`.
+- **Order:** the in-process check runs first, exactly as before, so every single-process `409` and
+  its detail is unchanged. The run lease is claimed after it. A refusal can only come from another
+  server process and answers the session-busy `409` (the generic in-flight `409` for transcript
+  generation). The lease is released before the in-process slot, before the response ends.
+- **Holder:** the user the run acts as (for a log-import job, its creator) and a server run id,
+  `srv:<boot id>:<uuid>`, unique per run.
+- **Renewal:** the lease lives 40 s; the holding process re-claims it as the same holder every
+  10 s. A refused renewal is logged and the run continues.
+- **Silent:** claiming, renewing and releasing a run lease never advances the revision and never
+  sends `lease.changed`. No client reads these kinds; status shows only the recording lease.
+- **Process ceilings** (`AI_CHAT_MAX_CONCURRENT`, the YouTube ceiling of 2, one transcript
+  generation) still count per process, and `GET /api/transcript-generation/status` reads this
+  process only.
+- **Restart window:** a process that crashes, is killed or restarts mid-run does not release its
+  run leases, so a retry on that session gets `409` for up to 40 s, until they expire.
 
 ## Security notes
 
