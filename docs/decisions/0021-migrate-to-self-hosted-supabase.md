@@ -1039,6 +1039,42 @@ Slice order:
      - a global expired-lease sweeper;
      - cross-process `lease.changed` fan-out;
      - Realtime exposure of `holder_user_id` and of the per-heartbeat UPDATE.
+
+   **8b `session-run-leases`** (owner decisions, 2026-10-07):
+   1. **only the per-session check moves to leases:** three run kinds, `ai-turn` (shared by AI chat,
+      AI v2, topic generation and event generation), `transcript-generation` and `youtube-import`;
+      after the panel, the in-process check stays in front of the lease; the process ceilings
+      (`AI_CHAT_MAX_CONCURRENT`, the YouTube ceiling of 2, one transcript generation and its
+      status) stay in memory and count per process; a deployment-wide ceiling is slice 9's;
+   2. **the holding process heartbeats:** a run lease lives 40 s and is renewed every 10 s; a
+      refused renewal is logged and the run continues;
+   3. **silent:** claiming, renewing, releasing or overwriting a run lease never advances the
+      revision and never broadcasts `lease.changed`;
+   4. **the holder is the requesting user and a run id** `srv:<boot id>:<uuid>`; a log-import job's
+      transcript runs hold as the job's creator. The 8a policies apply unchanged.
+
+   **8b's mechanism.**
+   - **The table.** Migration `20261012000000_session_run_leases.sql` widens
+     `session_leases_kind_check` to the four kinds. No rows or policies change.
+   - **The statements.** `LeaseStore.claimRunLease` and `releaseRunLease` run 8a's claim upsert and
+     a holder-scoped delete on the raw handle, so they never count, broadcast or arm the alarm.
+     Renewal is a re-claim by the same holder, so a holder whose row lapsed takes it back unless
+     another process took it. `expireIfStale` and its alarm cover recording rows only; an expired
+     run row stays until the next claim overwrites it.
+   - **The hold.** `holdRunLease` (session-core) claims once, then renews on an unref'd timer that
+     re-resolves the hub each tick, so idle eviction mid-run is harmless. `release()` is memoized
+     and never rejects.
+   - **The order.** Each route and pipeline takes its in-process slot first, unchanged, then claims
+     the lease; a refusal releases the slot and answers the session-busy `409` (transcript: the
+     generic in-flight `409`). The lease is released before the slot, before the response ends.
+   - **Accepted:** a process that crashes or restarts mid-run leaves its run leases, so that
+     session's kind is refused for up to 40 s. Graceful shutdown does not release them.
+   - **Rollback.** Revert the code. Run leases are written only by the new code, so rows left
+     behind expire harmlessly. To restore the `'recording'`-only check, run `delete from
+     catalog.session_leases where kind <> 'recording'`, then re-add the check with
+     `'recording'` only. This is a documented step, not a migration file.
+   - **Follow-ups for slice 9:** deployment-wide ceilings, a cross-process transcript status, and a
+     sweeper for expired run rows.
 9. Realtime replaces the WebSocket protocol.
 10. Blobs to Supabase Storage.
 11. The import script, parity check, cutover runbook and rollback plan. It must not import users,

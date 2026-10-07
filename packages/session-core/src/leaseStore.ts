@@ -1,13 +1,22 @@
-// Recording-lease domain (session-leases D3, D4, D5): one lease per session and kind in
+// Session-lease domain (session-leases D3, D4, D5): one lease per session and kind in
 // `catalog.session_leases`, bound to a client id and the user who claimed it. Liveness is always
 // judged from the stored expiry against the Clock port, so any process sharing the database reads
-// and claims the lease correctly; each statement decides its outcome on its own.
+// and claims the lease correctly; each statement decides its outcome on its own. The recording
+// lease counts toward the revision and broadcasts; the run leases (session-run-leases D2) are
+// silent: written on the raw handle, with no broadcast and no alarm.
 
 import type { SessionCore } from './sessionCore';
 
-/** The lease kinds (session-leases D1): the table's `session_leases_kind_check` admits exactly
- * these. */
-export type LeaseKind = 'recording';
+/** The run lease kinds (session-run-leases D1): the per-session single-flight slots of the shared
+ * AI turn, transcript generation and YouTube import. */
+export type RunLeaseKind = 'ai-turn' | 'transcript-generation' | 'youtube-import';
+
+/** The lease kinds (session-leases D1, session-run-leases D1): the table's
+ * `session_leases_kind_check` admits exactly these. */
+export type LeaseKind = 'recording' | RunLeaseKind;
+
+/** How often the holding process renews a run lease (session-run-leases D1, owner decision 2). */
+export const RUN_LEASE_RENEW_MS = 10_000;
 
 /** What a non-holder sees instead of the holder's client id (session-leases D4): non-empty, and
  * never equal to a tab id. */
@@ -25,9 +34,15 @@ export class LeaseStore {
   // A lease whose heartbeat is older than this expires (AUDIO_RECORDING_LEASE_STALE_SEC).
   static readonly LEASE_STALE_MS = 40_000;
 
-  /** Time to live per kind (session-leases D2). */
+  /** A run lease lives this long from its claim or last renewal (session-run-leases D1). */
+  static readonly RUN_LEASE_TTL_MS = 40_000;
+
+  /** Time to live per kind (session-leases D2, session-run-leases D1). */
   static readonly TTL_MS: Readonly<Record<LeaseKind, number>> = {
     recording: LeaseStore.LEASE_STALE_MS,
+    'ai-turn': LeaseStore.RUN_LEASE_TTL_MS,
+    'transcript-generation': LeaseStore.RUN_LEASE_TTL_MS,
+    'youtube-import': LeaseStore.RUN_LEASE_TTL_MS,
   };
 
   constructor(private core: SessionCore) {}
@@ -97,6 +112,30 @@ export class LeaseStore {
     if (changes > 0) this.core.broadcast({ type: 'lease.changed' });
   }
 
+  /** Claim or renew a run lease (session-run-leases D2): the claim upsert of `claimLease` on the
+   * raw handle, so it never advances the revision, broadcasts or arms the alarm. It wins on a free
+   * or expired row, or on the holder's own row (live or lapsed), so the same call is the renewal. */
+  async claimRunLease(kind: RunLeaseKind, holderId: string): Promise<boolean> {
+    const hid = usableClientId(holderId);
+    if (hid === null) return false;
+    const now = this.core.now();
+    return this.core.claimLeaseUncounted(
+      kind,
+      hid,
+      this.core.callerUserId,
+      now,
+      now + LeaseStore.TTL_MS[kind],
+    );
+  }
+
+  /** Release a run lease (session-run-leases D2): only the same holder id and user, on the raw
+   * handle; a lost lease is never deleted by its former holder. */
+  async releaseRunLease(kind: RunLeaseKind, holderId: string): Promise<void> {
+    const hid = usableClientId(holderId);
+    if (hid === null) return;
+    await this.core.releaseLeaseUncounted(kind, hid, this.core.callerUserId);
+  }
+
   /** Status of the recording lease (D3, D4): alive from the stored expiry, age from the last
    * heartbeat; the holder's client id only for the holding user (or a system caller reading a
    * system-held lease), `MASKED_HOLDER_ID` for everyone else. */
@@ -123,20 +162,25 @@ export class LeaseStore {
     };
   }
 
-  /** The alarm body, also run when the session opens (D3, D5): deletes every expired lease of the
-   * session (all kinds), then re-arms the alarm at the earliest remaining expiry, so an early
-   * alarm never leaks a live lease. A second run, or another process's, deletes nothing. */
+  /** The alarm body, also run when the session opens (D3, D5): deletes the session's expired
+   * recording lease, then re-arms the alarm at the earliest remaining recording expiry, so an early
+   * alarm never leaks a live lease. A second run, or another process's, deletes nothing. Run
+   * leases are left alone (session-run-leases D2): an expired one is overwritten by the next claim,
+   * and their expiries never pull the single alarm slot. */
   async expireIfStale(): Promise<void> {
+    const kind: LeaseKind = 'recording';
     const now = this.core.now();
     const { changes } = await this.core.db.run(
-      'DELETE FROM session_leases WHERE session_id = ? AND expires_at_ms <= ?',
+      'DELETE FROM session_leases WHERE session_id = ? AND kind = ? AND expires_at_ms <= ?',
       this.core.sessionId,
+      kind,
       now,
     );
     if (changes > 0) this.core.broadcast({ type: 'lease.changed' });
     const next = await this.core.first(
-      'SELECT MIN(expires_at_ms) AS next FROM session_leases WHERE session_id = ?',
+      'SELECT MIN(expires_at_ms) AS next FROM session_leases WHERE session_id = ? AND kind = ?',
       this.core.sessionId,
+      kind,
     );
     if (next?.next !== null && next?.next !== undefined) this.core.setAlarm(Number(next.next));
   }

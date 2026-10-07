@@ -36,6 +36,7 @@ import {
 import {
   AUDIO_SEAM_PARTS_HEADER,
   type AudioSeamPart,
+  holdRunLease,
   ImportWhileRollingError,
   parseAudioSeamPartsHeader,
   type SessionHubFacade,
@@ -480,15 +481,34 @@ sessionsRouter.post('/api/sessions/:sessionId/youtube-import', async (c) => {
     throw new ApiError(400, YOUTUBE_IMPORT_BAD_URL_DETAIL);
   }
 
-  // Concurrency guards (design D8) — the single statement directly before
-  // try{…}finally{release} (fidelity note: nothing throwable in between).
-  const lease = youtubeImportGuard.tryAcquire(sessionId);
-  if (!lease) {
+  // Concurrency guards (design D8), synchronous and unchanged (session-run-leases D4 step 1).
+  const guard = youtubeImportGuard.tryAcquire(sessionId);
+  if (!guard) {
     const detail = youtubeImportGuard.isSessionInFlight(sessionId)
       ? YOUTUBE_IMPORT_SESSION_BUSY_DETAIL
       : YOUTUBE_IMPORT_AT_CAPACITY_DETAIL;
     throw new ApiError(409, detail);
   }
+  // Then the session's `youtube-import` run lease (session-run-leases D4 step 2). The guard
+  // already excludes this process, so a refusal means another process imports into this session:
+  // session-busy. A claim that throws frees the guard and rethrows (500), outside the 502 mapping
+  // below.
+  let run: Awaited<ReturnType<typeof holdRunLease>>;
+  try {
+    run = await holdRunLease({
+      getHub: () => getSessionHub(c, sessionId),
+      kind: 'youtube-import',
+      sessionId,
+    });
+  } catch (err) {
+    guard.release();
+    throw err;
+  }
+  if (run === null) {
+    guard.release();
+    throw new ApiError(409, YOUTUBE_IMPORT_SESSION_BUSY_DETAIL);
+  }
+  const lease = run;
 
   let tempDir: string | null = null;
   try {
@@ -614,9 +634,12 @@ sessionsRouter.post('/api/sessions/:sessionId/youtube-import', async (c) => {
     const detail = err instanceof YtDlpError ? err.message : 'Failed to import audio from YouTube.';
     throw new ApiError(502, detail);
   } finally {
+    // The lease, then the guard (session-run-leases D4 step 3), then the temp dir, all before the
+    // response completes.
+    await lease.release();
+    guard.release();
     if (tempDir) {
       await rm(tempDir, { recursive: true, force: true }).catch(() => {});
     }
-    lease.release();
   }
 });

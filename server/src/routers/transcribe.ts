@@ -37,6 +37,7 @@ import {
   topicGenerateTimeoutSec,
 } from '../env';
 import { ApiError } from '../httpError';
+import { claimAiLease } from './_aiSlot';
 import {
   canAccessSession,
   expectedVersion,
@@ -277,15 +278,19 @@ transcribeRouter.post('/api/sessions/:sessionId/topics/generate', async (c) => {
   // Single-flight (per session) + process-wide concurrency ceiling — 409,
   // spawning nothing. Acquired here (not inside generateTopicsTurn) and
   // released in this handler's own finally.
-  const slot = aiChatTurns.tryAcquire(sessionId, aiChatMaxConcurrent(c.env.config));
-  if (!slot.ok) {
+  const proc = aiChatTurns.tryAcquire(sessionId, aiChatMaxConcurrent(c.env.config));
+  if (!proc.ok) {
     throw new ApiError(
       409,
-      slot.reason === 'session-busy'
+      proc.reason === 'session-busy'
         ? TOPIC_GENERATE_SESSION_BUSY_DETAIL
         : TOPIC_GENERATE_AT_CAPACITY_DETAIL,
     );
   }
+  // The session's `ai-turn` lease (session-run-leases D4), behind the slot: a
+  // refusal means another process runs a turn here, so it reads as session-busy.
+  const slot = await claimAiLease(c, sessionId, proc);
+  if (slot === null) throw new ApiError(409, TOPIC_GENERATE_SESSION_BUSY_DETAIL);
 
   try {
     // Record pre-run topic ids BEFORE the run (design D3's crash-safe swap):
@@ -353,7 +358,8 @@ transcribeRouter.post('/api/sessions/:sessionId/topics/generate', async (c) => {
     );
     throw new ApiError(502, TOPIC_GENERATE_FAILURE_DETAIL);
   } finally {
-    slot.release();
+    // Lease, then slot, before the response (session-run-leases D4).
+    await slot.release();
   }
 });
 

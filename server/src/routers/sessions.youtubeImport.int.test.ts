@@ -59,6 +59,13 @@ import { resolveYtDlpPath } from '../env';
 import { createBindings } from '../node/config';
 import { anonApp, app, env, envWith } from '../test/harness';
 import { catalogFor, seedAccessMatrix, seededSession, testDb } from '../test/helpers';
+import {
+  expiredLeaseOfAnotherProcess,
+  failNextRunLeaseClaim,
+  holdAsAnotherProcess,
+  observeRunLeases,
+  runLeaseRows,
+} from '../test/runLeases';
 import { slowStorage } from '../test/session/slowStorage';
 import { nthUserCall, sessionGate } from '../test/session/sessionGate';
 import { harnessHub, testRegistry } from '../test/session/sessionRows';
@@ -1306,5 +1313,114 @@ describe('a YouTube import failing at its anchor removes its stored file (sessio
     } finally {
       anchor.mockRestore();
     }
+  });
+});
+
+// ── session-run-leases D4: the import also holds the session's `youtube-import` run lease ───────
+// The guard is taken first (unchanged), then the lease; a live lease of another process (a second
+// holder id) refuses with the session-busy detail, and the lease is released before the guard and
+// before the response completes.
+
+describe('the youtube-import run lease (session-run-leases D4)', () => {
+  it('another process holding the lease: the session-busy 409, no spawn, the guard free afterwards', async () => {
+    const session = (await seededSession()).sessionId;
+    const { binaryPath, markerPath } = freshBinary();
+    const other = await holdAsAnotherProcess(session, 'youtube-import');
+    const res = await postImport(session, VALID_BODY, configuredEnv(binaryPath));
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ detail: SESSION_BUSY_DETAIL });
+    expect(neverSpawned(markerPath)).toBe(true);
+    expect(youtubeImportGuard.isSessionInFlight(session)).toBe(false);
+    expect(await runLeaseRows(session)).toEqual([
+      { kind: 'youtube-import', holder_client_id: other },
+    ]);
+  });
+
+  it('a lease another process left behind runs the import once it expired, and leaves no row', async () => {
+    const session = (await seededSession()).sessionId;
+    const { binaryPath, markerPath } = freshBinary();
+    await expiredLeaseOfAnotherProcess(session, 'youtube-import');
+    const obs = observeRunLeases();
+    try {
+      const res = await postImport(session, VALID_BODY, configuredEnv(binaryPath));
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ ok: true });
+      expect(existsSync(markerPath)).toBe(true);
+      expect(obs.claims('youtube-import')).toHaveLength(1);
+      expect(await runLeaseRows(session)).toEqual([]);
+    } finally {
+      obs.restore();
+    }
+  });
+
+  it('the import holds the lease, and it is gone when the response completes after success', async () => {
+    const session = (await seededSession()).sessionId;
+    const { binaryPath } = freshBinary();
+    const obs = observeRunLeases();
+    try {
+      const res = await postImport(session, VALID_BODY, configuredEnv(binaryPath));
+      expect(res.status).toBe(200);
+      await res.json();
+      expect(await runLeaseRows(session)).toEqual([]);
+      const [holder] = obs.claims('youtube-import');
+      expect(holder).toBeDefined();
+      expect(obs.releases('youtube-import')).toEqual([holder]);
+      expect(youtubeImportGuard.isSessionInFlight(session)).toBe(false);
+    } finally {
+      obs.restore();
+    }
+  });
+
+  it('the lease is gone when the response completes after a failure', async () => {
+    const session = (await seededSession()).sessionId;
+    const { binaryPath } = freshBinary({ mode: 'download-fail' });
+    const obs = observeRunLeases();
+    try {
+      const res = await postImport(session, VALID_BODY, configuredEnv(binaryPath));
+      expect(res.status).toBe(502);
+      await res.json();
+      expect(await runLeaseRows(session)).toEqual([]);
+      expect(obs.claims('youtube-import')).toHaveLength(1);
+      expect(obs.releases('youtube-import')).toEqual(obs.claims('youtube-import'));
+      expect(youtubeImportGuard.isSessionInFlight(session)).toBe(false);
+    } finally {
+      obs.restore();
+    }
+  });
+
+  it('back-to-back imports on the same session are not 409, each holding its own lease', async () => {
+    const session = (await seededSession()).sessionId;
+    const { binaryPath } = freshBinary();
+    const obs = observeRunLeases();
+    try {
+      const first = await postImport(session, VALID_BODY, configuredEnv(binaryPath));
+      expect(first.status).toBe(200);
+      await first.json();
+      const second = await postImport(session, VALID_BODY, configuredEnv(binaryPath));
+      expect(second.status).toBe(200);
+      await second.json();
+      expect(new Set(obs.claims('youtube-import')).size).toBe(2);
+      expect(await runLeaseRows(session)).toEqual([]);
+    } finally {
+      obs.restore();
+    }
+  });
+
+  it('a claim that throws answers 500, spawns nothing and leaves the guard free', async () => {
+    const session = (await seededSession()).sessionId;
+    const { binaryPath, markerPath } = freshBinary();
+    const fail = failNextRunLeaseClaim();
+    try {
+      const res = await postImport(session, VALID_BODY, configuredEnv(binaryPath));
+      expect(res.status).toBe(500);
+      expect(fail).toHaveBeenCalledTimes(1);
+    } finally {
+      fail.mockRestore();
+    }
+    expect(neverSpawned(markerPath)).toBe(true);
+    expect(youtubeImportGuard.isSessionInFlight(session)).toBe(false);
+    const next = await postImport(session, VALID_BODY, configuredEnv(binaryPath));
+    expect(next.status).toBe(200);
+    await next.json();
   });
 });

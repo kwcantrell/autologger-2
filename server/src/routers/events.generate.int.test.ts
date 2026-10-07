@@ -43,6 +43,12 @@ import {
   seededSession as seedSessionChain,
   testDb,
 } from '../test/helpers';
+import {
+  failNextRunLeaseClaim,
+  holdAsAnotherProcess,
+  observeRunLeases,
+  runLeaseRows,
+} from '../test/runLeases';
 import { sessionGate, systemCall } from '../test/session/sessionGate';
 import { harnessHub, testRegistry } from '../test/session/sessionRows';
 import { slowStorage } from '../test/session/slowStorage';
@@ -253,8 +259,7 @@ async function seedAutoSlateEvent(
 }
 
 async function listEvents(sessionId: string) {
-  return (await (await harnessHub(sessionId)).listEvents({ limit: 1000, offset: 0 }))
-    .events;
+  return (await (await harnessHub(sessionId)).listEvents({ limit: 1000, offset: 0 })).events;
 }
 
 async function catalogEventCount(sessionId: string): Promise<number> {
@@ -1241,5 +1246,98 @@ describe('regenerate after a revoke (session-content-policies P1)', () => {
     } finally {
       await gate.registry.closeAll();
     }
+  });
+});
+
+// ── session-run-leases D4: the run also holds the session's `ai-turn` run lease ─────────────────
+// The await-free window still ends at the synchronous `aiChatTurns.tryAcquire(` (eventsGenerateWindow
+// .test.ts, unchanged); the lease is claimed after it.
+
+const EVENT_SESSION_BUSY_DETAIL =
+  'A turn (AI chat, AI v2, topic generation, or event generation) is already in progress for this session; ' +
+  'wait for it to finish before generating events. These features share one per-session AI slot by design.';
+
+describe('events/generate — the ai-turn run lease (session-run-leases D4)', () => {
+  it('another process holding the lease: the session-busy 409, no spawn, the slot free afterwards', async () => {
+    const { sessionId } = await newSession();
+    await seedAnchoredTranscript(sessionId);
+    const other = await holdAsAnotherProcess(sessionId, 'ai-turn');
+    const res = await generateReq(sessionId, configuredEnv(EVENTS_SUCCESS_FIXTURE));
+    expect(res.status).toBe(409);
+    expect(await detailOf(res)).toBe(EVENT_SESSION_BUSY_DETAIL);
+    expect(neverSpawned(sessionId)).toBe(true);
+    expect(aiChatTurns.isSessionInFlight(sessionId)).toBe(false);
+    expect(await runLeaseRows(sessionId)).toEqual([{ kind: 'ai-turn', holder_client_id: other }]);
+  });
+
+  it('the run holds the lease, and it is gone when the response completes after success', async () => {
+    const { sessionId } = await newSession();
+    await seedAnchoredTranscript(sessionId);
+    const obs = observeRunLeases();
+    try {
+      const res = await generateReq(sessionId, configuredEnv(EVENTS_SUCCESS_FIXTURE));
+      expect(res.status).toBe(200);
+      await res.json();
+      expect(await runLeaseRows(sessionId)).toEqual([]);
+      const [holder] = obs.claims('ai-turn');
+      expect(holder).toBeDefined();
+      expect(obs.releases('ai-turn')).toEqual([holder]);
+      expect(aiChatTurns.isSessionInFlight(sessionId)).toBe(false);
+    } finally {
+      obs.restore();
+    }
+  });
+
+  it('the lease is gone when the response completes after an error', async () => {
+    const { sessionId } = await newSession();
+    await seedAnchoredTranscript(sessionId);
+    const obs = observeRunLeases();
+    try {
+      const res = await generateReq(sessionId, configuredEnv(EVENTS_PARTIAL_FAIL_FIXTURE));
+      expect(res.status).toBe(502);
+      await res.json();
+      expect(await runLeaseRows(sessionId)).toEqual([]);
+      expect(obs.claims('ai-turn')).toHaveLength(1);
+      expect(obs.releases('ai-turn')).toEqual(obs.claims('ai-turn'));
+      expect(aiChatTurns.isSessionInFlight(sessionId)).toBe(false);
+    } finally {
+      obs.restore();
+    }
+  });
+
+  it('an immediate second run on the same session is not 409, and holds its own lease', async () => {
+    const { sessionId } = await newSession();
+    await seedAnchoredTranscript(sessionId);
+    const obs = observeRunLeases();
+    try {
+      const first = await generateReq(sessionId, configuredEnv(EVENTS_SUCCESS_FIXTURE));
+      expect(first.status).toBe(200);
+      await first.json();
+      const second = await generateReq(sessionId, configuredEnv(EVENTS_SUCCESS_FIXTURE));
+      expect(second.status).toBe(200);
+      await second.json();
+      expect(new Set(obs.claims('ai-turn')).size).toBe(2);
+      expect(await runLeaseRows(sessionId)).toEqual([]);
+    } finally {
+      obs.restore();
+    }
+  });
+
+  it('a claim that throws answers 500, spawns nothing and leaves the slot free', async () => {
+    const { sessionId } = await newSession();
+    await seedAnchoredTranscript(sessionId);
+    const fail = failNextRunLeaseClaim();
+    try {
+      const res = await generateReq(sessionId, configuredEnv(EVENTS_SUCCESS_FIXTURE));
+      expect(res.status).toBe(500);
+      expect(fail).toHaveBeenCalledTimes(1);
+    } finally {
+      fail.mockRestore();
+    }
+    expect(neverSpawned(sessionId)).toBe(true);
+    expect(aiChatTurns.isSessionInFlight(sessionId)).toBe(false);
+    const next = await generateReq(sessionId, configuredEnv(EVENTS_SUCCESS_FIXTURE));
+    expect(next.status).toBe(200);
+    await next.json();
   });
 });

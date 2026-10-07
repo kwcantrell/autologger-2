@@ -16,6 +16,7 @@ import {
   seedStudio,
   seedUser,
 } from '../test/helpers';
+import { runLeaseHolders } from '../test/runLeases';
 import { harnessHub } from '../test/session/sessionRows';
 
 const NOT_CONFIGURED_DETAIL =
@@ -520,6 +521,56 @@ describe('cross-package instanceof pin: TranscriptGenerateError in ensureTimedTr
       );
     },
   );
+
+  it('a transcript run of the job claims the transcript-generation lease as the job creator (session-run-leases owner decision 4)', async () => {
+    const studio = await seedStudio();
+    const show = await seedShow({ studioId: studio });
+    const member = await seedUser({ studios: [studio] });
+    await grant(member, show);
+    const cookie = await loginCookie(member);
+    const title = 'Lease Holder Session';
+    const session = await seedSession({ showId: show, title });
+    const seg1 = readFileSync(join(TRANSCRIPTION_FIXTURES_DIR, 'audio', 'seg1.webm'));
+    const uploadRes = await app.request(
+      `/api/sessions/${session}/audio/segments`,
+      { method: 'POST', headers: { 'content-type': 'audio/webm', cookie }, body: seg1 },
+      env,
+    );
+    expect(uploadRes.status).toBe(200);
+
+    const xlsx = await xlsxBytes(title, { timecode: '0:01', message: 'hello', type: '' });
+    // The lease rows as the provider call sees them, mid-run.
+    const duringProviderCall: Array<{ kind: string; holder_user_id: string | null }>[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: Parameters<typeof fetch>[0]) => {
+        if (String(input).includes('deepgram.com')) {
+          duringProviderCall.push(await runLeaseHolders(session));
+          return new Response(
+            JSON.stringify({
+              results: {
+                channels: [
+                  { alternatives: [{ words: [{ word: 'hi', start: 0.5, end: 0.9, speaker: 0 }] }] },
+                ],
+              },
+            }),
+            { status: 200 },
+          );
+        }
+        return new Response(xlsx, { status: 200 });
+      }),
+    );
+
+    const post = await postImport(show, deepgramConfiguredEnv(), { cookie });
+    expect(post.status).toBe(200);
+    const { job_id } = (await post.json()) as { job_id: string };
+    await settleJob(job_id, { cookie });
+
+    expect(duringProviderCall).toEqual([
+      [{ kind: 'transcript-generation', holder_user_id: member }],
+    ]);
+    expect(await runLeaseHolders(session)).toEqual([]);
+  });
 });
 
 // ── Imports re-check access (show-grants D19, owner decision F) ─────────────

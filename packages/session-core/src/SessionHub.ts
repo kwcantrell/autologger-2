@@ -36,7 +36,7 @@ import { DashboardStore } from './dashboardStore';
 import { timecodeWallAnchors, wallTimeUtcForTimecode } from './eventAnchors';
 import { EventStore } from './eventStore';
 import { FifoLock } from './fifoLock';
-import { LeaseStore } from './leaseStore';
+import { LeaseStore, type RunLeaseKind } from './leaseStore';
 import { type SessionCaller, systemCaller } from './sessionCaller';
 import type {
   AttachedSocket,
@@ -241,6 +241,9 @@ export interface SessionHubFacade {
     lease_alive: boolean;
     lease_age_sec: number | null;
   }>;
+  /** Silent run leases (session-run-leases D2): no revision change, no broadcast, no alarm. */
+  claimRunLease: (kind: RunLeaseKind, holderId: string) => Promise<boolean>;
+  releaseRunLease: (kind: RunLeaseKind, holderId: string) => Promise<void>;
 
   // --- audio RPCs ---
   addAudioSegment: (input: {
@@ -1078,6 +1081,12 @@ export class SessionHubView implements SessionHubFacade {
   }
   leaseStatus() {
     return this.read((s) => s.lease.leaseStatus());
+  }
+  claimRunLease(kind: RunLeaseKind, holderId: string) {
+    return this.inTxn((s) => s.lease.claimRunLease(kind, holderId));
+  }
+  releaseRunLease(kind: RunLeaseKind, holderId: string) {
+    return this.inTxn((s) => s.lease.releaseRunLease(kind, holderId));
   }
 
   // --- audio delegates ---

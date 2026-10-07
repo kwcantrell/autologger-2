@@ -519,6 +519,54 @@ export class SessionCore {
     return changes === 1;
   }
 
+  /** The run-lease claim and renewal (session-run-leases D2): the recording claim's conditional
+   * upsert, on the raw handle so it never advances the revision. It wins on a free or expired row
+   * (at `nowMs`) or on the row of exactly `clientId` and `userId`. True when it changed the row. */
+  async claimLeaseUncounted(
+    kind: string,
+    clientId: string,
+    userId: string | null,
+    nowMs: number,
+    expiresAtMs: number,
+  ): Promise<boolean> {
+    const { changes } = await this.rawDb.run(
+      `INSERT INTO session_leases
+         (session_id, kind, holder_client_id, holder_user_id, heartbeat_at_ms, expires_at_ms)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT (session_id, kind) DO UPDATE SET
+         holder_client_id = excluded.holder_client_id, holder_user_id = excluded.holder_user_id,
+         heartbeat_at_ms = excluded.heartbeat_at_ms, expires_at_ms = excluded.expires_at_ms
+       WHERE session_leases.expires_at_ms <= ?
+          OR (session_leases.holder_client_id = excluded.holder_client_id
+              AND session_leases.holder_user_id IS NOT DISTINCT FROM excluded.holder_user_id)`,
+      this.sessionId,
+      kind,
+      clientId,
+      userId,
+      nowMs,
+      expiresAtMs,
+      nowMs,
+    );
+    return changes === 1;
+  }
+
+  /** The run-lease release (session-run-leases D2): deletes the lease of `kind` held by exactly
+   * `clientId` and `userId`, on the raw handle so it never advances the revision. */
+  async releaseLeaseUncounted(
+    kind: string,
+    clientId: string,
+    userId: string | null,
+  ): Promise<void> {
+    await this.rawDb.run(
+      `DELETE FROM session_leases WHERE session_id = ? AND kind = ? AND holder_client_id = ?
+         AND holder_user_id IS NOT DISTINCT FROM ?`,
+      this.sessionId,
+      kind,
+      clientId,
+      userId,
+    );
+  }
+
   async metaDelete(key: string): Promise<void> {
     await this.db.run(
       'DELETE FROM session_meta WHERE session_id = ? AND key = ?',

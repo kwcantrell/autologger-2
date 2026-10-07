@@ -64,6 +64,7 @@ const MIGRATION = resolve(MIGRATIONS, '20261001000000_catalog_schema.sql');
 const SESSION_TABLES_MIGRATION = '20261008000000_session_tables.sql';
 const ROW_VERSIONS_MIGRATION = '20261010000000_session_row_versions.sql';
 const LEASES_MIGRATION = '20261011000000_session_leases.sql';
+const RUN_LEASES_MIGRATION = '20261012000000_session_run_leases.sql';
 
 const open: postgres.Sql[] = [];
 function connect(o: ConnOptions): postgres.Sql {
@@ -406,7 +407,7 @@ const EXPECTED_SCHEMA: SchemaRecord = {
   // owner-bootstrap D1: the role check and at most one owner per team.
   $checks: [
     "catalog.session_leases session_leases_client_check CHECK (((holder_client_id <> ''::text) AND (length(holder_client_id) <= 256)))",
-    "catalog.session_leases session_leases_kind_check CHECK ((kind = 'recording'::text))",
+    "catalog.session_leases session_leases_kind_check CHECK ((kind = ANY (ARRAY['recording'::text, 'ai-turn'::text, 'transcript-generation'::text, 'youtube-import'::text])))",
     "catalog.session_overwrites session_overwrites_table_name_check CHECK ((table_name = ANY (ARRAY['session_events'::text, 'session_transcript_words'::text, 'session_topics'::text])))",
     "catalog.user_studio_memberships user_studio_memberships_role_check CHECK ((role = ANY (ARRAY['owner'::text, 'admin'::text, 'member'::text])))",
   ],
@@ -1128,6 +1129,80 @@ describe('the session leases migration (session-leases D1)', () => {
     expect(await run('owner', [], lease('ss1', 'owner', 'tab-owner', 2000, 'x'))).toEqual([
       { code: '23514' },
     ]);
+  });
+});
+
+describe('the session run leases migration (session-run-leases D1)', () => {
+  it('widens the kind check and changes no row', async () => {
+    const name = `t_srl_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    // The replay runs the role guards, which a parallel scratch role would trip (roleGuardLock.ts).
+    await holdRoleGuardLock(connect(connOptions('postgres', 'postgres')));
+    const root = connect(connOptions('postgres', 'postgres'));
+    await root.unsafe(`create database ${name} template template0`);
+    const sql = connect(connOptions('postgres', name));
+    const earlier = readdirSync(MIGRATIONS)
+      .filter((f) => f.endsWith('.sql') && f < RUN_LEASES_MIGRATION)
+      .sort();
+    expect(earlier.at(-1)).toBe(LEASES_MIGRATION);
+    for (const f of earlier) {
+      const text = readFileSync(resolve(MIGRATIONS, f), 'utf8');
+      await sql.begin((tx) => tx.unsafe(text));
+    }
+    await sql.unsafe(`
+      insert into catalog.sessions (id) values ('a');
+      insert into catalog.session_leases
+        (session_id, kind, holder_client_id, holder_user_id, heartbeat_at_ms, expires_at_ms)
+        values ('a', 'recording', 'tab-1', 'u1', 1000, 41000);`);
+    const before = await sql`select row_to_json(l) as r from catalog.session_leases l`;
+    const text = readFileSync(resolve(MIGRATIONS, RUN_LEASES_MIGRATION), 'utf8');
+    await sql.begin((tx) => tx.unsafe(text));
+    const after = await sql`select row_to_json(l) as r from catalog.session_leases l`;
+    expect(after.map((r) => r.r)).toEqual(before.map((r) => r.r));
+    expect(after).toHaveLength(1);
+  });
+
+  it('a user binding stores the run kinds beside a recording lease; kind x is still refused', async () => {
+    const db = await createTestDatabase();
+    await seedPolicyFixture(connect(db.system));
+    const sql = connect(db.app);
+    class Rollback extends Error {}
+    type Out = { count: number } | { code: string };
+    // One transaction that rolls back: `stmts` as catalog_user for `uid`; the result of each
+    // statement (a statement error ends the case).
+    const run = async (uid: string, ...stmts: string[]) => {
+      const out: Out[] = [];
+      await sql
+        .begin(async (tx) => {
+          await tx`select set_config('role', 'catalog_user', true), set_config('app.user_id', ${uid}, true)`;
+          for (const stmt of stmts) {
+            try {
+              out.push({ count: (await tx.unsafe(stmt)).count });
+            } catch (e) {
+              out.push({ code: String((e as { code?: unknown }).code) });
+              break;
+            }
+          }
+          throw new Rollback();
+        })
+        .catch((e) => {
+          if (!(e instanceof Rollback)) throw e;
+        });
+      return out;
+    };
+    const lease = (kind: string) =>
+      `insert into session_leases (session_id, kind, holder_client_id, holder_user_id, heartbeat_at_ms, expires_at_ms)
+       values ('ss1', '${kind}', 'srv:boot:${kind}', 'owner', 1000, 41000)`;
+    expect(
+      await run(
+        'owner',
+        lease('recording'),
+        lease('ai-turn'),
+        lease('transcript-generation'),
+        lease('youtube-import'),
+        `select kind from session_leases where session_id = 'ss1'`,
+      ),
+    ).toEqual([{ count: 1 }, { count: 1 }, { count: 1 }, { count: 1 }, { count: 4 }]);
+    expect(await run('owner', lease('x'))).toEqual([{ code: '23514' }]);
   });
 });
 
