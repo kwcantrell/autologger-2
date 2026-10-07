@@ -533,7 +533,9 @@ export class SessionCore {
 
   /** The run-lease claim and renewal (session-run-leases D2): the recording claim's conditional
    * upsert, on the raw handle so it never advances the revision. It wins on a free or expired row
-   * (at `nowMs`) or on the row of exactly `clientId` and `userId`. True when it changed the row. */
+   * (at `nowMs`) or on the row of exactly `clientId` and `userId`. True when it changed the row.
+   * `started_at_ms` is the run's start (run-status-and-sweeper D4): set to `nowMs` by a claim, kept
+   * by a renewal of the same holder, and reset when another holder takes an expired row over. */
   async claimLeaseUncounted(
     kind: string,
     clientId: string,
@@ -543,9 +545,13 @@ export class SessionCore {
   ): Promise<boolean> {
     const { changes } = await this.rawDb.run(
       `INSERT INTO session_leases
-         (session_id, kind, holder_client_id, holder_user_id, heartbeat_at_ms, expires_at_ms)
-       VALUES (?, ?, ?, ?, ?, ?)
+         (session_id, kind, holder_client_id, holder_user_id, heartbeat_at_ms, expires_at_ms,
+          started_at_ms)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT (session_id, kind) DO UPDATE SET
+         started_at_ms = CASE WHEN session_leases.holder_client_id = excluded.holder_client_id
+                               AND session_leases.holder_user_id IS NOT DISTINCT FROM excluded.holder_user_id
+                              THEN session_leases.started_at_ms ELSE excluded.started_at_ms END,
          holder_client_id = excluded.holder_client_id, holder_user_id = excluded.holder_user_id,
          heartbeat_at_ms = excluded.heartbeat_at_ms, expires_at_ms = excluded.expires_at_ms
        WHERE session_leases.expires_at_ms <= ?
@@ -557,6 +563,7 @@ export class SessionCore {
       userId,
       nowMs,
       expiresAtMs,
+      nowMs,
       nowMs,
     );
     return changes === 1;

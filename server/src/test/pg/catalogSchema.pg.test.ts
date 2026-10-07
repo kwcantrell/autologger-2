@@ -66,6 +66,7 @@ const SESSION_TABLES_MIGRATION = '20261008000000_session_tables.sql';
 const ROW_VERSIONS_MIGRATION = '20261010000000_session_row_versions.sql';
 const LEASES_MIGRATION = '20261011000000_session_leases.sql';
 const RUN_LEASES_MIGRATION = '20261012000000_session_run_leases.sql';
+const STARTED_AT_MIGRATION = '20261014000000_session_lease_started_at.sql';
 
 const open: postgres.Sql[] = [];
 function connect(o: ConnOptions): postgres.Sql {
@@ -400,6 +401,8 @@ const EXPECTED_SCHEMA: SchemaRecord = {
       'holder_user_id text collate C',
       'heartbeat_at_ms bigint not null',
       'expires_at_ms bigint not null',
+      // run-status-and-sweeper D4: the run's start, kept on renewal; null on recording rows.
+      'started_at_ms bigint',
     ],
     primaryKey: ['session_id', 'kind'],
     foreignKeys: ['FOREIGN KEY (session_id) REFERENCES catalog.sessions(id)'],
@@ -1209,6 +1212,38 @@ describe('the session run leases migration (session-run-leases D1)', () => {
       ),
     ).toEqual([{ count: 1 }, { count: 1 }, { count: 1 }, { count: 1 }, { count: 4 }]);
     expect(await run('owner', lease('x'))).toEqual([{ code: '23514' }]);
+  });
+});
+
+describe('the lease started_at migration (run-status-and-sweeper D4)', () => {
+  it('adds a nullable started_at_ms; existing rows keep null and are otherwise unchanged', async () => {
+    const name = `t_lsa_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    // The replay runs the role guards, which a parallel scratch role would trip (roleGuardLock.ts).
+    await holdRoleGuardLock(connect(connOptions('postgres', 'postgres')));
+    const root = connect(connOptions('postgres', 'postgres'));
+    await root.unsafe(`create database ${name} template template0`);
+    const sql = connect(connOptions('postgres', name));
+    const earlier = readdirSync(MIGRATIONS)
+      .filter((f) => f.endsWith('.sql') && f < STARTED_AT_MIGRATION)
+      .sort();
+    expect(earlier).toContain(RUN_LEASES_MIGRATION);
+    for (const f of earlier) {
+      const text = readFileSync(resolve(MIGRATIONS, f), 'utf8');
+      await sql.begin((tx) => tx.unsafe(text));
+    }
+    await sql.unsafe(`
+      insert into catalog.sessions (id) values ('a');
+      insert into catalog.session_leases
+        (session_id, kind, holder_client_id, holder_user_id, heartbeat_at_ms, expires_at_ms)
+        values ('a', 'recording', 'tab-1', 'u1', 1000, 41000),
+               ('a', 'ai-turn', 'srv:x:1', 'u1', 1000, 41000);`);
+    const before =
+      await sql`select row_to_json(l) as r from catalog.session_leases l order by kind`;
+    const text = readFileSync(resolve(MIGRATIONS, STARTED_AT_MIGRATION), 'utf8');
+    await sql.begin((tx) => tx.unsafe(text));
+    const after = await sql`select row_to_json(l) as r from catalog.session_leases l order by kind`;
+    expect(after.map((r) => r.r)).toEqual(before.map((r) => ({ ...r.r, started_at_ms: null })));
+    expect(after).toHaveLength(2);
   });
 });
 

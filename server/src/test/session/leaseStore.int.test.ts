@@ -43,6 +43,8 @@ const row = (
   holder_user_id: user,
   heartbeat_at_ms: heartbeat,
   expires_at_ms: expires,
+  // run-status-and-sweeper D4: a recording claim never names the column.
+  started_at_ms: null,
 });
 
 describe('LeaseStore on catalog.session_leases (session-leases D3)', () => {
