@@ -16,11 +16,11 @@
 - `npx vitest run` in `packages/log-import`, `packages/ai-runtime` and `packages/storage`.
 - `cd web && npx vitest run`.
 - `npm run typecheck`.
-- The full DB suites with `FULL_TESTS=1` in 5.1.
+- The full pg/integration suites run in CI on the PR (ADR 0026; owner preference: no local full DB runs). Locally, only the targeted tests being written, plus unit suites and typecheck.
 
 ## 1. Baselines
 
-- [ ] 1.1 Run the full suites on the base (`FULL_TESTS=1`) and record the counts. List the existing tests D4 categories 1-3 may touch: `grep -rn "clearLogImportJobs\|createLogImportJob\|getLogImportJob\|__resetAiChatIssuedSessionIdsForTests\|aiV2PendingQuestions\|API route missing" --include=*.test.ts --include=*.test.tsx server/src packages web/src`. Known flakes (record if they recur): storage "8 contending", `catalogContention.pg` cross-team retry, `aiMcpServer` "Cap holds under concurrent calls", `crossProcess.int` timeout.
+- [ ] 1.1 Run the unit suites and typecheck on the base and record the counts. The DB-suite baseline is the last CI run on `supabase-migration`. List the existing tests D4 categories 1-3 may touch: `grep -rn "clearLogImportJobs\|createLogImportJob\|getLogImportJob\|__resetAiChatIssuedSessionIdsForTests\|aiV2PendingQuestions\|API route missing" --include=*.test.ts --include=*.test.tsx server/src packages web/src`. Known flakes (record if they recur): storage "8 contending", `catalogContention.pg` cross-team retry, `aiMcpServer` "Cap holds under concurrent calls", `crossProcess.int` timeout.
 
 ## 2. Log-import jobs in kv (design D1)
 
@@ -39,7 +39,7 @@
 
 ## 5. Verify
 
-- [ ] 5.1 Full suites with `FULL_TESTS=1`, typecheck and `openspec validate --all --strict`. Compare the counts with 1.1 and explain every difference.
+- [ ] 5.1 Unit suites, typecheck and `openspec validate --all --strict` locally. The pg/integration suites come from the PR's CI run. Compare the counts with 1.1 and explain every difference.
 - [ ] 5.2 Latency bench per D5. Record the medians.
 - [ ] 5.3 README: the log-import, AI v2 and AI chat paragraphs (~212-214), the multi-process invariant (~509-514) and the package tree's "In-memory job-status store" (~729) now say this state is shared. Live check on the dev stack, with a second app process as in 9a 7.3 and the owner's temporary login row:
   - a design turn on A answered through B continues;
