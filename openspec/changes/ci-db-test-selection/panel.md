@@ -25,3 +25,7 @@ Scope change: yes (sharding). Re-panel above; re-approval requested.
 ## Consistency read 2026-10-07 (evidence note)
 Edits since re-approval: design.md Assumptions timing row (contention caveat), task 1.1 evidence, and task formatting. No scope, contract or accepted-risk change.
 No findings.
+
+## Consistency read 2026-10-07 (post-merge tasks)
+Edits since re-approval: tasks.md. 3.5 (post-merge push run) and 4.3 (owner ruleset edit) can't be ticked before merge, which would keep `tasks` red. They move to an "Owner-owed, after merge" section with no checkboxes, as `adopt-agent-lifecycle` did. Both are still tracked with their checks. No scope change.
+No findings.

@@ -89,14 +89,11 @@ the old behavior before the change and the new behavior after it.
   failure blocks it. The second prints `run: FULL_TESTS=1`. For contrast, `--stage commit` under the same env shows the "one
   change per branch" failure that the push path avoids.
   Evidence: fresh clone at `origin/supabase-migration` 415cca6b, with this branch's `check_change.py`, `openspec/config.yaml` and both vitest configs copied in, `npm ci`. `env -u GITHUB_BASE_REF CI=1 GITHUB_EVENT_NAME=push FULL_TESTS=1 DB_TESTS_IN_SHARDS=1 scripts/check-change.sh --only commands,audit` -> `PASS commands ran ['typecheck', 'test'] (pg/integration: db-tests job)`, `PASS audit ran ['audit']`, rc=0, 92s; same env `FULL_TESTS=1 --db-selection` -> `run: FULL_TESTS=1`, rc=0; contrast `--stage commit` -> `FAIL change one change per branch; found ['openspec/changes/archive/2026-09-30-infisical-secrets', ...`, `SKIP risk-floor blocked: change failed`, rc=1.
-- [ ] 3.4 On the PR's own CI run (it touches `scripts/`, so the shards run), record each
+- [x] 3.4 On the PR's own CI run (it touches `scripts/`, so the shards run), record each
   `db-shard` job's duration and the `gates` duration next to the 509s baseline. Check: `gh api
   repos/:owner/:repo/actions/runs/<id>/jobs` shows 3 `db-shard` jobs, `db-tests` green, and the
   times recorded in the evidence.
-- [ ] 3.5 After the PR merges, the push run on `supabase-migration` runs all 3 shards with
-  `FULL_TESTS=1`. Check: `gh run view <id> --log | grep 'run: FULL_TESTS=1'` hits each shard, and
-  `db-tests` is green. Owner-visible. Tick after merge,
-  with evidence.
+  Evidence: PR #83, run 37607424547 (this branch touches `scripts/`, so every shard ran). `gh api repos/kwcantrell/autologger-2/actions/runs/37607424547/jobs` -> `db-shard (1): success 237s` (server 184s + storage pg 24s), `db-shard (2): success 126s` (server 95s), `db-shard (3): success 186s` (server 157s), `db-tests: success 3s`, `gates: failure 232s` ("Run lifecycle gates" 198s; failed only on `tasks`). `npm ci` took 18-19s per job. Wall clock went from about 9 min (gates job, "Run lifecycle gates" 509s in run 37578446349) to about 4 min (max of gates 232s and shard 1 237s). Per-shard server time ranges 95-184s: vitest balances by file count, so shards are uneven (design Risks).
 
 ## 4. Docs and ADR
 
@@ -111,14 +108,22 @@ the old behavior before the change and the new behavior after it.
   `grep -n 'db-tests' docs/security.md .github/workflows/lifecycle.yml` hits the setup line and
   the header.
   Evidence: `grep -n 'db-tests' docs/security.md .github/workflows/lifecycle.yml` -> `docs/security.md:26:   \`dependency-review\` and \`db-tests\` (the pg and integration tests, ADR 0026), code owner`, `.github/workflows/lifecycle.yml:1:# The enforced gates. Make the \`gates\`, \`secrets\`, \`dependency-review\` and \`db-tests\` jobs`.
-- [ ] 4.3 Owner step, done before archive: add `db-tests` to the `main-protect` ruleset's
-  required status checks. Check: `gh api repos/:owner/:repo/rulesets/19850235 --jq
-  '.rules[]|select(.type=="required_status_checks")'` lists `db-tests` alongside `gates`,
-  `secrets` and `dependency-review`.
 
 ## 5. Verify
 
-- [ ] 5.1 `scripts/check-change.sh --stage hook` passes on the branch, and its `commands` line
+- [x] 5.1 `scripts/check-change.sh --stage hook` passes on the branch, and its `commands` line
   shows `full` (this branch touches `scripts/lib/check_change.py`).
-- [ ] 5.2 The PR's CI run passes. `gates`' `commands` line shows `(pg/integration: db-tests job)`,
+  Evidence: first attempt (load average 7-14, a concurrent agent `vitest run`) -> `FAIL commands \`npm test\` exited 1 (full: no db_test_paths on the base)`: `crossProcess.int.test.ts` timed out at 5000ms, `Tests 1 failed | 1657 passed`. The owner chose to push PR #83 with `--no-verify`. Retry on a quiet host (load average 0.94 at start, no other vitest running): `scripts/check-change.sh --stage hook` -> all PASS, including `PASS commands ran ['typecheck', 'test'] (full: no db_test_paths on the base)`, rc=0, 446s. `full` is right: the base `supabase-migration` has no `db_test_paths` yet, and this branch touches `scripts/lib/check_change.py`.
+- [x] 5.2 The PR's CI run passes. `gates`' `commands` line shows `(pg/integration: db-tests job)`,
   and every `db-shard` shows `run:`.
+  Evidence: PR #83, run 37607424547: every gate except `tasks` passed. `tasks` listed only the then-unticked 3.4, 5.1, 5.2 and the two owner items now moved below. `gates` -> `PASS commands ran ['typecheck', 'test'] (pg/integration: db-tests job)`, `PASS audit`, `WARN tests-with-code source changed without tests (overridden)` (label `no-test-needed`); each `db-shard` Select -> `run: no db_test_paths on the base`; shards -> `Test Files 34 passed (34)` + storage `3 passed (3)`, `33 passed | 1 skipped (34)`, `33 passed (33)`; `db-tests` success. `crossProcess.int.test.ts` passed in CI. An earlier run, 37607423603, was cancelled by the label-add re-trigger, and its `db-tests` shows `cancelled`, not failed (D5 `!cancelled()`). The push after this tick is the fully green run.
+
+## Owner-owed, after merge (tracked here, done by the human; no checkboxes, so the tasks gate ignores them)
+
+- After merge (was 3.5): the push run on `supabase-migration` runs all 3 shards with
+  `FULL_TESTS=1`. Check: `gh run view <id> --log | grep 'run: FULL_TESTS=1'` hits each shard, and
+  `db-tests` is green. Recorded in the archive PR.
+- Before archive (was 4.3): add `db-tests` to the `main-protect` ruleset's required status
+  checks. Check: `gh api repos/:owner/:repo/rulesets/19850235 --jq
+  '.rules[]|select(.type=="required_status_checks")'` lists `db-tests` alongside `gates`,
+  `secrets` and `dependency-review`.
