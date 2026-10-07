@@ -74,6 +74,12 @@ import {
   seedStudio,
   seedUser,
 } from '../test/helpers';
+import {
+  failNextRunLeaseClaim,
+  holdAsAnotherProcess,
+  observeRunLeases,
+  runLeaseRows,
+} from '../test/runLeases';
 import { __resetAiChatIssuedSessionIdsForTests, AI_CHAT_ALLOWED_TOOLS } from './ai';
 
 // Kept for the pre-existing guard-rejection assertions (see the SPAWN
@@ -652,4 +658,117 @@ describe('ai/chat — setup failures never leak the raw exception (task 3.4 conc
       expect(aiChatTurns.isSessionInFlight(s)).toBe(false);
     },
   );
+});
+
+// ── session-run-leases D4: the shared AI slot is also the session's `ai-turn` run lease ──────────
+// The in-process slot is taken first (unchanged), then the lease; a lease held by another process
+// (simulated by a second holder id) refuses with the same session-busy detail, and the lease is
+// released before the slot and before the response completes.
+
+const CHAT_SESSION_BUSY_DETAIL =
+  'A turn (AI chat, AI v2, topic generation, or event generation) is already in progress for this session; ' +
+  'wait for it to finish before sending another. These features share one per-session AI slot by design.';
+
+describe('ai/chat — the ai-turn run lease (session-run-leases D4)', () => {
+  it('another process holding the lease: the session-busy 409, no spawn, the slot free afterwards', async () => {
+    const s = await seededSession();
+    const other = await holdAsAnotherProcess(s, 'ai-turn');
+    const res = await post(s, { message: 'hi' }, fixtureEnv());
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as { detail: string }).detail).toBe(CHAT_SESSION_BUSY_DETAIL);
+    expect(neverSpawned(s)).toBe(true);
+    expect(aiChatTurns.isSessionInFlight(s)).toBe(false);
+    expect(await runLeaseRows(s)).toEqual([{ kind: 'ai-turn', holder_client_id: other }]);
+  });
+
+  it('the turn holds the lease, and it is gone when the response completes after success', async () => {
+    const s = await seededSession();
+    const obs = observeRunLeases();
+    try {
+      const res = await post(s, { message: 'hi' }, fixtureEnv());
+      expect(res.status).toBe(200);
+      expect(parseSse(await res.text()).some((e) => e.event === 'done')).toBe(true);
+      expect(await runLeaseRows(s)).toEqual([]);
+      const [holder] = obs.claims('ai-turn');
+      expect(holder).toBeDefined();
+      expect(obs.releases('ai-turn')).toEqual([holder]);
+      expect(aiChatTurns.isSessionInFlight(s)).toBe(false);
+    } finally {
+      obs.restore();
+    }
+  });
+
+  it('the lease is gone when the response completes after an error', async () => {
+    const s = await seededSession();
+    // The setup failure of "setup failures never leak the raw exception" above.
+    const cwd = stableSessionCwd(s);
+    mkdirSync(dirname(cwd), { recursive: true });
+    writeFileSync(cwd, 'not-a-directory');
+    const obs = observeRunLeases();
+    try {
+      const res = await post(s, { message: 'hi' }, fixtureEnv());
+      expect(res.status).toBe(200);
+      expect(parseSse(await res.text())).toEqual([
+        { event: 'error', data: { detail: 'internal-error' } },
+      ]);
+      expect(await runLeaseRows(s)).toEqual([]);
+      expect(obs.claims('ai-turn')).toHaveLength(1);
+      expect(obs.releases('ai-turn')).toEqual(obs.claims('ai-turn'));
+      expect(aiChatTurns.isSessionInFlight(s)).toBe(false);
+    } finally {
+      obs.restore();
+    }
+  });
+
+  it('the lease is gone when the response completes after a client abort', async () => {
+    const s = await seededSession();
+    const controller = new AbortController();
+    controller.abort();
+    const obs = observeRunLeases();
+    try {
+      const res = await post(s, { message: 'hi' }, fixtureEnv(), J, controller.signal);
+      expect(res.status).toBe(200);
+      expect(parseSse(await res.text())).toEqual([]);
+      expect(await runLeaseRows(s)).toEqual([]);
+      expect(obs.claims('ai-turn')).toHaveLength(1);
+      expect(obs.releases('ai-turn')).toEqual(obs.claims('ai-turn'));
+      expect(aiChatTurns.isSessionInFlight(s)).toBe(false);
+    } finally {
+      obs.restore();
+    }
+  });
+
+  it('an immediate second turn on the same session is not 409, and holds its own lease', async () => {
+    const s = await seededSession();
+    const obs = observeRunLeases();
+    try {
+      const first = await post(s, { message: 'one' }, fixtureEnv());
+      expect(first.status).toBe(200);
+      await first.text();
+      const second = await post(s, { message: 'two' }, fixtureEnv());
+      expect(second.status).toBe(200);
+      expect(parseSse(await second.text()).some((e) => e.event === 'done')).toBe(true);
+      expect(new Set(obs.claims('ai-turn')).size).toBe(2);
+      expect(await runLeaseRows(s)).toEqual([]);
+    } finally {
+      obs.restore();
+    }
+  });
+
+  it('a claim that throws answers 500, spawns nothing and leaves the slot free', async () => {
+    const s = await seededSession();
+    const fail = failNextRunLeaseClaim();
+    try {
+      const res = await post(s, { message: 'hi' }, fixtureEnv());
+      expect(res.status).toBe(500);
+      expect(fail).toHaveBeenCalledTimes(1);
+    } finally {
+      fail.mockRestore();
+    }
+    expect(neverSpawned(s)).toBe(true);
+    expect(aiChatTurns.isSessionInFlight(s)).toBe(false);
+    const next = await post(s, { message: 'again' }, fixtureEnv());
+    expect(next.status).toBe(200);
+    await next.text();
+  });
 });

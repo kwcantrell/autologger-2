@@ -85,15 +85,15 @@ Keep each task's text, and later its `Evidence:`, in one block with no blank lin
 
 ## 5. Guards on leases (design D4, D5)
 
-- [ ] 5.1 AI turn. Test first, in `ai.int.test.ts`, `aiV2.int.test.ts`, `transcribe.int.test.ts` (topics) and `events.generate.int.test.ts`:
+- [x] 5.1 AI turn. Test first, in `ai.int.test.ts`, `aiV2.int.test.ts`, `transcribe.int.test.ts` (topics) and `events.generate.int.test.ts`:
   - another holder's live `ai-turn` lease gives each route's session-busy `409` detail, with no
     spawn and the process slot free afterwards;
   - the lease row is gone when the response completes, after success, error and abort;
   - an immediate second request on the same session is not `409`;
   - a claim that throws leaves the process slot free;
   - `eventsGenerateWindow.test.ts` passes unchanged.
-
   Red, then add `server/src/routers/_aiSlot.ts` and switch the four routes (D4). Green.
+  - Evidence: a describe "the ai-turn run lease (session-run-leases D4)" in each of `ai.int.test.ts` (6), `aiV2.int.test.ts` (6), `transcribe.int.test.ts` topics (5) and `events.generate.int.test.ts` (5), over the new helpers in `server/src/test/runLeases.ts` (a live lease held by the default user under another holder id, the session's lease rows, pass-through `LeaseStore` spies keeping this process's `srv:<SERVER_BOOT_ID>:` holders, a claim that rejects once): another holder's lease -> `409` with the route's exact session-busy detail, no spawn, slot free, the other row intact; success, error (ai: the EEXIST setup failure; aiV2: a throwing spawn; topics and events: the partial-fail fixtures, `502`) and abort (ai, aiV2) -> one claim, its release, no row when the body is read, slot free; an immediate second request -> `200` with its own holder; a throwing claim -> `500`, no spawn, slot free, next request `200`. Red: `cd server && npx vitest run --project integration src/routers/ai.int.test.ts src/routers/aiV2.int.test.ts src/routers/transcribe.int.test.ts src/routers/events.generate.int.test.ts -t "run lease"` -> `Tests  22 failed | 166 skipped (188)`: `expected 200 to be 409`, `expected undefined to be defined`, `expected [] to have a length of 1 but got +0`, `expected +0 to be 2`, `expected 200 to be 500` (log `8b-5.1-red.log`). Added `server/src/routers/_aiSlot.ts` (`AiSlot`, `claimAiLease`, `__setAiLeaseRenewMsForTests`) and switched the four routes: the literal `aiChatTurns.tryAcquire(` stays (now `proc`), then `await claimAiLease(c, sessionId, proc)`, `null` -> the route's session-busy `409`, `await slot.release()` in the `finally`; aiV2 passes `() => { void slot.release(); }` to `runDesignTurn`. Green: those four files plus the unchanged `eventsGenerateWindow.test.ts` (`--project integration --project unit`) -> `Test Files  5 passed (5)`, `Tests  189 passed (189)` (log `8b-5.1-green.log`); `promiseHygiene.repo.test.ts` and `packageBoundaries.repo.test.ts` `Tests  107 passed (107)` (log `8b-5.1-repo.log`); `npm run typecheck` exit 0 (log `8b-5.1-typecheck.log`); whole server `Test Files  130 passed | 3 skipped (133)`, `Tests  1636 passed | 4 skipped (1640)` (log `8b-5.1-server.log`). No existing test changed.
 - [ ] 5.2 YouTube import. Test first, in `sessions.youtubeImport.int.test.ts`:
   - another holder's live `youtube-import` lease gives `YOUTUBE_IMPORT_SESSION_BUSY_DETAIL`, with
     no spawn and the guard free afterwards;

@@ -34,6 +34,7 @@ import {
   aiChatTimeoutSec,
 } from '../env';
 import { ApiError } from '../httpError';
+import { claimAiLease } from './_aiSlot';
 import { requireSession, sessionCaller } from './_helpers';
 
 export const aiRouter = new Hono<AppEnv>();
@@ -127,13 +128,17 @@ aiRouter.post('/api/sessions/:sessionId/ai/chat', async (c) => {
   // 5. Single-flight (per session) + process-wide concurrency ceiling — 409,
   // spawning nothing. The slot is held for the whole turn and released when the
   // stream ends.
-  const slot = aiChatTurns.tryAcquire(sessionId, aiChatMaxConcurrent(c.env.config));
-  if (!slot.ok) {
+  const proc = aiChatTurns.tryAcquire(sessionId, aiChatMaxConcurrent(c.env.config));
+  if (!proc.ok) {
     throw new ApiError(
       409,
-      slot.reason === 'session-busy' ? SESSION_BUSY_DETAIL : AT_CAPACITY_DETAIL,
+      proc.reason === 'session-busy' ? SESSION_BUSY_DETAIL : AT_CAPACITY_DETAIL,
     );
   }
+  // 5b. The session's `ai-turn` lease (session-run-leases D4), behind the slot:
+  // a refusal means another process runs a turn here, so it reads as session-busy.
+  const slot = await claimAiLease(c, sessionId, proc);
+  if (slot === null) throw new ApiError(409, SESSION_BUSY_DETAIL);
 
   // Every guard passed: `driveAiTurn` (topic-generation design D7 — the
   // shared helper `topics/generate` also uses) registers an MCP turn, spawns
@@ -173,7 +178,8 @@ aiRouter.post('/api/sessions/:sessionId/ai/chat', async (c) => {
         issuedClaudeSessionIds.set(outcome.claudeSessionId, sessionId);
       }
     } finally {
-      slot.release();
+      // Lease, then slot, before the stream closes (session-run-leases D4).
+      await slot.release();
     }
   });
 });

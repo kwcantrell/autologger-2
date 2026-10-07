@@ -55,6 +55,7 @@ import {
   eventGenerateTimeoutSec,
 } from '../env';
 import { ApiError } from '../httpError';
+import { claimAiLease } from './_aiSlot';
 import {
   expectedVersion,
   getSessionHub,
@@ -522,15 +523,20 @@ eventsRouter.post('/api/sessions/:sessionId/events/generate', async (c) => {
   // 6. Single-flight (per session) + process-wide ceiling — 409, spawning
   // nothing. Same registry as AI chat/AI v2/topics; released in this
   // handler's own finally (release BEFORE the projection — see the finally).
-  const slot = aiChatTurns.tryAcquire(sessionId, aiChatMaxConcurrent(c.env.config));
-  if (!slot.ok) {
+  const proc = aiChatTurns.tryAcquire(sessionId, aiChatMaxConcurrent(c.env.config));
+  if (!proc.ok) {
     throw new ApiError(
       409,
-      slot.reason === 'session-busy'
+      proc.reason === 'session-busy'
         ? EVENT_GENERATE_SESSION_BUSY_DETAIL
         : EVENT_GENERATE_AT_CAPACITY_DETAIL,
     );
   }
+  // The session's `ai-turn` lease (session-run-leases D4), claimed after the
+  // await-free window above ended at the synchronous tryAcquire: a refusal means
+  // another process runs a turn here, so it reads as session-busy.
+  const slot = await claimAiLease(c, sessionId, proc);
+  if (slot === null) throw new ApiError(409, EVENT_GENERATE_SESSION_BUSY_DETAIL);
 
   try {
     const hub = await getSessionHub(c, sessionId);
@@ -638,7 +644,8 @@ eventsRouter.post('/api/sessions/:sessionId/events/generate', async (c) => {
     // for this session behind a 409 until restart. The catalog projection needs no post-run
     // write: each insert and the regenerate's delete commit it in their own transaction
     // (session-tables design D8), so it is current by the time the route responds.
-    slot.release();
+    // Lease, then slot, before the response (session-run-leases D4).
+    await slot.release();
   }
 });
 

@@ -85,6 +85,7 @@ import {
   aiV2MaxBudgetUsd,
 } from '../env';
 import { ApiError } from '../httpError';
+import { claimAiLease } from './_aiSlot';
 import { getSessionHub, requireSession, requireUser, sessionCaller } from './_helpers';
 
 export const aiV2Router = new Hono<AppEnv>();
@@ -232,13 +233,17 @@ aiV2Router.post('/api/sessions/:sessionId/ai/v2/design', async (c) => {
   // Acquired BEFORE any spawn and held across the whole turn; released in the
   // stream's `finally` on every exit path (task 2.7 refines the acquisition
   // semantics; the hold-and-release lifecycle is real here).
-  const slot = aiChatTurns.tryAcquire(sessionId, aiChatMaxConcurrent(c.env.config));
-  if (!slot.ok) {
+  const proc = aiChatTurns.tryAcquire(sessionId, aiChatMaxConcurrent(c.env.config));
+  if (!proc.ok) {
     throw new ApiError(
       409,
-      slot.reason === 'session-busy' ? SESSION_BUSY_DETAIL : AT_CAPACITY_DETAIL,
+      proc.reason === 'session-busy' ? SESSION_BUSY_DETAIL : AT_CAPACITY_DETAIL,
     );
   }
+  // 6b. The session's `ai-turn` lease (session-run-leases D4), behind the slot:
+  // a refusal means another process runs a turn here, so it reads as session-busy.
+  const slot = await claimAiLease(c, sessionId, proc);
+  if (slot === null) throw new ApiError(409, SESSION_BUSY_DETAIL);
 
   // Every guard passed. Build the locked-down design turn (task 2.3's
   // closed-world option set), spawn it through the group-kill spawn override
@@ -337,7 +342,11 @@ aiV2Router.post('/api/sessions/:sessionId/ai/v2/design', async (c) => {
         abortController,
         abortSignal: c.req.raw.signal,
         terminate: spawner.terminate,
-        release: slot.release,
+        // One memoized, never-rejecting release (lease, then slot); the
+        // `finally` below awaits the same promise (session-run-leases D4).
+        release: () => {
+          void slot.release();
+        },
         abandonPendingQuestions: () => aiV2PendingQuestions.abandonTurn(sessionId, turnId),
         // code-health-consolidation D3: the workspace (cwd + config-dir)
         // cleanup rides in the orchestrator's every-exit-path `onFinally`;
@@ -357,7 +366,7 @@ aiV2Router.post('/api/sessions/:sessionId/ai/v2/design', async (c) => {
       // slot, and no pending question left able to resolve late (task 3.3).
       await spawner.terminate();
       aiV2PendingQuestions.abandonTurn(sessionId, turnId);
-      slot.release();
+      await slot.release();
       workspace.cleanup();
     }
   });
