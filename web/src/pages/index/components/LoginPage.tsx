@@ -89,11 +89,12 @@ const TAGLINE = 'mx-auto mb-0 mt-2 max-w-[19rem] text-[0.9rem] leading-[1.5] tex
 
 // Error banner: danger-tinted glass, house dialog radius. role="alert" lives
 // on the element; the retry link starts a fresh /auth/google/start.
-// shadcn-port-shell D4: the error banner is the destructive Alert (tinted as before); retry is a
-// link-variant Button rendered as the same <a>.
+// shadcn-port-shell D4: the error banner is the destructive Alert; retry is a link-variant Button
+// rendered as the same <a>. 11.4 cleanup: the DESIGN.md danger tokens (rose text, the danger-line
+// edge) on the Alert's raised-panel surface replace the off-token reds.
 const ERROR_BANNER =
-  'mt-6 block bg-[rgba(248,113,113,0.1)] border-[rgba(248,113,113,0.35)] text-left';
-const ERROR_TEXT = 'm-0 block text-[0.85rem] leading-[1.45] text-v5-text';
+  'mt-6 block border-(--si-danger-line) text-left *:data-[slot=alert-description]:text-si-danger';
+const ERROR_TEXT = 'm-0 block text-[0.85rem] leading-[1.45]';
 const ERROR_RETRY =
   'mt-1 h-auto p-0 text-[0.85rem] font-semibold normal-case tracking-normal underline underline-offset-2 hover-always:text-v5-primary2';
 

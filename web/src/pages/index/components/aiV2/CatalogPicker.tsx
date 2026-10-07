@@ -43,7 +43,7 @@ export function CatalogPicker({ unavailableTypes, onPick, onClose }: Props) {
         if (e.key === 'Escape') onClose();
       }}
     >
-      <div className="flex max-h-[80vh] w-full max-w-[36rem] flex-col gap-3 overflow-hidden rounded-v5-lg border border-v5-border-strong bg-[rgba(13,19,34,0.97)] p-4 shadow-2xl">
+      <div className="flex max-h-[80vh] w-full max-w-[36rem] flex-col gap-3 overflow-hidden rounded-card border border-si-line bg-popover p-4 text-popover-foreground shadow-2xl">
         <div className="flex shrink-0 items-center gap-2">
           <h3 className="m-0 text-sm font-semibold text-v5-text">Add a widget</h3>
           <button
@@ -72,7 +72,7 @@ export function CatalogPicker({ unavailableTypes, onPick, onClose }: Props) {
                 className={
                   disabled
                     ? 'flex cursor-not-allowed flex-col gap-1 rounded-v5-sm border border-v5-border bg-[rgba(255,255,255,0.02)] p-2 text-left opacity-50'
-                    : 'flex flex-col gap-1 rounded-v5-sm border border-v5-border-strong bg-[rgba(255,255,255,0.03)] p-2 text-left transition-colors hover:border-[rgba(56,189,248,0.4)]'
+                    : 'flex flex-col gap-1 rounded-v5-sm border border-v5-border-strong bg-[rgba(255,255,255,0.03)] p-2 text-left transition-colors hover:border-[color-mix(in_oklab,var(--si-accent)_40%,transparent)]'
                 }
               >
                 {/* Fixed catalog label — never agent/config-authored text. */}

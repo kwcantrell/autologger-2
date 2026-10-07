@@ -395,6 +395,10 @@
   --si-accent: #5b7cff;
   --si-danger: #ff9b9b;
   --si-danger-line: #5a2e33;
+  /* The waveform's unplayed body (11.4 cleanup, was a slate gradient): a flat foreground wash,
+   * half the stopped played portion (`--tx-wave-progress` 26%), so played vs unplayed reads in
+   * every transport state. */
+  --si-wave-body: color-mix(in oklab, var(--si-fg) 13%, transparent);
   /* The idle roll/record glyph on the transport controls (preview `.ctl.rec svg`). */
   --si-rec: #ff6464;
   /* The accent as text on the dark surfaces (the live hero timecode): lifted toward white so it
@@ -750,7 +754,6 @@
     --v6-rail-recent-shelf-mt: 1rem;
     --v6-rail-recent-shelf-pad: 0.6rem;
     --v6-rail-recent-shelf-radius: 1rem;
-    --v6-rail-recent-shelf-bg: linear-gradient(180deg, rgb(54 66 83 / 35%) 0%, rgb(26 26 43 / 50%));
   }
 
   /* Timeline marker click → temporary Event Feed row highlight: one accent fill on every cell
@@ -774,9 +777,13 @@
   &::-webkit-scrollbar {
     height: 6px;
   }
+  /* The themed scrollbar palette (base layer): strong-hairline thumb, accent on hover. */
   &::-webkit-scrollbar-thumb {
-    background: var(--legacy-border);
+    background: var(--si-line-strong);
     border-radius: 3px;
+  }
+  &::-webkit-scrollbar-thumb:hover {
+    background: var(--si-accent);
   }
 }
 
@@ -908,7 +915,7 @@
   }
 
   body.perf-dbg--no-v5-waveform-gradients #v4-log-session .timelineWaveformFill {
-    fill: rgba(148, 163, 184, 0.32) !important;
+    fill: var(--si-wave-body) !important;
   }
 
   body.perf-dbg--no-v5-waveform-gradients #v4-log-session .timelineWaveformProgress {
@@ -1365,27 +1372,26 @@
   input[type='text'],
   textarea {
     font: inherit;
-    color: var(--v5-text);
-    background: rgba(7, 11, 20, 0.6);
-    border: 1px solid var(--v5-border-strong);
-    border-radius: 0.6rem;
+    color: var(--si-fg);
+    background: var(--si-bg);
+    border: 1px solid var(--si-line-strong);
+    border-radius: var(--r-ctl);
     padding: 0.55rem 0.65rem;
     transition: border-color 0.15s ease, background 0.15s ease;
   }
 
   input[type='text']:focus-visible,
   textarea:focus-visible {
-    border-color: rgba(56, 189, 248, 0.55);
+    border-color: var(--ring);
     outline: none;
-    background: rgba(7, 11, 20, 0.75);
   }
 
   /* Placeholder floor (AA): the app-wide default placeholder used to bottom out
-   * near 35% alpha; 62% of the V5 text color clears 4.5:1 on the lightest dialog
-   * field the QA probe measured (shadcn-foundation D7). */
+   * near 35% alpha (shadcn-foundation D7). The muted tier (#a6acb7) clears 4.5:1 on the
+   * ground well and on the raised panel. */
   input::placeholder,
   textarea::placeholder {
-    color: rgba(229, 238, 252, 0.62);
+    color: var(--si-muted);
     opacity: 1;
   }
 

@@ -275,7 +275,7 @@ export function SseTurnComposer({
       className="flex shrink-0 items-end gap-2 border-t border-v5-border p-3"
     >
       <textarea
-        className="flex-1 resize-none rounded-v5-sm border border-v5-border bg-transparent px-3 py-2 text-sm text-v5-text [font-family:inherit] focus:border-[rgba(56,189,248,0.5)] focus:outline-none"
+        className="flex-1 resize-none rounded-v5-sm border border-input bg-(--si-bg) px-3 py-2 text-sm text-v5-text placeholder:text-muted-foreground focus:border-ring focus:outline-none"
         rows={2}
         value={input}
         placeholder={placeholder}

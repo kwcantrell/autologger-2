@@ -29,7 +29,7 @@ export function TopicTimelineWidget({ data }: { data: TopicTimelineDataT }) {
       {data.entries.map((entry) => (
         <li
           key={entry.topicId}
-          className="flex items-baseline gap-2 rounded-[0.4rem] border border-[rgba(56,189,248,0.26)] bg-[rgba(56,189,248,0.08)] px-2 py-1"
+          className="flex items-baseline gap-2 rounded-[0.4rem] border border-[color-mix(in_oklab,var(--si-accent)_26%,transparent)] bg-[color-mix(in_oklab,var(--si-accent)_8%,transparent)] px-2 py-1"
         >
           {/* Raw, verbatim session_time string — never parsed/reformatted. */}
           <span className="shrink-0 whitespace-nowrap font-mono text-[0.72rem] text-v5-soft">

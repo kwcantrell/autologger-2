@@ -185,9 +185,12 @@ describe('AA contrast floor — source colours over their lightest measured surf
   it('input/textarea placeholder floor on dialog fields', () => {
     const block = CSS.match(/input::placeholder,\s*textarea::placeholder\s*\{\s*color:\s*([^;]+);/);
     expect(block).not.toBeNull();
-    expect(
-      contrast(parseColor((block as RegExpMatchArray)[1]), SURFACE.dialogField),
-    ).toBeGreaterThanOrEqual(AA);
+    // 11.4 cleanup: the placeholder is a token now (`var(--si-muted)`); resolve it before measuring.
+    const raw = (block as RegExpMatchArray)[1].trim();
+    const ref = raw.match(/^var\((--[a-z0-9-]+)\)$/);
+    const fg = parseColor(ref ? resolved(ref[1]) : raw);
+    expect(contrast(fg, SURFACE.dialogField)).toBeGreaterThanOrEqual(AA);
+    expect(contrast(fg, parseColor(resolved('--si-bg')))).toBeGreaterThanOrEqual(AA);
   });
 
   it('login secondary link (BTN_CREATE) on its surface', () => {

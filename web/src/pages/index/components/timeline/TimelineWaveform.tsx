@@ -9,14 +9,14 @@ import {
 
 // --- converted class strings (were Timeline.module.css) ---
 // The `timelineWaveforms` / `timelineWaveformFill` / `timelineWaveformProgress` literals
-// are retained for the perf-debug @layer rules that target them. The fill uses the v5 gradient
-// url() — the #v4-log-session override, which is always the case here; progress is the accent. The decoding
+// are retained for the perf-debug @layer rules that target them. The unplayed body is a flat
+// on-palette wash (`--si-wave-body`; 11.4 cleanup retired the V5 slate gradient). The decoding
 // label folds Timeline's former hash-scoped keyframe into the shared wf-label-pulse token.
 const WAVEFORMS = 'timelineWaveforms absolute inset-0 h-full pointer-events-none z-[1]';
 const WAVEFORM_FULL =
   'absolute top-0 left-0 h-full w-full overflow-hidden box-border isolate [contain:paint]';
 const WAVEFORM_SVG = 'block relative w-full h-full [shape-rendering:geometricPrecision]';
-const WAVEFORM_FILL = 'timelineWaveformFill [fill:url(#timeline-wf-v5-fill)] stroke-none';
+const WAVEFORM_FILL = 'timelineWaveformFill [fill:var(--si-wave-body)] stroke-none';
 // The played portion is the one accent, flat (finish review fix round 2: it was a sky-blue ramp,
 // a second hue beside #5b7cff). Fix round 3: it follows the transport (`--tx-wave-progress`): a dim
 // neutral when stopped, the accent in playback and live, easing between states (still under
@@ -34,22 +34,9 @@ interface Props {
   clips: AudioClipLite[];
 }
 
-function V5Defs({ progRect }: { progRect: WaveformProgressRect | null }) {
+function WaveformDefs({ progRect }: { progRect: WaveformProgressRect | null }) {
   return (
     <defs>
-      <linearGradient
-        id="timeline-wf-v5-fill"
-        gradientUnits="userSpaceOnUse"
-        x1="0"
-        y1="0"
-        x2="0"
-        y2="100"
-      >
-        <stop offset="0%" stopColor="#94a3b8" stopOpacity="0.5" />
-        <stop offset="34%" stopColor="#64748b" stopOpacity="0.56" />
-        <stop offset="68%" stopColor="#334155" stopOpacity="0.62" />
-        <stop offset="100%" stopColor="#0f172a" stopOpacity="0.78" />
-      </linearGradient>
       {progRect && (
         <clipPath id="timeline-wf-p-full">
           <rect
@@ -95,7 +82,7 @@ export function TimelineWaveform({ mergedPeaks, isDecoding, activeSec, totalSec,
           preserveAspectRatio="none"
           aria-hidden={true}
         >
-          <V5Defs progRect={progRect} />
+          <WaveformDefs progRect={progRect} />
           <path className={WAVEFORM_FILL} d={pathD} />
           {progRect && (
             <path className={WAVEFORM_PROGRESS} d={pathD} clipPath="url(#timeline-wf-p-full)" />

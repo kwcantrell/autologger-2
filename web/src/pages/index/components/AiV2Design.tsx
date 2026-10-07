@@ -501,7 +501,7 @@ function QuestionCard({
 }: QuestionCardProps) {
   return (
     <div
-      className="flex flex-col gap-2 rounded-v5-sm border border-[rgba(56,189,248,0.22)] bg-[rgba(56,189,248,0.05)] p-3"
+      className="flex flex-col gap-2 rounded-v5-sm border border-[color-mix(in_oklab,var(--si-accent)_22%,transparent)] bg-[color-mix(in_oklab,var(--si-accent)_5%,transparent)] p-3"
       data-testid="aiv2-question-card"
     >
       {/* Agent-authored question text — plain text only. */}
@@ -526,7 +526,7 @@ function QuestionCard({
               className={clsx(
                 'flex flex-col gap-1 rounded-v5-sm border p-2 text-left text-sm transition-colors',
                 isSelected
-                  ? 'border-[rgba(56,189,248,0.55)] bg-[rgba(56,189,248,0.07)]'
+                  ? 'border-[color-mix(in_oklab,var(--si-accent)_55%,transparent)] bg-[color-mix(in_oklab,var(--si-accent)_7%,transparent)]'
                   : 'border-v5-border-strong bg-[rgba(255,255,255,0.03)]',
                 !selectable && 'cursor-not-allowed opacity-55',
               )}
@@ -568,7 +568,7 @@ function QuestionCard({
               onSubmitFreeText();
             }
           }}
-          className="min-w-0 flex-1 rounded-v5-sm border border-v5-border bg-transparent px-2 py-1 text-xs text-v5-text focus:border-[rgba(56,189,248,0.5)] focus:outline-none"
+          className="min-w-0 flex-1 rounded-v5-sm border border-input bg-(--si-bg) px-2 py-1 text-xs text-v5-text placeholder:text-muted-foreground focus:border-ring focus:outline-none"
         />
       </div>
     </div>
