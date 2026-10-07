@@ -37,7 +37,7 @@ Keep each task's text, and later its `Evidence:`, in one block with no blank lin
 
 ## 2. The migration (design D1)
 
-- [ ] 2.1 Test first, in `server/src/test/pg/catalogSchema.pg.test.ts`:
+- [x] 2.1 Test first, in `server/src/test/pg/catalogSchema.pg.test.ts`:
   - the kind-check snapshot admits the four kinds (D6 category 4);
   - a new describe "the session run leases migration (session-run-leases D1)" checks that:
     - a `catalog_user` inserts `ai-turn`, `transcript-generation` and `youtube-import` rows naming
@@ -46,6 +46,7 @@ Keep each task's text, and later its `Evidence:`, in one block with no blank lin
     - a `recording` row present before the migration is unchanged after it.
 
   Red, then add `supabase/migrations/20261012000000_session_run_leases.sql`. Green, plus `sh docker/supabase/test_migrate.sh`.
+  - Evidence: `server/src/test/pg/catalogSchema.pg.test.ts`: the kind-check snapshot line now `CHECK ((kind = ANY (ARRAY['recording'::text, 'ai-turn'::text, 'transcript-generation'::text, 'youtube-import'::text])))` (D6 category 1; the task's "category 4" means D6's category 1, the snapshot line), and the describe "the session run leases migration (session-run-leases D1)" (replay to `20261011000000`, a `recording` row, then the migration: rows equal before and after; `owner` as catalog_user inserts `recording`, `ai-turn`, `transcript-generation`, `youtube-import` on `ss1` -> `count 1` each, select `count 4`; kind `x` -> `23514`). `cd server && npx vitest run --project pg src/test/pg/catalogSchema.pg.test.ts` -> `Tests  3 failed | 22 passed (25)`: `matches the recorded catalog schema` (`expected { …(24) } to deeply equal { …(24) }`), `ENOENT: … 20261012000000_session_run_leases.sql`, `expected [ { count: 1 }, { code: '23514' } ] to deeply equal [ { count: 1 }, { count: 1 }, …(3) ]` (log `8b-2.1-red.log`). Added `supabase/migrations/20261012000000_session_run_leases.sql` (D1: drop and re-add the named check) -> `Tests  25 passed (25)` (log `8b-2.1-green.log`); whole pg project `Test Files  11 passed | 1 skipped (12)`, `Tests  105 passed | 1 skipped (106)` (log `8b-2.1-pg.log`); `sh docker/supabase/test_migrate.sh` -> `test_migrate: 35 passed, 0 failed` (log `8b-2.1-migrate.log`).
 
 ## 3. Silent run leases in the store (design D2)
 
