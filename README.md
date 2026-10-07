@@ -209,9 +209,13 @@ a transcript first when the session has none — billed DeepGram spend when `DEE
 is set), and writes the resulting events into those sessions. The POST is scoped to members
 of the show's studio (a non-member gets the same `404` as a nonexistent show). `GET
 /api/log-import/:jobId` polls the job (`{status, lines, error}`); it is **not** egress-gated
-(it only reads local in-process state) and answers only the job's creator — any other
-authenticated requester gets the same `404` as an unknown id. Terminal jobs are pruned from
-memory about an hour after finishing.
+(it only reads the job record) and answers only the job's creator — any other authenticated
+requester gets the same `404` as an unknown id. The job record is shared state: it lives in the
+Postgres kv (`log-import-job:<id>`), so any server process answers the poll, not only the one
+running the import. The running process refreshes a heartbeat every 10 s; a queued or running job
+whose heartbeat is more than 60 s old (its process stopped) is switched to `failed` with the error
+`The server running this import stopped.`, and that failure is final — the import is not resumed
+elsewhere. A finished job's record expires about an hour after it finishes.
 
 **Egress disclosure.** What leaves the machine: outbound HTTPS requests to `docs.google.com`
 only (the workbook-export endpoint); the downloaded workbook is processed locally. When: only
@@ -281,6 +285,17 @@ secret-free set (`upstream-failed`, `not-logged-in`, `timeout`, `internal-error`
 raw CLI stdout/stderr, environment values, credentials, or device-login URLs. The event
 vocabulary is additive-open: new event types or payload fields may appear without a further
 delta spec; clients ignore event types and fields they don't recognize.
+
+**Resume.** A `claude_session_id` from `done` is bound, in the Postgres kv
+(`ai-chat-resume:<id>`, identifiers only), to the autologger session **and the signed-in user**
+for 7 days, so a resume works through any server process. A resume is accepted only when the id
+is well-formed, the binding's session and user both match the request, and the CLI's
+conversation file exists at the exact path the CLI will read under this process's CLI home
+(`<HOME>/.claude/projects/<encoded session cwd>/<id>.jsonl`). Anything else — a co-member of the
+session resuming another user's chat, an expired or unknown id, or a file that is not on this
+process's disk — gets the existing `422` before anything is spawned. Whether server replicas in
+different containers share one CLI home (and so can resume each other's chats) is a deployment
+topology decision, not something this endpoint arranges.
 
 **Egress and spend disclosure.** Enabling this feature sends the session's transcript and
 topic content to Anthropic, over the operator's own `claude login` credentials — every chat
@@ -442,6 +457,15 @@ dashboard per session, `{config}` / `{config: null}`), not the catalog's show or
 yet compute (e.g. certain sentiment/utterance stats) render an honest "unavailable" state rather
 than a fabricated zero.
 
+**The question round trip is shared state.** When a design turn asks a question, the server
+stores a pending-question row in the Postgres kv (who may answer it and how many answers it takes,
+expiring with the turn) before the `question` event is sent. `POST …/ai/v2/answer` can land on any
+server process: it checks the row and records the answer with an atomic compare-and-swap, so of
+two concurrent answers exactly one gets `200` and the other the same masked `404` as a wrong id.
+The process running the turn reads its pending rows every 500 ms, so an answer reaches the turn up
+to about half a second after its `200`. When the turn ends by any path its rows are deleted, and a
+late answer gets the `404`.
+
 Gated by `AI_V2_ENABLED` (see `server/.env.example`) — unlike the AI chat's implicit
 `CLAUDE_CLI_PATH` gate, this is an **explicit** opt-in flag: unset/off keeps every `ai/v2` route,
 including dashboard persistence, at the endpoint's frozen `503 {detail}`.
@@ -509,9 +533,11 @@ DATA_DIR/
 
 - **Writes and frames hold across processes; the topology is still one replica.** Session writes
   lock their row and leases are database-backed, and frames reach every process through the frame
-  bus, in commit order. The stacks still run a single app replica (`container_name`, one Caddy
-  upstream, a local `DATA_DIR`); per-process request state (log-import jobs, AI v2 answers, chat
-  resume) moves in a later slice.
+  bus, in commit order. Request state is shared too: log-import jobs, AI v2 pending questions and
+  AI chat resume bindings live in the Postgres kv, so a poll, an answer or a resume works on any
+  process (a resume still needs the CLI's conversation file on that process's disk; sharing the
+  CLI home across containers is a topology decision). The stacks still run a single app replica
+  (`container_name`, one Caddy upstream, a local `DATA_DIR`).
 - **SessionHub RPC bodies await only their own SQL** — a hub method awaits its statements
   inside its transaction (an in-process FIFO lock keeps one body per session at a time); all other
   async work (fetch, streaming, etc.) lives in the router layer, not the hub.
@@ -726,9 +752,11 @@ packages/                 Source-only npm workspace packages (no build step; ser
                            app) moved from server/src/logImport/ (feature-service-packages
                            task 5.3)
     categoryMatch.ts         Fuzzy category-name matching
-    jobStore.ts              In-memory job-status store; Clock-parameterized (design D3) —
-                             createLogImportJob/getLogImportJob/setLogImportStatus take a Clock,
-                             appendLogImportLine/clearLogImportJobs don't read time
+    jobStore.ts              Shared job-status store over the kv port, one per binding
+                             (createLogImportJobStore(kv, clock)): one record per job that any
+                             process can read, a per-job ordered compare-and-swap write chain,
+                             a 10 s heartbeat, and a job stale for more than 60 s read as failed
+                             (final)
     runSessionLogImport.ts   Sync scoring + event creation against one matched session — the
                              service proper, taking `transcript` pre-resolved. Its
                              ensureTimedTranscript coordinator (the one production edge into
@@ -781,7 +809,9 @@ packages/                 Source-only npm workspace packages (no build step; ser
                                ai-turn run lease (server routers/_aiSlot.ts) for the cross-process
                                check
     aiV2PendingQuestions.ts   Pending-question registry for the AskUserQuestion round trip on
-                               v2 design turns, keyed and principal-bound
+                               v2 design turns, keyed and principal-bound; one per binding, over
+                               kv rows any process can answer, polled by the turn's process
+                               every 500 ms
     topicGenerate.ts          One-shot topics/generate turn driver (crash-safe replace-all)
     eventGeneratePrompt.ts    events/generate's generation prompt builder: dedicated one-shot
                                system prompt + the run-snapshot user-message builder
