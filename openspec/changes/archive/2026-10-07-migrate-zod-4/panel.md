@@ -14,3 +14,6 @@ Tier: 2 · Reviewers: assumption tester, failure and abuse, scope and simplicity
 Edits since approval: tasks.md only (1.1 to 4.3 ticked, each with `Evidence:`; 4.4 still open). proposal.md, design.md and both spec deltas are unchanged since e645e421.
 Scope change: no
 No findings.
+
+## Archive note 2026-10-07
+Wording corrected in proposal decision 4 and design D4: MCP chat tools have no `.int()` fields, so none becomes `integer` (the consistency read's minor 1). No behaviour or scope change.
