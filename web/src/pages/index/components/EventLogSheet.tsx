@@ -53,7 +53,7 @@ import {
   type RowEditValues,
   serverInlineDraft,
 } from './EventLogRow';
-import { FeedShell } from './FeedShell';
+import { FeedShell, feedCountLabel } from './FeedShell';
 import { type ColumnDef, FeedTable } from './FeedTable';
 import {
   FeedToolbarCaption,
@@ -1238,7 +1238,7 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
     },
   ];
 
-  const countLabel = `${feedCount}${fetchCapped ? '+' : ''} event${feedCount === 1 && !fetchCapped ? '' : 's'}`;
+  const countLabel = feedCountLabel(feedCount, 'event', { capped: fetchCapped });
 
   // Shared aria-disabled toolbar fragment (the a11y rationale — focusable
   // aria-disabled button + `aria-describedby` reason span — lives on

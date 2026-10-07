@@ -148,6 +148,39 @@ describe('shadcn primitives render (normalized, V5-themed)', () => {
     expect(screen.getByRole('tabpanel').textContent).toBe('Panel A');
   });
 
+  // redesign-show-ignition 11.3 (owner item e): Radix focuses the trigger from its own mousedown,
+  // which Chrome treats as script focus and paints `:focus-visible` after a pointer click. The
+  // trigger marks pointer focus and suppresses the ring for it; keyboard focus keeps the ring.
+  it.each([
+    ['default', undefined],
+    ['nav', 'nav'],
+  ] as const)('tab triggers (%s) show the focus ring for keyboard focus only', (_name, variant) => {
+    const onMouseDown = vi.fn();
+    const onBlur = vi.fn();
+    render(
+      <Tabs defaultValue="a">
+        <TabsList>
+          <TabsTrigger value="a" variant={variant}>
+            A
+          </TabsTrigger>
+          <TabsTrigger value="b" variant={variant} onMouseDown={onMouseDown} onBlur={onBlur}>
+            B
+          </TabsTrigger>
+        </TabsList>
+      </Tabs>,
+    );
+    const b = screen.getByRole('tab', { name: 'B' });
+    expect(b.className.split(/\s+/)).toContain('data-pointer-focus:focus-visible:outline-none');
+    expect(b.hasAttribute('data-pointer-focus')).toBe(false);
+    fireEvent.mouseDown(b, { button: 0 });
+    expect(b.hasAttribute('data-pointer-focus')).toBe(true);
+    expect(b.getAttribute('data-state')).toBe('active'); // Radix's activation still runs
+    expect(onMouseDown).toHaveBeenCalledTimes(1);
+    fireEvent.blur(b);
+    expect(b.hasAttribute('data-pointer-focus')).toBe(false);
+    expect(onBlur).toHaveBeenCalledTimes(1);
+  });
+
   it('table, card, badge, alert, skeleton, separator, empty, spinner, scroll-area', () => {
     render(
       <div>

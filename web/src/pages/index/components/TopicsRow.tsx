@@ -14,10 +14,12 @@ import { sessionTimeToTimelineSec } from '../../../shared/utils/timelineSec';
 import { type RowSeeds, useRowSeeds } from '../utils/rowHolds';
 import {
   FEED_CELL,
+  FEED_CELL_TEXT,
   FEED_CELL_TIME,
   FEED_INLINE_INPUT,
-  FEED_INLINE_INPUT_MONO,
-  FEED_ROW,
+  FEED_INLINE_INPUT_NUM,
+  FEED_INLINE_INPUT_TC,
+    FEED_ROW,
   FEED_SUMMARY_TEXTAREA,
 } from './FeedTable';
 import { JumpToTimeButton } from './JumpToTimeButton';
@@ -327,16 +329,16 @@ export function TopicsRow({
       </TableCell>
       <TableCell className={clsx(FEED_CELL, 'align-top', FEED_CELL_TIME)}>
         <input
-          className={clsx(FEED_INLINE_INPUT, FEED_INLINE_INPUT_MONO, 'mono')}
+          className={clsx(FEED_INLINE_INPUT, FEED_INLINE_INPUT_TC)}
           value={vals.session_time}
           onFocus={startEdit}
           onChange={(e) => setEdit((p) => (p ? { ...p, session_time: e.target.value } : p))}
           onBlur={(e) => commitField('session_time', e.target.value, e.relatedTarget)}
         />
       </TableCell>
-      <TableCell className={clsx(FEED_CELL, 'align-top')}>
+      <TableCell className={clsx(FEED_CELL, 'align-top', FEED_CELL_TEXT)}>
         <input
-          className={clsx(FEED_INLINE_INPUT, FEED_INLINE_INPUT_MONO, 'mono', 'max-w-20')}
+          className={clsx(FEED_INLINE_INPUT, FEED_INLINE_INPUT_NUM, 'max-w-20')}
           type="number"
           min={0}
           step={1}
@@ -346,9 +348,9 @@ export function TopicsRow({
           onBlur={(e) => commitField('duration_sec', e.target.value, e.relatedTarget)}
         />
       </TableCell>
-      <TableCell className={clsx(FEED_CELL, 'align-top')}>
+      <TableCell className={clsx(FEED_CELL, 'align-top', FEED_CELL_TEXT)}>
         <input
-          className={clsx(FEED_INLINE_INPUT, FEED_INLINE_INPUT_MONO, 'mono', 'max-w-20')}
+          className={clsx(FEED_INLINE_INPUT, FEED_INLINE_INPUT_NUM, 'max-w-20')}
           type="number"
           min={1}
           max={10}
@@ -359,7 +361,7 @@ export function TopicsRow({
           onBlur={(e) => commitField('topic_level', e.target.value, e.relatedTarget)}
         />
       </TableCell>
-      <TableCell className={clsx(FEED_CELL, 'align-top')}>
+      <TableCell className={clsx(FEED_CELL, 'align-top', FEED_CELL_TEXT)}>
         <textarea
           ref={summaryRef}
           className={clsx(FEED_INLINE_INPUT, FEED_SUMMARY_TEXTAREA)}

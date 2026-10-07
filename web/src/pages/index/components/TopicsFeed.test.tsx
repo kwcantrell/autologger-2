@@ -332,3 +332,28 @@ describe('TopicsFeed version conflicts (task 7.2)', () => {
     expect(topicPatches).toHaveLength(2);
   });
 });
+
+// redesign-show-ignition 11.3 item e follow-up: the heading reads like the Event feed's
+// ("10 events"): sentence case, singular at one.
+describe('TopicsFeed heading copy', () => {
+  it.each([
+    [1, '1 topic'],
+    [2, '2 topics'],
+  ])('%i topic(s) reads "%s"', async (n, label) => {
+    mockedApiFetch.mockImplementation(async (path: string) => {
+      if (path.includes('/status')) return statusFixture();
+      if (path.includes('/transcript-words')) return { words: [] };
+      if (path.includes('/topics'))
+        return {
+          topics: Array.from({ length: n }, (_, i) =>
+            topicFixture({ id: `topic-${i}`, ordinal: i }),
+          ),
+        };
+      throw new Error(`unexpected apiFetch call: ${path}`);
+    });
+    renderFeed();
+    await waitFor(() =>
+      expect(screen.getByRole('status', { name: 'Topics feed' }).textContent).toBe(label),
+    );
+  });
+});

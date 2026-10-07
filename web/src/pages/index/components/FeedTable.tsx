@@ -28,19 +28,36 @@ const FEED_EMPTY =
 export const FEED_ROW = 'hover-always:bg-[rgba(255,255,255,0.03)]';
 /** Feed body cell. `vertical-align` is intentionally NOT set here — callers add
  *  `align-middle` (Transcribe) or `align-top` (Topics tall-summary rows) so the two
- *  don't collide on one element (generated-order, not class-order, decides). Default
- *  grey mirrors Event Feed's internal-row `color: var(--color-legacy-muted)`. */
+ *  don't collide on one element (generated-order, not class-order, decides). No colour here:
+ *  each cell takes exactly one of FEED_TC / FEED_CELL_TEXT / FEED_CELL_LABEL (11.3 item e: a
+ *  muted default here beat the timecode cell's accent in generated order, greying the timecodes
+ *  and the body text alike). */
 export const FEED_CELL =
-  'px-[0.4rem] py-[0.1rem] text-[0.78rem] [border-bottom:1px_solid_rgba(255,255,255,0.04)] text-legacy-muted';
-/** Time column — blue monospaced, mirrors `.sheet .tc`. */
-export const FEED_CELL_TIME =
-  'font-[family-name:var(--font-mono)] text-legacy-accent whitespace-nowrap';
-/** Inline editable input: inherits the cell's face and size (the Event feed's 0.78rem). Timecode
- *  cells pass `FEED_INLINE_INPUT_MONO` alongside for the timecode face. */
+  'px-[0.4rem] py-[0.1rem] text-[0.78rem] [border-bottom:1px_solid_rgba(255,255,255,0.04)]';
+/** The timecode cell face, shared with the Event feed's timecode cell (EventLogRow `CELL_TC`):
+ *  accent, the timecode face, tabular figures, never wrapping. */
+export const FEED_TC =
+  'font-[family-name:var(--font-mono)] text-legacy-accent whitespace-nowrap tabular-nums';
+/** Time column (Transcript/Topics) — the Event feed's timecode cell. */
+export const FEED_CELL_TIME = FEED_TC;
+/** Body text (word, summary, numbers): the Event feed message cell's colour and regular weight. */
+export const FEED_CELL_TEXT = 'text-(--color-text)';
+/** Label column (speaker): the Event feed's Event-column weight, in the foreground. */
+export const FEED_CELL_LABEL = 'text-(--color-text) font-semibold';
+/** Inline editable input: inherits the cell's face, size, weight and colour (the Event feed's
+ *  0.78rem), so the cell class alone decides the typography. */
 export const FEED_INLINE_INPUT =
   'w-full px-[0.3rem] py-[0.18rem] bg-transparent border border-solid border-transparent rounded-[3px] text-inherit [font-family:inherit] [font-size:inherit] [font-weight:inherit] [font-style:inherit] [line-height:inherit] focus:border-[color-mix(in_oklab,var(--si-accent)_55%,transparent)] focus:bg-[color-mix(in_oklab,var(--si-accent)_8%,transparent)] [&[type=number]]:[-moz-appearance:textfield] [&[type=number]::-webkit-inner-spin-button]:appearance-none [&[type=number]::-webkit-inner-spin-button]:m-0 [&[type=number]::-webkit-outer-spin-button]:appearance-none [&[type=number]::-webkit-outer-spin-button]:m-0';
-// Show Ignition (11.3): timecodes in the timecode face, not the platform `monospace`.
-export const FEED_INLINE_INPUT_MONO = 'font-tc! tabular-nums'; // `!` beats the base's inherit
+/** Timecode input (composes with FEED_INLINE_INPUT inside a FEED_TC cell): the face comes from
+ *  the cell; the minimum width is a full HH:MM:SS:FF (11ch of the inherited timecode face) plus
+ *  the input's padding and border, so the auto-layout column can never clip the frames. */
+export const FEED_INLINE_INPUT_TC = 'tabular-nums min-w-[calc(11ch+0.6rem+2px)]';
+/** Speaker input (composes with FEED_INLINE_INPUT inside a FEED_CELL_LABEL cell): a minimum of
+ *  "Person 10" in the inherited semibold face plus padding and border, so the phone layout's
+ *  auto-sized column never clips the label. */
+export const FEED_INLINE_INPUT_LABEL = 'min-w-[calc(9ch+0.6rem+2px)]';
+/** Numeric inputs (Topics duration/level): body text with tabular figures. */
+export const FEED_INLINE_INPUT_NUM = 'tabular-nums';
 /** Auto-growing wrapping summary textarea (Topics). Composes with FEED_INLINE_INPUT. */
 export const FEED_SUMMARY_TEXTAREA =
   'block box-border min-h-[1.6rem] resize-none overflow-hidden whitespace-pre-wrap [overflow-wrap:anywhere] leading-[1.35]';

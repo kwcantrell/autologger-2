@@ -18,7 +18,7 @@ import { useTimelineSeek } from '../hooks/useTimelineSeek';
 import { useRowSeeds } from '../utils/rowHolds';
 import { followServer } from '../utils/seedStore';
 import { clickSortReducer } from '../utils/sortReducer';
-import { FeedShell } from './FeedShell';
+import { FeedShell, feedCountLabel } from './FeedShell';
 import { type ColumnDef, FeedTable } from './FeedTable';
 import { GenerateToolbar } from './GenerateToolbar';
 import { JUMP_COLUMN } from './JumpToTimeButton';
@@ -244,7 +244,7 @@ export const TopicsFeed = memo(function TopicsFeed({ sessionId }: Props) {
 
   return (
     <FeedShell
-      countLabel={`${topicCount} ${topicCount === 1 ? 'Topic' : 'Topics'}`}
+      countLabel={feedCountLabel(topicCount, 'topic')}
       headerId="v5-topics-feed-head"
       feedAriaLabel="Topics feed"
       toolbar={toolbar}

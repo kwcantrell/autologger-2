@@ -58,6 +58,14 @@ const FEED_TOOLBAR = 'flex-[0_0_auto] flex flex-row flex-wrap justify-start self
 const FEED_TITLE_NUMERIC =
   '[#v4-log-session_&]:font-ui [#v4-log-session_&]:text-[1.25rem] [#v4-log-session_&]:leading-tight [#v4-log-session_&]:font-semibold [#v4-log-session_&]:[font-variant-numeric:tabular-nums] [#v4-log-session_&]:tracking-normal';
 
+/** The feed heading's count copy, shared by every feed (redesign-show-ignition 11.3 item e): the
+ *  Event feed's sentence-case pattern ("10 events", "1 topic"), the bare count, singular only at
+ *  exactly one. `capped` marks a fetch-capped count (`500+ events`), which always reads plural. */
+export function feedCountLabel(count: number, noun: string, opts: { capped?: boolean } = {}) {
+  const capped = opts.capped === true;
+  return `${count}${capped ? '+' : ''} ${noun}${count === 1 && !capped ? '' : 's'}`;
+}
+
 interface Props {
   countLabel: string;
   headerId?: string;

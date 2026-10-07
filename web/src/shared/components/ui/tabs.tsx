@@ -71,9 +71,18 @@ const TRIGGER_LINE =
 const TRIGGER_NAV =
   'flex w-full min-w-0 items-center rounded-ctl px-2.5 py-2 text-left font-ui text-sm font-medium whitespace-nowrap text-muted-foreground cursor-pointer transition-[color,background-color,box-shadow] duration-150 outline-none data-[state=inactive]:hover-always:bg-accent data-[state=inactive]:hover-always:text-foreground focus-visible:outline-2 focus-visible:[outline-color:var(--si-accent)] focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-45 data-[state=active]:bg-(--sel-bg) data-[state=active]:shadow-[inset_0_0_0_1px_var(--sel-line)] data-[state=active]:font-semibold data-[state=active]:text-foreground';
 
+// Keyboard-only focus ring (redesign-show-ignition 11.3 item e): Radix focuses the trigger from
+// its own mousedown (for Safari), and Chrome counts that script focus as `:focus-visible`, so a
+// pointer click painted the ring. The trigger marks pointer focus on mousedown (before Radix's
+// handler runs) and clears it on blur; the marked state suppresses the ring (the base layer's
+// global `:focus-visible` outline included). Keyboard focus never carries the mark.
+const TRIGGER_POINTER_FOCUS = 'data-pointer-focus:focus-visible:outline-none';
+
 function TabsTrigger({
   className,
   variant = 'default',
+  onMouseDown,
+  onBlur,
   ...props
 }: React.ComponentProps<typeof TabsPrimitive.Trigger> & { variant?: 'default' | 'nav' }) {
   return (
@@ -83,8 +92,17 @@ function TabsTrigger({
         variant === 'nav'
           ? TRIGGER_NAV
           : [TRIGGER_BASE, TRIGGER_ACTIVE, TRIGGER_INACTIVE, TRIGGER_LINE],
+        TRIGGER_POINTER_FOCUS,
         className,
       )}
+      onMouseDown={(event) => {
+        event.currentTarget.setAttribute('data-pointer-focus', '');
+        onMouseDown?.(event);
+      }}
+      onBlur={(event) => {
+        event.currentTarget.removeAttribute('data-pointer-focus');
+        onBlur?.(event);
+      }}
       {...props}
     />
   );

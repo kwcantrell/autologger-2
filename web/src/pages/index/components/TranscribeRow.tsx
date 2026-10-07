@@ -9,10 +9,13 @@ import { type RowSeeds, useRowSeeds } from '../utils/rowHolds';
 import { formatSpeaker, speakerFromInput } from '../utils/speakerOffset';
 import {
   FEED_CELL,
+  FEED_CELL_LABEL,
+  FEED_CELL_TEXT,
   FEED_CELL_TIME,
   FEED_INLINE_INPUT,
-  FEED_INLINE_INPUT_MONO,
-  FEED_ROW,
+  FEED_INLINE_INPUT_LABEL,
+  FEED_INLINE_INPUT_TC,
+    FEED_ROW,
 } from './FeedTable';
 import { JumpToTimeButton } from './JumpToTimeButton';
 
@@ -344,14 +347,14 @@ export const TranscribeRow = memo(function TranscribeRow({
       </TableCell>
       <TableCell className={clsx(FEED_CELL, 'align-middle', FEED_CELL_TIME)}>
         <input
-          className={clsx(FEED_INLINE_INPUT, FEED_INLINE_INPUT_MONO, 'mono')}
+          className={clsx(FEED_INLINE_INPUT, FEED_INLINE_INPUT_TC)}
           value={vals.session_time}
           onFocus={startEdit}
           onChange={(e) => changeField('session_time', e.target.value)}
           onBlur={(e) => commitField('session_time', e.target.value, e.relatedTarget)}
         />
       </TableCell>
-      <TableCell className={clsx(FEED_CELL, 'align-middle')}>
+      <TableCell className={clsx(FEED_CELL, 'align-middle', FEED_CELL_LABEL)}>
         {/* The one display-space control in this row: `formatSpeaker` out,
             `speakerFromInput` back in on BOTH edges, so nothing downstream of
             these handlers ever sees a "Person N" label (see the value-space
@@ -359,7 +362,7 @@ export const TranscribeRow = memo(function TranscribeRow({
             identity, so text the operator never changed converts to
             nothing. */}
         <input
-          className={FEED_INLINE_INPUT}
+          className={clsx(FEED_INLINE_INPUT, FEED_INLINE_INPUT_LABEL)}
           value={formatSpeaker(vals.speaker, speakerOffset)}
           placeholder="Unknown"
           onFocus={startEdit}
@@ -375,7 +378,7 @@ export const TranscribeRow = memo(function TranscribeRow({
           }
         />
       </TableCell>
-      <TableCell className={clsx(FEED_CELL, 'align-middle')}>
+      <TableCell className={clsx(FEED_CELL, 'align-middle', FEED_CELL_TEXT)}>
         <input
           className={FEED_INLINE_INPUT}
           value={vals.word}

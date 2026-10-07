@@ -15,6 +15,7 @@ import {
 } from '../../../shared/utils/timecode';
 import type { DraftStore } from '../utils/draftStore';
 import type { SeedStore } from '../utils/seedStore';
+import { FEED_TC } from './FeedTable';
 import { JumpToTimeButton } from './JumpToTimeButton';
 import { Select } from './Select';
 
@@ -41,8 +42,7 @@ const CELL_HOVER = '[.group:hover_&]:bg-[rgba(124,183,255,0.06)]';
  *  claim on every descendant would defeat an unavailable-state cursor on
  *  anything rendered inside this cell in the future, so the assertion is
  *  dropped rather than carried forward as dead CSS. */
-const CELL_TC =
-  'text-left align-middle font-[family-name:var(--font-mono)] text-legacy-accent whitespace-nowrap';
+const CELL_TC = clsx('text-left align-middle', FEED_TC); // shared with Transcript/Topics
 /** Category cell (was `.sheetCat`). */
 const CELL_CAT = 'text-left align-middle font-semibold whitespace-nowrap';
 /** Message cell max-width (was `.sheet-dense .msg`, which beat `.sheet .msg`). */

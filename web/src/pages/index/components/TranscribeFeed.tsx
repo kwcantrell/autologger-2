@@ -22,7 +22,7 @@ import { useRowSeeds } from '../utils/rowHolds';
 import { followServer } from '../utils/seedStore';
 import { clickSortReducer } from '../utils/sortReducer';
 import { formatSpeaker, speakerOffsetFromWords } from '../utils/speakerOffset';
-import { FeedShell } from './FeedShell';
+import { FeedShell, feedCountLabel } from './FeedShell';
 import { type ColumnDef, FeedTable } from './FeedTable';
 import { GenerateToolbar } from './GenerateToolbar';
 import { JUMP_COLUMN } from './JumpToTimeButton';
@@ -305,7 +305,7 @@ export const TranscribeFeed = memo(function TranscribeFeed({ sessionId }: Props)
 
   return (
     <FeedShell
-      countLabel={`${wordCount} ${wordCount === 1 ? 'Word' : 'Words'}`}
+      countLabel={feedCountLabel(wordCount, 'word')}
       headerId="v5-transcribe-feed-head"
       feedAriaLabel="Transcript feed"
       toolbar={toolbar}
