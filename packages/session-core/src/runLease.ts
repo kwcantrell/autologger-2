@@ -41,7 +41,10 @@ export async function holdRunLease(opts: {
   if (!(await (await getHub()).claimRunLease(kind, holderId))) return null;
 
   let timer: ReturnType<typeof setInterval> | null = null;
-  let pending: Promise<void> | null = null;
+  // The current renewal (`renew` never rejects) and whether it is still running; booleans, not
+  // promise checks, decide (promiseHygiene.repo.test.ts).
+  let pending: Promise<void> = Promise.resolve();
+  let busy = false;
   const stop = () => {
     if (timer !== null) clearInterval(timer);
     timer = null;
@@ -58,25 +61,31 @@ export async function holdRunLease(opts: {
     }
   };
   timer = setInterval(() => {
-    if (pending !== null) return;
+    if (busy) return;
+    busy = true;
     pending = renew().finally(() => {
-      pending = null;
+      busy = false;
     });
   }, opts.renewMs ?? RUN_LEASE_RENEW_MS);
   timer.unref?.();
 
-  let released: Promise<void> | null = null;
+  const doRelease = async () => {
+    stop();
+    await pending;
+    try {
+      await (await getHub()).releaseRunLease(kind, holderId);
+    } catch (err) {
+      log(`run lease release failed: ${label}`, err);
+    }
+  };
+  let releasing = false;
+  let released: Promise<void> = Promise.resolve();
   return {
     release() {
-      released ??= (async () => {
-        stop();
-        if (pending !== null) await pending;
-        try {
-          await (await getHub()).releaseRunLease(kind, holderId);
-        } catch (err) {
-          log(`run lease release failed: ${label}`, err);
-        }
-      })();
+      if (!releasing) {
+        releasing = true;
+        released = doRelease();
+      }
       return released;
     },
   };

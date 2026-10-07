@@ -176,7 +176,7 @@ describe('holdRunLease (session-run-leases D3)', () => {
     s.failRelease(new Error('release failed'));
     const first = hold?.release();
     const second = hold?.release();
-    expect(second).toBe(first);
+    expect(Object.is(second, first)).toBe(true); // the same promise, not a second release
     await vi.advanceTimersByTimeAsync(0);
     expect(s.releases()).toBe(0); // waits for the pending renewal
     slow.resolve(true);
