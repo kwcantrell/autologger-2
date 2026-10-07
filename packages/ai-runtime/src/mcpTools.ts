@@ -299,10 +299,10 @@ export function buildAggregateMcpServer(
       'targetWidgetId).',
     {
       widgets: z
-        .array(z.record(z.unknown()))
+        .array(z.record(z.string(), z.unknown()))
         .describe('Widget instances: id, type, title, x, y, w, h.'),
       interactions: z
-        .array(z.record(z.unknown()))
+        .array(z.record(z.string(), z.unknown()))
         .optional()
         .describe('Optional cross-widget interactions: kind, sourceWidgetId, targetWidgetId.'),
     },
