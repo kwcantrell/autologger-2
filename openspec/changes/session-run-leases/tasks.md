@@ -138,4 +138,5 @@ Keep each task's text, and later its `Evidence:`, in one block with no blank lin
   5. A transcript generation and a YouTube import each leave no row afterwards.
 
   The owner does the browser-side check.
-- [ ] 7.4 `scripts/check-change.sh` (all gates) and the tier 2 `consistency-read`, then fix findings.
+- [x] 7.4 `scripts/check-change.sh` (all gates) and the tier 2 `consistency-read`, then fix findings.
+  - Evidence: `GITHUB_BASE_REF=supabase-migration scripts/check-change.sh` -> PASS openspec, yaml, workflows, skills-sync, guide-size, change (tier 2), risk-floor, approval, panel (8 findings, no open criticals), evidence, artifacts-first, tests-with-code (12 source / 11 test files), commands (typecheck, test), audit; FAIL tasks only for the then-open 7.3/7.4 (log `8b-7.4-all.log`). Consistency read (fresh-context subagent) appended to panel.md: scope change no, no findings; its minors: the 1.1/1.2 boxes were unticked despite evidence (ticked in 7c319d93); the aiV2 slot-to-stream gap (config reads and an already-asserted `requireUser` between the claim and `streamSSE`) predates this change and is left as is.
