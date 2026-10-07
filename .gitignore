@@ -39,3 +39,10 @@ openspec/changes/**/qa/**/*.png
 
 # impeccable skill downloads its platform binary on first run
 **/skills/impeccable/scripts/bin/
+
+# impeccable local state: agent-browser review captures (redesign-show-ignition browser checks),
+# the design hook's cache and per-machine config. Surface briefs and live/config.json stay tracked.
+**/.impeccable/review/
+**/.impeccable/hook.cache.json
+**/.impeccable/hook.pending.json
+**/.impeccable/config.local.json
