@@ -22,10 +22,17 @@
 //     unanswered question never wedges the turn's concurrency slot open
 //     (the predecessor's slot-leak hazard, D7: "not hygiene") and a pending
 //     entry cannot be resolved late.
+//
+// shared-request-state D2 (ADR 0021 slice 9b): each question is also a kv row
+// (`ai-v2-question:` + the JSON key, `{v:1, state, principalUserId,
+// questionCount}`), so `resolveAnswer` works on any server process with one
+// compare-and-swap; the turn's own process polls its rows every 500 ms and
+// resolves the local promise. The registry is built per server binding.
 
 import { randomBytes } from 'node:crypto';
 import type { PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 import type { AiV2AnswerItem } from '@autologger/contract';
+import type { Clock, KvStore } from '@autologger/ports';
 
 /** 16 bytes = 128 bits — the spec's stated floor ("at least 128 bits of
  * entropy"). Mirrors `aiMcpServer.ts`'s bearer-token construction
@@ -52,29 +59,74 @@ export interface PendingQuestionKey {
 interface PendingQuestionEntry {
   readonly sessionId: string;
   readonly turnId: string;
-  /** The user id of the principal that INITIATED the turn (D7). `null` for
-   * a turn initiated over a principal-less auth mechanism (the API_TOKEN
-   * device-token path — `requireSession` skips the studio check there
-   * because there is no individual to scope it to; see aiV2.ts). `null`
-   * can never equal an answering `user.id` (always a non-empty string), so
-   * such a turn's questions are structurally unanswerable by anyone and
-   * simply abandon on timeout — a safe degraded state, not a bypass. (Defence in depth:
-   * API_TOKEN is now scoped to /api/companion/*, so that path is unreachable over HTTP.) */
-  readonly principalUserId: string | null;
-  /** The raw `AskUserQuestion` tool input, kept so `resolveAnswer` can
-   * rebuild a same-shape `updatedInput` (question text -> answer) without
-   * the answer route needing to resend the original question text. */
+  /** The kv row's key (shared-request-state D2). */
+  readonly rowKey: string;
+  /** The raw `AskUserQuestion` tool input, kept so the poll that picks up an
+   * answer can rebuild a same-shape `updatedInput` (question text -> answer)
+   * without the answer route needing to resend the original question text. */
   readonly originalInput: Record<string, unknown>;
   readonly resolve: (result: PermissionResult) => void;
 }
+
+/** The kv row of one pending question (shared-request-state D2). `principalUserId` is the user id
+ * of the principal that INITIATED the turn (D7). `null` for a turn initiated over a
+ * principal-less auth mechanism (the API_TOKEN device-token path — `requireSession` skips the
+ * studio check there because there is no individual to scope it to; see aiV2.ts). `null` can
+ * never equal an answering `user.id` (always a non-empty string), so such a turn's questions are
+ * structurally unanswerable by anyone and simply abandon on timeout — a safe degraded state, not
+ * a bypass. (Defence in depth: API_TOKEN is now scoped to /api/companion/*, so that path is
+ * unreachable over HTTP.) */
+type QuestionRow =
+  | { v: 1; state: 'pending'; principalUserId: string | null; questionCount: number }
+  | {
+      v: 1;
+      state: 'answered';
+      principalUserId: string | null;
+      questionCount: number;
+      answers: AiV2AnswerItem[];
+    };
 
 /** `JSON.stringify` of the 3-tuple — collision-free regardless of what
  * characters `sessionId` (an attacker-controlled route param) contains. A
  * hand-picked string delimiter would let a crafted `sessionId` embedding
  * the delimiter collide two DIFFERENT (session, turn, request) triples onto
- * the same map key; JSON array encoding has no such ambiguity. */
+ * the same key; JSON array encoding has no such ambiguity. The kv row key is
+ * this with the `ai-v2-question:` prefix (shared-request-state D2). */
 function keyOf(key: PendingQuestionKey): string {
   return JSON.stringify([key.sessionId, key.turnId, key.requestId]);
+}
+
+const ROW_PREFIX = 'ai-v2-question:';
+/** How often the turn's process reads its pending rows (shared-request-state D2). */
+export const AI_V2_QUESTION_POLL_MS = 500;
+/** A row outlives its turn's deadline by this much, then expires on its own. */
+const ROW_GRACE_MS = 5_000;
+const ABANDONED_MESSAGE = 'The design turn ended before this question was answered.';
+
+function rowKeyOf(key: PendingQuestionKey): string {
+  return ROW_PREFIX + keyOf(key);
+}
+
+function turnKeyOf(sessionId: string, turnId: string): string {
+  return JSON.stringify([sessionId, turnId]);
+}
+
+function parseRow(raw: string): QuestionRow | null {
+  try {
+    const row = JSON.parse(raw) as QuestionRow | null;
+    return row?.v === 1 ? row : null;
+  } catch {
+    return null;
+  }
+}
+
+function questionCountOf(input: Record<string, unknown>): number {
+  const rawQuestions = (input as { questions?: unknown }).questions;
+  return Array.isArray(rawQuestions) ? rawQuestions.length : 0;
+}
+
+function errText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
 
 /**
@@ -165,107 +217,198 @@ export function stripPreviewForRelay(input: Record<string, unknown>): RelayedQue
   });
 }
 
+/**
+ * The pending-question registry over the KvStore port, built per server binding (shared-request-state
+ * D2; the former process-wide singleton is gone). Each question is a kv row any process can answer;
+ * the process running the turn holds the local resolver and polls its rows every 500 ms.
+ */
 export class AiV2PendingQuestionRegistry {
   private readonly pending = new Map<string, PendingQuestionEntry>();
+  /** One poller per turn with pending questions (keyed by `turnKeyOf`). */
+  private readonly pollers = new Map<
+    string,
+    { timer: ReturnType<typeof setInterval>; busy: boolean }
+  >();
+
+  constructor(
+    private readonly kv: KvStore,
+    private readonly clock: Clock,
+    private readonly pollMs: number = AI_V2_QUESTION_POLL_MS,
+  ) {}
 
   /**
-   * Register a pending question. Returns the Promise the `onQuestion`
-   * handler awaits — it resolves ONLY via `resolveAnswer` (a matching,
-   * principal-correct answer) or `abandonTurn` (disconnect/timeout); never
-   * on its own, so an answer that never arrives blocks the turn until the
-   * timeout backstop (spec "Subprocess and turn lifecycle") aborts it.
+   * Register a pending question: store its kv row first (expiring at the turn's deadline plus
+   * 5 s), and only then add the local entry and start or extend the turn's poller. Throws if the
+   * row cannot be stored, before anything local exists (the caller denies without emitting).
+   * The returned `result` resolves ONLY when a poll picks up an accepted answer, the row vanishes,
+   * or `abandonTurn` runs (disconnect/timeout); never on its own, so an answer that never arrives
+   * blocks the turn until the timeout backstop (spec "Subprocess and turn lifecycle") aborts it.
    */
-  register(
+  async register(
     key: PendingQuestionKey,
     principalUserId: string | null,
     originalInput: Record<string, unknown>,
-  ): Promise<PermissionResult> {
-    return new Promise((resolve) => {
+    turnDeadlineMs: number,
+  ): Promise<{ result: Promise<PermissionResult> }> {
+    const rowKey = rowKeyOf(key);
+    const row: QuestionRow = {
+      v: 1,
+      state: 'pending',
+      principalUserId,
+      questionCount: questionCountOf(originalInput),
+    };
+    const ttlS = Math.max(1, Math.ceil((turnDeadlineMs + ROW_GRACE_MS - this.clock.now()) / 1000));
+    await this.kv.put(rowKey, JSON.stringify(row), { expirationTtl: ttlS });
+    const result = new Promise<PermissionResult>((resolve) => {
       this.pending.set(keyOf(key), {
         sessionId: key.sessionId,
         turnId: key.turnId,
-        principalUserId,
+        rowKey,
         originalInput,
         resolve,
       });
     });
+    this.startPoller(key.sessionId, key.turnId);
+    return { result };
   }
 
-  /** True iff a matching pending entry exists — test/introspection only. */
+  /** True iff a matching LOCAL pending entry exists — test/introspection only. */
   has(key: PendingQuestionKey): boolean {
     return this.pending.has(keyOf(key));
   }
 
-  /** In-flight pending-question count across all turns (introspection / tests). */
+  /** In-flight local pending-question count across all turns (introspection / tests). */
   size(): number {
     return this.pending.size;
   }
 
+  /** The kv row's state, or null if it is gone — test/introspection only. */
+  async rowState(key: PendingQuestionKey): Promise<QuestionRow['state'] | null> {
+    const raw = await this.kv.get(rowKeyOf(key));
+    return raw === null ? null : (parseRow(raw)?.state ?? null);
+  }
+
   /**
-   * Resolve a pending question with a validated answer. Returns `'ok'` on
-   * success. Returns `'not-found'` — deliberately the SAME outcome — for
-   * every failure mode: no entry at all for this (sessionId, turnId,
-   * requestId) — a foreign/garbage id, or a late answer after the turn
-   * already ended and the entry was abandoned — OR a real entry whose
-   * recorded principal does not match `answeringPrincipalUserId` (D7's
-   * post-gate correction: a co-member with session access must not learn,
-   * from the response, whether they merely guessed a wrong id or are
-   * answering someone else's pending question — anti-enumeration).
-   *
-   * Also returns `'not-found'` — the SAME invalid-answer rejection path,
-   * NOT resolving the question — when the submitted answer count does not
-   * match the number of questions actually pending for this entry (Phase-3
-   * fix wave, defensive): `buildAnswerPermissionResult` zips `answers[i]` to
-   * `questions[i]` positionally, so a mismatched count would otherwise
-   * either fabricate a `question_${i}` key for an extra answer or silently
-   * leave a trailing question unanswered.
+   * Record a validated answer, on any process. Returns `'accepted'` once the row was swapped from
+   * pending to answered (the turn's process picks it up on its next poll). Returns `'not-found'` —
+   * deliberately the SAME outcome — for every failure mode: no row for this (sessionId, turnId,
+   * requestId) — a foreign/garbage id, or a late answer after the turn ended and its row was
+   * deleted — a row no longer pending, a row whose recorded principal does not match
+   * `answeringPrincipalUserId` (D7's post-gate correction: a co-member with session access must
+   * not learn whether they guessed a wrong id or are answering someone else's question —
+   * anti-enumeration), an answer count that does not match the question count
+   * (`buildAnswerPermissionResult` zips answers to questions positionally), or a lost race
+   * against a concurrent answer (the compare-and-swap). A kv error rejects (the route's 500).
    */
-  resolveAnswer(
+  async resolveAnswer(
     key: PendingQuestionKey,
     answeringPrincipalUserId: string,
     answers: readonly AiV2AnswerItem[],
-  ): 'ok' | 'not-found' {
-    const k = keyOf(key);
-    const entry = this.pending.get(k);
-    if (!entry || entry.principalUserId !== answeringPrincipalUserId) return 'not-found';
-    const rawQuestions = (entry.originalInput as { questions?: unknown }).questions;
-    const pendingQuestionCount = Array.isArray(rawQuestions) ? rawQuestions.length : 0;
-    if (answers.length !== pendingQuestionCount) return 'not-found';
-    this.pending.delete(k);
-    entry.resolve(buildAnswerPermissionResult(entry.originalInput, answers));
-    return 'ok';
+  ): Promise<'accepted' | 'not-found'> {
+    const rowKey = rowKeyOf(key);
+    const raw = await this.kv.get(rowKey);
+    if (raw === null) return 'not-found';
+    const row = parseRow(raw);
+    if (row?.state !== 'pending') return 'not-found';
+    if (row.principalUserId === null || row.principalUserId !== answeringPrincipalUserId) {
+      return 'not-found';
+    }
+    if (answers.length !== row.questionCount) return 'not-found';
+    const answered: QuestionRow = { ...row, state: 'answered', answers: [...answers] };
+    const swapped = await this.kv.replaceIf(rowKey, raw, JSON.stringify(answered));
+    return swapped ? 'accepted' : 'not-found';
   }
 
   /**
    * Abandon every pending question registered for one turn — called from
    * `runDesignTurn`'s lifecycle `finally` on EVERY exit path (spec: "the
    * pending entry SHALL be deleted when its turn ends by any path, so it
-   * cannot be resolved late"). Resolves each with a `deny` (never left
-   * hanging indefinitely) and deletes the entry BEFORE resolving, so a
-   * concurrently-arriving answer for the same id sees `resolveAnswer`
-   * return `'not-found'`, never a race against this cleanup.
+   * cannot be resolved late"). Denies each local entry at once (never left
+   * hanging), stops the turn's poller, and deletes the rows fire-and-forget;
+   * a failed delete is logged and the row expires at the turn's deadline.
    */
   abandonTurn(sessionId: string, turnId: string): void {
+    this.stopPoller(sessionId, turnId);
     for (const [k, entry] of this.pending) {
       if (entry.sessionId !== sessionId || entry.turnId !== turnId) continue;
       this.pending.delete(k);
-      entry.resolve({
-        behavior: 'deny',
-        message: 'The design turn ended before this question was answered.',
+      entry.resolve({ behavior: 'deny', message: ABANDONED_MESSAGE });
+      void this.kv.delete(entry.rowKey).catch((err: unknown) => {
+        console.warn(`[ai-v2] could not delete an abandoned question row (${errText(err)})`);
       });
     }
   }
 
-  /** Test-only: drop all pending entries so the shared singleton doesn't
-   * leak state across cases. Not used on any request path. */
-  reset(): void {
-    this.pending.clear();
+  private entriesOf(turnKey: string): Array<[string, PendingQuestionEntry]> {
+    return [...this.pending].filter(([, e]) => turnKeyOf(e.sessionId, e.turnId) === turnKey);
+  }
+
+  private startPoller(sessionId: string, turnId: string): void {
+    const turnKey = turnKeyOf(sessionId, turnId);
+    if (this.pollers.has(turnKey)) return;
+    const poller = {
+      timer: setInterval(() => {
+        void this.tick(turnKey);
+      }, this.pollMs),
+      busy: false,
+    };
+    poller.timer.unref?.();
+    this.pollers.set(turnKey, poller);
+  }
+
+  private stopPoller(sessionId: string, turnId: string): void {
+    const turnKey = turnKeyOf(sessionId, turnId);
+    const poller = this.pollers.get(turnKey);
+    if (!poller) return;
+    clearInterval(poller.timer);
+    this.pollers.delete(turnKey);
+  }
+
+  /** One poll of a turn's rows: an answered row is taken and resolves its question; a missing
+   * row denies it, as abandoned; a read that throws is logged and retried next tick. Never
+   * rejects; skips a tick while the previous one still runs. */
+  private async tick(turnKey: string): Promise<void> {
+    const poller = this.pollers.get(turnKey);
+    if (!poller || poller.busy) return;
+    poller.busy = true;
+    try {
+      for (const [k, entry] of this.entriesOf(turnKey)) {
+        try {
+          const raw = await this.kv.get(entry.rowKey);
+          if (this.pending.get(k) !== entry) continue; // abandoned meanwhile
+          if (raw === null) {
+            this.settle(k, entry, { behavior: 'deny', message: ABANDONED_MESSAGE });
+            continue;
+          }
+          if (parseRow(raw)?.state !== 'answered') continue;
+          const taken = await this.kv.take(entry.rowKey);
+          if (this.pending.get(k) !== entry) continue;
+          const row = taken === null ? null : parseRow(taken);
+          this.settle(
+            k,
+            entry,
+            row?.state === 'answered'
+              ? buildAnswerPermissionResult(entry.originalInput, row.answers)
+              : { behavior: 'deny', message: ABANDONED_MESSAGE },
+          );
+        } catch (err) {
+          console.warn(`[ai-v2] question poll failed; retrying (${errText(err)})`);
+        }
+      }
+    } finally {
+      poller.busy = false;
+      if (this.entriesOf(turnKey).length === 0 && this.pollers.get(turnKey) === poller) {
+        clearInterval(poller.timer);
+        this.pollers.delete(turnKey);
+      }
+    }
+  }
+
+  private settle(k: string, entry: PendingQuestionEntry, result: PermissionResult): void {
+    this.pending.delete(k);
+    entry.resolve(result);
   }
 }
-
-/** Process-wide singleton — the shared home the design-turn route and the
- * answer route both consume (single Node process invariant). */
-export const aiV2PendingQuestions = new AiV2PendingQuestionRegistry();
 
 export interface DesignQuestionEmitPayload {
   requestId: string;
@@ -289,8 +432,10 @@ export interface BuildPendingQuestionOnQuestionParams {
    * Errors are swallowed (a dead client stream); the abandonment path
    * (disconnect/timeout) still resolves and deletes the pending entry. */
   emitQuestion: (payload: DesignQuestionEmitPayload) => Promise<void> | void;
-  /** Defaults to the process-wide singleton; injectable for hermetic tests. */
-  registry?: AiV2PendingQuestionRegistry;
+  /** The turn's deadline (its start plus its timeout): the kv row expires 5 s after it. */
+  turnDeadlineMs: number;
+  /** The binding's registry (`c.env.ports.aiV2Questions`, shared-request-state D2). */
+  registry: AiV2PendingQuestionRegistry;
 }
 
 /**
@@ -304,19 +449,28 @@ export interface BuildPendingQuestionOnQuestionParams {
 export function buildPendingQuestionOnQuestion(
   params: BuildPendingQuestionOnQuestionParams,
 ): (input: Record<string, unknown>) => Promise<PermissionResult> {
-  const registry = params.registry ?? aiV2PendingQuestions;
+  const { registry } = params;
   return async (input: Record<string, unknown>) => {
     const requestId = generatePendingQuestionId();
-    const promise = registry.register(
-      { sessionId: params.sessionId, turnId: params.turnId, requestId },
-      params.principalUserId,
-      input,
-    );
+    let pending: { result: Promise<PermissionResult> };
+    try {
+      // The row is stored before the question goes out (shared-request-state D2), so a fast
+      // answer on any process finds it.
+      pending = await registry.register(
+        { sessionId: params.sessionId, turnId: params.turnId, requestId },
+        params.principalUserId,
+        input,
+        params.turnDeadlineMs,
+      );
+    } catch (err) {
+      console.warn(`[ai-v2] could not record a design question; denying it (${errText(err)})`);
+      return { behavior: 'deny', message: 'The question could not be recorded.' };
+    }
     await params.emitQuestion({
       requestId,
       turnId: params.turnId,
       questions: stripPreviewForRelay(input),
     });
-    return promise;
+    return pending.result;
   };
 }
