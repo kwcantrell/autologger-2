@@ -7,9 +7,8 @@ import type { EventButtonDraft } from './eventButtonsModel';
 
 // --- Settings save model (redesign-show-ignition D4) ---
 //
-// The rules the previous Settings dialog (`HomeSettingsModal`) applied when it built a profile
-// write, lifted out unchanged so the Settings view's sections and the dialog (until task 10.1
-// deletes it) share one copy:
+// The rules the previous Settings dialog applied when it built a profile write, lifted out
+// unchanged so the Settings view's sections share one copy:
 //   - a show's draft and its `show_updates` entry (the category and option mapping, with the
 //     `auto_instruction` trim gate);
 //   - which show to select for a team, and which `active_show_id` a save echoes (an absent one
@@ -175,8 +174,8 @@ export function showDraftToUpdate(showId: string, draft: ShowDraft): ShowUpdateE
       type: c.type,
       // Per-option belt (auto-generate-event-logs audit M6): the same
       // trim/omit gate as the category level below, applied here as a
-      // second enforcing site alongside EventOptionsModal's confirm
-      // mapping — a draft option that never went through that modal
+      // second enforcing site alongside `cleanDropdownOptions` (the
+      // event-button panel's save) — a draft option that never went through that panel
       // (hydrated then saved untouched, or padded by a future editor)
       // must still post the wire rule: key only when trim-non-empty,
       // emitted TRIMMED, matching server normalization.

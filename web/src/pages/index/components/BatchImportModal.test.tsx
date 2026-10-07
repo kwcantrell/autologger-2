@@ -17,7 +17,7 @@ vi.mock('../batchImport/stitch', () => ({
 
 const mockedApiFetch = vi.mocked(apiFetch);
 
-// Radix Select needs these in jsdom to open (the EventButtonsTable.lazyTypeSelect.test.tsx recipe).
+// Radix Select needs these in jsdom to open (the LazySelect.test.tsx recipe).
 if (typeof Element !== 'undefined' && !Element.prototype.hasPointerCapture) {
   Element.prototype.hasPointerCapture = () => false;
 }

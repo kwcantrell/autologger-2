@@ -2,8 +2,8 @@ import type { TeamMember, TeamRole } from '../../../../api/types';
 
 // --- Who may do what to a team member (team-management "Teams management page") ---
 //
-// The role matrix the previous team card applied inline (TeamCard.tsx), lifted out so the Members
-// section and that card (until task 10.1 deletes it) share one copy:
+// The role matrix the previous team card applied inline, lifted out so the Members
+// section and its panels share one copy:
 //   - no control ever targets the owner (ownership moves only by transfer);
 //   - only the owner changes roles (Admin / Member);
 //   - the owner removes anyone else; an admin removes `member` rows only; nobody removes themself

@@ -13,7 +13,7 @@ import { Input } from '../../../shared/components/ui/input';
 // `/teams` page and `OnboardingPanel` — and `OnboardingPanel` is part of the
 // eagerly-loaded homepage graph (AppShell early-returns to it for a logged-in
 // user with zero teams). While this component lived in `TeamsRoute.tsx`, that
-// one import pinned the ENTIRE teams page — `TeamCard` and the whole
+// one import pinned the ENTIRE teams page — the team card and the whole
 // `useTeams` detail/invite/role mutation surface — into the initial download,
 // silently cancelling TeamsRoute's `React.lazy` edge (its lazy chunk built out
 // to zero files). Splitting the shared leaf into its own module is what makes

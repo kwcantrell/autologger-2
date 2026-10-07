@@ -760,7 +760,7 @@
   }
 }
 
-/* EventButtonsTable's palette swatch — a native <input type=color> whose rendered swatch is
+/* Settings › Event buttons' palette swatch — a native <input type=color> whose rendered swatch is
  * a ::-webkit-color-swatch / ::-moz-color-swatch pseudo that can't carry inline utilities.
  * The box metrics (size/radius/appearance) are set here alongside the pseudo resets. */
 @utility pal-slot {
@@ -1205,7 +1205,7 @@
  *   - `.autologger-loading-video` / `__media` base rules target template-string DOM
  *     (shared/utils/loadingVideo.ts) rendered by three components — a components-layer
  *     block, not utilities on one tree.
- *   - `.muted` is a multi-emitter utility class (RecentSessionsList / HomeSettingsModal /
+ *   - `.muted` is a multi-emitter utility class (RecentSessionsList /
  *     SessionWorkspace placeholder — a class family), so it's one components-layer rule.
  * ============================================================ */
 

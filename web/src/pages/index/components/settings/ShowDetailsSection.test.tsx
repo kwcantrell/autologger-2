@@ -341,6 +341,20 @@ describe('Settings › Show details: the shows states', () => {
     expect(mockedApiFetch.mock.calls.some(([p]) => String(p).startsWith('shows'))).toBe(false);
   });
 
+  it('does not clobber unsaved edits when the shows response is re-delivered', async () => {
+    // Ported from the previous Settings dialog's "shows arrive asynchronously" block (10.1).
+    const client = renderSection();
+    fireEvent.change(await inPanel().findByLabelText('Show name'), {
+      target: { value: 'Morning Report' },
+    });
+    shows = [{ ...MORNING, name: 'Renamed Elsewhere' } as Show, EVENING];
+    await act(() => client.refetchQueries());
+    expect((inPanel().getByLabelText('Show name') as HTMLInputElement).value).toBe(
+      'Morning Report',
+    );
+    expect(save().textContent).not.toBe('Saved');
+  });
+
   it('says so when the team has no shows yet', async () => {
     shows = [];
     renderSection();

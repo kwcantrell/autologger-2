@@ -32,7 +32,7 @@ export function useCreateShow() {
       apiFetch<{ show: Show }>('shows', { method: 'POST', body: JSON.stringify(body) }),
     // The created show has to reach BOTH show caches, not just the profile:
     // `profile.shows[]` is the brief list every show picker reads, and
-    // the studio-shows list is the full-config one HomeSettingsModal edits — the new
+    // the studio-shows list is the full-config one the Settings view edits — the new
     // show would otherwise be missing from its own show selector until that
     // query's 30s staleTime expired (profile-shows-slimming). The response
     // itself stays the full `Show`, which the caller uses to seed a draft

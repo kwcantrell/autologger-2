@@ -4,8 +4,7 @@ import type { ShowDraft } from './settingsModel';
 
 // --- Event buttons: the draft and its rules (redesign-show-ignition D6) ---
 //
-// One copy of the event-button rules, shared by Settings › Event buttons (the list and its panel)
-// and the previous table (`EventButtonsTable`, until task 10.1 retires its UI):
+// One copy of the event-button rules, used by Settings › Event buttons (the list and its panel):
 //   - the `EventButtonDraft` shape and the instruction-bearing definition;
 //   - the type-switch rules (Dropdown seeds two options, On/Off seeds its labels and drops every
 //     instruction);

@@ -9,7 +9,7 @@ import type { Show } from '../types';
 //
 // Both hooks mirror `useShowCategories`: `enabled` on the id so a null id
 // never fires a request, and a 30s `staleTime` so reopening a modal inside
-// that window is free. That staleness window is why `HomeSettingsModal`'s save
+// that window is free. That staleness window is why a Settings save
 // path invalidates BOTH keys below alongside `show-categories` — without it,
 // the generate modal could render categories the user just edited away.
 
@@ -18,7 +18,7 @@ import type { Show } from '../types';
  * owner of the `'studio-shows'` and `'show'` literals, guarded by
  * `queryKeyFactories.repo.test.ts` (the `sessionStatusKeys`/`audioSegmentsKeys`
  * idiom). The bare-prefix members (`allStudios()`, `all()`) exist for
- * invalidation via React Query prefix matching — `HomeSettingsModal` drops both
+ * invalidation via React Query prefix matching — a Settings save drops both
  * roots after a save that carried `show_updates`, and `useCreateShow` drops the
  * studio list after a create.
  */

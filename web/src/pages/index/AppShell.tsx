@@ -160,8 +160,8 @@ export function AppShell() {
   // `AutoLogger_closeSettingsModal` / `Home_reloadSessionList` /
   // `Home_clearSessionList` window globals — retired by web-coordination-seam:
   // the first duplicated the `onClose` prop already threaded to
-  // `HomeSettingsModal`, the second is now inlined there via the shared query
-  // client, and the third was an identical duplicate of the second.)
+  // the Settings view, the second is now inlined in its saves via the shared
+  // query client, and the third was an identical duplicate of the second.)
   useEffect(() => {
     // Handle data-v6-modal-dismiss clicks (replaces v3.js listener)
     const handleModalDismiss = (e: MouseEvent) => {

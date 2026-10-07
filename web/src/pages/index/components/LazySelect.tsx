@@ -25,8 +25,8 @@ interface LazySelectProps {
  * `DocumentFragment`; that mount cost is what this exists to remove). The real `Select`
  * mounts on the user's first sign of intent (hover, keyboard focus, or activation).
  *
- * Originally `EventButtonsTable`'s per-row `LazyTypeSelect`, lifted here unchanged in
- * behaviour so the always-mounted settings-modal selects can share it — the modal's
+ * Originally the previous event-button table's per-row `LazyTypeSelect`, lifted here
+ * unchanged in behaviour so always-mounted settings selects (now `FpsSelect`) can share it — the modal's
  * open cost was dominated by the four closed selects' option subtrees (measured: 27
  * `SelectItem` mounts, ~5 fibers each, on a modal that shows no open dropdown).
  *

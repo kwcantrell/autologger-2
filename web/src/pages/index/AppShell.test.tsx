@@ -21,8 +21,8 @@ import { markOriginated, resetOriginationForTesting } from './transportOriginati
 // (the deep-link resolution layer that now wraps WorkspaceStatic — task 4.2;
 // its own resolution states are covered in SessionRoute.test.tsx) reports the
 // sessionId it received (the "workspace mount" observable) and a button
-// standing in for the Settings view's studio-switch save branch (its own
-// branch logic is covered in HomeSettingsModal.test.tsx). Location is driven
+// standing in for a close-session caller (the team switch's own branch
+// logic is covered in TopBar.test.tsx). Location is driven
 // by `wouter/memory-location` (recorded history) except for the browser-Back
 // test, which uses jsdom's real history.
 
@@ -671,8 +671,8 @@ describe('The Settings modal costs nothing while closed', () => {
 
 // --- Settings chunk splitting (bundle route-splitting, plan C5.5) ---
 //
-// The Settings view is a `settings`-state-gated `React.lazy` mount (it was
-// HomeSettingsModal's split point), with an idle prefetch warming the chunk. Two
+// The Settings view is a `settings`-state-gated `React.lazy` mount (it took
+// over the previous Settings dialog's split point), with an idle prefetch warming the chunk. Two
 // properties are pinned here: the open path still works across the async
 // boundary, and the prefetch is import-only — it must never mount, render, or
 // otherwise put the modal on screen on its own.

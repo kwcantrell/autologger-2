@@ -59,6 +59,7 @@ let shows: Show[];
 let profile: ProfilePayload;
 let teamDetail: TeamDetail;
 let failGrant: Error | null = null;
+let failShows = false;
 let nextId = 3;
 
 function briefs() {
@@ -113,7 +114,10 @@ function route() {
       }
       return { ...profile, shows: briefs() };
     }
-    if (path === 'shows?studio_id=team-a') return { shows: structuredClone(shows) };
+    if (path === 'shows?studio_id=team-a') {
+      if (failShows) throw new Error('Internal error');
+      return { shows: structuredClone(shows) };
+    }
     if (path === 'shows' && method === 'POST') {
       const body = JSON.parse(String(opts?.body));
       const created = makeShow(nextId++, {
@@ -180,6 +184,7 @@ const editShow = async (id: string) => {
 beforeEach(() => {
   mockedApiFetch.mockReset();
   failGrant = null;
+  failShows = false;
   nextId = 3;
   shows = [makeShow(1), makeShow(2, { title_suffix: 'episode' })];
   teamDetail = {
@@ -214,6 +219,22 @@ describe('Shows list', () => {
       false,
     );
     expect(inSection().queryByRole('button', { name: /Open previous Settings/ })).toBeNull();
+  });
+
+  it('a failed shows fetch is named and retryable, and Add show stays disabled over it', async () => {
+    // Ported from the previous Settings dialog's "shows-fetch failure" block (10.1).
+    failShows = true;
+    renderShows('owner');
+    expect(await inSection().findByText('Couldn’t load shows.')).not.toBeNull();
+    expect(inSection().getByRole('button', { name: 'Add show' }).hasAttribute('disabled')).toBe(
+      true,
+    );
+    failShows = false;
+    fireEvent.click(inSection().getByRole('button', { name: 'Retry' }));
+    expect(await findRow('show-1')).not.toBeNull();
+    expect(inSection().getByRole('button', { name: 'Add show' }).hasAttribute('disabled')).toBe(
+      false,
+    );
   });
 
   it('members have disabled Edit and Add show under a role notice', async () => {

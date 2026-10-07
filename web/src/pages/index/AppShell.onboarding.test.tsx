@@ -141,7 +141,7 @@ describe('zero-membership onboarding (design D8)', () => {
     await waitFor(() => expect(screen.getByTestId('onboarding-panel')).not.toBeNull());
     expect(screen.queryByTestId('rail')).toBeNull();
     expect(screen.queryByTestId('session-route')).toBeNull();
-    // The settings modal lift (teams-settings-nav, D1) mounts HomeSettingsModal
+    // The settings modal lift (teams-settings-nav, D1) mounts the Settings view
     // beside the route switch — the onboarding branch early-returns before
     // that switch, so neither the settings affordance nor the modal itself
     // can ever appear here.

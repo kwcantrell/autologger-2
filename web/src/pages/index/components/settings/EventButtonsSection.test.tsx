@@ -126,6 +126,7 @@ function makeShows(): Show[] {
 let shows: Show[];
 let profile: ProfilePayload;
 let failPut: Error | null = null;
+let failShows = false;
 
 function profileAs(role: TeamRole): ProfilePayload {
   return {
@@ -171,7 +172,10 @@ function route() {
       }
       return profile;
     }
-    if (path === 'shows?studio_id=team-a') return { shows: structuredClone(shows) };
+    if (path === 'shows?studio_id=team-a') {
+      if (failShows) throw new Error('Internal error');
+      return { shows: structuredClone(shows) };
+    }
     throw new Error(`unexpected apiFetch: ${method} ${path}`);
   });
 }
@@ -233,6 +237,7 @@ const savedCategories = (i = 0) => putBodies()[i].show_updates[0].categories;
 beforeEach(() => {
   mockedApiFetch.mockReset();
   failPut = null;
+  failShows = false;
   shows = makeShows();
 });
 
@@ -378,6 +383,17 @@ describe('Event buttons list', () => {
     await findRow('Roll Call');
     expect(inSection().getByText('No other shows on this team')).not.toBeNull();
     expect(inSection().queryByRole('button', { name: 'Copy' })).toBeNull();
+  });
+
+  it('a failed shows fetch is named and retryable here too', async () => {
+    // Ported from the previous Settings dialog's "says the same thing on the Event Buttons tab" (10.1).
+    failShows = true;
+    renderButtons();
+    expect(await inSection().findByText('Couldn’t load shows.')).not.toBeNull();
+    expect(inSection().queryByRole('button', { name: 'Add button' })).toBeNull();
+    failShows = false;
+    fireEvent.click(inSection().getByRole('button', { name: 'Retry' }));
+    expect(await findRow('Roll Call')).not.toBeNull();
   });
 
   it('members see the controls disabled under the role notice', async () => {

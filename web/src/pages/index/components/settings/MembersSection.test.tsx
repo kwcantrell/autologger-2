@@ -271,6 +271,13 @@ describe('Members list', () => {
     expect(screen.queryByTestId('member-row-member-1')).toBeNull();
   });
 
+  it('a member of an owned team with no admins sees the list, not the notice', async () => {
+    // Ported from the previous team card's member view (10.1).
+    renderMembers('member', detail('member', { members: [OWNER, MEMBER], enabled_admin_count: 0 }));
+    expect(await findRow('owner-1')).not.toBeNull();
+    expect(screen.queryByTestId('team-orphaned-notice')).toBeNull();
+  });
+
   it('an admin of an ownerless team keeps the controls under the notice', async () => {
     renderMembers('admin', detail('admin', { members: [ADMIN, MEMBER] }));
     const notice = await screen.findByTestId('team-orphaned-notice');
