@@ -13,7 +13,7 @@ import { generateTranscriptWords, TranscriptGenerateError } from '@autologger/tr
 import { Hono } from 'hono';
 import { z } from 'zod';
 import type { AppEnv, Bindings } from '../appEnv';
-import { sheetsLogImportConfigured } from '../env';
+import { runFeatureAllowed, sheetsLogImportConfigured } from '../env';
 import { ApiError } from '../httpError';
 import { requireShowAccess, requireUser, timecodeCtx } from './_helpers';
 
@@ -53,11 +53,18 @@ export async function ensureTimedTranscript(input: {
   audio: Bindings['ports']['audio'];
   ctx: TimecodeCtx;
   onProgress: (line: string) => void;
+  /** Whether the job's creator is approved for run features, decided when the job was created
+   * (run-status-and-sweeper D9). False: generation is skipped and the session fails. */
+  generationAllowed: boolean;
 }): Promise<TranscriptToken[]> {
   let tokens = await timedTranscriptTokens(await input.getHub());
   if (tokens.length > 0) {
     input.onProgress(`Transcript already present (${tokens.length} timed words).`);
     return tokens;
+  }
+  if (!input.generationAllowed) {
+    input.onProgress('Skipped transcript generation: limited to approved users on this server.');
+    throw new Error('No timed transcript is available for sync.');
   }
 
   input.onProgress('Generating transcript (DeepGram)…');
@@ -151,6 +158,8 @@ logImportRouter.post('/api/shows/:showId/log-import', async (c) => {
   const env = c.env;
   const spreadsheetUrl = parsed.data.spreadsheet_url;
   const categories = categoriesFromShowRow(show);
+  // run-status-and-sweeper D9: decided now, held in memory for this process's run of the job.
+  const generationAllowed = runFeatureAllowed(c.env.config, user);
 
   // Every write is queued on the job's chain and never rejects (D1); `log` only enqueues.
   const log = (line: string): void => {
@@ -219,6 +228,7 @@ logImportRouter.post('/api/shows/:showId/log-import', async (c) => {
             audio: env.ports.audio,
             ctx,
             onProgress: (line) => log(`  ${title}: ${line}`),
+            generationAllowed,
           });
           const result = await runSessionLogImport({
             hub: await getHub(),

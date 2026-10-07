@@ -18,6 +18,7 @@ import {
 } from '@autologger/session-core';
 import type { Context } from 'hono';
 import type { AppEnv } from '../appEnv';
+import { runFeatureAllowed } from '../env';
 import { ApiError } from '../httpError';
 
 export function timecodeCtx(row: Row): TimecodeCtx {
@@ -60,6 +61,19 @@ export function requireUser(c: Context<AppEnv>): AuthUser {
   const user = c.get('user');
   if (user === null) throw new MissingPrincipalError();
   return user;
+}
+
+/** The run routes' refusal of a user who is not approved (run-status-and-sweeper D9). */
+export const RUN_FEATURE_FORBIDDEN_DETAIL =
+  'This feature is limited to approved users on this server.';
+
+/** The approved-user gate of the six run routes (run-status-and-sweeper D9): 403 unless the
+ * signed-in user's email is the bootstrap owner's or in `RUN_FEATURE_EMAILS`. Each route calls it
+ * right after its configuration 503, before any slot, lease or spawn. */
+export function requireRunFeature(c: Context<AppEnv>): void {
+  if (!runFeatureAllowed(c.env.config, requireUser(c))) {
+    throw new ApiError(403, RUN_FEATURE_FORBIDDEN_DETAIL);
+  }
 }
 
 /** _session_access_gate — existence + show access (show-grants D3). Returns the catalog row.

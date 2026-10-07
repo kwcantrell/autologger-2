@@ -32,6 +32,7 @@ export async function busProcess(): Promise<BusProcess> {
       GOOGLE_CLIENT_ID: 'test-client-id',
       GOOGLE_CLIENT_SECRET: 'test-secret',
       BOOTSTRAP_OWNER_EMAIL: 'bootstrap-owner@example.com',
+      RUN_FEATURE_EMAILS: 'seeded-user@example.com,default-user@example.com',
       SESSION_COOKIE: 'autologger_sid',
       SESSION_DAYS: '14',
       ADMIN_TOKEN: 'test-admin-token',

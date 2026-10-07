@@ -35,7 +35,7 @@ import type { AppEnv } from '../appEnv';
 import { aiChatConfigured, aiChatMaxBudgetUsd, aiChatTimeoutSec } from '../env';
 import { ApiError } from '../httpError';
 import { claimAiLease } from './_aiSlot';
-import { requireSession, requireUser, sessionCaller } from './_helpers';
+import { requireRunFeature, requireSession, requireUser, sessionCaller } from './_helpers';
 
 export const aiRouter = new Hono<AppEnv>();
 
@@ -124,6 +124,8 @@ aiRouter.post('/api/sessions/:sessionId/ai/chat', async (c) => {
   if (!aiChatConfigured(c.env.config)) {
     throw new ApiError(503, NOT_CONFIGURED_DETAIL);
   }
+  // 3b. Approved users only (run-status-and-sweeper D9) — 403, before the body and any spawn.
+  requireRunFeature(c);
 
   // 4. Body validation — ZodError → 422, malformed JSON → 400 (global onError),
   // spawning nothing. c.req.json() throws SyntaxError on malformed JSON.

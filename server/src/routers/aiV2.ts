@@ -83,7 +83,13 @@ import {
 } from '../env';
 import { ApiError } from '../httpError';
 import { claimAiLease } from './_aiSlot';
-import { getSessionHub, requireSession, requireUser, sessionCaller } from './_helpers';
+import {
+  getSessionHub,
+  requireRunFeature,
+  requireSession,
+  requireUser,
+  sessionCaller,
+} from './_helpers';
 
 export const aiV2Router = new Hono<AppEnv>();
 
@@ -217,6 +223,9 @@ aiV2Router.post('/api/sessions/:sessionId/ai/v2/design', async (c) => {
   // below this line can ever run
   // for a device token.
   await guardAiV2Route(c, sessionId, SESSION_NOT_FOUND_DETAIL, 'design-turn');
+  // 4b. Approved users only (run-status-and-sweeper D9) — 403, after both 503s. Called here and
+  // never inside guardAiV2Route, whose prologue the ungated answer route shares.
+  requireRunFeature(c);
 
   // 5. Body validation — ZodError → 422, malformed JSON → 400 (both via the
   // global onError handler in app.ts), spawning nothing. c.req.json() throws

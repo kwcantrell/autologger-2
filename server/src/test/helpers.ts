@@ -38,6 +38,14 @@ export async function seedMemberStudio(opts: { id?: string; name?: string } = {}
   return id;
 }
 
+/** `seedUser`'s default email, approved for run features by the harness (run-status-and-sweeper
+ * D7 category 5). */
+export const SEEDED_USER_EMAIL = 'seeded-user@example.com';
+
+/** An email no harness `RUN_FEATURE_EMAILS` lists: a user with it gets the run routes' 403
+ * (run-status-and-sweeper D9). */
+export const NOT_APPROVED_EMAIL = 'not-approved@example.com';
+
 /** A user, optionally a member of `studios`: with the column default role (`member`), or with
  * `role` (show-grants D14: an `admin` reaches every show of the team without a grant). */
 export async function seedUser(
@@ -52,7 +60,9 @@ export async function seedUser(
   const cat = catalogFor();
   const created = await cat.auth.authCreateUserGoogle({
     id: opts.id ?? crypto.randomUUID(),
-    email: opts.email ?? `${uid('user')}@example.com`,
+    // run-status-and-sweeper D7 category 5: one fixed default email, approved for run features by
+    // the harness's RUN_FEATURE_EMAILS (`catalog.users.email` is not unique; login is by subject).
+    email: opts.email ?? SEEDED_USER_EMAIL,
     googleSub: opts.sub ?? uid('sub'),
     givenName: 'Test',
     familyName: 'User',

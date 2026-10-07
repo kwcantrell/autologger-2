@@ -36,6 +36,7 @@ import {
   canAccessSession,
   expectedVersion,
   getSessionHub,
+  requireRunFeature,
   requireSession,
   sessionCaller,
   timecodeCtx,
@@ -156,6 +157,8 @@ transcribeRouter.post('/api/sessions/:sessionId/transcript-words/generate', asyn
   if (!deepgramConfigured(c.env.config)) {
     throw new ApiError(503, UNAVAILABLE);
   }
+  // Approved users only (run-status-and-sweeper D9) — 403, before the lock, the lease and DeepGram.
+  requireRunFeature(c);
 
   try {
     const words = await generateTranscriptWords({
@@ -265,6 +268,8 @@ transcribeRouter.post('/api/sessions/:sessionId/topics/generate', async (c) => {
   if (!aiChatConfigured(c.env.config)) {
     throw new ApiError(503, UNAVAILABLE);
   }
+  // Approved users only (run-status-and-sweeper D9) — 403, before any slot, lease or spawn.
+  requireRunFeature(c);
 
   // Transcript precondition (design D4) — 400 before any spawn.
   const transcriptWords = await (await getSessionHub(c, sessionId)).listTranscriptWords();

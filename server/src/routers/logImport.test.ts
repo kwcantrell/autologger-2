@@ -60,6 +60,8 @@ function baseInput(hub: SessionHubFacade, onProgress: (line: string) => void) {
     audio,
     ctx,
     onProgress,
+    // run-status-and-sweeper D9 (D7 category 2): the creator is approved in the retry cases.
+    generationAllowed: true,
   };
 }
 
@@ -138,5 +140,33 @@ describe('ensureTimedTranscript retry path', () => {
     await expect(promise).rejects.toBe(original);
     expect(generateTranscriptWordsMock).toHaveBeenCalledTimes(1);
     expect(lines).toEqual(['Generating transcript (DeepGram)…']);
+  });
+});
+
+// run-status-and-sweeper D9: a job whose creator is not approved never generates a transcript.
+describe('ensureTimedTranscript for a creator who is not approved', () => {
+  it('skips generation with the skip line and fails the session', async () => {
+    const hub = makeHub([[]]);
+    const lines: string[] = [];
+    const promise = ensureTimedTranscript({
+      ...baseInput(hub, (line) => lines.push(line)),
+      generationAllowed: false,
+    });
+    await expect(promise).rejects.toThrow();
+    expect(generateTranscriptWordsMock).not.toHaveBeenCalled();
+    expect(lines).toEqual([
+      'Skipped transcript generation: limited to approved users on this server.',
+    ]);
+  });
+
+  it('still uses a timed transcript that is already present', async () => {
+    const hub = makeHub([[makeWord('hello', 1.5)]]);
+    const lines: string[] = [];
+    const tokens = await ensureTimedTranscript({
+      ...baseInput(hub, (line) => lines.push(line)),
+      generationAllowed: false,
+    });
+    expect(tokens).toEqual([{ word: 'hello', startSec: 1.5 }]);
+    expect(generateTranscriptWordsMock).not.toHaveBeenCalled();
   });
 });

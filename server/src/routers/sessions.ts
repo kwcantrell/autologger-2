@@ -51,6 +51,7 @@ import { ApiError } from '../httpError';
 import {
   canAccessSession,
   getSessionHub,
+  requireRunFeature,
   requireSession,
   requireUser,
   timecodeCtx,
@@ -462,6 +463,8 @@ sessionsRouter.post('/api/sessions/:sessionId/youtube-import', async (c) => {
   if (!ytDlpConfigured(c.env.config) || !binaryPath) {
     throw new ApiError(503, YOUTUBE_IMPORT_NOT_CONFIGURED_DETAIL);
   }
+  // Approved users only (run-status-and-sweeper D9) — 403, before the body 400 and any spawn.
+  requireRunFeature(c);
 
   // Body + URL validation (400) — before any concurrency claim or spawn.
   let rawBody: unknown;

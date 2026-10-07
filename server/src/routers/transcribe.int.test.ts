@@ -20,6 +20,7 @@ import { app, env, envWith } from '../test/harness';
 import {
   catalogFor,
   loginCookie,
+  NOT_APPROVED_EMAIL,
   seedAccessMatrix,
   seededSession,
   seedSession,
@@ -1697,5 +1698,141 @@ describe('the transcript-generation run lease (session-run-leases D4)', () => {
     } finally {
       obs.restore();
     }
+  });
+});
+
+// run-status-and-sweeper D9: topic generation and transcript generation are limited to approved
+// users; the 403 comes right after each route's configuration 503, before any slot, lease or run.
+describe('topics/generate and transcript-words/generate — approved users only (run-status-and-sweeper D9)', () => {
+  const FORBIDDEN = { detail: 'This feature is limited to approved users on this server.' };
+  const TOPICS_CLI = join(AI_RUNTIME_FIXTURES_DIR, 'fake-claude.mjs');
+  const cwds: string[] = [];
+  afterEach(async () => {
+    vi.unstubAllGlobals();
+    transcriptGenerationLock.reset();
+    aiChatTurns.reset();
+    await __resetAiMcpListenerForTests();
+    for (const id of cwds.splice(0)) rmSync(stableSessionCwd(id), { recursive: true, force: true });
+  });
+
+  async function sessionWithMember(email: string): Promise<{ s: string; cookie: string }> {
+    const { sessionId, studioId } = await seededSession();
+    cwds.push(sessionId);
+    const id = await seedUser({ email, studios: [studioId], role: 'admin' });
+    return { s: sessionId, cookie: await loginCookie(id) };
+  }
+
+  const neverSpawned = (s: string) => !existsSync(join(stableSessionCwd(s), '.fixture-argv.json'));
+
+  function topics(s: string, cookie: string, e: Bindings) {
+    return app.request(
+      `/api/sessions/${s}/topics/generate`,
+      { method: 'POST', headers: { cookie } },
+      e,
+    );
+  }
+
+  function stubDeepgram() {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify(deepgramResponse([{ word: 'hi', start: 0.5, end: 0.9, speaker: 0 }])),
+          { status: 200 },
+        ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    return fetchMock;
+  }
+
+  it('topics/generate: 403 for a member who is not approved, with no spawn, slot or lease', async () => {
+    const { s, cookie } = await sessionWithMember(NOT_APPROVED_EMAIL);
+    await (await harnessHub(s)).insertTranscriptWord({
+      session_time: '00:00:01',
+      speaker: 'Host',
+      word: 'hello',
+    });
+    const obs = observeRunLeases();
+    try {
+      const res = await topics(
+        s,
+        cookie,
+        envWith({ CLAUDE_CLI_PATH: TOPICS_CLI, HOST: '127.0.0.1' }),
+      );
+      expect(res.status).toBe(403);
+      expect(await res.json()).toEqual(FORBIDDEN);
+      expect(obs.claims('ai-turn')).toEqual([]);
+    } finally {
+      obs.restore();
+    }
+    expect(neverSpawned(s)).toBe(true);
+    expect(aiChatTurns.isSessionInFlight(s)).toBe(false);
+    expect(await runLeaseRows(s)).toEqual([]);
+  });
+
+  it('topics/generate: unconfigured still answers 503 to a member who is not approved', async () => {
+    const { s, cookie } = await sessionWithMember(NOT_APPROVED_EMAIL);
+    const res = await topics(s, cookie, envWith({ CLAUDE_CLI_PATH: '' }));
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({
+      detail: 'Transcription is unavailable on this deployment.',
+    });
+  });
+
+  it('topics/generate: a member named in RUN_FEATURE_EMAILS is admitted to the next guard', async () => {
+    const { s, cookie } = await sessionWithMember('approved.member@example.com');
+    const res = await topics(
+      s,
+      cookie,
+      envWith({
+        CLAUDE_CLI_PATH: TOPICS_CLI,
+        HOST: '127.0.0.1',
+        RUN_FEATURE_EMAILS: 'approved.member@example.com',
+      }),
+    );
+    // Past the 403: the transcript precondition answers (this session has no words).
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { detail: string }).detail).toMatch(/transcript/i);
+  });
+
+  it('transcript-words/generate: 403 for a member who is not approved, with no provider call and no lease', async () => {
+    const { s, cookie } = await sessionWithMember(NOT_APPROVED_EMAIL);
+    await logRecordingStarted(s, 1);
+    await uploadSegment(s, SEG1, { recordingOrdinal: 1 });
+    const fetchMock = stubDeepgram();
+    const obs = observeRunLeases();
+    try {
+      const res = await generate(s, { headers: { cookie } });
+      expect(res.status).toBe(403);
+      expect(await res.json()).toEqual(FORBIDDEN);
+      expect(obs.claims('transcript-generation')).toEqual([]);
+    } finally {
+      obs.restore();
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(transcriptGenerationLock.startedAt(s)).toBeNull();
+    expect(await runLeaseRows(s)).toEqual([]);
+  });
+
+  it('transcript-words/generate: unconfigured still answers 503 to a member who is not approved', async () => {
+    const { s, cookie } = await sessionWithMember(NOT_APPROVED_EMAIL);
+    const res = await generate(s, { headers: { cookie } }, envWith({}));
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({
+      detail: 'Transcription is unavailable on this deployment.',
+    });
+  });
+
+  it('transcript-words/generate: a member named in RUN_FEATURE_EMAILS is admitted and the run completes', async () => {
+    const { s, cookie } = await sessionWithMember('approved.member@example.com');
+    await logRecordingStarted(s, 1);
+    await uploadSegment(s, SEG1, { recordingOrdinal: 1 });
+    const fetchMock = stubDeepgram();
+    const res = await generate(
+      s,
+      { headers: { cookie } },
+      deepgramConfiguredEnv({ RUN_FEATURE_EMAILS: 'approved.member@example.com' }),
+    );
+    expect(res.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

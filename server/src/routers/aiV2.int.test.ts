@@ -52,6 +52,7 @@ import { aiV2CredentialsRefused } from '../env';
 import { anonApp, app, env, envWith } from '../test/harness';
 import {
   loginCookie,
+  NOT_APPROVED_EMAIL,
   parseSse,
   seededSession,
   seedSession,
@@ -1858,5 +1859,88 @@ describe('ai/v2/design — the ai-turn run lease (session-run-leases D4)', () =>
     const next = await post(s, { message: 'again' }, loopbackEnv());
     expect(next.status).toBe(200);
     await next.text();
+  });
+});
+
+// run-status-and-sweeper D9: the design turn is limited to approved users. The check runs in the
+// route after the whole shared guard prologue (both 503s), never inside it, so the answer route,
+// which shares the prologue, is not gated.
+describe('ai/v2 — approved users only on the design route (run-status-and-sweeper D9)', () => {
+  const FORBIDDEN = { detail: 'This feature is limited to approved users on this server.' };
+
+  async function sessionWithMember(
+    email: string,
+  ): Promise<{ s: string; id: string; cookie: string }> {
+    const { sessionId, studioId } = await seededSession();
+    const id = await seedUser({ email, studios: [studioId], role: 'admin' });
+    return { s: sessionId, id, cookie: await loginCookie(id) };
+  }
+
+  it('design: 403 for a member who is not approved, before the body, with no spawn, slot or lease', async () => {
+    const { s, cookie } = await sessionWithMember(NOT_APPROVED_EMAIL);
+    const obs = observeRunLeases();
+    try {
+      const res = await post(s, { nope: 1 }, loopbackEnv(), { ...J, Cookie: cookie });
+      expect(res.status).toBe(403);
+      expect(await res.json()).toEqual(FORBIDDEN);
+      expect(obs.claims('ai-turn')).toEqual([]);
+    } finally {
+      obs.restore();
+    }
+    expect(spawnSpy).not.toHaveBeenCalled();
+    expect(aiChatTurns.isSessionInFlight(s)).toBe(false);
+    expect(await runLeaseRows(s)).toEqual([]);
+  });
+
+  it('design: the configuration and agent-credentials 503s still come first for a member who is not approved', async () => {
+    const { s, cookie } = await sessionWithMember(NOT_APPROVED_EMAIL);
+    const off = await post(s, { message: 'hi' }, loopbackEnv({ AI_V2_ENABLED: '' }), {
+      ...J,
+      Cookie: cookie,
+    });
+    expect(off.status).toBe(503);
+    const refused = await post(
+      s,
+      { message: 'hi' },
+      loopbackEnv({ HOST: '0.0.0.0', IP_ALLOWLIST: '' }),
+      { ...J, Cookie: cookie },
+    );
+    expect(refused.status).toBe(503);
+    expect(spawnSpy).not.toHaveBeenCalled();
+  });
+
+  it('design: a member named in RUN_FEATURE_EMAILS is admitted and the turn runs', async () => {
+    const { s, cookie } = await sessionWithMember('approved.member@example.com');
+    const res = await post(
+      s,
+      { message: 'hi' },
+      loopbackEnv({ RUN_FEATURE_EMAILS: 'APPROVED.member@example.com' }),
+      { ...J, Cookie: cookie },
+    );
+    expect(res.status).toBe(200);
+    expect(parseSse(await res.text()).some((e) => e.event === 'done')).toBe(true);
+    expect(spawnSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('answer: not gated, a member who is not approved answers their own pending question', async () => {
+    const { s, id, cookie } = await sessionWithMember(NOT_APPROVED_EMAIL);
+    await questionRegistry().register(
+      { sessionId: s, turnId: 'turn-1', requestId: 'req-1' },
+      id,
+      {
+        questions: [
+          { question: 'Which widget?', header: 'Widget', multiSelect: false, options: [] },
+        ],
+      },
+      seedDeadline(),
+    );
+    const res = await postAnswer(
+      s,
+      { turnId: 'turn-1', requestId: 'req-1', answers: [{ kind: 'text', text: 'x' }] },
+      loopbackEnv(),
+      { ...J, Cookie: cookie },
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
   });
 });

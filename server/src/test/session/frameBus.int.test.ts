@@ -55,6 +55,7 @@ async function process_(frameBusClock?: Clock): Promise<Made> {
       GOOGLE_CLIENT_ID: 'test-client-id',
       GOOGLE_CLIENT_SECRET: 'test-secret',
       BOOTSTRAP_OWNER_EMAIL: 'bootstrap-owner@example.com',
+      RUN_FEATURE_EMAILS: 'seeded-user@example.com,default-user@example.com',
       SESSION_COOKIE: 'autologger_sid',
       SESSION_DAYS: '14',
       PGHOST: db.host,

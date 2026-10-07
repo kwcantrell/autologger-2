@@ -71,6 +71,7 @@ import type { Bindings } from '../appEnv';
 import { anonApp, app, defaultUser, env, envWith } from '../test/harness';
 import {
   loginCookie,
+  NOT_APPROVED_EMAIL,
   parseSse,
   seededSession as seedSessionChain,
   seedStudio,
@@ -994,5 +995,86 @@ describe('ai/chat — the ai-turn lease leaves the session revision unchanged (s
     }
     expect(await runLeaseRows(s)).toEqual([]);
     expect(await revision(s)).toBe(before);
+  });
+});
+
+// run-status-and-sweeper D9: the AI chat is limited to approved users; the 403 comes right after
+// the configuration 503, before the body, the slot, the lease and any spawn.
+describe('ai/chat — approved users only (run-status-and-sweeper D9)', () => {
+  const FORBIDDEN = { detail: 'This feature is limited to approved users on this server.' };
+
+  async function sessionWithMember(email: string): Promise<{ s: string; cookie: string }> {
+    const { sessionId, studioId } = await seedSessionChain();
+    seededSessionIds.push(sessionId);
+    const id = await seedUser({ email, studios: [studioId], role: 'admin' });
+    return { s: sessionId, cookie: await loginCookie(id) };
+  }
+
+  it('403 for a member who is not approved: no spawn, no slot, no lease claim', async () => {
+    const { s, cookie } = await sessionWithMember(NOT_APPROVED_EMAIL);
+    const obs = observeRunLeases();
+    try {
+      const res = await post(s, { message: 'hi' }, fixtureEnv(), { ...J, Cookie: cookie });
+      expect(res.status).toBe(403);
+      expect(await res.json()).toEqual(FORBIDDEN);
+      expect(obs.claims('ai-turn')).toEqual([]);
+    } finally {
+      obs.restore();
+    }
+    expect(neverSpawned(s)).toBe(true);
+    expect(aiChatTurns.isSessionInFlight(s)).toBe(false);
+    expect(await runLeaseRows(s)).toEqual([]);
+  });
+
+  it('403 comes before the body validation (422)', async () => {
+    const { s, cookie } = await sessionWithMember(NOT_APPROVED_EMAIL);
+    const res = await post(s, { nope: 1 }, fixtureEnv(), { ...J, Cookie: cookie });
+    expect(res.status).toBe(403);
+    expect(neverSpawned(s)).toBe(true);
+  });
+
+  it('an unconfigured feature still answers 503 to a member who is not approved', async () => {
+    const { s, cookie } = await sessionWithMember(NOT_APPROVED_EMAIL);
+    const res = await post(s, { message: 'hi' }, loopbackEnv({ CLAUDE_CLI_PATH: '' }), {
+      ...J,
+      Cookie: cookie,
+    });
+    expect(res.status).toBe(503);
+    expect(neverSpawned(s)).toBe(true);
+  });
+
+  it('a member named in RUN_FEATURE_EMAILS is admitted and the turn runs', async () => {
+    const { s, cookie } = await sessionWithMember('Approved.Member@Example.com');
+    const res = await post(
+      s,
+      { message: 'hi' },
+      fixtureEnv({ RUN_FEATURE_EMAILS: ' other@example.com, approved.member@example.com ' }),
+      { ...J, Cookie: cookie },
+    );
+    expect(res.status).toBe(200);
+    await res.text();
+    expect(neverSpawned(s)).toBe(false);
+  });
+
+  it('an all-blank list admits the bootstrap owner alone', async () => {
+    const owner = await sessionWithMember('test-owner@example.com');
+    const ownerEnv = {
+      BOOTSTRAP_OWNER_EMAIL: 'test-owner@example.com',
+      RUN_FEATURE_EMAILS: ',',
+    };
+    const ok = await post(owner.s, { message: 'hi' }, fixtureEnv(ownerEnv), {
+      ...J,
+      Cookie: owner.cookie,
+    });
+    expect(ok.status).toBe(200);
+    await ok.text();
+    const other = await sessionWithMember('seeded-user@example.com');
+    const refused = await post(other.s, { message: 'hi' }, fixtureEnv(ownerEnv), {
+      ...J,
+      Cookie: other.cookie,
+    });
+    expect(refused.status).toBe(403);
+    expect(await refused.json()).toEqual(FORBIDDEN);
+    expect(neverSpawned(other.s)).toBe(true);
   });
 });

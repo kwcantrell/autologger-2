@@ -59,6 +59,7 @@ import {
   expectedVersion,
   getSessionHub,
   parseOptionalMarkedAt,
+  requireRunFeature,
   requireSession,
   sessionCaller,
   timecodeCtx,
@@ -464,6 +465,8 @@ eventsRouter.post('/api/sessions/:sessionId/events/generate', async (c) => {
   if (!aiChatConfigured(c.env.config)) {
     throw new ApiError(503, EVENT_GENERATE_NOT_CONFIGURED_DETAIL);
   }
+  // 2b. Approved users only (run-status-and-sweeper D9) — 403; the body 400 above keeps its place.
+  requireRunFeature(c);
 
   // The show's categories are read BEFORE the word snapshot below, so the
   // snapshot-to-registration window holds no storage call or await

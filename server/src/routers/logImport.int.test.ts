@@ -9,13 +9,14 @@ import { app, defaultUser, env, envWith } from '../test/harness';
 import {
   catalogFor,
   loginCookie,
+  NOT_APPROVED_EMAIL,
   seedMemberStudio,
   seedSession,
   seedShow,
   seedStudio,
   seedUser,
 } from '../test/helpers';
-import { runLeaseHolders } from '../test/runLeases';
+import { observeRunLeases, runLeaseHolders } from '../test/runLeases';
 import { busProcess, closeBusProcesses } from '../test/session/busProcesses';
 import { harnessHub } from '../test/session/sessionRows';
 
@@ -568,6 +569,57 @@ describe('cross-package instanceof pin: TranscriptGenerateError in ensureTimedTr
     expect(duringProviderCall).toEqual([
       [{ kind: 'transcript-generation', holder_user_id: member }],
     ]);
+    expect(await runLeaseHolders(session)).toEqual([]);
+  });
+
+  // run-status-and-sweeper D9: the creator's approval is decided when the job is created; a
+  // creator who is not approved never generates a transcript, and that session fails.
+  it('a creator who is not approved skips transcript generation: the skip line, no lease, no provider call, the session failed', async () => {
+    const studio = await seedStudio();
+    const show = await seedShow({ studioId: studio });
+    const member = await seedUser({ email: NOT_APPROVED_EMAIL, studios: [studio] });
+    await grant(member, show);
+    const cookie = await loginCookie(member);
+    const title = 'Not Approved Session';
+    const session = await seedSession({ showId: show, title });
+    const seg1 = readFileSync(join(TRANSCRIPTION_FIXTURES_DIR, 'audio', 'seg1.webm'));
+    const uploadRes = await app.request(
+      `/api/sessions/${session}/audio/segments`,
+      { method: 'POST', headers: { 'content-type': 'audio/webm', cookie }, body: seg1 },
+      env,
+    );
+    expect(uploadRes.status).toBe(200);
+
+    const xlsx = await xlsxBytes(title, { timecode: '0:01', message: 'hello', type: '' });
+    let deepgramCalls = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: Parameters<typeof fetch>[0]) => {
+        if (String(input).includes('deepgram.com')) {
+          deepgramCalls += 1;
+          return new Response('unexpected', { status: 500 });
+        }
+        return new Response(xlsx, { status: 200 });
+      }),
+    );
+    const obs = observeRunLeases();
+    try {
+      const post = await postImport(show, deepgramConfiguredEnv(), { cookie });
+      expect(post.status).toBe(200);
+      const { job_id } = (await post.json()) as { job_id: string };
+      await settleJob(job_id, { cookie });
+      const res = await app.request(`/api/log-import/${job_id}`, { headers: { cookie } }, env);
+      const body = (await res.json()) as { status: string; lines: string[]; error: string | null };
+      expect(body.lines).toContain(
+        `  ${title}: Skipped transcript generation: limited to approved users on this server.`,
+      );
+      expect(body.status).toBe('failed');
+      expect(body.error).toBe('All matched sessions failed to import.');
+      expect(obs.claims('transcript-generation')).toEqual([]);
+    } finally {
+      obs.restore();
+    }
+    expect(deepgramCalls).toBe(0);
     expect(await runLeaseHolders(session)).toEqual([]);
   });
 });

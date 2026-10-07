@@ -40,8 +40,11 @@ import type { Bindings } from '../appEnv';
 import { app, defaultUser, env, envWith } from '../test/harness';
 import {
   catalogFor,
+  loginCookie,
+  NOT_APPROVED_EMAIL,
   seedAccessMatrix,
   seededSession as seedSessionChain,
+  seedUser,
   testDb,
 } from '../test/helpers';
 import {
@@ -1333,5 +1336,72 @@ describe('events/generate — the ai-turn run lease (session-run-leases D4)', ()
     const next = await generateReq(sessionId, configuredEnv(EVENTS_SUCCESS_FIXTURE));
     expect(next.status).toBe(200);
     await next.json();
+  });
+});
+
+// run-status-and-sweeper D9: event generation is limited to approved users. The 403 comes right
+// after the configuration 503, and the malformed-body 400 keeps its place before both.
+describe('events/generate — approved users only (run-status-and-sweeper D9)', () => {
+  const FORBIDDEN = { detail: 'This feature is limited to approved users on this server.' };
+
+  async function sessionWithMember(email: string): Promise<{ s: string; cookie: string }> {
+    const { sessionId, studioId } = await newSession();
+    const id = await seedUser({ email, studios: [studioId], role: 'admin' });
+    return { s: sessionId, cookie: await loginCookie(id) };
+  }
+
+  function post(s: string, cookie: string, e: Bindings, body?: unknown) {
+    return app.request(
+      `/api/sessions/${s}/events/generate`,
+      {
+        method: 'POST',
+        headers: { cookie, 'content-type': 'application/json' },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      },
+      e,
+    );
+  }
+
+  it('403 for a member who is not approved, with no spawn, slot or lease', async () => {
+    const { s, cookie } = await sessionWithMember(NOT_APPROVED_EMAIL);
+    await seedAnchoredTranscript(s);
+    const obs = observeRunLeases();
+    try {
+      const res = await post(s, cookie, configuredEnv(EVENTS_SUCCESS_FIXTURE), {});
+      expect(res.status).toBe(403);
+      expect(await res.json()).toEqual(FORBIDDEN);
+      expect(obs.claims('ai-turn')).toEqual([]);
+    } finally {
+      obs.restore();
+    }
+    expect(neverSpawned(s)).toBe(true);
+    expect(aiChatTurns.isSessionInFlight(s)).toBe(false);
+    expect(await runLeaseRows(s)).toEqual([]);
+  });
+
+  it('a malformed body still answers its 400 first, and an unconfigured feature its 503', async () => {
+    const { s, cookie } = await sessionWithMember(NOT_APPROVED_EMAIL);
+    const bad = await post(s, cookie, configuredEnv(EVENTS_SUCCESS_FIXTURE), {
+      regenerate: true,
+      selection: [{ category_id: 'slate', option_label: null }],
+    });
+    expect(bad.status).toBe(400);
+    const off = await post(s, cookie, envWith({ CLAUDE_CLI_PATH: '' }), {});
+    expect(off.status).toBe(503);
+    expect(neverSpawned(s)).toBe(true);
+  });
+
+  it('a member named in RUN_FEATURE_EMAILS is admitted to the next guard', async () => {
+    const { s, cookie } = await sessionWithMember('approved.member@example.com');
+    const res = await post(
+      s,
+      cookie,
+      configuredEnv(EVENTS_SUCCESS_FIXTURE, { RUN_FEATURE_EMAILS: 'approved.member@example.com' }),
+      {},
+    );
+    // Past the 403: the transcript precondition answers (this session has no words).
+    expect(res.status).toBe(400);
+    expect(await detailOf(res)).toMatch(/transcript/i);
+    expect(neverSpawned(s)).toBe(true);
   });
 });
