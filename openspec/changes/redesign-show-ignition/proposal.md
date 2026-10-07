@@ -3,7 +3,7 @@
 Tier: 1
 Tier reason: a web-only redesign inside existing contracts. It touches no `high_risk_paths`. Every action uses an existing endpoint, no client route is added or removed, and no wire format, auth or data handling changes. The spec deltas rewrite UI requirements that name the V5 glass vocabulary, the Settings modal and the `/teams` page.
 
-Approved-by: Kalen 2026-10-07
+Approved-by: Kalen 2026-10-07 (reapproved)
 
 ## Why
 
