@@ -43,24 +43,28 @@ Every task names the test written first. A task is ticked only with an `Evidence
 
 ## 2. Transport status and ignition (D2)
 
-- [ ] 2.1 Add the `pages/index/coordination/transportStatus.ts` store: publish, identity-scoped clear, subscribe.
+- [x] 2.1 Add the `pages/index/coordination/transportStatus.ts` store: publish, identity-scoped clear, subscribe.
   - Test first: `transportStatus.test.ts`.
     - Publish then read.
     - A stale owner's clear does not clear a newer publish.
     - A clear by the current owner resets to stopped.
   - Verify: the test passes.
-- [ ] 2.2 `SessionWorkspace` publishes its `effectiveTransport`, mapped `audio-recording→recording`, `rolling→rolling`, `play→playback`, `stop→stopped`, with the session id and title, and clears on unmount.
+  - Evidence: test first, new `src/pages/index/coordination/transportStatus.test.ts` -> `npx vitest run src/pages/index/coordination/transportStatus.test.ts` -> `Test Files  1 failed (1)` (`Cannot find module './transportStatus'`). After the import-free store (owner-token publish, identity-scoped `clearTransportStatus`, `subscribeTransportStatus`/`getTransportStatus` for `useSyncExternalStore`, equal-content publishes keep the snapshot and notify nobody; `resetTransportStatus` wired into `src/test/setup.ts` `afterEach`): same command -> `Tests  6 passed (6)`.
+- [x] 2.2 `SessionWorkspace` publishes its `effectiveTransport`, mapped `audio-recording→recording`, `rolling→rolling`, `play→playback`, `stop→stopped`, with the session id and title, and clears on unmount.
   - Test first, in `SessionWorkspace.test.tsx`:
     - a lease-alive status publishes `recording`;
     - `is_rolling` without a lease publishes `rolling`;
     - unmount clears;
     - switching session ids while recording leaves the store on the new session's state.
   - Verify: the tests pass.
-- [ ] 2.3 `AppShell` sets `data-transport` on the app root from the store. Add the CSS tints for the top bar, rail and transport strip, the glow, and the reduced-motion rules.
+  - Evidence: test first, `SessionWorkspace.test.tsx` gains the "shell transport status" block (the `useSessionStatus` mock now reads a per-id map) -> `npx vitest run src/pages/index/components/SessionWorkspace.test.tsx` -> `Tests  5 failed | 21 passed (26)`. After the publish effect (deps: mapped state, `sessionId`, `status.title`; per-run owner token cleared on cleanup): same command -> `Tests  26 passed (26)`.
+- [x] 2.3 `AppShell` sets `data-transport` on the app root from the store. Add the CSS tints for the top bar, rail and transport strip, the glow, and the reduced-motion rules.
   - Test first, in `AppShell.test.tsx`: the root's `data-transport` follows the store's four states, and the attribute is `stopped` with no session open.
   - Verify: the test passes. A `grep` of `tailwind.css` shows the `prefers-reduced-motion` block covers the tint transition and the blink.
-- [ ] 2.4 Browser check: agent-browser captures of the console in all four transport states (stopped, rolling, recording, playback), including with reduced motion emulated, at 1440 and 390, saved under `.impeccable/review/2/`.
+  - Evidence: test first, `AppShell.test.tsx` gains "AppShell transport tint (data-transport)" -> `npx vitest run src/pages/index/AppShell.test.tsx` -> `Tests  2 failed | 32 passed (34)`. After `useSyncExternalStore` on the store's state and `data-transport` on the `.shell` root, plus the unlayered ignition block in `tailwind.css` (`#v6-rail`, `[data-slot='topbar']` for group 3, `#v5-maximize-log-strip`, `[data-slot='live-dot']` blink): same command -> `Tests  34 passed (34)`. `grep -n` of the block -> line 614 `@media (prefers-reduced-motion: reduce)` with the rail's tint transitions dropped (`width, padding` only), topbar/strip `transition: none` and live-dot `animation: none`, plus the 390 variant at line 628. Full `npx vitest run` -> `Test Files  136 passed (136)`, `Tests  1738 passed (1738)`; `npm run typecheck` -> exit 0.
+- [x] 2.4 Browser check: agent-browser captures of the console in all four transport states (stopped, rolling, recording, playback), including with reduced motion emulated, at 1440 and 390, saved under `.impeccable/review/2/`.
   - Verify: each capture shows the intended state with no clipping, overflow or horizontal scroll, and anything wrong is fixed in this group before it is ticked.
+  - Evidence: states driven through the perf-debug override (`autologger:debugSessionTransport` + its event) on session `0c8aaf43…`; `.impeccable/review/2/console-{stop,rolling,audio-recording,play}-{1440,390}.png`: root `data-transport` read `stopped`/`rolling`/`recording`/`playback`, `scrollWidth` equal to the viewport (1440, 390) in every state; stopped muted, rolling and recording with the full rail and strip tint and glow, playback the softer strip edge. `console-audio-recording-{1440,390}-reduced-motion.png` (`set media dark reduced-motion`, captured with no wait): full tint at once, computed strip `transition: none/0s`, rail `width, padding` (390: `transform`). `console-{stop,audio-recording}-390-rail-open.png`: the drawer tints; fixed here, the first cut's `box-shadow: none` dropped the stopped drawer's drop shadow (now kept). `console-rolling-1440-settings-open.png`: `data-transport` stays `rolling` with Settings open (the legacy modal covers the shell until group 6). The strip's status text stays the session status ("Stopped" under a play override, "Recording" on the lease), unchanged. Seen at 390 and not caused here (this group changes colour, shadow and transition only): the strip's marker-nav dot after `»` sits at the viewport edge, with no page scroll; left to the 5.2 strip restyle.
 
 ## 3. Top bar (D5)
 
