@@ -402,6 +402,8 @@
   --si-accent: #5b7cff;
   --si-danger: #ff9b9b;
   --si-danger-line: #5a2e33;
+  /* The idle roll/record glyph on the transport controls (preview `.ctl.rec svg`). */
+  --si-rec: #ff6464;
   /* The primary button's accent tint and edge (preview `.btn.primary`). */
   --si-primary-tint: color-mix(in oklab, var(--si-accent) 26%, var(--si-panel-2));
   --si-primary-line: color-mix(in oklab, var(--si-accent) 55%, var(--si-line));
@@ -1179,32 +1181,12 @@
   }
 }
 
-/* --- Feed-tabs sheet-corner flatten (reaches into FeedShell's sheet) ---
- * SessionWorkspace's `.v5FeedTabsPanel` wraps FeedShell's `.v4-log-sheet.v5-event-feed`;
- * flattening the sheet's TOP corners lets the tab bar sit flush (bottom corners keep
- * their --v5-radius-lg pillow). The target is FeedShell-rendered DOM (Task 9), so this
- * can't be an inline utility on SessionWorkspace's JSX and stays a components-layer rule
- * scoped by the retained `v5FeedTabsPanel` ancestor class. FeedShell sets the sheet's
- * uniform radius with the `rounded-v5-lg` UTILITY (utilities layer, above components), so
- * the two top-radius overrides carry `!important` to beat it — the toggle-contract use of
- * `!` the recipe sanctions for beating a later layer. */
+/* Feed sheet under the workspace tabs (redesign-show-ignition task 5.2). The tabs are line tabs
+ * now, so the sheet is a whole flat card again (no flattened lid corner, no glow); this keeps
+ * only its stacking above the tab row. Scoped by the retained `v5FeedTabsPanel` ancestor class
+ * because the target is FeedShell-rendered DOM. */
 @layer components {
-  /* Square TL under the first tab. No top border / top hairline / top rim so the
-   * active tab bleeds into the sheet; TR stays softly rounded. The sheet's face
-   * comes ONLY from the glass-face-feed UTILITY (utilities layer beats this
-   * components-layer rule, and its `background` shorthand would reset any
-   * `background-color` set here) — the tab↔sheet seam matches because that
-   * gradient's top stop is `--v5-glass-feed-surface-top`, the same var the
-   * active tab uses. */
   .v5FeedTabsPanel .v4-log-sheet.v5-event-feed {
-    border-top-left-radius: 0 !important;
-    border-top-right-radius: 0.7rem !important;
-    border-top-width: 0 !important;
-    /* Drop panel-elevate's top highlight + 1px ring (reads as a seam under the tab). */
-    box-shadow:
-      0 22px 60px rgba(2, 8, 23, 0.58),
-      0 0 128px -36px rgba(56, 189, 248, 0.14),
-      0 0 64px -28px rgba(14, 165, 233, 0.09) !important;
     position: relative;
     z-index: 1;
   }

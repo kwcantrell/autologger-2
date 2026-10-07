@@ -292,10 +292,10 @@ describe('EventLogSheet time display menu', () => {
   it('opens by keyboard as a radio menu and switches the time display', async () => {
     renderSheet();
 
-    const trigger = await screen.findByRole('button', { name: 'Time Display' });
+    const trigger = await screen.findByRole('button', { name: 'Time display' });
     expect(trigger.getAttribute('aria-haspopup')).toBe('menu');
     fireEvent.keyDown(trigger, { key: 'Enter' });
-    expect(await screen.findByRole('menu', { name: 'Time Display' })).toBeTruthy();
+    expect(await screen.findByRole('menu', { name: 'Time display' })).toBeTruthy();
     const session = screen.getByRole('menuitemradio', { name: 'Session Time' });
     const world = screen.getByRole('menuitemradio', { name: 'World Clock' });
     expect(session.getAttribute('aria-checked')).toBe('true');
@@ -303,7 +303,7 @@ describe('EventLogSheet time display menu', () => {
     expect((document.getElementById('view-utc-log') as HTMLInputElement).checked).toBe(false);
 
     fireEvent.click(world);
-    expect(screen.queryByRole('menu', { name: 'Time Display' })).toBeNull();
+    expect(screen.queryByRole('menu', { name: 'Time display' })).toBeNull();
     expect((document.getElementById('view-utc-log') as HTMLInputElement).checked).toBe(true);
   });
 });

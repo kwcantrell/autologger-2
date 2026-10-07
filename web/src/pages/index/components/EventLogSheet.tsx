@@ -220,7 +220,7 @@ function TimeDisplayDropdown({
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button variant="glass" disabled={disabled}>
-          <FeedToolbarCaption label="Time Display" icon={<IconClock />} />
+          <FeedToolbarCaption label="Time display" icon={<IconClock />} />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
@@ -1227,9 +1227,15 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
       key: 'category',
       label: 'Event',
       sortKey: 'category',
-      thClassName: 'w-32',
+      thClassName: 'w-32 max-md:w-auto',
     },
-    { key: 'message', label: 'Message', sortKey: 'message', thClassName: 'min-w-48' },
+    // Phones: no message floor, so the table fits the card (the cell clips at its max width).
+    {
+      key: 'message',
+      label: 'Message',
+      sortKey: 'message',
+      thClassName: 'min-w-48 max-md:min-w-0',
+    },
   ];
 
   const countLabel = `${feedCount}${fetchCapped ? '+' : ''} event${feedCount === 1 && !fetchCapped ? '' : 's'}`;
@@ -1253,8 +1259,8 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
   );
   const genNoInstructionsReason = (
     <>
-      No event buttons carry auto-generate instructions yet. Add instructions in the Settings
-      event-buttons table first.
+      No event buttons carry auto-generate instructions yet. Add instructions in Settings › Event
+      buttons first.
     </>
   );
   const generateUnavailable = genUnavailable || noInstructions;
@@ -1288,7 +1294,7 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
           }}
         >
           <FeedToolbarCaption
-            label={generatePending ? 'Generating…' : 'Auto Generate'}
+            label={generatePending ? 'Generating…' : 'Auto generate'}
             icon={<IconSparkles />}
           />
         </Button>

@@ -27,6 +27,18 @@ const TOOLBAR =
 const TOOLBAR_PRIMARY =
   'border-(--si-primary-line) bg-(--si-primary-tint) text-foreground not-disabled:hover-always:border-primary';
 
+// Transport controls (redesign-show-ignition, task 5.2; preview `.ctl`): the neutral flat control,
+// and `data-active="true"` fills it with the live colour of the shell's transport state (the
+// `--tx-pill-*` variables `data-transport` sets, so a pressed Roll ignites with the rest of the
+// shell). A data attribute, not `aria-pressed`: these are actions, not toggles.
+const TRANSPORT = `${NEUTRAL} data-[active=true]:border-(--tx-pill-line) data-[active=true]:bg-(--tx-pill-bg) data-[active=true]:text-(--tx-pill-fg) data-[active=true]:shadow-[0_0_18px_-6px_var(--tx-glow)]`;
+
+// Logging-strip category buttons (preview `.cat`). The category colour is user data and its own
+// channel: the caller sets `--cat` inline and it drives only the hover edge, the latched/pressed
+// tint and the swatch, never the label. `data-latched="on"` is an On/Off button that is on;
+// `.cat-btn-press` is the momentary press CategoryButtonStrip toggles for 120ms.
+const LOG = `[--cat:var(--si-accent)] h-auto justify-start border-border bg-card text-foreground text-[0.875rem] not-disabled:hover:border-[color-mix(in_oklab,var(--cat)_55%,var(--si-line))] data-[latched=on]:border-(--cat) data-[latched=on]:bg-[color-mix(in_oklab,var(--cat)_22%,var(--si-panel))] [&.cat-btn-press]:translate-y-px [&.cat-btn-press]:border-(--cat) [&.cat-btn-press]:bg-[color-mix(in_oklab,var(--cat)_22%,var(--si-panel))] not-disabled:active:translate-y-px motion-reduce:[&.cat-btn-press]:translate-y-0 motion-reduce:not-disabled:active:translate-y-0`;
+
 const buttonVariants = cva('', {
   variants: {
     variant: {
@@ -36,6 +48,8 @@ const buttonVariants = cva('', {
       secondary: `${BUTTON_BASE} ${NEUTRAL}`,
       ghost: `${BUTTON_BASE} border-transparent bg-transparent text-foreground not-disabled:hover:bg-accent not-disabled:hover:text-accent-foreground disabled:bg-transparent disabled:border-transparent`,
       link: `${BUTTON_BASE} border-transparent bg-transparent text-primary underline-offset-4 not-disabled:hover:underline disabled:bg-transparent disabled:border-transparent`,
+      transport: `${BUTTON_BASE} ${TRANSPORT}`,
+      log: `${BUTTON_BASE} ${LOG}`,
       glass: TOOLBAR,
       'glass-primary': `${TOOLBAR} ${TOOLBAR_PRIMARY}`,
     },

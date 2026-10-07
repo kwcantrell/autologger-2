@@ -22,11 +22,22 @@ function Tabs({
   );
 }
 
-function TabsList({ className, ...props }: React.ComponentProps<typeof TabsPrimitive.List>) {
+// `variant="line"` (shadcn's line tabs; the preview's `.tabs`): a hairline under the row and an
+// accent underline on the active tab, no lid. The default stays the lid that joins a sheet.
+function TabsList({
+  className,
+  variant = 'default',
+  ...props
+}: React.ComponentProps<typeof TabsPrimitive.List> & { variant?: 'default' | 'line' }) {
   return (
     <TabsPrimitive.List
       data-slot="tabs-list"
-      className={cn('flex min-w-0 flex-1 flex-nowrap items-end gap-[0.12rem]', className)}
+      data-variant={variant}
+      className={cn(
+        'group/tabs-list flex min-w-0 flex-1 flex-nowrap items-end gap-[0.12rem]',
+        variant === 'line' && 'gap-0.5 border-b border-border',
+        className,
+      )}
       {...props}
     />
   );
@@ -46,11 +57,17 @@ const TRIGGER_ACTIVE =
 const TRIGGER_INACTIVE =
   'data-[state=inactive]:z-[1] data-[state=inactive]:pb-[0.62rem] data-[state=inactive]:text-muted-foreground data-[state=inactive]:border-transparent data-[state=inactive]:bg-transparent data-[state=inactive]:hover-always:text-foreground data-[state=inactive]:hover-always:border-border';
 
+// Line tabs (preview `.tabs button`): the label face, uppercase and tracked, muted until active;
+// the active tab takes the foreground and a 2px accent underline that overlaps the list's hairline.
+// Every rule is scoped to a `line` list, so they override the lid strings above only there.
+const TRIGGER_LINE =
+  'group-data-[variant=line]/tabs-list:-mb-px group-data-[variant=line]/tabs-list:rounded-none group-data-[variant=line]/tabs-list:border-0 group-data-[variant=line]/tabs-list:border-b-2 group-data-[variant=line]/tabs-list:border-solid group-data-[variant=line]/tabs-list:border-transparent group-data-[variant=line]/tabs-list:bg-transparent group-data-[variant=line]/tabs-list:px-3 group-data-[variant=line]/tabs-list:pt-[0.5625rem] group-data-[variant=line]/tabs-list:pb-2.5 group-data-[variant=line]/tabs-list:text-[0.8125rem] group-data-[variant=line]/tabs-list:tracking-[0.1em] group-data-[variant=line]/tabs-list:before:hidden group-data-[variant=line]/tabs-list:data-[state=active]:border-primary group-data-[variant=line]/tabs-list:data-[state=active]:bg-transparent group-data-[variant=line]/tabs-list:data-[state=inactive]:hover-always:border-transparent';
+
 function TabsTrigger({ className, ...props }: React.ComponentProps<typeof TabsPrimitive.Trigger>) {
   return (
     <TabsPrimitive.Trigger
       data-slot="tabs-trigger"
-      className={cn(TRIGGER_BASE, TRIGGER_ACTIVE, TRIGGER_INACTIVE, className)}
+      className={cn(TRIGGER_BASE, TRIGGER_ACTIVE, TRIGGER_INACTIVE, TRIGGER_LINE, className)}
       {...props}
     />
   );

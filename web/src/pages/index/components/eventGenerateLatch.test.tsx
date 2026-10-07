@@ -289,7 +289,7 @@ function renderSheet(sessionId: string) {
 }
 
 function generateButton(): HTMLElement {
-  return screen.getByRole('button', { name: /Auto Generate|Generating…/ });
+  return screen.getByRole('button', { name: /Auto generate|Generating…/ });
 }
 
 // Radix DropdownMenu opens on pointer-down or the keyboard, not on click (shadcn-port-shell B1).
@@ -298,7 +298,7 @@ function openMenu(trigger: HTMLElement) {
 }
 
 async function startGenerate(item = 'Generate All') {
-  openMenu(await screen.findByRole('button', { name: 'Auto Generate' }));
+  openMenu(await screen.findByRole('button', { name: 'Auto generate' }));
   fireEvent.click(await screen.findByRole('menuitem', { name: item }));
 }
 
@@ -354,7 +354,7 @@ describe('event feed — AUTO GENERATE 503 latch (honest capability gating)', ()
     // A REMOUNT (page reload) clears it: a fresh instance is actionable again.
     unmount();
     renderSheet(SESSION_A);
-    const fresh = await screen.findByRole('button', { name: 'Auto Generate' });
+    const fresh = await screen.findByRole('button', { name: 'Auto generate' });
     expect(fresh.getAttribute('aria-disabled')).toBeNull();
   });
 });
@@ -364,7 +364,7 @@ describe('event feed — Auto Generate menu and custom selection', () => {
     const calls = mockRoutes(() => Promise.resolve({ created: 1, cap_hit: false }));
     renderSheet(SESSION_A);
 
-    openMenu(await screen.findByRole('button', { name: 'Auto Generate' }));
+    openMenu(await screen.findByRole('button', { name: 'Auto generate' }));
     expect(screen.getByRole('menuitem', { name: 'Generate All' })).toBeTruthy();
     expect(screen.getByRole('menuitem', { name: 'Custom' })).toBeTruthy();
     fireEvent.click(screen.getByRole('menuitem', { name: 'Generate All' }));
@@ -387,7 +387,7 @@ describe('event feed — Auto Generate menu and custom selection', () => {
     });
     renderSheet(SESSION_A);
 
-    openMenu(await screen.findByRole('button', { name: 'Auto Generate' }));
+    openMenu(await screen.findByRole('button', { name: 'Auto generate' }));
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Regenerate All' }));
 
     // Destructive confirm first — nothing posted yet, copy states the
@@ -416,7 +416,7 @@ describe('event feed — Auto Generate menu and custom selection', () => {
     });
     renderSheet(SESSION_A);
 
-    openMenu(await screen.findByRole('button', { name: 'Auto Generate' }));
+    openMenu(await screen.findByRole('button', { name: 'Auto generate' }));
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Regenerate All' }));
     expect(await screen.findByRole('heading', { name: 'Regenerate all auto events' })).toBeTruthy();
 
@@ -444,7 +444,7 @@ describe('event feed — Auto Generate menu and custom selection', () => {
     });
     renderSheet(SESSION_A);
 
-    openMenu(await screen.findByRole('button', { name: 'Auto Generate' }));
+    openMenu(await screen.findByRole('button', { name: 'Auto generate' }));
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Regenerate All' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Delete and regenerate' }));
 
@@ -492,7 +492,7 @@ describe('event feed — Auto Generate menu and custom selection', () => {
     });
     renderSheet(SESSION_A);
 
-    openMenu(await screen.findByRole('button', { name: 'Auto Generate' }));
+    openMenu(await screen.findByRole('button', { name: 'Auto generate' }));
     expect(screen.getByRole('menuitem', { name: 'Generate All' })).toBeTruthy();
     fireEvent.click(screen.getByRole('menuitem', { name: 'Generate All' }));
 
@@ -521,7 +521,7 @@ describe('event feed — Auto Generate menu and custom selection', () => {
     });
     renderSheet(SESSION_A);
 
-    openMenu(await screen.findByRole('button', { name: 'Auto Generate' }));
+    openMenu(await screen.findByRole('button', { name: 'Auto generate' }));
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Custom' }));
     expect(await screen.findByRole('dialog', { name: 'Custom event generation' })).toBeTruthy();
     expect(calls.count).toBe(0);
@@ -614,7 +614,7 @@ describe('event feed — AUTO GENERATE non-503 outcomes (single inline channel)'
 });
 
 describe('event feed — no-instructions gate (auto_instructions_present: false)', () => {
-  it('is non-actionable with a distinct reason pointing at the Settings event-buttons table', async () => {
+  it('is non-actionable with a distinct reason pointing at Settings › Event buttons', async () => {
     const calls = mockRoutes(() => Promise.resolve({ created: 0, cap_hit: false }), {
       instructionsPresent: false,
     });
@@ -628,8 +628,8 @@ describe('event feed — no-instructions gate (auto_instructions_present: false)
     expect(reasonId).toBeTruthy();
     const reason = document.getElementById(reasonId as string);
     // The Settings pointer — NOT the 503-latch integration/reload copy.
-    expect(reason?.textContent).toMatch(/Settings/);
-    expect(reason?.textContent).toMatch(/event-buttons table/);
+    // redesign-show-ignition: the reason names the Settings view's Event buttons section.
+    expect(reason?.textContent).toMatch(/Settings › Event buttons/);
     expect(reason?.textContent).not.toMatch(/no integration configured/);
     // AT REST the reason is visually hidden (sr-only) — reachable through the
     // accessible description above, but adding no visible toolbar text: this
@@ -661,7 +661,7 @@ describe('event feed — run state is scoped to the starting session (mounted-hi
     // Switch to B mid-run: B renders IDLE (no running state, no outcome, no
     // error), while the request keeps running.
     switchSession(SESSION_B);
-    const idleOnB = await screen.findByRole('button', { name: 'Auto Generate' });
+    const idleOnB = await screen.findByRole('button', { name: 'Auto generate' });
     expect(idleOnB.hasAttribute('disabled')).toBe(false);
     expect(idleOnB.getAttribute('aria-disabled')).toBeNull();
     expect(screen.queryByText(/Created \d/)).toBeNull();
@@ -681,6 +681,6 @@ describe('event feed — run state is scoped to the starting session (mounted-hi
     // …and B never displays it: switching back to B reads idle again.
     switchSession(SESSION_B);
     await waitFor(() => expect(screen.queryByText(/Created \d/)).toBeNull());
-    expect(screen.getByRole('button', { name: 'Auto Generate' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Auto generate' })).toBeTruthy();
   });
 });

@@ -210,7 +210,7 @@ describe('AA contrast floor — source colours over their lightest measured surf
   it('timeline total-duration readout carries no extra opacity reduction', () => {
     const line = read('pages/index/components/Timeline.tsx')
       .split('\n')
-      .find((l) => l.includes('text-[0.65rem] font-medium tracking-[0.04em] text-v5-muted'));
+      .find((l) => l.includes('font-tc text-[0.6875rem] font-medium text-si-dim'));
     expect(line).toBeDefined();
     expect(line).not.toMatch(/opacity-\[/);
   });

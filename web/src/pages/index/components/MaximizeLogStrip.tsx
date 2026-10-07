@@ -1,5 +1,7 @@
 import clsx from 'clsx';
 import type { LogEvent, SessionStatus } from '../../../api/types';
+import { Badge } from '../../../shared/components/ui/badge';
+import { Button } from '../../../shared/components/ui/button';
 import { Tooltip } from '../../../shared/ui/Tooltip';
 import type { AudioClipLite } from '../../../shared/utils/waveformMerge';
 import { CategoryButtonStrip } from './CategoryButtonStrip';
@@ -28,14 +30,11 @@ interface Props {
   onOffState: Map<string, 'on' | 'off'>;
   onToggle: (categoryId: string) => void;
   statusText: string;
-  isRecording: boolean;
-  isRolling?: boolean;
 }
 
-// Live category buttons use --v4-cat-btn-h (~6.7rem); do not clamp to the
+// Live category buttons fill --v4-cat-btn-h (~6.7rem); do not clamp to the
 // shorter scrub-lane height or overflow-y:hidden will crop them.
-const LIVE_BUTTONS_SLOT =
-  'min-h-(--v4-cat-btn-h) h-auto max-h-none overflow-x-auto overflow-y-visible';
+const LIVE_BUTTONS_SLOT = 'min-h-(--v4-cat-btn-h) h-auto max-h-none overflow-visible';
 
 function fmtSessionDate(iso: string | null | undefined): string {
   if (!iso) return '—';
@@ -64,8 +63,6 @@ export function MaximizeLogStrip({
   onOffState,
   onToggle,
   statusText,
-  isRecording,
-  isRolling = false,
 }: Props) {
   const code = (status?.show_code ?? '').trim();
   const showName = (status?.show_name ?? '').trim();
@@ -84,7 +81,7 @@ export function MaximizeLogStrip({
   const liveButtons = (
     <div
       className={clsx(
-        'v4-cat-buttons__scroll box-border flex w-full min-w-0 items-center',
+        'v4-cat-buttons__scroll box-border flex w-full min-w-0 items-stretch',
         LIVE_BUTTONS_SLOT,
       )}
       id="cat-strip-live-slot"
@@ -100,8 +97,14 @@ export function MaximizeLogStrip({
     </div>
   );
 
+  // The strip's own status reads the session truth (statusText: Recording from the session-wide
+  // lease, Rolling, else Stopped). Its pill only ignites for Rolling/Recording; Stopped (which
+  // includes this client playing — the top bar says PLAY) stays the neutral outline, so the pill's
+  // colour never contradicts its word.
+  const statusLive = displayStatus === 'Rolling' || displayStatus === 'Recording';
+
   const sessionMeta = (
-    <div className="flex min-w-0 flex-col gap-[0.15rem]">
+    <div className="flex min-w-0 flex-row flex-wrap items-center justify-between gap-x-3 gap-y-1.5">
       {/* Date lives in a hover/focus tooltip — saves a meta row; rail already
           shows dates for session picking. */}
       <Tooltip content={`Date ${dateText}`} side="right" align="start" delayDuration={200}>
@@ -109,26 +112,23 @@ export function MaximizeLogStrip({
             visible show/name text plus the sr-only date span below already
             carry everything the label duplicated. */}
         <p
-          className="m-0 flex min-w-0 cursor-default flex-row flex-wrap items-baseline gap-x-[0.35rem] overflow-hidden font-ui text-[0.78rem] leading-[1.15] text-v5-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[rgba(56,189,248,0.55)]"
+          className="m-0 flex min-w-0 flex-1 cursor-default flex-row items-baseline gap-x-1.5 overflow-hidden rounded-[4px] font-ui text-[0.8125rem] leading-tight text-si-fg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
           id="session-deck-title"
           // biome-ignore lint/a11y/noNoninteractiveTabindex: deliberately focusable — the date lives only in this hover/FOCUS tooltip (spec "Maximize-log fused transport strip": "date via hover/focus tooltip"), so keyboard users need a way to summon it.
           tabIndex={0}
         >
           <span
             id="session-title-code"
-            className="session-title-code min-w-0 truncate font-semibold tracking-[-0.01em]"
+            className="session-title-code min-w-0 truncate font-semibold"
           >
             {stripShow}
           </span>
           {stripSessionName ? (
             <>
-              <span className="text-white/[0.32] font-medium select-none" aria-hidden={true}>
+              <span className="shrink-0 text-si-dim select-none" aria-hidden={true}>
                 &middot;
               </span>
-              <span
-                id="studio-name"
-                className="min-w-0 truncate text-[0.74rem] font-normal text-v5-primary"
-              >
+              <span id="studio-name" className="min-w-0 truncate text-si-muted">
                 {stripSessionName}
               </span>
             </>
@@ -140,52 +140,46 @@ export function MaximizeLogStrip({
       </Tooltip>
 
       <h2
-        className="m-0 flex min-h-0 flex-row flex-nowrap items-center justify-start gap-x-[0.4rem] font-ui text-[0.68rem] leading-none tracking-[0.04em]"
+        className="m-0 flex min-w-0 shrink-0 flex-row flex-nowrap items-center gap-2 font-ui text-[0.75rem] leading-none"
         id="v5-controls-recording-head"
         aria-live="polite"
       >
-        <span className="[display:inline] text-v5-muted font-medium">Status:</span>
-        {isRecording && (
-          <span
-            className="inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-[#ef4444] shadow-[0_0_8px_rgba(239,68,68,0.55)] animate-wf-label-pulse motion-reduce:animate-none"
-            aria-hidden="true"
-          />
+        <span className="sr-only">Status:</span>
+        {statusIsYtImport ? (
+          <Badge variant="outline" className="animate-yt-import-pulse motion-reduce:animate-none">
+            <span id="v5-controls-status-value">{displayStatus}</span>
+          </Badge>
+        ) : (
+          <Badge variant={statusLive ? 'transport' : 'outline'}>
+            {displayStatus === 'Recording' && (
+              <span
+                data-slot="live-dot"
+                className="size-1.5 shrink-0 rounded-full bg-current"
+                aria-hidden="true"
+              />
+            )}
+            <span id="v5-controls-status-value">{displayStatus}</span>
+          </Badge>
         )}
-        <span
-          className={clsx(
-            'font-semibold',
-            isRecording
-              ? 'text-[#ef4444]'
-              : statusIsYtImport
-                ? 'text-[#fb923c] animate-yt-import-pulse motion-reduce:animate-none motion-reduce:text-[#ea580c]'
-                : 'text-v5-text',
-          )}
-          id="v5-controls-status-value"
-        >
-          {displayStatus}
-        </span>
         {/* Visibility comes from CSS `body.v4-is-recording` (AudioRecorder's
             LOCAL-recorder signal), never from the session-wide `isRecording`
             lease — a remote client's recording must not reveal this client's
             (necessarily empty) meter. */}
         <span
           id="top-bar-mic-level"
-          className="items-center gap-[0.35rem] h-[1.05rem]"
+          className="items-center"
           aria-hidden="true"
           title="Microphone level"
         >
-          <span className="block h-[0.55rem] w-[3.5rem] overflow-hidden rounded-[0.2rem] border border-[rgba(251,113,133,0.35)] bg-[rgba(7,11,20,0.55)]">
+          <span className="block h-2 w-12 overflow-hidden rounded-[3px] border border-si-line bg-si-bg">
             <span
               id="top-bar-mic-level-fill"
-              className="block h-full w-0 origin-left bg-[linear-gradient(90deg,#4ade80_0%,#facc15_55%,#f87171_100%)] transition-[width] duration-75 ease-linear"
+              className="block h-full w-0 origin-left bg-si-accent transition-[width] duration-75 ease-linear"
             />
           </span>
         </span>
         <span
-          className={clsx(
-            'text-[0.68rem] font-semibold text-[#fecaca] [font-variant-numeric:tabular-nums]',
-            'mono',
-          )}
+          className="font-tc text-[0.75rem] font-medium text-si-fg [font-variant-numeric:tabular-nums]"
           id="top-bar-recording-dur"
           aria-hidden="true"
         >
@@ -195,15 +189,9 @@ export function MaximizeLogStrip({
     </div>
   );
 
-  // Desktop: equal-grow tiles across the full controls column. Mobile keeps fixed tiles.
-  // `!` beats the fixed flex-basis/width utilities on the shared tile classes.
-  const stripBtnDesktopGrow = 'md:min-w-(--v4-ctrl-btn-w) md:w-auto! md:max-w-none md:flex-1!';
-  // Mute secondary chrome only while stopped/playing — full tiles while rolling/recording.
-  const secondaryQuiet = !isRolling && !isRecording;
-
   const transportButtons = (
     <div
-      className="flex w-auto max-w-full flex-row flex-nowrap items-center justify-end gap-[0.3rem] overflow-visible md:w-full md:justify-start"
+      className="flex w-full min-w-0 flex-row flex-wrap items-center gap-1.5 md:flex-nowrap"
       role="toolbar"
       aria-label="Session transport controls"
     >
@@ -218,68 +206,40 @@ export function MaximizeLogStrip({
       <MarkerNav sessionId={sessionId} disabled={controlsLocked} ungrouped />
       {/* Shortcuts reference is desktop-only — phones don't use keyboard shortcuts. */}
       <Tooltip content="Keyboard shortcuts (?)">
-        <button
-          type="button"
-          className={clsx(
-            'relative isolate box-border grid h-(--v4-ctrl-btn-h) max-h-(--v4-ctrl-btn-h) min-h-(--v4-ctrl-btn-h) w-(--v4-ctrl-btn-w) flex-[0_0_var(--v4-ctrl-btn-w)] place-items-center overflow-hidden p-0 [--session-ctl-accent:#e2e8f0] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[rgba(56,189,248,0.55)]',
-            // Phone-only hide (`!` beats other display utilities on the tile).
-            'max-md:hidden!',
-            stripBtnDesktopGrow,
-            secondaryQuiet
-              ? controlsLocked
-                ? 'cursor-not-allowed rounded-v5-md border border-[rgba(148,163,184,0.12)] bg-white/[0.02] opacity-[0.55] text-[rgba(226,232,240,0.55)] shadow-none'
-                : // Soft mute: light border + faint fill (half as ghostly as full transparent).
-                  'cursor-pointer rounded-v5-md border border-[rgba(148,163,184,0.14)] bg-white/[0.03] text-[rgba(226,232,240,0.62)] shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] [transition:color_0.15s_ease,background_0.15s_ease,border-color_0.15s_ease] hover-always:border-[rgba(148,163,184,0.22)] hover-always:bg-white/[0.06] hover-always:text-[rgba(226,232,240,0.88)]'
-              : controlsLocked
-                ? 'cursor-not-allowed rounded-v5-md border border-dashed border-[rgba(148,163,184,0.14)] bg-[rgba(7,11,20,0.55)] opacity-[0.48] shadow-none'
-                : 'cursor-pointer rounded-v5-md border border-[rgba(148,163,184,0.22)] [background:linear-gradient(180deg,rgba(255,255,255,0.07)_0%,rgba(255,255,255,0)_42%),linear-gradient(180deg,rgba(19,27,48,0.88),rgba(11,16,30,0.78))] shadow-[inset_0_1px_0_rgba(255,255,255,0.07),0_4px_16px_rgba(2,8,23,0.42)] [transition:border-color_0.15s_ease,box-shadow_0.15s_ease,opacity_0.15s_ease] hover-always:[border-color:color-mix(in_srgb,var(--session-ctl-accent)_28%,rgba(148,163,184,0.22))]',
-          )}
+        <Button
+          variant="transport"
+          size="icon"
+          className="max-md:hidden md:w-auto md:min-w-(--h-ctl) md:flex-1"
           aria-label="Keyboard shortcuts"
           disabled={controlsLocked}
           onClick={onOpenShortcuts}
         >
-          <span
-            aria-hidden="true"
-            className={clsx(
-              'relative z-[1] text-[1.05rem] font-semibold leading-none',
-              secondaryQuiet
-                ? 'text-current'
-                : 'text-[color:color-mix(in_srgb,var(--session-ctl-accent)_70%,#e2e8f0)]',
-            )}
-          >
+          <span aria-hidden="true" className="font-tc text-[0.9375rem]">
             ?
           </span>
-        </button>
+        </Button>
       </Tooltip>
     </div>
   );
 
-  // Desktop: meta → timecode → buttons (column).
-  // Mobile: chrome (show/status) → instruments (timecode + buttons) → timeline.
+  // One column at every width (preview `.tc-block`): identity and status, then the timecode,
+  // then the transport row. Desktop pins it to the strip's left edge; phones stack it above
+  // the timeline lane and let the transport row wrap instead of running to the viewport edge.
   const transportAside = (
     <aside
       className={clsx(
-        'v5-session-controls-panel flex w-full min-w-0 flex-col items-stretch gap-[0.4rem] self-stretch overflow-visible',
-        'md:w-[min(100%,19.25rem)] md:shrink-0 md:justify-end md:self-end',
+        'v5-session-controls-panel flex w-full min-w-0 flex-col items-stretch gap-2.5 self-stretch',
+        'md:w-[min(100%,19.25rem)] md:shrink-0 md:justify-center',
       )}
       aria-label="Session info and transport"
     >
-      {/* Identity / chrome */}
-      <div className="flex min-w-0 flex-row items-center gap-2">
-        {/* The phone "Open navigation" button that sat here is gone: the top bar's sidebar
-            trigger opens the sidebar sheet (redesign-show-ignition D8). */}
-        <div className="min-w-0 flex-1">{sessionMeta}</div>
+      {/* The phone "Open navigation" button that sat here is gone: the top bar's sidebar
+          trigger opens the sidebar sheet (redesign-show-ignition D8). */}
+      {sessionMeta}
+      <div className={clsx('min-w-0', controlsLocked && 'opacity-50')}>
+        <TimecodeDisplay sessionId={sessionId} compact />
       </div>
-
-      {/* Instruments — timecode grows into spare width; buttons keep natural size. */}
-      <div className="flex min-w-0 flex-row items-center gap-2 md:contents">
-        <div className={clsx('min-w-0 flex-1 md:w-full', controlsLocked && 'opacity-[0.48]')}>
-          <TimecodeDisplay sessionId={sessionId} compact />
-        </div>
-        <div className="w-auto max-w-full shrink-0 overflow-visible md:w-full">
-          {transportButtons}
-        </div>
-      </div>
+      {transportButtons}
     </aside>
   );
 
@@ -287,13 +247,12 @@ export function MaximizeLogStrip({
     <section
       id="v5-maximize-log-strip"
       className={clsx(
-        'v5-maximize-log-strip min-w-0 overflow-visible box-border bg-[#050912]',
-        // Mobile: full-bleed band (controls + timeline); space before feed matches
-        // desktop session gap-5 (parent is max-md:block so flex gap doesn't apply).
-        'mx-0 mt-0 mb-5 w-full px-3 pt-2.5 pb-3 border-b border-white/[0.06]',
-        // Desktop: inset rounded band around controls + timeline.
-        'md:mx-4 md:mt-3 md:mb-0 md:w-[calc(100%-2rem)] md:rounded-v5-md md:border md:border-white/[0.06] md:px-3.5 md:py-3',
-        '[--v4-ctrl-btn-h:2.15rem] [--v4-ctrl-btn-w:2.35rem] [--v4-ctrl-btn-my:0] [--v4-clock-box-h:2.15rem] [--v4-clock-box-mb:0] [--v4-clock-box-mv:0] [--v4-clock-label-straddle:0.28rem]',
+        // Show Ignition transport card (preview `.transport`): the flat panel surface, line
+        // and card radius; the `data-transport` rules in tailwind.css tint it while live.
+        'v5-maximize-log-strip box-border min-w-0 overflow-visible rounded-card border border-si-line bg-si-panel',
+        'mx-3 mt-3 mb-5 w-[calc(100%-1.5rem)] p-3',
+        'md:mx-4 md:mb-0 md:w-[calc(100%-2rem)] md:px-3.5 md:py-3',
+        '[--v4-ctrl-btn-my:0]',
       )}
       aria-label="Session transport"
     >

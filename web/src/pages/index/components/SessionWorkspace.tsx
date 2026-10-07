@@ -544,8 +544,6 @@ export function SessionWorkspace({ sessionId, ytImportPending }: Props) {
                     onOffState={onOffState}
                     onToggle={handleToggle}
                     statusText={statusText}
-                    isRecording={isRecording}
-                    isRolling={isRolling}
                   />
                 </div>
 
@@ -560,10 +558,10 @@ export function SessionWorkspace({ sessionId, ytImportPending }: Props) {
                     onValueChange={(v) => setFeedTab(v as FeedTabId)}
                     className="v5FeedTabsPanel flex-[1_1_0] min-h-0"
                   >
-                    {/* Tabs share the sheet's mx-4 edge — no extra pad — so the lid
-                        aligns with the feed container. */}
-                    <div className="relative z-0 mx-4 flex shrink-0 items-end pt-[0.3rem] max-md:overflow-x-auto max-md:overflow-y-hidden max-md:[-webkit-overflow-scrolling:touch] max-md:[scrollbar-width:none]">
-                      <TabsList aria-label="Feed tabs">
+                    {/* Line tabs (redesign-show-ignition task 5.2; preview `.tabs`) on the sheet's
+                        mx-4 edge, a short gap above the feed card. */}
+                    <div className="relative z-0 mx-4 mb-3 max-md:mx-3 flex shrink-0 items-end pt-[0.3rem] max-md:overflow-x-auto max-md:overflow-y-hidden max-md:[-webkit-overflow-scrolling:touch] max-md:[scrollbar-width:none]">
+                      <TabsList variant="line" aria-label="Feed tabs">
                         {FEED_TABS.map((tab) => (
                           <TabsTrigger key={tab.id} value={tab.id}>
                             {tab.label}

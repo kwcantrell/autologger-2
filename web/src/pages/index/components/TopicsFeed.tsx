@@ -276,7 +276,7 @@ export const TopicsFeed = memo(function TopicsFeed({ sessionId }: Props) {
             </>
           ) : (
             <>
-              No topics yet. Generate a transcript first, then click <strong>Auto Generate</strong>.
+              No topics yet. Generate a transcript first, then click <strong>Auto generate</strong>.
             </>
           )
         }

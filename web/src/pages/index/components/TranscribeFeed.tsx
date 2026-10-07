@@ -340,7 +340,7 @@ export const TranscribeFeed = memo(function TranscribeFeed({ sessionId }: Props)
             </>
           ) : (
             <>
-              No transcript yet. Click <strong>Auto Generate</strong> to transcribe audio.
+              No transcript yet. Click <strong>Auto generate</strong> to transcribe audio.
             </>
           )
         }

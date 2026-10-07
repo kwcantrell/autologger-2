@@ -46,7 +46,7 @@ const CELL_TC =
 /** Category cell (was `.sheetCat`). */
 const CELL_CAT = 'text-left align-middle font-semibold whitespace-nowrap';
 /** Message cell max-width (was `.sheet-dense .msg`, which beat `.sheet .msg`). */
-const CELL_MSG = 'max-w-[min(28rem,38vw)]';
+const CELL_MSG = 'max-w-[min(28rem,38vw)] max-md:max-w-[28vw]';
 /** Message/actions cell chrome (was `.msg` + `.rowActions`). NOTE: `.rowActions`'s
  *  `text-align: center` was DEAD in the legacy cascade — `.sheet td { text-align: left }`
  *  (0,1,1) beat `.rowActions` (0,1,0), so the cell rendered LEFT. We keep that effective
