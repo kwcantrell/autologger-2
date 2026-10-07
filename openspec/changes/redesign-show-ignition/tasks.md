@@ -6,13 +6,15 @@ Every task names the test written first. A task is ticked only with an `Evidence
 
 ## 1. Direction record and design foundations (D1, D9)
 
-- [ ] 1.0 Point the dev stack at this checkout, with the owner's go-ahead (`:8787` mounts `/home/spark/autologger-2` today).
+- [x] 1.0 Point the dev stack at this checkout, with the owner's go-ahead (`:8787` mounts `/home/spark/autologger-2` today).
   - Run `make dev-up` from `autologger-ui`.
   - Verify: `docker inspect autologger-dev-app --format '{{range .Mounts}}{{.Source}}{{"\n"}}{{end}}'` lists `/home/spark/autologger-ui/web/src`, and agent-browser opens `http://localhost:8787/` logged in with the current UI.
+  - Evidence: owner go-ahead ("lets go with option 1"); `make dev-up` -> `dev app: http://127.0.0.1:8787` with all services Started or Healthy, after copying the gitignored `.env.openbao.dev` from autologger-2 with mode 600. `docker inspect autologger-dev-app …` -> `/home/spark/autologger-ui/web/src`; `curl -o /dev/null -w %{http_code} http://localhost:8787/` -> `200`; `agent-browser --session-name shadcn-qa open http://localhost:8787/` -> title `AutoLogger`, a logged-in home with the V5 rail and sessions.
 
-- [ ] 1.1 Record the direction contract for the console surface.
+- [x] 1.1 Record the direction contract for the console surface.
   - Run `impeccable surface-brief write web/src/pages/index/AppShell.tsx <brief>` with THESIS, OWN-WORLD, STORY, FIRST VIEWPORT, FORM and FINISH, using the approved preview as the critique reference.
   - Verify: `impeccable surface-brief read web/src/pages/index/AppShell.tsx` prints all six blocks.
+  - Evidence: `impeccable surface-brief write web/src/pages/index/AppShell.tsx brief.md` -> `web/.impeccable/surfaces/web-src-pages-index-appshell-tsx.md`; `impeccable surface-brief read … | grep -E "THESIS|OWN-WORLD|STORY|FIRST VIEWPORT|FORM|FINISH"` -> lines 27, 29, 43, 48, 58 and 60, all six blocks present.
 - [ ] 1.2 Add the Show Ignition tokens to `shared/theme/tailwind.css`, and point the shadcn variables and the `--v5-*` names at them (D1).
   - Tokens: `--si-*`, `--r-ctl`, `--r-card`, `--h-ctl`, `--h-sm`, `--sel-bg`, `--sel-line`, and the four transport mixes.
   - Test first: extend `contrastTokens.test.ts`. Primary label on accent, muted text on panel, and each status label (STOPPED, ROLLING, REC, PLAY) on its pill all compute to ≥4.5:1.
