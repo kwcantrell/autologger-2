@@ -187,20 +187,35 @@
   --color-legacy-border: #343842;
   --color-accent-dim: #4a8fd9;
   --color-danger: #ff6b6b;
-  --color-v5-bg: #070b14;
-  --color-v5-text: #e5eefc;
-  --color-v5-muted: rgba(229, 238, 252, 0.62);
-  --color-v5-soft: #94a3b8;
-  --color-v5-primary: #38bdf8;
-  --color-v5-primary2: #22d3ee;
-  --color-v5-danger: #f87171;
-  --color-v5-line: rgba(148, 163, 184, 0.16);
-  --color-v5-border: rgba(255, 255, 255, 0.06);
-  --color-v5-border-strong: rgba(255, 255, 255, 0.1);
+  /* The V5 utility names alias Show Ignition (redesign-show-ignition D1): untouched
+   * `text-v5-*` / `bg-v5-*` / `rounded-v5-*` consumers render the new vocabulary. */
+  --color-v5-bg: var(--si-bg);
+  --color-v5-text: var(--si-fg);
+  --color-v5-muted: var(--si-muted);
+  --color-v5-soft: var(--si-dim);
+  --color-v5-primary: var(--si-accent);
+  --color-v5-primary2: var(--si-accent);
+  --color-v5-danger: var(--si-danger);
+  --color-v5-line: var(--si-line);
+  --color-v5-border: var(--si-line);
+  --color-v5-border-strong: var(--si-line-strong);
   --radius-app: 10px;
-  --radius-v5-lg: 1.875rem;
-  --radius-v5-md: 1.25rem;
-  --radius-v5-sm: 1rem;
+  --radius-v5-lg: var(--r-card);
+  --radius-v5-md: var(--r-card);
+  --radius-v5-sm: var(--r-ctl);
+  /* Show Ignition utilities: `rounded-ctl`, `rounded-card`, `bg-si-panel`, `text-si-muted`… */
+  --radius-ctl: var(--r-ctl);
+  --radius-card: var(--r-card);
+  --color-si-bg: var(--si-bg);
+  --color-si-panel: var(--si-panel);
+  --color-si-panel-2: var(--si-panel-2);
+  --color-si-line: var(--si-line);
+  --color-si-fg: var(--si-fg);
+  --color-si-muted: var(--si-muted);
+  --color-si-dim: var(--si-dim);
+  --color-si-ink: var(--si-ink);
+  --color-si-accent: var(--si-accent);
+  --color-si-danger: var(--si-danger);
   --radius-v4-9: 0.5625rem;
   --radius-v4-10: 0.625rem;
 }
@@ -243,49 +258,36 @@
    * namespace tokens can't be defined twice. Self-hosted Google Fonts: Poppins
    * 100/300/400/600; League Gothic variable width. */
 
-  /* V5 design tokens (formerly scoped under body.v5-ui; promoted to :root in v1.15.0). */
-  --v5-bg: #070b14;
-  --v5-text: #e5eefc;
-  --v5-muted: rgba(229, 238, 252, 0.62);
-  --v5-soft: #94a3b8;
-  --v5-primary: #38bdf8;
-  --v5-primary2: #22d3ee;
-  --v5-danger: #f87171;
-  --v5-line: rgba(148, 163, 184, 0.16);
-  /* Slightly more opaque than old "blur glass" so panels stay readable without backdrop-filter */
-  --v5-glass-top: rgba(19, 27, 48, 0.91);
-  --v5-glass-bot: rgba(11, 16, 30, 0.84);
-  --v5-glass-strong-top: rgba(22, 31, 54, 0.94);
-  --v5-glass-strong-bot: rgba(12, 18, 32, 0.9);
-  /* Stacked: specular haze + tinted body (replaces frosted blur visually) */
-  --v5-glass-face: linear-gradient(180deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0) 44%),
-    linear-gradient(180deg, var(--v5-glass-top), var(--v5-glass-bot));
-  --v5-glass-face-strong: linear-gradient(180deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0) 42%),
-    linear-gradient(180deg, var(--v5-glass-strong-top), var(--v5-glass-strong-bot));
-  --v5-glass-face-aside: linear-gradient(180deg, rgba(255, 255, 255, 0.078) 0%, rgba(255, 255, 255, 0) 40%),
-    linear-gradient(180deg, var(--v5-glass-strong-top), var(--v5-glass-bot));
-  /* Feed sheet: open glass so page glow/noise reads through. Top sits close to
-   * bot (subtle fade) — active tabs use --v5-glass-feed-surface-top so they
-   * bleed into the sheet with no color mismatch. */
-  --v5-glass-feed-top: rgba(16, 23, 41, 0.58);
-  --v5-glass-feed-bot: rgba(11, 16, 30, 0.48);
-  --v5-glass-feed-surface-top: color-mix(in srgb, #ffffff 4%, var(--v5-glass-feed-top));
-  --v5-glass-face-feed: linear-gradient(
-    180deg,
-    var(--v5-glass-feed-surface-top),
-    var(--v5-glass-feed-bot)
-  );
-  --v5-glass-rim: inset 0 1px 0 rgba(255, 255, 255, 0.09);
-  --v5-border: rgba(255, 255, 255, 0.06);
-  --v5-border-strong: rgba(255, 255, 255, 0.1);
-  /* Mock .shadow-glow: lift + hairline + cyan/sky bloom */
-  --v5-shadow-glow: 0 1px 0 rgba(255, 255, 255, 0.055), 0 22px 60px rgba(2, 8, 23, 0.58),
-    0 0 0 1px rgba(255, 255, 255, 0.048), 0 0 128px -36px rgba(56, 189, 248, 0.14),
-    0 0 64px -28px rgba(14, 165, 233, 0.09);
+  /* V5 design tokens, re-pointed at Show Ignition (redesign-show-ignition D1). The names stay
+   * so untouched consumers keep resolving; the glass faces and glows are now flat surfaces
+   * and empty shadows, so every V5 glass panel renders as a flat Show Ignition panel. */
+  --v5-bg: var(--si-bg);
+  --v5-text: var(--si-fg);
+  --v5-muted: var(--si-muted);
+  --v5-soft: var(--si-dim);
+  --v5-primary: var(--si-accent);
+  --v5-primary2: var(--si-accent);
+  --v5-danger: var(--si-danger);
+  --v5-line: var(--si-line);
+  --v5-glass-top: var(--si-panel);
+  --v5-glass-bot: var(--si-panel);
+  --v5-glass-strong-top: var(--si-panel-2);
+  --v5-glass-strong-bot: var(--si-panel-2);
+  --v5-glass-face: var(--si-panel);
+  --v5-glass-face-strong: var(--si-panel-2);
+  --v5-glass-face-aside: var(--si-panel);
+  --v5-glass-feed-top: var(--si-panel);
+  --v5-glass-feed-bot: var(--si-panel);
+  --v5-glass-feed-surface-top: var(--si-panel);
+  --v5-glass-face-feed: var(--si-panel);
+  --v5-glass-rim: inset 0 0 #0000;
+  --v5-border: var(--si-line);
+  --v5-border-strong: var(--si-line-strong);
+  --v5-shadow-glow: 0 0 #0000;
   --v5-panel-elevate: var(--v5-shadow-glow), var(--v5-glass-rim);
-  --v5-radius-lg: 1.875rem;
-  --v5-radius-md: 1.25rem;
-  --v5-radius-sm: 1rem;
+  --v5-radius-lg: var(--r-card);
+  --v5-radius-md: var(--r-card);
+  --v5-radius-sm: var(--r-ctl);
   --v5-aside-w: 22.5rem;
   --v5-panel-padding: 1.5rem;
   --v5-panel-head-main-gap: 0.1rem;
@@ -377,33 +379,136 @@
 
 /* Compound tokens that can't be single-property utilities (audit K). */
 /* ============================================================
- * shadcn semantic tokens (shadcn-foundation design D5). Dark-only: the shadcn names alias V5
- * values on :root (no .dark block, no light theme). The legacy --border/--muted/--accent names
- * were renamed to --legacy-* first (design D3), so these never repaint legacy surfaces.
- * `@theme inline` exposes them as Tailwind colours (`bg-background`, `text-muted-foreground`…).
- * --radius (10px) is shared with legacy and equals shadcn's 0.625rem default.
+ * Show Ignition tokens (redesign-show-ignition D1; the approved preview's `:root` and its
+ * consistency pass). Dark-only and flat: one accent, one control size and radius, one card
+ * radius, one selected state. New and restyled components read the `--si-*` names directly;
+ * the shadcn variables below and the `--v5-*` names above alias them.
  * ============================================================ */
 :root {
-  --background: var(--v5-bg);
-  --foreground: var(--v5-text);
-  /* V5 strong glass top (rgba(22,31,54,.94)) composited over --v5-bg, as a solid. */
-  --card: #151e34;
-  --card-foreground: var(--v5-text);
-  --popover: #151e34;
-  --popover-foreground: var(--v5-text);
-  --primary: var(--v5-primary);
-  --primary-foreground: #e0f2fe;
-  /* V5 raised/hover surface: a faint white wash over glass. */
-  --secondary: rgba(255, 255, 255, 0.06);
-  --secondary-foreground: var(--v5-text);
-  --muted: rgba(255, 255, 255, 0.06);
-  --muted-foreground: var(--v5-muted);
+  --si-bg: #101216;
+  --si-panel: #16181d;
+  --si-panel-2: #1c1f25;
+  --si-line: #272b33;
+  --si-line-strong: #343944;
+  --si-fg: #eceef2;
+  --si-muted: #a6acb7;
+  --si-dim: #858c98;
+  --si-ink: #0b0c0f;
+  --si-accent: #5b7cff;
+  --si-danger: #ff9b9b;
+  --si-danger-line: #5a2e33;
+  /* The primary button's accent tint and edge (preview `.btn.primary`). */
+  --si-primary-tint: color-mix(in oklab, var(--si-accent) 26%, var(--si-panel-2));
+  --si-primary-line: color-mix(in oklab, var(--si-accent) 55%, var(--si-line));
+
+  --r-ctl: 8px;
+  --r-card: 12px;
+  --h-ctl: 36px;
+  --h-sm: 30px;
+
+  /* The one selected state: an accent tint with a 1px inset accent line (web-ui-system
+   * "Single V5 component vocabulary"). Apply as `background: var(--sel-bg);
+   * box-shadow: inset 0 0 0 1px var(--sel-line)`. */
+  --sel-bg: color-mix(in oklab, var(--si-accent) 18%, transparent);
+  --sel-line: color-mix(in oklab, var(--si-accent) 48%, transparent);
+
+  /* The four transport mixes: how far the rail tints toward the accent per state. */
+  --si-tx-stopped: color-mix(in oklab, var(--si-accent) 10%, #0c0d10);
+  --si-tx-rolling: color-mix(in oklab, var(--si-accent) 25%, #0a0b0e);
+  --si-tx-recording: color-mix(in oklab, var(--si-accent) 25%, #0a0b0e);
+  --si-tx-playback: color-mix(in oklab, var(--si-accent) 18%, #0c0d10);
+}
+
+/* Transport state (redesign-show-ignition D2). The shell sets `data-transport` on the app
+ * root; these rules only define what each state means. Stopped is the :root default, so a
+ * surface outside any transport root reads stopped. `--tx-rail`/`--tx-bar` tint the rail and
+ * top bar, `--tx-live` is the live accent (pressed transport, playhead), `--tx-glow` the soft
+ * glow, and `--tx-pill-*` the status label (STOPPED / ROLLING / REC / PLAY) and its pill. A
+ * stopped pill is transparent over the bar, so its surface is the bar colour. Every
+ * pill-fg/pill-bg pair clears AA (contrastTokens.test.ts). */
+:root,
+[data-transport='stopped'] {
+  --tx-rail: var(--si-tx-stopped);
+  --tx-bar: color-mix(in oklab, var(--si-accent) 7%, #0c0d10);
+  --tx-live: var(--si-accent);
+  --tx-glow: transparent;
+  --tx-pill-bg: color-mix(in oklab, var(--si-accent) 7%, #0c0d10);
+  --tx-pill-fg: var(--si-muted);
+  --tx-pill-line: var(--si-line);
+}
+[data-transport='rolling'] {
+  --tx-rail: var(--si-tx-rolling);
+  --tx-bar: color-mix(in oklab, var(--si-accent) 18%, #0a0b0e);
+  --tx-live: color-mix(in oklab, var(--si-accent) 88%, #000000);
+  --tx-glow: color-mix(in oklab, var(--si-accent) 46%, transparent);
+  --tx-pill-bg: color-mix(in oklab, var(--si-accent) 88%, #000000);
+  --tx-pill-fg: #ffffff;
+  --tx-pill-line: color-mix(in oklab, var(--si-accent) 88%, #000000);
+}
+[data-transport='recording'] {
+  --tx-rail: var(--si-tx-recording);
+  --tx-bar: color-mix(in oklab, var(--si-accent) 18%, #0a0b0e);
+  --tx-live: color-mix(in oklab, var(--si-accent) 88%, #000000);
+  --tx-glow: color-mix(in oklab, var(--si-accent) 46%, transparent);
+  --tx-pill-bg: color-mix(in oklab, var(--si-accent) 88%, #000000);
+  --tx-pill-fg: #ffffff;
+  --tx-pill-line: color-mix(in oklab, var(--si-accent) 88%, #000000);
+}
+[data-transport='playback'] {
+  --tx-rail: var(--si-tx-playback);
+  --tx-bar: color-mix(in oklab, var(--si-accent) 12%, #0c0d10);
+  --tx-live: color-mix(in oklab, var(--si-accent) 65%, #ffffff);
+  --tx-glow: color-mix(in oklab, var(--si-accent) 30%, transparent);
+  --tx-pill-bg: color-mix(in oklab, var(--si-accent) 65%, #ffffff);
+  --tx-pill-fg: var(--si-ink);
+  --tx-pill-line: color-mix(in oklab, var(--si-accent) 65%, #ffffff);
+}
+
+/* ============================================================
+ * shadcn semantic tokens (shadcn-foundation design D5), re-pointed at Show Ignition
+ * (redesign-show-ignition D1). Dark-only: no .dark block, no light theme. The legacy
+ * --border/--muted/--accent names were renamed to --legacy-* first (design D3), so these never
+ * repaint legacy surfaces. `@theme inline` exposes them as Tailwind colours
+ * (`bg-background`, `text-muted-foreground`…). --radius (10px) is shared with legacy; the
+ * primitives take their radii from --r-ctl / --r-card instead.
+ * ============================================================ */
+:root {
+  --background: var(--si-bg);
+  --foreground: var(--si-fg);
+  --card: var(--si-panel);
+  --card-foreground: var(--si-fg);
+  --popover: var(--si-panel-2);
+  --popover-foreground: var(--si-fg);
+  /* Solid accent fills (Badge, checked controls) carry ink; the default Button uses the
+   * --si-primary-tint surface with --si-fg instead. */
+  --primary: var(--si-accent);
+  --primary-foreground: var(--si-ink);
+  --secondary: var(--si-panel-2);
+  --secondary-foreground: var(--si-fg);
+  --muted: var(--si-panel-2);
+  --muted-foreground: var(--si-muted);
+  /* Hover/highlight wash for menus and ghost controls (not the selected state). */
   --accent: rgba(255, 255, 255, 0.06);
-  --accent-foreground: var(--v5-text);
-  --destructive: var(--v5-danger);
-  --border: var(--v5-border-strong);
-  --input: var(--v5-border-strong);
-  --ring: var(--v5-primary);
+  --accent-foreground: var(--si-fg);
+  --destructive: var(--si-danger);
+  --border: var(--si-line);
+  --input: var(--si-line-strong);
+  --ring: var(--si-accent);
+  --sidebar-foreground: var(--si-fg);
+  --sidebar-primary: var(--si-accent);
+  --sidebar-primary-foreground: var(--si-ink);
+  --sidebar-accent: rgba(255, 255, 255, 0.06);
+  --sidebar-accent-foreground: var(--si-fg);
+  --sidebar-ring: var(--si-accent);
+}
+
+/* The sidebar surface follows the transport tint. Redeclared on every transport root (not
+ * only :root) because a custom property's var() resolves where it is declared: declared on
+ * :root alone it would freeze at the stopped rail. */
+:root,
+[data-transport] {
+  --sidebar: var(--tx-rail);
+  --sidebar-border: color-mix(in oklab, var(--si-accent) 22%, var(--si-line));
 }
 
 @theme inline {
@@ -425,6 +530,14 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -1363,19 +1476,7 @@
     position: relative;
     z-index: 1;
   }
-
-  /* Fine film-grain / ISO noise over flat slate */
-  body::before {
-    content: "";
-    position: fixed;
-    inset: 0;
-    z-index: -1;
-    pointer-events: none;
-    opacity: 0.055;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23g)'/%3E%3C/svg%3E");
-    background-size: 200px 200px;
-    background-repeat: repeat;
-  }
+  /* The V5 film-grain layer (body::before) is retired: Show Ignition surfaces are flat. */
 }
 
 /* Ambient background glow — DOM nodes rendered by ThemeProvider (bgGlow.css). */
@@ -1387,21 +1488,11 @@
     pointer-events: none;
   }
 
-  /* Top grid + cool sky-blue wash from the page header */
-  .v5-bg-glow--grid {
-    background-image:
-      radial-gradient(circle at 50% -8%, rgba(56, 189, 248, 0.09), transparent 32%),
-      linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
-    background-size: auto, 24px 24px, 24px 24px;
-    background-position: center top, center, center;
-  }
-
-  /* Corner glows: bottom-left purple, top-right cyan */
+  /* The V5 sky grid and corner glows are retired (redesign-show-ignition D1: flat surfaces).
+   * ThemeProvider still renders the nodes; they paint nothing. */
+  .v5-bg-glow--grid,
   .v5-bg-glow--corners {
-    background:
-      radial-gradient(ellipse 120% 80% at 0% 100%, rgba(168, 85, 247, 0.08), transparent 45%),
-      radial-gradient(ellipse 100% 70% at 100% 35%, rgba(14, 165, 233, 0.07), transparent 40%);
+    background: none;
   }
 }
 

@@ -15,10 +15,11 @@ Every task names the test written first. A task is ticked only with an `Evidence
   - Run `impeccable surface-brief write web/src/pages/index/AppShell.tsx <brief>` with THESIS, OWN-WORLD, STORY, FIRST VIEWPORT, FORM and FINISH, using the approved preview as the critique reference.
   - Verify: `impeccable surface-brief read web/src/pages/index/AppShell.tsx` prints all six blocks.
   - Evidence: `impeccable surface-brief write web/src/pages/index/AppShell.tsx brief.md` -> `web/.impeccable/surfaces/web-src-pages-index-appshell-tsx.md`; `impeccable surface-brief read … | grep -E "THESIS|OWN-WORLD|STORY|FIRST VIEWPORT|FORM|FINISH"` -> lines 27, 29, 43, 48, 58 and 60, all six blocks present.
-- [ ] 1.2 Add the Show Ignition tokens to `shared/theme/tailwind.css`, and point the shadcn variables and the `--v5-*` names at them (D1).
+- [x] 1.2 Add the Show Ignition tokens to `shared/theme/tailwind.css`, and point the shadcn variables and the `--v5-*` names at them (D1).
   - Tokens: `--si-*`, `--r-ctl`, `--r-card`, `--h-ctl`, `--h-sm`, `--sel-bg`, `--sel-line`, and the four transport mixes.
   - Test first: extend `contrastTokens.test.ts`. Primary label on accent, muted text on panel, and each status label (STOPPED, ROLLING, REC, PLAY) on its pill all compute to ≥4.5:1.
   - Verify: that test passes, and the full `npx vitest run` passes.
+  - Evidence: test first, `npx vitest run src/shared/theme/contrastTokens.test.ts` -> `Tests  11 failed | 8 passed (19)` (no `--si-*` tokens, no `[data-transport='stopped']` rule). After the `tailwind.css` token, transport and re-pointing blocks: same command -> `Tests  19 passed (19)` (primary label on accent and on the primary tint, muted on panel/panel-2/bg and every rail mix, STOPPED/ROLLING/REC/PLAY each on its pill, all ≥4.5:1 via an OKLab `color-mix` evaluator). Full `npx vitest run` -> `Test Files  133 passed (133)`, `Tests  1702 passed (1702)`.
 - [ ] 1.3 Self-host the fonts (D9).
   - Barlow latin 400 and 600 go in `web/public/static/fonts/` and are preloaded in `app/(index)/layout.page.tsx` with `crossorigin`, replacing the Inter preload.
   - Barlow 500/700, Barlow Condensed and JetBrains Mono go in `assets/fonts`.
