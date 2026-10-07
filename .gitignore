@@ -36,3 +36,6 @@ old-lifecycle/
 
 # shadcn-migration QA screenshots (local review only; probes + contrast JSON are tracked)
 openspec/changes/**/qa/**/*.png
+
+# impeccable skill downloads its platform binary on first run
+**/skills/impeccable/scripts/bin/

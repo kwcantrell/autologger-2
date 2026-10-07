@@ -1,8 +1,6 @@
 # Product
 
-## Register
-
-product
+<!-- impeccable:product-schema 1 -->
 
 ## Platform
 
@@ -10,56 +8,91 @@ web
 
 ## Users
 
-Live production operators — loggers working a session in real time, often in a studio or
-broadcast/production environment under time pressure and dim ambient light. The same people (or
-their teammates) return afterward to review what happened: transcripts, topics, exports, and now
-AI-designed dashboards. Live-first calibrates the console surfaces; the review surfaces (AI tab,
-dashboards) serve the after-the-fact analysis side of the same audience. Register is split in
-practice: the authenticated app is the primary product surface, with brand register applied
-per-task when working on marketing-facing surfaces such as the login page or a future landing page.
+Production companies: one AutoLogger install serves several studios or clients, and producers
+oversee many shows and sessions across teams. Within each team:
+
+- **Owners and admins** run the team. They create teams, invite members, assign roles, and grant
+  per-show access.
+- **Members** do the session work: they log events live against timecode, then come back to
+  review transcripts, topics, exports, and AI dashboards.
+
+The people and devices vary. Desktops, tablets, and phones are all in use, in rooms that range
+from dim studios to bright offices, and sometimes remotely. The Companion hardware module also
+connects as a client of the live session.
 
 ## Product Purpose
 
-AutoLogger is a portable session-logging backend and workspace: operators log events against
-running timecode during a live session, record audio, and generate transcripts and topics from it.
-Success looks like a session that was effortless to log while it happened and is fully legible
-afterward — every event, word, and theme findable and visualizable without re-listening to the
-recording.
+AutoLogger is a session-logging workspace. Operators log events against running timecode during
+a live session. They record or import audio and generate transcripts and topics from it. Then
+they analyze the session afterward. Success means a producer can find any event, word, or theme
+in any session they have access to, and understand it, without re-listening to the recording.
 
 ## Positioning
 
-Every session becomes a searchable, visual record — transcripts, topics, dashboards.
+- **One searchable record per session.** Events, audio, transcript, topics, and dashboards live
+  together in the session, so nothing has to be reassembled from separate tools.
+- **Agentic analysis grounded in the session's own data.** An agent reads the session's computed
+  aggregates and proposes a dashboard, and the operator then edits it directly. The agent runs
+  under a closed-world lockdown, and its markup is never rendered.
 
-## Brand Personality
+## Operating Context
 
-Precise, calm, technical. Broadcast-console confidence: dense where density serves the operator,
-exact about time and state, quiet everywhere else. The existing V5 visual system (dark glass
-panels on near-black, sky-cyan accents, Inter/Poppins) is the committed expression of this
-personality — extend it, don't reinvent it.
+- **Session workspace tabs:** Event Feed, Transcript, Topics, Assistant, Dashboards, and Export.
+- **Live logging:** the 1–9 hotkeys, transport controls, and recording status, with Companion
+  hardware driving the same live session over WebSocket.
+- **Team administration:** the `/teams` page, which covers roles, invites, and show grants.
+  Members reach a show's sessions only through a grant, and losing access closes their live
+  sockets.
+- **Sign-in:** login is always required, via Google OAuth.
 
-## Anti-references
+## Capabilities and Constraints
 
-- Consumer-cute AI chat: no bubbly gradients, sparkle iconography, or mascot energy around the AI
-  features. The AI surfaces are instruments, not companions.
-- Terminal/hacker aesthetic: no green-on-black monospace-everything or fake-CRT styling. Mono is
-  for timecode and data values, not a theme.
+- **Contract:** the HTTP/WS contract is frozen (`api-contract-freeze`). Any UI change that
+  alters routes, JSON shapes, status codes, or WebSocket messages needs its own approved change.
+- **Server-side integrations:** DeepGram, `yt-dlp`, and the Claude CLI or Agent SDK run only on
+  the server. Each returns 503 until it is configured, and the UI must gate those features
+  honestly.
+- **Roles:** `owner`, `admin`, and `member`. Each team has at most one owner, and the owner
+  can't leave without transferring ownership.
+- **Deployment:** a portable Node server, now migrating to self-hosted Supabase Postgres.
+- **Open decisions:**
+  - Device priority: which device class gets the primary layout.
+  - Multi-tenant presentation: how studios and clients are distinguished in the UI.
 
-## Design Principles
+## Brand Commitments
 
-- **The tool disappears into the task.** Live surfaces optimize for zero-hesitation logging;
-  review surfaces optimize for orientation at a glance. Nothing decorates.
-- **Exact about time and state.** Timecode, transport state, and recording status are always
-  truthful and legible; motion conveys state, never flourish.
-- **Absence is information.** When data is missing (no word timings, no speaker names), the UI
-  says so and names the reason — zeros or blanks are never presented as data.
-- **One vocabulary everywhere.** New surfaces (AI dashboards included) reuse the established
-  panel, tab, button, and token vocabulary rather than inventing parallel ones.
-- **Legibility over spectacle.** Dark-room contrast discipline: body text and data labels hit AA
-  contrast on the glass surfaces they sit on.
+- **Name:** AutoLogger.
+- **Voice:** precise, calm, technical.
+- **Visual identity: open for redesign.** The current V5 dark-glass system is the incumbent, not
+  a commitment. No palette, typography, or aesthetic is binding yet.
+
+## Evidence on Hand
+
+- **Logos:** `web/public/static/logo-autologger-app.png`,
+  `web/public/static/logo-autologger-transparent.png`, and
+  `web/src/assets/logos/logo-autologger-transparent.png`.
+- **Brand video:** `web/src/assets/video/AutoLogger_Small.webm`.
+- **API fixtures:** `fixtures/api-responses/` holds real response shapes.
+- **What's missing:** there are no testimonials, customer names, case studies, benchmarks, or
+  pricing. Future work must not invent them.
+
+## Product Principles
+
+- **Many shows, one place.** Producers move across teams, shows, and sessions without losing
+  orientation, and access boundaries are always visible.
+- **Exact about time and state.** Timecode, transport, recording status, and access state are
+  always truthful.
+- **Absence is information.** When data is missing, unconfigured, or access is denied, the UI
+  says so and names the reason. It never shows blanks or zeros as if they were data.
+- **AI as an instrument.** Agentic analysis works from the session's own data and stays editable
+  by the operator.
 
 ## Accessibility & Inclusion
 
-WCAG AA: ≥4.5:1 body-text contrast (≥3:1 large text) on the actual rendered surfaces, color never
-the only channel in charts or state indicators, `prefers-reduced-motion` alternatives for every
-animation, and keyboard-operable equivalents for direct-manipulation interactions (dashboard
-editing included).
+- **Standard:** WCAG AA, measured on the rendered surfaces. That means ≥4.5:1 contrast for body
+  text and ≥3:1 for large text.
+- **Lighting and devices:** contrast must hold in both dim and bright rooms, on every supported
+  device class.
+- **State:** color is never the only channel.
+- **Motion:** every animation has a `prefers-reduced-motion` alternative.
+- **Keyboard:** every direct-manipulation interaction has a keyboard equivalent.
