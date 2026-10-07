@@ -41,6 +41,8 @@ import { showToast } from '../utils/toast';
 // Either then refetches the session list, events, session status and show categories, as the
 // modal's save did (web-coordination-seam "The settings modal still refetches the session list").
 // A failure leaves the cache — and so the shown selection — untouched and names the failure.
+// With Settings open and holding unsaved edits, a switch first asks through the view's discard
+// guard (`confirmSwitch`); declining keeps the edits and the selection.
 
 const STATUS_LABEL: Record<ShellTransportState, string> = {
   stopped: 'STOPPED',
@@ -63,9 +65,15 @@ interface Props {
   onCloseSession: () => void;
   /** Return to the open session's console (closing Settings if it is open). */
   onReturnToSession: (sessionId: string) => void;
+  /**
+   * Asked before a switch: the open Settings view's discard guard (AppShell), so a switch never
+   * drops unsaved Settings edits silently (web-ui-system "Honest save model in Settings").
+   * `true` at once when nothing is dirty; a declined prompt leaves the selection unchanged.
+   */
+  confirmSwitch?: () => true | Promise<boolean>;
 }
 
-export function TopBar({ onCloseSession, onReturnToSession }: Props) {
+export function TopBar({ onCloseSession, onReturnToSession, confirmSwitch }: Props) {
   const { data: profile } = useProfile();
   const mutation = useProfileMutation();
   const queryClient = useQueryClient();
@@ -88,6 +96,8 @@ export function TopBar({ onCloseSession, onReturnToSession }: Props) {
   // `what` names the switch in a failure ("Couldn't switch the team: …"); `closesSession` is true for
   // a team switch only.
   async function switchTo(what: string, closesSession: boolean, body: ProfileUpdateBody) {
+    const allowed = confirmSwitch?.() ?? true;
+    if (allowed !== true && !(await allowed)) return;
     try {
       await mutation.mutateAsync(body);
     } catch (err) {

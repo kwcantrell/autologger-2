@@ -326,3 +326,48 @@ describe('TopBar: switching (task 3.2)', () => {
     expect(invalidate).not.toHaveBeenCalled();
   });
 });
+
+// web-ui-system "Honest save model in Settings": leaving unsaved Settings edits warns, and a
+// top-bar switch is a way of leaving them. AppShell passes the open view's discard guard.
+describe('TopBar: switching asks the Settings guard first', () => {
+  it('a declined show switch sends nothing and keeps the selection', async () => {
+    const confirmSwitch = vi.fn(() => Promise.resolve(false));
+    setup({ confirmSwitch });
+    openMenu(showTrigger());
+    await act(async () => {
+      fireEvent.click(await screen.findByRole('menuitemradio', { name: 'Late Edition' }));
+    });
+    expect(confirmSwitch).toHaveBeenCalledTimes(1);
+    expect(apiFetchMock).not.toHaveBeenCalled();
+    expect(within(showTrigger()).getByText('Autolog Test Show')).toBeTruthy();
+  });
+
+  it('a confirmed show switch writes it', async () => {
+    apiFetchMock.mockResolvedValue(makeProfile({ active_show_id: 'show-late' }));
+    const confirmSwitch = vi.fn(() => Promise.resolve(true));
+    setup({ confirmSwitch });
+    openMenu(showTrigger());
+    fireEvent.click(await screen.findByRole('menuitemradio', { name: 'Late Edition' }));
+    await waitFor(() => expect(apiFetchMock).toHaveBeenCalledTimes(1));
+    expect(confirmSwitch).toHaveBeenCalledTimes(1);
+  });
+
+  it('a declined team switch sends nothing and does not close the session', async () => {
+    const { onCloseSession } = setup({ confirmSwitch: () => Promise.resolve(false) });
+    openMenu(teamTrigger());
+    await act(async () => {
+      fireEvent.click(await screen.findByRole('menuitemradio', { name: /Northlight/ }));
+    });
+    expect(apiFetchMock).not.toHaveBeenCalled();
+    expect(onCloseSession).not.toHaveBeenCalled();
+    expect(within(teamTrigger()).getByText('Youtube Studio')).toBeTruthy();
+  });
+
+  it('a clean guard (`true`) switches at once', async () => {
+    apiFetchMock.mockResolvedValue(makeProfile({ active_show_id: 'show-late' }));
+    setup({ confirmSwitch: () => true });
+    openMenu(showTrigger());
+    fireEvent.click(await screen.findByRole('menuitemradio', { name: 'Late Edition' }));
+    await waitFor(() => expect(apiFetchMock).toHaveBeenCalledTimes(1));
+  });
+});

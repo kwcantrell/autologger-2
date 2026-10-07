@@ -11,7 +11,7 @@ import {
   useTeam,
   useTransferOwnership,
 } from '../../../../api/hooks/useTeams';
-import type { ProfilePayload, TeamMember, TeamRole } from '../../../../api/types';
+import type { ProfilePayload, TeamMember } from '../../../../api/types';
 import { Alert, AlertDescription } from '../../../../shared/components/ui/alert';
 import { Button } from '../../../../shared/components/ui/button';
 import {
@@ -44,8 +44,16 @@ import {
   profileStudioId,
   teamSettingsWithFps,
 } from './settingsModel';
-import { RoleLockNotice, SectionSaveBar, SettingRow, SettingsSectionHeader } from './settingsParts';
+import {
+  OrphanedNotice,
+  RoleLockNotice,
+  SectionSaveBar,
+  SettingRow,
+  SettingsSectionHeader,
+  YOU_ARE,
+} from './settingsParts';
 import { useInlineDraft, useSettingsShows } from './settingsScopes';
+import { memberLabel } from './teamRules';
 
 // --- Settings › Team details (redesign-show-ignition 7.3) ---
 //
@@ -53,7 +61,8 @@ import { useInlineDraft, useSettingsShows } from './settingsScopes';
 // save bar, then ownership and membership by role, then create-a-team for anyone
 // (team-management "Teams management page"):
 //   - owner: rename, frame rate, transfer ownership, delete team (unavailable while the team has
-//     shows, saying so); no leave;
+//     shows, saying so without telling them to remove the shows: deleting a show has no UI); no
+//     leave;
 //   - admin: rename, frame rate, leave;
 //   - member: the same rows disabled under a notice naming their role, and leave.
 // A team with no owner shows the no-owner notice (an admin keeps their controls under it; a member
@@ -69,26 +78,9 @@ interface TeamDetailsDraft {
   fps: number;
 }
 
-const YOU_ARE: Record<TeamRole, string> = {
-  owner: 'You’re the owner',
-  admin: 'You’re an admin',
-  member: 'You’re a member',
-};
-
 function errorMessage(err: unknown, fallback: string): string {
   if (err instanceof ApiError || err instanceof Error) return err.message;
   return fallback;
-}
-
-const memberLabel = (m: TeamMember) => `${m.given_name} ${m.family_name}`.trim() || m.email;
-
-function OrphanedNotice() {
-  return (
-    // A polite status, not an alarm (shadcn-port-shell D5; Alert defaults to role="alert").
-    <Alert role="status" data-testid="team-orphaned-notice">
-      This team has no owner. Contact support.
-    </Alert>
-  );
 }
 
 export function TeamDetailsSection({ onCloseSession }: SettingsSectionProps) {
@@ -365,9 +357,9 @@ function TeamDetails({
                     label="Delete team"
                     description={
                       showCount > 0
-                        ? `Only a team with no shows can be deleted, so remove ${
-                            showCount === 1 ? 'its one show' : `its ${showCount} shows`
-                          } first.`
+                        ? `${teamName} still has ${
+                            showCount === 1 ? 'a show' : `${showCount} shows`
+                          }, and a team with shows can’t be deleted.`
                         : `Permanently deletes ${teamName}.`
                     }
                   >

@@ -15,7 +15,6 @@ import {
 } from '../../../../shared/components/ui/empty';
 import { FieldGroup, FieldSeparator } from '../../../../shared/components/ui/field';
 import { Input } from '../../../../shared/components/ui/input';
-import { ToggleGroup, ToggleGroupItem } from '../../../../shared/components/ui/toggle-group';
 import { showToast } from '../../utils/toast';
 import type { SettingsSectionProps } from './SettingsView';
 import { runSaveSteps } from './SidePanel';
@@ -23,6 +22,7 @@ import {
   activeShowIdForSave,
   invalidateAfterProfileSave,
   showDraftToUpdate,
+  showInitials,
 } from './settingsModel';
 import {
   RoleLockNotice,
@@ -30,6 +30,7 @@ import {
   SettingRow,
   SettingsSectionHeader,
   ShowsNotReady,
+  SuffixToggle,
 } from './settingsParts';
 import { useInlineDraft, useSettingsShows } from './settingsScopes';
 
@@ -52,15 +53,6 @@ interface ShowDetailsDraft {
   title_suffix: 'date' | 'episode';
 }
 
-/** The show-code hint: a code is usually the name's initials. */
-function initialsOf(name: string): string {
-  return name
-    .trim()
-    .split(/\s+/)
-    .map((w) => w[0]?.toUpperCase() ?? '')
-    .join('');
-}
-
 export function ShowDetailsSection({ onGoToSection }: SettingsSectionProps) {
   const { data: profile } = useProfile();
   const mutation = useProfileMutation();
@@ -70,12 +62,15 @@ export function ShowDetailsSection({ onGoToSection }: SettingsSectionProps) {
 
   const showId = scope.activeShowId;
   const saved = showId ? scope.baseline[showId] : undefined;
+  const slice: ShowDetailsDraft | null = saved
+    ? { name: saved.name, show_code: saved.show_code, title_suffix: saved.title_suffix }
+    : null;
+  // Keyed by the saved slice too: a save of this show from its panel in Shows re-seeds this
+  // section. It cannot be dirty then (leaving it dirty for Shows went through the discard guard).
   const draft = useInlineDraft<ShowDetailsDraft>(
     'show-details',
-    saved ? `${scope.studioId}:${showId}` : null,
-    saved
-      ? { name: saved.name, show_code: saved.show_code, title_suffix: saved.title_suffix }
-      : null,
+    slice ? `${scope.studioId}:${showId}:${JSON.stringify(slice)}` : null,
+    slice,
   );
 
   const role = showAccessFrom(profile).teamRole(scope.studioId);
@@ -171,7 +166,7 @@ export function ShowDetailsSection({ onGoToSection }: SettingsSectionProps) {
   }
 
   const value = draft.value;
-  const initials = initialsOf(value.name);
+  const initials = showInitials(value.name);
   const codeHint =
     value.name.trim() && value.show_code.trim() && value.show_code.trim().toUpperCase() !== initials
       ? `Usually the show name’s initials (${initials}). Yours differs, which is fine if intended.`
@@ -226,20 +221,12 @@ export function ShowDetailsSection({ onGoToSection }: SettingsSectionProps) {
               description="How an untitled session’s name ends: the date, or an episode number."
               disabled={!canEdit}
             >
-              <ToggleGroup
-                type="single"
-                variant="outline"
-                aria-labelledby="settings-show-suffix-label"
+              <SuffixToggle
+                labelledBy="settings-show-suffix-label"
                 disabled={!canEdit}
                 value={value.title_suffix}
-                onValueChange={(v) => {
-                  // A single toggle group deselects on a second click; a suffix is always set.
-                  if (v === 'date' || v === 'episode') draft.update({ title_suffix: v });
-                }}
-              >
-                <ToggleGroupItem value="date">Date</ToggleGroupItem>
-                <ToggleGroupItem value="episode">Episode Number</ToggleGroupItem>
-              </ToggleGroup>
+                onChange={(title_suffix) => draft.update({ title_suffix })}
+              />
             </SettingRow>
           </FieldGroup>
         </CardContent>

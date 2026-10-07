@@ -9,24 +9,21 @@ import {
 } from '../../../../shared/components/ui/card';
 import { HomeSettingsModal } from '../HomeSettingsModal';
 import { AccountSection } from './AccountSection';
-import { LegacyTeamsPanel } from './LegacyTeamsPanel';
+import { MembersSection } from './MembersSection';
 import type { SettingsSectionProps } from './SettingsView';
 import { ShowDetailsSection } from './ShowDetailsSection';
+import { ShowsSection } from './ShowsSection';
 import type { SettingsSectionId } from './sections';
 import { SettingsSectionHeader } from './settingsParts';
 import { TeamDetailsSection } from './TeamDetailsSection';
 
-// --- Settings sections (redesign-show-ignition 6.1, 7.1-7.3) ---
+// --- Settings sections (redesign-show-ignition 6.1, 7.1-7.3, 8.1-8.2) ---
 //
-// Account, Show details and Team details are the real inline sections (group 7). The rest land in
-// groups 8-9 (Members, Shows: 8; Event buttons: 9); until then each says so plainly and keeps what
-// users rely on reachable:
-//   - Members embeds the retired `/teams` page body (`LegacyTeamsPanel`), so every team action
-//     that page offered is still here;
-//   - Shows and Event buttons open the previous Settings dialog (`HomeSettingsModal`, retired by
-//     task 10.1), which still edits them.
-// The legacy dialog is imported statically: it rides in the Settings view's chunk, which is the
-// one overlay split point for Settings (web-frontend-platform's five).
+// Account, Show details and Team details are the inline sections (group 7); Members and Shows list
+// their items and edit each in a side panel (group 8). Event buttons lands in group 9; until then
+// it says so plainly and opens the previous Settings dialog (`HomeSettingsModal`, retired by task
+// 10.1), which still edits it. The legacy dialog is imported statically: it rides in the Settings
+// view's chunk, which is the one overlay split point for Settings (web-frontend-platform's five).
 
 function PreviousSettingsCard({
   what,
@@ -54,27 +51,6 @@ function PreviousSettingsCard({
         <HomeSettingsModal isOpen onClose={() => setOpen(false)} onCloseSession={onCloseSession} />
       )}
     </Card>
-  );
-}
-
-function MembersSection() {
-  return (
-    <>
-      <SettingsSectionHeader
-        title="Members"
-        description="Your teams, their members and invites. The new member list replaces this in an upcoming update."
-      />
-      <LegacyTeamsPanel />
-    </>
-  );
-}
-
-function ShowsSection({ onCloseSession }: SettingsSectionProps) {
-  return (
-    <>
-      <SettingsSectionHeader title="Shows" description="The active team’s shows." />
-      <PreviousSettingsCard what="Adding and editing shows" onCloseSession={onCloseSession} />
-    </>
   );
 }
 

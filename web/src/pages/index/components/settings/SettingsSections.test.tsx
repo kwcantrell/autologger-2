@@ -5,14 +5,10 @@ import { SETTINGS_SECTION_CONTENT } from './SettingsSections';
 
 // --- Interim Settings sections (redesign-show-ignition 6.1/6.2) ---
 //
-// Until groups 8-9 build the remaining sections, nothing users rely on may disappear: Members
-// carries the retired `/teams` page body, and Shows and Event buttons open the previous Settings
-// dialog (Account, Show details and Team details have their own tests). The two embedded surfaces have their own tests (LegacyTeamsPanel.test.tsx,
-// HomeSettingsModal.test.tsx); here they are stand-ins.
+// Until group 9 builds Event buttons, nothing users rely on may disappear: it opens the previous
+// Settings dialog (the other sections have their own tests). The dialog has its own tests
+// (HomeSettingsModal.test.tsx); here it is a stand-in.
 
-vi.mock('./LegacyTeamsPanel', () => ({
-  LegacyTeamsPanel: () => <div data-testid="legacy-teams-panel" />,
-}));
 vi.mock('../HomeSettingsModal', () => ({
   HomeSettingsModal: (props: { onClose: () => void; onCloseSession: () => void }) => (
     <div role="dialog" aria-label="Previous Settings">
@@ -29,15 +25,7 @@ vi.mock('../HomeSettingsModal', () => ({
 const props = () => ({ onGoToSection: vi.fn(), onCloseSession: vi.fn() });
 
 describe('interim Settings sections', () => {
-  it('Members carries the former teams page, so team management stays reachable', () => {
-    const Members = SETTINGS_SECTION_CONTENT.members;
-    renderStrict(<Members {...props()} />);
-    expect(screen.getByRole('heading', { name: 'Members' })).not.toBeNull();
-    expect(screen.getByTestId('legacy-teams-panel')).not.toBeNull();
-  });
-
   it.each([
-    'shows',
     'event-buttons',
   ] as const)('%s says it is moving here and opens the previous Settings dialog meanwhile', (id) => {
     const p = props();

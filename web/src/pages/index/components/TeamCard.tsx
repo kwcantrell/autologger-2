@@ -28,6 +28,7 @@ import { Field, FieldLabel, FieldLegend, FieldSet } from '../../../shared/compon
 import { Input } from '../../../shared/components/ui/input';
 import { Spinner } from '../../../shared/components/ui/spinner';
 import { useConfirm } from '../../../shared/ui/ConfirmDialog';
+import { memberPermissions } from './settings/teamRules';
 
 // --- TeamCard (teams-self-serve, task 6.2; owner-bootstrap D12) ---
 //
@@ -354,15 +355,16 @@ function ManagePanel({ detail, isOwner }: { detail: TeamDetail; isOwner: boolean
         <p className={HINT}>Members</p>
         <ul className="my-[1em] list-disc pl-10">
           {detail.members.map((m) => {
-            // No control ever targets the owner; an admin removes plain members only.
-            const target = m.role !== 'owner';
+            // No control ever targets the owner; an admin removes plain members only
+            // (the shared role matrix, settings/teamRules.ts).
+            const perms = memberPermissions(isOwner ? 'owner' : 'admin', m);
             return (
               <MemberRow
                 key={m.id}
                 member={m}
-                canChangeRole={isOwner && target}
-                canTransfer={isOwner && target}
-                canRemove={target && (isOwner || m.role === 'member')}
+                canChangeRole={perms.changeRole}
+                canTransfer={isOwner && m.role !== 'owner'}
+                canRemove={perms.remove}
                 busy={busy}
                 onPromote={() => handleRoleChange(m.id, 'admin')}
                 onDemote={() => handleRoleChange(m.id, 'member')}

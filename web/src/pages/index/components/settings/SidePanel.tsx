@@ -70,6 +70,8 @@ export interface SidePanelProps<T> {
   onClose: () => void;
   title: string;
   description?: ReactNode;
+  /** Shown beside the title (a member's avatar, a show's initials). */
+  media?: ReactNode;
   /** The caller's current draft. Compared structurally (JSON) with the baseline. */
   value: T;
   /** The saved state to compare against. Omitted, the panel snapshots `value` when it opens. */
@@ -87,6 +89,7 @@ export function SidePanel<T>({
   onClose,
   title,
   description,
+  media,
   value,
   baseline,
   valid = true,
@@ -151,9 +154,12 @@ export function SidePanel<T>({
         }}
       >
         <SheetContent side="right" className="w-full gap-0 sm:max-w-[420px]">
-          <SheetHeader className="pr-12">
-            <SheetTitle>{title}</SheetTitle>
-            {description && <SheetDescription>{description}</SheetDescription>}
+          <SheetHeader className="flex-row items-center gap-3 pr-12">
+            {media}
+            <div className="flex min-w-0 flex-col gap-1">
+              <SheetTitle className="truncate">{title}</SheetTitle>
+              {description && <SheetDescription>{description}</SheetDescription>}
+            </div>
           </SheetHeader>
           <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 pb-4">
             {children}

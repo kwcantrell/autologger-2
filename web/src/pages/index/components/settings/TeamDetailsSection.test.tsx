@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { useState } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { apiFetch } from '../../../../api/client';
+import { ApiError, apiFetch } from '../../../../api/client';
 import type { ProfilePayload, TeamDetail, TeamMember, TeamRole } from '../../../../api/types';
 import { renderStrict } from '../../../../test/renderStrict';
 import { SettingsView } from './SettingsView';
@@ -218,11 +218,15 @@ describe('Team details: owner view', () => {
     );
   });
 
-  it('Deleting a team that still has shows: delete is unavailable and says the shows must go first', async () => {
+  it('Deleting a team that still has shows: delete is unavailable and says a team with shows can’t be deleted', async () => {
     renderTeamDetails('owner', { shows: 2 });
     const del = await inPanel().findByRole('button', { name: 'Delete team' });
     expect(del.hasAttribute('disabled')).toBe(true);
-    expect(panel().textContent).toContain('remove its 2 shows first');
+    expect(panel().textContent).toContain(
+      'Team A still has 2 shows, and a team with shows can’t be deleted.',
+    );
+    // Deleting shows has no UI, so the reason gives no instruction to remove them.
+    expect(panel().textContent).not.toMatch(/remove/i);
     fireEvent.click(del);
     expect(screen.queryByRole('alertdialog')).toBeNull();
     expect(calls('DELETE', 'teams/team-a')).toHaveLength(0);
@@ -375,5 +379,29 @@ describe('Team details: saving', () => {
     renderTeamDetails('owner');
     fireEvent.change(inPanel().getByLabelText('Team name'), { target: { value: '  ' } });
     expect(save().hasAttribute('disabled')).toBe(true);
+  });
+});
+
+describe('Team details: create team', () => {
+  it('surfaces the {detail} cap error inline (ported from the teams page)', async () => {
+    renderTeamDetails('member');
+    mockedApiFetch.mockImplementation(async (path: string, opts?: RequestInit) => {
+      if (path === 'teams' && opts?.method === 'POST') {
+        throw new ApiError(400, 'You already own 20 teams; the limit has been reached.');
+      }
+      if (path === 'teams/team-a') return teamDetail;
+      if (path.startsWith('shows')) return { shows: [] };
+      return profile;
+    });
+    fireEvent.change(inPanel().getByLabelText('Team id (slug)'), { target: { value: 'my-crew' } });
+    fireEvent.change(inPanel().getByLabelText('Display name'), { target: { value: 'My Crew' } });
+    fireEvent.click(inPanel().getByRole('button', { name: 'Create team' }));
+    await waitFor(() =>
+      expect(
+        inPanel()
+          .getAllByRole('alert')
+          .some((a) => a.textContent === 'You already own 20 teams; the limit has been reached.'),
+      ).toBe(true),
+    );
   });
 });

@@ -19,7 +19,8 @@ import {
   FieldTitle,
 } from '../../../../shared/components/ui/field';
 import { Spinner } from '../../../../shared/components/ui/spinner';
-import { SHOWS_STATE_COPY } from './settingsModel';
+import { ToggleGroup, ToggleGroupItem } from '../../../../shared/components/ui/toggle-group';
+import { SHOWS_STATE_COPY, SUFFIX_LABEL } from './settingsModel';
 
 // --- Shared pieces of the Settings view's sections (redesign-show-ignition D10) ---
 //
@@ -137,6 +138,23 @@ const ROLE_PHRASE: Record<TeamRole, string> = {
   member: 'a member',
 };
 
+/** "You’re the owner" etc., for a section's scope line. */
+export const YOU_ARE: Record<TeamRole, string> = {
+  owner: 'You’re the owner',
+  admin: 'You’re an admin',
+  member: 'You’re a member',
+};
+
+/** A team with no owner (team-management "Orphaned team is visible as such"). */
+export function OrphanedNotice() {
+  return (
+    // A polite status, not an alarm (shadcn-port-shell D5; Alert defaults to role="alert").
+    <Alert role="status" data-testid="team-orphaned-notice">
+      This team has no owner. Contact support.
+    </Alert>
+  );
+}
+
 /** Disabled controls are explained, not hidden (team-management "Teams management page"). */
 export function RoleLockNotice({
   role,
@@ -209,5 +227,38 @@ export function ShowsNotReady({
         <EmptyDescription>{SHOWS_STATE_COPY.loading}</EmptyDescription>
       </EmptyHeader>
     </Empty>
+  );
+}
+
+/**
+ * The show's title Suffix (session-title-suffix): Date or Episode Number, always one of the two.
+ * Shared by Show details and the show panel.
+ */
+export function SuffixToggle({
+  labelledBy,
+  value,
+  disabled,
+  onChange,
+}: {
+  labelledBy: string;
+  value: 'date' | 'episode';
+  disabled?: boolean;
+  onChange: (value: 'date' | 'episode') => void;
+}) {
+  return (
+    <ToggleGroup
+      type="single"
+      variant="outline"
+      aria-labelledby={labelledBy}
+      disabled={disabled}
+      value={value}
+      onValueChange={(v) => {
+        // A single toggle group deselects on a second click; a suffix is always set.
+        if (v === 'date' || v === 'episode') onChange(v);
+      }}
+    >
+      <ToggleGroupItem value="date">{SUFFIX_LABEL.date}</ToggleGroupItem>
+      <ToggleGroupItem value="episode">{SUFFIX_LABEL.episode}</ToggleGroupItem>
+    </ToggleGroup>
   );
 }

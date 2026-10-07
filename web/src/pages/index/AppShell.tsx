@@ -290,6 +290,14 @@ export function AppShell() {
     [activeSessionId],
   );
 
+  // A top-bar team or show switch with Settings open asks the view's discard guard first, so it
+  // never drops unsaved edits silently (web-ui-system "Honest save model in Settings"). The view
+  // stays open on the new selection; `true` at once when it is closed or clean.
+  const confirmSettingsDiscard = useCallback(
+    (): true | Promise<boolean> => settingsCloseGuard.current?.() ?? true,
+    [],
+  );
+
   // Zero-membership onboarding (teams-self-serve, task 6.3; design D8): a
   // render switch INSIDE the authed shell, keyed on `logged_in && teams
   // .length === 0` — never on `studios` emptiness alone, so this can't
@@ -331,7 +339,11 @@ export function AppShell() {
         data-transport={transportState}
       >
         <SidebarShortcut />
-        <TopBar onCloseSession={handleCloseSession} onReturnToSession={handleReturnToSession} />
+        <TopBar
+          onCloseSession={handleCloseSession}
+          onReturnToSession={handleReturnToSession}
+          confirmSwitch={confirmSettingsDiscard}
+        />
         {/* v6-app string retained; desktop flex row filling the height under the top bar, max-md block. */}
         <div
           className="v6-app flex flex-row items-stretch flex-1 w-full min-w-0 min-h-0 overflow-hidden max-md:block max-md:overflow-visible"

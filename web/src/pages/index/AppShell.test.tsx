@@ -1048,6 +1048,41 @@ describe('AppShell top bar', () => {
     expect(memory.history).toEqual(['/', '/sessions/sess-1']);
   });
 
+  it('a team switch with unsaved Settings edits asks first: declining keeps the edits and the team, confirming switches', async () => {
+    let answer = false;
+    const guard = vi.fn(() => Promise.resolve(answer));
+    settingsChunk.guard = guard;
+    const { memory } = renderShell('/');
+    fireEvent.click(document.getElementById('v6-btn-settings') as HTMLElement);
+    await screen.findByRole('dialog', { name: 'Settings' });
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: /switch team/i }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    await act(async () => {
+      fireEvent.click(await screen.findByRole('menuitemradio', { name: /team b/i }));
+    });
+    expect(guard).toHaveBeenCalledTimes(1);
+    expect(profileWrite).not.toHaveBeenCalled();
+    expect(screen.getByRole('dialog', { name: 'Settings' })).not.toBeNull();
+
+    answer = true;
+    await chooseTeamB();
+    expect(guard).toHaveBeenCalledTimes(2);
+    // The view stays open on the new team; only the edits went.
+    expect(screen.getByRole('dialog', { name: 'Settings' })).not.toBeNull();
+    expect(memory.history).toEqual(['/']);
+  });
+
+  it('a team switch with Settings closed consults no guard', async () => {
+    const guard = vi.fn(() => Promise.resolve(false));
+    settingsChunk.guard = guard;
+    renderShell('/');
+    await chooseTeamB();
+    expect(guard).not.toHaveBeenCalled();
+  });
+
   it('the status returns to its session from another route', () => {
     const { memory } = renderShell('/teams');
     act(() => {

@@ -28,6 +28,21 @@ export interface ShowDraft {
   event_palette_custom: string[];
 }
 
+/** The Suffix choices' labels (session-title-suffix: Date / Episode Number). */
+export const SUFFIX_LABEL: Record<'date' | 'episode', string> = {
+  date: 'Date',
+  episode: 'Episode Number',
+};
+
+/** A show name's initials: the usual show code, and a show's avatar. */
+export function showInitials(name: string): string {
+  return name
+    .trim()
+    .split(/\s+/)
+    .map((w) => w[0]?.toUpperCase() ?? '')
+    .join('');
+}
+
 export function showToShowDraft(show: Show): ShowDraft {
   const palette = normalizePalette9(show.event_palette ?? []);
   const custom = normalizePalette9(
