@@ -15,10 +15,10 @@ import { AUTOLOGGER_LOADING_VIDEO_SRC } from '../../../shared/utils/loadingVideo
 // dependency is the loading-video src constant (already in that graph).
 
 // Height mirrors `#v3-session-active` (SessionWorkspace's `v3-session-active-root`:
-// `min-h-[calc(100vh-2.2rem)] max-md:min-h-0`) so swapping any of SessionRoute's states out
+// `min-h-[calc(100dvh-var(--topbar-h)-2.2rem)] max-md:min-h-0`) so swapping any of SessionRoute's states out
 // for the workspace — or back — shifts nothing (measured CLS 0.122 before the mirror).
 export const ROUTE_STATE_PAGE =
-  'relative z-[1] flex w-full items-center justify-center px-5 py-16 min-h-[calc(100vh-2.2rem)] max-md:min-h-0';
+  'relative z-[1] flex w-full items-center justify-center px-5 py-16 min-h-[calc(100dvh-var(--topbar-h)-2.2rem)] max-md:min-h-0';
 
 interface RouteLoadingStateProps {
   /** What is being waited on, announced to screen readers. */

@@ -499,7 +499,7 @@ export function SessionWorkspace({ sessionId, ytImportPending, onOpenMobileNav }
             reflows to plain block flow (see the column-reflow group below). */}
           <div
             id="v3-session-active"
-            className="v3-session-active-root relative flex flex-1 flex-col [overflow-x:clip] overflow-y-visible min-h-[calc(100vh-2.2rem)] max-md:block max-md:min-h-0 max-md:h-auto"
+            className="v3-session-active-root relative flex flex-1 flex-col [overflow-x:clip] overflow-y-visible min-h-[calc(100dvh-var(--topbar-h)-2.2rem)] max-md:block max-md:min-h-0 max-md:h-auto"
           >
             {/* #v3-session-grid.v4-session-workspace — min-h-0 !important quintet
               member; desktop flex column, max-md plain block. The empty-id

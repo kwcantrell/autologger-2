@@ -1,18 +1,18 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { Menu } from 'lucide-react';
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 import { useRoute } from 'wouter';
 import { useProfile } from '../../api/hooks/useProfile';
 import { useYoutubeImport } from '../../api/hooks/useSessions';
 import { Toast, toast } from '../../shared/components/Toast';
-import { Button } from '../../shared/components/ui/button';
 import { useIsMobile } from '../../shared/ui/breakpoints';
 import { freezeAutologgerLoadingVideos } from '../../shared/utils/loadingVideo';
 import { initPerfDebugUI } from '../../shared/utils/perfDebug';
 import { LazyChunk } from './components/ChunkLoadBoundary';
 import { OnboardingPanel } from './components/OnboardingPanel';
 import { RouteLoadingState } from './components/RouteLoadingState';
+import { toggleDesktopRailCollapsed } from './components/railCollapse';
 import { SessionRoute } from './components/SessionRoute';
+import { TopBar } from './components/TopBar';
 import { V6Rail } from './components/V6Rail';
 import { getTransportStatus, subscribeTransportStatus } from './coordination/transportStatus';
 import { navigate } from './navigation';
@@ -220,6 +220,27 @@ export function AppShell() {
     setShowSettings(false);
   }, []);
 
+  // The top bar's status control (redesign-show-ignition 3.3; web-ui-system "Status returns to
+  // the open session"): close Settings if it is open — the legacy modal until group 6's
+  // SettingsView replaces it — and show that session's console, navigating only when the route
+  // is not already on it.
+  const handleReturnToSession = useCallback(
+    (sid: string) => {
+      setShowSettings(false);
+      if (sid !== activeSessionId) navigate(`/sessions/${encodeURIComponent(sid)}`);
+    },
+    [activeSessionId],
+  );
+
+  // The top bar's sidebar control, interim until group 4 (D8, D10): with no `SidebarProvider` in
+  // the shell yet, it drives today's rail — the off-canvas drawer on phones, the body-class
+  // collapse on desktop (the same toggle as the rail's own menu button). Group 4 wraps the shell
+  // in `SidebarProvider`; TopBar then renders `SidebarTrigger` and this callback is removed.
+  const handleToggleSidebar = useCallback(() => {
+    if (isMobile) setRailOpen((open) => !open);
+    else toggleDesktopRailCollapsed();
+  }, [isMobile]);
+
   // Stable identity for the mobile-rail-open trigger threaded down to
   // WorkspaceStatic (settings-modal-mount-cost, design D0). An inline arrow
   // here gives WorkspaceStatic's memo a fresh prop reference on every AppShell
@@ -272,13 +293,20 @@ export function AppShell() {
       <Toast />
       {/* shell/shell-v3 strings retained (chrome.css .shell stays legacy until Task 11);
           the AppShell overrides that widen it convert to utilities here (win by layer). */}
+      {/* Desktop: a viewport-high column — the top bar (redesign-show-ignition D5), full width,
+          above the row that holds the rail and main. Phones: plain block flow (the page scrolls). */}
       <div
-        className="shell shell-v3 max-w-none w-full mx-0 px-0 pb-0"
+        className="shell shell-v3 max-w-none w-full mx-0 px-0 pb-0 flex flex-col flex-1 min-h-0 h-[100dvh] max-md:block max-md:h-auto"
         data-transport={transportState}
       >
-        {/* v6-app string retained; desktop flex row filling viewport, max-md block. */}
+        <TopBar
+          onToggleSidebar={handleToggleSidebar}
+          onCloseSession={handleCloseSession}
+          onReturnToSession={handleReturnToSession}
+        />
+        {/* v6-app string retained; desktop flex row filling the height under the top bar, max-md block. */}
         <div
-          className="v6-app flex flex-row items-stretch flex-1 w-full min-w-0 overflow-hidden min-h-[100dvh] max-md:block max-md:overflow-visible max-md:min-h-0"
+          className="v6-app flex flex-row items-stretch flex-1 w-full min-w-0 min-h-0 overflow-hidden max-md:block max-md:overflow-visible"
           id="v6-app"
         >
           {isMobile && railOpen && (
@@ -332,20 +360,8 @@ export function AppShell() {
                   : 'shrink-0 w-full box-border mb-6'
               }
             >
-              {/* Hamburger: home/teams only on mobile. Active session mounts the menu
-                  beside session controls in MaximizeLogStrip. md:hidden + inline-flex
-                  (not hidden+max-md:inline-flex) avoids utility-order hiding the button. */}
-              {!activeSessionId && (
-                <Button
-                  variant="outline"
-                  size="icon-lg"
-                  className="md:hidden mt-[0.6rem] ml-3 size-11 rounded-v5-sm"
-                  aria-label="Open navigation"
-                  onClick={() => setRailOpen(true)}
-                >
-                  <Menu className="size-5" strokeWidth={1.8} aria-hidden="true" />
-                </Button>
-              )}
+              {/* The no-session mobile hamburger that sat here is replaced by the top bar's
+                  sidebar control (redesign-show-ignition 3.1). */}
               {/* Void top-bar strip: the .v6WorkspaceTopBarVoid !important zero-height
                   war vs .v4-top-bar min-height is resolved here by writing the winning
                   values directly — both rules were AppShell's own and now live as

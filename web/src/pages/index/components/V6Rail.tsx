@@ -8,6 +8,7 @@ import { APP_VERSION } from '../../../shared/appVersion';
 import { Button } from '../../../shared/components/ui/button';
 import { navigate } from '../navigation';
 import { ArchivedSessionsList, RecentSessionsList } from './RecentSessionsList';
+import { isDesktopRailCollapsed, toggleDesktopRailCollapsed } from './railCollapse';
 
 // --- converted class strings (were V6Rail.module.css) ---
 // The desktop collapse mechanism is DRIVEN by the body class `v6-app--rail-collapsed`
@@ -19,9 +20,11 @@ import { ArchivedSessionsList, RecentSessionsList } from './RecentSessionsList';
 // justify-content flex-start→center. So the collapse rules are ALIVE and convert as
 // [.v6-app--rail-collapsed_&]: ancestor variants (NOT deleted). The mobile drawer
 // (≤767px) is `max-md:`. The 16 --v6-rail-* geometry vars live in tailwind.css.
+// Desktop height: the rail stretches to its row, which sits under the full-width top bar
+// (redesign-show-ignition 3.1), instead of claiming the whole viewport height.
 
 const RAIL =
-  'relative z-[4] flex h-screen h-[100dvh] max-h-screen max-h-[100dvh] w-(--v6-rail-w-expanded) flex-[0_0_auto] flex-shrink-0 flex-col items-stretch gap-0 self-start overflow-hidden box-border rounded-none border-r border-v5-border-strong bg-[linear-gradient(180deg,rgba(19,27,48,24%),rgba(8,14,28,9%))] p-(--v6-rail-pad) shadow-[inset_-1px_0_0_rgba(255,255,255,0.04)] [transition:width_var(--v6-rail-dur)_var(--v6-rail-ease),padding_var(--v6-rail-dur)_var(--v6-rail-ease),border-color_0.2s_ease] [.v6-app--rail-collapsed_&]:box-border [.v6-app--rail-collapsed_&]:w-(--v6-rail-w-collapsed) [.v6-app--rail-collapsed_&]:px-(--v6-rail-pad-collapsed-x) [.v6-app--rail-collapsed_&]:py-(--v6-rail-pad-collapsed-y) [&>*:not(.v6-rail-glow)]:relative [&>*:not(.v6-rail-glow)]:z-[1] max-md:fixed max-md:top-0 max-md:left-0 max-md:h-screen max-md:h-[100dvh] max-md:max-h-none max-md:w-[min(82vw,20rem)] max-md:z-(--z-rail-drawer) max-md:translate-x-[-100%] max-md:overflow-y-auto max-md:[transition:transform_0.28s_var(--v6-rail-ease)] max-md:[.v6-app--rail-collapsed_&]:w-[min(82vw,20rem)] max-md:[.v6-app--rail-collapsed_&]:p-(--v6-rail-pad)';
+  'relative z-[4] flex w-(--v6-rail-w-expanded) flex-[0_0_auto] flex-shrink-0 flex-col items-stretch gap-0 self-stretch overflow-hidden box-border rounded-none border-r border-v5-border-strong bg-[linear-gradient(180deg,rgba(19,27,48,24%),rgba(8,14,28,9%))] p-(--v6-rail-pad) shadow-[inset_-1px_0_0_rgba(255,255,255,0.04)] [transition:width_var(--v6-rail-dur)_var(--v6-rail-ease),padding_var(--v6-rail-dur)_var(--v6-rail-ease),border-color_0.2s_ease] [.v6-app--rail-collapsed_&]:box-border [.v6-app--rail-collapsed_&]:w-(--v6-rail-w-collapsed) [.v6-app--rail-collapsed_&]:px-(--v6-rail-pad-collapsed-x) [.v6-app--rail-collapsed_&]:py-(--v6-rail-pad-collapsed-y) [&>*:not(.v6-rail-glow)]:relative [&>*:not(.v6-rail-glow)]:z-[1] max-md:fixed max-md:top-0 max-md:left-0 max-md:h-screen max-md:h-[100dvh] max-md:max-h-none max-md:w-[min(82vw,20rem)] max-md:z-(--z-rail-drawer) max-md:translate-x-[-100%] max-md:overflow-y-auto max-md:[transition:transform_0.28s_var(--v6-rail-ease)] max-md:[.v6-app--rail-collapsed_&]:w-[min(82vw,20rem)] max-md:[.v6-app--rail-collapsed_&]:p-(--v6-rail-pad)';
 
 // Mobile-open modifier (drawer slid in). Only meaningful under max-md:. The `!`
 // on translate-x guarantees the open state beats the base max-md:translate-x-[-100%]
@@ -164,14 +167,7 @@ export function V6Rail({
       onMobileClose?.();
       return;
     }
-    document.body.classList.toggle('v6-app--rail-collapsed');
-    // aria-expanded lives on the toggle button (the element with the handler),
-    // not the aside — assistive tech reads the announced state off the control.
-    const toggle = document.getElementById('v6-rail-toggle');
-    const main = document.getElementById('v3-main');
-    const isNowCollapsed = document.body.classList.contains('v6-app--rail-collapsed');
-    if (toggle) toggle.setAttribute('aria-expanded', String(!isNowCollapsed));
-    if (main) main.classList.toggle('v6-workspace--rail-collapsed', isNowCollapsed);
+    toggleDesktopRailCollapsed();
   };
 
   const handleSearchBoxClick = () => {
@@ -180,7 +176,7 @@ export function V6Rail({
     // pointer (this handler and the box's own onClick) or keyboard (the real
     // button rendered inside the box, below) — the spec scenario requires
     // both paths to expand + focus identically.
-    if (!isMobile && document.body.classList.contains('v6-app--rail-collapsed')) {
+    if (!isMobile && isDesktopRailCollapsed()) {
       handleRailToggle();
     }
     searchInputRef.current?.focus({ preventScroll: true });

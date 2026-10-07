@@ -27,6 +27,8 @@ import {
 
 vi.mock('../../api/hooks/useProfile', () => ({
   useProfile: vi.fn(() => ({ data: undefined })),
+  // AppShell's top bar (redesign-show-ignition 3.1) holds the profile write; unused here.
+  useProfileMutation: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
 }));
 
 vi.mock('../../api/hooks/useSessions', () => ({

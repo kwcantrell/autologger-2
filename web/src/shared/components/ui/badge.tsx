@@ -16,6 +16,11 @@ const badgeVariants = cva(
           'border-v5-border-strong text-v5-muted [a&]:hover:bg-accent [a&]:hover:text-accent-foreground',
         ghost: '[a&]:hover:bg-accent [a&]:hover:text-accent-foreground',
         link: 'text-primary underline-offset-4 [a&]:hover:underline',
+        // The transport status pill (redesign-show-ignition D10): STOPPED / ROLLING / REC / PLAY,
+        // coloured from the shell's `data-transport` variables (`--tx-pill-*`, `--tx-glow`), so
+        // it follows the same state as the tints. Every fg/bg pair clears AA (contrastTokens).
+        transport:
+          'border-(--tx-pill-line) bg-(--tx-pill-bg) text-(--tx-pill-fg) shadow-[0_0_18px_-4px_var(--tx-glow)] tracking-[0.14em]',
       },
     },
     defaultVariants: {

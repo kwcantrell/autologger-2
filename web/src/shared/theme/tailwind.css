@@ -410,6 +410,8 @@
   --r-card: 12px;
   --h-ctl: 36px;
   --h-sm: 30px;
+  /* The shell's top bar (redesign-show-ignition D5): full width above the rail and main. */
+  --topbar-h: 52px;
 
   /* The one selected state: an accent tint with a 1px inset accent line (web-ui-system
    * "Single V5 component vocabulary"). Apply as `background: var(--sel-bg);

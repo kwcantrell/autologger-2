@@ -76,6 +76,12 @@ function useSidebar() {
   return context;
 }
 
+/** The sidebar context, or `null` outside a `SidebarProvider` (local addition: lets the top bar
+ * render `SidebarTrigger` only once the shell provides a sidebar — redesign-show-ignition 3.1). */
+function useOptionalSidebar() {
+  return React.useContext(SidebarContext);
+}
+
 function SidebarProvider({
   defaultOpen = true,
   open: openProp,
@@ -719,5 +725,6 @@ export {
   SidebarRail,
   SidebarSeparator,
   SidebarTrigger,
+  useOptionalSidebar,
   useSidebar,
 };

@@ -28,7 +28,12 @@ import { markOriginated, resetOriginationForTesting } from './transportOriginati
 
 vi.mock('../../api/hooks/useProfile', () => ({
   useProfile: vi.fn(),
+  // The top bar's switch write (redesign-show-ignition 3.2); its body and refetches are
+  // TopBar.test.tsx's concern, this file only needs it to resolve.
+  useProfileMutation: () => ({ mutateAsync: profileWrite, isPending: false }),
 }));
+
+const profileWrite = vi.hoisted(() => vi.fn());
 
 vi.mock('../../api/hooks/useSessions', () => ({
   useYoutubeImport: vi.fn(),
@@ -201,6 +206,52 @@ vi.mock('./components/YouTubeImportErrorModal', () => ({
 }));
 
 const mockedUseProfile = vi.mocked(useProfile);
+
+// A signed-in profile with two teams, for the top-bar tests (the default `undefined` profile is
+// the loading window most tests here want).
+const twoTeamProfile = {
+  active_studio_id: 'team-a',
+  active_show_id: 'show-a',
+  active_studio: { id: 'team-a', name: 'Team A', categories: [] },
+  studios: [
+    { id: 'team-a', name: 'Team A' },
+    { id: 'team-b', name: 'Team B' },
+  ],
+  studio_settings: {},
+  shows: [
+    {
+      id: 'show-a',
+      studio_id: 'team-a',
+      name: 'Show A',
+      show_code: 'A',
+      title_suffix: 'date',
+      can_access: true,
+    },
+    {
+      id: 'show-b',
+      studio_id: 'team-b',
+      name: 'Show B',
+      show_code: 'B',
+      title_suffix: 'date',
+      can_access: true,
+    },
+  ],
+  auth: {
+    logged_in: true,
+    oauth_configured: true,
+    user: {
+      id: 'u1',
+      email: 'u1@example.com',
+      given_name: 'U',
+      family_name: 'One',
+      picture_url: null,
+      teams: [
+        { id: 'team-a', name: 'Team A', role: 'owner' },
+        { id: 'team-b', name: 'Team B', role: 'member' },
+      ],
+    },
+  },
+};
 const mockedUseYoutubeImport = vi.mocked(useYoutubeImport);
 
 function renderShell(initialPath = '/') {
@@ -221,6 +272,7 @@ beforeEach(() => {
   settingsChunk.fail = false;
   settingsChunk.importFails = false;
   mockedUseProfile.mockReturnValue({ data: undefined } as unknown as ReturnType<typeof useProfile>);
+  profileWrite.mockResolvedValue(undefined);
   mockedUseYoutubeImport.mockReturnValue({
     mutateAsync: vi.fn().mockResolvedValue(undefined),
   } as unknown as ReturnType<typeof useYoutubeImport>);
@@ -772,5 +824,86 @@ describe('AppShell transport tint (data-transport)', () => {
       clearTransportStatus(owner);
     });
     expect(appRoot().getAttribute('data-transport')).toBe('stopped');
+  });
+});
+
+// --- Top bar (redesign-show-ignition 3.1-3.3; web-ui-system "Top bar names the active team, show
+// and transport state"; web-session-routing "Studio-switch close path still works") ---
+//
+// The real TopBar, mounted by AppShell: a team switch goes through AppShell's close-session path,
+// and the status control returns to the open session, closing Settings.
+describe('AppShell top bar', () => {
+  beforeEach(() => {
+    mockedUseProfile.mockReturnValue({
+      data: twoTeamProfile,
+    } as unknown as ReturnType<typeof useProfile>);
+  });
+
+  async function chooseTeamB() {
+    fireEvent.pointerDown(screen.getByRole('button', { name: /switch team/i }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    fireEvent.click(await screen.findByRole('menuitemradio', { name: /team b/i }));
+    await waitFor(() => expect(profileWrite).toHaveBeenCalledWith({ active_studio_id: 'team-b' }));
+  }
+
+  it('spans the shell above the rail and the main column, inside the transport root', () => {
+    renderShell('/');
+    // By slot, not role: the retained void `#v4-app-top-bar` <header> inside <main> is also
+    // reported as a banner by jsdom (browsers scope a header inside <main> out of the role).
+    const bar = document.querySelector("[data-slot='topbar']") as HTMLElement;
+    expect(bar).not.toBeNull();
+    expect(bar.tagName).toBe('HEADER');
+    const root = document.querySelector('[data-transport]') as HTMLElement;
+    expect(root.contains(bar)).toBe(true);
+    const rail = screen.getByTestId('rail');
+    // Not inside the rail's row: the bar precedes the row that holds rail and main.
+    expect(bar.contains(rail)).toBe(false);
+    expect(bar.compareDocumentPosition(rail) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(document.getElementById('v6-app')?.contains(bar)).toBe(false);
+  });
+
+  it('switching team on /sessions/:id follows the close-session path to /', async () => {
+    const stop = vi.fn();
+    register('stopTransportIfNeeded', stop);
+    const { memory } = renderShell('/sessions/sess-1');
+    markOriginated('sess-1');
+
+    await chooseTeamB();
+
+    await waitFor(() => expect(memory.history).toEqual(['/sessions/sess-1', '/']));
+    expect(workspaceSessionId()).toBe('');
+    expect(stop).toHaveBeenCalledTimes(1);
+  });
+
+  it('switching team on /teams does not navigate', async () => {
+    const { memory } = renderShell('/teams');
+    await chooseTeamB();
+    expect(memory.history).toEqual(['/teams']);
+  });
+
+  it('with Settings open over a recording session, the status closes Settings and shows the console', async () => {
+    const { memory } = renderShell('/sessions/sess-1');
+    act(() => {
+      publishTransportStatus({}, { state: 'recording', sessionId: 'sess-1', title: 'Ep 1' });
+    });
+    fireEvent.click(document.getElementById('v6-btn-settings') as HTMLElement);
+    expect(await screen.findByRole('dialog', { name: 'Settings' })).not.toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: /REC, Ep 1\. Return to session/ }));
+
+    expect(screen.queryByRole('dialog', { name: 'Settings' })).toBeNull();
+    expect(workspaceSessionId()).toBe('sess-1');
+    expect(memory.history).toEqual(['/sessions/sess-1']);
+  });
+
+  it('the status returns to its session from another route', () => {
+    const { memory } = renderShell('/teams');
+    act(() => {
+      publishTransportStatus({}, { state: 'rolling', sessionId: 'sess-9', title: 'Ep 9' });
+    });
+    fireEvent.click(screen.getByRole('button', { name: /return to session/i }));
+    expect(memory.history).toEqual(['/teams', '/sessions/sess-9']);
   });
 });

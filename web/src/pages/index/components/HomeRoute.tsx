@@ -26,7 +26,7 @@ import { navigate } from '../navigation';
 // wrong for an archived-only user, who has already created sessions.
 
 const HOME_ROUTE =
-  'relative z-[1] flex min-h-[calc(100vh-4rem)] w-full flex-col items-center justify-center px-6 py-16 text-center';
+  'relative z-[1] flex min-h-[calc(100dvh-var(--topbar-h)-4rem)] w-full flex-col items-center justify-center px-6 py-16 text-center';
 
 const RESUME_CARD =
   'group glass-panel box-border flex w-full max-w-[24rem] cursor-pointer flex-col items-stretch gap-[0.35rem] rounded-v5-lg border border-v5-border px-6 py-5 text-left [transition:border-color_0.15s_ease,background_0.15s_ease] hover-always:border-[color-mix(in_srgb,var(--v5-primary)_35%,var(--v5-border))] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[rgba(56,189,248,0.55)]';
