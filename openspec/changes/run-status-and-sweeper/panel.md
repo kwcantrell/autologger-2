@@ -29,3 +29,17 @@ Delta: owner decision 5 (approved users, design D9). Reviewers: assumption teste
 Delta: design D7 category 2 lets test process environments supply the variables boot validates (`AI_PROVIDER`, later `RUN_FEATURE_EMAILS`); found in task 2.1 by `server/src/node/config.test.ts` "ruling E6". Reviewers: assumption tester, failure and abuse, scope and simplicity · Date: 2026-10-07
 
 No findings.
+
+## Consistency read 2026-10-07
+Edits since approval (`6cbb09d3`): design.md (D7 category 2 lets test process environments supply the variables boot validates, `AI_PROVIDER` and later `RUN_FEATURE_EMAILS`; owner-approved and re-panelled above), tasks.md (1.1-8.4 ticked with Evidence; 1.1 lists the D7 category 1-3 tests), panel.md (re-panel section). Implementation checked against the artifacts: `git diff supabase-migration...HEAD`.
+Scope change: no
+
+No findings.
+
+Minor observations (no action needed for archive):
+Formatter-only edits touch existing tests outside the D7 categories, with no assertion changed: `catalogSystem.repo.test.ts` (two `it` bodies re-wrapped and the unrelated `events.ts` ALLOWLIST `why` string's quote style), `startupPurge.test.ts:57-59` (one assertion re-wrapped) and the import order in `sessions.youtubeImport.int.test.ts`.
+The YouTube "409 at-capacity when the GLOBAL ceiling is reached" case was rewritten as the cross-session "imports on three sessions are all admitted" case (task 3.2's test) rather than deleted or made same-session as D7 category 1 words it; the other route ceiling cases were deleted and new cases added.
+D6 says a failed tick warns once; `sweepLeasesOnce` (`server/src/startupPurge.ts`) warns separately for a failed run-row delete and a failed listing, so a tick can warn twice. It is the more robust reading, and `startupPurge.test.ts` pins it ("a failing run-row delete warns, and the tick still sweeps the recording rows").
+The proposal's code list names `server/src/bootOrder.ts`, which the branch leaves unchanged (nothing there needed to change).
+The api-contract-freeze scenarios "Unset list means the bootstrap owner" and "Granting someone keeps the owner approved" are tested at unit level (`server/src/env.test.ts` `runFeatureEmails`/`runFeatureAllowed`), not by a route post. The all-blank case has a route test (`ai.int.test.ts` "an all-blank list admits the bootstrap owner alone").
+A same-holder re-claim of a lapsed run lease keeps `started_at_ms` (the D4 CASE compares holders only). This matches "kept on renewal by the same holder", and run holder ids are unique per run, so a new run always resets it.
