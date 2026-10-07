@@ -11,6 +11,8 @@ import { __resetAiMcpListenerForTests } from '@autologger/ai-runtime/aiMcpServer
 import type { generateTopicsTurn } from '@autologger/ai-runtime/topicGenerate';
 import * as topicGenerateModule from '@autologger/ai-runtime/topicGenerate';
 import type { Clock } from '@autologger/ports';
+import { SessionHubView } from '@autologger/session-core';
+import { LeaseStore } from '@autologger/session-core/leaseStore';
 import { TRANSCRIPTION_FIXTURES_DIR, transcriptGenerationLock } from '@autologger/transcription';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Bindings } from '../appEnv';
@@ -1456,5 +1458,180 @@ describe('transcript generation lock status', () => {
       session_title: 'Member-Visible Title',
       started_at: new Date(startedAtMs).toISOString(),
     });
+  });
+});
+
+// ── session-run-leases D4: generation also holds the session's `transcript-generation` run lease ─
+// The process lock is taken first (unchanged), then the lease, inside the try whose finally frees
+// the lock. A live lease of another process (a second holder id) refuses with the generic in-flight
+// detail, because the lock has no holder to name; the lease is released after the replace commits,
+// then the lock.
+
+describe('the transcript-generation run lease (session-run-leases D4)', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    transcriptGenerationLock.reset();
+  });
+
+  const GENERIC_IN_FLIGHT_DETAIL =
+    'A transcript generation run is already in progress on this deployment; try again once it completes.';
+
+  function stubDeepgram() {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify(deepgramResponse([{ word: 'hi', start: 0.5, end: 0.9, speaker: 0 }])),
+          { status: 200 },
+        ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    return fetchMock;
+  }
+
+  async function sessionWithAudio(): Promise<string> {
+    const s = (await seededSession()).sessionId;
+    await logRecordingStarted(s, 1);
+    await uploadSegment(s, SEG1, { recordingOrdinal: 1 });
+    return s;
+  }
+
+  it('another process holding the lease: 409 with the generic detail, no provider call, the lock free afterwards', async () => {
+    const s = await sessionWithAudio();
+    const fetchMock = stubDeepgram();
+    const other = await holdAsAnotherProcess(s, 'transcript-generation');
+    const res = await generate(s);
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as { detail: string }).detail).toBe(GENERIC_IN_FLIGHT_DETAIL);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(transcriptGenerationLock.getLock()).toBeNull();
+    expect(await runLeaseRows(s)).toEqual([
+      { kind: 'transcript-generation', holder_client_id: other },
+    ]);
+  });
+
+  it('in-process busy keeps the holder detail and claims no lease', async () => {
+    const s = await sessionWithAudio();
+    const fetchMock = stubDeepgram();
+    expect(transcriptGenerationLock.tryAcquire(s, 1_700_000_000_000)).toBe(true);
+    const obs = observeRunLeases();
+    try {
+      const res = await generate(s);
+      expect(res.status).toBe(409);
+      expect(((await res.json()) as { detail: string }).detail).toContain('Test Session');
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(obs.claims('transcript-generation')).toEqual([]);
+    } finally {
+      obs.restore();
+    }
+  });
+
+  it('after success the lease is released once the replace committed, before the lock, and is gone', async () => {
+    const s = await sessionWithAudio();
+    stubDeepgram();
+    const steps: string[] = [];
+    const replace = SessionHubView.prototype.replaceTranscriptWordsRemapped;
+    const replaceSpy = vi
+      .spyOn(SessionHubView.prototype, 'replaceTranscriptWordsRemapped')
+      .mockImplementation(async function (this: SessionHubView, remap) {
+        const words = await replace.call(this, remap);
+        steps.push('replace committed');
+        return words;
+      });
+    const releaseRun = LeaseStore.prototype.releaseRunLease;
+    const releaseSpy = vi
+      .spyOn(LeaseStore.prototype, 'releaseRunLease')
+      .mockImplementation(async function (this: LeaseStore, kind, holderId) {
+        steps.push(
+          `lease release (lock ${transcriptGenerationLock.getLock() === null ? 'free' : 'held'})`,
+        );
+        return releaseRun.call(this, kind, holderId);
+      });
+    try {
+      const res = await generate(s);
+      expect(res.status).toBe(200);
+      await res.json();
+      expect(steps).toEqual(['replace committed', 'lease release (lock held)']);
+      expect(await runLeaseRows(s)).toEqual([]);
+      expect(transcriptGenerationLock.getLock()).toBeNull();
+    } finally {
+      replaceSpy.mockRestore();
+      releaseSpy.mockRestore();
+    }
+  });
+
+  it('the lease is gone after an error (no audio)', async () => {
+    const s = (await seededSession()).sessionId;
+    const obs = observeRunLeases();
+    try {
+      const res = await generate(s);
+      expect(res.status).toBe(400);
+      await res.json();
+      expect(obs.claims('transcript-generation')).toHaveLength(1);
+      expect(obs.releases('transcript-generation')).toEqual(obs.claims('transcript-generation'));
+      expect(await runLeaseRows(s)).toEqual([]);
+      expect(transcriptGenerationLock.getLock()).toBeNull();
+    } finally {
+      obs.restore();
+    }
+  });
+
+  it('the lease is gone after a pre-provider abort', async () => {
+    const s = await sessionWithAudio();
+    const fetchMock = stubDeepgram();
+    const controller = new AbortController();
+    controller.abort();
+    const obs = observeRunLeases();
+    try {
+      const res = await generate(s, { signal: controller.signal });
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as { detail: string }).detail).toMatch(/aborted/i);
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(obs.claims('transcript-generation')).toHaveLength(1);
+      expect(obs.releases('transcript-generation')).toEqual(obs.claims('transcript-generation'));
+      expect(await runLeaseRows(s)).toEqual([]);
+      expect(transcriptGenerationLock.getLock()).toBeNull();
+    } finally {
+      obs.restore();
+    }
+  });
+
+  it('a claim whose getHub rejects leaves the lock free, and the next generate succeeds', async () => {
+    const s = await sessionWithAudio();
+    const fetchMock = stubDeepgram();
+    // The route's first hub resolution is the claim's (requireSession reads the catalog).
+    const get = vi
+      .spyOn(env.ports.sessions, 'get')
+      .mockRejectedValueOnce(new Error('hub unavailable (test)'));
+    try {
+      const res = await generate(s);
+      expect(res.status).toBe(500);
+      expect(get).toHaveBeenCalledTimes(1);
+    } finally {
+      get.mockRestore();
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(transcriptGenerationLock.getLock()).toBeNull();
+    const next = await generate(s);
+    expect(next.status).toBe(200);
+    await next.json();
+    expect(await runLeaseRows(s)).toEqual([]);
+  });
+
+  it('back-to-back generations on the same session are not 409, each holding its own lease', async () => {
+    const s = await sessionWithAudio();
+    stubDeepgram();
+    const obs = observeRunLeases();
+    try {
+      const first = await generate(s);
+      expect(first.status).toBe(200);
+      await first.json();
+      const second = await generate(s);
+      expect(second.status).toBe(200);
+      await second.json();
+      expect(new Set(obs.claims('transcript-generation')).size).toBe(2);
+      expect(await runLeaseRows(s)).toEqual([]);
+    } finally {
+      obs.restore();
+    }
   });
 });

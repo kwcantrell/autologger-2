@@ -4,7 +4,13 @@
 import { mkdtemp, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { BlobStore, Config } from '@autologger/ports';
-import type { SessionHubFacade, TimecodeCtx, TranscriptWord } from '@autologger/session-core';
+import {
+  holdRunLease,
+  type RunLeaseHold,
+  type SessionHubFacade,
+  type TimecodeCtx,
+  type TranscriptWord,
+} from '@autologger/session-core';
 import { mergeAudioSegments } from './audioMerge';
 import type { TranscribeGroupResult } from './deepgram';
 import { DeepgramUpstreamError, transcribeGroup } from './deepgram';
@@ -99,7 +105,21 @@ export async function generateTranscriptWords(
 
   const blobStore = deps.audio;
   let scratchDir: string | null = null;
+  let lease: RunLeaseHold | null = null;
   try {
+    // The session's `transcript-generation` run lease, inside the try so a claim that throws still
+    // frees the lock (session-run-leases D4). The lock already excludes this process, so a refusal
+    // means another process generates for this session: the generic in-flight detail, with no
+    // holder to name, so the route redacts nothing.
+    lease = await holdRunLease({
+      getHub: deps.getHub,
+      kind: 'transcript-generation',
+      sessionId: deps.sessionId,
+    });
+    if (lease === null) {
+      throw new TranscriptGenerateError('in_flight', GENERATION_IN_FLIGHT_DETAIL);
+    }
+
     const segments = await (await deps.getHub()).listAudioSegments();
     if (segments.length === 0) {
       throw new TranscriptGenerateError('no_audio', NO_AUDIO_DETAIL);
@@ -170,7 +190,8 @@ export async function generateTranscriptWords(
     // The anchors read, the remap and the replace are one hub transaction (async-session-hub
     // design D7, S9), so the words are remapped against the anchors the replace commits with. A
     // `no_speech` throw from inside the remap rolls it back and writes nothing. `return await`:
-    // the finally below releases the generation lock only after the replace has committed.
+    // the finally below releases the lease and then the generation lock only after the replace
+    // has committed.
     const hub = await deps.getHub();
     return await hub.replaceTranscriptWordsRemapped((events) => {
       const anchors = recordingStartAnchors(events);
@@ -189,6 +210,8 @@ export async function generateTranscriptWords(
       };
     });
   } finally {
+    // The lease, then the lock (session-run-leases D4 step 3), then the scratch dir.
+    if (lease !== null) await lease.release();
     transcriptGenerationLock.release();
     if (scratchDir) await rm(scratchDir, { recursive: true, force: true });
   }

@@ -47,6 +47,16 @@ export async function runLeaseRows(
   })) as Array<{ kind: string; holder_client_id: string }>;
 }
 
+/** The session's lease rows with their holding user, by kind. */
+export async function runLeaseHolders(
+  sessionId: string,
+): Promise<Array<{ kind: string; holder_user_id: string | null }>> {
+  return (await rawRows(testStorage(sessionId), 'session_leases', {
+    columns: 'kind, holder_user_id',
+    orderBy: 'kind',
+  })) as Array<{ kind: string; holder_user_id: string | null }>;
+}
+
 /** Pass-through spies on `LeaseStore`'s run-lease methods, keeping only the calls this process's
  * runs make (holder `srv:<SERVER_BOOT_ID>:…`). `restore()` removes the spies. */
 export function observeRunLeases() {
