@@ -76,7 +76,7 @@ The frontend SHALL present one component vocabulary, **Show Ignition**:
 - one corner radius and height for controls (buttons, inputs, selects, logging buttons, menus' triggers) and one corner radius for cards and panels;
 - sentence-case button labels in the UI face, with uppercase tracked type reserved for labels, tab names, table column headers and status pills;
 - a red-tinted danger variant;
-- **one selected state:** an accent tint with a 1px inset accent line, used for the active session row, the current Settings section, checked menu items and pressed segmented controls. A selected state SHALL NOT use a coloured side stripe wider than 1px.
+- **one selected state:** an accent tint with a 1px inset accent line, used for the active session row, the current Settings section, the chosen item in single-choice (radio) menus and pressed segmented controls. A selected state SHALL NOT use a coloured side stripe wider than 1px. Multi-select checkbox menu items (for example the event filter) keep their checkmark-only treatment (web-session-console "Event filter checkmarks").
 
 No surface SHALL render the legacy flat grey chrome or the retired V5 glass surfaces. This is a steady-state requirement about the rendered result. Retiring the V5 token family and legacy class hooks is a design decision, not a spec obligation. A shared component layer that new surfaces build on SHALL render this same vocabulary by default, so a surface ported onto it does not change appearance class. (The requirement keeps its historical name.)
 
@@ -93,7 +93,7 @@ No surface SHALL render the legacy flat grey chrome or the retired V5 glass surf
 - **THEN** each renders a sentence-case label at the shared control height and radius on a flat surface, the primary variant accent-tinted and the destructive variant red-tinted, and its disabled state shows no hover response
 
 #### Scenario: One selected state everywhere
-- **WHEN** the active session row, the current Settings section, a checked menu item and a pressed segmented control are rendered
+- **WHEN** the active session row, the current Settings section, the chosen item in a single-choice menu and a pressed segmented control are rendered
 - **THEN** all four use the same accent tint and 1px inset accent line, and none uses a side stripe wider than 1px
 
 
