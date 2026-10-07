@@ -7,6 +7,7 @@ import { useYoutubeImport } from '../../api/hooks/useSessions';
 import { renderStrict } from '../../test/renderStrict';
 import { AppShell } from './AppShell';
 import { register } from './coordination/registry';
+import { clearTransportStatus, publishTransportStatus } from './coordination/transportStatus';
 import { navigate, setNavigationImplForTesting } from './navigation';
 import { markOriginated, resetOriginationForTesting } from './transportOrigination';
 
@@ -733,5 +734,43 @@ describe('AppShell legacy spine retirement', () => {
     expect('AutoLogger_closeSettingsModal' in window).toBe(false);
     expect('Home_reloadSessionList' in window).toBe(false);
     expect('Home_clearSessionList' in window).toBe(false);
+  });
+});
+
+// --- Shell transport tint (redesign-show-ignition D2, task 2.3) ---
+//
+// AppShell reads the transport-status store and sets `data-transport` on the
+// app root, which wraps the rail and main; the tints are pure CSS on it.
+describe('AppShell transport tint (data-transport)', () => {
+  const appRoot = () => {
+    const roots = document.querySelectorAll('[data-transport]');
+    expect(roots).toHaveLength(1);
+    const root = roots[0] as HTMLElement;
+    expect(root.contains(screen.getByTestId('rail'))).toBe(true);
+    expect(root.contains(screen.getByTestId('session-route'))).toBe(true);
+    return root;
+  };
+
+  it('is stopped with no session open', () => {
+    renderShell('/');
+    expect(appRoot().getAttribute('data-transport')).toBe('stopped');
+  });
+
+  it("follows the store's four states", () => {
+    renderShell('/sessions/sess-1');
+    const owner = {};
+    for (const state of ['recording', 'rolling', 'playback', 'stopped'] as const) {
+      act(() => {
+        publishTransportStatus(owner, { state, sessionId: 'sess-1', title: 'Ep 1' });
+      });
+      expect(appRoot().getAttribute('data-transport')).toBe(state);
+    }
+    act(() => {
+      publishTransportStatus(owner, { state: 'recording', sessionId: 'sess-1', title: 'Ep 1' });
+    });
+    act(() => {
+      clearTransportStatus(owner);
+    });
+    expect(appRoot().getAttribute('data-transport')).toBe('stopped');
   });
 });

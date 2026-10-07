@@ -1,6 +1,6 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { Menu } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 import { useRoute } from 'wouter';
 import { useProfile } from '../../api/hooks/useProfile';
 import { useYoutubeImport } from '../../api/hooks/useSessions';
@@ -14,6 +14,7 @@ import { OnboardingPanel } from './components/OnboardingPanel';
 import { RouteLoadingState } from './components/RouteLoadingState';
 import { SessionRoute } from './components/SessionRoute';
 import { V6Rail } from './components/V6Rail';
+import { getTransportStatus, subscribeTransportStatus } from './coordination/transportStatus';
 import { navigate } from './navigation';
 import { useLoginReturnConsume } from './useLoginReturnConsume';
 
@@ -247,6 +248,16 @@ export function AppShell() {
   // the whole shell rather than degrading part of it.
   const needsOnboarding = profile?.auth.logged_in && profile.auth.user?.teams.length === 0;
 
+  // Shell transport tint (redesign-show-ignition D2): the open session's
+  // transport state, published by SessionWorkspace. The store changes only on
+  // transitions, so this re-renders the shell only then; the tints themselves
+  // are pure CSS on `data-transport` (shared/theme/tailwind.css).
+  const transportState = useSyncExternalStore(
+    subscribeTransportStatus,
+    () => getTransportStatus().state,
+    () => 'stopped' as const,
+  );
+
   if (needsOnboarding) {
     return (
       <>
@@ -261,7 +272,10 @@ export function AppShell() {
       <Toast />
       {/* shell/shell-v3 strings retained (chrome.css .shell stays legacy until Task 11);
           the AppShell overrides that widen it convert to utilities here (win by layer). */}
-      <div className="shell shell-v3 max-w-none w-full mx-0 px-0 pb-0">
+      <div
+        className="shell shell-v3 max-w-none w-full mx-0 px-0 pb-0"
+        data-transport={transportState}
+      >
         {/* v6-app string retained; desktop flex row filling viewport, max-md block. */}
         <div
           className="v6-app flex flex-row items-stretch flex-1 w-full min-w-0 overflow-hidden min-h-[100dvh] max-md:block max-md:overflow-visible max-md:min-h-0"

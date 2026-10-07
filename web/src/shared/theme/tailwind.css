@@ -516,6 +516,121 @@
   --sidebar-border: color-mix(in oklab, var(--si-accent) 22%, var(--si-line));
 }
 
+/* ============================================================
+ * Shell ignition (redesign-show-ignition D2; web-session-console "Transport state tints the
+ * shell"). Pure CSS on the app root's `data-transport` (AppShell, from the transport-status
+ * store). Unlayered on purpose, so it beats the surfaces' own Tailwind utilities. Hooks:
+ *   - rail:            `#v6-rail` today; the group-4 shadcn Sidebar reads `--sidebar` above.
+ *   - top bar:         `[data-slot='topbar']` (group 3 puts it on the TopBar root).
+ *   - transport strip: `#v5-maximize-log-strip`.
+ *   - live indicator:  `[data-slot='live-dot']`, blinks while recording (top bar status pill).
+ * Recording and rolling take the full tint and glow, playback a softer one, stopped the muted
+ * tint. Under reduced motion the tint changes instantly and the live dot does not blink.
+ * ============================================================ */
+:root {
+  --tx-dur: 0.6s;
+  --tx-ease: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+[data-transport] #v6-rail {
+  background-image: none;
+  background-color: var(--tx-rail);
+  border-right-color: var(--sidebar-border);
+  transition:
+    width var(--v6-rail-dur) var(--v6-rail-ease),
+    padding var(--v6-rail-dur) var(--v6-rail-ease),
+    background-color var(--tx-dur) var(--tx-ease),
+    border-color var(--tx-dur) var(--tx-ease),
+    box-shadow var(--tx-dur) var(--tx-ease);
+}
+[data-transport] #v6-rail > .v6-rail-glow {
+  display: none;
+}
+[data-transport='recording'] #v6-rail,
+[data-transport='rolling'] #v6-rail {
+  border-right-color: color-mix(in oklab, var(--si-accent) 70%, transparent);
+  box-shadow: 12px 0 36px -18px var(--tx-glow);
+}
+[data-transport='playback'] #v6-rail {
+  border-right-color: color-mix(in oklab, var(--si-accent) 40%, var(--si-line));
+}
+
+[data-transport] [data-slot='topbar'] {
+  background-color: var(--tx-bar);
+  border-bottom: 1px solid color-mix(in oklab, var(--si-accent) 22%, var(--si-line));
+  transition:
+    background-color var(--tx-dur) var(--tx-ease),
+    border-color var(--tx-dur) var(--tx-ease);
+}
+[data-transport='recording'] [data-slot='topbar'],
+[data-transport='rolling'] [data-slot='topbar'] {
+  border-bottom-color: color-mix(in oklab, var(--si-accent) 55%, transparent);
+}
+
+[data-transport] #v5-maximize-log-strip {
+  background-color: var(--si-panel);
+  border-color: var(--si-line);
+  transition:
+    background-color var(--tx-dur) var(--tx-ease),
+    border-color var(--tx-dur) var(--tx-ease),
+    box-shadow var(--tx-dur) var(--tx-ease);
+}
+[data-transport='recording'] #v5-maximize-log-strip,
+[data-transport='rolling'] #v5-maximize-log-strip {
+  background-color: color-mix(in oklab, var(--si-accent) 13%, #121419);
+  border-color: color-mix(in oklab, var(--si-accent) 55%, var(--si-line));
+  box-shadow:
+    0 10px 34px -14px var(--tx-glow),
+    0 0 0 1px color-mix(in oklab, var(--si-accent) 28%, transparent);
+}
+[data-transport='playback'] #v5-maximize-log-strip {
+  background-color: color-mix(in oklab, var(--si-accent) 8%, var(--si-panel));
+  border-color: color-mix(in oklab, var(--si-accent) 38%, var(--si-line));
+  box-shadow: 0 10px 30px -18px var(--tx-glow);
+}
+
+[data-transport='recording'] [data-slot='live-dot'] {
+  animation: si-blink 1.2s steps(2, jump-none) infinite;
+}
+@keyframes si-blink {
+  50% {
+    opacity: 0.25;
+  }
+}
+
+/* Mobile: the rail is an off-canvas drawer that slides on transform, not width. */
+@media (max-width: 47.99rem) {
+  [data-transport] #v6-rail {
+    transition:
+      transform 0.28s var(--v6-rail-ease),
+      background-color var(--tx-dur) var(--tx-ease),
+      border-color var(--tx-dur) var(--tx-ease),
+      box-shadow var(--tx-dur) var(--tx-ease);
+  }
+}
+
+/* Reduced motion: the tint transition and the blink are dropped (the rail keeps only its own
+ * geometry transition, as before this change). */
+@media (prefers-reduced-motion: reduce) {
+  [data-transport] #v6-rail {
+    transition:
+      width var(--v6-rail-dur) var(--v6-rail-ease),
+      padding var(--v6-rail-dur) var(--v6-rail-ease);
+  }
+  [data-transport] [data-slot='topbar'],
+  [data-transport] #v5-maximize-log-strip {
+    transition: none;
+  }
+  [data-transport] [data-slot='live-dot'] {
+    animation: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) and (max-width: 47.99rem) {
+  [data-transport] #v6-rail {
+    transition: transform 0.28s var(--v6-rail-ease);
+  }
+}
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
