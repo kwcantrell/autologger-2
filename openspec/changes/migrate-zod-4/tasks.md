@@ -29,8 +29,10 @@
 
 ## 2. Tests first (design D3)
 
-- [ ] 2.1 Add `packages/contract/src/schemas.zod4.test.ts` with cases (a) to (e) from D3. Run it on zod 3: (a) and (e) must be red, and (b), (c) and (d) must be green.
-- [ ] 2.2 Add `server/src/routers/validationBody.int.test.ts` covering the D3 route cases, and `server/src/zodSingleCopy.repo.test.ts` (the lockfile guard). Run both on zod 3 and record the reds: the non-finite topic and the lockfile guard.
+- [x] 2.1 Add `packages/contract/src/schemas.zod4.test.ts` with cases (a) to (e) from D3. Run it on zod 3: (a) and (e) must be red, and (b), (c) and (d) must be green.
+  - Evidence: `cd packages/contract && npx vitest run src/schemas.zod4.test.ts` on zod 3.25.76 -> `Tests 3 failed | 35 passed (38)`; red: (a) `expected { code: 'invalid_type', …(4) } to not have property "received"`, (e) duration_sec and peaks `expected true to be false`; (b), (c), (d) green (log `z4-2.1-red.log`)
+- [x] 2.2 Add `server/src/routers/validationBody.int.test.ts` covering the D3 route cases, and `server/src/zodSingleCopy.repo.test.ts` (the lockfile guard). Run both on zod 3 and record the reds: the non-finite topic and the lockfile guard.
+  - Evidence: `npx vitest run --project integration src/routers/validationBody.int.test.ts` on zod 3 -> `Tests 1 failed | 3 passed (4)`, red: non-finite topic `expected 201 to be 422` (log `z4-2.2-red-int.log`); `npx vitest run --project unit src/zodSingleCopy.repo.test.ts` -> `Tests 2 failed | 1 passed (3)`, red: `expected '3.25.76' to match /^4\./`, `@anthropic-ai/sdk` `expected undefined to be defined`; the dependencies check is green (log `z4-2.2-red-repo.log`)
 
 ## 3. Migrate (design D1, D2)
 
