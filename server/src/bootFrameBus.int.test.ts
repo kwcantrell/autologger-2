@@ -154,6 +154,8 @@ describe('main.ts on the Postgres frame bus (session-frame-bus D1, D2)', () => {
     while (messages.length === 0 && Date.now() < end)
       await new Promise((res) => setTimeout(res, 20));
     expect(messages).toEqual([{ type: 'command', command: 'play-toggle' }]);
+    // The bus holds at most its listener and its publisher: 2 of the 14 per process (D7).
+    expect((await busConnections()).length).toBeLessThanOrEqual(2);
 
     r.proc.kill('SIGTERM');
     await r.exited;

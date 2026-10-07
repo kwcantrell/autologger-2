@@ -95,7 +95,9 @@ These live in the forge, not the repo, so the template can't apply them:
   frame or `command` therefore never reaches a socket. This assumes the server processes keep
   their clocks within a few seconds of each other (NTP); a skew over 30 s drops real frames until
   it is fixed. A close is exempt from the 30 s check so skew never leaves a revoked user's socket
-  open; a replayed close inside its window only disconnects that user's sockets again.
+  open; a captured close can be replayed at any time to a process that was already listening when
+  it was sent (closes are exempt from the 30 s check), but a replay only disconnects that user's
+  sockets again, and they reconnect through the access check.
   **Residuals:** the secret sits in the app process's environment, readable like `PGPASSWORD`
   above, and anything holding it can forge messages; a flood of forged notifications costs each process a signature check per message and can fill the
   notification queue, which fails writes. Rotation needs every process restarted together.

@@ -365,7 +365,7 @@ Values:
 
 #### Scenario: The connection count stays within the role's limit
 - **WHEN** the server runs with session hubs open
-- **THEN** it holds no more database connections than its root, transaction and session connections, together fewer than the app role's limit of 20
+- **THEN** it holds at most 14 database connections (its root, transaction and session connections plus the frame bus's listener and publisher), so three such processes stay within the app role's limit of 45
 
 ## ADDED Requirements
 
