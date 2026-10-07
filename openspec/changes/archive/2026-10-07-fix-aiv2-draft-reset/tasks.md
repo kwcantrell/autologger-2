@@ -35,3 +35,4 @@ in `web/`). The full suite runs in CI on the PR.
 
 - The PR's CI run: `gates`' `commands` passes, so the web suite including `AiV2Design.test.tsx` is
   green. Checked on the PR itself.
+  Evidence: PR #87 merged as 352417d1 with every check `SUCCESS` (`gates`, `db-shard (1-3)`, `db-tests`, `secrets`, `dependency-review`). PR #84, updated onto it, went green and merged as 7995374e. That post-merge push run, 37618686855, which includes the fix -> success: `gates` 233s (`PASS commands ran ['typecheck', 'test'] (pg/integration: db-tests job)`), `db-shard` 272s/134s/188s, `db-tests` success. #87's own post-merge run, 37618288996, was cancelled by #84's push (`cancel-in-progress`).
