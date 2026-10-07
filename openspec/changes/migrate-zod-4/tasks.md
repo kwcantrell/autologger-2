@@ -43,8 +43,10 @@
 
 ## 4. Verify
 
-- [ ] 4.1 Full suites as 1.1. Compare counts and explain every difference. No existing test assertion changed (D5).
-- [ ] 4.2 Re-run the 1.2 script. The tool schemas differ from the before file only in the ways D4 lists. The parsed outputs are identical.
+- [x] 4.1 Full suites as 1.1. Compare counts and explain every difference. No existing test assertion changed (D5).
+  - Evidence: server -> `Test Files 1 failed | 131 passed | 3 skipped (135)`, `Tests 1 failed | 1657 passed | 4 skipped (1662)`: the failure is the known flake `catalogContention.pg` cross-team retry (`expected [ 'fulfilled', 'rejected' ]`), rerun once -> `Tests 1 passed (1)` (logs `z4-4.1-server.log`, `z4-4.1-rerun-contention.log`); vs 1.1: +2 files, +7 tests = `validationBody.int.test.ts` (4) and `zodSingleCopy.repo.test.ts` (3). contract 98 (60 + 38 in `schemas.zod4.test.ts`); session-core 41, ai-runtime 181, web 1689, unchanged; storage `1 failed | 132 passed`: the known flake "8 contending" (`repetition 3: 1/8 exhausted`), rerun once -> `Tests 133 passed (133)` (logs `z4-4.1-{contract,session-core,ai-runtime,storage,web}.log`, `z4-4.1-rerun-storage.log`); `npm run typecheck` exit 0 (log `z4-4.1-typecheck.log`); `git diff --stat e645e421 HEAD` -> no existing test file touched (D5)
+- [x] 4.2 Re-run the 1.2 script. The tool schemas differ from the before file only in the ways D4 lists. The parsed outputs are identical.
+  - Evidence: `tsx z4/dump.mts` -> same tool sets as 1.2 (log `z4-4.2-after.log`); key-order-insensitive tools diff -> only `additionalProperties: false` removed (from all 8 tools that had it), `transcript_excerpt` offset/limit `integer`+`minimum` -> `number`, `propose_dashboard` record items gain `propertyNames: {type: string}`; descriptions kept; the raw diff also moves `description` before `type` (key order only); chat shapes have no `.int()` fields, so none became `integer` (logs `z4-4.2-tools-sorted.diff`, `z4-4.2-tools.diff`); `diff z4-1.2-parse-before.json z4-4.2-parse-after.json` -> exit 0, identical (log `z4-4.2-parse-raw.diff`)
 - [ ] 4.3 Live check on the dev stack (`docker restart autologger-dev-app`, then the gate):
   - a `422` probe;
   - an AI chat turn that calls `create_topic`, so the MCP SDK and zod 4 tools run;
