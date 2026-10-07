@@ -26,7 +26,6 @@ pair showing it fires on a violation and passes on conforming input).
 
 ## Requirements
 
-
 ### Requirement: One-to-one coordination has a single typed module home
 
 **One-to-one request/response coordination** — a call from one component to a single other
@@ -80,7 +79,6 @@ so an eleventh handle would evade it silently.
   assignment
 - **THEN** no such write exists in production or test code, including for a handle name this
   capability does not enumerate
-
 
 ### Requirement: Registration is explicit, reversible, and absence is a no-op
 
@@ -137,7 +135,6 @@ that identifies an *unintended* leak remains permitted.
   that it should no longer own the handle
 - **THEN** the handle has no registered handler afterwards, and invoking it is a no-op
 
-
 ### Requirement: Ownership state is observable
 
 The registry SHALL expose a way to ask whether a handle currently has a registered handler.
@@ -152,7 +149,6 @@ former is satisfiable by the latter. The mechanism being replaced *was* observab
 - **WHEN** a handle has no registered handler, and separately when it is registered to a handler
   that performs no action
 - **THEN** the two states are distinguishable through the registry's API
-
 
 ### Requirement: Conditional ownership is expressible without a sentinel assignment
 
@@ -180,7 +176,6 @@ requirement forbids.
 
 - **WHEN** an owner becomes ineligible while a different owner holds the registration
 - **THEN** the other owner's handler remains registered
-
 
 ### Requirement: React-external callers are first-class
 
@@ -214,7 +209,6 @@ handle at that moment.
 - **THEN** the transport-stop handle is invoked synchronously during the navigation call, before
   React re-renders, exactly once for the departure
 
-
 ### Requirement: The registry is the test seam and does not leak between tests
 
 Tests SHALL drive coordination through the registry's API rather than by assigning to `window`.
@@ -235,7 +229,6 @@ survives the owner's unmount into the next test.
 - **WHEN** a test registers a stub after its owner has mounted, and a subsequent test runs
 - **THEN** the subsequent test observes no handler registered by the earlier test
 
-
 ### Requirement: Handler ownership is identity-scoped at teardown
 
 A teardown SHALL clear a handle only if the handler being torn down is still the registered one.
@@ -244,7 +237,7 @@ A stale owner's teardown SHALL NOT clear a handler a newer owner has since regis
 **This is forward insurance against a latent hazard, not repair of an observed defect.** The
 hazard is real at the mechanism level — two owners of one handle spanning separate commits can
 produce cleanup-after-newer-setup — and it remains unreachable in the component tree as it stands.
-The application **does** now use `React.lazy` and `<Suspense>`: the route split put six surfaces
+The application **does** now use `React.lazy` and `<Suspense>`: the route split put five surfaces
 behind a shared `LazyChunk` boundary, and the session workspace — a handle-owner tree — is one of
 them. The earlier blanket precondition "the application uses no `Suspense`, `React.lazy`,
 transition API, or Offscreen boundary" is therefore **false and is retired**. Unreachability now
@@ -253,12 +246,12 @@ rests on four narrower, individually checkable facts:
 1. **One owner, one position.** Each handle still has exactly one owner rendered at exactly one
    position. The workspace `LazyChunk` is rendered at exactly one site inside `SessionRoute`,
    which is itself rendered at exactly one site in the shell.
-2. **No suspension point nested below a handle-owner tree.** The app has six `lazy()` boundaries,
+2. **No suspension point nested below a handle-owner tree.** The app has five `lazy()` boundaries,
    every one of them instantiated by the shared `LazyChunk` wrapper — but **none nests below
-   another**. Five are siblings rendered directly by the shell (the New Session, Batch Import,
-   YouTube-import-error and Settings overlays, plus the `/teams` route, which is the mutually
-   exclusive alternative to `SessionRoute` in one ternary); the sixth is the session workspace,
-   rendered by the statically-imported `SessionRoute`. The workspace boundary is therefore the
+   another**. Four are siblings rendered directly by the shell (the New Session, Batch Import,
+   YouTube-import-error and Settings view overlays; the Settings view also serves `/teams`, which
+   no longer has a route surface of its own); the fifth is the session workspace, rendered by the
+   statically-imported `SessionRoute`. The workspace boundary is therefore the
    **deepest** suspension point in the tree, and the handle-owner subtree it reveals contains
    none — no further `lazy()`, no `<Suspense>`, no suspense-mode query below it. Sibling
    boundaries at the shell level are beside the point: a sibling cannot re-suspend a revealed
@@ -307,7 +300,6 @@ unconditional `clear(handle)`, which would re-admit the same clobber through a s
   subtree unmounts before the incoming one mounts, and a failed chunk import registers nothing at
   all
 
-
 ### Requirement: The coordinated behaviors are observably intact
 
 The behaviors these handles serve SHALL hold, independent of which mechanism coordinates them:
@@ -346,17 +338,16 @@ feed-jump behavior edits `web-session-console` alone.
 
 #### Scenario: The settings modal still refetches the session list
 
-- **WHEN** the settings modal completes the action that refreshed the session list before this
-  change
-- **THEN** the session list is refetched, asserted against the shared query client rather than
-  against any coordination mechanism
+- **WHEN** the active team or show changes through the top bar, or a Settings save that changes
+  the active team, show, or a show's configuration completes
+- **THEN** the session list, events, session status and show categories are refetched, asserted
+  against the shared query client rather than against any coordination mechanism
 
 #### Scenario: Timeline ticks read the live zoom
 
 - **WHEN** the timeline ticks render while the zoom rail is mounted
 - **THEN** they read the current zoom value, and a non-finite or non-positive reading still
   yields the caller's existing fallback
-
 
 ### Requirement: The web app's internal import direction is mechanically enforced across its single entry
 
@@ -374,10 +365,10 @@ builds a **single entry bundle**, the index island (the admin island was retired
 `/admin/users` page).
 
 What has changed is the shape *inside* the index entry: it is no longer a single download. The
-index island is route-split behind `React.lazy`, with at least seven dynamic-import edges below
-the entry — six `LazyChunk` split points (the session workspace, the `/teams` route, and the New
-Session, Batch Import, YouTube-import-error, and Settings overlays) plus Batch Import's own inner
-import of the log-import client. "Entry bundle" in this requirement therefore means the entry
+index island is route-split behind `React.lazy`, with at least six dynamic-import edges below
+the entry — five `LazyChunk` split points (the session workspace and the New Session, Batch Import,
+YouTube-import-error, and Settings view overlays) plus Batch Import's own inner import of the
+log-import client. "Entry bundle" in this requirement therefore means the entry
 graph and the chunks reachable from it, not one file; the enforced property is the **direction** of
 edges, which is indifferent to how the bundler carves them into chunks.
 

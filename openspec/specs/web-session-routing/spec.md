@@ -16,12 +16,11 @@ in favor of route-driven rendering.
 
 ## Requirements
 
-
 ### Requirement: URL-addressed session state
 The web app SHALL derive its active-session state from the URL via a client-side route
 table with exactly three app routes: `/` (no session selected; home/sessions view),
-`/sessions/:id` (the session workspace for `:id`), and `/teams` (the team management
-view; no session selected). Selecting a session SHALL push a
+`/sessions/:id` (the session workspace for `:id`), and `/teams` (the sessions home view with the Settings view opened on its Members section; no
+session selected). Selecting a session SHALL push a
 history entry for `/sessions/:id`; selecting the session that is already active SHALL
 NOT push a duplicate entry (no-op or replace); closing the active session SHALL
 navigate to `/`; browser Back/Forward SHALL drive the same state transitions as in-app
@@ -43,13 +42,12 @@ same change that extends the module is the requirement. (The former vite dev-mid
 matcher and hand-written server serve block no longer exist; the shell router consumes
 the module directly instead of mirroring it.)
 
-Route matching stays eager, but the **view** a matched route mounts may be code-split.
-`/teams` is now fetched as a lazy chunk, so matching that route and mounting the team
-management view are two steps rather than one: between them the route renders the shared
-brand loading frame labelled for teams (`RouteLoadingState` with a teams label and a
-teams-specific DOM id, not the session route's), and a failed chunk fetch renders that
-boundary's retry card in the route's place. Route identity, history behaviour, and the
-route table are unaffected by the split.
+Route matching stays eager, but the **view** a matched route mounts may be code-split. `/teams`
+has no chunk of its own: matching it renders the home view and sets the shell's Settings state to
+the Members section, so the Settings view's overlay boundary (web-frontend-platform "The client
+island is route-split behind recoverable boundaries") is what loads — with that boundary's `null`
+fallback while in flight and its dismissible failure card over the intact home view on failure.
+Route identity, history behaviour, and the route table are unaffected.
 
 (Non-normative: a path matching no route 404s at the HTML layer under the shell
 router; the previously reachable raw built-asset path, e.g.
@@ -81,23 +79,21 @@ router; the previously reachable raw built-asset path, e.g.
 #### Scenario: Teams route is a first-class app route
 - **WHEN** an authenticated user navigates to `/teams` in-app, or reloads the browser
   on `/teams`
-- **THEN** the team management view mounts at that URL once its chunk has loaded, and
-  browser Back returns to the previous view
+- **THEN** the home view renders at that URL with the Settings view open on Members once the
+  Settings chunk has loaded, and browser Back returns to the previous view
 
 #### Scenario: The teams route announces its own chunk wait and failure
-- **WHEN** `/teams` is matched while its chunk is still in flight, and separately when
+- **WHEN** `/teams` is matched while the Settings chunk is still in flight, and separately when
   that chunk fetch fails
-- **THEN** the pending case renders the shared brand loading frame labelled for teams
-  under a teams-specific DOM id — not the session route's label or id — and the failed
-  case renders the route-variant retry card in the same frame, with the rest of the app
-  shell still mounted
+- **THEN** the pending case shows the home view with nothing overlaid (the overlay boundary's
+  `null` fallback), and the failed case shows the overlay variant's dismissible failure card over
+  the home view, with the rest of the app shell still mounted
 
 #### Scenario: Route table extension is single-sourced
 - **WHEN** a future change adds a router-known route
 - **THEN** it extends the shared route-definition module (predicate and segment shape)
   and `AppShell`'s wouter patterns in the same change, and no other copy of the route
   table exists to update
-
 
 ### Requirement: Deep-link resolution states
 The client SHALL resolve the `:id` route parameter with a per-id query against
@@ -215,7 +211,6 @@ a retry of a failed workspace chunk.
 - **THEN** the mounted workspace stays until the user navigates; no resolution state
   replaces it in place
 
-
 ### Requirement: Originator-scoped transport stop on route departure
 When, and only when, the current client initiated the transport roll during the
 current workspace mount (it issued the transport-start command), a same-document
@@ -250,43 +245,25 @@ entry) are outside this requirement's scope.
   rolling session
 - **THEN** the mount/unmount simulation issues no transport-stop command
 
-
 ### Requirement: Legacy selection spine retired
-The app SHALL NOT write `body.dataset.sessionId` and SHALL NOT define
-`window.V3_selectSession` or `window.V3_closeSession`; in-app callers of those globals
-SHALL use the router (or component props) instead. The imperative `syncChrome` DOM
-toggling SHALL be removed, with both of its observable behaviors preserved by
-route-driven rendering: without an active session the app renders the dedicated home
-route component in the workspace's place (a stable, e2e-observable region of its own —
-the legacy `#v3-session-placeholder` element and its copy are retired with it); with an
-active session it renders the session workspace (`#v3-session-grid`); and the page title
-resets to "AutoLogger" when no session is active. Test code SHALL observe the active
-session through the URL.
+The app SHALL NOT write `body.dataset.sessionId` and SHALL NOT define `window.V3_selectSession` or `window.V3_closeSession`. In-app callers of those globals SHALL use the router (or component props) instead.
 
-The swap remains mount-driven by the route, but it is **no longer instantaneous**: with
-the workspace behind session resolution and a lazy chunk, there is an interstitial window
-in which the route is `/sessions/<id>` and `#v3-session-grid` is not yet in the DOM —
-the loading frame, the chunk fallback, or (on failure) the boundary's retry card is
-rendered in its place. An observer that treats "route says session" as implying "session
-grid is present" SHALL be understood as asserting the settled state, not every commit in
-between. The reverse direction is unchanged and immediate: leaving the session route
-unmounts the grid in that commit.
+The imperative `syncChrome` DOM toggling SHALL be removed, with both of its observable behaviors preserved by route-driven rendering:
+- **Without an active session,** the app renders the dedicated home route component in the workspace's place. That component is a stable, e2e-observable region of its own; the legacy `#v3-session-placeholder` element and its copy are retired with it.
+- **With an active session,** it renders the session workspace (`#v3-session-grid`).
+
+The page title resets to "AutoLogger" when no session is active. Test code SHALL observe the active session through the URL.
+
+The swap remains mount-driven by the route, but it is **no longer instantaneous**. With the workspace behind session resolution and a lazy chunk, there is an interstitial window in which the route is `/sessions/<id>` and `#v3-session-grid` is not yet in the DOM. In that window the loading frame, the chunk fallback, or (on failure) the boundary's retry card is rendered in its place. An observer that treats "route says session" as implying "session grid is present" SHALL be understood as asserting the settled state, not every commit in between. The reverse direction is unchanged and immediate: leaving the session route unmounts the grid in that commit.
 
 #### Scenario: No dataset or window-global writes
-- **WHEN** a session is selected or closed through any path (click, deep link,
-  Back/Forward)
-- **THEN** `document.body.dataset.sessionId` remains unset and
-  `window.V3_selectSession` / `window.V3_closeSession` are undefined
+- **WHEN** a session is selected or closed through any path (click, deep link, Back/Forward)
+- **THEN** `document.body.dataset.sessionId` remains unset and `window.V3_selectSession` / `window.V3_closeSession` are undefined
 
 #### Scenario: Home/workspace swap is route-driven
 - **WHEN** a session becomes active (by any path) or is closed
-- **THEN** the dedicated home component renders without a session and the session grid
-  renders with one once resolution and the workspace chunk have settled — mount-driven
-  by the route, with an interstitial window in which neither the home component nor the
-  session grid is present because a route-state frame occupies that position instead
+- **THEN** the dedicated home component renders without a session and the session grid renders with one once resolution and the workspace chunk have settled. This is mount-driven by the route, with an interstitial window in which neither the home component nor the session grid is present because a route-state frame occupies that position instead.
 
 #### Scenario: Studio-switch close path still works
-- **WHEN** the settings modal's save handler detects an active-studio change while on
-  `/sessions/<id>`
-- **THEN** the app navigates to `/` with the same behavior the close-session control
-  produces
+- **WHEN** the active team changes (through the top bar's team menu) while on `/sessions/<id>`
+- **THEN** the app navigates to `/` with the same behavior the close-session control produces

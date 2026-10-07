@@ -191,9 +191,9 @@ rather than an empty mount node, and the not-found page SHALL be statically rend
 The skeleton SHALL contain no user- or session-derived data.
 
 The document for the **router-known paths** SHALL additionally emit `<link rel="preload"
-as="font" type="font/woff2" crossorigin>` for the two font faces on the critical path — the
-deduplicated Inter latin subset and the League Gothic latin subset the loading skeleton itself
-renders in. Because that layout has no `<head>` element and Next's
+as="font" type="font/woff2" crossorigin>` for the three font faces on the critical path — the
+Barlow latin subset at weights 400 and 600 (the UI face's body and emphasis weights) and the
+League Gothic latin subset the loading skeleton itself renders in. Because that layout has no `<head>` element and Next's
 `metadata` export has no preload API, the links are rendered in the body and hoisted to the
 document head by React 19 — the supported route.
 
@@ -201,7 +201,7 @@ Two properties of those preloads are load-bearing:
 
 - **The preload `href` and the CSS `src:` MUST resolve to the same URL.** A preload names an
   exact request; if the stylesheet then asks for a different URL, the preloaded bytes are dead
-  weight and the font is fetched twice. Satisfying this is what forces those two faces onto
+  weight and the font is fetched twice. Satisfying this is what forces those three faces onto
   stable, build-invariant paths; where those files live and what that costs is owned by
   `Self-hosted font faces are deduplicated and scoped to what renders`, and is not restated
   here.
@@ -216,7 +216,7 @@ Two properties of those preloads are load-bearing:
 
 #### Scenario: Critical fonts are preloaded with matching URLs
 - **WHEN** `GET /` is fetched without executing JavaScript
-- **THEN** the document contains two `<link rel="preload" as="font" type="font/woff2"
+- **THEN** the document contains three `<link rel="preload" as="font" type="font/woff2"
   crossorigin>` elements whose `href`s are the same stable `/static/fonts/` URLs the
   stylesheet's `@font-face` `src:` declarations request
 
@@ -320,9 +320,10 @@ file.
 ### Requirement: The client island is route-split behind recoverable boundaries
 
 The single `ssr: false` client island SHALL NOT ship the whole application tree in one chunk.
-Six surfaces SHALL be split out and loaded on demand: the **session workspace**
-(`WorkspaceStatic`, mounted by `SessionRoute`), the **teams route**, and four **modals** — New
-Session, Batch Import, YouTube Import Error, and Home Settings. Surfaces that render on the very
+Five surfaces SHALL be split out and loaded on demand: the **session workspace**
+(`WorkspaceStatic`, mounted by `SessionRoute`), three **modals** — New Session, Batch Import and
+YouTube Import Error — and the **Settings view**, an overlay that the shell's Settings affordance
+and the `/teams` route both open (the separate teams route surface is retired into it). Surfaces that render on the very
 first homepage paint — the rail, the home route, the login page, the root gate, and
 `SessionRoute` itself — SHALL stay statically imported, because splitting them would only buy a
 waterfall.
@@ -359,10 +360,12 @@ Fallback discipline SHALL follow the surface's role:
   over an unchanged page, so arriving a frame late costs no layout shift.
 - **Route** boundaries use a real surface **identical to their pending state** — `SessionRoute`
   renders the same `RouteLoadingState` frame for the chunk fetch that it renders while resolving
-  the session, so the wait is one continuous frame rather than two differently sized ones; the
-  teams boundary renders that same frame with its own label and id.
+  the session, so the wait is one continuous frame rather than two differently sized ones. The Settings view is an
+  overlay boundary, including when `/teams` opens it.
 
-Measured outcome: the homepage **island chunk set** falls from **581,762 B to 218,401 B**. The
+Measured outcome (recorded for the original six-surface split; folding the teams route into the
+Settings view does not add homepage-critical code, and its effect on the island set is re-measured
+with the same instrument as evidence for that change): the homepage **island chunk set** falls from **581,762 B to 218,401 B**. The
 **measurement instrument SHALL be recorded with the measurement**: Next's First Load JS table is
 blind to this change, because every boundary lives inside the already-dynamic island chunk, so the
 island's own chunk set — read from `react-loadable-manifest` — is the only valid instrument, and
@@ -376,7 +379,7 @@ total, 354,937 B before and 355,143 B after — a 206 B difference, i.e. flat, w
 363 KB reduction coming from the island. The two pairs SHALL NOT be relabelled into each other,
 and the island-set instrument clause above governs the island-set pair specifically.
 
-Honest limits of what shipped, recorded here rather than implied away: only two of the six
+Honest limits of what shipped, recorded here rather than implied away: only two of the five
 boundaries are warmed (settings after a 2.5 s idle delay, the workspace on session-route entry);
 there is **no busy affordance** on an invoking control during a cold chunk fetch, so activating
 New Session or Batch Import on a cold chunk produces nothing on screen for the duration; there
@@ -386,7 +389,7 @@ navigated away; and the chunk-set measurement is **not scripted or regression-gu
 #### Scenario: A cold homepage load does not fetch the split chunks
 
 - **WHEN** the homepage is loaded cold with no session open
-- **THEN** the workspace, teams, and modal chunks are not among the scripts fetched for first
+- **THEN** the workspace, Settings view, and modal chunks are not among the scripts fetched for first
   paint
 
 #### Scenario: A failed chunk fetch is scoped, not fatal
@@ -411,39 +414,44 @@ navigated away; and the chunk-set measurement is **not scripted or regression-gu
 
 The self-hosted font stack SHALL declare no redundant and no unused faces.
 
-**No two `@font-face` declarations SHALL reference byte-identical font files.** Three Inter faces
-(weights 400, 500, and 600) were byte-identical copies of the same variable font carrying the
-full weight axis, so the browser downloaded the same ~48 KB file three times to render one
-typeface. They SHALL be a single `@font-face` whose `font-weight` is the **range** `400 600`,
-letting the variable axis serve every weight the app asks for.
+**No two `@font-face` declarations SHALL reference byte-identical font files.** (History: three
+Inter faces were once byte-identical copies of one variable font and were merged into a single
+range declaration.) The UI face is now **Barlow**, which ships as static per-weight files: each
+declared weight SHALL map to its own distinct file, and no weight SHALL be declared that nothing
+renders. Inter is retired together with its file once nothing references it.
 
 **A declared `@font-face` SHALL correspond to a family something in `web/src` actually renders.**
+The redesign's faces are Barlow (UI), Barlow Condensed (labels, tabs, status) and JetBrains Mono
+(timecode and measured values only); the home wordmark keeps League Gothic.
 The Chivo Mono and Oswald declarations, and their files, had zero references anywhere and SHALL
 be deleted. This deletion's win is honestly bounded: an unreferenced `@font-face` never
 downloads, so what it removes is source and build size, **not** transfer.
 
-**The two faces on the critical path SHALL be served from stable, deliberately
+**The three faces on the critical path SHALL be served from stable, deliberately
 non-content-hashed `/static/fonts/` paths in `web/public/`**, rather than being bundler-emitted
-with a content hash — the deduplicated Inter latin subset and the League Gothic latin subset the
-boot loading skeleton renders in. A build-invariant URL is what lets the root layout's preload
+with a content hash — the Barlow latin subset at weights 400 and 600 and the League Gothic latin
+subset the boot loading skeleton renders in. A build-invariant URL is what lets the root layout's preload
 name the same request the stylesheet's `@font-face` `src:` makes (the matching-URL rule is
 stated by `Server-rendered shell`); a hashed filename would change under the preload and fetch
-the file twice. Accepted trade-off: these two files lose immutable content-hash caching. They
-change approximately never. The remaining subsets of those families (League Gothic latin-ext and
-vietnamese) and the other self-hosted families stay bundler-emitted asset imports.
+the file twice. Accepted trade-off: these three files lose immutable content-hash caching. They
+change approximately never. The remaining subsets and weights of those families (League Gothic latin-ext and vietnamese,
+Barlow 500 and 700) and the other self-hosted families (Barlow Condensed, JetBrains Mono) stay
+bundler-emitted asset imports.
 
-Measured outcome: −94 KB of font transfer per session-page load.
+Measured outcome (for the earlier Inter deduplication): −94 KB of font transfer per session-page
+load. The Barlow switch's transfer is re-measured as evidence for that change.
 
 #### Scenario: One Inter file per page
 
 - **WHEN** a session page is loaded and rendered
-- **THEN** exactly one Inter `.woff2` is requested, and it serves every Inter weight the page
-  renders
+- **THEN** no Inter `.woff2` is requested (the scenario keeps its historical name), and each Barlow
+  weight the page renders is requested exactly once
 
 #### Scenario: The preloaded faces are fetched once each
 
 - **WHEN** a page in the index route group is loaded
-- **THEN** the preloaded Inter and League Gothic files are each requested exactly once — the
+- **THEN** the preloaded Barlow 400, Barlow 600 and League Gothic files are each requested exactly
+  once — the
   preload and the CSS `src:` resolve to the same URL and share one request
 
 #### Scenario: No declared family is unreferenced
