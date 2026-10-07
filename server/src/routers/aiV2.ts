@@ -55,7 +55,6 @@
 
 import { aiChatTurns } from '@autologger/ai-runtime/aiChatRegistry';
 import {
-  aiV2PendingQuestions,
   buildPendingQuestionOnQuestion,
   generatePendingQuestionId,
 } from '@autologger/ai-runtime/aiV2PendingQuestions';
@@ -263,6 +262,10 @@ aiV2Router.post('/api/sessions/:sessionId/ai/v2/design', async (c) => {
   // (`requireSession` in the prologue already asserted one; require-login D3).
   const turnId = generatePendingQuestionId();
   const principalUserId = requireUser(c).id;
+  // shared-request-state D2: the binding's registry keeps each question as a kv row expiring at
+  // the turn's deadline (its start plus its timeout) plus 5 s.
+  const questions = c.env.ports.aiV2Questions;
+  const turnDeadlineMs = c.env.ports.clock.now() + timeoutMs;
 
   return streamSSE(c, async (stream) => {
     const workspace = createDesignTurnWorkspace();
@@ -318,6 +321,8 @@ aiV2Router.post('/api/sessions/:sessionId/ai/v2/design', async (c) => {
             sessionId,
             turnId,
             principalUserId,
+            turnDeadlineMs,
+            registry: questions,
             emitQuestion: async (payload) => {
               try {
                 await stream.writeSSE({ event: 'question', data: JSON.stringify(payload) });
@@ -347,7 +352,7 @@ aiV2Router.post('/api/sessions/:sessionId/ai/v2/design', async (c) => {
         release: () => {
           void slot.release();
         },
-        abandonPendingQuestions: () => aiV2PendingQuestions.abandonTurn(sessionId, turnId),
+        abandonPendingQuestions: () => questions.abandonTurn(sessionId, turnId),
         // code-health-consolidation D3: the workspace (cwd + config-dir)
         // cleanup rides in the orchestrator's every-exit-path `onFinally`;
         // the idempotent call in the `finally` below stays as
@@ -365,7 +370,7 @@ aiV2Router.post('/api/sessions/:sessionId/ai/v2/design', async (c) => {
       // ran, these idempotent calls guarantee no orphaned group, no leaked
       // slot, and no pending question left able to resolve late (task 3.3).
       await spawner.terminate();
-      aiV2PendingQuestions.abandonTurn(sessionId, turnId);
+      questions.abandonTurn(sessionId, turnId);
       await slot.release();
       workspace.cleanup();
     }
@@ -424,7 +429,9 @@ aiV2Router.post('/api/sessions/:sessionId/ai/v2/answer', async (c) => {
   // from the response, and a late answer (the turn already ended and its
   // pending entries were abandoned — task 3.3) is rejected here too, since
   // there is nothing left to resolve.
-  const outcome = aiV2PendingQuestions.resolveAnswer(
+  // shared-request-state D2: one compare-and-swap on the question's kv row, so this works on any
+  // server process; the turn's process picks the answer up on its next 500 ms poll.
+  const outcome = await c.env.ports.aiV2Questions.resolveAnswer(
     { sessionId, turnId: body.turnId, requestId: body.requestId },
     user.id,
     body.answers,

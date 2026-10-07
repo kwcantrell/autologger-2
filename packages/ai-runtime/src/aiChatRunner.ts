@@ -193,6 +193,30 @@ export function stableSessionCwd(sessionId: string): string {
   return join(CWD_ROOT, sessionId);
 }
 
+/** The CLI's project-directory name for a cwd: every character outside [A-Za-z0-9] becomes '-'
+ * (observed with CLI 2.1.292: `/home/spark/autologger-2` -> `-home-spark-autologger-2`;
+ * shared-request-state D3). */
+export function encodeCwd(cwd: string): string {
+  return cwd.replace(/[^A-Za-z0-9]/g, '-');
+}
+
+/** The exact file the CLI reads to resume `claudeSessionId` for this autologger session:
+ * `<cliHome>/.claude/projects/<encodeCwd(stableSessionCwd(sessionId))>/<id>.jsonl` (D3). The
+ * caller validates `claudeSessionId` before building it. */
+export function aiChatConversationFile(
+  cliHome: string,
+  sessionId: string,
+  claudeSessionId: string,
+): string {
+  return join(
+    cliHome,
+    '.claude',
+    'projects',
+    encodeCwd(stableSessionCwd(sessionId)),
+    `${claudeSessionId}.jsonl`,
+  );
+}
+
 function writeMcpConfigFile(path: string, mcpTurn: { url: string; token: string }): void {
   const contents = JSON.stringify({
     mcpServers: {

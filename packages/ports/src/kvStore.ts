@@ -11,7 +11,13 @@ export interface KvStore {
    * (async-catalog-stores D4: one-shot credentials such as the OAuth CSRF state). */
   take(key: string): Promise<string | null>;
   /** Replaces a live entry's value only if it is still `expected`, in one statement, keeping its
-   * expiry; false if it changed, is missing or expired (catalog-concurrency-hazards D7). */
-  replaceIf(key: string, expected: string, next: string): Promise<boolean>;
+   * expiry; false if it changed, is missing or expired (catalog-concurrency-hazards D7). With
+   * `{expirationTtl}` the same statement sets a new expiry instead (shared-request-state D1). */
+  replaceIf(
+    key: string,
+    expected: string,
+    next: string,
+    opts?: { expirationTtl?: number },
+  ): Promise<boolean>;
   purgeExpired(): Promise<void>;
 }

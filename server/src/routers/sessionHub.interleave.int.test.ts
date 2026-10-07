@@ -19,7 +19,6 @@ import { fileURLToPath } from 'node:url';
 import { aiChatTurns } from '@autologger/ai-runtime/aiChatRegistry';
 import { stableSessionCwd } from '@autologger/ai-runtime/aiChatRunner';
 import { __resetAiMcpListenerForTests } from '@autologger/ai-runtime/aiMcpServer';
-import { clearLogImportJobs } from '@autologger/log-import';
 import { TRANSCRIPTION_FIXTURES_DIR, transcriptGenerationLock } from '@autologger/transcription';
 import { type ServerType, serve } from '@hono/node-server';
 import { createNodeWebSocket } from '@hono/node-ws';
@@ -328,7 +327,6 @@ describe('conflicting pairs fired together equal a serial order (design D10)', (
   afterEach(() => {
     vi.unstubAllGlobals();
     transcriptGenerationLock.reset();
-    clearLogImportJobs();
   });
 
   it('two Companion toggles from a stopped transport: one start and one stop, the transport ends stopped', async () => {

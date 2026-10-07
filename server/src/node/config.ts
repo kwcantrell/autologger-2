@@ -4,6 +4,8 @@
 import { mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
+import { AiV2PendingQuestionRegistry } from '@autologger/ai-runtime/aiV2PendingQuestions';
+import { createLogImportJobStore } from '@autologger/log-import';
 import { sweepStaleYoutubeImportTempDirs } from '@autologger/media-import';
 import type { Clock } from '@autologger/ports';
 import {
@@ -121,6 +123,8 @@ export function createBindings(
       frameBus: registry.bus,
       audio: audioBlobStore,
       presence: new PresenceRegistry(clock),
+      logImportJobs: createLogImportJobStore(kv, clock),
+      aiV2Questions: new AiV2PendingQuestionRegistry(kv, clock),
     },
     config: {
       PUBLIC_BASE_URL: procEnv.PUBLIC_BASE_URL || '',
@@ -164,6 +168,9 @@ export function createBindings(
       // `procEnv`-driven override: see the Config field's own doc comment for
       // why (ruling E6).
       AI_V2_CREDENTIAL_SOURCE_PATH: join(homedir(), '.claude', '.credentials.json'),
+      // shared-request-state D3: where the AI chat CLI keeps its conversations (the spawn passes
+      // this process's HOME, which `homedir()` reads).
+      AI_CHAT_CLI_HOME: homedir(),
     },
   };
   // Spec "Login fallback is announced, not silent" (design D9): say so once,

@@ -20,8 +20,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AiChatSseEvent } from './aiChatRelay';
 import {
   AI_CHAT_SYSTEM_PROMPT_BRIEF,
+  aiChatConversationFile,
   buildAiChatArgv,
   buildAiChatChildEnv,
+  encodeCwd,
   killAiChatProcessGroup,
   runAiChatTurn,
   spawnAiChatTurn,
@@ -844,4 +846,27 @@ describe('runAiChatTurn — full SSE frame-sequence pins (task 1.3, phase-4 gate
       expect(wire).not.toContain('Invalid API key');
     },
   );
+});
+
+// shared-request-state D3: the CLI keys its conversation store by the cwd with every character
+// outside [A-Za-z0-9] replaced by '-'. Pinned against a path CLI 2.1.292 wrote on this host:
+// cwd `/home/spark/autologger-2` -> `~/.claude/projects/-home-spark-autologger-2/`.
+describe('encodeCwd / aiChatConversationFile (shared-request-state D3)', () => {
+  it('encodes a cwd as the CLI names its project directory', () => {
+    expect(encodeCwd('/home/spark/autologger-2')).toBe('-home-spark-autologger-2');
+    expect(encodeCwd('/tmp/autologger-ai-chat-cwd/abc')).toBe('-tmp-autologger-ai-chat-cwd-abc');
+    expect(encodeCwd('/tmp/a.b_c d/é')).toBe('-tmp-a-b-c-d--');
+  });
+
+  it('is the exact path under the CLI home: projects/<encoded stable cwd>/<id>.jsonl', () => {
+    expect(aiChatConversationFile('/home/u', 'sess-1', 'abc-123')).toBe(
+      join(
+        '/home/u',
+        '.claude',
+        'projects',
+        encodeCwd(stableSessionCwd('sess-1')),
+        'abc-123.jsonl',
+      ),
+    );
+  });
 });

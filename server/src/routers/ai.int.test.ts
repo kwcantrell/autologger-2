@@ -46,16 +46,18 @@ import { spawn } from 'node:child_process';
 import {
   existsSync,
   mkdirSync,
+  mkdtempSync,
   readdirSync,
   readFileSync,
   readlinkSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { AI_RUNTIME_FIXTURES_DIR } from '@autologger/ai-runtime';
 import { aiChatTurns } from '@autologger/ai-runtime/aiChatRegistry';
-import { stableSessionCwd } from '@autologger/ai-runtime/aiChatRunner';
+import { encodeCwd, stableSessionCwd } from '@autologger/ai-runtime/aiChatRunner';
 import { AiMcpListener, getAiMcpListener } from '@autologger/ai-runtime/aiMcpServer';
 // Namespace import (not the named `driveAiTurn` ai.ts itself uses) so the
 // test below can `vi.spyOn` the module's live export — asserting what ai.ts
@@ -66,7 +68,7 @@ import * as aiTurnModule from '@autologger/ai-runtime/aiTurn';
 import type { Clock } from '@autologger/ports';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Bindings } from '../appEnv';
-import { anonApp, app, env, envWith } from '../test/harness';
+import { anonApp, app, defaultUser, env, envWith } from '../test/harness';
 import {
   loginCookie,
   parseSse,
@@ -80,8 +82,9 @@ import {
   observeRunLeases,
   runLeaseRows,
 } from '../test/runLeases';
+import { busProcess, closeBusProcesses } from '../test/session/busProcesses';
 import { __setAiLeaseRenewMsForTests } from './_aiSlot';
-import { __resetAiChatIssuedSessionIdsForTests, AI_CHAT_ALLOWED_TOOLS } from './ai';
+import { AI_CHAT_ALLOWED_TOOLS } from './ai';
 
 // Kept for the pre-existing guard-rejection assertions (see the SPAWN
 // OBSERVATION note above) — harmless, but not load-bearing through this
@@ -149,13 +152,32 @@ function anyProcessInCwd(cwd: string): boolean {
 
 beforeEach(() => {
   aiChatTurns.reset();
-  __resetAiChatIssuedSessionIdsForTests();
   spawnSpy.mockClear();
 });
 afterEach(() => {
   aiChatTurns.reset();
-  __resetAiChatIssuedSessionIdsForTests();
 });
+
+// shared-request-state D3: a resume is accepted only when the CLI's conversation file exists at
+// `<cli home>/.claude/projects/<encodeCwd(stable cwd)>/<id>.jsonl`. The fake CLI writes none, so
+// tests that expect a resume seed one under a per-test CLI home (D4 category 2).
+const cliHomes: string[] = [];
+afterEach(() => {
+  for (const dir of cliHomes.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
+
+function makeCliHome(): string {
+  const dir = mkdtempSync(join(tmpdir(), 'autologger-cli-home-'));
+  cliHomes.push(dir);
+  return dir;
+}
+
+/** Writes the conversation file the CLI would have written for `claudeSessionId`. */
+function seedConversation(cliHome: string, sessionId: string, claudeSessionId: string): void {
+  const dir = join(cliHome, '.claude', 'projects', encodeCwd(stableSessionCwd(sessionId)));
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, `${claudeSessionId}.jsonl`), '{}\n');
+}
 
 const seededSessionIds: string[] = [];
 afterEach(() => {
@@ -491,18 +513,20 @@ describe('ai/chat — multi-turn continuity: claude_session_id ownership (422, b
 
   it('same-session resume: an id issued for THIS session is accepted and passed as --resume', async () => {
     const s = await seededSession();
+    const cliHome = makeCliHome();
 
-    const first = await post(s, { message: 'start' }, fixtureEnv());
+    const first = await post(s, { message: 'start' }, fixtureEnv({ AI_CHAT_CLI_HOME: cliHome }));
     expect(first.status).toBe(200);
     const firstEvents = parseSse(await first.text());
     const firstDone = firstEvents.find((e) => e.event === 'done');
     if (!firstDone) throw new Error('turn one emitted no `done` event');
     const issuedId = (firstDone.data as { claude_session_id: string }).claude_session_id;
+    seedConversation(cliHome, s, issuedId);
 
     const second = await post(
       s,
       { message: 'continue', claude_session_id: issuedId },
-      fixtureEnv(),
+      fixtureEnv({ AI_CHAT_CLI_HOME: cliHome }),
     );
     expect(second.status).toBe(200);
     // Drain fully BEFORE inspecting the fixture's recording — streamSSE's
@@ -519,6 +543,176 @@ describe('ai/chat — multi-turn continuity: claude_session_id ownership (422, b
     // OBSERVATION note at the top of this file).
     const argv = recordedArgv(s);
     expect(argv.slice(-2)).toEqual(['--resume', issuedId]);
+  });
+});
+
+// ── shared-request-state D3 — the resume binding in kv, per session and user ──
+
+describe('ai/chat — resume binding per session and user, with the exact conversation file (shared-request-state D3)', () => {
+  afterEach(() => closeBusProcesses());
+
+  /** Turn one as `cookie` on `sessionId`; returns the issued claude_session_id. */
+  async function turnOne(sessionId: string, reqEnv: Bindings, cookie?: string): Promise<string> {
+    const res = await post(
+      sessionId,
+      { message: 'start' },
+      reqEnv,
+      cookie ? { ...J, Cookie: cookie } : J,
+    );
+    expect(res.status).toBe(200);
+    const done = parseSse(await res.text()).find((e) => e.event === 'done');
+    if (!done) throw new Error('turn one emitted no `done` event');
+    return (done.data as { claude_session_id: string }).claude_session_id;
+  }
+
+  /** The binding row's write follows the stream's last event: wait for it. */
+  async function bound(claudeSessionId: string): Promise<void> {
+    await vi.waitFor(async () =>
+      expect(await env.ports.kv.get(`ai-chat-resume:${claudeSessionId}`)).not.toBeNull(),
+    );
+  }
+
+  it('a co-member of the session cannot resume another user’s conversation: 422, no resume', async () => {
+    const { sessionId: s, studioId } = await seedSessionChain();
+    seededSessionIds.push(s);
+    const u1 = await seedUser({ studios: [studioId], role: 'admin' });
+    const u2 = await seedUser({ studios: [studioId], role: 'admin' });
+    const cliHome = makeCliHome();
+    const id = await turnOne(s, fixtureEnv({ AI_CHAT_CLI_HOME: cliHome }), await loginCookie(u1));
+    await bound(id);
+    seedConversation(cliHome, s, id);
+
+    const res = await post(
+      s,
+      { message: 'hijack', claude_session_id: id },
+      fixtureEnv({ AI_CHAT_CLI_HOME: cliHome }),
+      { ...J, Cookie: await loginCookie(u2) },
+    );
+    expect(res.status).toBe(422);
+    expect(recordedArgv(s)).not.toContain('--resume'); // turn one's argv; nothing spawned since
+    // The issuing user still can.
+    const own = await post(
+      s,
+      { message: 'continue', claude_session_id: id },
+      fixtureEnv({ AI_CHAT_CLI_HOME: cliHome }),
+      { ...J, Cookie: await loginCookie(u1) },
+    );
+    expect(own.status).toBe(200);
+    await own.text();
+    expect(recordedArgv(s).slice(-2)).toEqual(['--resume', id]);
+  });
+
+  it('a resume through a second app sharing the CLI home works', async () => {
+    const s = await seededSession();
+    const cliHome = makeCliHome();
+    const id = await turnOne(s, fixtureEnv({ AI_CHAT_CLI_HOME: cliHome }));
+    await bound(id);
+    seedConversation(cliHome, s, id);
+    const b = await busProcess();
+    const bEnv: Bindings = {
+      ...b.bindings,
+      config: {
+        ...b.bindings.config,
+        CLAUDE_CLI_PATH: FIXTURE_CLI,
+        HOST: '127.0.0.1',
+        AI_CHAT_CLI_HOME: cliHome,
+      },
+    };
+    const res = await post(s, { message: 'continue on B', claude_session_id: id }, bEnv);
+    expect(res.status).toBe(200);
+    const done = parseSse(await res.text()).find((e) => e.event === 'done');
+    expect(done?.data).toEqual({ claude_session_id: id });
+    expect(recordedArgv(s).slice(-2)).toEqual(['--resume', id]);
+  });
+
+  it('a conversation file under another project directory, but not the exact one, gets 422', async () => {
+    const s = await seededSession();
+    const cliHome = makeCliHome();
+    const id = await turnOne(s, fixtureEnv({ AI_CHAT_CLI_HOME: cliHome }));
+    await bound(id);
+    const other = join(cliHome, '.claude', 'projects', encodeCwd('/some/other/cwd'));
+    mkdirSync(other, { recursive: true });
+    writeFileSync(join(other, `${id}.jsonl`), '{}\n');
+
+    const res = await post(
+      s,
+      { message: 'continue', claude_session_id: id },
+      fixtureEnv({ AI_CHAT_CLI_HOME: cliHome }),
+    );
+    expect(res.status).toBe(422);
+    expect(recordedArgv(s)).not.toContain('--resume');
+  });
+
+  it('a path-shaped id gets 422 before any binding read or path is built', async () => {
+    const s = await seededSession();
+    const { id: userId } = await defaultUser();
+    const cliHome = makeCliHome();
+    const pathy = '../../escape';
+    // Everything a traversal would need, in place: a binding for the id and a file at the path
+    // the unchecked id would build. Only the id check stands between it and a resume.
+    await env.ports.kv.put(
+      `ai-chat-resume:${pathy}`,
+      JSON.stringify({ v: 1, sessionId: s, userId }),
+      { expirationTtl: 3600 },
+    );
+    const target = join(
+      cliHome,
+      '.claude',
+      'projects',
+      encodeCwd(stableSessionCwd(s)),
+      `${pathy}.jsonl`,
+    );
+    mkdirSync(dirname(target), { recursive: true });
+    writeFileSync(target, '{}\n');
+    const reads: string[] = [];
+    const kv = env.ports.kv;
+    const watched: typeof kv = Object.assign(Object.create(kv), {
+      get: (key: string) => {
+        reads.push(key);
+        return kv.get(key);
+      },
+    });
+
+    const res = await post(
+      s,
+      { message: 'hi', claude_session_id: pathy },
+      fixtureEnv({ AI_CHAT_CLI_HOME: cliHome }, { kv: watched }),
+    );
+    expect(res.status).toBe(422);
+    expect(reads.filter((k) => k.startsWith('ai-chat-resume:'))).toEqual([]);
+    expect(neverSpawned(s)).toBe(true);
+  });
+
+  it('an expired binding gets 422', async () => {
+    const s = await seededSession();
+    const { id: userId } = await defaultUser();
+    const cliHome = makeCliHome();
+    const id = 'expired-binding-id';
+    await env.ports.kv.put(`ai-chat-resume:${id}`, JSON.stringify({ v: 1, sessionId: s, userId }), {
+      expirationTtl: 1,
+    });
+    seedConversation(cliHome, s, id);
+    await new Promise((r) => setTimeout(r, 1100));
+
+    const res = await post(
+      s,
+      { message: 'hi', claude_session_id: id },
+      fixtureEnv({ AI_CHAT_CLI_HOME: cliHome }),
+    );
+    expect(res.status).toBe(422);
+    expect(neverSpawned(s)).toBe(true);
+  });
+
+  it('the binding is stored as {sessionId, userId} after done', async () => {
+    const s = await seededSession();
+    const { id: userId } = await defaultUser();
+    const id = await turnOne(s, fixtureEnv());
+    await bound(id);
+    expect(JSON.parse((await env.ports.kv.get(`ai-chat-resume:${id}`)) ?? '{}')).toEqual({
+      v: 1,
+      sessionId: s,
+      userId,
+    });
   });
 });
 

@@ -41,7 +41,6 @@ import type {
 } from '@anthropic-ai/claude-agent-sdk';
 import { AI_RUNTIME_FIXTURES_DIR } from '@autologger/ai-runtime';
 import { aiChatTurns } from '@autologger/ai-runtime/aiChatRegistry';
-import { aiV2PendingQuestions } from '@autologger/ai-runtime/aiV2PendingQuestions';
 import * as aiV2SdkSpawnModule from '@autologger/ai-runtime/aiV2SdkSpawn';
 import { AGGREGATE_MCP_SERVER_NAME } from '@autologger/ai-runtime/mcpTools';
 import type { Clock, Config } from '@autologger/ports';
@@ -50,7 +49,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Bindings } from '../appEnv';
 import { aiV2CredentialsRefused } from '../env';
-import { anonApp, app, envWith } from '../test/harness';
+import { anonApp, app, env, envWith } from '../test/harness';
 import {
   loginCookie,
   parseSse,
@@ -66,6 +65,7 @@ import {
   observeRunLeases,
   runLeaseRows,
 } from '../test/runLeases';
+import { busProcess, closeBusProcesses } from '../test/session/busProcesses';
 import { harnessHub } from '../test/session/sessionRows';
 
 const J = { 'content-type': 'application/json' };
@@ -129,7 +129,6 @@ async function* hangingDesignQuery(): AsyncGenerator<SDKMessage> {
 
 beforeEach(() => {
   aiChatTurns.reset();
-  aiV2PendingQuestions.reset();
   spawnSpy.mockReset();
   spawnSpy.mockImplementation(() => fakeDesignQuery() as unknown as Query);
   credentialsSpy.mockClear();
@@ -137,8 +136,12 @@ beforeEach(() => {
 });
 afterEach(() => {
   aiChatTurns.reset();
-  aiV2PendingQuestions.reset();
 });
+
+/** This test's per-binding pending-question registry (shared-request-state D2). */
+const questionRegistry = () => env.ports.aiV2Questions;
+/** A seeded question's turn deadline: well past the test. */
+const seedDeadline = () => Date.now() + 60_000;
 
 /** Configured + loopback-bound + no key: every 503 gate passes (the login
  * fallback is permitted on loopback), so requests reach body/slot checks. */
@@ -886,12 +889,11 @@ describe('ai/v2/answer — principal binding: access to the session is not enoug
   it('(c) a token-only request is inert: it cannot answer a pending question (401), which stays pending', async () => {
     const { sessionId: s } = await seededSession();
     const initiator = await seedUser({}); // the real principal that "started" the turn
-    aiV2PendingQuestions.register(
+    await questionRegistry().register(
       { sessionId: s, turnId: 'turn-1', requestId: 'req-1' },
       initiator,
-      {
-        questions: [],
-      },
+      { questions: [] },
+      seedDeadline(),
     );
 
     const res = await postAnswer(
@@ -908,7 +910,7 @@ describe('ai/v2/answer — principal binding: access to the session is not enoug
 
     expect(res.status).toBe(401);
     // Refused before the registry lookup — the question is provably not consumed.
-    expect(aiV2PendingQuestions.has({ sessionId: s, turnId: 'turn-1', requestId: 'req-1' })).toBe(
+    expect(questionRegistry().has({ sessionId: s, turnId: 'turn-1', requestId: 'req-1' })).toBe(
       true,
     );
     expect(spawnSpy).not.toHaveBeenCalled();
@@ -917,12 +919,11 @@ describe('ai/v2/answer — principal binding: access to the session is not enoug
   it('(b) a foreign turn/request id is rejected even from the correct principal, with session access', async () => {
     const { sessionId: s, studioId } = await seededSession();
     const initiator = await seedUser({ studios: [studioId], role: 'admin' });
-    aiV2PendingQuestions.register(
+    await questionRegistry().register(
       { sessionId: s, turnId: 'turn-1', requestId: 'req-1' },
       initiator,
-      {
-        questions: [],
-      },
+      { questions: [] },
+      seedDeadline(),
     );
 
     const res = await postAnswer(
@@ -933,7 +934,7 @@ describe('ai/v2/answer — principal binding: access to the session is not enoug
     );
 
     expect(res.status).toBe(404);
-    expect(aiV2PendingQuestions.has({ sessionId: s, turnId: 'turn-1', requestId: 'req-1' })).toBe(
+    expect(questionRegistry().has({ sessionId: s, turnId: 'turn-1', requestId: 'req-1' })).toBe(
       true,
     );
   });
@@ -942,12 +943,11 @@ describe('ai/v2/answer — principal binding: access to the session is not enoug
     const { sessionId: s, studioId } = await seededSession();
     const initiator = await seedUser({ studios: [studioId], role: 'admin' });
     const coMember = await seedUser({ studios: [studioId], role: 'admin' });
-    aiV2PendingQuestions.register(
+    await questionRegistry().register(
       { sessionId: s, turnId: 'turn-1', requestId: 'req-1' },
       initiator,
-      {
-        questions: [],
-      },
+      { questions: [] },
+      seedDeadline(),
     );
 
     const res = await postAnswer(
@@ -958,7 +958,7 @@ describe('ai/v2/answer — principal binding: access to the session is not enoug
     );
 
     expect(res.status).toBe(404);
-    expect(aiV2PendingQuestions.has({ sessionId: s, turnId: 'turn-1', requestId: 'req-1' })).toBe(
+    expect(questionRegistry().has({ sessionId: s, turnId: 'turn-1', requestId: 'req-1' })).toBe(
       true,
     );
   });
@@ -966,10 +966,11 @@ describe('ai/v2/answer — principal binding: access to the session is not enoug
   it('the initiating principal CAN answer their own pending question — 200, and the pending entry is resolved and removed', async () => {
     const { sessionId: s, studioId } = await seededSession();
     const initiator = await seedUser({ studios: [studioId], role: 'admin' });
-    const promise = aiV2PendingQuestions.register(
+    const { result: promise } = await questionRegistry().register(
       { sessionId: s, turnId: 'turn-1', requestId: 'req-1' },
       initiator,
       { questions: [{ question: 'Which widget?' }] },
+      seedDeadline(),
     );
 
     const res = await postAnswer(
@@ -981,7 +982,11 @@ describe('ai/v2/answer — principal binding: access to the session is not enoug
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true });
-    expect(aiV2PendingQuestions.has({ sessionId: s, turnId: 'turn-1', requestId: 'req-1' })).toBe(
+    // Resolved on the turn's next 500 ms poll (shared-request-state D2).
+    await waitFor(
+      () => !questionRegistry().has({ sessionId: s, turnId: 'turn-1', requestId: 'req-1' }),
+    );
+    expect(questionRegistry().has({ sessionId: s, turnId: 'turn-1', requestId: 'req-1' })).toBe(
       false,
     );
     await expect(promise).resolves.toMatchObject({
@@ -993,14 +998,19 @@ describe('ai/v2/answer — principal binding: access to the session is not enoug
   it('(d) a late answer (turn already ended / abandoned) has no effect — 404, even from the correct principal', async () => {
     const { sessionId: s, studioId } = await seededSession();
     const initiator = await seedUser({ studios: [studioId], role: 'admin' });
-    aiV2PendingQuestions.register(
+    await questionRegistry().register(
       { sessionId: s, turnId: 'turn-1', requestId: 'req-1' },
       initiator,
-      {
-        questions: [],
-      },
+      { questions: [] },
+      seedDeadline(),
     );
-    aiV2PendingQuestions.abandonTurn(s, 'turn-1'); // simulates a timeout/disconnect ending the turn
+    questionRegistry().abandonTurn(s, 'turn-1'); // simulates a timeout/disconnect ending the turn
+    // The row is deleted fire-and-forget (shared-request-state D2): wait for it.
+    await vi.waitFor(async () =>
+      expect(
+        await questionRegistry().rowState({ sessionId: s, turnId: 'turn-1', requestId: 'req-1' }),
+      ).toBeNull(),
+    );
 
     const res = await postAnswer(
       s,
@@ -1106,7 +1116,7 @@ describe('ai/v2/design + ai/v2/answer — a real onQuestion round trip through t
           options: [{ label: 'Duration', description: 'd' }],
         },
       ]);
-      expect(aiV2PendingQuestions.has({ sessionId: s, turnId, requestId })).toBe(true);
+      expect(questionRegistry().has({ sessionId: s, turnId, requestId })).toBe(true);
 
       const answerRes = await postAnswer(
         s,
@@ -1115,7 +1125,8 @@ describe('ai/v2/design + ai/v2/answer — a real onQuestion round trip through t
         { ...J, Cookie: await loginCookie(user) },
       );
       expect(answerRes.status).toBe(200);
-      expect(aiV2PendingQuestions.has({ sessionId: s, turnId, requestId })).toBe(false);
+      await waitFor(() => !questionRegistry().has({ sessionId: s, turnId, requestId }));
+      expect(questionRegistry().has({ sessionId: s, turnId, requestId })).toBe(false);
 
       // Drain the original stream to completion now that the question is
       // answered and the gated turn can proceed to its result.
@@ -1134,6 +1145,114 @@ describe('ai/v2/design + ai/v2/answer — a real onQuestion round trip through t
       expect(events.some((e) => e.event === 'done')).toBe(true);
     },
   );
+});
+
+// ── shared-request-state D2 — an answer through another server process ──────
+
+describe('ai/v2/answer through a second server process (shared-request-state D2)', () => {
+  afterEach(() => closeBusProcesses());
+
+  /** Process B's bindings, configured as `loopbackEnv()` configures A's. */
+  function envOf(b: Awaited<ReturnType<typeof busProcess>>): Bindings {
+    return {
+      ...b.bindings,
+      config: { ...b.bindings.config, AI_V2_ENABLED: '1', HOST: '127.0.0.1', AI_V2_API_KEY: '' },
+    };
+  }
+
+  /** Starts a design turn on A whose fake query asks one question and then finishes; returns the
+   * question's ids and a reader that resolves with the instant the stream ended. */
+  async function askOnA(s: string, cookie: string) {
+    spawnSpy.mockImplementationOnce((_prompt, options) => {
+      async function* gatedQuery(): AsyncGenerator<SDKMessage> {
+        await options.canUseTool?.(
+          'AskUserQuestion',
+          {
+            questions: [
+              { question: 'Which widget?', header: 'W', multiSelect: false, options: [] },
+            ],
+          },
+          { signal: new AbortController().signal, toolUseID: 't', requestId: 'r' } as never,
+        );
+        yield { type: 'result', subtype: 'success', is_error: false } as unknown as SDKMessage;
+      }
+      return gatedQuery() as unknown as Query;
+    });
+    const res = await post(s, { message: 'hi' }, loopbackEnv(), { ...J, Cookie: cookie });
+    expect(res.status).toBe(200);
+    if (res.body === null) throw new Error('SSE response had no body stream');
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffered = '';
+    while (!buffered.includes('event: question')) {
+      const { value, done } = await reader.read();
+      if (done) throw new Error('stream ended before a question event arrived');
+      buffered += decoder.decode(value, { stream: true });
+    }
+    const block = buffered.split('\n\n').find((b) => b.includes('event: question')) ?? '';
+    const data = block.split('\n').find((l) => l.startsWith('data: ')) ?? '';
+    const { turnId, requestId } = JSON.parse(data.slice('data: '.length)) as {
+      turnId: string;
+      requestId: string;
+    };
+    const ended = (async () => {
+      let rest = '';
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) return { at: Date.now(), text: buffered + rest };
+        rest += decoder.decode(value, { stream: true });
+      }
+    })();
+    return { turnId, requestId, ended };
+  }
+
+  it('an answer through B reaches the turn on A within 1 s, and B’s registry never held a local entry', async () => {
+    const { sessionId: s, studioId } = await seededSession();
+    const user = await seedUser({ studios: [studioId], role: 'admin' });
+    const cookie = await loginCookie(user);
+    const b = await busProcess();
+    const bRegister = vi.spyOn(b.bindings.ports.aiV2Questions, 'register');
+    const { turnId, requestId, ended } = await askOnA(s, cookie);
+    expect(b.bindings.ports.aiV2Questions).not.toBe(questionRegistry());
+
+    const answer = await postAnswer(
+      s,
+      { turnId, requestId, answers: [{ kind: 'text', text: 'through B' }] },
+      envOf(b),
+      { ...J, Cookie: cookie },
+    );
+    const answeredAt = Date.now();
+    expect(answer.status).toBe(200);
+    expect(await answer.json()).toEqual({ ok: true });
+
+    const { at, text } = await ended;
+    expect(at - answeredAt).toBeLessThan(1000);
+    expect(parseSse(text).some((e) => e.event === 'done')).toBe(true);
+    expect(bRegister).not.toHaveBeenCalled();
+    expect(b.bindings.ports.aiV2Questions.size()).toBe(0);
+  });
+
+  it('two concurrent answers, through A and through B, accept exactly one', async () => {
+    const { sessionId: s, studioId } = await seededSession();
+    const user = await seedUser({ studios: [studioId], role: 'admin' });
+    const cookie = await loginCookie(user);
+    const b = await busProcess();
+    const { turnId, requestId, ended } = await askOnA(s, cookie);
+    const body = { turnId, requestId, answers: [{ kind: 'text', text: 'x' }] };
+    const [viaA, viaB] = await Promise.all([
+      postAnswer(s, body, loopbackEnv(), { ...J, Cookie: cookie }),
+      postAnswer(s, body, envOf(b), { ...J, Cookie: cookie }),
+    ]);
+    expect([viaA.status, viaB.status].sort()).toEqual([200, 404]);
+    const loser = viaA.status === 404 ? viaA : viaB;
+    // The same masked 404 as an unknown id.
+    const unknown = await postAnswer(s, { ...body, requestId: 'no-such-request' }, envOf(b), {
+      ...J,
+      Cookie: cookie,
+    });
+    expect(await loser.text()).toBe(await unknown.text());
+    await ended;
+  });
 });
 
 // ── Task 5.1/5.2/5.3 — dashboard persistence (spec "Dashboard persistence", ──
