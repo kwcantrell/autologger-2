@@ -552,7 +552,11 @@ export class SessionCore {
 
   /** The run-lease release (session-run-leases D2): deletes the lease of `kind` held by exactly
    * `clientId` and `userId`, on the raw handle so it never advances the revision. */
-  async releaseLeaseUncounted(kind: string, clientId: string, userId: string | null): Promise<void> {
+  async releaseLeaseUncounted(
+    kind: string,
+    clientId: string,
+    userId: string | null,
+  ): Promise<void> {
     await this.rawDb.run(
       `DELETE FROM session_leases WHERE session_id = ? AND kind = ? AND holder_client_id = ?
          AND holder_user_id IS NOT DISTINCT FROM ?`,

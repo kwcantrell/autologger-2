@@ -73,7 +73,7 @@ Keep each task's text, and later its `Evidence:`, in one block with no blank lin
 
 ## 4. The lease-hold helper (design D3)
 
-- [ ] 4.1 Test first, `holdRunLease`:
+- [x] 4.1 Test first, `holdRunLease`:
   - 180 s under the fake clock and fake timers: 18 renewals, alive throughout, and a competing claim
     refused throughout;
   - a refusal logs once and stops;
@@ -85,6 +85,7 @@ Keep each task's text, and later its `Evidence:`, in one block with no blank lin
   - `newRunHolderId()` starts with `srv:<SERVER_BOOT_ID>:` and is unique across 1000 calls.
 
   Red, then implement `packages/session-core/src/runLease.ts` and export it. Green.
+  - Evidence: stub-hub cases in `packages/session-core/src/runLease.test.ts` (8: renew every `renewMs` as one holder until release, no timer after; refused claim `null` with no timer; a throwing claim or `getHub` propagates with no timer; a refused renewal logs `run lease lost: …` once and stops; errors (claim and `getHub`) logged and retried; no overlapping ticks; `release()` memoized, awaits the pending tick, resolves when the release or `getHub` throws, logged; `newRunHolderId()` = `srv:<SERVER_BOOT_ID>:<uuid>`, 1000 unique) and Postgres cases in `server/src/test/session/runLease.int.test.ts` "holdRunLease on Postgres (session-run-leases D3)" (4: 180 s under the registry clock and driver-safe fake timers: 19 claims (claim + 18 renewals), alive after every tick, a competing holder refused at every tick, one holder id, row expiry `T + 220 s`; 50 s of failed renewals, row lapsed, then a renewal re-takes it; another holder takes the expired row, the renewal is refused, logged once, no more ticks, release leaves the new holder's row; an evicted hub re-resolved on the next tick, new entry, row renewed). Red: `cd packages/session-core && npx vitest run src/runLease.test.ts` -> `Error: Cannot find module './runLease'`, `Tests  no tests` (log `8b-4.1-red-unit.log`); `cd server && npx vitest run --project integration src/test/session/runLease.int.test.ts` -> `Error: Cannot find package '@autologger/session-core/runLease'`, `Test Files  1 failed (1)` (log `8b-4.1-red-int.log`). Implemented `packages/session-core/src/runLease.ts` (`SERVER_BOOT_ID`, `newRunHolderId`, `RunLeaseHold`, `holdRunLease`; adds an optional `sessionId` that only labels the log lines, since the facade carries no session id) and `export * from './runLease'` in `index.ts`. Green: unit `Tests  8 passed (8)` (log `8b-4.1-green-unit.log`); integration first `Tests  1 failed | 14 passed (15)`: the eviction case's wait loop (10 000 `setImmediate` turns) ran out before the re-opened hub's claim (`waited for claim 2, have 1`), a test-harness wait, so the wait became 10 s of real time (`performance.now()`, not faked) -> `Tests  15 passed (15)` (log `8b-4.1-green-int.log`), then 3 consecutive runs each `Tests  15 passed (15)` (logs `8b-4.1-int-run1..3.log`). After `biome check --write` (format only): runLease, leaseRace and leaseStore integration `Tests  34 passed (34)` (log `8b-4.1-green-int2.log`); session-core `Tests  41 passed (41)` (log `8b-4.1-session-core.log`); `packageBoundaries.repo.test.ts` `Tests  84 passed (84)` (log `8b-4.1-boundaries.log`); `npm run typecheck` exit 0 (log `8b-4.1-typecheck.log`).
 
 ## 5. Guards on leases (design D4, D5)
 

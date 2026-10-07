@@ -23,6 +23,7 @@ export * from './eventAnchors';
 export * from './eventStore';
 export * from './fifoLock';
 export * from './leaseStore';
+export * from './runLease';
 export * from './SessionHub';
 export * from './sessionCaller';
 export * from './sessionCore';
