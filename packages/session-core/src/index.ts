@@ -22,6 +22,7 @@ export * from './dashboardStore';
 export * from './eventAnchors';
 export * from './eventStore';
 export * from './fifoLock';
+export * from './frameBus';
 export * from './leaseStore';
 export * from './runLease';
 export * from './SessionHub';
