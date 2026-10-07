@@ -1,0 +1,16 @@
+# Panel: migrate-zod-4
+Tier: 2 · Reviewers: assumption tester, failure and abuse, scope and simplicity · Date: 2026-10-07
+
+- [x] [major] Zod 4's `z.number()` refuses non-finite numbers. JSON `1e400` (parsed as `Infinity`) was accepted by zod 3 and stored, and now gets a `422` whose issue still has `received: "Infinity"`. That contradicted both "which requests are refused SHALL NOT change" and the spec's promise of "no `received`". Raised by failure and abuse. Resolved: proposal decision 6 and D4 accept the refusal (it is safer). The spec now pins only `code`/`path`/`message` and states the non-finite refusal as a scenario. Tests are D3 (e) and the route test (task 2.2). The owner is told explicitly at approval.
+- [x] [major] For the Agent SDK aggregate tools, the bundled converter drops `integer` and `minimum`, so `transcript_excerpt` `offset`/`limit` become a plain `number`. D4 claimed the opposite (`type: "integer"`). Raised by assumption tester. Resolved: decision 4 and D4 list it, and runtime still enforces `.int()`/`.min()`. The owner is told explicitly at approval.
+- [x] [major] `@anthropic-ai/sdk` is not dev-only in practice. The Agent SDK is a production dependency that peers on it, so npm installs it and its tree in the production image. Raised by assumption tester. Resolved: decision 5 and D1 say so; nothing imports it at runtime. The owner is told explicitly at approval.
+- [x] [major] The accepted list of 422 issue changes was incomplete: `invalid_string` becomes `invalid_format` with `pattern`, `invalid_literal` becomes `invalid_value`, `exact` is dropped, an out-of-range int gives two issues, and `Infinity` gives `invalid_type`. Raised by assumption tester. Resolved: decision 2 and D4 list them, and the spec now says clients rely only on `code`, `path` and `message`.
+- [x] [major] D1's fallback `npm install zod@^4 -w …` would write `dependencies.zod` into contract and ai-runtime, which must keep zod as a peer. Raised by scope. Resolved: D1 edits the manifests by hand and then runs a plain `npm install`. The lockfile guard asserts that no workspace except `server` lists zod under `dependencies`.
+- [x] [major] Nothing automated keeps the single-copy and peer-met properties, so the next bump could bring back the incident. Raised by scope. Resolved: the new `server/src/zodSingleCopy.repo.test.ts` (D3, task 2.2) checks the lockfile: one zod 4, `@anthropic-ai/sdk` present, and zod in no workspace's `dependencies` except server.
+- [x] [major] D2's deprecation clean-ups weren't required, and they contradicted keeping `superRefine`. Raised by scope. Resolved: D2 is limited to the five one-argument `z.record` calls plus typecheck-forced changes. The deprecated-but-working APIs are a non-goal.
+- [x] [major] The "Defaults and transforms" scenario wasn't observable at route level, and the before/after body capture duplicated the route tests. Raised by scope. Resolved: the scenario is restated at the schema level and mapped to D3 (c) plus the 1.2/4.2 parse-output diff. The body capture is dropped, and only the tool-schema and parse-output diffs remain.
+
+## Consistency read 2026-10-07
+Edits since approval: tasks.md only (1.1 to 4.3 ticked, each with `Evidence:`; 4.4 still open). proposal.md, design.md and both spec deltas are unchanged since e645e421.
+Scope change: no
+No findings.

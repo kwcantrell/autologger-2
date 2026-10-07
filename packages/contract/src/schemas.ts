@@ -23,7 +23,7 @@ export const showUpdateEntrySchema = z.object({
   // ignored (never reaches `profile.ts`'s field-mapping) and does NOT cause
   // a 400 solely because it's present.
   title_suffix: z.enum(['date', 'episode']).nullish(),
-  categories: z.array(z.record(z.unknown())).nullish(),
+  categories: z.array(z.record(z.string(), z.unknown())).nullish(),
   event_palette: z.array(z.string()).nullish(),
   event_palette_preset: z.string().max(32).nullish(),
   event_palette_custom: z.array(z.string()).nullish(),
@@ -65,7 +65,7 @@ export const logBodySchema = z.object({
   category: z.string().min(1).max(200),
   message: z.string().min(1).max(8000),
   metadata: z
-    .record(z.unknown())
+    .record(z.string(), z.unknown())
     .default({})
     .refine((v) => JSON.stringify(v).length <= MAX_METADATA_BYTES, {
       message: `metadata exceeds ${MAX_METADATA_BYTES} serialized bytes`,
@@ -362,7 +362,7 @@ export function validateYoutubeImportUrl(raw: string): YoutubeUrlValidation {
 export const profileUpdateBodySchema = z.object({
   active_studio_id: z.string().max(120).nullish(),
   active_show_id: z.string().min(1).max(120).nullish(),
-  settings: z.record(z.unknown()).nullish(),
+  settings: z.record(z.string(), z.unknown()).nullish(),
   show_updates: z.array(showUpdateEntrySchema).nullish(),
   given_name: z.string().max(200).nullish(),
   family_name: z.string().max(200).nullish(),
