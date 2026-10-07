@@ -488,6 +488,30 @@ describe('pending questions live in kv (shared-request-state D2)', () => {
     expect(warn).toHaveBeenCalled();
   });
 
+  it('a turn abandoned while its row is being stored deletes the row, emits nothing, and leaves no entry or poller', async () => {
+    const { kv, registry } = makeRegistry();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    let releasePut: () => void = () => {};
+    kv.before = (op) => (op === 'put' ? new Promise<void>((res) => (releasePut = res)) : undefined);
+    const emit = vi.fn();
+    const onQuestion = buildPendingQuestionOnQuestion({
+      sessionId: 's1',
+      turnId: 't1',
+      principalUserId: 'user-a',
+      turnDeadlineMs: now + TIMEOUT_MS,
+      registry,
+      emitQuestion: emit,
+    });
+    const pending = onQuestion(input);
+    await vi.waitFor(() => expect(kv.before).not.toBeNull());
+    registry.abandonTurn('s1', 't1');
+    releasePut();
+    await expect(pending).resolves.toMatchObject({ behavior: 'deny' });
+    await vi.waitFor(() => expect(kv.rows.size).toBe(0));
+    expect(emit).not.toHaveBeenCalled();
+    expect(registry.size()).toBe(0);
+  });
+
   it('an answer through a second registry over the same kv resolves the first one’s turn on its next poll', async () => {
     const { kv, registry: a } = makeRegistry();
     const b = new AiV2PendingQuestionRegistry(kv, clock);
@@ -566,11 +590,16 @@ describe('pending questions live in kv (shared-request-state D2)', () => {
     await vi.waitFor(() => expect(warn).toHaveBeenCalled());
     expect(kv.rows.has(rowKey)).toBe(true); // it expires at the deadline instead
     kv.before = null;
-    const { result: p2 } = await register(registry, { ...key, requestId: 'r2' }, 'user-a', input);
-    registry.abandonTurn('s1', 't1');
+    const { result: p2 } = await register(
+      registry,
+      { ...key, turnId: 't2', requestId: 'r2' },
+      'user-a',
+      input,
+    );
+    registry.abandonTurn('s1', 't2');
     await expect(p2).resolves.toMatchObject({ behavior: 'deny' });
     await vi.waitFor(() =>
-      expect(kv.rows.has(`ai-v2-question:${JSON.stringify(['s1', 't1', 'r2'])}`)).toBe(false),
+      expect(kv.rows.has(`ai-v2-question:${JSON.stringify(['s1', 't2', 'r2'])}`)).toBe(false),
     );
   });
 

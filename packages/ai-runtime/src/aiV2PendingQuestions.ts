@@ -101,6 +101,8 @@ const ROW_PREFIX = 'ai-v2-question:';
 export const AI_V2_QUESTION_POLL_MS = 500;
 /** A row outlives its turn's deadline by this much, then expires on its own. */
 const ROW_GRACE_MS = 5_000;
+/** How long an abandoned turn is remembered, so a register still storing its row deletes it. */
+const ABANDONED_MEMORY_MS = 60_000;
 const ABANDONED_MESSAGE = 'The design turn ended before this question was answered.';
 
 function rowKeyOf(key: PendingQuestionKey): string {
@@ -229,6 +231,10 @@ export class AiV2PendingQuestionRegistry {
     string,
     { timer: ReturnType<typeof setInterval>; busy: boolean }
   >();
+  /** Recently abandoned turns (turn key -> when to forget it), so a `register` still storing its
+   * row when its turn ends deletes the row instead of arming it (shared-request-state D2,
+   * consistency read). A store takes milliseconds; a minute of memory is ample. */
+  private readonly abandoned = new Map<string, number>();
 
   constructor(
     private readonly kv: KvStore,
@@ -258,7 +264,17 @@ export class AiV2PendingQuestionRegistry {
       questionCount: questionCountOf(originalInput),
     };
     const ttlS = Math.max(1, Math.ceil((turnDeadlineMs + ROW_GRACE_MS - this.clock.now()) / 1000));
+    const turnKey = turnKeyOf(key.sessionId, key.turnId);
+    this.pruneAbandoned();
+    if (this.abandoned.has(turnKey)) throw new Error('the design turn already ended');
     await this.kv.put(rowKey, JSON.stringify(row), { expirationTtl: ttlS });
+    if (this.abandoned.has(turnKey)) {
+      // The turn ended while the row was being stored: delete it and arm nothing.
+      void this.kv.delete(rowKey).catch((err: unknown) => {
+        console.warn(`[ai-v2] could not delete an abandoned question row (${errText(err)})`);
+      });
+      throw new Error('the design turn ended while its question was being stored');
+    }
     const result = new Promise<PermissionResult>((resolve) => {
       this.pending.set(keyOf(key), {
         sessionId: key.sessionId,
@@ -328,6 +344,8 @@ export class AiV2PendingQuestionRegistry {
    * a failed delete is logged and the row expires at the turn's deadline.
    */
   abandonTurn(sessionId: string, turnId: string): void {
+    this.pruneAbandoned();
+    this.abandoned.set(turnKeyOf(sessionId, turnId), this.clock.now() + ABANDONED_MEMORY_MS);
     this.stopPoller(sessionId, turnId);
     for (const [k, entry] of this.pending) {
       if (entry.sessionId !== sessionId || entry.turnId !== turnId) continue;
@@ -336,6 +354,13 @@ export class AiV2PendingQuestionRegistry {
       void this.kv.delete(entry.rowKey).catch((err: unknown) => {
         console.warn(`[ai-v2] could not delete an abandoned question row (${errText(err)})`);
       });
+    }
+  }
+
+  private pruneAbandoned(): void {
+    const now = this.clock.now();
+    for (const [turnKey, forgetAt] of this.abandoned) {
+      if (forgetAt <= now) this.abandoned.delete(turnKey);
     }
   }
 

@@ -464,7 +464,9 @@ server process: it checks the row and records the answer with an atomic compare-
 two concurrent answers exactly one gets `200` and the other the same masked `404` as a wrong id.
 The process running the turn reads its pending rows every 500 ms, so an answer reaches the turn up
 to about half a second after its `200`. When the turn ends by any path its rows are deleted, and a
-late answer gets the `404`.
+late answer gets the `404`. One exception: if the process running the turn stops without ending it,
+an answer posted before the turn's deadline still gets `200` and has no effect, because no process
+remains to delete the row.
 
 Gated by `AI_V2_ENABLED` (see `server/.env.example`) — unlike the AI chat's implicit
 `CLAUDE_CLI_PATH` gate, this is an **explicit** opt-in flag: unset/off keeps every `ai/v2` route,
