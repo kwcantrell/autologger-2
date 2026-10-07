@@ -885,11 +885,13 @@ The published HTTP contract SHALL include:
   `lines` (string array progress), and `error` (string or null). The route is
   creator-scoped: unknown job ids and jobs created by a different user both
   get the uniform
-  `404 { detail: "Log import job not found." }`. It is NOT egress-gated
-  (local in-process state only). Terminal jobs are prunable one hour after
-  finishing and the in-memory job map is capped at 200 entries (oldest
-  terminal evicted first; queued/running jobs never evicted), so a terminal
-  job's status is only promised for about an hour after it finishes.
+  `404 { detail: "Log import job not found." }`. It is NOT egress-gated (it
+  reads only the job record in the catalog). Any server process sharing the
+  database SHALL answer it (ADR 0021 slice 9b). A terminal job's record expires
+  one hour after it finishes, so its status is only promised for about an hour.
+  A `queued` or `running` job whose process stopped heartbeating more than 60 s
+  ago SHALL be reported `failed` with `error`
+  `"The server running this import stopped."`.
 
 These endpoints are additive. Existing event POST/PUT shapes remain unchanged;
 imported events are created server-side by the job (not via a new public
@@ -920,6 +922,15 @@ create-at-arbitrary-timecode client endpoint in this change).
   configured or an unconfigured deployment
 - **THEN** the response is `404 { detail: "Show not found." }`, byte-identical to the unknown-show
   response, and no job is created
+
+#### Scenario: Another process answers the status poll
+- **WHEN** a job started through process A is polled through process B
+- **THEN** process B returns the job's current `{status, lines, error}`
+
+#### Scenario: A job whose process stopped reads as failed
+- **WHEN** a job is `running` and its process stops heartbeating for more than 60 s
+- **THEN** a poll returns `status: "failed"` with `error: "The server running this import stopped."`
+  and the lines written so far
 
 ### Requirement: events/generate optional body and deleted count
 

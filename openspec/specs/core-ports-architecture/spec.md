@@ -118,8 +118,9 @@ Every decision-making time read SHALL obtain the current time from a single inje
 synchronous `Clock` port rather than calling `Date.now()` directly — covering
 recording-lease staleness/expiry and alarm scheduling, session live-timecode derivation,
 key/value TTL expiry (login sessions, OAuth CSRF), Companion presence freshness, the
-identity JWKS cache TTL, the log-import job store's terminal-job TTL and finished-at
-stamping, and the AI runtime's process-group kill-ladder deadline. The lease **alarm
+identity JWKS cache TTL, the log-import job store's expiries, finished-at stamping and
+heartbeat staleness (ADR 0021 slice 9b), the AI v2 pending-question deadline, the AI chat
+resume binding's expiry, and the AI runtime's process-group kill-ladder deadline. The lease **alarm
 scheduler and the clock SHALL share one time base**, so an alarm scheduled from clock time
 and an expiry check reading clock time cannot diverge (no real-`setTimeout`-vs-fake-clock
 skew).
@@ -196,12 +197,19 @@ complete.
 - **THEN** the expired terminal jobs are pruned and the jobs that are still queued or running survive, without any real time passing
 
 #### Scenario: Size-cap eviction is unchanged and reads no time
-- **WHEN** the job store exceeds its size cap
-- **THEN** eviction removes terminal jobs in map insertion order and never a queued or running job — behavior that depends on no time value and is exercised by exceeding the cap rather than by advancing a clock
+- **WHEN** many log-import jobs exist (the in-memory store and its size cap were removed in ADR
+  0021 slice 9b; jobs live in the key-value store)
+- **THEN** no job is evicted by count: a job leaves only when its key-value expiry passes, judged
+  by the Clock port
 
 #### Scenario: Job status observed through the app is unchanged
 - **WHEN** a log-import job is created, progresses, and reaches a terminal status through the real app after the clock is injected
 - **THEN** the status endpoint's JSON shape, status codes, and creator-scoping behavior are identical to before the change, and no job time value is observable on the wire (`systemClock` reads the same source the direct call did)
+
+#### Scenario: A stale job is judged by the Clock port
+- **WHEN** a test starts a log-import job through the injected clock, stops its heartbeat, and
+  advances the clock 61 s
+- **THEN** a read of the job reports it `failed` with error `The server running this import stopped.`
 
 ### Requirement: Identity verification is a port with no hidden global state
 
