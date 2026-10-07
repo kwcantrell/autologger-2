@@ -1,9 +1,10 @@
 // The KV startup purge is an awaited boot step that never blocks boot (async-session-callers D2).
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { KvStore } from '@autologger/ports';
+import type { KvStore, LeaseDirectory } from '@autologger/ports';
+import type { SessionHubRegistryFacade } from '@autologger/session-core';
 import { describe, expect, it, vi } from 'vitest';
-import { purgeExpiredAtBoot, startPeriodicPurge } from './startupPurge';
+import { purgeExpiredAtBoot, startLeaseSweeper, startPeriodicPurge } from './startupPurge';
 
 const kvWith = (purgeExpired: () => Promise<void>) => ({ purgeExpired }) as unknown as KvStore;
 
@@ -53,7 +54,9 @@ describe('startPeriodicPurge', () => {
       expect(calls).toBe(1);
       await vi.advanceTimersByTimeAsync(10 * 60_000);
       expect(calls).toBe(2);
-      expect(String(warn.mock.calls[0]?.[0])).toMatch(/periodic KV purge failed \(CONNECTION_CLOSED\)/);
+      expect(String(warn.mock.calls[0]?.[0])).toMatch(
+        /periodic KV purge failed \(CONNECTION_CLOSED\)/,
+      );
       clearInterval(timer);
       await vi.advanceTimersByTimeAsync(30 * 60_000);
       expect(calls).toBe(2);
@@ -66,5 +69,190 @@ describe('startPeriodicPurge', () => {
     const main = readFileSync(join(__dirname, 'main.ts'), 'utf8');
     expect(main).toMatch(/const purgeTimer = startPeriodicPurge\(/);
     expect(main).toMatch(/clearInterval\(purgeTimer\)/);
+  });
+});
+
+// core-ports-architecture "Expired leases are swept by every process" (run-status-and-sweeper D6).
+describe('startLeaseSweeper', () => {
+  type Fakes = {
+    leases: LeaseDirectory;
+    sessions: SessionHubRegistryFacade;
+    swept: string[];
+    callers: unknown[];
+    runDeletes: number[];
+    recordingReads: Array<[number, number]>;
+  };
+  const fakes = (
+    opts: {
+      deleteRuns?: () => Promise<number>;
+      expired?: () => Promise<string[]>;
+      expire?: (id: string) => Promise<void>;
+    } = {},
+  ): Fakes => {
+    const swept: string[] = [];
+    const callers: unknown[] = [];
+    const runDeletes: number[] = [];
+    const recordingReads: Array<[number, number]> = [];
+    const leases: LeaseDirectory = {
+      earliestLiveRun: async () => null,
+      deleteExpiredRunLeases: async (now) => {
+        runDeletes.push(now);
+        return opts.deleteRuns ? opts.deleteRuns() : 0;
+      },
+      expiredRecordingSessions: async (now, limit) => {
+        recordingReads.push([now, limit]);
+        return opts.expired ? opts.expired() : [];
+      },
+    };
+    const sessions = {
+      get: async (id: string) => ({
+        as: (caller: unknown) => {
+          callers.push(caller);
+          return {
+            expireStaleLeases: async () => {
+              await opts.expire?.(id);
+              swept.push(id);
+            },
+          };
+        },
+      }),
+    } as unknown as SessionHubRegistryFacade;
+    return { leases, sessions, swept, callers, runDeletes, recordingReads };
+  };
+  const clock = { now: () => 1_000_000 };
+
+  const withFakeTimers = async (body: () => Promise<void>) => {
+    vi.useFakeTimers();
+    try {
+      await body();
+    } finally {
+      vi.useRealTimers();
+    }
+  };
+
+  it("ticks every 60 s, not at start, on an unref'd timer; deletes run rows, then sweeps each expired recording session as session-lease-sweep", () =>
+    withFakeTimers(async () => {
+      const f = fakes({ expired: async () => ['s1', 's2'] });
+      const warn = vi.fn();
+      const timer = startLeaseSweeper({ leases: f.leases, sessions: f.sessions, clock, warn });
+      expect(timer.hasRef()).toBe(false);
+      await vi.advanceTimersByTimeAsync(59_999);
+      expect(f.runDeletes).toEqual([]);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(f.runDeletes).toEqual([1_000_000]);
+      expect(f.recordingReads).toEqual([[1_000_000, 100]]);
+      expect(f.swept).toEqual(['s1', 's2']);
+      expect(f.callers).toEqual([
+        { kind: 'system', reason: 'session-lease-sweep' },
+        { kind: 'system', reason: 'session-lease-sweep' },
+      ]);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(f.runDeletes).toHaveLength(2);
+      expect(warn).not.toHaveBeenCalled();
+      clearInterval(timer);
+      await vi.advanceTimersByTimeAsync(5 * 60_000);
+      expect(f.runDeletes).toHaveLength(2);
+    }));
+
+  it('a slow tick blocks overlap: no second tick starts until the first finishes', () =>
+    withFakeTimers(async () => {
+      let release!: () => void;
+      const gate = new Promise<void>((r) => {
+        release = r;
+      });
+      const f = fakes({ expired: async () => ['s1'], expire: () => gate });
+      const timer = startLeaseSweeper({
+        leases: f.leases,
+        sessions: f.sessions,
+        clock,
+        warn: vi.fn(),
+      });
+      try {
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(f.runDeletes).toHaveLength(1);
+        await vi.advanceTimersByTimeAsync(3 * 60_000);
+        expect(f.runDeletes).toHaveLength(1);
+        release();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(f.swept).toEqual(['s1']);
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(f.runDeletes).toHaveLength(2);
+      } finally {
+        clearInterval(timer);
+      }
+    }));
+
+  it('a failing run-row delete warns, and the tick still sweeps the recording rows', () =>
+    withFakeTimers(async () => {
+      const f = fakes({
+        deleteRuns: async () => {
+          throw Object.assign(new Error('gone'), { code: 'CONNECTION_CLOSED' });
+        },
+        expired: async () => ['s1'],
+      });
+      const warn = vi.fn();
+      const timer = startLeaseSweeper({ leases: f.leases, sessions: f.sessions, clock, warn });
+      try {
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(warn).toHaveBeenCalledOnce();
+        expect(String(warn.mock.calls[0]?.[0])).toMatch(/lease sweep.*CONNECTION_CLOSED/);
+        expect(f.swept).toEqual(['s1']);
+      } finally {
+        clearInterval(timer);
+      }
+    }));
+
+  it('a failing listing warns once and the timer keeps ticking', () =>
+    withFakeTimers(async () => {
+      const f = fakes({
+        expired: async () => {
+          throw new TypeError('boom');
+        },
+      });
+      const warn = vi.fn();
+      const timer = startLeaseSweeper({ leases: f.leases, sessions: f.sessions, clock, warn });
+      try {
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(warn).toHaveBeenCalledOnce();
+        expect(String(warn.mock.calls[0]?.[0])).toMatch(/lease sweep.*TypeError/);
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(f.runDeletes).toHaveLength(2);
+      } finally {
+        clearInterval(timer);
+      }
+    }));
+
+  it('one failing session warns, naming it, and the others are still swept', () =>
+    withFakeTimers(async () => {
+      const f = fakes({
+        expired: async () => ['bad', 'good'],
+        expire: async (id) => {
+          if (id === 'bad') throw Object.assign(new Error('x'), { name: 'SessionHubClosedError' });
+        },
+      });
+      const warn = vi.fn();
+      const timer = startLeaseSweeper({
+        leases: f.leases,
+        sessions: f.sessions,
+        clock,
+        warn,
+        batch: 7,
+      });
+      try {
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(f.recordingReads).toEqual([[1_000_000, 7]]);
+        expect(f.swept).toEqual(['good']);
+        expect(warn).toHaveBeenCalledOnce();
+        expect(String(warn.mock.calls[0]?.[0])).toMatch(/bad.*SessionHubClosedError/);
+      } finally {
+        clearInterval(timer);
+      }
+    }));
+
+  it('main.ts starts it after the periodic purge and clears it on shutdown', () => {
+    const main = readFileSync(join(__dirname, 'main.ts'), 'utf8');
+    const start = main.indexOf('const leaseSweepTimer = startLeaseSweeper(');
+    expect(start).toBeGreaterThan(main.indexOf('const purgeTimer = startPeriodicPurge('));
+    expect(main).toMatch(/clearInterval\(leaseSweepTimer\)/);
   });
 });

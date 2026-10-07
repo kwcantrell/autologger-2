@@ -63,6 +63,11 @@ const ALLOWLIST: readonly { file: string; reason: string; why: string }[] = [
     why: 'the lease alarm frees a stale lease even if its holder lost access',
   },
   {
+    file: 'server/src/startupPurge.ts',
+    reason: 'session-lease-sweep',
+    why: 'the lease sweeper frees an expired recording lease no process has open, whoever held it (run-status-and-sweeper D6)',
+  },
+  {
     file: 'server/src/routers/audio.ts',
     reason: 'session-undo',
     why: "the upload's undo deletes only the segment row the same request created",

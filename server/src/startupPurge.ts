@@ -1,7 +1,8 @@
 // Startup hygiene for the KV store (async-session-callers D2): purge expired entries once, before
 // the server listens (after the catalog readiness wait, catalog-on-postgres D2). A failure
 // only warns: reads still treat expired entries as absent, so it must not block boot.
-import type { KvStore } from '@autologger/ports';
+import type { Clock, KvStore, LeaseDirectory } from '@autologger/ports';
+import { type SessionHubRegistryFacade, systemCaller } from '@autologger/session-core';
 
 export async function purgeExpiredAtBoot(
   kv: KvStore,
@@ -32,6 +33,75 @@ export function startPeriodicPurge(
         `autologger: periodic KV purge failed (${typeof code === 'string' ? code : e instanceof Error ? e.name : 'error'})`,
       );
     });
+  }, intervalMs);
+  timer.unref();
+  return timer;
+}
+
+/** The sweeper's caller: freeing an expired recording lease is session-wide, not any user's
+ * (run-status-and-sweeper D6; a reviewed reason in catalogSystem.repo.test.ts). */
+const SWEEP_CALLER = systemCaller('session-lease-sweep');
+
+const errorKind = (e: unknown): string => {
+  const code = (e as { code?: unknown })?.code;
+  return typeof code === 'string' ? code : e instanceof Error ? e.name : 'error';
+};
+
+export interface LeaseSweepDeps {
+  leases: LeaseDirectory;
+  sessions: SessionHubRegistryFacade;
+  clock: Clock;
+  warn?: (msg: string) => void;
+  /** The most recording sessions freed per tick; the rest wait for later ticks. */
+  batch?: number;
+}
+
+/** One lease-sweeper tick (run-status-and-sweeper D6): delete the expired run rows (silent), then
+ * free each listed session's expired recording lease, one at a time, through the hub's write path
+ * (revision bump, `lease.changed` to every process, alarm re-arm). Warn-only: a failed step or
+ * session warns and the tick goes on. Idempotent across processes: a second sweep deletes nothing. */
+export async function sweepLeasesOnce({
+  leases,
+  sessions,
+  clock,
+  warn = console.warn,
+  batch = 100,
+}: LeaseSweepDeps): Promise<void> {
+  try {
+    await leases.deleteExpiredRunLeases(clock.now());
+  } catch (e) {
+    warn(`autologger: lease sweep: run-lease delete failed (${errorKind(e)})`);
+  }
+  let ids: string[];
+  try {
+    ids = await leases.expiredRecordingSessions(clock.now(), batch);
+  } catch (e) {
+    warn(`autologger: lease sweep: listing expired recording leases failed (${errorKind(e)})`);
+    return;
+  }
+  for (const id of ids) {
+    try {
+      await (await sessions.get(id)).as(SWEEP_CALLER).expireStaleLeases();
+    } catch (e) {
+      warn(`autologger: lease sweep: session ${id} failed (${errorKind(e)})`);
+    }
+  }
+}
+
+/** Every process sweeps expired session leases every minute, with no election (core-ports-
+ * architecture "Expired leases are swept by every process"). No tick at start, so it never delays
+ * `listen()`; ticks never overlap (a busy flag). Unref'd; main.ts clears it on shutdown. */
+export function startLeaseSweeper(deps: LeaseSweepDeps & { intervalMs?: number }): NodeJS.Timeout {
+  const { intervalMs = 60_000, warn = console.warn, ...rest } = deps;
+  let busy = false;
+  const timer = setInterval(() => {
+    if (busy) return;
+    busy = true;
+    void sweepLeasesOnce({ ...rest, warn })
+      .catch((e: unknown) => warn(`autologger: lease sweep failed (${errorKind(e)})`))
+      .finally(() => {
+        busy = false;
+      });
   }, intervalMs);
   timer.unref();
   return timer;

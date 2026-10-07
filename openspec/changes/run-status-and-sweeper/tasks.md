@@ -79,20 +79,20 @@ Anything else is a stop: update the artifacts and ask the owner.
 
 ## 6. The sweeper (design D6)
 
-- [ ] 6.1 Test first: unit tests for `startLeaseSweeper` with a fake clock and fake ports.
+- [x] 6.1 Test first: unit tests for `startLeaseSweeper` with a fake clock and fake ports.
   - It ticks every 60 s.
   - A slow tick blocks overlap.
   - A failing `deleteExpiredRunLeases` warns, and the tick goes on to recording rows.
   - One failing session warns, and the others are still swept.
   - The timer is unref'd.
-
   Red, then add it, plus the facade `expireStaleLeases`, and wire it into `main.ts` (started after the purge, cleared on shutdown); add `session-lease-sweep` to the ALLOWLIST (D7 category 4). Green.
+  - Evidence: red, `cd server && npx vitest run --project unit src/startupPurge.test.ts` -> `TypeError: startLeaseSweeper is not a function` (x5), `main.ts starts it after the periodic purge and clears it on shutdown` `AssertionError: expected -1 to be greater than 2709`, `Tests  6 failed | 5 passed (11)`; with the code in place and before the ALLOWLIST entry, `npx vitest run --project unit src/catalogSystem.repo.test.ts` -> `+ "server/src/startupPurge.ts session-lease-sweep"`, `Tests  1 failed | 17 passed (18)` (log `9c-6.1-red.log`). Green: `npx vitest run --project unit src/startupPurge.test.ts src/catalogSystem.repo.test.ts` -> `Tests  29 passed (29)`; server unit suite `Tests  338 passed | 3 skipped (341)`; `packages/session-core` `Tests  55 passed (55)`; `npm run typecheck` clean (log `9c-6.1-green.log`).
+  - Evidence: `server/src/startupPurge.ts`: `sweepLeasesOnce({leases, sessions, clock, warn, batch = 100})` (one tick: `deleteExpiredRunLeases(now)`, warn and go on; `expiredRecordingSessions(now, batch)`, warn once and stop the tick on failure; each id in turn `(await sessions.get(id)).as(systemCaller('session-lease-sweep')).expireStaleLeases()`, a failure warns naming the session and the loop goes on) and `startLeaseSweeper({..., intervalMs = 60_000})` (`setInterval`, busy flag, no tick at start, unref'd, a rejected tick warns once). Facade `SessionHubFacade.expireStaleLeases()` = `inTxn((s) => s.lease.expireIfStale())`, the alarm's write path. `main.ts` starts `leaseSweepTimer` after `startPeriodicPurge` and clears it next to `purgeTimer`; the stale "no sweep timer" comment now says the purge repeats periodically. The first run of the unit suite caught the `.finally()` chain as a dropped promise (`promiseHygiene.repo.test.ts`); it is `void`ed. Existing tests: `catalogSystem.repo.test.ts` ALLOWLIST gains `server/src/startupPurge.ts` / `session-lease-sweep` (D7 category 4); in `startupPurge.test.ts` Biome reflowed one existing `toMatch(...)` line, formatting only.
 - [ ] 6.2 Test first: integration cases.
   - With two apps on one database and a Postgres frame bus, an expired recording lease claimed on A, with no alarm armed on B, is freed by a sweeper tick on B.
   - The session revision advances once, and A's socket gets `lease.changed`.
   - Expired run rows are deleted with no revision change.
   - A second tick on A deletes nothing.
-
   Red, then fix whatever fails. Green.
 
 ## 7. Approved users (design D9)
