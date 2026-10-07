@@ -147,6 +147,24 @@ refactor of this one.
   remains unconditional `503 {detail}` (no external integration wired up). Manual
   transcript-word/topic CRUD still works.
 
+### Run features: approved users only
+
+Six routes start paid or egress-making runs: `POST …/ai/chat`, `…/ai/v2/design`,
+`…/topics/generate`, `…/events/generate`, `…/youtube-import` and `…/transcript-words/generate`.
+Only approved users may start them (run-status-and-sweeper, ADR 0021 slice 9c):
+- **Who:** the bootstrap owner (`BOOTSTRAP_OWNER_EMAIL`) is always approved, and the optional
+  `RUN_FEATURE_EMAILS` (comma-separated) adds others. Entries match the user's verified login email
+  like the bootstrap owner: trimmed, ASCII case-insensitive, exact. A non-ASCII entry refuses boot;
+  the boot log prints the count and masked forms, never the addresses.
+- **Granting:** add the email to `RUN_FEATURE_EMAILS` in the stack's OpenBao secret and restart
+  (`make <env>-up`). Removing works the same way.
+- **Refusal:** anyone else gets **403** `{"detail":"This feature is limited to approved users on
+  this server."}`, right after the route's configuration `503` and before anything is claimed or
+  spawned. The AI v2 answer and dashboard routes are not gated. The web shows the detail.
+- **Log import:** a job whose creator is not approved skips transcript generation for sessions with
+  no transcript words, logging `Skipped transcript generation: limited to approved users on this
+  server.`, and those sessions fail. An existing transcript is still used.
+
 ### Transcript generation (DeepGram)
 
 `POST …/transcript-words/generate` is gated by `DEEPGRAM_API_KEY` (see
@@ -157,14 +175,15 @@ API (`DEEPGRAM_MODEL`, default `nova-3`), and — only once every group succeeds
 session's transcript words with the result (`200 {words}`). Failure modes: no recorded audio
 or no readable segments (`400`, distinct details), a run that succeeds upstream but finds no
 speech (`400`, existing transcript untouched), the request aborted before any provider call
-(`400`, no spend), a concurrent run already in flight (`409`, no spend), and upstream
-failure/timeout or a group over DeepGram's 2 GB upload limit (`502`). At most one generation
-run is in flight per process at a time, and at most one per session across processes: a run
-held in another process gets the generic in-flight `409` (see "Run leases" below).
+(`400`, no spend), a run already in flight on the same session (`409`, no spend), and upstream
+failure/timeout or a group over DeepGram's 2 GB upload limit (`502`). Runs are per session: any
+number of sessions can generate at once, but only one run per session, in this or any other server
+process. The `409` names the session and its run's start time, or gives a generic detail when the
+run's lease row is gone (see "Run leases" below).
 
 **Setting `DEEPGRAM_API_KEY` sends recorded session audio to DeepGram's cloud API and enables
-billed, metered calls — every generate request is a paid request.** Any signed-in member of
-the session's studio can trigger those calls; there is no additional gate beyond login. Only
+billed, metered calls — every generate request is a paid request.** Only approved users can
+trigger those calls (see "Run features: approved users only" above). Only
 set the key on a box you operate and are prepared to pay for.
 
 ### YouTube audio import
@@ -179,8 +198,9 @@ video's best supported-container audio into an isolated temp dir, attaches it as
 segment on the session (rolling back the metadata row if the blob write fails), and — when
 `use_publish_date` is set and the video reports an upload date — writes the session's
 `episode_date`. Responses: `400 {detail}` for a malformed or non-allowlisted URL (no spawn);
-`409 {detail}` when another import for the same session is already running (in this or another
-server process) or this process's concurrency ceiling is reached (no spawn); `502 {detail}` for
+`403 {detail}` for a user who is not approved (see "Run features" above); `409 {detail}` when
+another import for the same session is already running, in this or another server process (no
+spawn; there is no limit on imports across sessions); `502 {detail}` for
 a download/extraction failure, hang timeout, over the byte-size or 4-hour duration cap, a
 live/unknown-duration stream, or an unsupported produced container (no segment attached);
 `200 {ok: true}` on success.
@@ -188,7 +208,7 @@ live/unknown-duration stream, or an unsupported produced container (no segment a
 **Egress and spend disclosure.** Enabling this (by either route — configured path or bare
 `PATH`) makes the server issue outbound HTTP requests to YouTube and download third-party
 audio to local disk for every import — there is no metered API cost, but it is real network
-egress on the operator's behalf, for any signed-in member. Only run this on a box you operate and are
+egress on the operator's behalf, for any approved user. Only run this on a box you operate and are
 prepared to have make YouTube requests on your behalf.
 
 **`ffmpeg` note.** The spawned `yt-dlp` child's `PATH` is pinned to the resolved binary's own
@@ -236,7 +256,7 @@ session-scoped toolset.
 button is a separate, **non-conversational** consumer of the same CLI/MCP machinery: gated on
 the same `CLAUDE_CLI_PATH` (unset/blank keeps the endpoint's frozen `503`, byte-for-byte
 unchanged for unconfigured deployments) and the same
-per-session single-flight / process-wide concurrency ceiling (`AI_CHAT_MAX_CONCURRENT`) as
+per-session single-flight as
 the chat — a generate and a chat turn on the same session are mutually exclusive, since both
 spend the operator's Anthropic budget on that session. Unlike the chat — whose toolset has no
 delete tool, so it can only append topics — a generate **replaces the session's topics
@@ -300,11 +320,14 @@ topology decision, not something this endpoint arranges.
 **Egress and spend disclosure.** Enabling this feature sends the session's transcript and
 topic content to Anthropic, over the operator's own `claude login` credentials — every chat
 turn is a real, billed Anthropic API call against the operator's account/quota. Spend is
-bounded three ways: at most one turn in flight per autologger session (a second concurrent
-request for the same session gets `409`, spawning nothing), a process-wide ceiling on
-concurrent turns across all sessions (`AI_CHAT_MAX_CONCURRENT`, default `2` — turns beyond
-the ceiling are rejected with `409` and never spawned), and a per-turn CLI cost ceiling
-(`AI_CHAT_MAX_BUDGET_USD`, default `0.5`, passed to the CLI as `--max-budget-usd`). A turn
+bounded three ways: only approved users can start a turn (see "Run features" above), at most
+one turn is in flight per autologger session (a second concurrent request for the same session
+gets `409`, spawning nothing), and a per-turn CLI cost ceiling (`AI_CHAT_MAX_BUDGET_USD`, default
+`0.5`, passed to the CLI as `--max-budget-usd`). There is no limit on turns across sessions:
+`AI_PROVIDER` (default `claude_cli`, today the only accepted value; any other value refuses boot)
+selects the operator's development CLI, which runs without ceilings.
+`AI_CHAT_MAX_CONCURRENT` is ignored: the process-wide limit is gone. A deployment-wide ceiling,
+counting live run leases under a per-kind advisory lock, returns with the providers change. A turn
 that runs long is killed after `AI_CHAT_TIMEOUT_SEC` (default `300` seconds) — the
 guaranteed backstop; a client disconnect (Stop button or closed tab) also kills the
 subprocess but is best-effort only.
@@ -369,8 +392,7 @@ delta.
 
 The feed tab's AUTO GENERATE button starts one **synchronous** run: gated on the same
 `CLAUDE_CLI_PATH` as the AI chat (unset/blank keeps the endpoint's frozen `503`) and the same
-per-session single-flight / process-wide ceiling
-(`AI_CHAT_MAX_CONCURRENT`). The server snapshots the session's frame rate, transcript, and
+per-session single-flight. The server snapshots the session's frame rate, transcript, and
 instruction-bearing categories at run start (mid-run edits affect the next run, not this
 one), then drives a **single orchestrator CLI turn** through the same locked-down one-shot
 machinery as `topics/generate` — no built-in tools, strict per-turn MCP config, loopback +
@@ -418,15 +440,17 @@ pre-spawn when the session has no transcript words, no words with session-time a
 instruction-bearing button, or the instructions exceed the aggregate pre-spawn bound
 (`EVENT_GENERATE_MAX_INSTRUCTION_BYTES`, default `24576` total instruction bytes /
 `EVENT_GENERATE_MAX_INSTRUCTION_ENTRIES`, default `50` instruction-bearing entries);
-`409 {detail}` when the shared AI slot or process-wide ceiling is held; `200 {created,
+`403 {detail}` for a user who is not approved; `409 {detail}` when the session's shared AI
+slot is held; `200 {created,
 cap_hit}` on success; `502 {detail}` for a CLI-turn failure after spawn — a fixed opaque
 detail carrying no raw subprocess output, with events inserted before the failure remaining
 persisted (and reported nowhere in the error body). **The shared AI-slot `409` busy details
 are reworded** (authorized by the same delta) to name event generation among the possible
-holders — the `ai/chat`, AI v2, and `topics/generate` busy/at-capacity strings now all read
-"AI chat, AI v2, topic generation, or event generation". The shared slot is also held as the
+holders — the `ai/chat`, AI v2, and `topics/generate` busy strings now all read
+"AI chat, AI v2, topic generation, or event generation" (the at-capacity strings are gone with
+the ceiling). The shared slot is also held as the
 session's `ai-turn` run lease, so a turn running in another server process gets the same
-session-busy `409`; `AI_CHAT_MAX_CONCURRENT` still counts per process (see "Run leases" below).
+session-busy `409` (see "Run leases" below).
 
 **Egress and spend disclosure.** Like `topics/generate`, a run is a real, billed Anthropic
 API call over the operator's own `claude login` credentials — the transcript and the
@@ -438,7 +462,8 @@ same full transcript at generation density:
 `EVENT_GENERATE_MAX_BUDGET_USD` (default `5.0`, the per-turn CLI cost ceiling, passed as
 `--max-budget-usd`) and `EVENT_GENERATE_TIMEOUT_SEC` (default `600`, the server-side
 timeout backstop) — see `server/.env.example`. Concurrency exposure is bounded together
-with the other paid AI features by the shared slot and `AI_CHAT_MAX_CONCURRENT`.
+with the other paid AI features by the shared per-session slot and the approved users; there is
+no limit across sessions on `AI_PROVIDER=claude_cli`.
 
 ### AI v2 dashboards
 
@@ -480,9 +505,9 @@ operator's interactive `claude login` session — spending the **operator's pers
 and that fallback is permitted only on a loopback bind (`HOST=127.0.0.1`), logged loudly at
 startup; a non-loopback bind with no configured key refuses (`503`) to serve design turns at all.
 Spend is bounded per turn (`AI_V2_MAX_BUDGET_USD`, default `0.5`) and turns share the **same**
-per-session single-flight slot and process-wide concurrency ceiling as the AI chat
-(`AI_CHAT_MAX_CONCURRENT`) — the two paid features bound the operator's exposure together, not
-separately.
+per-session single-flight slot and approved users as the AI chat — the two paid features bound
+the operator's exposure together, not separately, with no limit across sessions on
+`AI_PROVIDER=claude_cli`.
 
 **Configuration gating — CRUD is deliberately different.** The design
 and answer routes carry the full guard chain: config gate (`503`) and the agent-credentials
@@ -718,13 +743,10 @@ packages/                 Source-only npm workspace packages (no build step; ser
     audioMerge.ts            mediabunny packet-copy concat of recorded audio segments
     transcriptRemap.ts       Timeline remap of words + enrichment onto the session's SMPTE
                              timeline
-    transcriptGenerationLock.ts  Process-wide generation lock (singleton); its tryAcquire
-                             Date.now() default formats the frozen GET
-                             /api/transcript-generation/status started_at field — nothing
-                             branches, expires, orders, or persists on the value, but it is
-                             contract-bearing, so it stays a display timestamp, not a Clock read.
-                             It counts per process; generateTranscript.ts then claims the
-                             session's transcript-generation run lease for the cross-process check
+    transcriptGenerationLock.ts  Per-session generation runs (singleton; the process-wide
+                             generation lock is gone): one run per session in this process, any
+                             number of sessions. generateTranscript.ts then claims the session's
+                             transcript-generation run lease for the cross-process check
     generateTranscript.ts    Orchestrating entry point both the HTTP generate route and
                              log-import's ensureTimedTranscript coordinator call; imports
                              BlobStore directly from @autologger/ports (no appEnv/Bindings escape)
@@ -738,9 +760,9 @@ packages/                 Source-only npm workspace packages (no build step; ser
                            server/src/node/ (feature-service-packages task 3.1)
     ytdlp.ts                 yt-dlp spawn + lockdown + bounds; exports YtDlpError, matched by
                              instanceof at routers/sessions.ts
-    youtubeImportGuard.ts    Per-session + process-wide concurrency guard (singleton); the
-                             ceiling counts per process, and routers/sessions.ts then claims the
-                             session's youtube-import run lease for the cross-process check
+    youtubeImportGuard.ts    Per-session import guard (singleton; no ceiling across sessions);
+                             routers/sessions.ts then claims the session's youtube-import run
+                             lease for the cross-process check
     youtubeImportScratch.ts  Startup sweep of stale per-request temp dirs
     index.ts                 Package barrel; exports MEDIA_IMPORT_FIXTURES_DIR
   media-import/fixtures/   fake-ytdlp.mjs, moved from server/src/test/fixtures/ (design D4).
@@ -805,11 +827,10 @@ packages/                 Source-only npm workspace packages (no build step; ser
                                ai/chat and topics/generate
     aiChatRelay.ts            JSONL→SSE stream relay: maps the CLI's stream-json stdout to the
                                frozen delta/tool/done/error SSE vocabulary
-    aiChatRegistry.ts         Shared per-session AI turn registry: per-session single-flight +
-                               process-wide concurrency ceiling (the aiChatTurns singleton); the
-                               ceiling counts per process, and the routes then claim the session's
-                               ai-turn run lease (server routers/_aiSlot.ts) for the cross-process
-                               check
+    aiChatRegistry.ts         Shared per-session AI turn registry: per-session single-flight
+                               only (the aiChatTurns singleton; no ceiling across sessions); the
+                               routes then claim the session's ai-turn run lease (server
+                               routers/_aiSlot.ts) for the cross-process check
     aiV2PendingQuestions.ts   Pending-question registry for the AskUserQuestion round trip on
                                v2 design turns, keyed and principal-bound; one per binding, over
                                kv rows any process can answer, polled by the turn's process
@@ -882,19 +903,19 @@ Content-coding is transport applied above the frozen representation: the decoded
 | `GET\|POST /api/sessions/{id}/events` (GET adds `has_auto_generated`, whole-session; POST silently strips the reserved `auto_generated`/`auto_generate_run_id` metadata keys from client input) · `PUT\|DELETE …/events/{eid}` (optional `version`/`overwrite`; a stale version is **409** `{detail: "Version conflict.", current}`; see "Row versions" below) | `routers/events.py` |
 | `GET …/status` (`events_stream_revision` is the session revision, advanced by every session write; see "Row versions" below) · `POST …/transport/start\|stop` · `GET …/show-categories` | `routers/events.py` |
 | `…/audio-recording-lease` (claim/heartbeat/release) · `GET …/ws` | `routers/events.py` |
-| `POST …/events/generate` → **503** unconfigured · **409** concurrent-turn/at-capacity · **400** no-transcript/no-anchors/no-instructions/over-instruction-bound/malformed-body/`regenerate`+`selection` combo/selection-matches-no-instructions · **200** `{created, cap_hit}` configured success, plus `deleted` when `regenerate:true` (append-only; regenerate deletes the prior `auto_generated` snapshot only after a successful run creates ≥1 event — zero-created success and `502` leave prior rows intact, `deleted` reflects the post-success removal) · **502** CLI-turn-failure (already-inserted events persist) (see "Event auto-generation" above) | `routers/events.ts` (new, auto-generate-event-logs + event-generate-menu) |
+| `POST …/events/generate` → **503** unconfigured · **403** not an approved user · **409** concurrent-turn · **400** no-transcript/no-anchors/no-instructions/over-instruction-bound/malformed-body/`regenerate`+`selection` combo/selection-matches-no-instructions · **200** `{created, cap_hit}` configured success, plus `deleted` when `regenerate:true` (append-only; regenerate deletes the prior `auto_generated` snapshot only after a successful run creates ≥1 event — zero-created success and `502` leave prior rows intact, `deleted` reflects the post-success removal) · **502** CLI-turn-failure (already-inserted events persist) (see "Event auto-generation" above) | `routers/events.ts` (new, auto-generate-event-logs + event-generate-menu) |
 | `GET\|POST …/audio/segments` · `POST …/segments/sync-from-disk` · range `GET …/segments/{id}` · `PUT …/waveform` | `routers/audio.py` |
 | `GET\|POST\|PATCH\|DELETE …/transcript-words` · `…/topics` (`PATCH`/`DELETE …/{id}` take an optional `version`/`overwrite`; a stale version is **409**; see "Row versions" below) | `routers/transcribe.py` |
-| `GET /api/transcript-generation/status` → **200** `{in_flight:false}` idle · **200** busy fields when held (`session_id`, `session_title`, `started_at`) | `routers/transcribe.py` |
-| `…/transcript-words/generate` → **503** unconfigured · **200** `{words}` configured (see "Transcript generation" above) | `routers/transcribe.py` |
-| `POST …/topics/generate` → **503** unconfigured · **409** concurrent-turn/at-capacity · **400** no-transcript · **200** `{topics}` configured success (crash-safe replace-all) · **502** CLI-turn-failure/zero-topics (prior topics unchanged) (see "AI chat (Claude CLI)" below) | `routers/transcribe.py` |
+| `GET /api/transcript-generation/status` → **200** `{in_flight:false}` idle · **200** busy fields for the earliest-started live run in the deployment (`session_id`, `session_title`, `started_at`; the ids are null for a session the caller can't access) | `routers/transcribe.py` |
+| `…/transcript-words/generate` → **503** unconfigured · **403** not an approved user · **200** `{words}` configured (see "Transcript generation" above) | `routers/transcribe.py` |
+| `POST …/topics/generate` → **503** unconfigured · **403** not an approved user · **409** concurrent-turn · **400** no-transcript · **200** `{topics}` configured success (crash-safe replace-all) · **502** CLI-turn-failure/zero-topics (prior topics unchanged) (see "AI chat (Claude CLI)" below) | `routers/transcribe.py` |
 | `…/transcribe.csv` → **503** | (unavailable) |
 | `POST …/local-audio-import` → **400** missing/invalid `duration_s`/empty body/missing Content-Type · **404** session · **409** rolling · **413** oversize body · **200** `{ok: true}` success (local file attach+anchor; requires `duration_s`; optional `X-Audio-Seam-Parts`; not YouTube) | `routers/sessions.py` |
 | `POST /api/shows/:showId/log-import` → **404** show/no show access · **503** unconfigured · **400** bad body · **200** `{ job_id }` configured success (public Sheets log import job; see "Google Sheets log import" above) | — |
 | `GET /api/log-import/:jobId` → **404** unknown/not-creator · **200** `{ status, lines, error }` | — |
-| `POST …/youtube-import` → **503** unconfigured · **400** bad/non-allowlisted url · **409** concurrent-session/at-capacity · **200** `{ok: true}` configured success · **502** download/extract/bound/container/blob-write failure (see "YouTube audio import" above) | `routers/sessions.py` |
-| `POST …/ai/chat` → **503** unconfigured · **200** `text/event-stream` configured (see "AI chat" below) | `routers/ai.ts` (new, ai-topics-chat) |
-| `POST …/ai/v2/design` → **503** unconfigured/credentials · **200** `text/event-stream` configured (SSE: `delta`\|`question`\|`dashboard`\|`done`\|`error`) · `POST …/ai/v2/answer` → answer round trip, **200** `{ok:true}` (see "AI v2 dashboards" below) | `routers/aiV2.ts` (new, ai-v2-dashboards) |
+| `POST …/youtube-import` → **503** unconfigured · **403** not an approved user · **400** bad/non-allowlisted url · **409** concurrent-session · **200** `{ok: true}` configured success · **502** download/extract/bound/container/blob-write failure (see "YouTube audio import" above) | `routers/sessions.py` |
+| `POST …/ai/chat` → **503** unconfigured · **403** not an approved user · **200** `text/event-stream` configured (see "AI chat" below) | `routers/ai.ts` (new, ai-topics-chat) |
+| `POST …/ai/v2/design` → **503** unconfigured/credentials · **403** not an approved user · **200** `text/event-stream` configured (SSE: `delta`\|`question`\|`dashboard`\|`done`\|`error`) · `POST …/ai/v2/answer` → answer round trip, **200** `{ok:true}` (see "AI v2 dashboards" below) | `routers/aiV2.ts` (new, ai-v2-dashboards) |
 | `GET\|PUT\|DELETE …/ai/v2/dashboard` → dashboard persistence: **200** `{config}` (GET: `{config:null}` if none) \| `{ok:true}` (DELETE), **422** invalid/bounds-exceeded, **400** malformed | `routers/aiV2.ts` (new, ai-v2-dashboards) |
 | `GET …/export.csv` · `…/export.jsonl` | `routers/exports.py` / `export.py` |
 | `/api/companion/presence\|state\|log\|transport\|command\|categories\|commands/*` | `routers/companion.py` |
@@ -981,19 +1002,28 @@ also rows in `catalog.session_leases`, one kind each: `ai-turn` (shared by AI ch
 generation and event generation), `transcript-generation` and `youtube-import`.
 - **Order:** the in-process check runs first, exactly as before, so every single-process `409` and
   its detail is unchanged. The run lease is claimed after it. A refusal can only come from another
-  server process and answers the session-busy `409` (the generic in-flight `409` for transcript
-  generation). The lease is released before the in-process slot, before the response ends.
+  server process and answers the session-busy `409` (for transcript generation, the `409` naming
+  the session and the run's `started_at_ms`, or the generic in-flight detail if the row is gone). The lease is released before the in-process slot, before the response ends.
 - **Holder:** the user the run acts as (for a log-import job, its creator) and a server run id,
   `srv:<boot id>:<uuid>`, unique per run.
 - **Renewal:** the lease lives 40 s; the holding process re-claims it as the same holder every
   10 s. A refused renewal is logged and the run continues.
 - **Silent:** claiming, renewing and releasing a run lease never advances the revision and never
-  sends `lease.changed`. No client reads these kinds; status shows only the recording lease.
-- **Process ceilings** (`AI_CHAT_MAX_CONCURRENT`, the YouTube ceiling of 2, one transcript
-  generation) still count per process, and `GET /api/transcript-generation/status` reads this
-  process only.
+  sends `lease.changed`. The session `GET …/status` shows only the recording lease.
+- **No ceilings** (run-status-and-sweeper, ADR 0021 slice 9c): on `AI_PROVIDER=claude_cli` the
+  process-wide limits are gone (`AI_CHAT_MAX_CONCURRENT` is ignored, and the YouTube limit of 2 and
+  one transcript generation per process are removed). Any number of sessions can run each kind;
+  one run per session per kind stays. The deployment-wide ceiling (a live run-lease count under a
+  per-kind advisory lock) returns with the providers change.
+- **Status:** a run-lease claim records `started_at_ms` (kept on renewal by the same holder), and
+  `GET /api/transcript-generation/status` reports the earliest-started live
+  `transcript-generation` run of the whole deployment, whichever process holds it.
+- **Sweeper:** every process, every 60 s, deletes the expired run-lease rows (silently) and frees
+  each expired recording lease through its session, which advances the revision and sends
+  `lease.changed` to every process. There is no election; a second sweep finds nothing.
 - **Restart window:** a process that crashes, is killed or restarts mid-run does not release its
-  run leases, so a retry on that session gets `409` for up to 40 s, until they expire.
+  run leases, so a retry on that session gets `409` for up to 40 s, until they expire. The sweeper
+  deletes the rows later; it does not shorten the window.
 
 ## Security notes
 
@@ -1043,6 +1073,8 @@ only: nothing reads `server/.env`. The stacks take values from OpenBao
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | *(required)* | Google OAuth credentials. The server refuses to boot when either, or `PUBLIC_BASE_URL`, is blank. |
 | `FRAME_BUS_SECRET` | *(required)* | Signs every session frame bus message (HMAC-SHA256, at least 32 characters, server-only; set in OpenBao). `main.ts` refuses to boot without it. Rotate it by restarting every process together. |
 | `BOOTSTRAP_OWNER_EMAIL` | *(required)* | The bootstrap owner's email. A sign-in whose verified Google email matches it (trimmed, ASCII case-insensitive) becomes owner of every team with no owner. The server refuses to boot when it is blank or non-ASCII, and logs it masked (domain plus a short hash). |
+| `RUN_FEATURE_EMAILS` | *(empty = the bootstrap owner only)* | Comma-separated emails of users approved for the run features (AI chat, AI v2 design, topic and event generation, YouTube import, transcript generation); the bootstrap owner is always approved. Others get `403`. A non-ASCII entry refuses boot. See "Run features: approved users only". |
+| `AI_PROVIDER` | `claude_cli` | The AI provider; `claude_cli` is the only accepted value, and any other refuses boot. It runs with no limit on runs across sessions. `AI_CHAT_MAX_CONCURRENT` is ignored (the process-wide limit is gone). |
 
 **Config-gated feature keys** (each endpoint returns a frozen `503` until its key/binary is
 present — see the linked sections above): `DEEPGRAM_API_KEY` (+ `DEEPGRAM_MODEL`) for
@@ -1197,6 +1229,7 @@ hand-typed `docker compose up` fails on purpose. Nothing reads `server/.env`.
 | `PUBLIC_BASE_URL` | yes | The public HTTPS origin (e.g. `https://autologger.nrvo.ai`). Builds the OAuth redirect `${PUBLIC_BASE_URL}/auth/google/callback`. |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | yes | Google sign-in, the only way in for people; the server refuses to boot without them. |
 | `BOOTSTRAP_OWNER_EMAIL` | yes | The bootstrap owner; their first sign-in claims every ownerless team. Compose and the server refuse to start without it. |
+| `RUN_FEATURE_EMAILS` | optional | Users approved for the run features besides the bootstrap owner (comma-separated). Grant by adding an email and restarting. |
 | `API_TOKEN` | if Companion is used | Companion bearer token, **≥ 32 random bytes**. Authenticates **only** `/api/companion/*`. |
 | `ADMIN_TOKEN` | yes for cutover | Gates `/api/admin/*` (membership bootstrap). |
 | `ROUTER_PORT` | no (`8080`) | Host loopback port the router publishes; the Newt target. |

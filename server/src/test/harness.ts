@@ -67,6 +67,9 @@ export async function resetTestEnv(): Promise<void> {
       GOOGLE_CLIENT_SECRET: 'test-secret',
       // owner-bootstrap D13: an address no suite signs in with, so no sign-in claims by accident.
       BOOTSTRAP_OWNER_EMAIL: 'bootstrap-owner@example.com',
+      // run-status-and-sweeper D7 category 5: seeded users and the default user run the six run
+      // routes as approved users; negative cases seed an explicit, non-approved email.
+      RUN_FEATURE_EMAILS: 'seeded-user@example.com,default-user@example.com',
       SESSION_COOKIE: 'autologger_sid',
       SESSION_DAYS: '14',
       NEW_USER_ALL_TEAMS: '0',

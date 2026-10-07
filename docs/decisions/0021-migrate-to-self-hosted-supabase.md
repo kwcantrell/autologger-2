@@ -1083,7 +1083,9 @@ Slice order:
      catalog.session_leases where kind <> 'recording'`, then re-add the check with
      `'recording'` only. This is a documented step, not a migration file.
    - **Follow-ups for slice 9:** deployment-wide ceilings, a cross-process transcript status, and a
-     sweeper for expired run rows.
+     sweeper for expired run rows. **Amended (9c, owner, 2026-10-07):** the status and the sweeper
+     shipped in 9c; the ceilings were removed on `claude_cli`, and the deployment-wide ceiling moves
+     to the providers change.
 9. Realtime replaces the WebSocket protocol. **Amended (owner, 2026-10-07):** slice 9 keeps the
    WebSocket and runs as sub-slices; Realtime is deferred.
    - 9a `session-frame-bus`: every session frame, relayed command and access-loss close travels
@@ -1094,9 +1096,32 @@ Slice order:
      re-listens; the app role's connection limit rises to 45 (14 per process, three processes).
      Only `main.ts` uses the Postgres bus; tests keep the in-process bus. The topology stays one
      replica.
-   - 9b per-process request state (log-import jobs, AI v2 answers, chat resume); 9c
-     deployment-wide ceilings, a cross-process transcript status and sweepers; 9d the Companion
-     device credential.
+   - 9b per-process request state (log-import jobs, AI v2 answers, chat resume); 9d the Companion
+     device credential and Companion presence.
+   - 9c `run-status-and-sweeper` (owner decisions, 2026-10-07):
+     1. **the deployment-wide ceiling will be a live run-lease count:** a new claim takes a
+        per-kind transaction advisory lock, counts the kind's live rows and inserts only below the
+        limit; renewals skip the count. Deferred to the providers change; 9c builds no ceiling;
+     2. **`AI_PROVIDER`, no limits on `claude_cli`:** the setting defaults to `claude_cli`, today
+        the only accepted value (anything else refuses boot). On it the AI-turn, YouTube and
+        transcript-generation ceilings are off, in process and deployment-wide;
+        `AI_CHAT_MAX_CONCURRENT` is ignored. One run per session per kind stays;
+     3. **the sweeper runs in every process,** idempotent, with no election;
+     4. **the transcript status comes from the lease:** a new `session_leases.started_at_ms` (set on
+        a run claim, kept on renewal) and `GET /api/transcript-generation/status` names the
+        earliest-started live run of the deployment, with today's body and redaction. Transcript
+        generation is per session;
+     5. (after the panel's denial-of-service finding) **only approved users start runs:** the
+        bootstrap owner plus the `RUN_FEATURE_EMAILS` allowlist; anyone else gets a `403` on the
+        six run routes, and a log-import job whose creator lacks access skips transcript
+        generation.
+
+     **Shipped:** the migration adding `started_at_ms`; the `LeaseDirectory` port (system reads of
+     the earliest live run, expired run rows and expired recording sessions); the sweeper, every
+     60 s on every process, which deletes expired run rows silently and frees each expired
+     recording lease through the session's hub, so `lease.changed` reaches every process over the
+     9a bus. **Deferred:** the live-lease ceiling (the providers change) and Companion presence
+     (9d).
 10. Blobs to Supabase Storage.
 11. The import script, parity check, cutover runbook and rollback plan. It must not import users,
     memberships, prefs, invites or login sessions (slice 5a above).

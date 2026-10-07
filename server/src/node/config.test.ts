@@ -82,6 +82,9 @@ describe('createBindings -- AI_V2_CREDENTIAL_SOURCE_PATH has NO environment over
         // A plausible differently-named override a buggy implementation
         // might read instead of/in addition to the field's own name.
         CLAUDE_CREDENTIALS_FILE: '/etc/shadow',
+        // Boot validates AI_PROVIDER, so it needs a valid value here (run-status-and-sweeper D7
+        // category 2); it has no bearing on the credential path.
+        AI_PROVIDER: 'claude_cli',
       });
       // Pinning two sentinel KEY NAMES only proves an implementation that
       // happens to read one of those two names is caught -- a third,
@@ -222,6 +225,25 @@ describe('createBindings -- BOOTSTRAP_OWNER_EMAIL (owner-bootstrap D8)', () => {
       expect(unset.bindings.config.BOOTSTRAP_OWNER_EMAIL).toBe('');
     } finally {
       await unset.close();
+    }
+  });
+});
+
+describe('createBindings -- AI_PROVIDER (run-status-and-sweeper D1)', () => {
+  it('refuses an unknown AI_PROVIDER before taking the DATA_DIR lock', async () => {
+    const env = freshProcEnv();
+    expect(() => createBindings({ ...env, AI_PROVIDER: 'openai' })).toThrow(
+      'AI_PROVIDER must be one of: claude_cli (got "openai")',
+    );
+    expect(existsSync(join(dir, 'sessions'))).toBe(false); // nothing was created
+    await createBindings(env).close(); // and the lock was never held
+  });
+  it('carries claude_cli on Config when unset', async () => {
+    const b = createBindings(freshProcEnv());
+    try {
+      expect(b.bindings.config.AI_PROVIDER).toBe('claude_cli');
+    } finally {
+      await b.close();
     }
   });
 });

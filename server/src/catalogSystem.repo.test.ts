@@ -48,6 +48,11 @@ const ALLOWLIST: readonly { file: string; reason: string; why: string }[] = [
     why: 'login sessions, OAuth state, the Companion last command and the expiry purges',
   },
   {
+    file: 'packages/storage/src/leaseDirectory.ts',
+    reason: 'lease-directory',
+    why: "the transcript status's earliest live run across sessions and the sweeper's expired-lease reads and run-row delete (run-status-and-sweeper D5)",
+  },
+  {
     file: 'packages/session-core/src/SessionHub.ts',
     reason: 'session-open',
     why: "a hub's open seeds the session's rows and frees a lease that went stale while down",
@@ -56,6 +61,11 @@ const ALLOWLIST: readonly { file: string; reason: string; why: string }[] = [
     file: 'packages/session-core/src/SessionHub.ts',
     reason: 'session-lease-alarm',
     why: 'the lease alarm frees a stale lease even if its holder lost access',
+  },
+  {
+    file: 'server/src/startupPurge.ts',
+    reason: 'session-lease-sweep',
+    why: 'the lease sweeper frees an expired recording lease no process has open, whoever held it (run-status-and-sweeper D6)',
   },
   {
     file: 'server/src/routers/audio.ts',
@@ -70,7 +80,7 @@ const ALLOWLIST: readonly { file: string; reason: string; why: string }[] = [
   {
     file: 'server/src/routers/events.ts',
     reason: 'session-undo',
-    why: "the regenerate deletes only the snapshot ids it read and replaced in the same request",
+    why: 'the regenerate deletes only the snapshot ids it read and replaced in the same request',
   },
   {
     file: 'server/scripts/merge-session-audio.ts',
@@ -346,8 +356,12 @@ describe('the scan is mutation-checked against synthetic trees (catalog-roles D1
   });
 
   it('a systemCaller(reason) with a variable is a violation', () => {
-    const root = tree({ 'server/src/a.ts': "cat.system('job-a');\nhub.as(systemCaller(reason));\n" });
-    expect(scanCatalogBindings(root).nonLiteral).toEqual([{ file: 'server/src/a.ts', arg: 'reason' }]);
+    const root = tree({
+      'server/src/a.ts': "cat.system('job-a');\nhub.as(systemCaller(reason));\n",
+    });
+    expect(scanCatalogBindings(root).nonLiteral).toEqual([
+      { file: 'server/src/a.ts', arg: 'reason' },
+    ]);
   });
 
   it('a binding under server/scripts is scanned', () => {
@@ -393,7 +407,8 @@ describe('the scan is mutation-checked against synthetic trees (catalog-roles D1
     const root = tree({
       'server/src/routers/forged.ts': "storage.tx({ kind: 'system', reason: 'x' }, fn);\n",
       'packages/ai-runtime/src/forged.ts': "const c = { kind:'user', userId: id };\n",
-      'packages/storage/src/postgresSessionSql.ts': "| { readonly kind: 'user'; readonly userId: string }\n",
+      'packages/storage/src/postgresSessionSql.ts':
+        "| { readonly kind: 'user'; readonly userId: string }\n",
       'packages/session-core/src/sessionCaller.ts': "Object.freeze({ kind: 'system', reason });\n",
       'server/src/routers/fine.ts': "attachSocket(ws, 'browser'); const k = { kind: 'catalog' };\n",
     });

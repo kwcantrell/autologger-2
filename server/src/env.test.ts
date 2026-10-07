@@ -17,8 +17,11 @@ import {
   maskBootstrapOwnerEmail,
   newUserAllTeamsEnabled,
   oauthConfigured,
+  parseAiProvider,
   publicBaseUrl,
   resolveYtDlpPath,
+  runFeatureAllowed,
+  runFeatureEmails,
   sessionCookieName,
   sessionTtlDays,
   topicGenerateMaxBudgetUsd,
@@ -270,5 +273,69 @@ describe('bootstrap owner email (owner-bootstrap D8, D16)', () => {
     expect(m).toMatch(/#[0-9a-f]{8}\b/);
     expect(m.toLowerCase()).not.toContain('owner');
     expect(maskBootstrapOwnerEmail(' owner@example.com ')).toBe(m);
+  });
+});
+
+describe('AI_PROVIDER (run-status-and-sweeper D1)', () => {
+  it('defaults to claude_cli when unset or blank', () => {
+    for (const raw of [undefined, '', '   '])
+      expect(parseAiProvider(raw), String(raw)).toBe('claude_cli');
+  });
+  it('accepts claude_cli', () => {
+    expect(parseAiProvider('claude_cli')).toBe('claude_cli');
+  });
+  it('refuses anything else, naming the accepted list and echoing the value', () => {
+    expect(() => parseAiProvider('openai')).toThrow(
+      'AI_PROVIDER must be one of: claude_cli (got "openai")',
+    );
+    expect(() => parseAiProvider('Claude_CLI')).toThrow(
+      'AI_PROVIDER must be one of: claude_cli (got "Claude_CLI")',
+    );
+  });
+});
+
+// run-status-and-sweeper D9: the run features are limited to the bootstrap owner plus the approved
+// list, matched with the bootstrap owner's exact-ASCII rule.
+describe('approved users for run features (run-status-and-sweeper D9)', () => {
+  const OWNER = 'Owner@Example.com';
+  it('runFeatureEmails gives the bootstrap owner alone when the list is unset, blank or all-blank', () => {
+    for (const v of [undefined, '', '   ', ',', ' , ,, ']) {
+      expect(
+        runFeatureEmails(E({ BOOTSTRAP_OWNER_EMAIL: OWNER, RUN_FEATURE_EMAILS: v })),
+        JSON.stringify(v),
+      ).toEqual(['owner@example.com']);
+    }
+  });
+  it('runFeatureEmails adds a set list after the owner, who stays approved', () => {
+    expect(
+      runFeatureEmails(E({ BOOTSTRAP_OWNER_EMAIL: OWNER, RUN_FEATURE_EMAILS: 'a@example.com' })),
+    ).toEqual(['owner@example.com', 'a@example.com']);
+  });
+  it('runFeatureEmails splits on commas, trims, drops blanks and duplicates, ASCII-normalizes', () => {
+    expect(
+      runFeatureEmails(
+        E({
+          BOOTSTRAP_OWNER_EMAIL: OWNER,
+          RUN_FEATURE_EMAILS: ' A@Example.com,, b@example.com ,a@example.com,OWNER@example.COM, ',
+        }),
+      ),
+    ).toEqual(['owner@example.com', 'a@example.com', 'b@example.com']);
+  });
+  it('runFeatureAllowed matches any entry, folding ASCII case', () => {
+    const env = E({ BOOTSTRAP_OWNER_EMAIL: OWNER, RUN_FEATURE_EMAILS: 'Member@Example.com' });
+    expect(runFeatureAllowed(env, { email: 'owner@EXAMPLE.com' })).toBe(true);
+    expect(runFeatureAllowed(env, { email: ' member@example.COM' })).toBe(true);
+    expect(runFeatureAllowed(env, { email: 'other@example.com' })).toBe(false);
+    expect(runFeatureAllowed(env, { email: '' })).toBe(false);
+  });
+  it('runFeatureAllowed never matches a non-ASCII token email (strict === true)', () => {
+    const env = E({
+      BOOTSTRAP_OWNER_EMAIL: 'kalen@gmail.com',
+      RUN_FEATURE_EMAILS: 'kalen@gmail.com',
+    });
+    expect(runFeatureAllowed(env, { email: '\u212Aalen@gmail.com' })).toBe(false);
+  });
+  it('runFeatureAllowed is false for everyone when no owner and no list are set', () => {
+    expect(runFeatureAllowed(E({}), { email: 'a@example.com' })).toBe(false);
   });
 });

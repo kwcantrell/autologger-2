@@ -70,6 +70,27 @@ export function maskBootstrapOwnerEmail(value: string): string {
   return `${domain || '(no domain)'} #${hash}`;
 }
 
+// ── Approved users for run features (run-status-and-sweeper D9) ────────────
+
+/** The approved users' emails, ASCII-normalized: the bootstrap owner first (a grant never locks
+ * the owner out), then the `RUN_FEATURE_EMAILS` entries (comma-separated, each trimmed, blanks and
+ * duplicates dropped). Unset, blank or all-blank gives the owner alone. */
+export function runFeatureEmails(env: Config): string[] {
+  const out = [bootstrapOwnerEmail(env)];
+  for (const raw of (env.RUN_FEATURE_EMAILS || '').split(',')) {
+    const e = asciiEmailNorm(raw);
+    if (e !== '' && !out.includes(e)) out.push(e);
+  }
+  return out;
+}
+
+/** Whether `user` may run the run features: their email matches an approved entry under the
+ * bootstrap owner's exact-ASCII rule. Strict `=== true`: `'non-ascii'` is truthy and never a
+ * match. */
+export function runFeatureAllowed(env: Config, user: { email: string }): boolean {
+  return runFeatureEmails(env).some((e) => bootstrapEmailMatch(user.email, e) === true);
+}
+
 export function sessionTtlDays(env: Config): number {
   const n = Number(env.SESSION_DAYS ?? '14');
   return Number.isFinite(n) && n > 0 ? n : 14.0;
@@ -122,11 +143,13 @@ export function aiChatTimeoutSec(env: Config): number {
   return Number.isFinite(n) && n > 0 ? n : 300;
 }
 
-/** Process-wide concurrent-turn ceiling (spec Spend and concurrency bounds); a
- * small default (2) so a paid endpoint can't fan out unbounded turns. */
-export function aiChatMaxConcurrent(env: Config): number {
-  const n = Number((env.AI_CHAT_MAX_CONCURRENT || '').trim());
-  return Number.isInteger(n) && n > 0 ? n : 2;
+/** The AI provider (run-status-and-sweeper D1). Unset or blank gives `'claude_cli'`, the only
+ * accepted value; anything else throws, echoing the value (it is not a secret). Called by
+ * `createBindings` before the `DATA_DIR` lock. */
+export function parseAiProvider(raw: string | undefined): 'claude_cli' {
+  const v = (raw ?? '').trim();
+  if (v === '' || v === 'claude_cli') return 'claude_cli';
+  throw new Error(`AI_PROVIDER must be one of: claude_cli (got "${raw}")`);
 }
 
 /** Per-turn CLI cost ceiling in USD (spec Spend and concurrency bounds; the CLI
@@ -138,7 +161,7 @@ export function aiChatMaxBudgetUsd(env: Config): number {
 
 // ── Topic generation (topic-generation, design D6) ──────────────────────────
 // `topics/generate` reuses the AI chat's CLI/MCP/gate/registry (aiChatConfigured,
-// aiChatTurns, AI_CHAT_MAX_CONCURRENT) as-is, but a
+// aiChatTurns) as-is, but a
 // one-shot generate reads the WHOLE transcript in a single turn -- a bigger
 // workload than an incremental chat message -- so spend/time bounds are their
 // own dedicated config, defaulted higher than the chat's, rather than reused
@@ -173,8 +196,7 @@ export function topicGenerateTimeoutSec(env: Config): number {
 
 // ── Event auto-generation (auto-generate-event-logs, design D8) ────────────
 // `events/generate` reuses the AI chat's/topic-generate's CLI/MCP/gate/
-// registry (aiChatConfigured, aiChatTurns,
-// AI_CHAT_MAX_CONCURRENT) as-is, but its own one-shot run is a LARGE
+// registry (aiChatConfigured, aiChatTurns) as-is, but its own one-shot run is a LARGE
 // workload: the full transcript at generation density, an instruction sweep
 // per instruction-bearing category/option, and a create_event tool round-trip
 // per hit -- far past what the CHAT bounds are sized for, so it gets its own

@@ -16,7 +16,7 @@
 import type { AiV2PendingQuestionRegistry } from '@autologger/ai-runtime/aiV2PendingQuestions';
 import type { AuthUser, CatalogFacade } from '@autologger/catalog';
 import type { LogImportJobStore } from '@autologger/log-import';
-import type { Ports as BasePorts, Config } from '@autologger/ports';
+import type { Ports as BasePorts, Config, LeaseDirectory } from '@autologger/ports';
 import type { SessionFrameBus, SessionHubRegistryFacade } from '@autologger/session-core';
 
 export type { Config };
@@ -34,6 +34,8 @@ export interface Ports extends BasePorts {
   logImportJobs: LogImportJobStore;
   /** AI v2 pending-question rows in the catalog kv, built per binding (shared-request-state D2). */
   aiV2Questions: AiV2PendingQuestionRegistry;
+  /** Cross-session lease reads and the silent run-row expiry (run-status-and-sweeper D5). */
+  leases: LeaseDirectory;
 }
 
 /** The per-request env object. Callers MUST pass a fresh env per request and

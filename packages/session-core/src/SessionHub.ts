@@ -253,6 +253,12 @@ export interface SessionHubFacade {
   /** Silent run leases (session-run-leases D2): no revision change, no broadcast, no alarm. */
   claimRunLease: (kind: RunLeaseKind, holderId: string) => Promise<boolean>;
   releaseRunLease: (kind: RunLeaseKind, holderId: string) => Promise<void>;
+  /** The live run lease's start, else null (run-status-and-sweeper D3); a read under the caller. */
+  runLeaseStartedAt: (kind: RunLeaseKind) => Promise<number | null>;
+  /** The lease sweeper's write (run-status-and-sweeper D6): the alarm body (`expireIfStale`) as a
+   * write transaction, so a freed recording lease advances the revision once, sends
+   * `lease.changed` to every process and re-arms the alarm. Deletes nothing if nothing expired. */
+  expireStaleLeases: () => Promise<void>;
 
   // --- audio RPCs ---
   addAudioSegment: (input: {
@@ -1159,11 +1165,17 @@ export class SessionHubView implements SessionHubFacade {
   leaseStatus() {
     return this.read((s) => s.lease.leaseStatus());
   }
+  expireStaleLeases() {
+    return this.inTxn((s) => s.lease.expireIfStale());
+  }
   claimRunLease(kind: RunLeaseKind, holderId: string) {
     return this.inTxn((s) => s.lease.claimRunLease(kind, holderId));
   }
   releaseRunLease(kind: RunLeaseKind, holderId: string) {
     return this.inTxn((s) => s.lease.releaseRunLease(kind, holderId));
+  }
+  runLeaseStartedAt(kind: RunLeaseKind) {
+    return this.read((s) => s.lease.runLeaseStartedAt(kind));
   }
 
   // --- audio delegates ---

@@ -1,7 +1,7 @@
 // @autologger/media-import package entry (feature-service-packages task
 // 3.1). The YouTube audio import service — ytdlp.ts (the yt-dlp spawn +
-// lockdown + bounds module), youtubeImportGuard.ts (the per-session +
-// global concurrency guard), youtubeImportScratch.ts (the startup sweep of
+// lockdown + bounds module), youtubeImportGuard.ts (the per-session
+// concurrency guard; no global ceiling, run-status-and-sweeper D2), youtubeImportScratch.ts (the startup sweep of
 // stale per-request temp dirs) — moved verbatim from server/src/node/.
 // Imports no `@autologger/*` workspace package at all (Node stdlib only) —
 // this package sits at L2 by role, not by need (design D1).

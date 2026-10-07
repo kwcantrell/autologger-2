@@ -20,12 +20,18 @@ import {
   KvStore,
   PostgresCatalogDb,
   PostgresFrameBus,
+  PostgresLeaseDirectory,
   PostgresSessionDb,
 } from '@autologger/storage';
 import type { Bindings } from '../appEnv';
 import { GoogleIdentityVerifier } from '../auth/oauth_google';
 import { CATALOG_PG_VARS } from '../bootGuard';
-import { aiV2UsesLoginFallback, newUserAllTeamsEnabled, resolveYtDlpPath } from '../env';
+import {
+  aiV2UsesLoginFallback,
+  newUserAllTeamsEnabled,
+  parseAiProvider,
+  resolveYtDlpPath,
+} from '../env';
 import { PresenceRegistry } from './presence';
 import { systemClock } from './systemClock';
 
@@ -60,6 +66,8 @@ export function createBindings(
   // session-frame-bus D2: the Postgres bus signs with FRAME_BUS_SECRET; refused before the lock.
   const busSecret =
     options.frameBus === 'postgres' ? checkFrameBusSecret(procEnv.FRAME_BUS_SECRET) : null;
+  // run-status-and-sweeper D1: an unknown AI_PROVIDER is refused before the lock.
+  const aiProvider = parseAiProvider(procEnv.AI_PROVIDER);
   // retire-host-dev D2: one server per DATA_DIR. Taken before anything is created or swept; a
   // second server refuses here (DataDirLockedError). Released by close().
   const lock = acquireDataDirLock(dataDir);
@@ -125,6 +133,8 @@ export function createBindings(
       presence: new PresenceRegistry(clock),
       logImportJobs: createLogImportJobStore(kv, clock),
       aiV2Questions: new AiV2PendingQuestionRegistry(kv, clock),
+      // run-status-and-sweeper D5: binds its own reviewed reason, system:lease-directory.
+      leases: new PostgresLeaseDirectory(catalogDb),
     },
     config: {
       PUBLIC_BASE_URL: procEnv.PUBLIC_BASE_URL || '',
@@ -133,6 +143,7 @@ export function createBindings(
       GOOGLE_CLIENT_ID: procEnv.GOOGLE_CLIENT_ID || '',
       GOOGLE_CLIENT_SECRET: procEnv.GOOGLE_CLIENT_SECRET || '',
       BOOTSTRAP_OWNER_EMAIL: procEnv.BOOTSTRAP_OWNER_EMAIL || '',
+      RUN_FEATURE_EMAILS: procEnv.RUN_FEATURE_EMAILS || '',
       SESSION_COOKIE: procEnv.SESSION_COOKIE || '',
       SESSION_DAYS: procEnv.SESSION_DAYS || '14',
       NEW_USER_ALL_TEAMS: procEnv.NEW_USER_ALL_TEAMS || '0',
@@ -145,7 +156,7 @@ export function createBindings(
       DEEPGRAM_MODEL: procEnv.DEEPGRAM_MODEL || '',
       CLAUDE_CLI_PATH: procEnv.CLAUDE_CLI_PATH || '',
       AI_CHAT_TIMEOUT_SEC: procEnv.AI_CHAT_TIMEOUT_SEC || '',
-      AI_CHAT_MAX_CONCURRENT: procEnv.AI_CHAT_MAX_CONCURRENT || '',
+      AI_PROVIDER: aiProvider,
       AI_CHAT_MAX_BUDGET_USD: procEnv.AI_CHAT_MAX_BUDGET_USD || '',
       TOPIC_GENERATE_MAX_BUDGET_USD: procEnv.TOPIC_GENERATE_MAX_BUDGET_USD || '',
       TOPIC_GENERATE_TIMEOUT_SEC: procEnv.TOPIC_GENERATE_TIMEOUT_SEC || '',

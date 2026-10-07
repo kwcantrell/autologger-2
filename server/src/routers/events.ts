@@ -47,7 +47,6 @@ import { Hono } from 'hono';
 import type { AppEnv } from '../appEnv';
 import {
   aiChatConfigured,
-  aiChatMaxConcurrent,
   eventGenerateMaxBudgetUsd,
   eventGenerateMaxCreatedEvents,
   eventGenerateMaxInstructionBytes,
@@ -60,6 +59,7 @@ import {
   expectedVersion,
   getSessionHub,
   parseOptionalMarkedAt,
+  requireRunFeature,
   requireSession,
   sessionCaller,
   timecodeCtx,
@@ -286,9 +286,6 @@ const EVENT_GENERATE_NO_INSTRUCTIONS_DETAIL =
 const EVENT_GENERATE_SESSION_BUSY_DETAIL =
   'A turn (AI chat, AI v2, topic generation, or event generation) is already in progress for this session; ' +
   'wait for it to finish before generating events. These features share one per-session AI slot by design.';
-const EVENT_GENERATE_AT_CAPACITY_DETAIL =
-  'The server is at its AI turn concurrency limit (AI_CHAT_MAX_CONCURRENT, shared between AI chat, AI v2, ' +
-  'topic generation, and event generation); try again shortly.';
 // Fixed, handler-owned — never the CLI's raw output or its internal outcome
 // token (the topics/generate opaque-502 pattern; spec "A CLI/turn failure
 // after spawn SHALL map to the same opaque scrubbed failure mechanics").
@@ -468,6 +465,8 @@ eventsRouter.post('/api/sessions/:sessionId/events/generate', async (c) => {
   if (!aiChatConfigured(c.env.config)) {
     throw new ApiError(503, EVENT_GENERATE_NOT_CONFIGURED_DETAIL);
   }
+  // 2b. Approved users only (run-status-and-sweeper D9) — 403; the body 400 above keeps its place.
+  requireRunFeature(c);
 
   // The show's categories are read BEFORE the word snapshot below, so the
   // snapshot-to-registration window holds no storage call or await
@@ -520,18 +519,11 @@ eventsRouter.post('/api/sessions/:sessionId/events/generate', async (c) => {
     );
   }
 
-  // 6. Single-flight (per session) + process-wide ceiling — 409, spawning
-  // nothing. Same registry as AI chat/AI v2/topics; released in this
+  // 6. Single-flight (per session) — 409, spawning nothing; no process-wide
+  // ceiling (run-status-and-sweeper D2). Same registry as AI chat/AI v2/topics; released in this
   // handler's own finally (release BEFORE the projection — see the finally).
-  const proc = aiChatTurns.tryAcquire(sessionId, aiChatMaxConcurrent(c.env.config));
-  if (!proc.ok) {
-    throw new ApiError(
-      409,
-      proc.reason === 'session-busy'
-        ? EVENT_GENERATE_SESSION_BUSY_DETAIL
-        : EVENT_GENERATE_AT_CAPACITY_DETAIL,
-    );
-  }
+  const proc = aiChatTurns.tryAcquire(sessionId);
+  if (!proc.ok) throw new ApiError(409, EVENT_GENERATE_SESSION_BUSY_DETAIL);
   // The session's `ai-turn` lease (session-run-leases D4), claimed after the
   // await-free window above ended at the synchronous tryAcquire: a refusal means
   // another process runs a turn here, so it reads as session-busy.

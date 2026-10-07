@@ -20,6 +20,7 @@ import { app, env, envWith } from '../test/harness';
 import {
   catalogFor,
   loginCookie,
+  NOT_APPROVED_EMAIL,
   seedAccessMatrix,
   seededSession,
   seedSession,
@@ -29,11 +30,15 @@ import {
   testDb,
 } from '../test/helpers';
 import {
+  expiredLeaseOfAnotherProcess,
   failNextRunLeaseClaim,
   holdAsAnotherProcess,
+  liveLeaseOfAnotherProcess,
   observeRunLeases,
   runLeaseRows,
+  runLeaseStartedAtMs,
 } from '../test/runLeases';
+import { busProcess, closeBusProcesses } from '../test/session/busProcesses';
 import { harnessHub } from '../test/session/sessionRows';
 
 const J = { 'content-type': 'application/json' };
@@ -260,7 +265,7 @@ describe('topics/generate — configured behavior (topic-generation)', () => {
   it('configured + concurrency: a turn already holding the session slot → 409, no spawn', async () => {
     const s = await newSession();
     await seedTranscript(s);
-    const slot = aiChatTurns.tryAcquire(s, 2);
+    const slot = aiChatTurns.tryAcquire(s);
     expect(slot.ok).toBe(true);
     try {
       const res = await generateReq(s, claudeConfiguredEnv(SUCCESS_STREAM_FIXTURE));
@@ -270,6 +275,20 @@ describe('topics/generate — configured behavior (topic-generation)', () => {
       expect(neverSpawned(s)).toBe(true);
     } finally {
       if (slot.ok) slot.release();
+    }
+  });
+
+  it('configured + turns in flight on two OTHER sessions: no 409, the run proceeds (no ceiling, run-status-and-sweeper D2)', async () => {
+    const others = [await newSession(), await newSession()];
+    const s = await newSession();
+    await seedMultiPageTranscript(s);
+    const held = others.map((o) => aiChatTurns.tryAcquire(o));
+    expect(held.every((h) => h.ok)).toBe(true);
+    try {
+      const res = await generateReq(s, claudeConfiguredEnv(REAL_SUCCESS_FIXTURE));
+      expect(res.status).toBe(200);
+    } finally {
+      for (const h of held) if (h.ok) h.release();
     }
   });
 
@@ -971,7 +990,7 @@ describe('transcript generation', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('409 concurrent: a second run is rejected with no additional provider spend', async () => {
+  it('409 concurrent: a second run of the same session is rejected, naming it and its start, with no additional provider spend', async () => {
     const s = (await seededSession()).sessionId;
     await uploadSegment(s, SEG1);
 
@@ -989,15 +1008,22 @@ describe('transcript generation', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     const firstReq = generate(s);
-    // Poll until the provider call has actually started (single-flight lock held).
+    // Poll until the provider call has actually started (the session's run is held).
     while (fetchMock.mock.calls.length === 0) {
       await new Promise((resolve) => setTimeout(resolve, 1));
     }
 
+    // The in-process refusal (run-status-and-sweeper D3): the holder-named detail for the
+    // requested session, with this process's start of its run.
+    const startedAtMs = transcriptGenerationLock.startedAt(s);
+    expect(startedAtMs).not.toBeNull();
     const secondRes = await generate(s);
     expect(secondRes.status).toBe(409);
-    const secondBody = (await secondRes.json()) as { detail: string };
-    expect(secondBody.detail).toContain('Test Session');
+    expect(await secondRes.json()).toEqual({
+      detail:
+        'A transcript generation run is already in progress for session "Test Session" ' +
+        `(started ${new Date(startedAtMs as number).toISOString()}); try again once it completes.`,
+    });
     expect(fetchMock).toHaveBeenCalledTimes(1); // second made no provider request
 
     release.fn?.();
@@ -1005,124 +1031,98 @@ describe('transcript generation', () => {
     expect(firstRes.status).toBe(200);
   });
 
-  it('a failed run releases the process-wide lock on its own — no manual reset needed', async () => {
+  it('two sessions generate concurrently, and both get 200 (run-status-and-sweeper D3)', async () => {
+    const s1 = (await seededSession()).sessionId;
+    const s2 = (await seededSession()).sessionId;
+    await uploadSegment(s1, SEG1);
+    await uploadSegment(s2, SEG1);
+
+    const gates: Array<() => void> = [];
+    const fetchMock = vi.fn(async () => {
+      await new Promise<void>((resolve) => {
+        gates.push(resolve);
+      });
+      return new Response(
+        JSON.stringify(deepgramResponse([{ word: 'hi', start: 0, end: 0.2, speaker: 0 }])),
+        { status: 200 },
+      );
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const first = generate(s1);
+    const second = generate(s2);
+    // Both provider calls are in flight at once: neither run waits for, or refuses, the other.
+    const deadline = Date.now() + 10_000;
+    while (fetchMock.mock.calls.length < 2) {
+      const early = await Promise.race([
+        first,
+        second,
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), 5)),
+      ]);
+      if (early !== null) {
+        throw new Error(`a run answered ${early.status} before both provider calls started`);
+      }
+      if (Date.now() > deadline) throw new Error('both provider calls never started');
+    }
+    for (const open of gates) open();
+    const [r1, r2] = await Promise.all([first, second]);
+    expect(r1.status).toBe(200);
+    expect(r2.status).toBe(200);
+    await r1.json();
+    await r2.json();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(transcriptGenerationLock.startedAt(s1)).toBeNull();
+    expect(transcriptGenerationLock.startedAt(s2)).toBeNull();
+  });
+
+  it('a failed run releases its session on its own — no manual reset needed', async () => {
     // Guards the `finally` in generateTranscriptWords: every other failure-path
     // test here is followed by this suite's unconditional afterEach reset, so
-    // dropping that `finally` would wedge the lock without failing any of them.
+    // dropping that `finally` would wedge the session without failing any of them.
     // This test asserts release BEFORE any reset runs.
     const s = (await seededSession()).sessionId;
     // Zero audio segments → the run fails (400 no_audio) AFTER acquiring the
-    // process-wide slot.
+    // session's run.
     const res = await generate(s);
     expect(res.status).toBe(400);
 
-    // WITHOUT any reset: the slot must already be free, and a fresh
+    // WITHOUT any reset: the session must already be free, and a fresh
     // acquisition must succeed.
-    expect(transcriptGenerationLock.getLock()).toBeNull();
-    expect(transcriptGenerationLock.tryAcquire('probe-session')).toBe(true);
-    transcriptGenerationLock.release();
+    expect(transcriptGenerationLock.startedAt(s)).toBeNull();
+    expect(transcriptGenerationLock.tryAcquire(s)).toBe(true);
+    transcriptGenerationLock.release(s);
   });
 
-  it('409 concurrent: the enriched detail is redacted for a logged-in non-member of the holding session’s studio', async () => {
-    // Holder: a session in a studio the requester does NOT belong to.
-    const holderStudio = await seedStudio();
-    const holderShow = await seedShow({ studioId: holderStudio });
-    const holderSession = await seedSession({ showId: holderShow, title: 'Foreign Holder Title' });
-    expect(transcriptGenerationLock.tryAcquire(holderSession, 1_700_000_000_000)).toBe(true);
-
-    // Requester: admin of their own session's studio only.
-    const myStudio = await seedStudio();
-    const myShow = await seedShow({ studioId: myStudio });
-    const mySession = await seedSession({ showId: myShow });
-    const cookie = await loginCookie(await seedAdminOf([myStudio]));
-
-    const res = await generate(mySession, { headers: { Cookie: cookie } }, deepgramConfiguredEnv());
-    expect(res.status).toBe(409);
-    const body = (await res.json()) as { detail: string };
-    // The identifier-free generic detail — never the holder's id or title.
-    expect(body.detail).toBe(
-      'A transcript generation run is already in progress on this deployment; try again once it completes.',
-    );
-    expect(body.detail).not.toContain(holderSession);
-    expect(body.detail).not.toContain('Foreign Holder Title');
-  });
-
-  it('409 concurrent: redaction checks the holder the detail names, even if the lock changes hands (async-session-callers D5)', async () => {
-    const holderStudio = await seedStudio();
-    const holderShow = await seedShow({ studioId: holderStudio });
-    const holderSession = await seedSession({ showId: holderShow, title: 'Foreign Swapped Title' });
-    expect(transcriptGenerationLock.tryAcquire(holderSession, 1_700_000_000_000)).toBe(true);
-    const myStudio = await seedStudio();
-    const mySession = await seedSession({ showId: await seedShow({ studioId: myStudio }) });
-    const cookie = await loginCookie(await seedAdminOf([myStudio]));
-    // The detail is built from the real (foreign) holder; any later lock read sees the
-    // requester's own session, as if the lock changed hands meanwhile.
-    const real = transcriptGenerationLock.getLock.bind(transcriptGenerationLock);
-    const spy = vi
-      .spyOn(transcriptGenerationLock, 'getLock')
-      .mockImplementationOnce(real)
-      .mockImplementation(() => ({ sessionId: mySession, startedAtMs: 1_700_000_000_000 }));
-    try {
-      const res = await generate(
-        mySession,
-        { headers: { Cookie: cookie } },
-        deepgramConfiguredEnv(),
-      );
-      expect(res.status).toBe(409);
-      const body = (await res.json()) as { detail: string };
-      expect(body.detail).not.toContain('Foreign Swapped Title');
-      expect(body.detail).not.toContain(holderSession);
-    } finally {
-      spy.mockRestore();
-    }
-  });
-
-  it('409 concurrent: a logged-in caller with access to the holding session keeps the enriched detail', async () => {
-    const holderStudio = await seedStudio();
-    const holderShow = await seedShow({ studioId: holderStudio });
-    const holderSession = await seedSession({ showId: holderShow, title: 'Visible Holder Title' });
-    expect(transcriptGenerationLock.tryAcquire(holderSession, 1_700_000_000_000)).toBe(true);
-
-    // Requester: admin of BOTH studios — their own (to pass requireSession)
-    // and the holder's (to see its identifiers; show-grants D12).
-    const myStudio = await seedStudio();
-    const myShow = await seedShow({ studioId: myStudio });
-    const mySession = await seedSession({ showId: myShow });
-    const cookie = await loginCookie(await seedAdminOf([myStudio, holderStudio]));
-
-    const res = await generate(mySession, { headers: { Cookie: cookie } }, deepgramConfiguredEnv());
-    expect(res.status).toBe(409);
-    const body = (await res.json()) as { detail: string };
-    expect(body.detail).toContain('Visible Holder Title');
-  });
-
-  it('409 concurrent: the enriched detail is redacted for an ungranted member of the holder’s team (show-grants D12)', async () => {
-    // Holder: the matrix session, whose show the ungranted member has no grant for.
+  it('409 concurrent: a member granted the show keeps the enriched detail of the same session', async () => {
+    // The holder is always the requested session (run-status-and-sweeper D3), so a caller who
+    // passed the route's own access check sees it named.
     const m = await seedAccessMatrix();
     expect(transcriptGenerationLock.tryAcquire(m.sessionId, 1_700_000_000_000)).toBe(true);
-    // Requester: the same member, generating on a session of another show of the team that they
-    // were granted (their own session would be the masked 404).
-    const myShow = await seedShow({ studioId: m.studioId, name: 'Mine', code: 'MN' });
-    await catalogFor().auth.authGrantShow(
-      m.ungranted.id,
-      myShow,
-      m.owner.id,
-      new Date().toISOString(),
-    );
-    const mySession = await seedSession({ showId: myShow, title: 'My Session' });
-
     const res = await generate(
-      mySession,
-      { headers: { Cookie: m.ungranted.cookie } },
+      m.sessionId,
+      { headers: { Cookie: m.granted.cookie } },
       deepgramConfiguredEnv(),
     );
     expect(res.status).toBe(409);
-    const body = (await res.json()) as { detail: string };
-    expect(body.detail).toBe(
-      'A transcript generation run is already in progress on this deployment; try again once it completes.',
+    expect(await res.json()).toEqual({
+      detail:
+        'A transcript generation run is already in progress for session "Test Session" ' +
+        '(started 2023-11-14T22:13:20.000Z); try again once it completes.',
+    });
+  });
+
+  it('a busy session stays the masked 404 for an ungranted member of its team (show-grants D12)', async () => {
+    // The ungranted member cannot reach the session at all, so the in-flight refusal (and any
+    // identifier in it) is never reached: the same 404 as for an idle session.
+    const m = await seedAccessMatrix();
+    expect(transcriptGenerationLock.tryAcquire(m.sessionId, 1_700_000_000_000)).toBe(true);
+    const res = await generate(
+      m.sessionId,
+      { headers: { Cookie: m.ungranted.cookie } },
+      deepgramConfiguredEnv(),
     );
-    expect(body.detail).not.toContain(m.sessionId);
-    expect(body.detail).not.toContain('Test Session');
+    expect(res.status).toBe(404);
+    expect(JSON.stringify(await res.json())).not.toContain('Test Session');
   });
 
   it('502 upstream failure preserves existing words', async () => {
@@ -1157,7 +1157,7 @@ describe('transcript generation', () => {
   // `TranscriptGenerateError` and throws it directly cannot exercise (it
   // never crosses the package boundary the router does at runtime). Both
   // tests below drive the real app end to end — real mocked-`fetch`
-  // DeepGram failure / real process-wide lock contention -> real
+  // DeepGram failure / real same-session run contention -> real
   // `TranscriptGenerateError` thrown inside the package -> real router
   // `catch` — so the router's own `instanceof` sites actually run, following
   // `routers/flows.int.test.ts`'s "416 for a suffix Range against a
@@ -1182,19 +1182,13 @@ describe('transcript generation', () => {
       expect(await res.json()).toEqual({ detail: 'DeepGram transcription failed or timed out.' });
     });
 
-    it('an "in_flight" TranscriptGenerateError matches :157 (true) then, for a visible holder, falls through to :59 (true) -> exact frozen 409 {detail}', async () => {
-      const holderStudio = await seedStudio();
-      const holderShow = await seedShow({ studioId: holderStudio });
-      const holderSession = await seedSession({
-        showId: holderShow,
-        title: 'Instanceof Pin Holder',
-      });
-      expect(transcriptGenerationLock.tryAcquire(holderSession, 1_700_000_000_000)).toBe(true);
-
+    it('an "in_flight" TranscriptGenerateError matches :157 (true) then, for the visible requested session, falls through to :59 (true) -> exact frozen 409 {detail}', async () => {
       const myStudio = await seedStudio();
       const myShow = await seedShow({ studioId: myStudio });
-      const mySession = await seedSession({ showId: myShow });
-      const cookie = await loginCookie(await seedAdminOf([myStudio, holderStudio]));
+      const mySession = await seedSession({ showId: myShow, title: 'Instanceof Pin Holder' });
+      // The same session is already generating in this process (run-status-and-sweeper D3).
+      expect(transcriptGenerationLock.tryAcquire(mySession, 1_700_000_000_000)).toBe(true);
+      const cookie = await loginCookie(await seedAdminOf([myStudio]));
 
       const res = await generate(
         mySession,
@@ -1203,7 +1197,7 @@ describe('transcript generation', () => {
       );
       expect(res.status).toBe(409);
       // Exact match on the package's `generationInFlightDetail(...)` output
-      // (deterministic: fixed lock timestamp + seeded holder title) proves
+      // (deterministic: fixed run start + seeded title) proves
       // the redacted-vs-visible branch at :157 matched the real thrown
       // instance, then `mapGenerateError`'s own `instanceof` at :59 mapped
       // `code: 'in_flight'` to 409 using the class's own `.message`.
@@ -1315,7 +1309,16 @@ describe('transcript generation', () => {
       // The wire projection (`wordApiDict`) is narrower than the stored row:
       // `created_at_utc` and the former `session_id` graft are both absent.
       expect(Object.keys(w).sort()).toEqual(
-        ['end_sec', 'id', 'ordinal', 'session_time', 'speaker', 'start_sec', 'version', 'word'].sort(),
+        [
+          'end_sec',
+          'id',
+          'ordinal',
+          'session_time',
+          'speaker',
+          'start_sec',
+          'version',
+          'word',
+        ].sort(),
       );
     }
   });
@@ -1354,16 +1357,33 @@ describe('transcript generation', () => {
   });
 });
 
+// ── The status from the lease (run-status-and-sweeper D5): the earliest live
+// `transcript-generation` run lease in the database, whichever process holds it. The
+// cases seed lease rows; the in-process runs are not read.
+
 describe('transcript generation lock status', () => {
-  afterEach(() => {
+  afterEach(async () => {
     transcriptGenerationLock.reset();
+    await closeBusProcesses();
   });
 
-  async function status() {
-    return app.request('/api/transcript-generation/status', { method: 'GET' }, { ...env });
+  async function status(on: Bindings = env, init: RequestInit = {}) {
+    return app.request('/api/transcript-generation/status', { method: 'GET', ...init }, { ...on });
   }
 
   it('idle: returns in_flight false with no busy-only fields', async () => {
+    const res = await status();
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ in_flight: false });
+  });
+
+  it('idle when no row is live: an expired run, a live row with no start, an in-process run alone', async () => {
+    const { sessionId } = await seededSession();
+    await expiredLeaseOfAnotherProcess(sessionId, 'transcript-generation');
+    const s2 = (await seededSession()).sessionId;
+    await liveLeaseOfAnotherProcess(s2, 'transcript-generation', null);
+    const s3 = (await seededSession()).sessionId;
+    expect(transcriptGenerationLock.tryAcquire(s3, 1_700_000_000_000)).toBe(true);
     const res = await status();
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ in_flight: false });
@@ -1373,7 +1393,7 @@ describe('transcript generation lock status', () => {
     const { sessionId } = await seededSession();
     const title = String((await catalogFor().sessions.getSessionIndexRow(sessionId))?.title ?? '');
     const startedAtMs = 1_700_000_000_000;
-    expect(transcriptGenerationLock.tryAcquire(sessionId, startedAtMs)).toBe(true);
+    await liveLeaseOfAnotherProcess(sessionId, 'transcript-generation', startedAtMs);
 
     const res = await status();
     expect(res.status).toBe(200);
@@ -1392,7 +1412,7 @@ describe('transcript generation lock status', () => {
     const { sessionId } = await seededSession();
     await testDb().run('UPDATE sessions SET ui_hidden = 1 WHERE id = ?', sessionId);
     const startedAtMs = 1_700_000_000_000;
-    expect(transcriptGenerationLock.tryAcquire(sessionId, startedAtMs)).toBe(true);
+    await liveLeaseOfAnotherProcess(sessionId, 'transcript-generation', startedAtMs);
 
     const res = await status();
     expect(res.status).toBe(200);
@@ -1404,7 +1424,7 @@ describe('transcript generation lock status', () => {
     });
   });
 
-  // ── Cross-tenant redaction (pr-3-review) — the lock is process-wide, so the
+  // ── Cross-tenant redaction (pr-3-review) — the status is deployment-wide, so the
   // holder can belong to a studio the requester is not a member of. Sibling
   // routes close the existence/title oracle by 404ing non-members; here
   // busy-ness stays truthful but the identifiers are nulled (same key set,
@@ -1415,16 +1435,12 @@ describe('transcript generation lock status', () => {
     const holderShow = await seedShow({ studioId: holderStudio });
     const holderSession = await seedSession({ showId: holderShow, title: 'Foreign Holder Title' });
     const startedAtMs = 1_700_000_000_000;
-    expect(transcriptGenerationLock.tryAcquire(holderSession, startedAtMs)).toBe(true);
+    await liveLeaseOfAnotherProcess(holderSession, 'transcript-generation', startedAtMs);
 
     const otherStudio = await seedStudio();
     const cookie = await loginCookie(await seedUser({ studios: [otherStudio] }));
 
-    const res = await app.request(
-      '/api/transcript-generation/status',
-      { method: 'GET', headers: { Cookie: cookie } },
-      { ...env },
-    );
+    const res = await status(env, { headers: { Cookie: cookie } });
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
       in_flight: true,
@@ -1439,18 +1455,14 @@ describe('transcript generation lock status', () => {
     const holderShow = await seedShow({ studioId: holderStudio });
     const holderSession = await seedSession({ showId: holderShow, title: 'Member-Visible Title' });
     const startedAtMs = 1_700_000_000_000;
-    expect(transcriptGenerationLock.tryAcquire(holderSession, startedAtMs)).toBe(true);
+    await liveLeaseOfAnotherProcess(holderSession, 'transcript-generation', startedAtMs);
 
     // A member sees the holder only with a grant for its show (show-grants D12).
     const member = await seedUser({ studios: [holderStudio] });
     await catalogFor().auth.authGrantShow(member, holderShow, member, new Date().toISOString());
     const cookie = await loginCookie(member);
 
-    const res = await app.request(
-      '/api/transcript-generation/status',
-      { method: 'GET', headers: { Cookie: cookie } },
-      { ...env },
-    );
+    const res = await status(env, { headers: { Cookie: cookie } });
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
       in_flight: true,
@@ -1459,13 +1471,46 @@ describe('transcript generation lock status', () => {
       started_at: new Date(startedAtMs).toISOString(),
     });
   });
+
+  it('two apps sharing the database both name the earliest live run, redacted for a non-member (run-status-and-sweeper D5)', async () => {
+    const b = await busProcess();
+    const early = await seedSession({
+      showId: (await seededSession()).showId,
+      title: 'Earliest Run',
+    });
+    const late = (await seededSession()).sessionId;
+    // The earlier run is held through app B, the later one through this app (A).
+    await holdAsAnotherProcess(early, 'transcript-generation', b.bindings);
+    const earlyStart = await runLeaseStartedAtMs(early, 'transcript-generation');
+    while (Date.now() <= (earlyStart as number)) await new Promise((r) => setTimeout(r, 1));
+    await holdAsAnotherProcess(late, 'transcript-generation');
+    expect(await runLeaseStartedAtMs(late, 'transcript-generation')).toBeGreaterThan(
+      earlyStart as number,
+    );
+    const busy = {
+      in_flight: true,
+      session_id: early,
+      session_title: 'Earliest Run',
+      started_at: new Date(earlyStart as number).toISOString(),
+    };
+    for (const on of [env, b.bindings]) {
+      const res = await status(on);
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual(busy);
+    }
+    const cookie = await loginCookie(await seedUser({ studios: [await seedStudio()] }));
+    for (const on of [env, b.bindings]) {
+      const res = await status(on, { headers: { Cookie: cookie } });
+      expect(await res.json()).toEqual({ ...busy, session_id: null, session_title: null });
+    }
+  });
 });
 
 // ── session-run-leases D4: generation also holds the session's `transcript-generation` run lease ─
-// The process lock is taken first (unchanged), then the lease, inside the try whose finally frees
-// the lock. A live lease of another process (a second holder id) refuses with the generic in-flight
-// detail, because the lock has no holder to name; the lease is released after the replace commits,
-// then the lock.
+// The session's in-process run is taken first, then the lease, inside the try whose finally frees
+// the run. A live lease of another process (a second holder id) refuses with the holder-named detail
+// at the lease's start, or the generic detail when the row has no start (run-status-and-sweeper
+// D3); the lease is released after the replace commits, then the session's run.
 
 describe('the transcript-generation run lease (session-run-leases D4)', () => {
   afterEach(() => {
@@ -1495,15 +1540,35 @@ describe('the transcript-generation run lease (session-run-leases D4)', () => {
     return s;
   }
 
-  it('another process holding the lease: 409 with the generic detail, no provider call, the lock free afterwards', async () => {
+  it('another process holding the lease: 409 naming the session at the lease start, no provider call, the run free afterwards', async () => {
     const s = await sessionWithAudio();
     const fetchMock = stubDeepgram();
     const other = await holdAsAnotherProcess(s, 'transcript-generation');
+    const startedAtMs = await runLeaseStartedAtMs(s, 'transcript-generation');
+    expect(startedAtMs).not.toBeNull();
     const res = await generate(s);
     expect(res.status).toBe(409);
-    expect(((await res.json()) as { detail: string }).detail).toBe(GENERIC_IN_FLIGHT_DETAIL);
+    expect(await res.json()).toEqual({
+      detail:
+        'A transcript generation run is already in progress for session "Test Session" ' +
+        `(started ${new Date(startedAtMs as number).toISOString()}); try again once it completes.`,
+    });
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(transcriptGenerationLock.getLock()).toBeNull();
+    expect(transcriptGenerationLock.startedAt(s)).toBeNull();
+    expect(await runLeaseRows(s)).toEqual([
+      { kind: 'transcript-generation', holder_client_id: other },
+    ]);
+  });
+
+  it('another process holding a lease with no started_at_ms: 409 with the generic detail', async () => {
+    const s = await sessionWithAudio();
+    const fetchMock = stubDeepgram();
+    const other = await liveLeaseOfAnotherProcess(s, 'transcript-generation', null);
+    const res = await generate(s);
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ detail: GENERIC_IN_FLIGHT_DETAIL });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(transcriptGenerationLock.startedAt(s)).toBeNull();
     expect(await runLeaseRows(s)).toEqual([
       { kind: 'transcript-generation', holder_client_id: other },
     ]);
@@ -1525,7 +1590,7 @@ describe('the transcript-generation run lease (session-run-leases D4)', () => {
     }
   });
 
-  it('after success the lease is released once the replace committed, before the lock, and is gone', async () => {
+  it('after success the lease is released once the replace committed, before the session run, and is gone', async () => {
     const s = await sessionWithAudio();
     stubDeepgram();
     const steps: string[] = [];
@@ -1542,7 +1607,7 @@ describe('the transcript-generation run lease (session-run-leases D4)', () => {
       .spyOn(LeaseStore.prototype, 'releaseRunLease')
       .mockImplementation(async function (this: LeaseStore, kind, holderId) {
         steps.push(
-          `lease release (lock ${transcriptGenerationLock.getLock() === null ? 'free' : 'held'})`,
+          `lease release (lock ${transcriptGenerationLock.startedAt(s) === null ? 'free' : 'held'})`,
         );
         return releaseRun.call(this, kind, holderId);
       });
@@ -1552,7 +1617,7 @@ describe('the transcript-generation run lease (session-run-leases D4)', () => {
       await res.json();
       expect(steps).toEqual(['replace committed', 'lease release (lock held)']);
       expect(await runLeaseRows(s)).toEqual([]);
-      expect(transcriptGenerationLock.getLock()).toBeNull();
+      expect(transcriptGenerationLock.startedAt(s)).toBeNull();
     } finally {
       replaceSpy.mockRestore();
       releaseSpy.mockRestore();
@@ -1569,7 +1634,7 @@ describe('the transcript-generation run lease (session-run-leases D4)', () => {
       expect(obs.claims('transcript-generation')).toHaveLength(1);
       expect(obs.releases('transcript-generation')).toEqual(obs.claims('transcript-generation'));
       expect(await runLeaseRows(s)).toEqual([]);
-      expect(transcriptGenerationLock.getLock()).toBeNull();
+      expect(transcriptGenerationLock.startedAt(s)).toBeNull();
     } finally {
       obs.restore();
     }
@@ -1589,13 +1654,13 @@ describe('the transcript-generation run lease (session-run-leases D4)', () => {
       expect(obs.claims('transcript-generation')).toHaveLength(1);
       expect(obs.releases('transcript-generation')).toEqual(obs.claims('transcript-generation'));
       expect(await runLeaseRows(s)).toEqual([]);
-      expect(transcriptGenerationLock.getLock()).toBeNull();
+      expect(transcriptGenerationLock.startedAt(s)).toBeNull();
     } finally {
       obs.restore();
     }
   });
 
-  it('a claim whose getHub rejects leaves the lock free, and the next generate succeeds', async () => {
+  it('a claim whose getHub rejects leaves the session run free, and the next generate succeeds', async () => {
     const s = await sessionWithAudio();
     const fetchMock = stubDeepgram();
     // The route's first hub resolution is the claim's (requireSession reads the catalog).
@@ -1610,7 +1675,7 @@ describe('the transcript-generation run lease (session-run-leases D4)', () => {
       get.mockRestore();
     }
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(transcriptGenerationLock.getLock()).toBeNull();
+    expect(transcriptGenerationLock.startedAt(s)).toBeNull();
     const next = await generate(s);
     expect(next.status).toBe(200);
     await next.json();
@@ -1633,5 +1698,141 @@ describe('the transcript-generation run lease (session-run-leases D4)', () => {
     } finally {
       obs.restore();
     }
+  });
+});
+
+// run-status-and-sweeper D9: topic generation and transcript generation are limited to approved
+// users; the 403 comes right after each route's configuration 503, before any slot, lease or run.
+describe('topics/generate and transcript-words/generate — approved users only (run-status-and-sweeper D9)', () => {
+  const FORBIDDEN = { detail: 'This feature is limited to approved users on this server.' };
+  const TOPICS_CLI = join(AI_RUNTIME_FIXTURES_DIR, 'fake-claude.mjs');
+  const cwds: string[] = [];
+  afterEach(async () => {
+    vi.unstubAllGlobals();
+    transcriptGenerationLock.reset();
+    aiChatTurns.reset();
+    await __resetAiMcpListenerForTests();
+    for (const id of cwds.splice(0)) rmSync(stableSessionCwd(id), { recursive: true, force: true });
+  });
+
+  async function sessionWithMember(email: string): Promise<{ s: string; cookie: string }> {
+    const { sessionId, studioId } = await seededSession();
+    cwds.push(sessionId);
+    const id = await seedUser({ email, studios: [studioId], role: 'admin' });
+    return { s: sessionId, cookie: await loginCookie(id) };
+  }
+
+  const neverSpawned = (s: string) => !existsSync(join(stableSessionCwd(s), '.fixture-argv.json'));
+
+  function topics(s: string, cookie: string, e: Bindings) {
+    return app.request(
+      `/api/sessions/${s}/topics/generate`,
+      { method: 'POST', headers: { cookie } },
+      e,
+    );
+  }
+
+  function stubDeepgram() {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify(deepgramResponse([{ word: 'hi', start: 0.5, end: 0.9, speaker: 0 }])),
+          { status: 200 },
+        ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    return fetchMock;
+  }
+
+  it('topics/generate: 403 for a member who is not approved, with no spawn, slot or lease', async () => {
+    const { s, cookie } = await sessionWithMember(NOT_APPROVED_EMAIL);
+    await (await harnessHub(s)).insertTranscriptWord({
+      session_time: '00:00:01',
+      speaker: 'Host',
+      word: 'hello',
+    });
+    const obs = observeRunLeases();
+    try {
+      const res = await topics(
+        s,
+        cookie,
+        envWith({ CLAUDE_CLI_PATH: TOPICS_CLI, HOST: '127.0.0.1' }),
+      );
+      expect(res.status).toBe(403);
+      expect(await res.json()).toEqual(FORBIDDEN);
+      expect(obs.claims('ai-turn')).toEqual([]);
+    } finally {
+      obs.restore();
+    }
+    expect(neverSpawned(s)).toBe(true);
+    expect(aiChatTurns.isSessionInFlight(s)).toBe(false);
+    expect(await runLeaseRows(s)).toEqual([]);
+  });
+
+  it('topics/generate: unconfigured still answers 503 to a member who is not approved', async () => {
+    const { s, cookie } = await sessionWithMember(NOT_APPROVED_EMAIL);
+    const res = await topics(s, cookie, envWith({ CLAUDE_CLI_PATH: '' }));
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({
+      detail: 'Transcription is unavailable on this deployment.',
+    });
+  });
+
+  it('topics/generate: a member named in RUN_FEATURE_EMAILS is admitted to the next guard', async () => {
+    const { s, cookie } = await sessionWithMember('approved.member@example.com');
+    const res = await topics(
+      s,
+      cookie,
+      envWith({
+        CLAUDE_CLI_PATH: TOPICS_CLI,
+        HOST: '127.0.0.1',
+        RUN_FEATURE_EMAILS: 'approved.member@example.com',
+      }),
+    );
+    // Past the 403: the transcript precondition answers (this session has no words).
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { detail: string }).detail).toMatch(/transcript/i);
+  });
+
+  it('transcript-words/generate: 403 for a member who is not approved, with no provider call and no lease', async () => {
+    const { s, cookie } = await sessionWithMember(NOT_APPROVED_EMAIL);
+    await logRecordingStarted(s, 1);
+    await uploadSegment(s, SEG1, { recordingOrdinal: 1 });
+    const fetchMock = stubDeepgram();
+    const obs = observeRunLeases();
+    try {
+      const res = await generate(s, { headers: { cookie } });
+      expect(res.status).toBe(403);
+      expect(await res.json()).toEqual(FORBIDDEN);
+      expect(obs.claims('transcript-generation')).toEqual([]);
+    } finally {
+      obs.restore();
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(transcriptGenerationLock.startedAt(s)).toBeNull();
+    expect(await runLeaseRows(s)).toEqual([]);
+  });
+
+  it('transcript-words/generate: unconfigured still answers 503 to a member who is not approved', async () => {
+    const { s, cookie } = await sessionWithMember(NOT_APPROVED_EMAIL);
+    const res = await generate(s, { headers: { cookie } }, envWith({}));
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({
+      detail: 'Transcription is unavailable on this deployment.',
+    });
+  });
+
+  it('transcript-words/generate: a member named in RUN_FEATURE_EMAILS is admitted and the run completes', async () => {
+    const { s, cookie } = await sessionWithMember('approved.member@example.com');
+    await logRecordingStarted(s, 1);
+    await uploadSegment(s, SEG1, { recordingOrdinal: 1 });
+    const fetchMock = stubDeepgram();
+    const res = await generate(
+      s,
+      { headers: { cookie } },
+      deepgramConfiguredEnv({ RUN_FEATURE_EMAILS: 'approved.member@example.com' }),
+    );
+    expect(res.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

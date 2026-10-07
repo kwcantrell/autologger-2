@@ -15,8 +15,9 @@
 // Frozen-surface self-check: this suite asserts only statuses/shapes the
 // auto-event-generation delta authorizes for this NEW route — 404 (unchanged
 // requireSession mask), 503 (unconfigured), 400 ×3
-// (anchorless transcript / no instructions / aggregate bound), 409 ×2
-// (session-busy / at-capacity, reworded shared details), 200 {created,
+// (anchorless transcript / no instructions / aggregate bound), 409
+// (session-busy, reworded shared details; at-capacity is gone,
+// run-status-and-sweeper D2), 200 {created,
 // cap_hit}, 502 {detail} opaque — and the reworded 409 detail on the
 // pre-existing ai/chat route (authorized by the same delta). No other
 // route's status or shape is asserted.
@@ -39,8 +40,11 @@ import type { Bindings } from '../appEnv';
 import { app, defaultUser, env, envWith } from '../test/harness';
 import {
   catalogFor,
+  loginCookie,
+  NOT_APPROVED_EMAIL,
   seedAccessMatrix,
   seededSession as seedSessionChain,
+  seedUser,
   testDb,
 } from '../test/helpers';
 import {
@@ -444,7 +448,7 @@ describe('events/generate — guard ladder', () => {
   it('7. shared AI slot held → 409 naming the full holder set incl. event generation, no spawn', async () => {
     const { sessionId } = await newSession();
     await seedAnchoredTranscript(sessionId);
-    const slot = aiChatTurns.tryAcquire(sessionId, 2);
+    const slot = aiChatTurns.tryAcquire(sessionId);
     expect(slot.ok).toBe(true);
     try {
       const res = await generateReq(sessionId, configuredEnv(EVENTS_SUCCESS_FIXTURE));
@@ -458,24 +462,17 @@ describe('events/generate — guard ladder', () => {
     }
   });
 
-  it('7b. process-wide ceiling reached → 409 with the distinct at-capacity detail naming event generation', async () => {
-    const other = (await newSession()).sessionId;
+  it('7b. turns in flight on two OTHER sessions do not 409 a new session (no ceiling, run-status-and-sweeper D2)', async () => {
+    const others = [(await newSession()).sessionId, (await newSession()).sessionId];
     const { sessionId } = await newSession();
     await seedAnchoredTranscript(sessionId);
-    const slot = aiChatTurns.tryAcquire(other, 1);
-    expect(slot.ok).toBe(true);
+    const held = others.map((o) => aiChatTurns.tryAcquire(o));
+    expect(held.every((h) => h.ok)).toBe(true);
     try {
-      const res = await generateReq(
-        sessionId,
-        configuredEnv(EVENTS_SUCCESS_FIXTURE, { AI_CHAT_MAX_CONCURRENT: '1' }),
-      );
-      expect(res.status).toBe(409);
-      const detail = await detailOf(res);
-      expect(detail).toMatch(/concurrency limit/i);
-      expect(detail).toMatch(/event generation/);
-      expect(neverSpawned(sessionId)).toBe(true);
+      const res = await generateReq(sessionId, configuredEnv(EVENTS_SUCCESS_FIXTURE));
+      expect(res.status).toBe(200);
     } finally {
-      if (slot.ok) slot.release();
+      for (const h of held) if (h.ok) h.release();
     }
   });
 
@@ -484,7 +481,7 @@ describe('events/generate — guard ladder', () => {
     // A generate run in flight is indistinguishable from any other holder at
     // the registry — the CHAT route's reworded shared detail must name event
     // generation so a user who pressed AUTO GENERATE understands the 409.
-    const slot = aiChatTurns.tryAcquire(sessionId, 2);
+    const slot = aiChatTurns.tryAcquire(sessionId);
     expect(slot.ok).toBe(true);
     try {
       const res = await app.request(
@@ -678,7 +675,7 @@ describe('events/generate — optional body, regenerate, and selection', () => {
     const { sessionId } = await newSession();
     await seedAnchoredTranscript(sessionId);
     await seedAutoSlateEvent(sessionId);
-    const slot = aiChatTurns.tryAcquire(sessionId, 2);
+    const slot = aiChatTurns.tryAcquire(sessionId);
     expect(slot.ok).toBe(true);
     try {
       const res = await generateReq(sessionId, configuredEnv(EVENTS_SUCCESS_FIXTURE), {
@@ -1339,5 +1336,72 @@ describe('events/generate — the ai-turn run lease (session-run-leases D4)', ()
     const next = await generateReq(sessionId, configuredEnv(EVENTS_SUCCESS_FIXTURE));
     expect(next.status).toBe(200);
     await next.json();
+  });
+});
+
+// run-status-and-sweeper D9: event generation is limited to approved users. The 403 comes right
+// after the configuration 503, and the malformed-body 400 keeps its place before both.
+describe('events/generate — approved users only (run-status-and-sweeper D9)', () => {
+  const FORBIDDEN = { detail: 'This feature is limited to approved users on this server.' };
+
+  async function sessionWithMember(email: string): Promise<{ s: string; cookie: string }> {
+    const { sessionId, studioId } = await newSession();
+    const id = await seedUser({ email, studios: [studioId], role: 'admin' });
+    return { s: sessionId, cookie: await loginCookie(id) };
+  }
+
+  function post(s: string, cookie: string, e: Bindings, body?: unknown) {
+    return app.request(
+      `/api/sessions/${s}/events/generate`,
+      {
+        method: 'POST',
+        headers: { cookie, 'content-type': 'application/json' },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      },
+      e,
+    );
+  }
+
+  it('403 for a member who is not approved, with no spawn, slot or lease', async () => {
+    const { s, cookie } = await sessionWithMember(NOT_APPROVED_EMAIL);
+    await seedAnchoredTranscript(s);
+    const obs = observeRunLeases();
+    try {
+      const res = await post(s, cookie, configuredEnv(EVENTS_SUCCESS_FIXTURE), {});
+      expect(res.status).toBe(403);
+      expect(await res.json()).toEqual(FORBIDDEN);
+      expect(obs.claims('ai-turn')).toEqual([]);
+    } finally {
+      obs.restore();
+    }
+    expect(neverSpawned(s)).toBe(true);
+    expect(aiChatTurns.isSessionInFlight(s)).toBe(false);
+    expect(await runLeaseRows(s)).toEqual([]);
+  });
+
+  it('a malformed body still answers its 400 first, and an unconfigured feature its 503', async () => {
+    const { s, cookie } = await sessionWithMember(NOT_APPROVED_EMAIL);
+    const bad = await post(s, cookie, configuredEnv(EVENTS_SUCCESS_FIXTURE), {
+      regenerate: true,
+      selection: [{ category_id: 'slate', option_label: null }],
+    });
+    expect(bad.status).toBe(400);
+    const off = await post(s, cookie, envWith({ CLAUDE_CLI_PATH: '' }), {});
+    expect(off.status).toBe(503);
+    expect(neverSpawned(s)).toBe(true);
+  });
+
+  it('a member named in RUN_FEATURE_EMAILS is admitted to the next guard', async () => {
+    const { s, cookie } = await sessionWithMember('approved.member@example.com');
+    const res = await post(
+      s,
+      cookie,
+      configuredEnv(EVENTS_SUCCESS_FIXTURE, { RUN_FEATURE_EMAILS: 'approved.member@example.com' }),
+      {},
+    );
+    // Past the 403: the transcript precondition answers (this session has no words).
+    expect(res.status).toBe(400);
+    expect(await detailOf(res)).toMatch(/transcript/i);
+    expect(neverSpawned(s)).toBe(true);
   });
 });

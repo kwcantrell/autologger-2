@@ -11,5 +11,6 @@ export * from './clock';
 export * from './config';
 export * from './identityVerifier';
 export * from './kvStore';
+export * from './leaseDirectory';
 export * from './ports';
 export * from './presenceRegistry';

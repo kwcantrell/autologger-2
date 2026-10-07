@@ -26,22 +26,17 @@ import {
   generateTranscriptWords,
   TRANSCRIPT_UNAVAILABLE,
   TranscriptGenerateError,
-  transcriptGenerationLock,
 } from '@autologger/transcription';
 import { Hono } from 'hono';
 import type { AppEnv } from '../appEnv';
-import {
-  aiChatConfigured,
-  aiChatMaxConcurrent,
-  topicGenerateMaxBudgetUsd,
-  topicGenerateTimeoutSec,
-} from '../env';
+import { aiChatConfigured, topicGenerateMaxBudgetUsd, topicGenerateTimeoutSec } from '../env';
 import { ApiError } from '../httpError';
 import { claimAiLease } from './_aiSlot';
 import {
   canAccessSession,
   expectedVersion,
   getSessionHub,
+  requireRunFeature,
   requireSession,
   sessionCaller,
   timecodeCtx,
@@ -113,25 +108,29 @@ async function resolveCatalogSessionTitle(
   return String(row.title ?? '');
 }
 
-// ── Transcript generation lock status (transcript-gen-lock-status) ───────────
+// ── Transcript generation status (transcript-gen-lock-status; run-status-and-sweeper D5) ───────
 
 transcribeRouter.get('/api/transcript-generation/status', async (c) => {
-  const holder = transcriptGenerationLock.getLock();
-  if (holder === null) {
+  // The earliest live `transcript-generation` run lease in the database, whichever process holds it.
+  const run = await c.env.ports.leases.earliestLiveRun(
+    'transcript-generation',
+    c.env.ports.clock.now(),
+  );
+  if (run === null) {
     return c.json({ in_flight: false });
   }
-  // Cross-tenant redaction: the lock is process-wide, so the holder may be a
+  // Cross-tenant redaction: the status is deployment-wide, so the holder may be a
   // session the requester can't access (another team's, or a show they hold no
   // grant for; show-grants D12). Busy-ness stays truthful; the identifiers are
   // nulled (same key set, null values, never absent keys).
-  const visible = await canAccessSession(c, holder.sessionId);
+  const visible = await canAccessSession(c, run.sessionId);
   return c.json({
     in_flight: true,
-    session_id: visible ? holder.sessionId : null,
+    session_id: visible ? run.sessionId : null,
     session_title: visible
-      ? await resolveCatalogSessionTitle(c.get('catalog'), holder.sessionId)
+      ? await resolveCatalogSessionTitle(c.get('catalog'), run.sessionId)
       : null,
-    started_at: new Date(holder.startedAtMs).toISOString(),
+    started_at: new Date(run.startedAtMs).toISOString(),
   });
 });
 
@@ -158,6 +157,8 @@ transcribeRouter.post('/api/sessions/:sessionId/transcript-words/generate', asyn
   if (!deepgramConfigured(c.env.config)) {
     throw new ApiError(503, UNAVAILABLE);
   }
+  // Approved users only (run-status-and-sweeper D9) — 403, before the lock, the lease and DeepGram.
+  requireRunFeature(c);
 
   try {
     const words = await generateTranscriptWords({
@@ -178,7 +179,9 @@ transcribeRouter.post('/api/sessions/:sessionId/transcript-words/generate', asyn
     // detail actually names (carried on the error), never a fresh lock read,
     // which could see a different holder after an await (async-session-callers
     // D5); no named holder means the detail is already the generic one.
-    // Same 409 status either way.
+    // Same 409 status either way. The holder is now always the requested
+    // session (run-status-and-sweeper D3), so a caller who passed
+    // `requireSession` keeps the named detail; the check is unchanged.
     if (err instanceof TranscriptGenerateError && err.code === 'in_flight') {
       const named = err.holderSessionId;
       if (named === undefined || !(await canAccessSession(c, named))) {
@@ -252,9 +255,6 @@ const NO_TRANSCRIPT_DETAIL = 'This session has no transcript words to generate t
 const TOPIC_GENERATE_SESSION_BUSY_DETAIL =
   'A turn (AI chat, AI v2, topic generation, or event generation) is already in progress for this session; ' +
   'wait for it to finish before generating topics again. These features share one per-session AI slot by design.';
-const TOPIC_GENERATE_AT_CAPACITY_DETAIL =
-  'The server is at its AI turn concurrency limit (AI_CHAT_MAX_CONCURRENT, shared between AI chat, AI v2, ' +
-  'topic generation, and event generation); try again shortly.';
 // Fixed, handler-owned — never the CLI's raw output or its internal outcome
 // token (design D3/spec "Failure mapping").
 const TOPIC_GENERATE_FAILURE_DETAIL = 'Topic generation failed.';
@@ -268,6 +268,8 @@ transcribeRouter.post('/api/sessions/:sessionId/topics/generate', async (c) => {
   if (!aiChatConfigured(c.env.config)) {
     throw new ApiError(503, UNAVAILABLE);
   }
+  // Approved users only (run-status-and-sweeper D9) — 403, before any slot, lease or spawn.
+  requireRunFeature(c);
 
   // Transcript precondition (design D4) — 400 before any spawn.
   const transcriptWords = await (await getSessionHub(c, sessionId)).listTranscriptWords();
@@ -275,18 +277,11 @@ transcribeRouter.post('/api/sessions/:sessionId/topics/generate', async (c) => {
     throw new ApiError(400, NO_TRANSCRIPT_DETAIL);
   }
 
-  // Single-flight (per session) + process-wide concurrency ceiling — 409,
-  // spawning nothing. Acquired here (not inside generateTopicsTurn) and
+  // Single-flight (per session) — 409, spawning nothing. There is no
+  // process-wide ceiling (run-status-and-sweeper D2). Acquired here (not inside generateTopicsTurn) and
   // released in this handler's own finally.
-  const proc = aiChatTurns.tryAcquire(sessionId, aiChatMaxConcurrent(c.env.config));
-  if (!proc.ok) {
-    throw new ApiError(
-      409,
-      proc.reason === 'session-busy'
-        ? TOPIC_GENERATE_SESSION_BUSY_DETAIL
-        : TOPIC_GENERATE_AT_CAPACITY_DETAIL,
-    );
-  }
+  const proc = aiChatTurns.tryAcquire(sessionId);
+  if (!proc.ok) throw new ApiError(409, TOPIC_GENERATE_SESSION_BUSY_DETAIL);
   // The session's `ai-turn` lease (session-run-leases D4), behind the slot: a
   // refusal means another process runs a turn here, so it reads as session-busy.
   const slot = await claimAiLease(c, sessionId, proc);

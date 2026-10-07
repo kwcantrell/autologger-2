@@ -9,10 +9,10 @@ import { Hono } from 'hono';
 import { wireApp } from './app';
 import type { AppEnv } from './appEnv';
 import { checkBootEnv } from './bootGuard';
-import { maskBootstrapOwnerEmail } from './env';
+import { maskBootstrapOwnerEmail, runFeatureEmails } from './env';
 import { createBindings } from './node/config';
 import { createNextFrontend } from './node/nextFrontend';
-import { purgeExpiredAtBoot, startPeriodicPurge } from './startupPurge';
+import { purgeExpiredAtBoot, startLeaseSweeper, startPeriodicPurge } from './startupPurge';
 import { captureHonoUpgradeHandler, installUpgradeDispatcher } from './upgradeDispatch';
 import { waitForCatalog } from './waitForCatalog';
 
@@ -41,6 +41,12 @@ const { bindings, close, startFrameBus } = created;
 // owner-bootstrap D8: the masked bootstrap owner (domain and a short hash, never the local part),
 // so the operator can check the configured value for a typo.
 console.info(`bootstrap owner: ${maskBootstrapOwnerEmail(bindings.config.BOOTSTRAP_OWNER_EMAIL)}`);
+// run-status-and-sweeper D9: the approved users for run features, as a count and masked forms
+// (never the addresses), so the operator can check the list.
+const runFeatureList = runFeatureEmails(bindings.config);
+console.info(
+  `run-feature users: ${runFeatureList.length} (${runFeatureList.map(maskBootstrapOwnerEmail).join(', ')})`,
+);
 // catalog-on-postgres D2: listen only once the catalog answers. Exit 1 otherwise, so the
 // supervisor retries (the stack's migrations service may still be creating the schema).
 try {
@@ -53,9 +59,16 @@ try {
   await close().catch(() => {});
   process.exit(1);
 }
-// Startup KV hygiene, no sweep timer (async-session-callers D2): awaited before listening.
+// Startup KV hygiene (async-session-callers D2): awaited before listening, then repeated by the
+// periodic purge (catalog-concurrency-hazards D10).
 await purgeExpiredAtBoot(bindings.ports.kv);
 const purgeTimer = startPeriodicPurge(bindings.ports.kv);
+// run-status-and-sweeper D6: every process sweeps expired session leases; first tick in 60 s.
+const leaseSweepTimer = startLeaseSweeper({
+  leases: bindings.ports.leases,
+  sessions: bindings.ports.sessions,
+  clock: bindings.ports.clock,
+});
 const port = Number(process.env.PORT || '8787');
 const hostname = bindings.config.HOST;
 
@@ -120,6 +133,7 @@ for (const sig of ['SIGINT', 'SIGTERM'] as const) {
     // sockets aren't idle keep-alives) — the normal state of this app. Destroy
     // them too, and guarantee exit even if something else holds the loop.
     clearInterval(purgeTimer);
+    clearInterval(leaseSweepTimer);
     const failsafe = setTimeout(() => process.exit(1), 5000);
     failsafe.unref();
     const serverClosed = new Promise<void>((resolve) => server.close(() => resolve()));

@@ -54,7 +54,7 @@ beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'autologger-transcribe-'));
 });
 afterEach(() => {
-  transcriptGenerationLock.release();
+  transcriptGenerationLock.release('s1');
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -86,7 +86,7 @@ describe('generateTranscriptWords remaps inside the replace transaction', () => 
     expect(err).toMatchObject({ code: 'no_speech', message: NO_SPEECH_DETAIL });
     expect(await hub.listTranscriptWords()).toEqual(before);
     expect(await hub.listTranscriptEnrichment()).toEqual({ paragraphs: [], sentiment: [] });
-    expect(transcriptGenerationLock.getLock()).toBeNull();
+    expect(transcriptGenerationLock.startedAt('s1')).toBeNull();
     await hub.close();
   });
 });

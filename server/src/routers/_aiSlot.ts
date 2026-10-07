@@ -1,6 +1,7 @@
 // The shared AI turn slot's session lease (session-run-leases D4). Each of the four AI routes
 // (ai/chat, ai/v2/design, topics/generate, events/generate) takes its in-process slot first,
-// synchronously, with its literal `aiChatTurns.tryAcquire(` call (registries unchanged, D5), and
+// synchronously, with its literal `aiChatTurns.tryAcquire(` call (per-session only, no process-wide
+// ceiling: run-status-and-sweeper D2), and
 // then awaits `claimAiLease`, which claims the session's `ai-turn` run lease and holds it (renewed
 // every 10 s) for the turn. Within one process the slot already excludes a second turn, so a
 // refused claim means another process runs a turn on this session.

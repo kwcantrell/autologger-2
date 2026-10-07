@@ -37,9 +37,8 @@
 // malformed JSON, spec scenario "Invalid body rejected without side
 // effects") → turn slot (409, spec "Spend and concurrency bounds" — shared
 // with the AI chat's OWN registry BY DESIGN: "acquire a slot from the same
-// registry the AI chat uses ... so per-session single-flight and the
-// process-wide ceiling bound both features together rather than doubling
-// the operator's exposure").
+// registry the AI chat uses", so per-session single-flight bounds both
+// features together; there is no process-wide ceiling, run-status-and-sweeper D2).
 //
 // SPAWN BOUNDARY: no guard-rejecting path reaches attemptDesignTurnSpawn
 // (`@autologger/ai-runtime`'s `aiV2SdkSpawn.ts`) — the one call site that reaches the
@@ -76,7 +75,6 @@ import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import type { AppEnv } from '../appEnv';
 import {
-  aiChatMaxConcurrent,
   aiChatTimeoutSec,
   aiV2ApiKey,
   aiV2Configured,
@@ -85,7 +83,13 @@ import {
 } from '../env';
 import { ApiError } from '../httpError';
 import { claimAiLease } from './_aiSlot';
-import { getSessionHub, requireSession, requireUser, sessionCaller } from './_helpers';
+import {
+  getSessionHub,
+  requireRunFeature,
+  requireSession,
+  requireUser,
+  sessionCaller,
+} from './_helpers';
 
 export const aiV2Router = new Hono<AppEnv>();
 
@@ -100,9 +104,6 @@ const CREDENTIALS_REFUSED_DETAIL =
 const SESSION_BUSY_DETAIL =
   'A turn (AI chat, AI v2, topic generation, or event generation) is already in progress for this session; ' +
   'wait for it to finish before starting another. These features share one per-session AI slot by design.';
-const AT_CAPACITY_DETAIL =
-  'The server is at its AI turn concurrency limit (AI_CHAT_MAX_CONCURRENT, shared between AI chat, AI v2, ' +
-  'topic generation, and event generation); try again shortly.';
 // Task 3.2 (spec "Design question round trip", design D7). Deliberately the
 // SAME detail for "no such pending question" and "wrong answering
 // principal" — the route never reveals which reason applied, matching the
@@ -222,6 +223,9 @@ aiV2Router.post('/api/sessions/:sessionId/ai/v2/design', async (c) => {
   // below this line can ever run
   // for a device token.
   await guardAiV2Route(c, sessionId, SESSION_NOT_FOUND_DETAIL, 'design-turn');
+  // 4b. Approved users only (run-status-and-sweeper D9) — 403, after both 503s. Called here and
+  // never inside guardAiV2Route, whose prologue the ungated answer route shares.
+  requireRunFeature(c);
 
   // 5. Body validation — ZodError → 422, malformed JSON → 400 (both via the
   // global onError handler in app.ts), spawning nothing. c.req.json() throws
@@ -232,13 +236,8 @@ aiV2Router.post('/api/sessions/:sessionId/ai/v2/design', async (c) => {
   // Acquired BEFORE any spawn and held across the whole turn; released in the
   // stream's `finally` on every exit path (task 2.7 refines the acquisition
   // semantics; the hold-and-release lifecycle is real here).
-  const proc = aiChatTurns.tryAcquire(sessionId, aiChatMaxConcurrent(c.env.config));
-  if (!proc.ok) {
-    throw new ApiError(
-      409,
-      proc.reason === 'session-busy' ? SESSION_BUSY_DETAIL : AT_CAPACITY_DETAIL,
-    );
-  }
+  const proc = aiChatTurns.tryAcquire(sessionId);
+  if (!proc.ok) throw new ApiError(409, SESSION_BUSY_DETAIL);
   // 6b. The session's `ai-turn` lease (session-run-leases D4), behind the slot:
   // a refusal means another process runs a turn here, so it reads as session-busy.
   const slot = await claimAiLease(c, sessionId, proc);

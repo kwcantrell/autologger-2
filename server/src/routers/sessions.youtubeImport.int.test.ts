@@ -41,24 +41,31 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
-import { SessionHubView } from '@autologger/session-core';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { SessionIndexStore } from '@autologger/catalog';
 import {
   MEDIA_IMPORT_FIXTURES_DIR,
-  YOUTUBE_IMPORT_MAX_CONCURRENT,
   YOUTUBE_IMPORT_TMP_PREFIX,
   youtubeImportGuard,
 } from '@autologger/media-import';
 import type { Clock } from '@autologger/ports';
+import { SessionHubView } from '@autologger/session-core';
 import { recordingStartAnchors } from '@autologger/transcription';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Bindings } from '../appEnv';
 import { resolveYtDlpPath } from '../env';
 import { createBindings } from '../node/config';
 import { anonApp, app, env, envWith } from '../test/harness';
-import { catalogFor, seedAccessMatrix, seededSession, testDb } from '../test/helpers';
+import {
+  catalogFor,
+  loginCookie,
+  NOT_APPROVED_EMAIL,
+  seedAccessMatrix,
+  seededSession,
+  seedUser,
+  testDb,
+} from '../test/helpers';
 import {
   expiredLeaseOfAnotherProcess,
   failNextRunLeaseClaim,
@@ -66,9 +73,9 @@ import {
   observeRunLeases,
   runLeaseRows,
 } from '../test/runLeases';
-import { slowStorage } from '../test/session/slowStorage';
 import { nthUserCall, sessionGate } from '../test/session/sessionGate';
 import { harnessHub, testRegistry } from '../test/session/sessionRows';
+import { slowStorage } from '../test/session/slowStorage';
 
 const FIXTURE_PATH = join(MEDIA_IMPORT_FIXTURES_DIR, 'fake-ytdlp.mjs');
 
@@ -80,8 +87,6 @@ const BAD_BODY_DETAIL = 'Invalid youtube-import request body.';
 const BAD_URL_DETAIL =
   'url must be an http(s) link to youtube.com, youtu.be, or music.youtube.com.';
 const SESSION_BUSY_DETAIL = 'An import is already in progress for this session.';
-const AT_CAPACITY_DETAIL =
-  'The server is already running the maximum number of concurrent YouTube imports; try again shortly.';
 const TRANSCRIPTION_UNAVAILABLE_DETAIL = 'Transcription is unavailable on this deployment.';
 const IMPORT_ROLLING_DETAIL =
   'YouTube import is refused while this session is actively recording; stop the recording and try again.';
@@ -423,18 +428,18 @@ describe('concurrency guards through the real route (matrix: both 409 causes; Ph
     }
   });
 
-  it('409 at-capacity when the GLOBAL ceiling is reached by OTHER (distinct) sessions, no spawn', async () => {
+  it('imports on three sessions are all admitted: two held on OTHER sessions do not 409 a third (no ceiling, run-status-and-sweeper D2)', async () => {
     const session = (await seededSession()).sessionId;
     const { binaryPath, markerPath } = freshBinary();
-    const held = Array.from({ length: YOUTUBE_IMPORT_MAX_CONCURRENT }, (_, i) =>
-      youtubeImportGuard.tryAcquire(`ceiling-other-${i}`),
+    const held = ['no-ceiling-other-0', 'no-ceiling-other-1'].map((id) =>
+      youtubeImportGuard.tryAcquire(id),
     );
     expect(held.every((l) => l !== null)).toBe(true);
     try {
       const res = await postImport(session, VALID_BODY, configuredEnv(binaryPath));
-      expect(res.status).toBe(409);
-      expect(await res.json()).toEqual({ detail: AT_CAPACITY_DETAIL });
-      expect(neverSpawned(markerPath)).toBe(true);
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ ok: true });
+      expect(existsSync(markerPath)).toBe(true);
     } finally {
       for (const l of held) l?.release();
     }
@@ -1422,5 +1427,69 @@ describe('the youtube-import run lease (session-run-leases D4)', () => {
     const next = await postImport(session, VALID_BODY, configuredEnv(binaryPath));
     expect(next.status).toBe(200);
     await next.json();
+  });
+});
+
+// run-status-and-sweeper D9: the YouTube import is limited to approved users. The 403 comes right
+// after the configuration 503, before the body 400, the guard, the lease and any spawn.
+describe('youtube-import — approved users only (run-status-and-sweeper D9)', () => {
+  const FORBIDDEN = { detail: 'This feature is limited to approved users on this server.' };
+
+  async function sessionWithMember(email: string): Promise<{ s: string; cookie: string }> {
+    const { sessionId, studioId } = await seededSession();
+    const id = await seedUser({ email, studios: [studioId], role: 'admin' });
+    return { s: sessionId, cookie: await loginCookie(id) };
+  }
+
+  function post(s: string, cookie: string, body: unknown, bindings: Bindings) {
+    return app.request(
+      `/api/sessions/${s}/youtube-import`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', cookie },
+        body: JSON.stringify(body),
+      },
+      bindings,
+    );
+  }
+
+  it('403 for a member who is not approved, before the body 400, with no spawn, guard or lease', async () => {
+    const { s, cookie } = await sessionWithMember(NOT_APPROVED_EMAIL);
+    const { binaryPath, markerPath } = freshBinary();
+    const obs = observeRunLeases();
+    try {
+      const res = await post(s, cookie, VALID_BODY, configuredEnv(binaryPath));
+      expect(res.status).toBe(403);
+      expect(await res.json()).toEqual(FORBIDDEN);
+      const bad = await post(s, cookie, { url: 'not a url' }, configuredEnv(binaryPath));
+      expect(bad.status).toBe(403);
+      expect(obs.claims('youtube-import')).toEqual([]);
+    } finally {
+      obs.restore();
+    }
+    expect(neverSpawned(markerPath)).toBe(true);
+    expect(youtubeImportGuard.isSessionInFlight(s)).toBe(false);
+    expect(await runLeaseRows(s)).toEqual([]);
+  });
+
+  it('an unconfigured deployment still answers 503 to a member who is not approved', async () => {
+    const { s, cookie } = await sessionWithMember(NOT_APPROVED_EMAIL);
+    const res = await post(s, cookie, VALID_BODY, { ...env });
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ detail: NOT_CONFIGURED_DETAIL });
+  });
+
+  it('a member named in RUN_FEATURE_EMAILS is admitted and the import runs', async () => {
+    const { s, cookie } = await sessionWithMember('approved.member@example.com');
+    const { binaryPath, markerPath } = freshBinary();
+    const res = await post(
+      s,
+      cookie,
+      VALID_BODY,
+      configuredEnv(binaryPath, { RUN_FEATURE_EMAILS: 'approved.member@example.com' }),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
+    expect(existsSync(markerPath)).toBe(true);
   });
 });

@@ -50,12 +50,14 @@ const row = (
   user: string | null,
   heartbeat: number,
   expires = heartbeat + TTL,
+  started: number | null = null,
 ) => ({
   kind,
   holder_client_id: client,
   holder_user_id: user,
   heartbeat_at_ms: heartbeat,
   expires_at_ms: expires,
+  started_at_ms: started,
 });
 
 describe('silent run leases on catalog.session_leases (session-run-leases D2)', () => {
@@ -81,11 +83,11 @@ describe('silent run leases on catalog.session_leases (session-run-leases D2)', 
     const r = await revision();
     const t0 = Date.now();
     expect(await A.run((s) => s.lease.claimRunLease(kind, 'srv:x:1'))).toBe(true);
-    expect(await leases()).toEqual([row(kind, 'srv:x:1', a, t0)]);
+    expect(await leases()).toEqual([row(kind, 'srv:x:1', a, t0, t0 + TTL, t0)]);
     vi.advanceTimersByTime(10_000);
     const t1 = Date.now();
     expect(await A.run((s) => s.lease.claimRunLease(kind, 'srv:x:1'))).toBe(true);
-    expect(await leases()).toEqual([row(kind, 'srv:x:1', a, t1)]);
+    expect(await leases()).toEqual([row(kind, 'srv:x:1', a, t1, t1 + TTL, t0)]);
     await A.run((s) => s.lease.releaseRunLease(kind, 'srv:x:1'));
     expect(await leases()).toEqual([]);
     expect(await revision()).toBe(r);
@@ -103,13 +105,13 @@ describe('silent run leases on catalog.session_leases (session-run-leases D2)', 
     expect(await A.run((s) => s.lease.claimRunLease('ai-turn', 'srv:x:2'))).toBe(false);
     expect(await B.run((s) => s.lease.claimRunLease('ai-turn', 'srv:x:1'))).toBe(false);
     expect(await B.run((s) => s.lease.claimRunLease('ai-turn', 'srv:y:1'))).toBe(false);
-    expect(await leases()).toEqual([row('ai-turn', 'srv:x:1', a, t0)]);
+    expect(await leases()).toEqual([row('ai-turn', 'srv:x:1', a, t0, t0 + TTL, t0)]);
     // A different kind of the same session is its own lease.
     expect(await B.run((s) => s.lease.claimRunLease('youtube-import', 'srv:y:1'))).toBe(true);
     vi.advanceTimersByTime(1);
     const t1 = Date.now();
     expect(await B.run((s) => s.lease.claimRunLease('ai-turn', 'srv:y:2'))).toBe(true);
-    expect((await leases())[0]).toEqual(row('ai-turn', 'srv:y:2', b, t1));
+    expect((await leases())[0]).toEqual(row('ai-turn', 'srv:y:2', b, t1, t1 + TTL, t1));
     expect(await revision()).toBe(r);
     expect(broadcasts).toEqual([]);
     expect(alarms).toEqual([]);
@@ -117,6 +119,7 @@ describe('silent run leases on catalog.session_leases (session-run-leases D2)', 
 
   it('the holder re-takes its own lapsed row that nobody took', async () => {
     const { A, a, leases } = await setup();
+    const t0 = Date.now();
     expect(await A.run((s) => s.lease.claimRunLease('transcript-generation', 'srv:x:1'))).toBe(
       true,
     );
@@ -125,7 +128,8 @@ describe('silent run leases on catalog.session_leases (session-run-leases D2)', 
     expect(await A.run((s) => s.lease.claimRunLease('transcript-generation', 'srv:x:1'))).toBe(
       true,
     );
-    expect(await leases()).toEqual([row('transcript-generation', 'srv:x:1', a, t1)]);
+    // The same holder: a renewal, so the start is kept (run-status-and-sweeper D4).
+    expect(await leases()).toEqual([row('transcript-generation', 'srv:x:1', a, t1, t1 + TTL, t0)]);
   });
 
   it("a former holder's release leaves the new holder's row", async () => {
@@ -137,7 +141,7 @@ describe('silent run leases on catalog.session_leases (session-run-leases D2)', 
     await A.run((s) => s.lease.releaseRunLease('youtube-import', 'srv:x:1'));
     // The same run id as another user does not release it either.
     await A.run((s) => s.lease.releaseRunLease('youtube-import', 'srv:y:1'));
-    expect(await leases()).toEqual([row('youtube-import', 'srv:y:1', b, t1)]);
+    expect(await leases()).toEqual([row('youtube-import', 'srv:y:1', b, t1, t1 + TTL, t1)]);
   });
 
   it('a blank or NUL holder id: claim false, release a no-op, nothing stored', async () => {
@@ -153,7 +157,7 @@ describe('silent run leases on catalog.session_leases (session-run-leases D2)', 
     await A.run((s) => s.lease.claimRunLease('ai-turn', 'srv:x:1'));
     const r = await revision();
     await A.run((s) => s.lease.releaseRunLease('ai-turn', 'srv:x:1\u0000'));
-    expect(await leases()).toEqual([row('ai-turn', 'srv:x:1', a, t0)]);
+    expect(await leases()).toEqual([row('ai-turn', 'srv:x:1', a, t0, t0 + TTL, t0)]);
     expect(await revision()).toBe(r);
   });
 
@@ -191,6 +195,52 @@ describe('silent run leases on catalog.session_leases (session-run-leases D2)', 
     expect(broadcasts).toEqual([{ type: 'lease.changed' }]);
     expect(alarms).toEqual([]);
     expect(await revision()).toBe(r + 1);
+  });
+
+  it('started_at_ms: set by a claim, kept by renewals, reset by a takeover (run-status-and-sweeper D4)', async () => {
+    const { A, B, a, b, leases, revision } = await setup();
+    const started = async () => (await leases()).map((l) => l.started_at_ms);
+    const t0 = Date.now();
+    expect(await A.run((s) => s.lease.claimRunLease('transcript-generation', 'srv:x:1'))).toBe(
+      true,
+    );
+    expect(await started()).toEqual([t0]);
+    const r = await revision();
+    // Renewals by the same holder keep the start.
+    for (let i = 0; i < 3; i += 1) {
+      vi.advanceTimersByTime(10_000);
+      expect(await A.run((s) => s.lease.claimRunLease('transcript-generation', 'srv:x:1'))).toBe(
+        true,
+      );
+    }
+    expect(await started()).toEqual([t0]);
+    // A refused claim leaves it.
+    expect(await B.run((s) => s.lease.claimRunLease('transcript-generation', 'srv:y:1'))).toBe(
+      false,
+    );
+    expect(await started()).toEqual([t0]);
+    // Another holder takes the expired row over: a new run, so a new start.
+    vi.advanceTimersByTime(TTL);
+    const t1 = Date.now();
+    expect(await B.run((s) => s.lease.claimRunLease('transcript-generation', 'srv:y:1'))).toBe(
+      true,
+    );
+    expect(await leases()).toEqual([row('transcript-generation', 'srv:y:1', b, t1, t1 + TTL, t1)]);
+    // The same user with another run id is another holder too.
+    vi.advanceTimersByTime(TTL);
+    const t2 = Date.now();
+    expect(await B.run((s) => s.lease.claimRunLease('transcript-generation', 'srv:y:2'))).toBe(
+      true,
+    );
+    expect(await started()).toEqual([t2]);
+    // The same run id as another user is another holder.
+    vi.advanceTimersByTime(TTL);
+    const t3 = Date.now();
+    expect(await A.run((s) => s.lease.claimRunLease('transcript-generation', 'srv:y:2'))).toBe(
+      true,
+    );
+    expect(await leases()).toEqual([row('transcript-generation', 'srv:y:2', a, t3, t3 + TTL, t3)]);
+    expect(await revision()).toBe(r);
   });
 
   it('leaseStatus ignores run rows', async () => {
@@ -244,6 +294,48 @@ describe('the run-lease facade (session-run-leases D2)', () => {
     expect(await rawRows(storage, 'session_leases')).toEqual([]);
     expect(await storedRevision(sessionId)).toBe(before);
     expect(frames).toEqual([]);
+  });
+
+  it('runLeaseStartedAt: the live row’s started_at_ms, else null (run-status-and-sweeper D3)', async () => {
+    const studio = await seedStudio();
+    const a = await seedUser({ studios: [studio], role: 'owner' });
+    const b = await seedUser({ studios: [studio], role: 'admin' });
+    const show = await seedShow({ studioId: studio });
+    const sessionId = await seedSession({ showId: show });
+    const storage = testStorage(sessionId);
+    const time = { now: 1_750_000_000_000 };
+    const registry = testRegistry({ clock: { now: () => time.now } });
+    registries.push(registry);
+    const entry = await registry.get(sessionId);
+    const va = entry.as(userCaller(a));
+    const vb = entry.as(userCaller(b));
+    // No row.
+    expect(await va.runLeaseStartedAt('transcript-generation')).toBeNull();
+    // A's live run: read under the caller, by the holder and by another member alike.
+    const t0 = time.now;
+    expect(await va.claimRunLease('transcript-generation', 'srv:x:1')).toBe(true);
+    time.now += 10_000;
+    expect(await va.claimRunLease('transcript-generation', 'srv:x:1')).toBe(true);
+    expect(await va.runLeaseStartedAt('transcript-generation')).toBe(t0);
+    expect(await vb.runLeaseStartedAt('transcript-generation')).toBe(t0);
+    // Another kind of the same session is its own row.
+    expect(await va.runLeaseStartedAt('ai-turn')).toBeNull();
+    // Expired: expires_at_ms <= now gives null, though the row is still there.
+    time.now += TTL;
+    expect(await va.runLeaseStartedAt('transcript-generation')).toBeNull();
+    expect(await rawRows(storage, 'session_leases', { columns: 'kind' })).toEqual([
+      { kind: 'transcript-generation' },
+    ]);
+    // A live row with no started_at_ms (written by pre-9c code) gives null.
+    await va.releaseRunLease('transcript-generation', 'srv:x:1');
+    await insertRaw(storage, 'session_leases', {
+      kind: 'transcript-generation',
+      holder_client_id: 'srv:old:1',
+      holder_user_id: a,
+      heartbeat_at_ms: time.now,
+      expires_at_ms: time.now + TTL,
+    });
+    expect(await va.runLeaseStartedAt('transcript-generation')).toBeNull();
   });
 });
 

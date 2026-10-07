@@ -4,7 +4,7 @@
 // segments into per-codec-family container files), transcriptRemap.ts
 // (timeline remap of DeepGram words + paragraph/sentiment enrichment onto
 // the session's SMPTE timeline), transcriptGenerationLock.ts (the
-// process-wide generation lock), generateTranscript.ts (the orchestrating
+// per-session generation runs), generateTranscript.ts (the orchestrating
 // entry point both the HTTP generate route and sheets-log-import's
 // ensure-timed-transcript coordinator call), deepgramConfig.ts
 // (deepgramConfigured/deepgramModel, moved out of server/src/env.ts —
