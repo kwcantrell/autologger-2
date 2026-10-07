@@ -8,15 +8,17 @@ Defines `topics/generate`: a `CLAUDE_CLI_PATH`-gated, one-shot, non-streaming en
 ### Requirement: Single-flight and concurrency bounds
 
 Topic generation SHALL acquire a turn slot from the shared AI-turn registry
-(`aiChatTurns`) — per-session single-flight plus the process-wide concurrency ceiling — the
-same bound the AI chat uses, since a generation run is a `claude` CLI turn that spends
-budget. A request that cannot acquire a slot SHALL respond `409 {detail}` and spawn nothing.
+(`aiChatTurns`) — per-session single-flight, with no process-wide or deployment-wide ceiling on
+`AI_PROVIDER=claude_cli` (run-status-and-sweeper D2) — the same bound the AI chat uses, since a
+generation run is a `claude` CLI turn that spends budget. A request that cannot acquire a slot
+SHALL respond `409 {detail}` and spawn nothing.
 
 #### Scenario: Concurrent generation is rejected
 
-- **WHEN** a `topics/generate` request arrives while another AI turn (chat or generate) holds
-  the session's slot, or the global ceiling is reached
-- **THEN** the response is `409 {detail}` and no subprocess is spawned
+- **WHEN** a `topics/generate` request arrives while another AI turn (chat, AI v2 design, event
+  generation or topic generation) holds the session's slot, in this or another process
+- **THEN** the response is `409 {detail}` and no subprocess is spawned; AI turns running for other
+  sessions never cause this refusal
 
 ### Requirement: Transcript precondition
 

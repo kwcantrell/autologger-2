@@ -692,7 +692,11 @@ columns:
 - `holder_client_id`, non-null, non-empty, at most 256 characters;
 - `holder_user_id`, null only when a reviewed system task holds the lease;
 - `heartbeat_at_ms` and `expires_at_ms`, non-null `bigint` epoch milliseconds read from the Clock
-  port.
+  port;
+- `started_at_ms`, a nullable `bigint` epoch milliseconds read from the Clock port, with no
+  default: a run-lease claim sets it when it inserts the row or takes over another holder's row,
+  and keeps it when the same holder renews; recording leases leave it null (run-status-and-sweeper
+  D4).
 
 The primary key SHALL be `(session_id, kind)`, so a session has at most one lease of each kind.
 
@@ -712,6 +716,10 @@ judge expiry, so a user with access could rewrite a live lease to itself with a 
 server's lease statements are the only writers, and they enforce the holder.
 
 The migration that widens the kind check (slice 8b) SHALL change no row and no policy.
+
+The migration that adds `started_at_ms` (run-status-and-sweeper) SHALL change no policy and SHALL
+backfill nothing: rows that exist before it keep a null `started_at_ms`. Its rollback drops the
+column after the code is reverted.
 
 The migration that creates the table SHALL copy no lease. It SHALL leave the `lease_holder` and
 `lease_seen_ms` meta rows unchanged.
@@ -744,3 +752,13 @@ The migration that creates the table SHALL copy no lease. It SHALL leave the `le
 - **WHEN** a `catalog_user` binding for user U inserts leases of kinds `ai-turn`,
   `transcript-generation` and `youtube-import` naming U, in a session U can access
 - **THEN** all three succeed, and their rows coexist with a `recording` lease of the same session
+
+#### Scenario: The start time is kept on renewal and reset on takeover
+- **WHEN** user U claims a `transcript-generation` lease, U renews it as the same holder 10 s
+  later, the lease then expires, and user V claims it
+- **THEN** the renewal leaves `started_at_ms` at U's claim time, and V's claim sets it to V's claim
+  time
+
+#### Scenario: Recording leases carry no start time
+- **WHEN** a client claims a session's `recording` lease
+- **THEN** the stored row's `started_at_ms` is null

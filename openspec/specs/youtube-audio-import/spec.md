@@ -124,50 +124,6 @@ breach). Temp directories orphaned by a process crash/kill SHALL be swept at sta
   normal exit; at startup for a crash-orphaned directory), and it never resided under the
   audio blob prefix
 
-### Requirement: Global concurrency ceiling
-
-Across all sessions, the number of concurrent import runs SHALL be bounded by a global
-ceiling. A request that would exceed the ceiling SHALL respond `409 {detail}` and SHALL NOT
-spawn a subprocess. This bounds aggregate resource use (a single actor opening many sessions
-cannot spawn an unbounded number of concurrent downloads / in-memory buffers).
-
-#### Scenario: Import at the global ceiling is rejected
-
-- **WHEN** the number of in-flight import runs is already at the global ceiling and another
-  `youtube-import` request arrives (for any session)
-- **THEN** the response is `409 {detail}` and no additional subprocess is spawned
-
-#### Scenario: Ceiling slot is released when a run finishes
-
-- **WHEN** an in-flight import run completes (success or failure)
-- **THEN** its slot is released and a subsequent import request is admitted up to the ceiling
-
-### Requirement: Per-session single-flight
-
-At most one import run per session SHALL be in flight at a time. When an import request
-arrives for a session that already has a run in progress, the server SHALL respond
-`409 {detail}` and SHALL NOT spawn a second subprocess or make a second outbound request.
-The guard SHALL be released when the run finishes (success or failure), so a later import
-for the same session is permitted.
-
-#### Scenario: Concurrent import for the same session is rejected
-
-- **WHEN** a `youtube-import` request arrives for a session whose previous import is still
-  running
-- **THEN** the response is `409 {detail}`, and no additional subprocess is spawned and no
-  additional outbound request is made
-
-#### Scenario: Guard is released after a run finishes
-
-- **WHEN** an import run for a session completes (whether it succeeded or failed)
-- **THEN** a subsequent import request for that session is no longer rejected as concurrent
-
-#### Scenario: Different sessions import concurrently within the ceiling
-
-- **WHEN** imports are requested for two different sessions at the same time and the global
-  ceiling is not exceeded
-- **THEN** neither is rejected as concurrent on account of the other
-
 ### Requirement: Publish-date opt-in writes the session episode date via the catalog layer
 
 When `use_publish_date` is true and the fetched video metadata carries a usable upload date,
@@ -393,3 +349,52 @@ client-computed waveform like any segment with no server-side peaks).
 - **THEN** it is written by one hub RPC inside a transaction, whose body awaits only its own
   transaction's statements, with the blob write performed in the router layer after the RPC
   returns
+
+### Requirement: No global import ceiling on claude_cli
+
+On `AI_PROVIDER=claude_cli`, the default and only accepted value, import runs SHALL have no
+global concurrency ceiling, in process or deployment-wide: an import request for a session SHALL
+NOT be refused on account of imports running for other sessions, in this or any other process
+(run-status-and-sweeper D1, D2). Aggregate resource use is then bounded only by the per-session
+single-flight and each run's timeout, duration and byte-size bounds, which the owner accepts for
+development. A deployment-wide ceiling, a count of live `youtube-import` run leases, is deferred to
+the change that adds other providers.
+
+#### Scenario: Imports on other sessions do not refuse an import
+
+- **WHEN** `AI_PROVIDER` is `claude_cli`, imports are running for two sessions, and a
+  `youtube-import` request arrives for a third session
+- **THEN** it is admitted and its subprocess is spawned; no `409` is returned on account of the
+  other imports
+
+#### Scenario: A finished run releases only its session slot
+
+- **WHEN** an in-flight import run completes (success or failure)
+- **THEN** only its session's single-flight slot is released; no global count exists to release
+
+### Requirement: Per-session single-flight across processes
+
+At most one import run per session SHALL be in flight at a time, across every server process
+sharing the database (its `youtube-import` run lease). When an import request arrives for a
+session that already has a run in progress, in this or another process, the server SHALL respond
+`409 {detail}` and SHALL NOT spawn a second subprocess or make a second outbound request.
+The guard SHALL be released when the run finishes (success or failure), so a later import
+for the same session is permitted.
+
+#### Scenario: Concurrent import for the same session is rejected
+
+- **WHEN** a `youtube-import` request arrives for a session whose previous import is still
+  running
+- **THEN** the response is `409 {detail}`, and no additional subprocess is spawned and no
+  additional outbound request is made
+
+#### Scenario: Guard is released after a run finishes
+
+- **WHEN** an import run for a session completes (whether it succeeded or failed)
+- **THEN** a subsequent import request for that session is no longer rejected as concurrent
+
+#### Scenario: Different sessions import concurrently
+
+- **WHEN** imports are requested for three different sessions at the same time on
+  `AI_PROVIDER=claude_cli`
+- **THEN** none is rejected as concurrent on account of the others, since no ceiling applies
