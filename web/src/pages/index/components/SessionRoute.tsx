@@ -168,16 +168,9 @@ interface SessionRouteProps {
   ytImportPending?: boolean;
   /** Opens the AppShell-owned New Session modal (design D10); threaded to HomeRoute. */
   onNewSession: () => void;
-  /** Mobile: open the off-canvas nav rail from the session strip. */
-  onOpenMobileNav?: () => void;
 }
 
-export function SessionRoute({
-  sessionId,
-  ytImportPending,
-  onNewSession,
-  onOpenMobileNav,
-}: SessionRouteProps) {
+export function SessionRoute({ sessionId, ytImportPending, onNewSession }: SessionRouteProps) {
   const query = useSession(sessionId);
 
   // Warm the workspace chunk in PARALLEL with resolution, mirroring AppShell's
@@ -217,11 +210,7 @@ export function SessionRoute({
       // the island.
       <LazyChunk load={loadWorkspaceStatic} variant="route" fallback={<LoadingState />}>
         {(WorkspaceStatic) => (
-          <WorkspaceStatic
-            sessionId={sessionId}
-            ytImportPending={ytImportPending}
-            onOpenMobileNav={onOpenMobileNav}
-          />
+          <WorkspaceStatic sessionId={sessionId} ytImportPending={ytImportPending} />
         )}
       </LazyChunk>
     );

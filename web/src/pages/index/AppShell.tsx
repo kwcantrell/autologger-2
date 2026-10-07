@@ -4,14 +4,15 @@ import { useRoute } from 'wouter';
 import { useProfile } from '../../api/hooks/useProfile';
 import { useYoutubeImport } from '../../api/hooks/useSessions';
 import { Toast, toast } from '../../shared/components/Toast';
-import { useIsMobile } from '../../shared/ui/breakpoints';
+import { SidebarProvider, useSidebar } from '../../shared/components/ui/sidebar';
+import { isOverlayOpen } from '../../shared/ui/overlayOpen';
 import { freezeAutologgerLoadingVideos } from '../../shared/utils/loadingVideo';
 import { initPerfDebugUI } from '../../shared/utils/perfDebug';
 import { LazyChunk } from './components/ChunkLoadBoundary';
 import { OnboardingPanel } from './components/OnboardingPanel';
 import { RouteLoadingState } from './components/RouteLoadingState';
-import { toggleDesktopRailCollapsed } from './components/railCollapse';
 import { SessionRoute } from './components/SessionRoute';
+import { isTypingTarget } from './components/ShortcutsDialog';
 import { TopBar } from './components/TopBar';
 import { V6Rail } from './components/V6Rail';
 import { getTransportStatus, subscribeTransportStatus } from './coordination/transportStatus';
@@ -70,6 +71,27 @@ const loadHomeSettingsModal = () =>
 // `AppShell.test.tsx` pins.
 const SETTINGS_PREFETCH_DELAY_MS = 2500;
 
+/**
+ * The shell's one `[` listener (redesign-show-ignition D8; web-ui-system "Shell-level sidebar
+ * shortcut"). Mounted inside the shell's `SidebarProvider` on every signed-in route, with or
+ * without a session. It yields to text entry and to open dialogs and menus, like the console's
+ * single-key handlers; the primitive's own Ctrl/⌘+B is unaffected.
+ */
+function SidebarShortcut() {
+  const { toggleSidebar } = useSidebar();
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== '[' || e.ctrlKey || e.metaKey || e.altKey || e.defaultPrevented) return;
+      if (isTypingTarget(e.target) || isOverlayOpen()) return;
+      e.preventDefault();
+      toggleSidebar();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [toggleSidebar]);
+  return null;
+}
+
 export function AppShell() {
   // Active session is URL-derived (design D2): `/sessions/:id` is the session
   // workspace; anything else — `/` or an unmatched path (e.g. the raw dev
@@ -91,8 +113,6 @@ export function AppShell() {
     sessionId: string;
     lastUrl: string;
   } | null>(null);
-  const [railOpen, setRailOpen] = useState(false);
-  const isMobile = useIsMobile();
   const queryClient = useQueryClient();
   const { data: profile } = useProfile();
   const { mutateAsync: runYoutubeImport } = useYoutubeImport();
@@ -100,23 +120,6 @@ export function AppShell() {
   // Post-login deep-link return (design D6): keyed explicitly on
   // `auth.logged_in === true`, never on this component merely mounting.
   useLoginReturnConsume(profile?.auth.logged_in === true);
-
-  const closeRail = useCallback(() => setRailOpen(false), []);
-
-  // Drop any open-drawer state when leaving the mobile breakpoint, and close
-  // the drawer on Escape while it is open.
-  useEffect(() => {
-    if (!isMobile) {
-      setRailOpen(false);
-      return;
-    }
-    if (!railOpen) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setRailOpen(false);
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [isMobile, railOpen]);
 
   // syncChrome's title-reset behavior, now route-driven (design D9): with no
   // active session the tab title returns to the app name. (Nothing currently
@@ -216,6 +219,10 @@ export function AppShell() {
     setShowNewSession(true);
   }, []);
 
+  const handleOpenBatchImport = useCallback(() => {
+    setShowBatchImport(true);
+  }, []);
+
   const handleCloseSettings = useCallback(() => {
     setShowSettings(false);
   }, []);
@@ -231,35 +238,6 @@ export function AppShell() {
     },
     [activeSessionId],
   );
-
-  // The top bar's sidebar control, interim until group 4 (D8, D10): with no `SidebarProvider` in
-  // the shell yet, it drives today's rail — the off-canvas drawer on phones, the body-class
-  // collapse on desktop (the same toggle as the rail's own menu button). Group 4 wraps the shell
-  // in `SidebarProvider`; TopBar then renders `SidebarTrigger` and this callback is removed.
-  const handleToggleSidebar = useCallback(() => {
-    if (isMobile) setRailOpen((open) => !open);
-    else toggleDesktopRailCollapsed();
-  }, [isMobile]);
-
-  // Stable identity for the mobile-rail-open trigger threaded down to
-  // WorkspaceStatic (settings-modal-mount-cost, design D0). An inline arrow
-  // here gives WorkspaceStatic's memo a fresh prop reference on every AppShell
-  // render, so the memo's shallow comparison can never bail. Matches the
-  // useCallback treatment already given to handleOpenSettings /
-  // handleCloseSettings / handleOpenNewSession above.
-  //
-  // Scope of the claim (deliberately narrow): this keeps the boundary props
-  // referentially stable, which is what AppShell.test.tsx asserts. It is NOT
-  // known to change how often the workspace actually renders — the change that
-  // introduced it originally claimed a large re-render win, and that claim was
-  // withdrawn when the render counts behind it turned out to be an artifact of
-  // the profiling tool (ground truth: SessionWorkspace renders zero times on a
-  // settings click, with or without this callback). Do not restore a
-  // performance rationale here without a measurement that does not come from
-  // `agent-browser react renders`.
-  const handleOpenMobileNav = useCallback(() => {
-    setRailOpen(true);
-  }, []);
 
   // Zero-membership onboarding (teams-self-serve, task 6.3; design D8): a
   // render switch INSIDE the authed shell, keyed on `logged_in && teams
@@ -295,53 +273,26 @@ export function AppShell() {
           the AppShell overrides that widen it convert to utilities here (win by layer). */}
       {/* Desktop: a viewport-high column — the top bar (redesign-show-ignition D5), full width,
           above the row that holds the rail and main. Phones: plain block flow (the page scrolls). */}
-      <div
-        className="shell shell-v3 max-w-none w-full mx-0 px-0 pb-0 flex flex-col flex-1 min-h-0 h-[100dvh] max-md:block max-md:h-auto"
+      {/* The SidebarProvider's wrapper is the shell root (redesign-show-ignition D8): the top bar's
+          trigger, the `[` shortcut and the rail share its state. */}
+      <SidebarProvider
+        className="shell shell-v3 max-w-none w-full mx-0 px-0 pb-0 flex-col flex-1 min-h-0 h-[100dvh] max-md:block max-md:h-auto"
         data-transport={transportState}
       >
-        <TopBar
-          onToggleSidebar={handleToggleSidebar}
-          onCloseSession={handleCloseSession}
-          onReturnToSession={handleReturnToSession}
-        />
+        <SidebarShortcut />
+        <TopBar onCloseSession={handleCloseSession} onReturnToSession={handleReturnToSession} />
         {/* v6-app string retained; desktop flex row filling the height under the top bar, max-md block. */}
         <div
           className="v6-app flex flex-row items-stretch flex-1 w-full min-w-0 min-h-0 overflow-hidden max-md:block max-md:overflow-visible"
           id="v6-app"
         >
-          {isMobile && railOpen && (
-            <button
-              type="button"
-              className="fixed inset-0 z-(--z-rail-scrim) appearance-none border-none p-0 bg-[rgba(6,9,16,0.55)] [backdrop-filter:blur(1.5px)] cursor-pointer animate-rail-scrim-fade"
-              aria-label="Close navigation"
-              onClick={closeRail}
-            />
-          )}
           <V6Rail
             activeSessionId={activeSessionId}
-            isMobile={isMobile}
-            mobileOpen={railOpen}
-            onMobileClose={closeRail}
-            onSelectSession={(sid) => {
-              handleSelectSession(sid);
-              closeRail();
-            }}
-            onCloseSession={() => {
-              handleCloseSession();
-              closeRail();
-            }}
-            onNewSession={() => {
-              setShowNewSession(true);
-              closeRail();
-            }}
-            onBatchImport={() => {
-              setShowBatchImport(true);
-              closeRail();
-            }}
-            onOpenSettings={() => {
-              handleOpenSettings();
-              closeRail();
-            }}
+            onSelectSession={handleSelectSession}
+            onCloseSession={handleCloseSession}
+            onNewSession={handleOpenNewSession}
+            onBatchImport={handleOpenBatchImport}
+            onOpenSettings={handleOpenSettings}
           />
           {/* main-v3 / v3-layout-session-focus strings retained. Display comes from
               SessionWorkspace's `.main-v3` @layer rule (display:block — the app.css
@@ -494,12 +445,11 @@ export function AppShell() {
                 sessionId={activeSessionId}
                 ytImportPending={ytImportPending}
                 onNewSession={handleOpenNewSession}
-                onOpenMobileNav={handleOpenMobileNav}
               />
             )}
           </main>
         </div>
-      </div>
+      </SidebarProvider>
     </>
   );
 }

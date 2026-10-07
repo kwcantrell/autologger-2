@@ -83,10 +83,9 @@ const WORDS_DEPENDENT_TABS: ReadonlySet<FeedTabId> = new Set<FeedTabId>([
 interface Props {
   sessionId: string;
   ytImportPending?: boolean;
-  onOpenMobileNav?: () => void;
 }
 
-export function SessionWorkspace({ sessionId, ytImportPending, onOpenMobileNav }: Props) {
+export function SessionWorkspace({ sessionId, ytImportPending }: Props) {
   const { data: status } = useSessionStatus(sessionId || null);
 
   // Wide events query feeding the timeline marker rendering.
@@ -547,7 +546,6 @@ export function SessionWorkspace({ sessionId, ytImportPending, onOpenMobileNav }
                     statusText={statusText}
                     isRecording={isRecording}
                     isRolling={isRolling}
-                    onOpenMobileNav={onOpenMobileNav}
                   />
                 </div>
 

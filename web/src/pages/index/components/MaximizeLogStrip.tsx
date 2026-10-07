@@ -1,5 +1,4 @@
 import clsx from 'clsx';
-import { Menu } from 'lucide-react';
 import type { LogEvent, SessionStatus } from '../../../api/types';
 import { Tooltip } from '../../../shared/ui/Tooltip';
 import type { AudioClipLite } from '../../../shared/utils/waveformMerge';
@@ -31,8 +30,6 @@ interface Props {
   statusText: string;
   isRecording: boolean;
   isRolling?: boolean;
-  /** Mobile: open the off-canvas nav rail (menu sits left of session controls). */
-  onOpenMobileNav?: () => void;
 }
 
 // Live category buttons use --v4-cat-btn-h (~6.7rem); do not clamp to the
@@ -69,7 +66,6 @@ export function MaximizeLogStrip({
   statusText,
   isRecording,
   isRolling = false,
-  onOpenMobileNav,
 }: Props) {
   const code = (status?.show_code ?? '').trim();
   const showName = (status?.show_name ?? '').trim();
@@ -259,7 +255,7 @@ export function MaximizeLogStrip({
   );
 
   // Desktop: meta → timecode → buttons (column).
-  // Mobile: chrome (menu + show/status) → instruments (timecode + buttons) → timeline.
+  // Mobile: chrome (show/status) → instruments (timecode + buttons) → timeline.
   const transportAside = (
     <aside
       className={clsx(
@@ -270,16 +266,8 @@ export function MaximizeLogStrip({
     >
       {/* Identity / chrome */}
       <div className="flex min-w-0 flex-row items-center gap-2">
-        {onOpenMobileNav ? (
-          <button
-            type="button"
-            className="inline-flex h-11 w-11 shrink-0 items-center justify-center box-border rounded-v5-sm border border-v5-border-strong bg-white/[0.04] text-v5-text cursor-pointer md:hidden"
-            aria-label="Open navigation"
-            onClick={onOpenMobileNav}
-          >
-            <Menu className="size-5" aria-hidden="true" />
-          </button>
-        ) : null}
+        {/* The phone "Open navigation" button that sat here is gone: the top bar's sidebar
+            trigger opens the sidebar sheet (redesign-show-ignition D8). */}
         <div className="min-w-0 flex-1">{sessionMeta}</div>
       </div>
 

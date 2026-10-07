@@ -522,7 +522,8 @@
  * Shell ignition (redesign-show-ignition D2; web-session-console "Transport state tints the
  * shell"). Pure CSS on the app root's `data-transport` (AppShell, from the transport-status
  * store). Unlayered on purpose, so it beats the surfaces' own Tailwind utilities. Hooks:
- *   - rail:            `#v6-rail` today; the group-4 shadcn Sidebar reads `--sidebar` above.
+ *   - rail:            the shadcn Sidebar reads `--sidebar` above; `#v6-rail` is its desktop
+ *                      container (border, glow), and the phone Sheet follows via :has().
  *   - top bar:         `[data-slot='topbar']` (group 3 puts it on the TopBar root).
  *   - transport strip: `#v5-maximize-log-strip`.
  *   - live indicator:  `[data-slot='live-dot']`, blinks while recording (top bar status pill).
@@ -534,19 +535,19 @@
   --tx-ease: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
+/* The rail is the shadcn Sidebar (group 4): its surface is `bg-sidebar`, which reads `--sidebar`
+ * above, so the tint itself needs no rule here. `#v6-rail` is the desktop sidebar container; its
+ * own width/left transition is the primitive's and is kept in the list. */
 [data-transport] #v6-rail {
-  background-image: none;
-  background-color: var(--tx-rail);
   border-right-color: var(--sidebar-border);
   transition:
-    width var(--v6-rail-dur) var(--v6-rail-ease),
-    padding var(--v6-rail-dur) var(--v6-rail-ease),
-    background-color var(--tx-dur) var(--tx-ease),
+    left 0.2s linear,
+    width 0.2s linear,
     border-color var(--tx-dur) var(--tx-ease),
     box-shadow var(--tx-dur) var(--tx-ease);
 }
-[data-transport] #v6-rail > .v6-rail-glow {
-  display: none;
+[data-transport] #v6-rail > [data-slot='sidebar-inner'] {
+  transition: background-color var(--tx-dur) var(--tx-ease);
 }
 [data-transport='recording'] #v6-rail,
 [data-transport='rolling'] #v6-rail {
@@ -555,6 +556,25 @@
 }
 [data-transport='playback'] #v6-rail {
   border-right-color: color-mix(in oklab, var(--si-accent) 40%, var(--si-line));
+}
+
+/* Phones: the sidebar is the primitive's Sheet, portaled to <body> outside the transport root, so
+ * it takes the shell's state through :has() (a stopped shell keeps the :root stopped tint). */
+:root:has([data-transport='rolling']) [data-slot='sidebar'][data-mobile='true'] {
+  --sidebar: var(--si-tx-rolling);
+}
+:root:has([data-transport='recording']) [data-slot='sidebar'][data-mobile='true'] {
+  --sidebar: var(--si-tx-recording);
+}
+:root:has([data-transport='playback']) [data-slot='sidebar'][data-mobile='true'] {
+  --sidebar: var(--si-tx-playback);
+}
+[data-slot='sidebar'][data-mobile='true'] {
+  border-right-color: var(--sidebar-border);
+}
+:root:has([data-transport='recording']) [data-slot='sidebar'][data-mobile='true'],
+:root:has([data-transport='rolling']) [data-slot='sidebar'][data-mobile='true'] {
+  border-right-color: color-mix(in oklab, var(--si-accent) 70%, transparent);
 }
 
 [data-transport] [data-slot='topbar'] {
@@ -600,24 +620,16 @@
   }
 }
 
-/* Mobile: the rail is an off-canvas drawer that slides on transform, not width. */
-@media (max-width: 47.99rem) {
-  [data-transport] #v6-rail {
-    transition:
-      transform 0.28s var(--v6-rail-ease),
-      background-color var(--tx-dur) var(--tx-ease),
-      border-color var(--tx-dur) var(--tx-ease),
-      box-shadow var(--tx-dur) var(--tx-ease);
-  }
-}
-
 /* Reduced motion: the tint transition and the blink are dropped (the rail keeps only its own
- * geometry transition, as before this change). */
+ * geometry transition). */
 @media (prefers-reduced-motion: reduce) {
   [data-transport] #v6-rail {
     transition:
-      width var(--v6-rail-dur) var(--v6-rail-ease),
-      padding var(--v6-rail-dur) var(--v6-rail-ease);
+      left 0.2s linear,
+      width 0.2s linear;
+  }
+  [data-transport] #v6-rail > [data-slot='sidebar-inner'] {
+    transition: none;
   }
   [data-transport] [data-slot='topbar'],
   [data-transport] #v5-maximize-log-strip {
@@ -625,11 +637,6 @@
   }
   [data-transport] [data-slot='live-dot'] {
     animation: none;
-  }
-}
-@media (prefers-reduced-motion: reduce) and (max-width: 47.99rem) {
-  [data-transport] #v6-rail {
-    transition: transform 0.28s var(--v6-rail-ease);
   }
 }
 

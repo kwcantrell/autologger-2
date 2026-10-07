@@ -1,5 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { ChevronDownIcon, ChevronRightIcon, PanelLeftIcon } from 'lucide-react';
+import { ChevronDownIcon, ChevronRightIcon } from 'lucide-react';
 import { useMemo, useSyncExternalStore } from 'react';
 import { useProfile, useProfileMutation } from '../../../api/hooks/useProfile';
 import { sessionStatusKeys } from '../../../api/hooks/useSessionStatus';
@@ -16,7 +16,7 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from '../../../shared/components/ui/dropdown-menu';
-import { SidebarTrigger, useOptionalSidebar } from '../../../shared/components/ui/sidebar';
+import { SidebarTrigger } from '../../../shared/components/ui/sidebar';
 import {
   getTransportStatus,
   type ShellTransportState,
@@ -59,19 +59,16 @@ const CRUMB_NAME =
 const CRUMB_SEP = 'size-3.5 shrink-0 text-si-dim';
 
 interface Props {
-  /** Interim sidebar toggle, used only while no `SidebarProvider` wraps the shell (group 4). */
-  onToggleSidebar?: () => void;
   /** AppShell's close-session path (navigates to `/` only when a session is open). */
   onCloseSession: () => void;
   /** Return to the open session's console (closing Settings if it is open). */
   onReturnToSession: (sessionId: string) => void;
 }
 
-export function TopBar({ onToggleSidebar, onCloseSession, onReturnToSession }: Props) {
+export function TopBar({ onCloseSession, onReturnToSession }: Props) {
   const { data: profile } = useProfile();
   const mutation = useProfileMutation();
   const queryClient = useQueryClient();
-  const sidebar = useOptionalSidebar();
   const status = useSyncExternalStore(
     subscribeTransportStatus,
     getTransportStatus,
@@ -132,20 +129,8 @@ export function TopBar({ onToggleSidebar, onCloseSession, onReturnToSession }: P
       data-slot="topbar"
       className="flex h-(--topbar-h) w-full min-w-0 shrink-0 items-center gap-2 px-3 md:gap-3 md:px-4"
     >
-      {sidebar ? (
-        <SidebarTrigger className="shrink-0" />
-      ) : (
-        <Button
-          variant="ghost"
-          size="icon"
-          className="shrink-0"
-          aria-label="Toggle sidebar"
-          title="Toggle sidebar"
-          onClick={onToggleSidebar}
-        >
-          <PanelLeftIcon />
-        </Button>
-      )}
+      {/* The shell's SidebarProvider (AppShell) owns the state; `[` and Ctrl/⌘+B toggle it too. */}
+      <SidebarTrigger className="size-(--h-ctl) shrink-0" title="Toggle sidebar ( [ )" />
 
       <nav
         aria-label="Current team and show"

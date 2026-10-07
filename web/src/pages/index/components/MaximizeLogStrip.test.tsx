@@ -101,10 +101,9 @@ describe('MaximizeLogStrip session-meta title', () => {
   });
 });
 
-describe('MaximizeLogStrip mobile nav glyph (shadcn-port-workspace D6)', () => {
-  it('the Open navigation control draws the lucide menu glyph', () => {
-    renderStrict(<MaximizeLogStrip {...baseProps()} status={null} onOpenMobileNav={() => {}} />);
-    const btn = screen.getByRole('button', { name: 'Open navigation' });
-    expect(btn.querySelector('svg.lucide-menu')).not.toBeNull();
+describe('MaximizeLogStrip has no navigation control (redesign-show-ignition D8)', () => {
+  it('draws no Open navigation button: the top bar trigger opens the sidebar', () => {
+    renderStrict(<MaximizeLogStrip {...baseProps()} status={null} />);
+    expect(screen.queryByRole('button', { name: 'Open navigation' })).toBeNull();
   });
 });

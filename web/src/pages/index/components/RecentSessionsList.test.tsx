@@ -9,6 +9,7 @@ import {
   useUpdateSession,
 } from '../../../api/hooks/useSessions';
 import type { ProfilePayload, Session, SessionStatus } from '../../../api/types';
+import { SidebarProvider } from '../../../shared/components/ui/sidebar';
 import { renderStrict } from '../../../test/renderStrict';
 import { showToast } from '../utils/toast';
 import { ArchivedSessionsList, RecentSessionsList } from './RecentSessionsList';
@@ -80,6 +81,12 @@ function accessProfile(
   } as unknown as ProfilePayload;
 }
 
+// The cards are sidebar menu items (redesign-show-ignition D8), so they render inside the shell's
+// SidebarProvider, as in the app.
+function renderInSidebar(ui: React.ReactElement) {
+  return renderStrict(<SidebarProvider>{ui}</SidebarProvider>);
+}
+
 function mockProfile(p: ProfilePayload) {
   vi.mocked(useProfile).mockReturnValue({ data: p } as unknown as ReturnType<typeof useProfile>);
 }
@@ -149,7 +156,7 @@ function renderRecent(
     onCloseSession?: () => void;
   } = {},
 ) {
-  return renderStrict(
+  return renderInSidebar(
     <RecentSessionsList
       sessions={{ active: sessions, archived: [] }}
       isLoading={false}
@@ -277,14 +284,16 @@ describe('SessionCard (active-list variant)', () => {
     );
 
     const inactiveTitle = within(card(container, 'sess-1')).getByText('Session One');
-    expect(inactiveTitle.getAttribute('aria-disabled')).toBeNull();
+    expect(inactiveTitle.closest('button')?.getAttribute('aria-current')).toBeNull();
     fireEvent.click(inactiveTitle);
     expect(onSelectSession).toHaveBeenCalledWith('sess-1');
 
-    // Active variant: its title is a no-op, marked aria-disabled (4.8), plus
-    // the hidden a11y marker and the Close session menu item.
+    // Active variant: activating it is a no-op, and it says so to assistive technology — once
+    // `aria-disabled` on the title (4.8), now `aria-current="page"` on the card's sidebar menu
+    // button (redesign-show-ignition D8) — plus the hidden a11y marker and the Close session item.
     const activeTitle = within(card(container, 'sess-2')).getByText('Session Two');
-    expect(activeTitle.getAttribute('aria-disabled')).toBe('true');
+    expect(activeTitle.closest('button')?.getAttribute('aria-current')).toBe('page');
+    expect(activeTitle.closest('button')?.getAttribute('data-active')).toBe('true');
     onSelectSession.mockClear();
     fireEvent.click(activeTitle);
     expect(onSelectSession).not.toHaveBeenCalled();
@@ -378,7 +387,7 @@ describe('SessionCard (active-list variant)', () => {
 
 describe('ArchivedSessionCard (archived-list variant)', () => {
   function renderArchived(sessions: Session[]) {
-    return renderStrict(<ArchivedSessionsList sessions={sessions} />);
+    return renderInSidebar(<ArchivedSessionsList sessions={sessions} />);
   }
 
   it('deletes via the same shared confirm-then-delete flow', async () => {
@@ -452,7 +461,7 @@ describe('cards of a show the user can’t access (show-grants D13)', () => {
   });
 
   it('search still filters the non-openable rows', () => {
-    const { container } = renderStrict(
+    const { container } = renderInSidebar(
       <RecentSessionsList
         sessions={{
           active: [
@@ -473,7 +482,7 @@ describe('cards of a show the user can’t access (show-grants D13)', () => {
   });
 
   it('an archived card is non-openable too: hint and no menu', () => {
-    const { container } = renderStrict(
+    const { container } = renderInSidebar(
       <ArchivedSessionsList
         sessions={[
           sessionFixture({ id: 'arch-x', title: 'Old Locked', show_id: 'show-x', archived: true }),

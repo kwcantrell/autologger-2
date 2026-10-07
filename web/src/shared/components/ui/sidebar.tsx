@@ -29,7 +29,13 @@ import { useIsMobile } from '@/shared/ui/breakpoints';
 //   `document.cookie`, because the shell sets and reads no cookies; an absent or unreadable
 //   value means expanded;
 // - the widths match the approved preview (272px expanded, 68px icon);
-// - `useIsMobile` is the repo's shared breakpoint hook, not a generated duplicate.
+// - `useIsMobile` is the repo's shared breakpoint hook, not a generated duplicate;
+// - the desktop sidebar hides on phones with `max-md:hidden` instead of the generated
+//   `hidden md:block` / `hidden md:flex`: the app's legacy `.hidden` hook is
+//   `display: none !important` (shared/theme/tailwind.css), which no `md:` utility can undo;
+// - menu-button tooltips are held shut outside the desktop icon strip (see SidebarMenuButton);
+// - group labels take the label face (Barlow Condensed, uppercase, tracked), as every label in
+//   the Show Ignition vocabulary does.
 const SIDEBAR_STORAGE_KEY = 'autologger:sidebar';
 const SIDEBAR_WIDTH = '272px';
 const SIDEBAR_WIDTH_MOBILE = '18rem';
@@ -233,7 +239,7 @@ function Sidebar({
 
   return (
     <div
-      className="group peer hidden text-sidebar-foreground md:block"
+      className="group peer block text-sidebar-foreground max-md:hidden"
       data-state={state}
       data-collapsible={state === 'collapsed' ? collapsible : ''}
       data-variant={variant}
@@ -255,7 +261,7 @@ function Sidebar({
       <div
         data-slot="sidebar-container"
         className={cn(
-          'fixed inset-y-0 z-10 hidden h-svh w-(--sidebar-width) transition-[left,right,width] duration-200 ease-linear md:flex',
+          'fixed inset-y-0 z-10 flex h-svh w-(--sidebar-width) transition-[left,right,width] duration-200 ease-linear max-md:hidden',
           side === 'left'
             ? 'left-0 group-data-[collapsible=offcanvas]:left-[calc(var(--sidebar-width)*-1)]'
             : 'right-0 group-data-[collapsible=offcanvas]:right-[calc(var(--sidebar-width)*-1)]',
@@ -421,7 +427,7 @@ function SidebarGroupLabel({
       data-slot="sidebar-group-label"
       data-sidebar="group-label"
       className={cn(
-        'flex h-8 shrink-0 items-center rounded-md px-2 text-xs font-medium text-sidebar-foreground/70 ring-sidebar-ring outline-hidden transition-[margin,opacity] duration-200 ease-linear focus-visible:ring-2 [&>svg]:size-4 [&>svg]:shrink-0',
+        'flex h-8 shrink-0 items-center rounded-md px-2 font-label text-[11px] font-semibold tracking-[0.12em] text-muted-foreground uppercase ring-sidebar-ring outline-hidden transition-[margin,opacity] duration-200 ease-linear focus-visible:ring-2 [&>svg]:size-4 [&>svg]:shrink-0',
         'group-data-[collapsible=icon]:-mt-8 group-data-[collapsible=icon]:opacity-0',
         className,
       )}
@@ -523,6 +529,7 @@ function SidebarMenuButton({
 } & VariantProps<typeof sidebarMenuButtonVariants>) {
   const Comp = asChild ? Slot.Root : 'button';
   const { isMobile, state } = useSidebar();
+  const [tooltipOpen, setTooltipOpen] = React.useState(false);
 
   const button = (
     <Comp
@@ -545,15 +552,14 @@ function SidebarMenuButton({
     };
   }
 
+  // Local edit: the tooltip is held shut (not just hidden) outside the icon strip, so a focused
+  // button in the expanded sidebar or the phone sheet opens no invisible tooltip layer that would
+  // swallow the first Escape meant for the sheet.
+  const tooltipEnabled = state === 'collapsed' && !isMobile;
   return (
-    <Tooltip>
+    <Tooltip open={tooltipEnabled && tooltipOpen} onOpenChange={setTooltipOpen}>
       <TooltipTrigger asChild>{button}</TooltipTrigger>
-      <TooltipContent
-        side="right"
-        align="center"
-        hidden={state !== 'collapsed' || isMobile}
-        {...tooltip}
-      />
+      <TooltipContent side="right" align="center" hidden={!tooltipEnabled} {...tooltip} />
     </Tooltip>
   );
 }

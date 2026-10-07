@@ -61,33 +61,45 @@ vi.mock('../../shared/utils/perfDebug', () => ({
   initPerfDebugUI: () => {},
 }));
 
-vi.mock('./components/V6Rail', () => ({
-  V6Rail: (props: {
+// The rail mock reads the shell's real `SidebarProvider` (redesign-show-ignition D8): it reports
+// the sidebar state and holds a search input, for the `[` shortcut tests.
+vi.mock('./components/V6Rail', async () => {
+  const { useSidebar } = await import('../../shared/components/ui/sidebar');
+  function V6Rail(props: {
     activeSessionId: string;
     onSelectSession: (sid: string) => void;
     onCloseSession: () => void;
     onNewSession: () => void;
     onBatchImport: () => void;
     onOpenSettings: () => void;
-  }) => (
-    <div data-testid="rail" data-active-session-id={props.activeSessionId}>
-      <button
-        type="button"
-        data-testid="rail-select-s1"
-        onClick={() => props.onSelectSession('sess-1')}
-      />
-      <button
-        type="button"
-        data-testid="rail-select-s2"
-        onClick={() => props.onSelectSession('sess-2')}
-      />
-      <button type="button" data-testid="rail-close" onClick={() => props.onCloseSession()} />
-      <button type="button" data-testid="rail-new" onClick={() => props.onNewSession()} />
-      <button type="button" data-testid="rail-batch" onClick={() => props.onBatchImport()} />
-      <button type="button" id="v6-btn-settings" onClick={() => props.onOpenSettings()} />
-    </div>
-  ),
-}));
+  }) {
+    const { state } = useSidebar();
+    return (
+      <div
+        data-testid="rail"
+        data-active-session-id={props.activeSessionId}
+        data-sidebar-state={state}
+      >
+        <input type="search" aria-label="Search sessions" />
+        <button
+          type="button"
+          data-testid="rail-select-s1"
+          onClick={() => props.onSelectSession('sess-1')}
+        />
+        <button
+          type="button"
+          data-testid="rail-select-s2"
+          onClick={() => props.onSelectSession('sess-2')}
+        />
+        <button type="button" data-testid="rail-close" onClick={() => props.onCloseSession()} />
+        <button type="button" data-testid="rail-new" onClick={() => props.onNewSession()} />
+        <button type="button" data-testid="rail-batch" onClick={() => props.onBatchImport()} />
+        <button type="button" id="v6-btn-settings" onClick={() => props.onOpenSettings()} />
+      </div>
+    );
+  }
+  return { V6Rail };
+});
 
 // --- render-isolation probe (settings-modal-mount-cost, task 2.1; design D0)
 // ---
@@ -96,7 +108,7 @@ vi.mock('./components/V6Rail', () => ({
 // below this mock, inside the real `SessionRoute`. This file mocks
 // `SessionRoute` wholesale (see the comment above), so the memo boundary
 // itself isn't exercised here — but `SessionRoute` forwards `sessionId` /
-// `ytImportPending` / `onOpenMobileNav` into `WorkspaceStatic` completely
+// `ytImportPending` into `WorkspaceStatic` completely
 // unchanged (no new object/closure created in between; see
 // `SessionRoute.tsx`). So asserting that those props keep a stable identity
 // as received by THIS mock is equivalent to asserting the real memo holds —
@@ -107,7 +119,6 @@ const sessionRouteProbe = vi.hoisted(() => ({
     sessionId: string;
     ytImportPending?: boolean;
     onNewSession: () => void;
-    onOpenMobileNav?: () => void;
   }>,
 }));
 
@@ -116,7 +127,6 @@ vi.mock('./components/SessionRoute', () => ({
     sessionId: string;
     ytImportPending?: boolean;
     onNewSession: () => void;
-    onOpenMobileNav?: () => void;
   }) => {
     sessionRouteProbe.renders.push(props);
     return <div data-testid="session-route" data-session-id={props.sessionId} />;
@@ -686,7 +696,6 @@ describe('AppShell workspace render isolation (settings-modal-mount-cost, D0)', 
 
     const after = lastRender();
     expect(after.sessionId).toBe('sess-1');
-    expect(after.onOpenMobileNav).toBe(before.onOpenMobileNav);
     expect(after.onNewSession).toBe(before.onNewSession);
   });
 
@@ -700,7 +709,6 @@ describe('AppShell workspace render isolation (settings-modal-mount-cost, D0)', 
     expect(screen.queryByRole('dialog')).toBeNull();
 
     const after = lastRender();
-    expect(after.onOpenMobileNav).toBe(before.onOpenMobileNav);
     expect(after.onNewSession).toBe(before.onNewSession);
   });
 
@@ -712,7 +720,6 @@ describe('AppShell workspace render isolation (settings-modal-mount-cost, D0)', 
     expect(await screen.findByTestId('new-session-create')).not.toBeNull();
 
     const after = lastRender();
-    expect(after.onOpenMobileNav).toBe(before.onOpenMobileNav);
     expect(after.onNewSession).toBe(before.onNewSession);
   });
 
@@ -724,27 +731,23 @@ describe('AppShell workspace render isolation (settings-modal-mount-cost, D0)', 
     expect(await screen.findByTestId('batch-import-modal')).not.toBeNull();
 
     const after = lastRender();
-    expect(after.onOpenMobileNav).toBe(before.onOpenMobileNav);
     expect(after.onNewSession).toBe(before.onNewSession);
   });
 
-  it('toggling the mobile nav rail (invoking the boundary prop itself) keeps it referentially stable across the resulting shell render', () => {
-    // The mobile-rail-open trigger IS the prop under test
-    // (`onOpenMobileNav={() => setRailOpen(true)}` in production): the
-    // workspace's own session strip calls it on mobile to open the rail. So
-    // "toggling the mobile navigation rail" (the spec's second scenario) is
-    // exercised by invoking the captured callback and checking its own
-    // identity survives the shell render that results.
+  it('toggling the navigation sidebar keeps the SessionRoute boundary props referentially stable', () => {
+    // redesign-show-ignition D8: the rail opens and closes from the top bar's sidebar trigger
+    // (on phones, the sidebar's sheet), not from a callback threaded into the workspace.
     renderShell('/sessions/sess-1');
     const before = lastRender();
-    expect(typeof before.onOpenMobileNav).toBe('function');
 
-    act(() => {
-      before.onOpenMobileNav?.();
-    });
+    fireEvent.click(screen.getByRole('button', { name: /toggle sidebar/i }));
+    expect(screen.getByTestId('rail').getAttribute('data-sidebar-state')).toBe('collapsed');
 
     const after = lastRender();
-    expect(after.onOpenMobileNav).toBe(before.onOpenMobileNav);
+    expect(after.sessionId).toBe(before.sessionId);
+    expect(after.ytImportPending).toBe(before.ytImportPending);
+    expect(after.onNewSession).toBe(before.onNewSession);
+    expect('onOpenMobileNav' in after).toBe(false);
   });
 });
 
@@ -905,5 +908,91 @@ describe('AppShell top bar', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: /return to session/i }));
     expect(memory.history).toEqual(['/teams', '/sessions/sess-9']);
+  });
+});
+
+// --- Shell-level sidebar shortcut (redesign-show-ignition D8, task 4.1; web-ui-system
+// "Shell-level sidebar shortcut") ---
+//
+// AppShell owns one `[` listener on every signed-in route, with or without a session; it yields
+// to typing targets and open dialogs/menus. Ctrl/⌘+B stays the primitive's own.
+describe('AppShell sidebar shortcut', () => {
+  const railState = () => screen.getByTestId('rail').getAttribute('data-sidebar-state');
+  const press = (target: Element = document.body, init: KeyboardEventInit = {}) =>
+    fireEvent.keyDown(target, { key: '[', code: 'BracketLeft', ...init });
+
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+  afterEach(() => {
+    window.localStorage.clear();
+  });
+
+  it('on / with no session, `[` collapses the sidebar and `[` again expands it', () => {
+    renderShell('/');
+    expect(workspaceSessionId()).toBe('');
+    expect(railState()).toBe('expanded');
+    press();
+    expect(railState()).toBe('collapsed');
+    press();
+    expect(railState()).toBe('expanded');
+  });
+
+  it('also toggles with a session open', () => {
+    renderShell('/sessions/sess-1');
+    press();
+    expect(railState()).toBe('collapsed');
+  });
+
+  it('does nothing while focus is in the search input', () => {
+    renderShell('/');
+    const input = screen.getByRole('searchbox', { name: 'Search sessions' });
+    input.focus();
+    press(input);
+    expect(railState()).toBe('expanded');
+  });
+
+  it('does nothing while a dialog is open', async () => {
+    renderShell('/');
+    fireEvent.click(document.getElementById('v6-btn-settings') as HTMLElement);
+    expect(await screen.findByRole('dialog')).not.toBeNull();
+    press();
+    expect(railState()).toBe('expanded');
+  });
+
+  it('ignores modified brackets', () => {
+    renderShell('/');
+    press(document.body, { ctrlKey: true });
+    press(document.body, { metaKey: true });
+    press(document.body, { altKey: true });
+    expect(railState()).toBe('expanded');
+  });
+
+  it('the state set by `[` persists across a remount', () => {
+    const first = renderShell('/');
+    press();
+    expect(railState()).toBe('collapsed');
+    first.view.unmount();
+    renderShell('/');
+    expect(railState()).toBe('collapsed');
+  });
+
+  it('storage that throws defaults to expanded, and `[` still toggles', () => {
+    const own = Object.getOwnPropertyDescriptor(window, 'localStorage');
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      get: () => {
+        throw new Error('denied');
+      },
+    });
+    try {
+      renderShell('/');
+      expect(railState()).toBe('expanded');
+      press();
+      expect(railState()).toBe('collapsed');
+    } finally {
+      if (own) Object.defineProperty(window, 'localStorage', own);
+      else delete (window as unknown as Record<string, unknown>).localStorage;
+    }
   });
 });

@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const useSessionStatusMock = vi.fn();
@@ -156,18 +156,9 @@ describe('SessionWorkspace fused strip layout', () => {
     expect(screen.queryByRole('button', { name: /^(Maximize log|Default view)$/ })).toBeNull();
   });
 
-  it('places mobile nav beside session controls when onOpenMobileNav is provided', () => {
-    const onOpenMobileNav = vi.fn();
-    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    render(
-      <QueryClientProvider client={qc}>
-        <SessionWorkspace sessionId="sess-a" onOpenMobileNav={onOpenMobileNav} />
-      </QueryClientProvider>,
-    );
-    const btn = screen.getByRole('button', { name: 'Open navigation' });
-    expect(btn.className).toContain('md:hidden');
-    fireEvent.click(btn);
-    expect(onOpenMobileNav).toHaveBeenCalledTimes(1);
+  it('draws no phone "Open navigation" button (the top bar trigger opens the sidebar, D8)', () => {
+    renderWorkspace();
+    expect(screen.queryByRole('button', { name: 'Open navigation' })).toBeNull();
   });
 
   it('shows Status above timecode in the strip', () => {

@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { apiFetch } from '../../../api/client';
 import { sessionStatusKeys } from '../../../api/hooks/useSessionStatus';
 import type { ProfilePayload } from '../../../api/types';
+import { SidebarProvider } from '../../../shared/components/ui/sidebar';
 import { renderWithQueryClient } from '../../../test/renderWithQueryClient';
 import { publishTransportStatus } from '../coordination/transportStatus';
 import { showToast } from '../utils/toast';
@@ -94,17 +95,13 @@ function setup(
   const invalidate = vi.spyOn(client, 'invalidateQueries');
   const onCloseSession = vi.fn();
   const onReturnToSession = vi.fn();
-  const onToggleSidebar = vi.fn();
   renderWithQueryClient(
-    <TopBar
-      onCloseSession={onCloseSession}
-      onReturnToSession={onReturnToSession}
-      onToggleSidebar={onToggleSidebar}
-      {...props}
-    />,
+    <SidebarProvider>
+      <TopBar onCloseSession={onCloseSession} onReturnToSession={onReturnToSession} {...props} />
+    </SidebarProvider>,
     client,
   );
-  return { client, invalidate, onCloseSession, onReturnToSession, onToggleSidebar };
+  return { client, invalidate, onCloseSession, onReturnToSession };
 }
 
 // Radix DropdownMenu opens on pointer-down (button 0) or on Enter / Space / ArrowDown.
@@ -189,10 +186,17 @@ describe('TopBar: names and menus (task 3.1)', () => {
     expect(apiFetchMock).not.toHaveBeenCalled();
   });
 
-  it('the sidebar control toggles the sidebar', () => {
-    const { onToggleSidebar } = setup();
-    fireEvent.click(screen.getByRole('button', { name: /toggle sidebar/i }));
-    expect(onToggleSidebar).toHaveBeenCalledTimes(1);
+  it('the sidebar control is the SidebarTrigger and toggles the shell sidebar', () => {
+    window.localStorage.clear();
+    setup();
+    const trigger = screen.getByRole('button', { name: /toggle sidebar/i });
+    expect(trigger.getAttribute('data-slot')).toBe('sidebar-trigger');
+    fireEvent.click(trigger);
+    expect(document.querySelector('[data-slot="sidebar-wrapper"]')).not.toBeNull();
+    expect(window.localStorage.getItem('autologger:sidebar')).toBe('collapsed');
+    fireEvent.click(trigger);
+    expect(window.localStorage.getItem('autologger:sidebar')).toBe('expanded');
+    window.localStorage.clear();
   });
 });
 
