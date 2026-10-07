@@ -77,7 +77,7 @@ const MARKER_CHIP_ACCENT =
 const MARKER_CHIP_BODY =
   'relative flex min-w-0 max-w-full flex-1 items-center gap-[0.4rem] overflow-visible rounded-t-[0.45rem] rounded-b-none border border-solid [border-color:var(--marker-chip-border)] py-0 pl-[calc(var(--marker-chip-accent-w)+0.45rem)] pr-[0.45rem] shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]';
 const MARKER_CHIP_CAT =
-  '[font-family:"Inter",var(--font-poppins),system-ui,sans-serif] relative z-[2] shrink-0 text-[0.62rem] font-bold leading-none tracking-[0.12em] uppercase text-white';
+  'font-ui relative z-[2] shrink-0 text-[0.62rem] font-bold leading-none tracking-[0.12em] uppercase text-white';
 const MARKER_CHIP_SEP =
   'relative z-[2] shrink-0 self-center text-white/40 leading-none select-none';
 // Marquee cell/track/value — same overflow dance as before (imperative class toggle).
@@ -88,7 +88,7 @@ const NAV_MSG_CELL =
 const NAV_MSG_TRACK =
   'inline-flex min-w-[max-content] items-center translate-x-0 motion-reduce:animate-none!';
 const NAV_MSG_VALUE =
-  '[font-family:"Inter",var(--font-poppins),system-ui,sans-serif] text-[0.78rem] font-medium leading-snug tracking-[0.02em] normal-case text-white whitespace-nowrap';
+  'font-ui text-[0.78rem] font-medium leading-snug tracking-[0.02em] normal-case text-white whitespace-nowrap';
 // `[display:inline]` NOT `inline` — bare `inline` collides with chrome.css `.inline`.
 const NAV_MSG_GAP = '[display:inline]';
 // Hang = chip height exactly — chip sits flush on the track (one joined element).
@@ -164,15 +164,15 @@ const HOVER_TOOLTIP =
 // ---- zoom rail ----
 // .timelineZoomTooltip (v4 variant) + #v4-log-session (v5 glass). Positioned above rail.
 const ZOOM_TOOLTIP =
-  'absolute left-1/2 bottom-[calc(100%+6px)] top-auto -translate-x-1/2 px-[0.5em] py-[0.2em] [font-family:var(--font-poppins)] text-[0.65rem] font-extrabold leading-[1.2] whitespace-nowrap z-[5] pointer-events-none rounded-[0.45rem] glass-face-strong border border-v5-border text-v5-text panel-elevate';
+  'absolute left-1/2 bottom-[calc(100%+6px)] top-auto -translate-x-1/2 px-[0.5em] py-[0.2em] font-ui text-[0.65rem] font-extrabold leading-[1.2] whitespace-nowrap z-[5] pointer-events-none rounded-[0.45rem] glass-face-strong border border-v5-border text-v5-text panel-elevate';
 // .timelineZoomValue + .v4TimelineZoomPct + #v4-log-session (v5 bg/border/color).
 // NOTE: the source `input.timelineZoomValue` started from `font: inherit` then re-set
 // line-height/size/family in later rules. Expressing `font:inherit` as an arbitrary
 // property here would (by generated-stylesheet order) reset the explicit line-height back
 // to the inherited value and inflate the box height, so the final resolved metrics are
-// written directly instead (family Inter, size 0.62rem, weight 600, line-height 1.2).
+// written directly instead (family Barlow via font-ui, size 0.62rem, weight 600, line-height 1.2).
 const ZOOM_VALUE =
-  'appearance-none leading-[1.2] box-border m-0 flex-[0_0_3.65rem] w-[3.65rem] min-w-[3.65rem] max-w-[3.65rem] [direction:ltr] [text-indent:0] text-center rounded-[0.45rem] border border-v5-border-strong bg-[rgba(7,11,20,0.72)] text-v5-primary [font-family:"Inter",var(--font-poppins),system-ui,sans-serif] text-[0.62rem] font-semibold [font-variant-numeric:tabular-nums] px-[0.2rem] py-[0.1rem] focus:outline focus:outline-1 focus:outline-legacy-accent focus:outline-offset-1';
+  'appearance-none leading-[1.2] box-border m-0 flex-[0_0_3.65rem] w-[3.65rem] min-w-[3.65rem] max-w-[3.65rem] [direction:ltr] [text-indent:0] text-center rounded-[0.45rem] border border-v5-border-strong bg-[rgba(7,11,20,0.72)] text-v5-primary font-ui text-[0.62rem] font-semibold [font-variant-numeric:tabular-nums] px-[0.2rem] py-[0.1rem] focus:outline focus:outline-1 focus:outline-legacy-accent focus:outline-offset-1';
 // .v4ZoomRange + .timelineZoomRange + `.v4TimelineZoomRail .timelineZoomRange` +
 // #v4-log-session (v5 bg/border, radius). --v4-zoom-handle-h drives min-height.
 const ZOOM_RANGE =

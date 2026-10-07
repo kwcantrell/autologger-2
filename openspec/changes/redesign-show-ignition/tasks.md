@@ -20,7 +20,7 @@ Every task names the test written first. A task is ticked only with an `Evidence
   - Test first: extend `contrastTokens.test.ts`. Primary label on accent, muted text on panel, and each status label (STOPPED, ROLLING, REC, PLAY) on its pill all compute to ≥4.5:1.
   - Verify: that test passes, and the full `npx vitest run` passes.
   - Evidence: test first, `npx vitest run src/shared/theme/contrastTokens.test.ts` -> `Tests  11 failed | 8 passed (19)` (no `--si-*` tokens, no `[data-transport='stopped']` rule). After the `tailwind.css` token, transport and re-pointing blocks: same command -> `Tests  19 passed (19)` (primary label on accent and on the primary tint, muted on panel/panel-2/bg and every rail mix, STOPPED/ROLLING/REC/PLAY each on its pill, all ≥4.5:1 via an OKLab `color-mix` evaluator). Full `npx vitest run` -> `Test Files  133 passed (133)`, `Tests  1702 passed (1702)`.
-- [ ] 1.3 Self-host the fonts (D9).
+- [x] 1.3 Self-host the fonts (D9).
   - Barlow latin 400 and 600 go in `web/public/static/fonts/` and are preloaded in `app/(index)/layout.page.tsx` with `crossorigin`, replacing the Inter preload.
   - Barlow 500/700, Barlow Condensed and JetBrains Mono go in `assets/fonts`.
   - Set the body, label and timecode font tokens, and retire the Inter face and its file. League Gothic stays for the home wordmark.
@@ -29,6 +29,7 @@ Every task names the test written first. A task is ticked only with an `Evidence
     - no `@font-face` references Inter or `fonts.googleapis.com`;
     - every declared family is referenced in `web/src`.
   - Verify: the test passes and `npm run typecheck` is clean.
+  - Evidence: test first, new `src/shared/theme/fonts.repo.test.ts`; `npx vitest run src/shared/theme/fonts.repo.test.ts` -> `Tests  4 failed | 2 passed (6)` (no Barlow faces, Inter preload and face present, no font tokens). Files from the Google Fonts CSS2 API (latin, woff2): `barlow-{400,600}-latin.woff2` in `web/public/static/fonts/`, Barlow 500/700, Barlow Condensed 500/600/700 and `jetbrains-mono-latin-var.woff2` in `assets/fonts` (Google serves byte-identical JetBrains Mono 500 and 600, so one `font-weight: 500 600` face, and the test's weight expectation was corrected to match). Inter (face and file) and Poppins (12 faces and files) deleted after their five consumers' `"Inter",var(--font-poppins)` stacks became `font-ui`; Badge takes `font-label`. Then `npx vitest run src/shared/theme/` -> `Tests  25 passed (25)`; full `npx vitest run` -> `Tests  1708 passed (1708)`; `npm run typecheck` -> exit 0, 0 `error TS`.
 - [ ] 1.4 Add the missing shadcn components (D10).
   - Run `npx shadcn@latest add sidebar sheet toggle-group item kbd avatar` from `web/`, read every generated file, and apply the hygiene rewrite (local `cn`, no `dark:` variants).
   - In `sidebar.tsx`, replace the `document.cookie` persistence with try/catch `localStorage`, and set the preview's widths (272px expanded, 68px icon).

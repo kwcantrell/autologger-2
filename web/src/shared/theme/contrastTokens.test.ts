@@ -227,7 +227,9 @@ describe('shadcn semantic tokens alias V5 values that clear the floor (design D5
   // its label is --si-fg on --si-primary-tint, and solid accent fills (Badge, checkbox) carry
   // --primary-foreground on --primary. Both are evaluated from the CSS, color-mix included.
   it('primary labels on the accent surfaces (default Button label, e.g. Create & open)', () => {
-    expect(contrast(colour('--primary-foreground'), colour('--primary'))).toBeGreaterThanOrEqual(AA);
+    expect(contrast(colour('--primary-foreground'), colour('--primary'))).toBeGreaterThanOrEqual(
+      AA,
+    );
     expect(contrast(colour('--si-fg'), colour('--si-primary-tint'))).toBeGreaterThanOrEqual(AA);
   });
 
@@ -301,8 +303,16 @@ describe('Show Ignition tokens (redesign-show-ignition D1)', () => {
     expect(token('--muted-foreground')).toBe('var(--si-muted)');
     expect(token('--border')).toBe('var(--si-line)');
     expect(token('--ring')).toBe('var(--si-accent)');
-    for (const t of ['sidebar', 'sidebar-foreground', 'sidebar-primary', 'sidebar-primary-foreground',
-      'sidebar-accent', 'sidebar-accent-foreground', 'sidebar-border', 'sidebar-ring']) {
+    for (const t of [
+      'sidebar',
+      'sidebar-foreground',
+      'sidebar-primary',
+      'sidebar-primary-foreground',
+      'sidebar-accent',
+      'sidebar-accent-foreground',
+      'sidebar-border',
+      'sidebar-ring',
+    ]) {
       expect(token(`--color-${t}`)).toBe(`var(--${t})`);
     }
   });
@@ -311,8 +321,12 @@ describe('Show Ignition tokens (redesign-show-ignition D1)', () => {
     expect(resolved('--v5-bg')).toBe('#101216');
     expect(resolved('--v5-text')).toBe('#eceef2');
     expect(resolved('--v5-primary')).toBe('#5b7cff');
-    for (const glass of ['--v5-glass-face', '--v5-glass-face-strong', '--v5-glass-face-aside',
-      '--v5-glass-face-feed']) {
+    for (const glass of [
+      '--v5-glass-face',
+      '--v5-glass-face-strong',
+      '--v5-glass-face-aside',
+      '--v5-glass-face-feed',
+    ]) {
       expect(token(glass)).not.toMatch(/gradient/);
     }
     expect(token('--v5-shadow-glow')).not.toMatch(/rgba\(56, 189, 248/);

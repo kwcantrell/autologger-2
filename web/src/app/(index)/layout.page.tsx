@@ -39,7 +39,7 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
-  themeColor: '#070b14',
+  themeColor: '#101216',
 };
 
 export default function IndexLayout({ children }: { children: ReactNode }) {
@@ -51,18 +51,27 @@ export default function IndexLayout({ children }: { children: ReactNode }) {
             document head from anywhere in the tree. Next's `metadata` export
             has no preload API, so this is the supported route.
 
-            Both hrefs are stable /public paths rather than bundler-emitted
+            The three critical faces (redesign-show-ignition D9): Barlow latin
+            400 and 600 (the UI face's body and emphasis weights) and League
+            Gothic latin (the loading skeleton's wordmark). All hrefs are stable /public paths rather than bundler-emitted
             content-hashed asset URLs, because a preload must name the exact
             URL the CSS `src:` will request (see the matching @font-face
             comments in tailwind.css). Trade-off: /public loses immutable
-            content-hash caching; these two files change ~never.
+            content-hash caching; these three files change ~never.
 
             `crossOrigin="anonymous"` is MANDATORY even same-origin -- fonts
             are always fetched in CORS mode, so a preload without it is a
             cache-key mismatch and the font downloads twice. */}
         <link
           rel="preload"
-          href="/static/fonts/inter-latin-var.woff2"
+          href="/static/fonts/barlow-400-latin.woff2"
+          as="font"
+          type="font/woff2"
+          crossOrigin="anonymous"
+        />
+        <link
+          rel="preload"
+          href="/static/fonts/barlow-600-latin.woff2"
           as="font"
           type="font/woff2"
           crossOrigin="anonymous"

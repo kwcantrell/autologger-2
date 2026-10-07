@@ -17,9 +17,8 @@
   --breakpoint-md: 768px;
 
   /* Moved out of tokens.css (same-name namespace tokens can't be defined twice): */
-  --font-poppins: 'Poppins', 'SF Pro Text', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   --font-league-gothic: 'League Gothic', sans-serif;
-  --font-sans: 'SF Pro Text', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-sans: var(--font-ui);
 
   --animate-toast-enter: toast-enter 0.18s ease-out;
   @keyframes toast-enter {
@@ -230,7 +229,14 @@
   --color-text: #e8eaed;
   --color-legacy-muted: #9aa0a6;
   --color-legacy-accent: #7cb7ff;
-  --font-mono: 'SF Mono', 'Consolas', 'Liberation Mono', monospace;
+  /* Show Ignition faces (redesign-show-ignition D9): Barlow for the UI and body, Barlow
+   * Condensed for labels, tabs and status, JetBrains Mono for timecode and measured values
+   * only. `font-ui` / `font-label` / `font-tc` utilities; `--font-mono` (the older timecode
+   * token) now names the timecode face. */
+  --font-ui: 'Barlow', 'Segoe UI', system-ui, sans-serif;
+  --font-label: 'Barlow Condensed', 'Arial Narrow', 'Barlow', system-ui, sans-serif;
+  --font-tc: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  --font-mono: var(--font-tc);
 }
 
 /* Non-namespace + legacy-flat tokens (Task 11 — moved verbatim from the deleted
@@ -239,7 +245,7 @@
  * chrome/base rules + SessionWorkspace/AppShell/Timeline escape hatches) and by the
  * remaining component CSS/TSX that reads the v4, v5, surface, and radius tokens. The
  * flat colors also have literal @theme-inline twins above for utility generation;
- * these :root copies serve the plain-CSS var() consumers. The poppins and
+ * these :root copies serve the plain-CSS var() consumers. The UI-face and
  * league-gothic fonts live in @theme; the mono stack became --font-mono. */
 :root {
   /* Matte dark slate + noise (see body::before in baseline.css) */
@@ -254,9 +260,8 @@
   --accent-dim: #4a8fd9;
   --danger: #ff6b6b;
   --radius: 10px;
-  /* --font-poppins / --font-league-gothic moved into @theme (tailwind.css) — same-name
-   * namespace tokens can't be defined twice. Self-hosted Google Fonts: Poppins
-   * 100/300/400/600; League Gothic variable width. */
+  /* --font-league-gothic and the Show Ignition --font-ui/-label/-tc live in @theme (above) —
+   * same-name namespace tokens can't be defined twice. */
 
   /* V5 design tokens, re-pointed at Show Ignition (redesign-show-ignition D1). The names stay
    * so untouched consumers keep resolving; the glass faces and glows are now flat surfaces
@@ -1008,7 +1013,7 @@
     margin: 0;
     width: 100%;
     text-align: left;
-    font-family: 'Inter', var(--font-poppins, ui-sans-serif), system-ui, sans-serif;
+    font-family: var(--font-ui);
     font-size: 1.35rem;
     font-weight: 600;
     letter-spacing: -0.02em;
@@ -1270,11 +1275,12 @@
  * need to beat utilities, so they live in @layer components (below / perf-debug section).
  * ============================================================ */
 @layer base {
-  /* Self-hosted (OFL via Google Fonts): League Gothic, Poppins, Inter, Roboto —
-   * .woff2 in src/assets/fonts/, EXCEPT the two preload targets (deduped Inter
-   * latin + League Gothic latin), which live at stable /static/fonts/ URLs so
-   * `<link rel="preload">` in the root layout can name them (perf C4b). Chivo
-   * Mono and Oswald were deleted in C4c — zero references anywhere in web/src. */
+  /* Self-hosted (OFL via Google Fonts): League Gothic, Barlow, Barlow Condensed, JetBrains
+   * Mono; Roboto (Apache 2.0) for the Google sign-in button — .woff2 in src/assets/fonts/,
+   * EXCEPT the three preload targets (Barlow latin 400 and 600, League Gothic latin), which
+   * live at stable /static/fonts/ URLs so `<link rel="preload">` in the root layout can name
+   * them (perf C4b; redesign-show-ignition D9). Chivo Mono and Oswald were deleted in C4c;
+   * Inter and Poppins were retired by redesign-show-ignition once nothing referenced them. */
   /* vietnamese */
   @font-face {
     font-family: 'League Gothic';
@@ -1308,129 +1314,78 @@
     src: url("/static/fonts/league-gothic-latin.woff2") format('woff2');
     unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
   }
-  /* devanagari */
+  /* Barlow, Barlow Condensed and JetBrains Mono: SIL Open Font License 1.1 (Barlow © The
+   * Barlow Project Authors; JetBrains Mono © The JetBrains Mono Project Authors), vendored from
+   * Google Fonts, latin subset only (the UI is English). Barlow ships static per-weight files,
+   * one file per declared weight. Barlow 400 and 600 are preload targets — served from /public
+   * at stable, non-content-hashed URLs so the root layout's `<link rel="preload">` and these
+   * `src:` hit one request; 500/700 stay bundler-emitted asset imports. */
+  /* latin — preload target */
   @font-face {
-    font-family: 'Poppins';
-    font-style: normal;
-    font-weight: 100;
-    font-display: swap;
-    src: url("../../assets/fonts/pxiGyp8kv8JHgFVrLPTucXtAOvWDSHFF.woff2") format('woff2');
-    unicode-range: U+0900-097F, U+1CD0-1CF9, U+200C-200D, U+20A8, U+20B9, U+20F0, U+25CC, U+A830-A839, U+A8E0-A8FF, U+11B00-11B09;
-  }
-  /* latin-ext */
-  @font-face {
-    font-family: 'Poppins';
-    font-style: normal;
-    font-weight: 100;
-    font-display: swap;
-    src: url("../../assets/fonts/pxiGyp8kv8JHgFVrLPTufntAOvWDSHFF.woff2") format('woff2');
-    unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
-  }
-  /* latin */
-  @font-face {
-    font-family: 'Poppins';
-    font-style: normal;
-    font-weight: 100;
-    font-display: swap;
-    src: url("../../assets/fonts/pxiGyp8kv8JHgFVrLPTucHtAOvWDSA.woff2") format('woff2');
-    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
-  }
-  /* devanagari */
-  @font-face {
-    font-family: 'Poppins';
-    font-style: normal;
-    font-weight: 300;
-    font-display: swap;
-    src: url("../../assets/fonts/pxiByp8kv8JHgFVrLDz8Z11lFd2JQEl8qw.woff2") format('woff2');
-    unicode-range: U+0900-097F, U+1CD0-1CF9, U+200C-200D, U+20A8, U+20B9, U+20F0, U+25CC, U+A830-A839, U+A8E0-A8FF, U+11B00-11B09;
-  }
-  /* latin-ext */
-  @font-face {
-    font-family: 'Poppins';
-    font-style: normal;
-    font-weight: 300;
-    font-display: swap;
-    src: url("../../assets/fonts/pxiByp8kv8JHgFVrLDz8Z1JlFd2JQEl8qw.woff2") format('woff2');
-    unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
-  }
-  /* latin */
-  @font-face {
-    font-family: 'Poppins';
-    font-style: normal;
-    font-weight: 300;
-    font-display: swap;
-    src: url("../../assets/fonts/pxiByp8kv8JHgFVrLDz8Z1xlFd2JQEk.woff2") format('woff2');
-    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
-  }
-  /* devanagari */
-  @font-face {
-    font-family: 'Poppins';
+    font-family: 'Barlow';
     font-style: normal;
     font-weight: 400;
     font-display: swap;
-    src: url("../../assets/fonts/pxiEyp8kv8JHgFVrJJbecnFHGPezSQ.woff2") format('woff2');
-    unicode-range: U+0900-097F, U+1CD0-1CF9, U+200C-200D, U+20A8, U+20B9, U+20F0, U+25CC, U+A830-A839, U+A8E0-A8FF, U+11B00-11B09;
-  }
-  /* latin-ext */
-  @font-face {
-    font-family: 'Poppins';
-    font-style: normal;
-    font-weight: 400;
-    font-display: swap;
-    src: url("../../assets/fonts/pxiEyp8kv8JHgFVrJJnecnFHGPezSQ.woff2") format('woff2');
-    unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
-  }
-  /* latin */
-  @font-face {
-    font-family: 'Poppins';
-    font-style: normal;
-    font-weight: 400;
-    font-display: swap;
-    src: url("../../assets/fonts/pxiEyp8kv8JHgFVrJJfecnFHGPc.woff2") format('woff2');
+    src: url("/static/fonts/barlow-400-latin.woff2") format('woff2');
     unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
   }
-  /* devanagari */
   @font-face {
-    font-family: 'Poppins';
+    font-family: 'Barlow';
     font-style: normal;
-    font-weight: 600;
+    font-weight: 500;
     font-display: swap;
-    src: url("../../assets/fonts/pxiByp8kv8JHgFVrLEj6Z11lFd2JQEl8qw.woff2") format('woff2');
-    unicode-range: U+0900-097F, U+1CD0-1CF9, U+200C-200D, U+20A8, U+20B9, U+20F0, U+25CC, U+A830-A839, U+A8E0-A8FF, U+11B00-11B09;
-  }
-  /* latin-ext */
-  @font-face {
-    font-family: 'Poppins';
-    font-style: normal;
-    font-weight: 600;
-    font-display: swap;
-    src: url("../../assets/fonts/pxiByp8kv8JHgFVrLEj6Z1JlFd2JQEl8qw.woff2") format('woff2');
-    unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
-  }
-  /* latin */
-  @font-face {
-    font-family: 'Poppins';
-    font-style: normal;
-    font-weight: 600;
-    font-display: swap;
-    src: url("../../assets/fonts/pxiByp8kv8JHgFVrLEj6Z1xlFd2JQEk.woff2") format('woff2');
+    src: url("../../assets/fonts/barlow-500-latin.woff2") format('woff2');
     unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
   }
-
-  /* Inter (vendored from Google Fonts CDN, stage 0a): latin subset only —
-   * app renders English UI text; matches the CDN link's family/weight set.
-   * ONE face, not three (perf C4a): inter-400/500/600.woff2 were byte-identical
-   * copies of the same variable font carrying the full weight axis, so the
-   * browser downloaded 48KB three times to render the same file. A single face
-   * with a `font-weight` RANGE lets the variable axis serve 400/500/600.
-   * Preload target — served from /public at a stable, non-content-hashed URL
-   * so the root layout's `<link rel="preload">` and this `src:` hit one request. */
+  /* latin — preload target */
   @font-face {
-    font-family: 'Inter';
+    font-family: 'Barlow';
     font-style: normal;
-    font-weight: 400 600;
+    font-weight: 600;
     font-display: swap;
-    src: url("/static/fonts/inter-latin-var.woff2") format('woff2');
+    src: url("/static/fonts/barlow-600-latin.woff2") format('woff2');
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+  }
+  @font-face {
+    font-family: 'Barlow';
+    font-style: normal;
+    font-weight: 700;
+    font-display: swap;
+    src: url("../../assets/fonts/barlow-700-latin.woff2") format('woff2');
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+  }
+  /* Labels, tabs and status. */
+  @font-face {
+    font-family: 'Barlow Condensed';
+    font-style: normal;
+    font-weight: 500;
+    font-display: swap;
+    src: url("../../assets/fonts/barlow-condensed-500-latin.woff2") format('woff2');
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+  }
+  @font-face {
+    font-family: 'Barlow Condensed';
+    font-style: normal;
+    font-weight: 600;
+    font-display: swap;
+    src: url("../../assets/fonts/barlow-condensed-600-latin.woff2") format('woff2');
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+  }
+  @font-face {
+    font-family: 'Barlow Condensed';
+    font-style: normal;
+    font-weight: 700;
+    font-display: swap;
+    src: url("../../assets/fonts/barlow-condensed-700-latin.woff2") format('woff2');
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+  }
+  /* Timecode and measured values. One variable file serves 500–600 (Google serves the same bytes for both weights), so one face with a weight range, not two. */
+  @font-face {
+    font-family: 'JetBrains Mono';
+    font-style: normal;
+    font-weight: 500 600;
+    font-display: swap;
+    src: url("../../assets/fonts/jetbrains-mono-latin-var.woff2") format('woff2');
     unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
   }
   /* Roboto (vendored from Google Fonts CDN, stage 0a): latin subset only. */
@@ -1461,7 +1416,7 @@
     min-height: 100vh;
     min-height: 100dvh;
     overscroll-behavior-y: none;
-    font-family: "Inter", var(--font-poppins, ui-sans-serif), system-ui, sans-serif;
+    font-family: var(--font-ui);
     font-size: 15px;
     line-height: 1.45;
     color: var(--v5-text);

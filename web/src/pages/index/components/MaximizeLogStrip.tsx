@@ -113,7 +113,7 @@ export function MaximizeLogStrip({
             visible show/name text plus the sr-only date span below already
             carry everything the label duplicated. */}
         <p
-          className="m-0 flex min-w-0 cursor-default flex-row flex-wrap items-baseline gap-x-[0.35rem] overflow-hidden [font-family:Inter,var(--font-poppins),system-ui,sans-serif] text-[0.78rem] leading-[1.15] text-v5-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[rgba(56,189,248,0.55)]"
+          className="m-0 flex min-w-0 cursor-default flex-row flex-wrap items-baseline gap-x-[0.35rem] overflow-hidden font-ui text-[0.78rem] leading-[1.15] text-v5-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[rgba(56,189,248,0.55)]"
           id="session-deck-title"
           // biome-ignore lint/a11y/noNoninteractiveTabindex: deliberately focusable — the date lives only in this hover/FOCUS tooltip (spec "Maximize-log fused transport strip": "date via hover/focus tooltip"), so keyboard users need a way to summon it.
           tabIndex={0}
@@ -144,7 +144,7 @@ export function MaximizeLogStrip({
       </Tooltip>
 
       <h2
-        className="m-0 flex min-h-0 flex-row flex-nowrap items-center justify-start gap-x-[0.4rem] [font-family:Inter,var(--font-poppins),system-ui,sans-serif] text-[0.68rem] leading-none tracking-[0.04em]"
+        className="m-0 flex min-h-0 flex-row flex-nowrap items-center justify-start gap-x-[0.4rem] font-ui text-[0.68rem] leading-none tracking-[0.04em]"
         id="v5-controls-recording-head"
         aria-live="polite"
       >
