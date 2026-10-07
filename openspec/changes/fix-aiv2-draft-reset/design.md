@@ -26,7 +26,7 @@ behavior is the bug. A real click can land in the same gap, rarely.
 ### D2. Test-first with a deterministic reproduction
 
 The new test mounts `AiV2Design` on a raw `createRoot`, with `IS_REACT_ACT_ENVIRONMENT` off for
-that test only and restored in `finally`. It renders the question with `root.render`, on the
+that test only, via `vi.stubGlobal` (the repo's global-write guard allows only that), and restored by the file's `vi.unstubAllGlobals()` afterEach. It renders the question with `root.render`, on the
 default lane, and clicks the second option from a `MutationObserver` callback, after commit and
 before the passive effect flushes. It then expects that option to be `aria-pressed="true"`.
 
@@ -45,5 +45,6 @@ before the passive effect flushes. It then expects that option to be `aria-press
 - [A stale draft could leak into a new question's submission] → `answerQuestion` builds `next`
   from the derived `draftAnswers`, which is `{}` for a new `requestId`. The new carry-over test
   covers this.
-- [The test toggles `IS_REACT_ACT_ENVIRONMENT`] → scoped to one test and restored in `finally`.
-  The root is unmounted and the container removed.
+- [The test toggles `IS_REACT_ACT_ENVIRONMENT`] → through `vi.stubGlobal`, scoped to one test and
+  restored by the `vi.unstubAllGlobals()` afterEach. The root is unmounted and the container
+  removed in `finally`.
