@@ -54,9 +54,14 @@ function mac(secret: string, text: string): Buffer {
   return createHmac('sha256', secret).update(text).digest();
 }
 
+/** `FRAME_BUS_SECRET` is missing or too short; the message names the variable, never its value. */
+export class FrameBusSecretError extends Error {
+  override name = 'FrameBusSecretError';
+}
+
 export function checkFrameBusSecret(secret: string | undefined): string {
   if (!secret || secret.length < FRAME_BUS_SECRET_MIN_LENGTH) {
-    throw new Error(
+    throw new FrameBusSecretError(
       `FRAME_BUS_SECRET must be set to at least ${FRAME_BUS_SECRET_MIN_LENGTH} characters`,
     );
   }

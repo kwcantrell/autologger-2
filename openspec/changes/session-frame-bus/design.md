@@ -231,6 +231,13 @@ listener's backend pid via `pg_backend_pid()` on listen (panel: other files' lis
    (re-panel). A concurrent `ALTER ROLE` can fail with "tuple concurrently updated", so the
    snapshot test, and the new limit test, retry their transaction once on that error.
 
+3. (Owner, 2026-10-07, during 6.1.) `bootOrder.int.test.ts` "with an unreachable catalog: exits 1
+   after the readiness wait" gets a dummy `FRAME_BUS_SECRET` in its env, because `main.ts` now
+   refuses a missing secret before it touches `DATA_DIR`.
+4. (Owner, 2026-10-07, during 5.1, under category 1.) The `access-loss-check` entry leaves the
+   reviewed system-binding allowlist in `catalogSystem.repo.test.ts`: the post-commit helper that
+   used that binding is gone.
+
 Any other change is a stop.
 
 ### D9. Latency

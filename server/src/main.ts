@@ -2,7 +2,7 @@
 
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { DataDirLockedError } from '@autologger/storage';
+import { DataDirLockedError, FrameBusSecretError } from '@autologger/storage';
 import { serve } from '@hono/node-server';
 import { createNodeWebSocket } from '@hono/node-ws';
 import { Hono } from 'hono';
@@ -25,16 +25,19 @@ if (refusal) {
 
 let created: ReturnType<typeof createBindings>;
 try {
-  created = createBindings(process.env);
+  // session-frame-bus D1: the production entry point is the only one on the Postgres frame bus, so
+  // session frames reach every process sharing the database. It refuses without a valid
+  // FRAME_BUS_SECRET (D2), before the data directory is touched.
+  created = createBindings(process.env, { frameBus: 'postgres' });
 } catch (e) {
   // retire-host-dev D2: another server holds DATA_DIR — refuse cleanly (nothing was touched).
-  if (e instanceof DataDirLockedError) {
+  if (e instanceof DataDirLockedError || e instanceof FrameBusSecretError) {
     console.error(`autologger: ${e.message}`);
     process.exit(1);
   }
   throw e;
 }
-const { bindings, close } = created;
+const { bindings, close, startFrameBus } = created;
 // owner-bootstrap D8: the masked bootstrap owner (domain and a short hash, never the local part),
 // so the operator can check the configured value for a typo.
 console.info(`bootstrap owner: ${maskBootstrapOwnerEmail(bindings.config.BOOTSTRAP_OWNER_EMAIL)}`);
@@ -42,6 +45,9 @@ console.info(`bootstrap owner: ${maskBootstrapOwnerEmail(bindings.config.BOOTSTR
 // supervisor retries (the stack's migrations service may still be creating the schema).
 try {
   await waitForCatalog(bindings.ports.catalog.bindSystem('boot-wait'));
+  // session-frame-bus D1: the bus's listener is up (its first LISTEN done) before listen(), so no
+  // socket attaches before this process receives frames.
+  await startFrameBus();
 } catch (e) {
   console.error(`autologger: ${(e as Error).message}`);
   await close().catch(() => {});
@@ -129,7 +135,8 @@ for (const sig of ['SIGINT', 'SIGTERM'] as const) {
       console.error('frontend close() rejected during shutdown', err);
     });
     // Neither input rejects: serverClosed only resolves, frontendClosed catches.
-    // close() ends the catalog connections (catalog-on-postgres D2); the failsafe above still
+    // close() ends the frame bus's listener and publisher and the catalog connections
+    // (catalog-on-postgres D2, session-frame-bus D1); the failsafe above still
     // bounds it, and a transaction it cuts short rolls back on the server.
     void Promise.all([serverClosed, frontendClosed])
       .then(() => close())
