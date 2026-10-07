@@ -22,7 +22,8 @@ See proposal.md for why. Today:
 **Goals:**
 
 - A PR whose changed files can't affect a pg or integration test skips those two projects, and
-  says so in the gate output.
+  says so in the output that decides it: the `commands` line locally, and each `db-shard`'s
+  `--db-selection` line in CI (D5).
 - The selection fails safe: if anything is unclear, run everything.
 - Every merge into `supabase-migration` gets a full run.
 
@@ -88,7 +89,8 @@ The `commands` gate sets `SKIP_DB_TESTS=1` for the `test` command only when all 
 4. `db_test_paths` (as read from the base) is a non-empty list;
 5. no file in `ctx.changed` matches `db_test_paths`.
 
-Otherwise it runs the full suite. The gate message names the outcome, for example
+Otherwise it runs the full suite. In CI, D5 overrides this: `gates` never runs the DB tests, and
+the same conditions are evaluated by each `db-shard` through `--db-selection`. The gate message names the outcome, for example
 `ran ['typecheck', 'test'] (pg/integration skipped: no db_test_paths changed)`, or
 `(full: server/src/app.ts matches db_test_paths)`. That way evidence lines show which suite
 ran. Typecheck, lint and audit are never affected.
@@ -104,8 +106,11 @@ anyway, since evidence comes from non-quiet runs.
 ### D4. A full suite after every merge
 
 `lifecycle.yml` `push.branches` becomes `[main, supabase-migration]`. A push to
-`supabase-migration` runs only `FULL_TESTS=1 scripts/check-change.sh --only commands,audit`.
-A push to `main` keeps `--stage commit`, and PRs keep `--stage pr`.
+`supabase-migration` runs only `FULL_TESTS=1 scripts/check-change.sh --only commands,audit`, under `gates`' job-level
+`DB_TESTS_IN_SHARDS=1` (D5).
+A push to `main` keeps `--stage commit`, and PRs keep `--stage pr`. With D5, the push's DB tests
+run in the `db-shard` jobs with `FULL_TESTS=1`, and the `gates` step runs typecheck, unit tests and
+audit.
 
 The commit stage can't run on a `supabase-migration` push. There is no `GITHUB_BASE_REF`, so
 `resolve_base` falls back to `origin/main`, 486 commits behind. The diff then holds 43 archive
@@ -123,6 +128,57 @@ gets a full run, which covers the earlier ones.
 *Alternative: a nightly scheduled run.* Rejected by the owner (2026-10-07) in favor of per-merge
 runs, which tie a failure to one merge.
 
+### D5. Shard the DB tests in CI (re-approval delta, 2026-10-07)
+
+The workflow gets two new jobs. `gates` stays the same apart from one env var.
+
+- **`db-shard`**, a matrix over `shard: [1, 2, 3]`. It runs on pull requests and on pushes to
+  `supabase-migration`, and checks out with `fetch-depth: 0`. It installs PyYAML, then runs
+  `scripts/check-change.sh --db-selection`, which prints `run: <reason>` or `skip: <reason>`. On
+  `skip`, the remaining steps are skipped, so no `npm ci` or image pull happens. On `run`, it runs
+  `npm ci`, then `npx vitest run --project integration --project pg --shard=${{ matrix.shard }}/3`
+  in `server/`. Shard 1 also runs `npx vitest run --project pg` in `packages/storage/`, unsharded.
+  That project has only 3 files (about 51s locally), and vitest exits 1 when the shard count
+  exceeds the file count, so sharding it would cap the matrix at 3. Pushes set `FULL_TESTS=1`.
+- **The selection step fails toward running.** `--db-selection` returns before `main()` resolves
+  the change or prints any gate line, so its stdout is exactly one line. The step skips the tests
+  only when the command exits 0 *and* stdout is exactly one line starting `skip: `. Empty output,
+  extra lines and unknown words all mean run. A non-zero exit (missing PyYAML, a traceback in base
+  resolution) fails the shard, which fails `db-tests`.
+- **`db-tests`** has `needs: db-shard` and the same event condition as `db-shard` (pull requests and
+  pushes to `supabase-migration`), combined with `!cancelled()` rather than `always()`. It fails
+  unless `needs.db-shard.result == 'success'`, so it's the one name to make required. A matrix
+  job's check names change with the matrix. A shard that stops after `skip` still reports
+  `success`. On a push to `main`, both jobs are skipped by their `if`, so no red check is posted.
+  When `cancel-in-progress` cancels a run (a new push, or a label or description edit),
+  `db-tests` doesn't run, so a cancelled run never posts a failure.
+- **`gates`** sets `DB_TESTS_IN_SHARDS=1` as job-level `env`, so it applies to the PR and push
+  commands alike. When `CI` is set too, the `commands` gate runs the test
+  command with `SKIP_DB_TESTS=1` whatever the paths, and its message reads
+  `(pg/integration: db-tests job)`. The checker ignores `DB_TESTS_IN_SHARDS` locally (`CI` unset),
+  so a stray export can't skip local DB tests. There, D3 still decides.
+
+`--db-selection` and the `commands` gate call the same function (D3's conditions 1-5), so CI and
+local can't disagree about which paths need DB tests. `--db-selection` loads the config and base
+the same way a normal run does, and runs no gates.
+
+**Why 3 shards:** the local measurement puts the DB tests at about 600s. Three runners at about
+200s each, plus setup, should finish within the time `gates` already takes for typecheck and unit
+tests. Shard count is the matrix literal plus the `/3` in the server command. Storage isn't
+sharded, so the count is bounded only by the server's 101 files. Task 3.4 measures the real
+per-shard times.
+
+*Alternative: shard inside the `gates` job.* Not possible. Sharding only helps when the shards run
+on separate machines.
+
+*Alternative: let `--shard` handle selection by having every shard always run the full check
+(`--stage pr`) with a shard index.* Rejected. It repeats every file gate three times and mixes
+evidence for the same gates across jobs.
+
+*Alternative: `vitest --shard` over all workspaces from the root.* Rejected. The root `npm test` is
+a chain of workspace commands, not a single vitest run, and only `server` and `storage` have DB
+projects.
+
 ## Assumptions
 
 | Assumption | Command | Observed |
@@ -133,7 +189,10 @@ runs, which tie a failure to one merge.
 | Only server and storage define pg/integration projects | `ls */vitest.config.ts packages/*/vitest.config.ts` | `companion`, `packages/storage`, `server`, `web`. The companion and web configs have no `projects` |
 | Integration tests read `fixtures/` | `grep -rln 'fixtures/' server/src --include=*.int.test.ts` | `sessionHub.interleave`, `transcribe`, `sessions.youtubeImport` |
 | The pg image is pinned under `docker/` | `grep -n supabase-db test/pg/globalSetup.ts` | `Runs the image pinned in docker/supabase-db.yaml` |
-| pg/integration dominate test time | `time npx vitest run --project <p>` per project, plus web tests and `npm run typecheck`, on this host, 2026-10-07 | server integration 511s (exit 1, see tasks 1.1), server pg 35s, storage pg 51s: 597s of DB tests. Server unit 21s, storage unit 2s, web 49s, typecheck 24s |
+| pg/integration dominate test time | `time npx vitest run --project <p>` per project, plus web tests and `npm run typecheck`, on this host, 2026-10-07 | server integration 511s (exit 1: one test, `crossProcess.int.test.ts` "concurrent writes from two processes...", timed out at 5000ms; 1228 of 1229 passed. See task 1.1), server pg 35s, storage pg 51s: 597s of DB tests. Server unit 21s, storage unit 2s, web 49s, typecheck 24s |
+| `vitest run --shard` splits files within selected projects | `cd server && npx vitest run --project unit --shard=<i>/3` for i = 1..3 | `Test Files 12 passed`, `10 passed, 1 skipped (11)`, `10 passed, 1 skipped (11)`: 34 files, disjoint shards |
+| `vitest list` can't be used to check shards | `npx vitest list --project integration --project pg --shard=<i>/3 --filesOnly \| grep -c '^\['` | `101` for every i: list ignores `--shard`, so task 3.2 checks with `run` instead |
+| Runners have 4 vCPUs | `gh repo view --json visibility` | `PUBLIC`: standard public-repo Linux runners are 4 vCPU |
 
 ## Risks / Trade-offs
 
@@ -147,7 +206,21 @@ runs, which tie a failure to one merge.
 - [Local `hook` runs skip DB tests that the agent needed] → the skip line prints even under
   `--quiet` (D3), and `FULL_TESTS=1 scripts/check-change.sh --stage hook` forces the full suite.
 
+- [A shard gets most of the slow files, because vitest balances by file count, not duration] →
+  task 3.4 records per-shard times. Rebalancing (more shards, or splitting a slow file) is a
+  follow-up, not part of this change.
+- [The `gates` check passes while the DB tests fail] → `db-tests` is a separate check. The
+  `main-protect` ruleset (refs/heads/main) requires only `gates`, `secrets` and
+  `dependency-review`, so until `db-tests` is added, a PR into `main` could merge with red DB
+  tests. `supabase-migration` has no protection either way. Task 4.2 updates the docs that list
+  the required checks. Task 4.3 is the owner's ruleset edit, ticked with `gh api` evidence before
+  this change is archived.
+- [More CI minutes: 3 × (checkout, `npm ci`, image pull)] → the repo is public, so standard
+  runners cost nothing. A `skip` shard stops after checkout and the PyYAML install.
+
 ## Migration Plan
 
-Lands as one PR. Rollback is reverting that PR. With `db_test_paths` absent from the base config,
+Lands as one PR. Rollback is reverting that PR. The owner adds `db-tests` to `main-protect`'s
+required checks before archive (task 4.3). A ruleset can name a check before any run has
+produced it, and PRs into `supabase-migration` are unprotected either way. With `db_test_paths` absent from the base config,
 the gate always runs the full suite, so the first PR (and any revert) runs fully.

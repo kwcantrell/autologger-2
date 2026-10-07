@@ -3,7 +3,7 @@
 Tier: 2
 Tier reason: changes the lifecycle itself: `scripts/lib/check_change.py`, `.github/workflows/lifecycle.yml` and `openspec/config.yaml` are all high-risk paths.
 
-Approved-by: Kalen 2026-10-07
+Approved-by: Kalen 2026-10-07 (reapproved)
 
 ## Why
 
@@ -26,17 +26,29 @@ test. These are the slow tests, and they only exercise `server/`, `packages/`, `
   `db_test_paths`, the test command runs with `SKIP_DB_TESTS=1`. The gate's message says the pg
   and integration projects were skipped and why, and that line is printed even under `--quiet`,
   so pre-push shows it. In every other case (any match, no base, a non-PR CI run, or
-  `FULL_TESTS=1`), the full suite runs as today.
+  `FULL_TESTS=1`), the full suite runs as today. In CI, the DB tests always run in `db-shard`
+  instead (see the sharding bullet), and `gates` runs typecheck, unit tests and audit.
 - **`server/vitest.config.ts` and `packages/storage/vitest.config.ts`.** When `SKIP_DB_TESTS=1`,
   the `integration` and `pg` projects are left out of `test.projects`. Unit projects always run.
   Without the variable, nothing changes.
 - **`.github/workflows/lifecycle.yml`: full suite after merge.** `push` also triggers on
   `supabase-migration`, the branch PRs merge into. A push to `supabase-migration` runs only
-  `FULL_TESTS=1 scripts/check-change.sh --only commands,audit`. It skips the commit stage, which
+  `FULL_TESTS=1 scripts/check-change.sh --only commands,audit` in `gates` (typecheck, unit tests,
+  audit; `gates` carries `DB_TESTS_IN_SHARDS=1` as job-level env), plus all three `db-shard`s with `FULL_TESTS=1` for the DB tests. It skips the commit stage, which
   has no PR base on a push and would diff the branch against `main`. A push to `main` keeps
   today's `--stage commit`. Today no push runs any tests. Nobody waits on this run. It catches
   anything the path list missed.
-- **Docs.** `docs/lifecycle.md` explains the selection and `FULL_TESTS=1`. The AGENTS.md commands
+- **Sharded DB tests in CI (re-approval delta).** In CI the pg and integration projects move out
+  of the `gates` job into a `db-shard` matrix job with 3 shards. Each shard runs
+  `vitest run --project integration --project pg --shard=<i>/3` in `server/` on its own runner,
+  with its own Postgres container. Shard 1 also runs `packages/storage`'s 3 pg files, unsharded. Each shard asks the checker for the same path decision
+  (`scripts/check-change.sh --db-selection`). If the answer is `skip`, it stops after checkout
+  and the PyYAML install, before `npm ci` or the Postgres image pull. A `db-tests` job waits for all shards and gives one stable
+  required-check name. The `gates` job sets `DB_TESTS_IN_SHARDS=1`, so its `commands` gate runs
+  typecheck and unit tests only and says the DB tests ran in `db-tests`. Pushes to
+  `supabase-migration` shard the same way with `FULL_TESTS=1`. Locally, nothing is sharded: the
+  hook stage still runs the DB tests in-process (or skips them by path).
+- **Docs.** `docs/lifecycle.md` explains the selection, the shards and `FULL_TESTS=1`. The AGENTS.md commands
   table gets no new row (the gate's message is self-describing).
 
 Typecheck, unit tests and `npm audit` still run on every PR.
@@ -54,7 +66,11 @@ None.
 
 ## Non-goals
 
-- Parallel or sharded CI jobs, test caching, or making the pg/integration tests themselves faster.
+- Sharding locally, sharding unit tests or typecheck, running the 14 workspaces concurrently, test
+  caching, or making the pg/integration tests themselves faster.
+- Balancing shards by duration. Vitest shards by file, and the shard count is a fixed 3.
+- Editing the GitHub ruleset as the agent. Adding `db-tests` to `main-protect`'s required checks
+  is the owner's action, tracked as task 4.3 and done before archive.
 - Selecting unit tests or typecheck by path. They stay unconditional.
 - Retiring or changing any other gate (`artifacts-first`, `tests-with-code` and the rest). Those
   are separate decisions.
@@ -68,5 +84,9 @@ None.
   `server/vitest.config.ts`, `packages/storage/vitest.config.ts`, `docs/lifecycle.md`, and a new
   ADR in `docs/decisions/` (AGENTS.md rule 10).
 - PRs that touch only `web/`, `companion/`, `openspec/`, `docs/` or `.claude/` skip the pg and
-  integration projects. Every other PR runs exactly what it runs today.
-- CI minutes go up slightly: each merge now runs a full suite on `supabase-migration`.
+  integration projects. Every other PR runs them split over 3 parallel runners instead of one.
+- CI minutes go up. Each shard pays its own checkout, `npm ci` and Postgres image pull, and each
+  merge now runs a full suite on `supabase-migration`. Wall-clock time per PR goes down.
+- Check names change. `gates` no longer covers the DB tests. `db-tests` does, and needs adding
+  to the ruleset's required checks (task 4.3). `docs/security.md` and the workflow header, which
+  list the required checks, are updated (task 4.2).
