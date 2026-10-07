@@ -65,7 +65,10 @@ export interface SessionFrameBus {
 
 - **`LocalFrameBus`** (session-core) is the default. `publishInTx` is a no-op, and `afterCommit` and
   `publishNow` deliver straight to the registry. Behaviour is today's exactly.
-- **`PostgresFrameBus`** (storage):
+- **`PostgresFrameBus`** (storage). Storage may import only `ports`, so `config.ts` passes it the
+  allowed frame types and commands (session-core's `SESSION_FRAME_TYPES`, and `SESSION_COMMANDS`
+  from `companionCommandBodySchema`), and storage declares the message and handle types
+  structurally (owner, 2026-10-07, after approval):
   - `publishInTx` sends `select pg_notify('autologger_session_frames', $1)` per message, on the given
     transaction handle;
   - `afterCommit` is a no-op;
@@ -119,7 +122,9 @@ export interface SessionFrameBus {
 
 ### D4. Commands
 
-`handleSocketMessage` and `broadcastCommand`:
+`handleSocketMessage(raw, ws?)` and `broadcastCommand`. The socket argument is optional and added
+(owner, 2026-10-07, after approval) on the facade, the entry and the view. `sessionWs.ts` passes the
+socket Hono hands to every handler. Without it, one bucket per hub applies.
 - drop a command not in the contract enum (a browser could send any string before);
 - rate-limit to 10 per second per socket (a token bucket on the attached socket), dropping excess;
 - publish with `bus.publishNow`.
@@ -156,17 +161,19 @@ the last step inside each revoking transaction's body (the six call sites above)
   spec.
 - **Reconnect backoff** is postgres.js's own (about 19 s after a refused-connection outage).
 
-### D7. Connection budget (owner decision: raise the limit)
+### D7. Connection budget (owner decision: raise the limit to 45)
 
 - **Migration** `20261013000000_app_role_connection_limit.sql`:
-  `alter role autologger_app connection limit 60`.
+  `alter role autologger_app connection limit 45`.
   - It also raises an error if `current_setting('max_connections')::int` is less than 100.
   - Each migration runs once (`schema_migrations`), so the catalog-schema migration's
     `connection limit 20` is left as it is; the new migration supersedes it. The catalog-database
-    spec states the resulting limit, 60.
-- **Per process:** 12 pool connections, plus the listener and the publisher, gives 14. Four
-  processes fit in 56 of 60.
-- **The README** states the per-process budget and the four-process ceiling.
+    spec states the resulting limit, 45.
+- **Per process:** 12 pool connections, plus the listener and the publisher, gives 14. Three
+  processes fit in 42 of 45. Postgres's 100 connections stay shared with the Supabase services
+  (about 13 in dev today) and `migrate`, as the original cap intended (catalog-pg-schema panel). A
+  fourth process raises the limit in its own change.
+- **The README** states the per-process budget and the three-process ceiling.
 
 ### D8. Tests (test first)
 
@@ -201,12 +208,19 @@ listener's backend pid via `pg_backend_pid()` on listen (panel: other files' lis
 - a grant revoke through A closes M's socket on B with `4403`, and other sockets stay open;
 - an injected publish failure makes the revoke `500`, and the grant is still present.
 
-**Migration (pg project):** `rolconnlimit = 60`, plus the `max_connections` guard.
+**Migration (pg project):** `rolconnlimit = 45`, plus the `max_connections` guard.
 
 **Existing tests** pass unchanged on the local bus. Allowed changes:
 1. Tests of `closeSocketsAfterAccessLoss` (`_helpers.test.ts` and the access tests) may follow its
    move into the transaction, with the same observable closes.
-2. The catalog-database role snapshot line for the connection limit.
+2. The catalog-database role snapshot test (`catalogSchema.pg.test.ts:595-621`): its expected limit
+   becomes 45, and (owner, 2026-10-07, after approval) it re-applies the connection-limit migration
+   in the same transaction that reads the role. Roles are cluster-wide, and `teamOwner.pg.test.ts`
+   (around lines 99-101) replays the whole catalog-schema migration, which resets the limit to 20,
+   in a parallel file without any lock. Reading inside the transaction that set the value makes the
+   read deterministic; the role-guard lock adds nothing, because that replay doesn't take it
+   (re-panel). A concurrent `ALTER ROLE` can fail with "tuple concurrently updated", so the
+   snapshot test, and the new limit test, retry their transaction once on that error.
 
 Any other change is a stop.
 

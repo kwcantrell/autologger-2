@@ -6,7 +6,7 @@ the WebSocket emission semantics of the frozen contract: access-loss closes and 
 bus loss. It touches `packages/session-core`, `packages/storage` and the composition root. ADR 0021
 slice 9a.
 
-Approved-by: Kalen 2026-10-07
+Approved-by: Kalen 2026-10-07 (reapprove)
 
 ## Why
 
@@ -34,9 +34,12 @@ every WebSocket frame is delivered only to sockets attached in the process that 
 4. **Messages are HMAC-signed (panel).** Any database login role can `pg_notify`. A server-only
    `FRAME_BUS_SECRET` signs every message, and receivers drop unsigned or invalid ones, so no other
    role can forge a frame, a record command or a close.
-5. **The app role's connection limit rises to 60 by migration (panel).** The limit counts every
-   process together. A process uses 14 connections (12 pool, a listener and a publisher), so 60
-   fits four processes.
+5. **The app role's connection limit rises to 45 by migration (panel; owner, 2026-10-07, after
+   approval: 45, not 60).** The limit counts every process together, and Postgres's 100
+   connections are shared with the Supabase services (about 13 today) and the migration runner.
+   A process uses 14 connections (12 pool, a listener and a publisher), so 45 fits three processes
+   (42) and leaves the Supabase services and `migrate` more than 40 of Postgres's 100. A fourth
+   process raises it again.
 6. **Access-loss closes are published inside the revoking transaction (panel).** The close is
    published in the same transaction as the revoke (grant revoke, removal, leave, demotion,
    support-plane delete). A revoke whose close cannot be published fails and changes nothing.
@@ -57,7 +60,7 @@ every WebSocket frame is delivered only to sockets attached in the process that 
   limit.
 - **Losing the listener.** When the listener reconnects after a loss, the process closes its
   sockets with `1012`, and the web reconnects and re-syncs.
-- **A migration** raises `autologger_app`'s connection limit to 60.
+- **A migration** raises `autologger_app`'s connection limit to 45.
 - **A new secret,** `FRAME_BUS_SECRET`, is added to the secrets allowlist. The owner sets it in
   OpenBao for dev, stage and prod.
 
@@ -90,7 +93,7 @@ every WebSocket frame is delivered only to sockets attached in the process that 
   - `packages/session-core` (`sessionCore.ts`, `SessionHub.ts`, the new `frameBus.ts`);
   - `packages/storage` (the new Postgres bus);
   - `packages/catalog` (the transaction `notify`);
-  - `server/src/main.ts`, `server/src/node/config.ts`, `server/src/routers/{_helpers,teams,admin}.ts`;
+  - `server/src/main.ts`, `server/src/node/config.ts`, `server/src/routers/{_helpers,teams,admin,sessionWs}.ts`;
   - a migration and `docker/secrets-env.yaml`;
   - README, `docs/security.md`, ADR 0021 and ADR 0023.
 

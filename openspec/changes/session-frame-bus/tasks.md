@@ -28,16 +28,16 @@
 
 ## 2. Connection limit (design D7)
 
-- [ ] 2.1 Test first, pg project: `rolconnlimit` for `autologger_app` is 60, and the migration refuses when `max_connections` is below 100. Red, then add `supabase/migrations/20261013000000_app_role_connection_limit.sql`. Green, plus `sh docker/supabase/test_migrate.sh`.
+- [ ] 2.1 Test first, pg project: `rolconnlimit` for `autologger_app` is 45 (owner, after approval; first 60), the role snapshot test re-applies the migration and reads the role in one transaction, retrying once on "tuple concurrently updated" (D8 category 2), and the migration refuses when `max_connections` is below 100. Red, then add `supabase/migrations/20261013000000_app_role_connection_limit.sql`. Green, plus `sh docker/supabase/test_migrate.sh`.
 
 ## 3. The port, the local bus and commands (design D1, D3, D4)
 
-- [ ] 3.1 Test first, `packages/session-core/src/frameBus.test.ts`, covering the D8 local-bus unit cases (including command validation and the rate limit). Red, then add `frameBus.ts` (`SessionFrameBus`, `BusMessage`, `LocalFrameBus`) and route `SessionHub.transaction` (publish on the raw handle `t`), `handleSocketMessage`/`broadcastCommand` and `SessionHubRegistry.deliver`/`closeAllSockets` through it, with the local bus as default. Green. The full session-core and server session suites pass unchanged.
+- [ ] 3.1 Test first, `packages/session-core/src/frameBus.test.ts`, covering the D8 local-bus unit cases (including command validation and the rate limit). Red, then add `frameBus.ts` (`SessionFrameBus`, `BusMessage`, `LocalFrameBus`) and route `SessionHub.transaction` (publish on the raw handle `t`), `handleSocketMessage(raw, ws?)`/`broadcastCommand` and `SessionHubRegistry.deliver`/`closeAllSockets` through it, with the local bus as default. Export `SESSION_FRAME_TYPES` and `SESSION_COMMANDS` (from `companionCommandBodySchema`), and pass the socket from `server/src/routers/sessionWs.ts`. The tests cover two sockets with separate buckets, and the per-hub fallback with no socket. Green. The full session-core and server session suites pass unchanged.
 
 ## 4. The Postgres bus (design D2, D3, D6)
 
 - [ ] 4.1 Test first, the signing unit tests (D8): a valid message verifies; a tampered field, a wrong key, an unknown version, a bad frame type, an unknown command or a bad close code is dropped; the size is counted in bytes; sequence numbers are unique. Red, then implement the envelope and its verification in `packages/storage`. Green.
-- [ ] 4.2 Test first, `server/src/test/session/frameBus.int.test.ts` with two `'postgres'` bindings: the six `core-ports-architecture` scenarios and an unchanged revision. The forged-message case uses a second database role without the secret. The 300-session case comes in 5.1. Red, then implement `PostgresFrameBus` (listener on its own connection, `application_name` `autologger-frame-bus`, backend pid exposed; publisher connection) and the `createBindings({frameBus})` option. Green, three runs in a row.
+- [ ] 4.2 Test first, `server/src/test/session/frameBus.int.test.ts` with two `'postgres'` bindings: the six `core-ports-architecture` scenarios and an unchanged revision. The forged-message case uses a second database role without the secret. The 300-session case comes in 5.1. Red, then implement `PostgresFrameBus` (listener on its own connection, `application_name` `autologger-frame-bus`, backend pid exposed; publisher connection) and the `createBindings({frameBus})` option, with `config.ts` passing `SESSION_FRAME_TYPES` and `SESSION_COMMANDS` into the bus. Green, three runs in a row.
 - [ ] 4.3 Test first, the two `api-contract-freeze` `1012` scenarios. Terminate only this test's listener, by its exposed backend pid: sockets close with `1012` once, and after the reconnect a write through A reaches B. Red, then implement D6. Green.
 
 ## 5. Access-loss closes inside the revoke (design D5)
@@ -53,7 +53,7 @@
 
 - [ ] 6.1 Test first, a boot test: with the Postgres bus, `main.ts`'s start-up refuses without a valid `FRAME_BUS_SECRET`, starts the listener before `listen()`, delivers a signed notify issued after boot, and ends both bus connections on shutdown. Red, then wire `main.ts` and add `FRAME_BUS_SECRET` to `docker/secrets-env.yaml` (dev, stage and prod pull it from there). Green. `check-envs.sh` passes.
 - [ ] 6.2 Docs:
-  - README: live updates through the frame bus; the "Single Node process" invariant rewritten (writes and frames hold across processes, the topology is still one replica); the per-process connection budget of 14 and the four-process ceiling; `pg_notification_queue_usage()`; secret rotation needs every process restarted together.
+  - README: live updates through the frame bus; the "Single Node process" invariant rewritten (writes and frames hold across processes, the topology is still one replica); the per-process connection budget of 14 and the three-process ceiling (42 of 45); `pg_notification_queue_usage()`; secret rotation needs every process restarted together.
   - `docs/security.md`: the NOTIFY forgery threat and the HMAC defence.
   - ADR 0021: the live-updates decision (line ~60), step 9 (~1078), Consequences (~1096), the 6a follow-up (~463-466, resolved here), and the "until slice 9" broadcast-order notes (~825, ~869); a 9a entry.
   - ADR 0023: a status note deferring Realtime.

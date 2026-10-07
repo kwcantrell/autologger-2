@@ -314,7 +314,7 @@ run on a separate, smaller set of the adapter's single-connection clients (the s
 connections), with their own wait queue, so that session work never occupies a connection the
 catalog's transactions or root statements need: heavy session traffic can slow only session calls.
 The root, transaction and session connections, together with the frame bus's listener and
-publisher connections, SHALL stay within a per-process budget of 14, so that up to four server
+publisher connections, SHALL stay within a per-process budget of 14, so that three server
 processes fit the app role's connection limit (catalog-database "The app connects as a
 least-privilege role"). Each session transaction and snapshot SHALL run under the binding of the
 caller the call names (core-ports-architecture "Every catalog and session call is bound to a
