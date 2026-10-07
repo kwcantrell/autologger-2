@@ -1,12 +1,9 @@
 import { createCatalog } from '@autologger/catalog';
 import type { CategoryRecord } from '@autologger/domain';
 import {
-  appendLogImportLine,
-  createLogImportJob,
   fetchPublicWorkbookSheets,
-  getLogImportJob,
+  JOB_HEARTBEAT_INTERVAL_MS,
   runSessionLogImport,
-  setLogImportStatus,
   type TranscriptToken,
   timedTranscriptTokens,
 } from '@autologger/log-import';
@@ -148,45 +145,63 @@ logImportRouter.post('/api/shows/:showId/log-import', async (c) => {
   const parsed = bodySchema.safeParse(raw);
   if (!parsed.success) throw new ApiError(400, 'spreadsheet_url is required.');
 
-  const job = createLogImportJob(c.env.ports.clock, user.id);
+  // shared-request-state D1: the job is a kv record any process can report; this process runs it.
+  const jobs = c.env.ports.logImportJobs;
+  const job = await jobs.create(user.id);
   const env = c.env;
   const spreadsheetUrl = parsed.data.spreadsheet_url;
   const categories = categoriesFromShowRow(show);
 
+  // Every write is queued on the job's chain and never rejects (D1); `log` only enqueues.
+  const log = (line: string): void => {
+    void jobs.appendLine(job.id, line);
+  };
+  const setStatus = (status: 'completed' | 'failed', error: string | null = null): void => {
+    void jobs.setStatus(job.id, status, error);
+  };
+
   void (async () => {
-    setLogImportStatus(env.ports.clock, job.id, 'running');
+    // A 10 s heartbeat keeps the record from reading as stale while this process runs the job.
+    const heartbeat = setInterval(() => {
+      void jobs.heartbeat(job.id);
+    }, JOB_HEARTBEAT_INTERVAL_MS);
+    heartbeat.unref();
+    void jobs.setStatus(job.id, 'running');
     try {
       // The job outlives its request, so it builds its own catalog (catalog-concurrency-hazards D9).
       const catalog = createCatalog(env.ports.catalog).system('log-import-job');
       await catalog.init();
-      appendLogImportLine(job.id, 'Fetching spreadsheet…');
+      log('Fetching spreadsheet…');
       const sheets = await fetchPublicWorkbookSheets(spreadsheetUrl);
-      appendLogImportLine(job.id, `Loaded ${sheets.length} sheet(s).`);
+      log(`Loaded ${sheets.length} sheet(s).`);
 
       const sessions = await catalog.sessions.listSessionsForShow(showId);
       let sessionsOk = 0;
       let sessionsFailed = 0;
 
       for (const sheet of sheets) {
+        // A poll switched the record to failed (this process looked stopped): the failure is
+        // final, so stop importing and write nothing more (D1).
+        if (jobs.isLost(job.id)) return;
         // Access re-check before each sheet (show-grants D19, owner decision F): a creator who
         // lost access to the show stops the job; sheets already imported keep their events.
         if (!(await catalog.auth.authCanAccessShow(job.createdByUserId, showId))) {
-          appendLogImportLine(job.id, 'Access revoked; stopping.');
-          setLogImportStatus(env.ports.clock, job.id, 'failed', 'Access revoked.');
+          log('Access revoked; stopping.');
+          setStatus('failed', 'Access revoked.');
           return;
         }
         const title = sheet.name.trim();
         const session = sessions.find((s) => String(s.title ?? '').trim() === title);
         if (!session) {
-          appendLogImportLine(job.id, `Skipped sheet “${title}” (no matching session title).`);
+          log(`Skipped sheet “${title}” (no matching session title).`);
           continue;
         }
         if (sheet.rows.length === 0) {
-          appendLogImportLine(job.id, `Skipped sheet “${title}” (no log rows from row 7).`);
+          log(`Skipped sheet “${title}” (no log rows from row 7).`);
           continue;
         }
         const sessionId = String(session.id);
-        appendLogImportLine(job.id, `Importing “${title}” → session ${sessionId.slice(0, 8)}…`);
+        log(`Importing “${title}” → session ${sessionId.slice(0, 8)}…`);
         try {
           // The job's hub calls run as its creator (session-content-policies D7, owner decision 2):
           // the database applies the creator's current access to every statement.
@@ -203,7 +218,7 @@ logImportRouter.post('/api/shows/:showId/log-import', async (c) => {
             config: env.config,
             audio: env.ports.audio,
             ctx,
-            onProgress: (line) => appendLogImportLine(job.id, `  ${title}: ${line}`),
+            onProgress: (line) => log(`  ${title}: ${line}`),
           });
           const result = await runSessionLogImport({
             hub: await getHub(),
@@ -213,58 +228,46 @@ logImportRouter.post('/api/shows/:showId/log-import', async (c) => {
             transcript,
           });
           for (const line of result.lines) {
-            appendLogImportLine(job.id, `  ${title}: ${line}`);
+            log(`  ${title}: ${line}`);
           }
           sessionsOk += 1;
         } catch (err) {
           sessionsFailed += 1;
           const detail = jobFailureDetail(err);
-          appendLogImportLine(
-            job.id,
-            detail === null ? `Failed “${title}”` : `Failed “${title}”: ${detail}`,
-          );
-          appendLogImportLine(job.id, `Continuing with remaining sheets…`);
+          log(detail === null ? `Failed “${title}”` : `Failed “${title}”: ${detail}`);
+          log(`Continuing with remaining sheets…`);
           // Per-session failure must not abort the rest of the workbook.
         }
       }
 
-      appendLogImportLine(
-        job.id,
-        `Done. ${sessionsOk} session(s) imported, ${sessionsFailed} failed.`,
-      );
+      log(`Done. ${sessionsOk} session(s) imported, ${sessionsFailed} failed.`);
       if (sessionsFailed > 0 && sessionsOk === 0) {
-        setLogImportStatus(
-          env.ports.clock,
-          job.id,
-          'failed',
-          'All matched sessions failed to import.',
-        );
+        setStatus('failed', 'All matched sessions failed to import.');
       } else if (sessionsFailed > 0) {
-        setLogImportStatus(
-          env.ports.clock,
-          job.id,
-          'completed',
-          `${sessionsFailed} session(s) failed; see progress lines.`,
-        );
+        setStatus('completed', `${sessionsFailed} session(s) failed; see progress lines.`);
       } else {
-        setLogImportStatus(env.ports.clock, job.id, 'completed');
+        setStatus('completed');
       }
     } catch (err) {
       const detail = jobFailureDetail(err);
-      appendLogImportLine(job.id, detail === null ? 'Failed' : `Failed: ${detail}`);
-      setLogImportStatus(env.ports.clock, job.id, 'failed', detail ?? 'Import failed.');
+      log(detail === null ? 'Failed' : `Failed: ${detail}`);
+      setStatus('failed', detail ?? 'Import failed.');
+    } finally {
+      // Drain the chain before the heartbeat stops, so no write is left behind it (D1).
+      await jobs.release(job.id);
+      clearInterval(heartbeat);
     }
   })();
 
   return c.json({ job_id: job.id });
 });
 
-logImportRouter.get('/api/log-import/:jobId', (c) => {
+logImportRouter.get('/api/log-import/:jobId', async (c) => {
   const user = requireUser(c);
-  const job = getLogImportJob(c.env.ports.clock, c.req.param('jobId'));
+  const job = await c.env.ports.logImportJobs.get(c.req.param('jobId'));
   // Creator scope: a requester who didn't create the job gets the SAME 404 as
   // an unknown id — no existence oracle (always checked, require-login D3).
-  // Not egress-gated: this route only reads local in-process state.
+  // Not egress-gated: this route only reads the job record in the catalog kv.
   if (!job || job.createdByUserId !== user.id) {
     throw new ApiError(404, JOB_NOT_FOUND_DETAIL);
   }

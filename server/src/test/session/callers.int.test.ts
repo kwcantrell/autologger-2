@@ -6,7 +6,6 @@
 // system tasks; an AI tool body and a log-import job run as the user who started them.
 
 import { AiMcpListener } from '@autologger/ai-runtime/aiMcpServer';
-import { clearLogImportJobs } from '@autologger/log-import';
 import { LeaseStore } from '@autologger/session-core/leaseStore';
 import { systemCaller, userCaller } from '@autologger/session-core/sessionCaller';
 import type { SessionCaller } from '@autologger/session-core/sessionCaller';
@@ -92,7 +91,6 @@ const event = (message: string) => ({
 const registries: SessionHubRegistry[] = [];
 afterEach(async () => {
   for (const r of registries.splice(0)) await r.closeAll();
-  clearLogImportJobs();
   vi.unstubAllGlobals();
 });
 

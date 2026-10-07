@@ -70,7 +70,7 @@ function ttlFor(record: JobRecord): number {
 function parseRecord(raw: string): JobRecord | null {
   try {
     const r = JSON.parse(raw) as Partial<JobRecord> | null;
-    if (!r || r.v !== 1 || !Array.isArray(r.lines) || typeof r.status !== 'string') return null;
+    if (r?.v !== 1 || !Array.isArray(r.lines) || typeof r.status !== 'string') return null;
     return r as JobRecord;
   } catch {
     return null;
@@ -96,6 +96,8 @@ interface LocalJob {
   record: JobRecord;
   lastWritten: string;
   tail: Promise<void>;
+  /** Writes queued so far; `release` waits until no new one arrived while it waited. */
+  queued: number;
   lost: boolean;
 }
 
@@ -153,6 +155,7 @@ export function createLogImportJobStore(kv: KvStore, clock: Clock): LogImportJob
       job.record = { ...changed, seq: job.record.seq };
       await write(id, job);
     });
+    job.queued += 1;
     job.tail = run.catch((err) => {
       console.warn(`[log-import] job ${id} write chain error`, err);
     });
@@ -176,7 +179,13 @@ export function createLogImportJobStore(kv: KvStore, clock: Clock): LogImportJob
       };
       const value = JSON.stringify(record);
       await kv.put(keyOf(id), value, { expirationTtl: LIVE_JOB_TTL_S });
-      local.set(id, { record, lastWritten: value, tail: Promise.resolve(), lost: false });
+      local.set(id, {
+        record,
+        lastWritten: value,
+        tail: Promise.resolve(),
+        queued: 0,
+        lost: false,
+      });
       return toJob(id, record);
     },
 
@@ -227,9 +236,7 @@ export function createLogImportJobStore(kv: KvStore, clock: Clock): LogImportJob
     },
 
     heartbeat(id) {
-      return enqueue(id, (r) =>
-        isTerminal(r.status) ? null : { ...r, heartbeatMs: clock.now() },
-      );
+      return enqueue(id, (r) => (isTerminal(r.status) ? null : { ...r, heartbeatMs: clock.now() }));
     },
 
     isLost(id) {
@@ -240,11 +247,11 @@ export function createLogImportJobStore(kv: KvStore, clock: Clock): LogImportJob
       const job = local.get(id);
       if (!job) return;
       // A write queued while waiting (a heartbeat tick) moves the tail: wait for that one too.
-      let tail: Promise<void>;
+      let seen: number;
       do {
-        tail = job.tail;
-        await tail;
-      } while (tail !== job.tail);
+        seen = job.queued;
+        await job.tail;
+      } while (seen !== job.queued);
       // Writes queued after this point are dropped: the job is done on this process.
       local.delete(id);
     },

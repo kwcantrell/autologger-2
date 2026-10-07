@@ -1,12 +1,11 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { SessionIndexStore } from '@autologger/catalog';
-import { clearLogImportJobs } from '@autologger/log-import';
 import type { SessionHubFacade } from '@autologger/session-core';
 import { TRANSCRIPTION_FIXTURES_DIR } from '@autologger/transcription';
 import ExcelJS from 'exceljs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { app, env, envWith } from '../test/harness';
+import { app, defaultUser, env, envWith } from '../test/harness';
 import {
   catalogFor,
   loginCookie,
@@ -17,6 +16,7 @@ import {
   seedUser,
 } from '../test/helpers';
 import { runLeaseHolders } from '../test/runLeases';
+import { busProcess, closeBusProcesses } from '../test/session/busProcesses';
 import { harnessHub } from '../test/session/sessionRows';
 
 const NOT_CONFIGURED_DETAIL =
@@ -50,7 +50,6 @@ async function grant(userId: string, showId: string): Promise<void> {
 }
 
 afterEach(() => {
-  clearLogImportJobs();
   vi.unstubAllGlobals();
 });
 
@@ -684,7 +683,9 @@ describe('the log-import job re-checks its creator’s show access before each s
             };
           }
           if (prop === 'addEventAtTotalFramesIfAbsent') {
-            return async (input: Parameters<SessionHubFacade['addEventAtTotalFramesIfAbsent']>[0]) => {
+            return async (
+              input: Parameters<SessionHubFacade['addEventAtTotalFramesIfAbsent']>[0],
+            ) => {
               const result = await target.addEventAtTotalFramesIfAbsent(input);
               if (!hooked) {
                 hooked = true;
@@ -809,5 +810,103 @@ describe('the log-import job re-checks its creator’s show access before each s
     expect(body.error).toBeNull();
     expect(await eventMessages(run.s1)).toContain(SHEET_ROW);
     expect(await eventMessages(run.s2)).toContain(SHEET_ROW);
+  });
+});
+
+// shared-request-state D1 (ADR 0021 slice 9b): job records live in the catalog kv, so a second
+// server process over the same database answers the status poll, and a job whose process stopped
+// heartbeating reads as failed, finally.
+describe('log-import jobs are shared across server processes (shared-request-state D1)', () => {
+  afterEach(() => closeBusProcesses());
+
+  it('a GET through a second app returns the job its first app started', async () => {
+    const studio = await seedMemberStudio();
+    const show = await seedShow({ studioId: studio });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('<!DOCTYPE html><html></html>', { status: 200 })),
+    );
+    const post = await postImport(show); // through the harness app (process A)
+    expect(post.status).toBe(200);
+    const { job_id } = (await post.json()) as { job_id: string };
+    const b = await busProcess();
+    let body: { status: string; lines: string[]; error: string | null } | null = null;
+    for (let i = 0; i < 200; i++) {
+      const res = await app.request(`/api/log-import/${job_id}`, {}, b.bindings);
+      expect(res.status).toBe(200);
+      body = (await res.json()) as { status: string; lines: string[]; error: string | null };
+      if (body.status === 'failed' || body.status === 'completed') break;
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    expect(body?.status).toBe('failed');
+    expect(body?.error).toMatch(/HTML|link/i);
+    expect(body?.lines[0]).toBe('Fetching spreadsheet…');
+    expect(Object.keys(body ?? {}).sort()).toEqual(['error', 'lines', 'status']);
+  });
+
+  it('a running job whose process stopped heartbeating 61 s ago reads as failed, finally', async () => {
+    const { id: userId } = await defaultUser();
+    const jobId = crypto.randomUUID();
+    const now = Date.now();
+    // A record as a runner on a process that then died leaves it: running, last heartbeat 61 s ago.
+    await env.ports.kv.put(
+      `log-import-job:${jobId}`,
+      JSON.stringify({
+        v: 1,
+        status: 'running',
+        lines: ['Fetching spreadsheet…', 'Loaded 2 sheet(s).'],
+        error: null,
+        createdAtMs: now - 120_000,
+        finishedAtMs: null,
+        createdByUserId: userId,
+        heartbeatMs: now - 61_000,
+        seq: 3,
+      }),
+      { expirationTtl: 7200 },
+    );
+    const b = await busProcess();
+    const res = await app.request(`/api/log-import/${jobId}`, {}, b.bindings);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      status: 'failed',
+      lines: ['Fetching spreadsheet…', 'Loaded 2 sheet(s).'],
+      error: 'The server running this import stopped.',
+    });
+    // The switch was written to the record, so process A reads the same final failure.
+    const stored = JSON.parse((await env.ports.kv.get(`log-import-job:${jobId}`)) ?? '{}');
+    expect(stored).toMatchObject({ status: 'failed', seq: 4 });
+    const again = await app.request(`/api/log-import/${jobId}`, {}, env);
+    expect(((await again.json()) as { status: string }).status).toBe('failed');
+  });
+
+  it('the creator-scoped 404 is unchanged through a second app', async () => {
+    const studio = await seedStudio();
+    const show = await seedShow({ studioId: studio });
+    const creator = await seedUser({ studios: [studio] });
+    const otherMember = await seedUser({ studios: [studio] });
+    await grant(creator, show);
+    await grant(otherMember, show);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('<!DOCTYPE html><html></html>', { status: 200 })),
+    );
+    const creatorCookie = await loginCookie(creator);
+    const post = await postImport(show, enabledEnv(), { cookie: creatorCookie });
+    const { job_id } = (await post.json()) as { job_id: string };
+    const b = await busProcess();
+    const foreign = await app.request(
+      `/api/log-import/${job_id}`,
+      { headers: { cookie: await loginCookie(otherMember) } },
+      b.bindings,
+    );
+    const unknown = await app.request(
+      `/api/log-import/${crypto.randomUUID()}`,
+      { headers: { cookie: creatorCookie } },
+      b.bindings,
+    );
+    expect(foreign.status).toBe(404);
+    expect(unknown.status).toBe(404);
+    expect(await foreign.text()).toBe(await unknown.text());
+    await settleJob(job_id, { cookie: creatorCookie });
   });
 });

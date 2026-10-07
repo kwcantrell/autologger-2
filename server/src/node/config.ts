@@ -4,6 +4,7 @@
 import { mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
+import { createLogImportJobStore } from '@autologger/log-import';
 import { sweepStaleYoutubeImportTempDirs } from '@autologger/media-import';
 import type { Clock } from '@autologger/ports';
 import {
@@ -121,6 +122,7 @@ export function createBindings(
       frameBus: registry.bus,
       audio: audioBlobStore,
       presence: new PresenceRegistry(clock),
+      logImportJobs: createLogImportJobStore(kv, clock),
     },
     config: {
       PUBLIC_BASE_URL: procEnv.PUBLIC_BASE_URL || '',

@@ -24,7 +24,6 @@
 // (assert-only otherwise — see `server/src/test/apiFixtures.ts` for why a
 // missing fixture fails instead of being written.)
 
-import { clearLogImportJobs } from '@autologger/log-import';
 import { transcriptGenerationLock } from '@autologger/transcription';
 import { describe, expect, it, vi } from 'vitest';
 import { expectCapturedResponse } from '../test/apiFixtures';
@@ -1350,7 +1349,6 @@ describe('log-import', () => {
       );
     } finally {
       vi.unstubAllGlobals();
-      clearLogImportJobs();
     }
   });
 });
