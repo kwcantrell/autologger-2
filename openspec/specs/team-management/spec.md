@@ -387,11 +387,12 @@ transfer to the caller themselves SHALL succeed and change nothing.
 **Revocation.** Removal, leave, demotion, transfer, delete and a grant revoke take effect at the
 next authorization check (HTTP request or WebSocket establishment). In addition, when a removal,
 leave, demotion to `member` (team plane or support plane), support-plane membership delete or
-grant revoke commits, the server SHALL close every session WebSocket the affected user holds in
-this process on a session they can no longer access (owner decision E, 2026-10-02); the client's
+grant revoke commits, the server SHALL close every session WebSocket the affected user holds, in
+any server process sharing the database, on a session they can no longer access (owner decision E, 2026-10-02); the client's
 reconnect gets the masked `404`. Sockets on sessions the user still reaches stay open, and
-in-flight HTTP requests are not interrupted. This covers one server process; with several
-processes or Realtime (slices 8 and 9) the close is driven from the database.
+in-flight HTTP requests are not interrupted. The close is published inside the transaction that
+removes the access (ADR 0021 slice 9a), so a removal whose close cannot be published fails and
+changes nothing.
 
 #### Scenario: Promote, demote, remove
 - **WHEN** a team owner promotes member M to admin, then demotes them back, then removes them
@@ -514,7 +515,8 @@ SHALL get `403`.
   found`, or the grant commits first and the leave deletes it. In both cases no grant outlives
   the membership.
 - **Open sockets close.** After a revoke commits, the server SHALL close every session WebSocket
-  that user holds on the show's sessions in this process; the client's reconnect then gets the
+  that user holds on the show's sessions in any server process sharing the database (ADR 0021
+  slice 9a); the client's reconnect then gets the
   masked `404`. Sockets on shows the user still reaches stay open (team-management "Owner-anchored
   team lifecycle and access revocation").
 

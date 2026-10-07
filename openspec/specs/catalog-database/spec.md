@@ -88,7 +88,8 @@ run. The catalog SHALL NOT be created in schema `public`.
 
 ### Requirement: The app connects as a least-privilege role
 The migration SHALL create the role `autologger_app` and SHALL always reset it to no `CREATEDB`,
-`CREATEROLE` or `BYPASSRLS`, a connection limit of 20, a `statement_timeout` of 30 seconds and an
+`CREATEROLE` or `BYPASSRLS`, a connection limit of 45 (three server processes of 14 connections each, ADR 0021 slice 9a; owner,
+2026-10-07), a `statement_timeout` of 30 seconds and an
 `idle_in_transaction_session_timeout` of 15 seconds. The migration SHALL fail if the role is a
 superuser or a replication role (the migrations user, not a superuser, cannot reset those two
 attributes).

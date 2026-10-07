@@ -1078,7 +1078,9 @@ read, change or delete another session's rows.
 The hub's storage operations SHALL return promises and SHALL be reached only through a view of
 the hub bound to a session caller; views for different callers SHALL share the hub's one
 serialization, broadcasts and alarm. Its socket operations (attach, detach, relay a command,
-close a user's sockets) SHALL stay synchronous and need no caller. Whatever the mechanism, the session hub
+close a user's sockets) SHALL need no caller; relaying a command and closing a user's sockets
+SHALL reach the sockets of every server process sharing the database (ADR 0021 slice 9a, "Session
+frames reach every process in commit order"). Whatever the mechanism, the session hub
 SHALL guarantee these observables:
 - **No dirty or lost reads:** no read SHALL observe a write that is not yet committed or that
   later rolls back, and a read that runs several statements SHALL see one committed state.
@@ -1093,6 +1095,8 @@ SHALL guarantee these observables:
 - **Broadcast order:** a session's `*.changed` broadcasts SHALL be sent only after the
   transaction that issued them commits, in the order the session's transactions committed and,
   within one transaction, in the order issued; a transaction that fails SHALL send none of them.
+  This order SHALL hold on every socket of the session in every server process sharing the
+  database, whichever processes made the writes.
   A broadcast issued outside the session's transaction (a relayed Companion command) SHALL be sent
   at once and SHALL NOT be held or dropped by a transaction it does not belong to.
 - **No self-deadlock:** a storage operation of any session's hub called from inside an open hub
@@ -1227,8 +1231,10 @@ connection-loss and unconfirmed-end rules and `close()`. Session transactions an
 run on a separate, smaller set of the adapter's single-connection clients (the session
 connections), with their own wait queue, so that session work never occupies a connection the
 catalog's transactions or root statements need: heavy session traffic can slow only session calls.
-The root, transaction and session connections together SHALL stay within the app role's
-connection limit. Each session transaction and snapshot SHALL run under the binding of the
+The root, transaction and session connections, together with the frame bus's listener and
+publisher connections, SHALL stay within a per-process budget of 14, so that three server
+processes fit the app role's connection limit (catalog-database "The app connects as a
+least-privilege role"). Each session transaction and snapshot SHALL run under the binding of the
 caller the call names (core-ports-architecture "Every catalog and session call is bound to a
 caller"), chosen per call: a user caller as `catalog_user` with the user's id, a system caller as
 `catalog_system` with its reason.
@@ -1277,7 +1283,7 @@ Values:
 
 #### Scenario: The connection count stays within the role's limit
 - **WHEN** the server runs with session hubs open
-- **THEN** it holds no more database connections than its root, transaction and session connections, together fewer than the app role's limit of 20
+- **THEN** it holds at most 14 database connections (its root, transaction and session connections plus the frame bus's listener and publisher), so three such processes stay within the app role's limit of 45
 
 ### Requirement: Every catalog and session call is bound to a caller
 
@@ -1315,8 +1321,10 @@ either:
   only what that same request wrote or the snapshot it is replacing, after one of its later steps
   failed or was refused.
 
-Socket fan-out (attach, detach, relayed commands, closing a user's sockets) and broadcasts send
-no statement and need no caller.
+Socket fan-out (attach, detach, relayed commands, closing a user's sockets) and broadcasts need no
+caller. The frame bus (ADR 0021 slice 9a) sends its `pg_notify` statements either inside the
+write or revoke transaction that issued them, under that transaction's binding, or on its own
+publisher and listener connections, which run no catalog or session statement and read no row.
 
 **System reasons are reviewed.** Every system binding and every system session caller in
 production code SHALL name its reason as a string literal. A repository test SHALL list every
@@ -1549,3 +1557,72 @@ slice 8b), so two processes sharing one database never run two of the same kind 
 #### Scenario: Back-to-back runs on one session are not refused
 - **WHEN** a topic generation run on a session completes, and the client immediately sends another
 - **THEN** the second request is not refused with `409`
+
+### Requirement: Session frames reach every process in commit order
+Every frame a session's write transaction issues (`event.changed`, `transport.changed`,
+`audio.changed`, `lease.changed`) SHALL reach every `/api/sessions/:id/ws` socket attached to that
+session in any server process sharing the database (ADR 0021 slice 9a), through a Postgres
+`NOTIFY` channel that every process listens on.
+
+- **Published with the commit.** A transaction's frames SHALL be published inside the
+  transaction, so a transaction that rolls back, or an attempt that is retried, publishes nothing.
+  Every process, including the one that made the write, SHALL deliver frames only from the channel,
+  so each socket receives a session's frames in commit order and, within one transaction, in issue
+  order. Each published message SHALL carry a sequence number unique within its transaction, so
+  Postgres never folds two equal frames into one.
+- **Signed.** Every message SHALL carry an HMAC-SHA256 over its content, keyed by the server-only
+  `FRAME_BUS_SECRET`. A receiver SHALL drop, and log, a message whose signature does not verify,
+  whose version is unknown, whose frame type is not one of the five session frame types, or whose
+  command is not a contract command. Each message SHALL also carry its sending bus's id and send
+  time under the signature. A receiver SHALL drop a message sent before its own listener first
+  started, a message other than a close sent more than 30 s before or after its own clock, and a
+  message whose bus id and sequence number it already accepted in the last 60 s; it SHALL log each
+  drop, with the clock skew for a stale one. A database role without the secret therefore cannot
+  inject a frame, a command or a close, and cannot replay a captured frame or command. The server
+  processes SHALL keep their clocks within a few seconds of each other (NTP).
+- **Commands.** A relayed command SHALL be checked against the contract's command values before it
+  is published, at most 10 per second per socket (excess dropped), and published on the bus's own
+  publisher connection, never on a catalog or session connection.
+- **Access-loss closes.** The close for a user who lost access SHALL be published inside the
+  transaction that removes the access, split across as many messages as the payload limit needs.
+  A revoke whose close cannot be published SHALL fail and change nothing.
+- **The frames are unchanged.** Shapes, types, revisions, and where each frame is emitted are as
+  before.
+
+The Postgres bus is used by the server's production entry point. Test harnesses and a registry
+built without a bus deliver in process, after commit, as before this change.
+
+#### Scenario: A write through one process reaches a socket on another
+- **WHEN** a browser has a socket on session S through process B and a client logs an event through
+  process A
+- **THEN** the socket on B receives that write's `event.changed` with its revision, exactly once
+
+#### Scenario: Interleaved writes arrive in commit order everywhere
+- **WHEN** processes A and B each log 100 events on session S concurrently, and sockets on S are
+  attached through both
+- **THEN** every socket receives 200 `event.changed` frames whose revisions strictly increase
+
+#### Scenario: A rolled-back write publishes nothing
+- **WHEN** a write transaction on S issues a frame and then fails
+- **THEN** no socket in any process receives that frame
+
+#### Scenario: A command reaches a browser on another process
+- **WHEN** a socket on session S through process A sends `{type:"command", command:"record-start"}`
+  while another browser socket on S is attached through process B
+- **THEN** the socket on B receives the `command` frame
+
+#### Scenario: A forged message is dropped
+- **WHEN** a database role without the secret calls `pg_notify` on the channel with a well-formed
+  command frame for session S
+- **THEN** no socket in any process receives it, and the receiving processes log the drop
+
+#### Scenario: A replayed message is dropped
+- **WHEN** a database role captures a signed command message from the channel and calls
+  `pg_notify` with the same payload, once right away and again 31 s later
+- **THEN** no socket in any process receives either copy, and the receiving processes log both
+  drops
+
+#### Scenario: A large team's revoke still closes every socket
+- **WHEN** a member of a team with 300 sessions is removed through process A while they hold a
+  socket on one of those sessions through process B
+- **THEN** that socket closes with code `4403`
