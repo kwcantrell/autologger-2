@@ -21,7 +21,15 @@ const SECRET = 'b'.repeat(48);
 let dir: string | null = null;
 let child: ChildProcess | null = null;
 afterEach(() => {
-  child?.kill('SIGKILL');
+  // tsx runs main.ts in a child node process, so a refusal case that booted instead would leave
+  // that grandchild running: kill the whole process group (spawned detached, so it leads one).
+  if (child?.pid !== undefined) {
+    try {
+      process.kill(-child.pid, 'SIGKILL');
+    } catch {
+      // the group is already gone
+    }
+  }
   child = null;
   if (dir) rmSync(dir, { recursive: true, force: true });
   dir = null;
@@ -57,7 +65,11 @@ function stackEnv(extra: Record<string, string>): Record<string, string> {
 /** Spawns main.ts; resolves with its exit status, or with the port once it is listening. */
 function boot(env: Record<string, string>) {
   const out = { stdout: '', stderr: '' };
-  const proc = spawn(TSX, [join(SERVER, 'src/main.ts')], { cwd: dir ?? undefined, env });
+  const proc = spawn(TSX, [join(SERVER, 'src/main.ts')], {
+    cwd: dir ?? undefined,
+    env,
+    detached: true,
+  });
   child = proc;
   proc.stdout.on('data', (d) => {
     out.stdout += String(d);
