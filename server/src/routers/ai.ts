@@ -31,12 +31,7 @@ import { chatRequestSchema } from '@autologger/contract';
 import { type Context, Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import type { AppEnv } from '../appEnv';
-import {
-  aiChatConfigured,
-  aiChatMaxBudgetUsd,
-  aiChatMaxConcurrent,
-  aiChatTimeoutSec,
-} from '../env';
+import { aiChatConfigured, aiChatMaxBudgetUsd, aiChatTimeoutSec } from '../env';
 import { ApiError } from '../httpError';
 import { claimAiLease } from './_aiSlot';
 import { requireSession, requireUser, sessionCaller } from './_helpers';
@@ -155,7 +150,7 @@ aiRouter.post('/api/sessions/:sessionId/ai/chat', async (c) => {
   // 5. Single-flight (per session) + process-wide concurrency ceiling — 409,
   // spawning nothing. The slot is held for the whole turn and released when the
   // stream ends.
-  const proc = aiChatTurns.tryAcquire(sessionId, aiChatMaxConcurrent(c.env.config));
+  const proc = aiChatTurns.tryAcquire(sessionId, 2); // the old default; run-status-and-sweeper D2 drops it
   if (!proc.ok) {
     throw new ApiError(
       409,

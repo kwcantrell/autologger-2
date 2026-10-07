@@ -76,7 +76,6 @@ import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import type { AppEnv } from '../appEnv';
 import {
-  aiChatMaxConcurrent,
   aiChatTimeoutSec,
   aiV2ApiKey,
   aiV2Configured,
@@ -232,7 +231,7 @@ aiV2Router.post('/api/sessions/:sessionId/ai/v2/design', async (c) => {
   // Acquired BEFORE any spawn and held across the whole turn; released in the
   // stream's `finally` on every exit path (task 2.7 refines the acquisition
   // semantics; the hold-and-release lifecycle is real here).
-  const proc = aiChatTurns.tryAcquire(sessionId, aiChatMaxConcurrent(c.env.config));
+  const proc = aiChatTurns.tryAcquire(sessionId, 2); // the old default; run-status-and-sweeper D2 drops it
   if (!proc.ok) {
     throw new ApiError(
       409,

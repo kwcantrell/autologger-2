@@ -328,7 +328,7 @@ describe('ai/v2/design — agent credentials refusal (503)', () => {
       DEEPGRAM_MODEL: '',
       CLAUDE_CLI_PATH: '',
       AI_CHAT_TIMEOUT_SEC: '',
-      AI_CHAT_MAX_CONCURRENT: '',
+      AI_PROVIDER: 'claude_cli',
       AI_CHAT_MAX_BUDGET_USD: '',
       TOPIC_GENERATE_MAX_BUDGET_USD: '',
       TOPIC_GENERATE_TIMEOUT_SEC: '',

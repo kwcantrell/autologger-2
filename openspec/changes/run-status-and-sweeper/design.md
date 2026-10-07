@@ -200,6 +200,12 @@ own session, and shows `TranscriptGenerationLockBanner` for any busy status.
      become `startedAt(sessionId)`, or a lease read.
    - The status tests seed a lease row instead of the in-process lock.
    - Full `Config` literals drop `AI_CHAT_MAX_CONCURRENT` and add `AI_PROVIDER`.
+   - Test process environments handed to `createBindings` or `checkBootEnv` supply the variables
+     boot now validates, `AI_PROVIDER` (and, from task 7.1, `RUN_FEATURE_EMAILS`), with a valid
+     value. The case that found this is `server/src/node/config.test.ts` "AI_V2_CREDENTIAL_SOURCE_PATH
+     has NO environment override (ruling E6)": its proxy env answers `'/etc/attacker'` for every
+     unset key, so it gains `AI_PROVIDER: 'claude_cli'` in its base env. What it asserts is
+     unchanged (amended in task 2.1, owner 2026-10-07).
 3. **The new column in row assertions.** The `catalogSchema.pg` column snapshot gains
    `started_at_ms`. Whole-row `session_leases` assertions (`leaseStore.int`, `runLease.int`, and
    any other `rawRows(…, 'session_leases')` user) gain `started_at_ms`: `null` for recording, the

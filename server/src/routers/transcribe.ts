@@ -30,12 +30,7 @@ import {
 } from '@autologger/transcription';
 import { Hono } from 'hono';
 import type { AppEnv } from '../appEnv';
-import {
-  aiChatConfigured,
-  aiChatMaxConcurrent,
-  topicGenerateMaxBudgetUsd,
-  topicGenerateTimeoutSec,
-} from '../env';
+import { aiChatConfigured, topicGenerateMaxBudgetUsd, topicGenerateTimeoutSec } from '../env';
 import { ApiError } from '../httpError';
 import { claimAiLease } from './_aiSlot';
 import {
@@ -278,7 +273,7 @@ transcribeRouter.post('/api/sessions/:sessionId/topics/generate', async (c) => {
   // Single-flight (per session) + process-wide concurrency ceiling — 409,
   // spawning nothing. Acquired here (not inside generateTopicsTurn) and
   // released in this handler's own finally.
-  const proc = aiChatTurns.tryAcquire(sessionId, aiChatMaxConcurrent(c.env.config));
+  const proc = aiChatTurns.tryAcquire(sessionId, 2); // the old default; run-status-and-sweeper D2 drops it
   if (!proc.ok) {
     throw new ApiError(
       409,

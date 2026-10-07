@@ -17,6 +17,7 @@ import {
   maskBootstrapOwnerEmail,
   newUserAllTeamsEnabled,
   oauthConfigured,
+  parseAiProvider,
   publicBaseUrl,
   resolveYtDlpPath,
   sessionCookieName,
@@ -270,5 +271,23 @@ describe('bootstrap owner email (owner-bootstrap D8, D16)', () => {
     expect(m).toMatch(/#[0-9a-f]{8}\b/);
     expect(m.toLowerCase()).not.toContain('owner');
     expect(maskBootstrapOwnerEmail(' owner@example.com ')).toBe(m);
+  });
+});
+
+describe('AI_PROVIDER (run-status-and-sweeper D1)', () => {
+  it('defaults to claude_cli when unset or blank', () => {
+    for (const raw of [undefined, '', '   '])
+      expect(parseAiProvider(raw), String(raw)).toBe('claude_cli');
+  });
+  it('accepts claude_cli', () => {
+    expect(parseAiProvider('claude_cli')).toBe('claude_cli');
+  });
+  it('refuses anything else, naming the accepted list and echoing the value', () => {
+    expect(() => parseAiProvider('openai')).toThrow(
+      'AI_PROVIDER must be one of: claude_cli (got "openai")',
+    );
+    expect(() => parseAiProvider('Claude_CLI')).toThrow(
+      'AI_PROVIDER must be one of: claude_cli (got "Claude_CLI")',
+    );
   });
 });

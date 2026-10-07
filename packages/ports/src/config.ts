@@ -25,14 +25,16 @@ export interface Config {
    * feature off (503). The rest tune spend/lifecycle bounds. */
   CLAUDE_CLI_PATH: string;
   AI_CHAT_TIMEOUT_SEC: string;
-  AI_CHAT_MAX_CONCURRENT: string;
+  /** The AI provider (run-status-and-sweeper D1): `'claude_cli'` is the only one; `createBindings`
+   * refuses any other `AI_PROVIDER` at boot. */
+  AI_PROVIDER: 'claude_cli';
   AI_CHAT_MAX_BUDGET_USD: string;
   /** Topic generation (topic-generation, design D6). A one-shot generate
    * reads the entire transcript in one turn -- a larger workload than an
    * incremental chat message -- so it gets its OWN budget/timeout, defaulted
    * higher than AI_CHAT_MAX_BUDGET_USD/AI_CHAT_TIMEOUT_SEC rather than
    * reusing them (reuse would make the button deterministically fail on
-   * large sessions). Concurrency/gating (CLAUDE_CLI_PATH, AI_CHAT_MAX_CONCURRENT,
+   * large sessions). Concurrency/gating (CLAUDE_CLI_PATH,
    * the aiChatTurns registry) is shared with the AI chat, unchanged. */
   TOPIC_GENERATE_MAX_BUDGET_USD: string;
   TOPIC_GENERATE_TIMEOUT_SEC: string;
@@ -44,7 +46,7 @@ export interface Config {
    * are sized for that whole-transcript read rather than for an incremental
    * chat message (the env.ts lesson TOPIC_GENERATE_* itself was defaulted
    * against). Separate knobs so an operator can retune one workload without
-   * the other. Gating (CLAUDE_CLI_PATH, AI_CHAT_MAX_CONCURRENT, the
+   * the other. Gating (CLAUDE_CLI_PATH, the
    * aiChatTurns registry) is shared, unchanged. */
   EVENT_GENERATE_MAX_BUDGET_USD: string;
   EVENT_GENERATE_TIMEOUT_SEC: string;
@@ -75,8 +77,7 @@ export interface Config {
   /** Per-turn USD spend ceiling (spec "Spend and concurrency bounds", the
    * SDK's `maxBudgetUsd` option). Concurrency itself is NOT a separate AI v2
    * setting — design "Spend and concurrency bounds" shares the AI chat's
-   * registry and ceiling (AI_CHAT_MAX_CONCURRENT) deliberately, so both
-   * features bound the operator's exposure together. */
+   * per-session registry deliberately. */
   AI_V2_MAX_BUDGET_USD: string;
   /** Google Sheets log import (POST /api/shows/:showId/log-import). Public
    * sheets need no API key, so the gate is an EXPLICIT boolean opt-in

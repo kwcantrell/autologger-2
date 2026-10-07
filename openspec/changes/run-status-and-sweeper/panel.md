@@ -23,3 +23,9 @@ Delta: owner decision 5 (approved users, design D9). Reviewers: assumption teste
 - [x] [major] D7 category 5 couldn't keep the existing tests running: seeded users get random emails, many suites outside the six route files post to these routes as several users, and the harness's bootstrap owner is deliberately never signed in (owner-bootstrap D13). Raised by the assumption tester and the scope reviewer. Evidence: `server/src/test/helpers.ts` -> `email: opts.email ?? \`${uid('user')}@example.com\``; `server/src/test/harness.ts:68-69` -> "an address no suite signs in with". Resolved: D7 category 5 gives `seedUser` the fixed default `seeded-user@example.com` (email is not unique), and `resetTestEnv`, `busProcesses.ts` and the direct `createBindings` test sites approve it and `default-user@example.com`. Negative cases use explicit emails.
 - [x] [major] The README endpoint table, the normative route list, wasn't set to gain the 403. Evidence: `README.md:885-897` -> no 403 on the six rows. Resolved: task 8.1 adds **403** to the six rows, and its done-check verifies them.
 - [x] [major] No task documented how to grant access, nor covered the stack env examples. Evidence: `docs/openbao-secrets.md:101,111`; `grep -n BOOTSTRAP_OWNER_EMAIL docker/.env.*example` -> dev:34, stage:19, example:22. Resolved: task 7.1 adds `RUN_FEATURE_EMAILS` to `docs/openbao-secrets.md` (optional key, how to grant) and to `docker/.env{,.dev,.stage}.example`; the proposal's code list names `bootGuard.ts`, `_helpers.ts`, `logImport.ts` and the test harness.
+
+## Re-panel
+
+Delta: design D7 category 2 lets test process environments supply the variables boot validates (`AI_PROVIDER`, later `RUN_FEATURE_EMAILS`); found in task 2.1 by `server/src/node/config.test.ts` "ruling E6". Reviewers: assumption tester, failure and abuse, scope and simplicity · Date: 2026-10-07
+
+No findings.
