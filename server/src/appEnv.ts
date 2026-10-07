@@ -13,6 +13,7 @@
 // `AuthUser` is a plain domain type re-exported through the catalog
 // package's barrel, not a concrete class — importing it here is fine.
 
+import type { AiV2PendingQuestionRegistry } from '@autologger/ai-runtime/aiV2PendingQuestions';
 import type { AuthUser, CatalogFacade } from '@autologger/catalog';
 import type { LogImportJobStore } from '@autologger/log-import';
 import type { Ports as BasePorts, Config } from '@autologger/ports';
@@ -31,6 +32,8 @@ export interface Ports extends BasePorts {
   frameBus: SessionFrameBus;
   /** Log-import job records in the catalog kv, built per binding (shared-request-state D1). */
   logImportJobs: LogImportJobStore;
+  /** AI v2 pending-question rows in the catalog kv, built per binding (shared-request-state D2). */
+  aiV2Questions: AiV2PendingQuestionRegistry;
 }
 
 /** The per-request env object. Callers MUST pass a fresh env per request and

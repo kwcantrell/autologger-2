@@ -4,6 +4,7 @@
 import { mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
+import { AiV2PendingQuestionRegistry } from '@autologger/ai-runtime/aiV2PendingQuestions';
 import { createLogImportJobStore } from '@autologger/log-import';
 import { sweepStaleYoutubeImportTempDirs } from '@autologger/media-import';
 import type { Clock } from '@autologger/ports';
@@ -123,6 +124,7 @@ export function createBindings(
       audio: audioBlobStore,
       presence: new PresenceRegistry(clock),
       logImportJobs: createLogImportJobStore(kv, clock),
+      aiV2Questions: new AiV2PendingQuestionRegistry(kv, clock),
     },
     config: {
       PUBLIC_BASE_URL: procEnv.PUBLIC_BASE_URL || '',
