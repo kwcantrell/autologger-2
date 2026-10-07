@@ -354,7 +354,7 @@ JetBrains Mono 600 at 0.6875rem, 20px tall, a raised-panel fill, a hairline with
 Column heads use the label type in dim on the panel, sticky, over a hairline. Timecode cells use measure type. A timeline-marker jump flashes the row with an 18% accent fill.
 
 ### Timeline
-A slim lane with the waveform. The played portion of the waveform follows `--tx-wave-progress`: a 26% foreground when stopped, the accent at 72–80% otherwise. The playhead is a 2px fully rounded line in `--tx-playhead` (the foreground when stopped) with its halo.
+A slim lane with the waveform. The unplayed body is a flat `--si-wave-body` (13% foreground); there is no gradient. The played portion follows `--tx-wave-progress`: a 26% foreground when stopped, the accent at 72–80% otherwise. The playhead is a 2px fully rounded line in `--tx-playhead` (the foreground when stopped) with its halo.
 
 ### Browser surfaces
 Text selection is 45% accent into the ground, the caret is the accent, and scrollbars are 8px with a ground track and a strong-hairline thumb that turns accent on hover.

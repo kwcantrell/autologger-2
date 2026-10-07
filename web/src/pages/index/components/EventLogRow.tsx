@@ -70,7 +70,7 @@ const ROW_HOVER_ACTIONS =
   'absolute right-[0.4rem] top-1/2 -translate-y-1/2 inline-flex gap-[0.2rem] [transition:opacity_0.14s_ease]';
 /** Compact in-row icon action (ui-refresh): replaces the legacy `.btn`-with-emoji delete. */
 const ROW_ICON_BTN =
-  'inline-flex h-6 w-6 cursor-pointer items-center justify-center rounded-[0.4rem] border border-v5-border-strong bg-[rgba(15,23,42,0.88)] p-0 text-v5-muted [transition:border-color_0.15s_ease,color_0.15s_ease,background_0.15s_ease] hover-always:border-[rgba(251,113,133,0.5)] hover-always:text-[#fda4af] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[rgba(56,189,248,0.55)]';
+  'inline-flex h-6 w-6 cursor-pointer items-center justify-center rounded-[0.4rem] border border-v5-border-strong bg-[rgba(15,23,42,0.88)] p-0 text-v5-muted [transition:border-color_0.15s_ease,color_0.15s_ease,background_0.15s_ease] hover-always:border-[rgba(251,113,133,0.5)] hover-always:text-[#fda4af] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring';
 /** Reveal-on-hover/focus-within (non-batch): hidden until the row (`group`) is hovered. */
 const ROW_ACTIONS_HIDDEN =
   'opacity-0 pointer-events-none [.group:hover_&]:opacity-100 [.group:hover_&]:pointer-events-auto [.group:focus-within_&]:opacity-100 [.group:focus-within_&]:pointer-events-auto';

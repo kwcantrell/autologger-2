@@ -86,4 +86,23 @@ describe('V5 leftovers (11.4 cleanup)', () => {
   it('the unused rail shelf gradient token is gone', () => {
     expect(CSS).not.toContain('--v6-rail-recent-shelf-bg');
   });
+  it('no production component under pages/ keeps the V5 cyan or a sky-* utility', () => {
+    const PAGES = path.join(SRC, 'pages');
+    const walk = (d: string): string[] =>
+      fs.readdirSync(d, { withFileTypes: true }).flatMap((e) =>
+        e.isDirectory() ? walk(path.join(d, e.name)) : [path.join(d, e.name)],
+      );
+    const hits = walk(PAGES)
+      .filter((f) => /\.tsx?$/.test(f) && !/\.test\.tsx?$/.test(f))
+      .filter((f) => {
+        const code = fs
+          .readFileSync(f, 'utf8')
+          .split('\n')
+          .filter((l) => !/^\s*(\/\/|\*)/.test(l))
+          .join('\n');
+        return /rgba\(\s*56\s*,\s*189\s*,\s*248|\bsky-\d{3}\b/.test(code);
+      })
+      .map((f) => path.relative(SRC, f));
+    expect(hits).toEqual([]);
+  });
 });
