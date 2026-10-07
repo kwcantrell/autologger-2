@@ -1,6 +1,7 @@
 import { fireEvent, screen, waitFor, within } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderStrict, StrictWrapper } from '../../../test/renderStrict';
+import { getTransportStatus } from '../coordination/transportStatus';
 import { useTranscriptWordsGate } from '../hooks/TranscriptWordsGateContext';
 import { SessionWorkspace } from './SessionWorkspace';
 
@@ -70,8 +71,16 @@ vi.mock('../../../api/hooks/useSessionSocket', () => ({
   useSessionSocket: () => {},
 }));
 
+// Per-session status, keyed by id (redesign-show-ignition 2.2): undefined for
+// every session unless a test seeds it, which is what the rest of this file
+// relies on.
+const { statusBySession } = vi.hoisted(() => ({
+  statusBySession: new Map<string, Record<string, unknown>>(),
+}));
 vi.mock('../../../api/hooks/useSessionStatus', () => ({
-  useSessionStatus: () => ({ data: undefined }),
+  useSessionStatus: (sessionId: string | null) => ({
+    data: sessionId ? statusBySession.get(sessionId) : undefined,
+  }),
 }));
 
 vi.mock('@tanstack/react-query', () => ({
@@ -756,5 +765,74 @@ describe('SessionWorkspace "?" shortcut', () => {
     } finally {
       overlay.remove();
     }
+  });
+});
+
+// --- Shell transport status (redesign-show-ignition D2, task 2.2) ---
+//
+// The workspace publishes its effective transport to the shell store, mapped
+// audio-recording→recording, rolling→rolling, play→playback, stop→stopped,
+// with the session id and title, and clears it on unmount.
+describe('SessionWorkspace shell transport status', () => {
+  afterEach(() => {
+    statusBySession.clear();
+  });
+
+  it('a lease-alive status publishes recording', () => {
+    statusBySession.set('sess-rec', {
+      title: 'Ep 12',
+      is_rolling: true,
+      audio_recording_lease_alive: true,
+    });
+    renderStrict(<SessionWorkspace sessionId="sess-rec" />);
+    expect(getTransportStatus()).toEqual({
+      state: 'recording',
+      sessionId: 'sess-rec',
+      title: 'Ep 12',
+    });
+  });
+
+  it('is_rolling without a lease publishes rolling', () => {
+    statusBySession.set('sess-roll', {
+      title: 'Ep 13',
+      is_rolling: true,
+      audio_recording_lease_alive: false,
+    });
+    renderStrict(<SessionWorkspace sessionId="sess-roll" />);
+    expect(getTransportStatus()).toEqual({
+      state: 'rolling',
+      sessionId: 'sess-roll',
+      title: 'Ep 13',
+    });
+  });
+
+  it('a session with no live status publishes stopped with its id', () => {
+    renderStrict(<SessionWorkspace sessionId="sess-idle" />);
+    expect(getTransportStatus()).toEqual({ state: 'stopped', sessionId: 'sess-idle', title: null });
+  });
+
+  it('unmount clears', () => {
+    statusBySession.set('sess-rec', { title: 'Ep 12', audio_recording_lease_alive: true });
+    const { unmount } = renderStrict(<SessionWorkspace sessionId="sess-rec" />);
+    expect(getTransportStatus().state).toBe('recording');
+    unmount();
+    expect(getTransportStatus()).toEqual({ state: 'stopped', sessionId: null, title: null });
+  });
+
+  // SessionWorkspace does not remount per session (see the words-gate tests
+  // above), so the switch is a prop change under the same instance.
+  it("switching session ids while recording leaves the store on the new session's state", () => {
+    statusBySession.set('sess-a', { title: 'A', audio_recording_lease_alive: true });
+    statusBySession.set('sess-b', { title: 'B', is_rolling: true });
+    const { rerender } = renderStrict(<SessionWorkspace sessionId="sess-a" />);
+    expect(getTransportStatus()).toEqual({ state: 'recording', sessionId: 'sess-a', title: 'A' });
+
+    rerender(
+      <StrictWrapper>
+        <SessionWorkspace sessionId="sess-b" />
+      </StrictWrapper>,
+    );
+
+    expect(getTransportStatus()).toEqual({ state: 'rolling', sessionId: 'sess-b', title: 'B' });
   });
 });

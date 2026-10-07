@@ -13,6 +13,11 @@ import { ConfirmDialog } from '../../../shared/ui/ConfirmDialog';
 import { isOverlayOpen } from '../../../shared/ui/overlayOpen';
 import { AUTOLOGGER_LOADING_VIDEO_SRC } from '../../../shared/utils/loadingVideo';
 import { register, unregister } from '../coordination/registry';
+import {
+  clearTransportStatus,
+  publishTransportStatus,
+  type ShellTransportState,
+} from '../coordination/transportStatus';
 import { AudioClipsProvider } from '../hooks/AudioClipsContext';
 import { TranscriptWordsGateProvider } from '../hooks/TranscriptWordsGateContext';
 import { useAudioClips } from '../hooks/useAudioClips';
@@ -49,6 +54,18 @@ const FEED_TABS = [
 ] as const;
 
 type FeedTabId = (typeof FEED_TABS)[number]['id'];
+
+// The workspace's effective transport → the shell store's state (D2). The perf
+// debug override flows through `effectiveTransport`, so the shell follows it.
+const SHELL_TRANSPORT: Record<
+  'audio-recording' | 'rolling' | 'play' | 'stop',
+  ShellTransportState
+> = {
+  'audio-recording': 'recording',
+  rolling: 'rolling',
+  play: 'playback',
+  stop: 'stopped',
+};
 
 // Tabs whose content is UNCONDITIONALLY derived from the transcript word list
 // (perf plan B4). Activating any of them is what opens the deferred-words gate
@@ -124,6 +141,21 @@ export function SessionWorkspace({ sessionId, ytImportPending, onOpenMobileNav }
   useEffect(() => {
     document.body.dataset.v4Transport = effectiveTransport;
   }, [effectiveTransport]);
+
+  // Publish the shell's transport status (redesign-show-ignition D2): AppShell's
+  // `data-transport` tint and the top bar read it. The deps are the mapped
+  // state, id and title only, so this re-runs on transitions — never on the
+  // playback tick. Each run publishes under its own owner token and clears only
+  // that token on cleanup (identity-scoped, as the coordination registry).
+  const shellTransport = SHELL_TRANSPORT[effectiveTransport];
+  const sessionTitle = (status?.title ?? '').trim() || null;
+  useEffect(() => {
+    const owner = {};
+    publishTransportStatus(owner, { state: shellTransport, sessionId, title: sessionTitle });
+    return () => {
+      clearTransportStatus(owner);
+    };
+  }, [shellTransport, sessionId, sessionTitle]);
 
   const [showShortcuts, setShowShortcuts] = useState(false);
 
