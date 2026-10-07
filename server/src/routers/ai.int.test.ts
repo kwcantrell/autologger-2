@@ -80,6 +80,7 @@ import {
   observeRunLeases,
   runLeaseRows,
 } from '../test/runLeases';
+import { __setAiLeaseRenewMsForTests } from './_aiSlot';
 import { __resetAiChatIssuedSessionIdsForTests, AI_CHAT_ALLOWED_TOOLS } from './ai';
 
 // Kept for the pre-existing guard-rejection assertions (see the SPAWN
@@ -770,5 +771,37 @@ describe('ai/chat — the ai-turn run lease (session-run-leases D4)', () => {
     const next = await post(s, { message: 'again' }, fixtureEnv());
     expect(next.status).toBe(200);
     await next.text();
+  });
+});
+
+// ── api-contract-freeze "Run leases leave the revision unchanged" (session-run-leases D2, D6) ────
+describe('ai/chat — the ai-turn lease leaves the session revision unchanged (session-run-leases D6)', () => {
+  afterEach(() => __setAiLeaseRenewMsForTests(undefined));
+
+  const revision = async (sessionId: string): Promise<number> => {
+    const res = await app.request(`/api/sessions/${sessionId}/status`, { method: 'GET' }, env);
+    expect(res.status).toBe(200);
+    return ((await res.json()) as { events_stream_revision: number }).events_stream_revision;
+  };
+
+  it('status, a turn that calls no write tool (claimed, renewed, released), status: same revision', async () => {
+    const s = await seededSession();
+    // A renewal every 2 ms, so the fixture turn (tens of ms) sees at least one.
+    __setAiLeaseRenewMsForTests(2);
+    const before = await revision(s);
+    const obs = observeRunLeases();
+    try {
+      const res = await post(s, { message: 'hi' }, fixtureEnv());
+      expect(res.status).toBe(200);
+      expect(parseSse(await res.text()).some((e) => e.event === 'done')).toBe(true);
+      const claims = obs.claims('ai-turn');
+      expect(claims.length).toBeGreaterThanOrEqual(2); // the claim and at least one renewal
+      expect(new Set(claims).size).toBe(1);
+      expect(obs.releases('ai-turn')).toEqual([claims[0]]);
+    } finally {
+      obs.restore();
+    }
+    expect(await runLeaseRows(s)).toEqual([]);
+    expect(await revision(s)).toBe(before);
   });
 });
