@@ -75,9 +75,24 @@ These live in the forge, not the repo, so the template can't apply them:
 - The app's catalog password (`PGPASSWORD`, from `APP_DB_PASSWORD`) sits in the app process's
   environment. Its children (the Claude CLI, yt-dlp) get allowlisted environments, but a
   same-uid child that runs code can still read `/proc/<pid>/environ`; a file would leak the same
-  way. The bounds are the database role (`autologger_app`: DML on `catalog` only, 20 connections,
+  way. The bounds are the database role (`autologger_app`: DML on `catalog` only, 45 connections,
   statement timeouts, no memberships) and the two-member `catalog` network, which reaches only
   `db` (catalog-pg-schema D3, D5).
+- **NOTIFY forgery on the session frame bus** (session-frame-bus D2, ADR 0021 slice 9a). Every
+  server process delivers session frames, Companion record/play commands and access-loss closes
+  from one `NOTIFY` channel, and `pg_notify` is executable by every role, even in a read-only
+  transaction. Any database login (a Supabase service role, a leaked `autologger_app` password,
+  an agent with `psql`) could otherwise forge a frame, start a recording on someone's session, or
+  keep a revoked user's socket open. The defence: every message is HMAC-SHA256-signed with
+  `FRAME_BUS_SECRET`, a server-only secret of at least 32 characters held in OpenBao, and
+  receivers drop and log (`frame bus: dropped <reason>`, never the payload) any message whose
+  signature, version, frame type, command or close code is wrong. **Residuals:** the secret sits
+  in the app process's environment, readable like `PGPASSWORD` above, and anything holding it can
+  forge messages; a database login can `LISTEN` and re-send a captured signed message, since
+  receivers don't reject a repeated sequence number (a replayed frame only makes clients re-read
+  and a replayed close re-closes, but a replayed `command` repeats that record/play action); a flood of
+  forged notifications costs each process a signature check per message and can fill the
+  notification queue, which fails writes. Rotation needs every process restarted together.
 - PUBLIC keeps `CONNECT` on every database and `TEMP` on `postgres`, so `autologger_app` can
   connect to databases where it has no grants and create session-local temp tables. Revoking
   them from PUBLIC would change what the Supabase services get; slice 6 revisits it.

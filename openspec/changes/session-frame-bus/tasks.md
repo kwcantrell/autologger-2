@@ -72,11 +72,12 @@
   - Evidence: D8 category 3: `bootOrder.int.test.ts` "with an unreachable catalog" gets `FRAME_BUS_SECRET: 'b'.repeat(40)`; before it, that case failed `expected 'autologger: FRAME_BUS_SECRET must be …' to match /catalog not ready/` (log `9a-6.1-green.log`). `docker/secrets-env.yaml` gains `FRAME_BUS_SECRET:`; no value is set anywhere.
   - Evidence: `sh docker/scripts/check-envs.sh all` -> `check-envs: ok (all)` (log `9a-6.1-check-envs.log`); `node --test docker/scripts/compose-run.test.mjs` -> `pass 72`, `fail 0` (log `9a-6.1-compose-run.log`); `sh docker/scripts/test_check_envs.sh` -> `48 passed, 1 failed`, the same on the base with these changes stashed (invariant 4 in its clean-tree case; logs `9a-6.1-test-check-envs.log`, `9a-6.1-test-check-envs-base.log`).
   - Evidence: `cd server && npx vitest run --project unit --project integration --project pg` -> `Test Files 136 passed | 3 skipped (139)`, `Tests 1678 passed | 4 skipped (1682)` (1675 + 3; log `9a-6.1-server.log`); storage `Tests 139 passed (139)` (log `9a-6.1-storage.log`); `npm run typecheck` -> 0 `error TS` (log `9a-6.1-typecheck.log`).
-- [ ] 6.2 Docs:
+- [x] 6.2 Docs:
   - README: live updates through the frame bus; the "Single Node process" invariant rewritten (writes and frames hold across processes, the topology is still one replica); the per-process connection budget of 14 and the three-process ceiling (42 of 45); `pg_notification_queue_usage()`; secret rotation needs every process restarted together.
   - `docs/security.md`: the NOTIFY forgery threat and the HMAC defence.
   - ADR 0021: the live-updates decision (line ~60), step 9 (~1078), Consequences (~1096), the 6a follow-up (~463-466, resolved here), and the "until slice 9" broadcast-order notes (~825, ~869); a 9a entry.
   - ADR 0023: a status note deferring Realtime.
+  - Evidence: `grep -n` over the edited docs -> README `Live updates go through the session frame bus`, `Connections per process: 14`, `three processes (42 of 45)`, `pg_notification_queue_usage()`, `restarting **every process together**`, the invariant `Writes and frames hold across processes; the topology is still one replica`, and a `FRAME_BUS_SECRET` row in the env table; `docs/security.md` `NOTIFY forgery on the session frame bus` (threat, HMAC defence, residuals incl. replay) and the role's `45 connections`; ADR 0021 `Amended by slice 9a` (live updates), the 6a follow-up `Resolved by slice 9a`, both "until slice 9" broadcast-order notes, a step 9 `9a session-frame-bus` entry, Consequences; ADR 0023 `Status note` deferring Realtime (log `9a-6.2-docs.log`). Also `docs/supabase.md`'s role row said `at most 20 connections`; it now says 45 (14 per process).
 
 ## 7. Verify
 
