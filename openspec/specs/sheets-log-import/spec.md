@@ -118,11 +118,14 @@ imports: when access is lost, the job appends `Access revoked; stopping.`, ends
 `failed` with error `Access revoked.`, and imports no further sheet; events
 already written stay. `GET /api/log-import/:jobId` SHALL be
 creator-scoped: any requester other than the job's creator receives the same `404 { detail: "Log import job not found." }` as an unknown id. Job
-records live in process memory: terminal (completed/failed) jobs SHALL become
-prunable one hour after finishing, and the job map SHALL be capped at 200
-entries with the oldest terminal jobs evicted first — queued/running jobs are
-NEVER evicted (the map may transiently exceed the cap rather than orphan a
-live import’s status).
+records live in the catalog's key-value store (ADR 0021 slice 9b), so any server
+process sharing the database can report a job: a terminal (completed/failed) job
+SHALL expire one hour after finishing, and a queued/running job SHALL NOT expire
+while its process keeps heartbeating (every 10 s). A queued/running job whose
+heartbeat is more than 60 s old SHALL be reported `failed` with error
+`The server running this import stopped.`, and that report SHALL be final: the job's record is
+switched to `failed` with a compare-and-swap, and a runner that finds its record changed stops
+importing; the sheets it already imported stay.
 
 #### Scenario: Non-member POST looks like a missing show
 
@@ -139,8 +142,15 @@ live import’s status).
 
 #### Scenario: Running jobs survive the size cap
 
-- **WHEN** the job map is at its 200-entry cap and holds running jobs
-- **THEN** only terminal jobs are evicted; no queued or running job is removed
+- **WHEN** a running job keeps heartbeating past 2 h (its record's initial expiry), however many
+  other jobs exist (the size cap was removed)
+- **THEN** its record is still readable and reports `running`
+
+#### Scenario: A job whose process stopped reads as failed
+
+- **WHEN** a job's process stops while the job is `running`, and 61 s pass
+- **THEN** a poll reports `failed` with error `The server running this import stopped.` and the
+  lines written before the stop
 
 #### Scenario: A member without a grant looks like a missing show
 
@@ -185,7 +195,7 @@ SHEETS_LOG_IMPORT_ENABLED=1 to enable it." before any body parsing, job
 creation, or egress. Check ordering follows youtube-import: show/membership
 `404` first, then the configuration gate, then body validation. The route SHALL NOT have any
 network-posture refusal. `GET /api/log-import/:jobId` SHALL NOT be egress-gated — it reads
-only local in-process state.
+only the job record in the catalog.
 
 #### Scenario: Unconfigured deployment refuses before any egress
 

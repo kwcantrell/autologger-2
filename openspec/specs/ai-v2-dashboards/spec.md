@@ -78,6 +78,17 @@ identify an individual principal SHALL NOT be accepted on these routes.
 An answer for a turn that is no longer in flight SHALL be rejected without effect, and a pending
 entry SHALL be deleted when its turn ends by any path, so it cannot be resolved late.
 
+A pending question SHALL be recorded in the catalog's key-value store (its owner, its question
+count, and an expiry at the turn's deadline: the turn's start plus its timeout, plus 5 s), so the
+answer endpoint on any server process sharing the database can validate and accept it (ADR 0021
+slice 9b). The record SHALL be stored before the question is delivered to the client; a question
+whose record cannot be stored SHALL be denied to the agent and SHALL NOT be delivered. Accepting
+an answer SHALL be one atomic compare-and-swap on that record, so of two concurrent answers to one
+question exactly one is accepted. The process running the turn SHALL pick up an accepted answer
+within one second. One exception to rejecting late answers is accepted: when the process running
+the turn stops without ending it, an answer posted before the turn's deadline is accepted with
+`200` and has no effect, because no process remains to delete the record.
+
 An unanswered question SHALL NOT hold a turn open indefinitely. When the requesting client
 disconnects or the turn times out, the pending question SHALL be abandoned, the turn SHALL end,
 its child process SHALL be terminated, and its concurrency slot SHALL be released.
@@ -102,6 +113,17 @@ its child process SHALL be terminated, and its concurrency slot SHALL be release
 #### Scenario: An abandoned question does not wedge the session
 - **WHEN** a question is pending and the requesting client disconnects
 - **THEN** the turn ends, its child is terminated, and its concurrency slot is released
+
+#### Scenario: An answer through another process reaches the turn
+- **WHEN** a design turn runs through process A, asks a question, and its initiator posts the
+  answer through process B
+- **THEN** B responds `200 { ok: true }` and the turn on A continues with that answer within one
+  second
+
+#### Scenario: Two answers to one question accept one
+- **WHEN** the initiator posts two answers to the same pending question at once, through two
+  processes
+- **THEN** exactly one is accepted with `200`, and the other gets the masked `404`
 
 ### Requirement: Widget catalog is a closed set
 Dashboards SHALL be composed from a fixed catalog of widget types. A dashboard naming a type
