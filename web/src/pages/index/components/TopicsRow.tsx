@@ -40,10 +40,19 @@ export const TOPIC_EDIT_FIELDS = [
   'summary',
 ] as const satisfies ReadonlyArray<keyof TopicEditState>;
 
-/** The folded Duration/Level line under the time (phones): short labels in the label face, the
- *  values in the body text colour and the cell's timecode face. */
+/** The folded Duration/Level line under the time (phones): the desktop headers' words in normal
+ *  case and the muted body face ("Duration 30s", "Level 1"; finish review fix round 2 dropped the
+ *  tracked-caps `Dur`/`Lvl`), the values in the body text colour and the cell's timecode face.
+ *  The two pairs wrap onto their own lines when the time column is narrow (390). */
 const FOLDED_NUMS =
-  'mt-0.5 flex items-center gap-1 font-label text-[0.65rem] font-semibold tracking-[0.08em] text-muted-foreground uppercase [&_input]:font-tc [&_input]:text-[0.75rem] [&_input]:tracking-normal [&_input]:text-(--color-text)';
+  'mt-0.5 flex flex-wrap items-center gap-x-2 font-ui text-[0.72rem] font-normal text-muted-foreground [&_input]:font-tc [&_input]:text-[0.75rem] [&_input]:text-(--color-text)';
+const FOLDED_PAIR = 'inline-flex items-center whitespace-nowrap';
+
+/** A folded numeric input exactly as wide as its value in the timecode face, plus its padding and
+ *  border, so the unit sits right after the number ("30s"). */
+function foldedWidth(value: string) {
+  return { width: `calc(${Math.max(1, value.length)}ch + 0.6rem + 2px)` };
+}
 
 export interface TopicPatch {
   session_time?: string;
@@ -327,11 +336,8 @@ export function TopicsRow({
   // Named (aria-label) in both layouts; the folded line also shows short visible labels.
   const durationInput = (
     <input
-      className={clsx(
-        FEED_INLINE_INPUT,
-        FEED_INLINE_INPUT_NUM,
-        folded ? 'w-[calc(4ch+0.6rem+2px)]' : 'max-w-20',
-      )}
+      className={clsx(FEED_INLINE_INPUT, FEED_INLINE_INPUT_NUM, folded ? 'shrink-0' : 'max-w-20')}
+      style={folded ? foldedWidth(vals.duration_sec) : undefined}
       aria-label="Duration (s)"
       type="number"
       min={0}
@@ -344,11 +350,8 @@ export function TopicsRow({
   );
   const levelInput = (
     <input
-      className={clsx(
-        FEED_INLINE_INPUT,
-        FEED_INLINE_INPUT_NUM,
-        folded ? 'w-[calc(2ch+0.6rem+2px)]' : 'max-w-20',
-      )}
+      className={clsx(FEED_INLINE_INPUT, FEED_INLINE_INPUT_NUM, folded ? 'shrink-0' : 'max-w-20')}
+      style={folded ? foldedWidth(vals.topic_level) : undefined}
       aria-label="Level"
       type="number"
       min={1}
@@ -385,10 +388,17 @@ export function TopicsRow({
         />
         {folded && (
           <span className={FOLDED_NUMS}>
-            <span aria-hidden="true">Dur</span>
-            {durationInput}
-            <span aria-hidden="true">Lvl</span>
-            {levelInput}
+            <span className={FOLDED_PAIR}>
+              <span aria-hidden="true">Duration</span>
+              {durationInput}
+              <span aria-hidden="true" className="-ml-1">
+                s
+              </span>
+            </span>
+            <span className={FOLDED_PAIR}>
+              <span aria-hidden="true">Level</span>
+              {levelInput}
+            </span>
           </span>
         )}
       </TableCell>

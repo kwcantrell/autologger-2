@@ -338,3 +338,22 @@ describe('TopicsRow folded for phones', () => {
     expect(tr.querySelectorAll(':scope > td')).toHaveLength(5);
   });
 });
+
+// Finish review fix round 2: the folded line reads as the desktop headers do, in words and in
+// normal case ("Duration 30s · Level 1"), not tracked-caps abbreviations.
+describe('TopicsRow folded labels', () => {
+  it('reads Duration <n>s and Level <n> in normal case', () => {
+    renderRow({ folded: true });
+    const durationPair = screen.getByLabelText('Duration (s)').parentElement as HTMLElement;
+    const levelPair = screen.getByLabelText('Level').parentElement as HTMLElement;
+    expect(durationPair.textContent).toBe('Durations');
+    expect(levelPair.textContent).toBe('Level');
+    const line = durationPair.parentElement as HTMLElement;
+    expect(line.contains(levelPair)).toBe(true);
+    expect(line.className).not.toMatch(/\buppercase\b/);
+    expect(line.className).not.toMatch(/tracking-\[/);
+    expect(line.className).toMatch(/text-muted-foreground/);
+    expect(screen.queryByText('Dur')).toBeNull();
+    expect(screen.queryByText('Lvl')).toBeNull();
+  });
+});

@@ -430,7 +430,8 @@
  * top bar (the same mix, so the two read as one lit frame; 11.3 found an 18% bar invisible
  * beside the 25% rail), `--tx-live` is the live accent (pressed transport, playhead), `--tx-playhead`
  * the timeline playhead (the foreground when stopped, the live accent otherwise), `--tx-glow` the soft
- * glow, and `--tx-pill-*` the status label (STOPPED / ROLLING / REC / PLAY) and its pill. A
+ * glow, `--tx-playhead-glow` the playhead's own halo (strong enough to read beside a 2px line; none
+ * when stopped; finish review fix round 2), and `--tx-pill-*` the status label (STOPPED / ROLLING / REC / PLAY) and its pill. A
  * stopped pill is transparent over the bar, so its surface is the bar colour. Every
  * pill-fg/pill-bg pair clears AA (contrastTokens.test.ts). */
 :root,
@@ -440,6 +441,7 @@
   --tx-live: var(--si-accent);
   --tx-playhead: var(--si-fg);
   --tx-glow: transparent;
+  --tx-playhead-glow: transparent;
   --tx-pill-bg: var(--si-tx-stopped);
   --tx-pill-fg: var(--si-muted);
   --tx-pill-line: var(--si-line);
@@ -450,6 +452,7 @@
   --tx-live: color-mix(in oklab, var(--si-accent) 88%, #000000);
   --tx-playhead: var(--tx-live);
   --tx-glow: color-mix(in oklab, var(--si-accent) 46%, transparent);
+  --tx-playhead-glow: color-mix(in oklab, var(--si-accent) 75%, transparent);
   --tx-pill-bg: color-mix(in oklab, var(--si-accent) 88%, #000000);
   --tx-pill-fg: #ffffff;
   --tx-pill-line: color-mix(in oklab, var(--si-accent) 88%, #000000);
@@ -460,6 +463,7 @@
   --tx-live: color-mix(in oklab, var(--si-accent) 88%, #000000);
   --tx-playhead: var(--tx-live);
   --tx-glow: color-mix(in oklab, var(--si-accent) 46%, transparent);
+  --tx-playhead-glow: color-mix(in oklab, var(--si-accent) 75%, transparent);
   --tx-pill-bg: color-mix(in oklab, var(--si-accent) 88%, #000000);
   --tx-pill-fg: #ffffff;
   --tx-pill-line: color-mix(in oklab, var(--si-accent) 88%, #000000);
@@ -470,6 +474,7 @@
   --tx-live: color-mix(in oklab, var(--si-accent) 65%, #ffffff);
   --tx-playhead: var(--tx-live);
   --tx-glow: color-mix(in oklab, var(--si-accent) 30%, transparent);
+  --tx-playhead-glow: color-mix(in oklab, var(--si-accent) 60%, transparent);
   --tx-pill-bg: color-mix(in oklab, var(--si-accent) 65%, #ffffff);
   --tx-pill-fg: var(--si-ink);
   --tx-pill-line: color-mix(in oklab, var(--si-accent) 65%, #ffffff);
@@ -902,7 +907,7 @@
   }
 
   body.perf-dbg--no-v5-waveform-gradients #v4-log-session .timelineWaveformProgress {
-    fill: rgba(56, 189, 248, 0.4) !important;
+    fill: color-mix(in oklab, var(--si-accent) 40%, transparent) !important;
   }
 }
 

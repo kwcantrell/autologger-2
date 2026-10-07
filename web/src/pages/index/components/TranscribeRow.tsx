@@ -15,7 +15,7 @@ import {
   FEED_INLINE_INPUT,
   FEED_INLINE_INPUT_LABEL,
   FEED_INLINE_INPUT_TC,
-    FEED_ROW,
+  FEED_ROW,
 } from './FeedTable';
 import { JumpToTimeButton } from './JumpToTimeButton';
 
@@ -379,9 +379,13 @@ export const TranscribeRow = memo(function TranscribeRow({
         />
       </TableCell>
       <TableCell className={clsx(FEED_CELL, 'align-middle', FEED_CELL_TEXT)}>
+        {/* A word wider than its cell (phones) ends in an ellipsis and carries its full text on
+            hover (title) and in its accessible name on focus (finish review fix round 2). */}
         <input
-          className={FEED_INLINE_INPUT}
+          className={clsx(FEED_INLINE_INPUT, 'text-ellipsis')}
           value={vals.word}
+          title={vals.word}
+          aria-label={`Word: ${vals.word}`}
           onFocus={startEdit}
           onChange={(e) => changeField('word', e.target.value)}
           onBlur={(e) => commitField('word', e.target.value, e.relatedTarget)}

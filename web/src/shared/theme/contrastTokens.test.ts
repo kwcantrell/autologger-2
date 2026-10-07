@@ -396,12 +396,49 @@ describe('Show Ignition tokens (redesign-show-ignition D1)', () => {
     expect(blockVars(`[data-transport='stopped']`)['--tx-playhead']).toBe('var(--si-fg)');
   });
 
-  it('the Timeline playhead reads the playhead colour and the soft glow', () => {
+  it('the Timeline playhead reads the playhead colour and its glow', () => {
     const src = read('pages/index/components/Timeline.tsx');
     const line = src.split('\n').find((l) => l.includes("'timelinePlayhead absolute"));
     expect(line).toMatch(/bg-\(--tx-playhead\)/);
-    expect(line).toMatch(/var\(--tx-glow\)/);
+    expect(line).toMatch(/var\(--tx-playhead-glow\)/);
     expect(line).not.toMatch(/bg-si-fg/);
+  });
+
+  // Finish review fix round 2: the halo was too faint to see (~2/255 beside the line). Live states
+  // carry a strong playhead glow; stopped carries none; the playhead's shadow is the reference's
+  // `0 0 10px 1px` halo (plus a tight inner ring) on that token, with no animation.
+  it.each([
+    ['playback', 55],
+    ['rolling', 70],
+    ['recording', 70],
+  ])('the %s playhead glow is the accent at its floor', (state, floor) => {
+    const glow = blockVars(`[data-transport='${state}']`)['--tx-playhead-glow'] ?? '';
+    const m = glow.match(/color-mix\(in oklab, var\(--si-accent\) (\d+)%, transparent\)/);
+    expect(m).not.toBeNull();
+    expect(Number((m as RegExpMatchArray)[1])).toBeGreaterThanOrEqual(floor as number);
+  });
+
+  it('the stopped playhead has no glow', () => {
+    expect(blockVars(`[data-transport='stopped']`)['--tx-playhead-glow']).toBe('transparent');
+  });
+
+  it('the Timeline playhead casts the visible halo, unanimated', () => {
+    const src = read('pages/index/components/Timeline.tsx');
+    const line = src.split('\n').find((l) => l.includes("'timelinePlayhead absolute")) ?? '';
+    expect(line).toMatch(/0_0_10px_1px_var\(--tx-playhead-glow\)/);
+    expect(line).not.toMatch(/animate-/);
+  });
+
+  // Finish review fix round 2: the waveform's played portion was sky blue (~200 deg) beside the
+  // #5b7cff accent; it is the accent now, and so is its perf-debug flat fallback.
+  it('the waveform progress is the accent, with no sky-blue stops', () => {
+    const src = read('pages/index/components/timeline/TimelineWaveform.tsx');
+    for (const sky of ['#7dd3fc', '#38bdf8', '#0284c7']) expect(src).not.toContain(sky);
+    const prog = src.match(/const WAVEFORM_PROGRESS =\s*'([^']*)'/)?.[1] ?? '';
+    expect(prog).toMatch(/var\(--si-accent\)/);
+    const perf = CSS.match(/\.timelineWaveformProgress\s*\{([^}]*)\}/)?.[1] ?? '';
+    expect(perf).toMatch(/var\(--si-accent\)/);
+    expect(perf).not.toMatch(/56, 189, 248/);
   });
 
   it('the live hero timecode takes the accent with the glow and clears AA on the live card', () => {

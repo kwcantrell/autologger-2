@@ -49,14 +49,16 @@ const COLUMNS: ColumnDef[] = [
     key: 'speaker',
     label: 'Speaker',
     sortKey: 'speaker',
-    thClassName: 'text-left w-32 max-md:w-auto',
+    thClassName: 'text-left w-32 max-md:w-px',
   },
   // Phones: no floors, so the table fits a 390px card with no sideways scroll (finish review).
+  // The speaker column shrinks to its content ("Person 10") and the word column takes the rest,
+  // so ordinary words show whole at 390 (fix round 2: "defamatio" was cut beside a 102px speaker).
   {
     key: 'word',
     label: 'Word(s)',
     sortKey: 'word',
-    thClassName: 'text-left min-w-40 max-md:min-w-0',
+    thClassName: 'text-left min-w-40 max-md:min-w-0 max-md:w-full',
   },
 ];
 
