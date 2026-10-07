@@ -22,8 +22,9 @@ agent writes code in this repo. Review this table in the quarterly rule review.
 
 These live in the forge, not the repo, so the template can't apply them:
 
-1. Main branch ruleset: require a pull request, required status checks `gates`, `secrets` and
-   `dependency-review`, code owner review, and no bypass for agents or bots.
+1. Main branch ruleset: require a pull request, required status checks `gates`, `secrets`,
+   `dependency-review` and `db-tests` (the pg and integration tests, ADR 0026), code owner
+   review, and no bypass for agents or bots.
 2. Secret scanning with push protection
    ([docs](https://docs.github.com/en/code-security/secret-scanning/introduction/about-push-protection)).
 3. Dependency graph (needed by dependency review).

@@ -52,6 +52,20 @@ lifecycle:
   - .claude/hooks/guard-approval.sh
   - .claude/hooks/stop-check.sh
   grandfathered_changes: []
+  # Paths the pg and integration tests depend on (ci-db-test-selection D1). When a PR changes none,
+  # those vitest projects are skipped. Read from the merge-base, like test_globs.
+  db_test_paths:
+  - server/**
+  - packages/**
+  - supabase/**
+  - test/**
+  - docker/**
+  - fixtures/**
+  - package.json
+  - package-lock.json
+  - scripts/lib/check_change.py
+  - .github/workflows/**
+  - openspec/config.yaml
   high_risk_paths:
   - AGENTS.md
   - CLAUDE.md
