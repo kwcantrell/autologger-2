@@ -90,8 +90,10 @@ available, otherwise the session id) when the requester is permitted to view tha
 (can access the holder's show); for a requester without that access —
 and for the race where the holder released the lock between the failed acquire and error
 mapping, leaving nothing to check access against — the detail SHALL fall back to the
-identifier-free generic in-flight detail (`GENERATION_IN_FLIGHT_DETAIL`). Status stays
-`409` either way. Before issuing the provider request, the pipeline
+identifier-free generic in-flight detail (`GENERATION_IN_FLIGHT_DETAIL`). A run of the same
+session in another process sharing the database (its `transcript-generation` session lease,
+ADR 0021 slice 8b) SHALL also be refused with `409` and the generic in-flight detail, because the
+process lock has no holder to name. Status stays `409` either way. Before issuing the provider request, the pipeline
 SHALL check whether the originating HTTP request has been aborted and, if so, abandon the
 run without provider spend, responding `400` with a detail distinct from the other `400`
 conditions (no-audio, all-unreadable, no-speech) — **not** an unauthorized status code
@@ -127,6 +129,12 @@ Generation lock status is observable).
 - **WHEN** the client's connection drops after the provider request was issued and the
   run then succeeds
 - **THEN** the replaced words are persisted and served by subsequent list requests
+
+#### Scenario: A run in another process is refused with the generic detail
+- **WHEN** another process holds a live `transcript-generation` lease for session S, and a member
+  of S's show requests generation for S through this process, whose lock is free
+- **THEN** the response is `409` with the generic in-flight `{detail}`, no provider request is
+  made, and this process's lock is free afterwards
 
 ### Requirement: Segment grouping and concatenation
 The pipeline SHALL classify each audio segment by **probing the blob bytes** (container +
