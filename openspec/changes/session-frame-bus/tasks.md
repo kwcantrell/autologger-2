@@ -22,7 +22,9 @@
 
 ## 1. Baselines
 
-- [ ] 1.1 Run the full suites on the base and record the counts. List the existing tests D8 categories 1-2 may touch: `grep -rn "closeSocketsAfterAccessLoss\|closeUserSockets\|connection limit" --include=*.test.ts server/src packages`. Known flakes (record if they recur): storage "8 contending", `catalogContention.pg` cross-team retry, `aiMcpServer` "Cap holds under concurrent calls".
+- [x] 1.1 Run the full suites on the base and record the counts. List the existing tests D8 categories 1-2 may touch: `grep -rn "closeSocketsAfterAccessLoss\|closeUserSockets\|connection limit" --include=*.test.ts server/src packages`. Known flakes (record if they recur): storage "8 contending", `catalogContention.pg` cross-team retry, `aiMcpServer` "Cap holds under concurrent calls".
+  - Evidence: `cd server && npx vitest run --project unit --project integration --project pg` -> `Test Files 132 passed | 3 skipped (135)`, `Tests 1658 passed | 4 skipped (1662)` (log `9a-1.1-server.log`); `npx vitest run` in session-core -> `Tests 41 passed (41)`, storage -> `Tests 133 passed (133)`, catalog -> `Tests 50 passed (50)` (logs `9a-1.1-session-core.log`, `9a-1.1-storage.log`, `9a-1.1-catalog.log`); `cd web && npx vitest run` -> `Tests 1689 passed (1689)` (log `9a-1.1-web.log`); `npm run typecheck` -> 0 `error TS` (log `9a-1.1-typecheck.log`). No known flake recurred.
+  - Evidence: the grep -> `server/src/routers/_helpers.test.ts:61` (`closeSocketsAfterAccessLoss`, category 1) and `server/src/test/session/SessionHub.int.test.ts:786-858` (`closeUserSockets`, unchanged by the move); no `connection limit` hit in tests, but `server/src/test/pg/catalogSchema.pg.test.ts:609` asserts `rolconnlimit: 20` (category 2; `:635` re-runs the old role block and keeps 20) (log `9a-1.1-grep.log`).
 
 ## 2. Connection limit (design D7)
 
