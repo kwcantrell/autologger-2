@@ -1,19 +1,26 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { Menu } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { useRoute } from 'wouter';
 import { useProfile } from '../../api/hooks/useProfile';
 import { useYoutubeImport } from '../../api/hooks/useSessions';
 import { Toast, toast } from '../../shared/components/Toast';
-import { Button } from '../../shared/components/ui/button';
-import { useIsMobile } from '../../shared/ui/breakpoints';
+import { SidebarProvider, useSidebar } from '../../shared/components/ui/sidebar';
+import { isOverlayOpen } from '../../shared/ui/overlayOpen';
 import { freezeAutologgerLoadingVideos } from '../../shared/utils/loadingVideo';
 import { initPerfDebugUI } from '../../shared/utils/perfDebug';
 import { LazyChunk } from './components/ChunkLoadBoundary';
 import { OnboardingPanel } from './components/OnboardingPanel';
-import { RouteLoadingState } from './components/RouteLoadingState';
 import { SessionRoute } from './components/SessionRoute';
+import { isTypingTarget } from './components/ShortcutsDialog';
+import {
+  DEFAULT_SETTINGS_SECTION,
+  SETTINGS_VIEW_SELECTOR,
+  type SettingsSectionId,
+  type SettingsState,
+} from './components/settings/sections';
+import { TopBar } from './components/TopBar';
 import { V6Rail } from './components/V6Rail';
+import { getTransportStatus, subscribeTransportStatus } from './coordination/transportStatus';
 import { navigate } from './navigation';
 import { useLoginReturnConsume } from './useLoginReturnConsume';
 
@@ -37,11 +44,9 @@ import { useLoginReturnConsume } from './useLoginReturnConsume';
 // in which case `lazy()` caches the rejection forever and only a fresh
 // instance can recover. See `./components/ChunkLoadBoundary`.
 //
-// Route-level: gets the shared brand loading frame, identical to the one
-// SessionRoute renders while resolving (`RouteLoadingState`) — a bare `null`
-// here would blank the main column for the chunk fetch.
-const loadTeamsRoute = () =>
-  import('./components/TeamsRoute').then((m) => ({ default: m.TeamsRoute }));
+// Five split points (web-frontend-platform "The client island is route-split behind recoverable
+// boundaries"): the session workspace (SessionRoute's own), and the four overlays below. `/teams`
+// has no chunk of its own any more: it opens the Settings view (redesign-show-ignition D3).
 
 // Overlay-level: `fallback={null}`. These are already gated behind open flags
 // and render as overlays over an unchanged page, so arriving one frame late
@@ -58,8 +63,8 @@ const loadYouTubeImportErrorModal = () =>
   import('./components/YouTubeImportErrorModal').then((m) => ({
     default: m.YouTubeImportErrorModal,
   }));
-const loadHomeSettingsModal = () =>
-  import('./components/HomeSettingsModal').then((m) => ({ default: m.HomeSettingsModal }));
+const loadSettingsView = () =>
+  import('./components/settings/SettingsView').then((m) => ({ default: m.SettingsView }));
 
 // Warm the settings chunk once the page has gone quiet, so the first
 // interactive open is a cache hit rather than a network round trip. 2.5s is
@@ -68,6 +73,30 @@ const loadHomeSettingsModal = () =>
 // only evaluates it — it mounts nothing and renders nothing, which
 // `AppShell.test.tsx` pins.
 const SETTINGS_PREFETCH_DELAY_MS = 2500;
+
+/**
+ * The shell's one `[` listener (redesign-show-ignition D8; web-ui-system "Shell-level sidebar
+ * shortcut"). Mounted inside the shell's `SidebarProvider` on every signed-in route, with or
+ * without a session. It yields to text entry and to open dialogs and menus other than the
+ * Settings view, like the console's single-key handlers; the primitive's own Ctrl/⌘+B is
+ * unaffected.
+ */
+function SidebarShortcut() {
+  const { toggleSidebar } = useSidebar();
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== '[' || e.ctrlKey || e.metaKey || e.altKey || e.defaultPrevented) return;
+      // The Settings view is the one dialog `[` reaches through (web-ui-system "The Settings view
+      // is modal to the console": the shell owns `[`).
+      if (isTypingTarget(e.target) || isOverlayOpen(document, SETTINGS_VIEW_SELECTOR)) return;
+      e.preventDefault();
+      toggleSidebar();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [toggleSidebar]);
+  return null;
+}
 
 export function AppShell() {
   // Active session is URL-derived (design D2): `/sessions/:id` is the session
@@ -81,17 +110,37 @@ export function AppShell() {
   // the session one — the wouter-pattern mirror of the shared route module.
   // No <Route> tree (design D6's "gate above router" shape stays intact):
   // this is a plain boolean read off the URL, same idiom as onSessionRoute.
+  // It renders the home view and opens Settings on Members (redesign-show-ignition D3).
   const [onTeamsRoute] = useRoute('/teams');
   const [showNewSession, setShowNewSession] = useState(false);
   const [showBatchImport, setShowBatchImport] = useState(false);
-  const [showSettings, setShowSettings] = useState(false);
+  // The Settings view's open state and section (redesign-show-ignition D3; web-ui-system "The
+  // Settings modal costs nothing while closed"): shell state, NEVER the URL, so an open view
+  // survives route changes. `/teams` opens it by setting this state, not by a route branch.
+  const [settings, setSettings] = useState<SettingsState>(() =>
+    onTeamsRoute ? { section: 'members' } : null,
+  );
+  // Arriving at `/teams` (load or navigation) opens Settings on Members. Adjusted during render,
+  // so the arriving commit already holds the open state rather than painting closed first.
+  const [prevOnTeamsRoute, setPrevOnTeamsRoute] = useState(onTeamsRoute);
+  if (onTeamsRoute !== prevOnTeamsRoute) {
+    setPrevOnTeamsRoute(onTeamsRoute);
+    if (onTeamsRoute) setSettings({ section: 'members' });
+  }
+  // The section an open with no named section lands on: the last one visited this page load,
+  // initially Show details (web-ui-system "Settings modal defers inactive tab content").
+  const lastSettingsSection = useRef<SettingsSectionId>(DEFAULT_SETTINGS_SECTION);
+  useEffect(() => {
+    if (settings) lastSettingsSection.current = settings.section;
+  }, [settings]);
+  // The open view's discard guard, so the shell's own close path (the top bar's status) asks
+  // before dropping unsaved inline edits. `true` at once when nothing is dirty.
+  const settingsCloseGuard = useRef<(() => true | Promise<boolean>) | null>(null);
   const [ytImportPending, setYtImportPending] = useState(false);
   const [ytImportError, setYtImportError] = useState<{
     sessionId: string;
     lastUrl: string;
   } | null>(null);
-  const [railOpen, setRailOpen] = useState(false);
-  const isMobile = useIsMobile();
   const queryClient = useQueryClient();
   const { data: profile } = useProfile();
   const { mutateAsync: runYoutubeImport } = useYoutubeImport();
@@ -99,23 +148,6 @@ export function AppShell() {
   // Post-login deep-link return (design D6): keyed explicitly on
   // `auth.logged_in === true`, never on this component merely mounting.
   useLoginReturnConsume(profile?.auth.logged_in === true);
-
-  const closeRail = useCallback(() => setRailOpen(false), []);
-
-  // Drop any open-drawer state when leaving the mobile breakpoint, and close
-  // the drawer on Escape while it is open.
-  useEffect(() => {
-    if (!isMobile) {
-      setRailOpen(false);
-      return;
-    }
-    if (!railOpen) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setRailOpen(false);
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [isMobile, railOpen]);
 
   // syncChrome's title-reset behavior, now route-driven (design D9): with no
   // active session the tab title returns to the app name. (Nothing currently
@@ -128,8 +160,8 @@ export function AppShell() {
   // `AutoLogger_closeSettingsModal` / `Home_reloadSessionList` /
   // `Home_clearSessionList` window globals — retired by web-coordination-seam:
   // the first duplicated the `onClose` prop already threaded to
-  // `HomeSettingsModal`, the second is now inlined there via the shared query
-  // client, and the third was an identical duplicate of the second.)
+  // the Settings view, the second is now inlined in its saves via the shared
+  // query client, and the third was an identical duplicate of the second.)
   useEffect(() => {
     // Handle data-v6-modal-dismiss clicks (replaces v3.js listener)
     const handleModalDismiss = (e: MouseEvent) => {
@@ -155,7 +187,7 @@ export function AppShell() {
 
   // Idle prefetch of the now-split settings chunk (plan C5.5): the modal used
   // to be always-mounted, so opening it never touched the network. Gating the
-  // mount on `showSettings` would otherwise turn a cold first open into a
+  // mount on `settings` would otherwise turn a cold first open into a
   // chunk fetch; warming it after the load burst keeps interactive opens fast
   // without putting the bytes on the homepage's critical path.
   useEffect(() => {
@@ -164,7 +196,7 @@ export function AppShell() {
       // open goes back through `LazyChunk`, which owns the retry and the error card. Without
       // the catch, a redeploy-rotated chunk URL or a network blip turns the warm-up into an
       // unhandled rejection (mirrors SessionRoute's workspace warm-up).
-      void loadHomeSettingsModal().catch(() => {});
+      void loadSettingsView().catch(() => {});
     }, SETTINGS_PREFETCH_DELAY_MS);
     return () => clearTimeout(t);
   }, []);
@@ -204,9 +236,21 @@ export function AppShell() {
     queryClient.invalidateQueries({ queryKey: ['sessions'] });
   }, [activeSessionId, queryClient]);
 
+  // The rail's Settings control names no section: the last one visited, else Show details.
   const handleOpenSettings = useCallback(() => {
-    setShowSettings(true);
+    setSettings({ section: lastSettingsSection.current });
   }, []);
+
+  const handleSettingsSectionChange = useCallback((section: SettingsSectionId) => {
+    setSettings({ section });
+  }, []);
+
+  const registerSettingsCloseGuard = useCallback(
+    (guard: (() => true | Promise<boolean>) | null) => {
+      settingsCloseGuard.current = guard;
+    },
+    [],
+  );
 
   // Stable callback for the home launch surface's New Session action (design
   // D10), threaded AppShell -> SessionRoute -> HomeRoute, so a fresh closure
@@ -215,29 +259,44 @@ export function AppShell() {
     setShowNewSession(true);
   }, []);
 
-  const handleCloseSettings = useCallback(() => {
-    setShowSettings(false);
+  const handleOpenBatchImport = useCallback(() => {
+    setShowBatchImport(true);
   }, []);
 
-  // Stable identity for the mobile-rail-open trigger threaded down to
-  // WorkspaceStatic (settings-modal-mount-cost, design D0). An inline arrow
-  // here gives WorkspaceStatic's memo a fresh prop reference on every AppShell
-  // render, so the memo's shallow comparison can never bail. Matches the
-  // useCallback treatment already given to handleOpenSettings /
-  // handleCloseSettings / handleOpenNewSession above.
-  //
-  // Scope of the claim (deliberately narrow): this keeps the boundary props
-  // referentially stable, which is what AppShell.test.tsx asserts. It is NOT
-  // known to change how often the workspace actually renders — the change that
-  // introduced it originally claimed a large re-render win, and that claim was
-  // withdrawn when the render counts behind it turned out to be an artifact of
-  // the profiling tool (ground truth: SessionWorkspace renders zero times on a
-  // settings click, with or without this callback). Do not restore a
-  // performance rationale here without a measurement that does not come from
-  // `agent-browser react renders`.
-  const handleOpenMobileNav = useCallback(() => {
-    setRailOpen(true);
-  }, []);
+  // Closing the view (its back control, Escape, or the failure card's dismiss). On `/teams` the
+  // view is the page, so closing it goes home through the shared navigation wrapper
+  // (team-management "Teams management page"); elsewhere the route underneath is already right.
+  const handleCloseSettings = useCallback(() => {
+    setSettings(null);
+    if (onTeamsRoute) navigate('/');
+  }, [onTeamsRoute]);
+
+  // The top bar's status control (redesign-show-ignition 3.3; web-ui-system "Status returns to
+  // the open session"): close Settings if it is open, through its discard guard, and show that
+  // session's console, navigating only when the route is not already on it.
+  const handleReturnToSession = useCallback(
+    (sid: string) => {
+      const proceed = () => {
+        setSettings(null);
+        if (sid !== activeSessionId) navigate(`/sessions/${encodeURIComponent(sid)}`);
+      };
+      const ok = settingsCloseGuard.current?.() ?? true;
+      if (ok === true) proceed();
+      else
+        void ok.then((confirmed) => {
+          if (confirmed) proceed();
+        });
+    },
+    [activeSessionId],
+  );
+
+  // A top-bar team or show switch with Settings open asks the view's discard guard first, so it
+  // never drops unsaved edits silently (web-ui-system "Honest save model in Settings"). The view
+  // stays open on the new selection; `true` at once when it is closed or clean.
+  const confirmSettingsDiscard = useCallback(
+    (): true | Promise<boolean> => settingsCloseGuard.current?.() ?? true,
+    [],
+  );
 
   // Zero-membership onboarding (teams-self-serve, task 6.3; design D8): a
   // render switch INSIDE the authed shell, keyed on `logged_in && teams
@@ -246,6 +305,16 @@ export function AppShell() {
   // user has no active studio to drive the rail/workspace, so this replaces
   // the whole shell rather than degrading part of it.
   const needsOnboarding = profile?.auth.logged_in && profile.auth.user?.teams.length === 0;
+
+  // Shell transport tint (redesign-show-ignition D2): the open session's
+  // transport state, published by SessionWorkspace. The store changes only on
+  // transitions, so this re-renders the shell only then; the tints themselves
+  // are pure CSS on `data-transport` (shared/theme/tailwind.css).
+  const transportState = useSyncExternalStore(
+    subscribeTransportStatus,
+    () => getTransportStatus().state,
+    () => 'stopped' as const,
+  );
 
   if (needsOnboarding) {
     return (
@@ -261,45 +330,32 @@ export function AppShell() {
       <Toast />
       {/* shell/shell-v3 strings retained (chrome.css .shell stays legacy until Task 11);
           the AppShell overrides that widen it convert to utilities here (win by layer). */}
-      <div className="shell shell-v3 max-w-none w-full mx-0 px-0 pb-0">
-        {/* v6-app string retained; desktop flex row filling viewport, max-md block. */}
+      {/* Desktop: a viewport-high column — the top bar (redesign-show-ignition D5), full width,
+          above the row that holds the rail and main. Phones: plain block flow (the page scrolls). */}
+      {/* The SidebarProvider's wrapper is the shell root (redesign-show-ignition D8): the top bar's
+          trigger, the `[` shortcut and the rail share its state. */}
+      <SidebarProvider
+        className="shell shell-v3 max-w-none w-full mx-0 px-0 pb-0 flex-col flex-1 min-h-0 h-[100dvh] max-md:block max-md:h-auto"
+        data-transport={transportState}
+      >
+        <SidebarShortcut />
+        <TopBar
+          onCloseSession={handleCloseSession}
+          onReturnToSession={handleReturnToSession}
+          confirmSwitch={confirmSettingsDiscard}
+        />
+        {/* v6-app string retained; desktop flex row filling the height under the top bar, max-md block. */}
         <div
-          className="v6-app flex flex-row items-stretch flex-1 w-full min-w-0 overflow-hidden min-h-[100dvh] max-md:block max-md:overflow-visible max-md:min-h-0"
+          className="v6-app flex flex-row items-stretch flex-1 w-full min-w-0 min-h-0 overflow-hidden max-md:block max-md:overflow-visible"
           id="v6-app"
         >
-          {isMobile && railOpen && (
-            <button
-              type="button"
-              className="fixed inset-0 z-(--z-rail-scrim) appearance-none border-none p-0 bg-[rgba(6,9,16,0.55)] [backdrop-filter:blur(1.5px)] cursor-pointer animate-rail-scrim-fade"
-              aria-label="Close navigation"
-              onClick={closeRail}
-            />
-          )}
           <V6Rail
             activeSessionId={activeSessionId}
-            isMobile={isMobile}
-            mobileOpen={railOpen}
-            onMobileClose={closeRail}
-            onSelectSession={(sid) => {
-              handleSelectSession(sid);
-              closeRail();
-            }}
-            onCloseSession={() => {
-              handleCloseSession();
-              closeRail();
-            }}
-            onNewSession={() => {
-              setShowNewSession(true);
-              closeRail();
-            }}
-            onBatchImport={() => {
-              setShowBatchImport(true);
-              closeRail();
-            }}
-            onOpenSettings={() => {
-              handleOpenSettings();
-              closeRail();
-            }}
+            onSelectSession={handleSelectSession}
+            onCloseSession={handleCloseSession}
+            onNewSession={handleOpenNewSession}
+            onBatchImport={handleOpenBatchImport}
+            onOpenSettings={handleOpenSettings}
           />
           {/* main-v3 / v3-layout-session-focus strings retained. Display comes from
               SessionWorkspace's `.main-v3` @layer rule (display:block — the app.css
@@ -318,20 +374,8 @@ export function AppShell() {
                   : 'shrink-0 w-full box-border mb-6'
               }
             >
-              {/* Hamburger: home/teams only on mobile. Active session mounts the menu
-                  beside session controls in MaximizeLogStrip. md:hidden + inline-flex
-                  (not hidden+max-md:inline-flex) avoids utility-order hiding the button. */}
-              {!activeSessionId && (
-                <Button
-                  variant="outline"
-                  size="icon-lg"
-                  className="md:hidden mt-[0.6rem] ml-3 size-11 rounded-v5-sm"
-                  aria-label="Open navigation"
-                  onClick={() => setRailOpen(true)}
-                >
-                  <Menu className="size-5" strokeWidth={1.8} aria-hidden="true" />
-                </Button>
-              )}
+              {/* The no-session mobile hamburger that sat here is replaced by the top bar's
+                  sidebar control (redesign-show-ignition 3.1). */}
               {/* Void top-bar strip: the .v6WorkspaceTopBarVoid !important zero-height
                   war vs .v4-top-bar min-height is resolved here by writing the winning
                   values directly — both rules were AppShell's own and now live as
@@ -408,33 +452,26 @@ export function AppShell() {
               </LazyChunk>
             )}
 
-            {/* Settings modal: mounted here, beside the route switch, so the
-                rail's Settings button works on every route (`/`, `/sessions/:id`,
-                `/teams`) — a route-branch-coupled mount was the bug class itself
-                (teams-settings-nav, design D1). That invariant is unchanged by
-                the code split (plan C5.5): the gate below is `showSettings`, a
-                piece of AppShell state, and NEVER the URL — so an open modal
-                still survives route changes instead of desyncing `showSettings`
-                from what's rendered.
-                What did change: the mount is now conditional rather than
-                unconditional. It used to rely on Radix Dialog rendering nothing
-                while `open` is false; with the modal behind `React.lazy` that
-                would download the chunk on every page load, defeating the split.
-                Gating on `showSettings` keeps the bytes off the homepage; the
-                idle prefetch above keeps the first open warm. The
-                settings-modal-mount-cost optimizations live INSIDE the modal and
-                are untouched. */}
-            {showSettings && (
-              <LazyChunk
-                load={loadHomeSettingsModal}
-                variant="overlay"
-                onDismiss={handleCloseSettings}
-              >
-                {(HomeSettingsModal) => (
-                  <HomeSettingsModal
-                    isOpen
+            {/* Settings view (redesign-show-ignition D3): mounted here, beside the route
+                switch, so the rail's Settings control works on every route — a
+                route-branch-coupled mount was the bug class itself (teams-settings-nav, design
+                D1). The gate is `settings`, a piece of AppShell state, and NEVER the URL — so an
+                open view survives route changes instead of desyncing from what's rendered; `/teams`
+                opens it by setting that state. The mount is conditional rather than relying on a
+                primitive to render nothing, which behind `React.lazy` would download the chunk on
+                every page load; the idle prefetch above keeps the first open warm. Inside <main>,
+                below the top bar and beside the rail: the view covers the console, not the bar,
+                so the status control and menus stay reachable over it. */}
+            {settings && (
+              <LazyChunk load={loadSettingsView} variant="overlay" onDismiss={handleCloseSettings}>
+                {(SettingsView) => (
+                  <SettingsView
+                    section={settings.section}
+                    onSectionChange={handleSettingsSectionChange}
                     onClose={handleCloseSettings}
                     onCloseSession={handleCloseSession}
+                    backLabel={activeSessionId ? 'Back to session' : 'Back to sessions'}
+                    registerCloseGuard={registerSettingsCloseGuard}
                   />
                 )}
               </LazyChunk>
@@ -443,33 +480,16 @@ export function AppShell() {
             {/* Session workspace, behind deep-link resolution: SessionRoute
                 resolves the routed id through the per-id query and gates the
                 workspace mount on it (task 4.2, design D5); the empty id renders
-                the dedicated home route component (design D10). At `/teams`
-                (teams-self-serve, task 5.2), TeamsRoute mounts in SessionRoute's
-                place instead — since SessionRoute is what renders the no-session
-                home view (HomeRoute) for the empty id, swapping it out is what
-                hides that home view at the teams route. */}
-            {onTeamsRoute ? (
-              <LazyChunk
-                load={loadTeamsRoute}
-                variant="route"
-                // Teams-specific announcement and id: the session route's
-                // `#session-route-loading` identifies THAT route's wait, and `/teams` renders
-                // in its place, not inside it (PR review finding 3).
-                fallback={<RouteLoadingState label="Loading teams" id="teams-route-loading" />}
-              >
-                {(TeamsRoute) => <TeamsRoute />}
-              </LazyChunk>
-            ) : (
-              <SessionRoute
-                sessionId={activeSessionId}
-                ytImportPending={ytImportPending}
-                onNewSession={handleOpenNewSession}
-                onOpenMobileNav={handleOpenMobileNav}
-              />
-            )}
+                the dedicated home route component (design D10) — on `/` and, under
+                the Settings view, on `/teams`. */}
+            <SessionRoute
+              sessionId={activeSessionId}
+              ytImportPending={ytImportPending}
+              onNewSession={handleOpenNewSession}
+            />
           </main>
         </div>
-      </div>
+      </SidebarProvider>
     </>
   );
 }

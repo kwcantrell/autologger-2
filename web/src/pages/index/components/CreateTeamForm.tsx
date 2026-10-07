@@ -8,12 +8,12 @@ import { Input } from '../../../shared/components/ui/input';
 
 // --- CreateTeamForm (teams-self-serve, task 6.1) ---
 //
-// Lives in its own module rather than inside `TeamsRoute.tsx` for a bundling
+// Lives in its own module rather than inside the (since retired) `TeamsRoute.tsx` for a bundling
 // reason (bundle route-splitting, plan C5.3): it has two consumers — the
 // `/teams` page and `OnboardingPanel` — and `OnboardingPanel` is part of the
 // eagerly-loaded homepage graph (AppShell early-returns to it for a logged-in
 // user with zero teams). While this component lived in `TeamsRoute.tsx`, that
-// one import pinned the ENTIRE teams page — `TeamCard` and the whole
+// one import pinned the ENTIRE teams page — the team card and the whole
 // `useTeams` detail/invite/role mutation surface — into the initial download,
 // silently cancelling TeamsRoute's `React.lazy` edge (its lazy chunk built out
 // to zero files). Splitting the shared leaf into its own module is what makes
@@ -26,7 +26,14 @@ function errorMessage(err: unknown, fallback: string): string {
 
 /** Create-team form (task 6.1's `useCreateTeam` mutation). Reused verbatim by
  * the zero-membership onboarding panel (task 6.3, design D8). */
-export function CreateTeamForm({ onCreated }: { onCreated?: () => void }) {
+export function CreateTeamForm({
+  onCreated,
+  className = 'glass-panel rounded-v5-lg px-4 py-4',
+}: {
+  onCreated?: () => void;
+  /** The form's own box. Settings › Team details sets it inside a card, so it passes none. */
+  className?: string;
+}) {
   const [slug, setSlug] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -49,11 +56,7 @@ export function CreateTeamForm({ onCreated }: { onCreated?: () => void }) {
   }
 
   return (
-    <form
-      className="glass-panel rounded-v5-lg px-4 py-4"
-      data-testid="team-create-form"
-      onSubmit={handleSubmit}
-    >
+    <form className={className} data-testid="team-create-form" onSubmit={handleSubmit}>
       {/* shadcn-port-shell D5: one destructive Alert (the tests require exactly one alert). */}
       {error && (
         <Alert variant="destructive" className="mb-3">

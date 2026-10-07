@@ -113,7 +113,7 @@ describe('Dialog (mobile bottom sheet)', () => {
       const [text, setText] = useState('');
       return <input aria-label="Draft" value={text} onChange={(e) => setText(e.target.value)} />;
     }
-    // Parent vetoes every close (HomeSettingsModal's dirty → "Keep editing" pattern).
+    // Parent vetoes every close (a dirty form's "Keep editing" pattern).
     render(
       <Dialog open onOpenChange={() => {}} title="Settings">
         <Child />

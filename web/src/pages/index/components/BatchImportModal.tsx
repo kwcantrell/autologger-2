@@ -35,7 +35,7 @@ function ProgressBar({ percent }: { percent: number }) {
       aria-valuemax={100}
     >
       <div
-        className="h-full bg-sky-400 [transition:width_0.15s_ease]"
+        className="h-full bg-primary [transition:width_0.15s_ease]"
         style={{ width: `${percent}%` }}
       />
     </div>

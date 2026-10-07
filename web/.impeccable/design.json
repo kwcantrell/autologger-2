@@ -1,0 +1,710 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-07T22:53:54+00:00",
+  "title": "Design System: AutoLogger",
+  "extensions": {
+    "colorMeta": {
+      "accent": {
+        "role": "primary",
+        "displayName": "Ignition Blue",
+        "canonical": "var(--si-accent) = #5b7cff",
+        "tonalRamp": [
+          "oklch(15% 0.118 269)",
+          "oklch(26% 0.137 269)",
+          "oklch(37% 0.157 269)",
+          "oklch(48% 0.176 269)",
+          "oklch(60% 0.198 269)",
+          "oklch(71% 0.178 269)",
+          "oklch(83% 0.157 269)",
+          "oklch(95% 0.135 269)"
+        ]
+      },
+      "accent-text": {
+        "role": "primary",
+        "displayName": "Lifted Ignition",
+        "canonical": "--si-accent-text",
+        "tonalRamp": [
+          "oklch(15% 0.118 269)",
+          "oklch(26% 0.137 269)",
+          "oklch(37% 0.157 269)",
+          "oklch(48% 0.176 269)",
+          "oklch(60% 0.198 269)",
+          "oklch(71% 0.178 269)",
+          "oklch(83% 0.157 269)",
+          "oklch(95% 0.135 269)"
+        ],
+        "approxHex": "#85a3ff"
+      },
+      "primary-tint": {
+        "role": "primary",
+        "displayName": "Primary Tint",
+        "canonical": "--si-primary-tint",
+        "tonalRamp": [
+          "#131723",
+          "#181f34",
+          "#1c2541",
+          "#2b3658",
+          "#42579d",
+          "#4b68d7",
+          "#5b7cff",
+          "#85a3ff"
+        ],
+        "approxHex": "#2b3658"
+      },
+      "primary-line": {
+        "role": "primary",
+        "displayName": "Primary Line",
+        "canonical": "--si-primary-line",
+        "tonalRamp": [
+          "#131723",
+          "#181f34",
+          "#1c2541",
+          "#2b3658",
+          "#42579d",
+          "#4b68d7",
+          "#5b7cff",
+          "#85a3ff"
+        ],
+        "approxHex": "#42579d"
+      },
+      "selected-tint": {
+        "role": "primary",
+        "displayName": "Selected Tint",
+        "canonical": "--sel-bg",
+        "tonalRamp": [
+          "#131723",
+          "#181f34",
+          "#1c2541",
+          "#2b3658",
+          "#42579d",
+          "#4b68d7",
+          "#5b7cff",
+          "#85a3ff"
+        ]
+      },
+      "selected-line": {
+        "role": "primary",
+        "displayName": "Selected Line",
+        "canonical": "--sel-line",
+        "tonalRamp": [
+          "#131723",
+          "#181f34",
+          "#1c2541",
+          "#2b3658",
+          "#42579d",
+          "#4b68d7",
+          "#5b7cff",
+          "#85a3ff"
+        ]
+      },
+      "ignition-stopped": {
+        "role": "primary",
+        "displayName": "Stopped Frame",
+        "canonical": "--si-tx-stopped",
+        "tonalRamp": [
+          "#131723",
+          "#181f34",
+          "#1c2541",
+          "#2b3658",
+          "#42579d",
+          "#4b68d7",
+          "#5b7cff",
+          "#85a3ff"
+        ],
+        "approxHex": "#131723"
+      },
+      "ignition-live": {
+        "role": "primary",
+        "displayName": "Live Frame",
+        "canonical": "--si-tx-rolling / --si-tx-recording",
+        "tonalRamp": [
+          "#131723",
+          "#181f34",
+          "#1c2541",
+          "#2b3658",
+          "#42579d",
+          "#4b68d7",
+          "#5b7cff",
+          "#85a3ff"
+        ],
+        "approxHex": "#1c2541"
+      },
+      "ignition-playback": {
+        "role": "primary",
+        "displayName": "Playback Frame",
+        "canonical": "--si-tx-playback",
+        "tonalRamp": [
+          "#131723",
+          "#181f34",
+          "#1c2541",
+          "#2b3658",
+          "#42579d",
+          "#4b68d7",
+          "#5b7cff",
+          "#85a3ff"
+        ],
+        "approxHex": "#181f34"
+      },
+      "live-accent": {
+        "role": "primary",
+        "displayName": "Live Accent",
+        "canonical": "--tx-live / --tx-pill-bg (rolling, recording)",
+        "tonalRamp": [
+          "#131723",
+          "#181f34",
+          "#1c2541",
+          "#2b3658",
+          "#42579d",
+          "#4b68d7",
+          "#5b7cff",
+          "#85a3ff"
+        ],
+        "approxHex": "#4b68d7"
+      },
+      "playback-accent": {
+        "role": "primary",
+        "displayName": "Playback Accent",
+        "canonical": "--tx-live / --tx-pill-bg (playback)",
+        "tonalRamp": [
+          "oklch(15% 0.118 269)",
+          "oklch(26% 0.137 269)",
+          "oklch(37% 0.157 269)",
+          "oklch(48% 0.176 269)",
+          "oklch(60% 0.198 269)",
+          "oklch(71% 0.178 269)",
+          "oklch(83% 0.157 269)",
+          "oklch(95% 0.135 269)"
+        ],
+        "approxHex": "#90adff"
+      },
+      "live-glow": {
+        "role": "primary",
+        "displayName": "Live Glow",
+        "canonical": "--tx-glow (rolling, recording)",
+        "tonalRamp": [
+          "oklch(15% 0.118 269)",
+          "oklch(26% 0.137 269)",
+          "oklch(37% 0.157 269)",
+          "oklch(48% 0.176 269)",
+          "oklch(60% 0.198 269)",
+          "oklch(71% 0.178 269)",
+          "oklch(83% 0.157 269)",
+          "oklch(95% 0.135 269)"
+        ]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Ink",
+        "canonical": "--si-ink",
+        "tonalRamp": [
+          "#0b0c0f",
+          "#101216",
+          "#16181d",
+          "#1c1f25",
+          "#272b33",
+          "#343944",
+          "#858c98",
+          "#eceef2"
+        ]
+      },
+      "ground": {
+        "role": "neutral",
+        "displayName": "Show Floor",
+        "canonical": "--si-bg",
+        "tonalRamp": [
+          "#0b0c0f",
+          "#101216",
+          "#16181d",
+          "#1c1f25",
+          "#272b33",
+          "#343944",
+          "#858c98",
+          "#eceef2"
+        ]
+      },
+      "panel": {
+        "role": "neutral",
+        "displayName": "Panel",
+        "canonical": "--si-panel",
+        "tonalRamp": [
+          "#0b0c0f",
+          "#101216",
+          "#16181d",
+          "#1c1f25",
+          "#272b33",
+          "#343944",
+          "#858c98",
+          "#eceef2"
+        ]
+      },
+      "panel-raised": {
+        "role": "neutral",
+        "displayName": "Raised Panel",
+        "canonical": "--si-panel-2",
+        "tonalRamp": [
+          "#0b0c0f",
+          "#101216",
+          "#16181d",
+          "#1c1f25",
+          "#272b33",
+          "#343944",
+          "#858c98",
+          "#eceef2"
+        ]
+      },
+      "line": {
+        "role": "neutral",
+        "displayName": "Hairline",
+        "canonical": "--si-line",
+        "tonalRamp": [
+          "#0b0c0f",
+          "#101216",
+          "#16181d",
+          "#1c1f25",
+          "#272b33",
+          "#343944",
+          "#858c98",
+          "#eceef2"
+        ]
+      },
+      "line-strong": {
+        "role": "neutral",
+        "displayName": "Strong Hairline",
+        "canonical": "--si-line-strong",
+        "tonalRamp": [
+          "#0b0c0f",
+          "#101216",
+          "#16181d",
+          "#1c1f25",
+          "#272b33",
+          "#343944",
+          "#858c98",
+          "#eceef2"
+        ]
+      },
+      "fg": {
+        "role": "neutral",
+        "displayName": "Foreground",
+        "canonical": "--si-fg",
+        "tonalRamp": [
+          "#0b0c0f",
+          "#101216",
+          "#16181d",
+          "#1c1f25",
+          "#272b33",
+          "#343944",
+          "#858c98",
+          "#eceef2"
+        ]
+      },
+      "muted": {
+        "role": "neutral",
+        "displayName": "Muted",
+        "canonical": "--si-muted",
+        "tonalRamp": [
+          "#0b0c0f",
+          "#101216",
+          "#16181d",
+          "#1c1f25",
+          "#272b33",
+          "#343944",
+          "#858c98",
+          "#eceef2"
+        ]
+      },
+      "dim": {
+        "role": "neutral",
+        "displayName": "Dim",
+        "canonical": "--si-dim",
+        "tonalRamp": [
+          "#0b0c0f",
+          "#101216",
+          "#16181d",
+          "#1c1f25",
+          "#272b33",
+          "#343944",
+          "#858c98",
+          "#eceef2"
+        ]
+      },
+      "hover-wash": {
+        "role": "neutral",
+        "displayName": "Hover Wash",
+        "canonical": "--accent / --sidebar-accent",
+        "tonalRamp": [
+          "#0b0c0f",
+          "#101216",
+          "#16181d",
+          "#1c1f25",
+          "#272b33",
+          "#343944",
+          "#858c98",
+          "#eceef2"
+        ]
+      },
+      "danger": {
+        "role": "tertiary",
+        "displayName": "Danger Rose",
+        "canonical": "--si-danger",
+        "tonalRamp": [
+          "oklch(15% 0.071 20)",
+          "oklch(26% 0.083 20)",
+          "oklch(37% 0.095 20)",
+          "oklch(48% 0.107 20)",
+          "oklch(60% 0.120 20)",
+          "oklch(71% 0.108 20)",
+          "oklch(83% 0.095 20)",
+          "oklch(95% 0.082 20)"
+        ]
+      },
+      "danger-line": {
+        "role": "tertiary",
+        "displayName": "Danger Line",
+        "canonical": "--si-danger-line",
+        "tonalRamp": [
+          "oklch(15% 0.071 20)",
+          "oklch(26% 0.083 20)",
+          "oklch(37% 0.095 20)",
+          "oklch(48% 0.107 20)",
+          "oklch(60% 0.120 20)",
+          "oklch(71% 0.108 20)",
+          "oklch(83% 0.095 20)",
+          "oklch(95% 0.082 20)"
+        ]
+      },
+      "rec-glyph": {
+        "role": "tertiary",
+        "displayName": "Record Red",
+        "canonical": "--si-rec",
+        "tonalRamp": [
+          "oklch(15% 0.113 23)",
+          "oklch(26% 0.132 23)",
+          "oklch(37% 0.150 23)",
+          "oklch(48% 0.169 23)",
+          "oklch(60% 0.190 23)",
+          "oklch(71% 0.171 23)",
+          "oklch(83% 0.150 23)",
+          "oklch(95% 0.130 23)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "timecode-hero": {
+        "displayName": "Timecode Hero",
+        "purpose": "The session timecode; Lifted Ignition with glow while live. 1.625rem compact, 1.5rem phone."
+      },
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Settings section headings."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Settings view title."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Body baseline; crumbs, descriptions, rows."
+      },
+      "control": {
+        "displayName": "Control",
+        "purpose": "Sentence-case button labels."
+      },
+      "tab": {
+        "displayName": "Tab",
+        "purpose": "Uppercase tracked workspace line tabs."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Uppercase tracked column heads, sidebar group labels, timeline labels."
+      },
+      "status": {
+        "displayName": "Status",
+        "purpose": "Badges and the STOPPED / ROLLING / REC / PLAY pill (0.14em on the pill)."
+      },
+      "measure": {
+        "displayName": "Measure",
+        "purpose": "Feed timecodes, durations, levels, key caps (600)."
+      },
+      "wordmark": {
+        "displayName": "Wordmark",
+        "purpose": "Sign-in card name only; non-normative brand face."
+      }
+    },
+    "shadows": [
+      {
+        "name": "frame-glow-rail",
+        "value": "12px 0 36px -18px var(--tx-glow)",
+        "purpose": "Rail while rolling or recording."
+      },
+      {
+        "name": "frame-glow-topbar",
+        "value": "0 12px 36px -18px var(--tx-glow)",
+        "purpose": "Top bar while rolling or recording."
+      },
+      {
+        "name": "transport-card-live",
+        "value": "0 10px 34px -14px var(--tx-glow), 0 0 0 1px color-mix(in oklab, var(--si-accent) 28%, transparent)",
+        "purpose": "Transport card while rolling or recording."
+      },
+      {
+        "name": "transport-card-playback",
+        "value": "0 10px 30px -18px var(--tx-glow)",
+        "purpose": "Transport card in playback."
+      },
+      {
+        "name": "pill-glow",
+        "value": "0 0 18px -4px var(--tx-glow)",
+        "purpose": "Status pill; transparent when stopped."
+      },
+      {
+        "name": "pressed-transport-glow",
+        "value": "0 0 18px -6px var(--tx-glow)",
+        "purpose": "Pressed transport control."
+      },
+      {
+        "name": "playhead-halo",
+        "value": "0 0 10px 1px var(--tx-playhead-glow)",
+        "purpose": "Keeps the 2px playhead legible; none when stopped."
+      },
+      {
+        "name": "timecode-glow",
+        "value": "text-shadow: 0 0 20px var(--tx-glow)",
+        "purpose": "Hero timecode while live."
+      },
+      {
+        "name": "selected-inset",
+        "value": "inset 0 0 0 1px var(--sel-line)",
+        "purpose": "The one selected state's edge (with --sel-bg)."
+      }
+    ],
+    "motion": [
+      {
+        "name": "ignition",
+        "value": "0.6s cubic-bezier(0.16, 1, 0.3, 1)",
+        "purpose": "--tx-dur/--tx-ease: tint, edge, glow and waveform-progress changes between transport states; none under reduced motion."
+      },
+      {
+        "name": "live-dot-blink",
+        "value": "si-blink 1.2s steps(2, jump-none) infinite",
+        "purpose": "REC live dot while recording; held under reduced motion."
+      },
+      {
+        "name": "control-state",
+        "value": "150ms",
+        "purpose": "Button and input border/background/colour transitions."
+      },
+      {
+        "name": "rail-geometry",
+        "value": "0.2s linear",
+        "purpose": "Sidebar width/left on collapse."
+      },
+      {
+        "name": "log-press",
+        "value": "120ms translateY(1px)",
+        "purpose": "Momentary log-button press; no translate under reduced motion."
+      },
+      {
+        "name": "overlay-fade",
+        "value": "0.18s ease-out",
+        "purpose": "Overlays and the sign-in card entrance."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "md",
+        "value": "768px"
+      },
+      {
+        "name": "sm",
+        "value": "640px"
+      }
+    ],
+    "transportStates": {
+      "stopped": {
+        "rail": "--si-tx-stopped",
+        "pillBg": "--si-tx-stopped",
+        "pillFg": "--si-muted",
+        "pillLine": "--si-line",
+        "playhead": "--si-fg",
+        "glow": "transparent",
+        "waveProgress": "color-mix(in oklab, var(--si-fg) 26%, transparent)"
+      },
+      "rolling": {
+        "rail": "--si-tx-rolling",
+        "pillBg": "accent 88% into #000",
+        "pillFg": "#ffffff",
+        "playhead": "--tx-live",
+        "glow": "accent 46%",
+        "playheadGlow": "accent 75%",
+        "waveProgress": "accent 80%"
+      },
+      "recording": {
+        "rail": "--si-tx-recording",
+        "pillBg": "accent 88% into #000",
+        "pillFg": "#ffffff",
+        "playhead": "--tx-live",
+        "glow": "accent 46%",
+        "playheadGlow": "accent 75%",
+        "waveProgress": "accent 80%",
+        "liveDot": "blinks"
+      },
+      "playback": {
+        "rail": "--si-tx-playback",
+        "pillBg": "accent 65% into #fff",
+        "pillFg": "--si-ink",
+        "playhead": "--tx-live",
+        "glow": "accent 30%",
+        "playheadGlow": "accent 60%",
+        "waveProgress": "accent 72%"
+      }
+    },
+    "sourceOfTruth": "web/src/shared/theme/tailwind.css (:root --si-*, --r-*, --h-*, --sel-*, [data-transport] --tx-*); --v5-* and glass-* names are flat aliases"
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The default variant: the one primary action per region.",
+      "html": "<button class=\"ds-btn ds-btn-primary\">Save</button>",
+      "css": ".ds-btn{display:inline-flex;align-items:center;justify-content:center;gap:.4rem;height:var(--h-ctl,36px);padding:0 .9rem;border-radius:var(--r-ctl,8px);border:1px solid;font-family:'Barlow','Segoe UI',system-ui,sans-serif;font-size:.8125rem;font-weight:600;line-height:1;cursor:pointer;transition:border-color .15s,background-color .15s,box-shadow .15s,color .15s}.ds-btn-primary{background:var(--si-primary-tint,#2b3658);border-color:var(--si-primary-line,#42579d);color:var(--si-fg,#eceef2)}.ds-btn-primary:hover{border-color:var(--si-accent,#5b7cff)}.ds-btn-primary:focus-visible{outline:none;box-shadow:0 0 0 3px color-mix(in oklab,var(--si-accent,#5b7cff) 50%,transparent)}"
+    },
+    {
+      "name": "Neutral Button",
+      "kind": "button",
+      "refersTo": "button-neutral",
+      "description": "Outline/secondary: the flat neutral control.",
+      "html": "<button class=\"ds-btn ds-btn-neutral\">Cancel</button>",
+      "css": ".ds-btn{display:inline-flex;align-items:center;justify-content:center;height:var(--h-ctl,36px);padding:0 .9rem;border-radius:var(--r-ctl,8px);border:1px solid;font-family:'Barlow','Segoe UI',system-ui,sans-serif;font-size:.8125rem;font-weight:600;line-height:1;cursor:pointer;transition:border-color .15s,color .15s}.ds-btn-neutral{background:var(--si-panel-2,#1c1f25);border-color:var(--si-line,#272b33);color:var(--si-fg,#eceef2)}.ds-btn-neutral:hover{border-color:color-mix(in oklab,var(--si-fg,#eceef2) 25%,var(--si-line,#272b33))}.ds-btn-neutral:focus-visible{outline:none;box-shadow:0 0 0 3px color-mix(in oklab,var(--si-accent,#5b7cff) 50%,transparent)}"
+    },
+    {
+      "name": "Transport Button (pressed, live)",
+      "kind": "button",
+      "refersTo": "transport-button-live",
+      "description": "Transport control pressed while rolling or recording; fills with the pill colours.",
+      "html": "<button class=\"ds-tx\" data-active=\"true\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 16 16\" aria-hidden=\"true\"><circle cx=\"8\" cy=\"8\" r=\"5\" fill=\"currentColor\"/></svg>Roll</button>",
+      "css": ".ds-tx{display:inline-flex;align-items:center;gap:.4rem;height:36px;padding:0 .75rem;border-radius:8px;border:1px solid #272b33;background:#1c1f25;color:#eceef2;font-family:'Barlow',system-ui,sans-serif;font-size:.8125rem;font-weight:600;cursor:pointer;transition:all .6s cubic-bezier(.16,1,.3,1)}.ds-tx[data-active=true]{background:color-mix(in oklab,#5b7cff 88%,#000);border-color:color-mix(in oklab,#5b7cff 88%,#000);color:#fff;box-shadow:0 0 18px -6px color-mix(in oklab,#5b7cff 46%,transparent)}.ds-tx:focus-visible{outline:2px solid #5b7cff;outline-offset:2px}"
+    },
+    {
+      "name": "Log Button",
+      "kind": "custom",
+      "refersTo": "log-button",
+      "description": "Logging-strip category button: key cap, swatch, label; category colour drives only edge, tint and swatch.",
+      "html": "<button class=\"ds-log\" style=\"--cat:#43a047\"><kbd class=\"ds-kbd\">1</kbd><i class=\"ds-sw\"></i>Applause</button>",
+      "css": ".ds-log{--cat:#5b7cff;display:inline-flex;align-items:center;gap:.5rem;min-height:36px;padding:6px 12px 6px 8px;border-radius:8px;border:1px solid var(--si-line,#272b33);background:var(--si-panel,#16181d);color:var(--si-fg,#eceef2);font-family:'Barlow',system-ui,sans-serif;font-size:.875rem;font-weight:600;cursor:pointer;transition:border-color .15s,background-color .15s}.ds-log:hover{border-color:color-mix(in oklab,var(--cat) 55%,#272b33)}.ds-log:active{transform:translateY(1px);border-color:var(--cat);background:color-mix(in oklab,var(--cat) 22%,#16181d)}.ds-log:focus-visible{outline:none;box-shadow:0 0 0 3px color-mix(in oklab,#5b7cff 50%,transparent)}.ds-kbd{display:inline-flex;align-items:center;justify-content:center;height:20px;min-width:20px;padding:0 4px;border:1px solid #272b33;border-bottom-width:2px;border-radius:4px;background:#1c1f25;color:#a6acb7;font-family:'JetBrains Mono',ui-monospace,monospace;font-size:.6875rem;font-weight:600;line-height:1}.ds-sw{display:inline-block;width:8px;height:8px;border-radius:2px;background:var(--cat)}"
+    },
+    {
+      "name": "Status Pill",
+      "kind": "chip",
+      "refersTo": "status-pill-live",
+      "description": "STOPPED / REC / PLAY pill coloured from --tx-pill-*.",
+      "html": "<span class=\"ds-pill\" data-state=\"stopped\">Stopped</span> <span class=\"ds-pill\" data-state=\"live\"><i class=\"ds-dot\"></i>Rec</span> <span class=\"ds-pill\" data-state=\"play\">Play</span>",
+      "css": ".ds-pill{display:inline-flex;align-items:center;gap:4px;padding:.2rem .45rem;border-radius:5px;border:1px solid;font-family:'Barlow Condensed','Arial Narrow',sans-serif;font-size:.7rem;font-weight:600;letter-spacing:.14em;text-transform:uppercase;white-space:nowrap}.ds-pill[data-state=stopped]{background:color-mix(in oklab,#5b7cff 10%,#0c0d10);color:#a6acb7;border-color:#272b33}.ds-pill[data-state=live]{background:color-mix(in oklab,#5b7cff 88%,#000);border-color:color-mix(in oklab,#5b7cff 88%,#000);color:#fff;box-shadow:0 0 18px -4px color-mix(in oklab,#5b7cff 46%,transparent)}.ds-pill[data-state=play]{background:color-mix(in oklab,#5b7cff 65%,#fff);border-color:color-mix(in oklab,#5b7cff 65%,#fff);color:#0b0c0f;box-shadow:0 0 18px -4px color-mix(in oklab,#5b7cff 30%,transparent)}.ds-dot{width:8px;height:8px;border-radius:999px;background:currentColor;animation:ds-blink 1.2s steps(2,jump-none) infinite}@keyframes ds-blink{50%{opacity:.25}}@media (prefers-reduced-motion:reduce){.ds-dot{animation:none}}"
+    },
+    {
+      "name": "Card",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "Flat panel container with hairline and 12px corners.",
+      "html": "<div class=\"ds-card\"><div class=\"ds-card-title\">Team details</div><p class=\"ds-card-desc\">Name and owner of this team.</p></div>",
+      "css": ".ds-card{display:flex;flex-direction:column;gap:.5rem;padding:24px;border-radius:var(--r-card,12px);border:1px solid var(--si-line,#272b33);background:var(--si-panel,#16181d);color:var(--si-fg,#eceef2);font-family:'Barlow',system-ui,sans-serif}.ds-card-title{font-weight:600;line-height:1}.ds-card-desc{margin:0;font-size:.875rem;color:var(--si-muted,#a6acb7)}"
+    },
+    {
+      "name": "Text Input",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Ground-well field with strong hairline; accent edge on focus.",
+      "html": "<input class=\"ds-input\" placeholder=\"Search this show\" />",
+      "css": ".ds-input{width:16rem;height:36px;padding:.5rem .65rem;border-radius:8px;border:1px solid var(--si-line-strong,#343944);background:var(--si-bg,#101216);color:var(--si-fg,#eceef2);font:15px/1.45 'Barlow',system-ui,sans-serif;outline:none;transition:border-color .15s;caret-color:#5b7cff}.ds-input::placeholder{color:var(--si-muted,#a6acb7)}.ds-input:focus-visible{border-color:var(--si-accent,#5b7cff)}"
+    },
+    {
+      "name": "Line Tabs",
+      "kind": "nav",
+      "refersTo": "tab",
+      "description": "Workspace line tabs: condensed caps, accent underline when active.",
+      "html": "<div class=\"ds-tabs\" role=\"tablist\"><button class=\"ds-tab\" aria-selected=\"true\">Event feed</button><button class=\"ds-tab\">Transcript</button><button class=\"ds-tab\">Topics</button></div>",
+      "css": ".ds-tabs{display:flex;gap:2px;border-bottom:1px solid var(--si-line,#272b33)}.ds-tab{margin-bottom:-1px;padding:.5625rem .75rem .625rem;border:0;border-bottom:2px solid transparent;background:transparent;color:var(--si-muted,#a6acb7);font-family:'Barlow Condensed','Arial Narrow',sans-serif;font-size:.8125rem;font-weight:600;letter-spacing:.1em;text-transform:uppercase;cursor:pointer;transition:color .18s,border-color .18s}.ds-tab:hover{color:var(--si-fg,#eceef2)}.ds-tab[aria-selected=true]{color:var(--si-fg,#eceef2);border-bottom-color:var(--si-accent,#5b7cff)}.ds-tab:focus-visible{outline:2px solid #5b7cff;outline-offset:2px}"
+    },
+    {
+      "name": "Selected Nav Row",
+      "kind": "nav",
+      "refersTo": "nav-item-selected",
+      "description": "Settings nav and sidebar rows in the one selected state.",
+      "html": "<nav class=\"ds-nav\"><a class=\"ds-nav-row\" aria-current=\"page\">Members</a><a class=\"ds-nav-row\">Shows</a><a class=\"ds-nav-row\">Event buttons</a></nav>",
+      "css": ".ds-nav{display:flex;flex-direction:column;gap:2px;width:250px}.ds-nav-row{display:flex;align-items:center;padding:8px 10px;border-radius:8px;color:var(--si-muted,#a6acb7);font:500 .875rem/1.2 'Barlow',system-ui,sans-serif;cursor:pointer;transition:color .15s,background-color .15s,box-shadow .15s}.ds-nav-row:hover{background:rgba(255,255,255,.06);color:var(--si-fg,#eceef2)}.ds-nav-row[aria-current=page]{background:color-mix(in oklab,#5b7cff 18%,transparent);box-shadow:inset 0 0 0 1px color-mix(in oklab,#5b7cff 48%,transparent);color:var(--si-fg,#eceef2);font-weight:600}.ds-nav-row:focus-visible{outline:2px solid #5b7cff;outline-offset:2px}"
+    },
+    {
+      "name": "Ignited Top Bar",
+      "kind": "nav",
+      "refersTo": "top-bar",
+      "description": "The 52px top bar; tint and glow follow the transport.",
+      "html": "<header class=\"ds-topbar\" data-state=\"live\"><span class=\"ds-crumb\">Northside Studio</span><svg width=\"14\" height=\"14\" viewBox=\"0 0 16 16\" aria-hidden=\"true\"><path d=\"M6 3l5 5-5 5\" fill=\"none\" stroke=\"#858c98\" stroke-width=\"1.5\"/></svg><span class=\"ds-crumb\">Morning Show</span><svg width=\"14\" height=\"14\" viewBox=\"0 0 16 16\" aria-hidden=\"true\"><path d=\"M6 3l5 5-5 5\" fill=\"none\" stroke=\"#858c98\" stroke-width=\"1.5\"/></svg><span class=\"ds-tc\">01:12:44</span></header>",
+      "css": ".ds-topbar{display:flex;align-items:center;gap:12px;height:52px;padding:0 16px;background:color-mix(in oklab,#5b7cff 10%,#0c0d10);border-bottom:1px solid color-mix(in oklab,#5b7cff 22%,#272b33);color:#eceef2;font:15px/1.45 'Barlow',system-ui,sans-serif;transition:background-color .6s cubic-bezier(.16,1,.3,1),border-color .6s cubic-bezier(.16,1,.3,1),box-shadow .6s cubic-bezier(.16,1,.3,1)}.ds-topbar[data-state=live]{background:color-mix(in oklab,#5b7cff 25%,#0a0b0e);border-bottom-color:color-mix(in oklab,#5b7cff 70%,transparent);box-shadow:0 12px 36px -18px color-mix(in oklab,#5b7cff 46%,transparent)}.ds-crumb{padding:0 8px;border-radius:8px}.ds-crumb:hover{background:rgba(255,255,255,.06)}.ds-tc{font:500 .75rem 'JetBrains Mono',ui-monospace,monospace;font-variant-numeric:tabular-nums;color:#a6acb7}"
+    }
+  ],
+  "narrative": {
+    "northStar": "Show Ignition",
+    "overview": "The shell itself says whether the session is live. AutoLogger is a dark, flat operating console where one cold blue accent does almost all the talking: it marks the primary action, the selected row, keyboard focus, and above all the transport state. When a session rolls or records, the top bar, the sidebar and the transport card take on that accent and get a soft glow. In playback the tint is softer. When the session stops, the frame dims to a near-black tint. Operators read live/not-live from the frame around their work, not from a lone red dot in a corner.\n\nDensity is a working console's: controls are compact (36px, 30px small), the type is a condensed-friendly grotesque, and timecode and measured values sit in a monospace with tabular figures. Surfaces are flat dark planes separated by 1px lines, with no glass, grain, sky grid or decorative gradient. Depth comes only from the ignition glow and from overlays. The system rejects the category default it was built against: a grey media tool with a lone red REC dot and its state hidden in a corner. It also replaces the retired V5 dark-glass look, which survives only as alias names (`--v5-*`, `glass-*`) that now resolve to the flat tokens.\n\nCategory colours are user data on their own channel: a number key cap plus a small swatch. They never colour labels, and they never compete with the accent.",
+    "keyCharacteristics": [
+      "Dark-only, flat planes: ground, panel and raised panel, divided by 1px lines.",
+      "One accent (#5b7cff) for primary, selection, focus and ignition, and for nothing decorative.",
+      "The transport state (stopped, rolling, recording, playback) drives the tint of the top bar, the rail and the transport card through `data-transport` on the app root.",
+      "Three faces with fixed jobs: Barlow for the UI, Barlow Condensed in uppercase with tracking for labels, tabs, column heads and status, and JetBrains Mono only for timecode and measured values.",
+      "Two radii (8px controls, 12px cards) and two control heights (36px, 30px).",
+      "One selected state everywhere: an accent tint plus a 1px inset accent line."
+    ],
+    "rules": [
+      {
+        "name": "The One Accent Rule",
+        "body": "#5b7cff and its mixes are the only hue in the chrome. Category colours, chart series (`--viz-*`) and the Google sign-in button are separate data and vendor channels; they never style chrome.",
+        "section": "colors"
+      },
+      {
+        "name": "The Ignition Rule",
+        "body": "The transport state is shown by the frame. A surface that needs to show live state reads the `--tx-*` variables that `data-transport` sets, and never hard-codes a state colour. Every pill fg/bg pair clears AA.",
+        "section": "colors"
+      },
+      {
+        "name": "The Category Channel Rule",
+        "body": "A category colour appears only as a 2px-radius swatch, a hover edge (55%), and a latched or pressed tint (22% into the panel). It never colours a label.",
+        "section": "colors"
+      },
+      {
+        "name": "The Measured-Only Mono Rule",
+        "body": "JetBrains Mono sets timecode, durations, levels and key caps, and nothing else. It's never used as a stylistic voice.",
+        "section": "typography"
+      },
+      {
+        "name": "The Condensed Caps Rule",
+        "body": "Uppercase with tracking belongs to Barlow Condensed on labels, tabs, column heads and status. Buttons, Settings rows, nav rows and headings stay sentence case in Barlow.",
+        "section": "typography"
+      },
+      {
+        "name": "The Glow Means Live Rule",
+        "body": "Glow is reserved for ignition. A stopped shell carries no glow anywhere, and no element uses glow for decoration or hover.",
+        "section": "elevation"
+      },
+      {
+        "name": "The State Easing Rule",
+        "body": "Ignition tints, edges and glows ease over 0.6s `cubic-bezier(0.16, 1, 0.3, 1)`. Under reduced motion they change instantly, and the REC live dot (a 1.2s two-step blink) holds still.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "**Do** read surface, line and text colours from the `--si-*` tokens. Read state colours from the `--tx-*` variables under `data-transport`.",
+      "**Do** build controls at `--h-ctl` (36px) or `--h-sm` (30px) with `--r-ctl` (8px), and containers with `--r-card` (12px).",
+      "**Do** use the one selected state (`--sel-bg` plus a 1px inset `--sel-line`) for any current or chosen item.",
+      "**Do** set labels, tabs, column heads and status in Barlow Condensed in uppercase with tracking, and timecode and measured values in JetBrains Mono with tabular figures.",
+      "**Do** keep category colours to the swatch, the hover edge and the latched or pressed tint, paired with a 1–9 key cap.",
+      "**Do** honour reduced motion: ignition changes instantly and the REC dot doesn't blink."
+    ],
+    "donts": [
+      "**Don't** introduce a second accent hue, or colour chrome with category, chart or vendor colours.",
+      "**Don't** add glass, backdrop blur, film grain, background glows or gradient fills to surfaces. The V5 dark-glass look is retired.",
+      "**Don't** use glow at rest or on hover. Glow means the transport is lit.",
+      "**Don't** show transport state only with a red dot. The frame, the pill colour and the pill word carry it together.",
+      "**Don't** put an uppercase kicker or eyebrow above a heading or card title.",
+      "**Don't** use JetBrains Mono for prose, headings or labels, or uppercase a button label."
+    ]
+  }
+}

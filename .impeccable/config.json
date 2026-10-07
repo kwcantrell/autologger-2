@@ -1,0 +1,38 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "overused-font",
+        "value": "roboto",
+        "createdAt": "2026-10-07T20:59:17.679Z",
+        "reason": "agent (11.3): Google sign-in branding requires Roboto on the Google button label (LoginPage BTN_GOOGLE and its vendored @font-face); the UI faces are Barlow/JetBrains Mono"
+      },
+      {
+        "rule": "border-accent-on-rounded",
+        "value": "*",
+        "files": [
+          "web/src/shared/components/ui/kbd.tsx"
+        ],
+        "createdAt": "2026-10-07T20:59:17.685Z",
+        "reason": "agent (11.3): false positive; border-b-2 is the key cap's neutral heavier bottom edge (preview .keycap), not an accent border"
+      },
+      {
+        "rule": "design-system-font",
+        "value": "*",
+        "files": [
+          "web/src/shared/theme/fonts.repo.test.ts"
+        ],
+        "createdAt": "2026-10-07T22:53:05.233Z",
+        "reason": "agent: false positive — regex patterns in the font-stack repo test, not rendered fonts"
+      },
+      {
+        "rule": "design-system-font",
+        "value": "roboto",
+        "createdAt": "2026-10-07T22:53:05.241Z",
+        "reason": "agent: Google sign-in button brand requirement; self-hosted latin subset used only there; accepted in the redesign finish review"
+      }
+    ]
+  }
+}

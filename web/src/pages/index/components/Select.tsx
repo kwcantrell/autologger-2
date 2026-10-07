@@ -29,7 +29,7 @@ interface SelectProps {
   /** Mounts the Radix root already open (settings-modal-mount-cost, D3). Additive and
    * optional — every existing call site omits it and keeps mounting closed, which is
    * `SelectRoot`'s own default when the prop is undefined. It exists so a
-   * lazily-upgraded control (`EventButtonsTable`'s inert trigger) can open on the same
+   * lazily-upgraded control (`LazySelect`'s inert trigger) can open on the same
    * activation that mounted it, since the freshly-mounted trigger cannot receive the
    * gesture that triggered the swap. */
   defaultOpen?: boolean;

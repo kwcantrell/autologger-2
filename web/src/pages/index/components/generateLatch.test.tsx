@@ -95,7 +95,7 @@ function renderFeed(feed: 'transcribe' | 'topics') {
 }
 
 function generateButton(): HTMLElement {
-  return screen.getByRole('button', { name: 'Auto Generate' });
+  return screen.getByRole('button', { name: 'Auto generate' });
 }
 
 beforeEach(() => {
@@ -117,7 +117,7 @@ describe.each(CASES)('$feed feed — generate 503 latch (ui-refresh D9)', ({ fee
   it('toolbar buttons are glass Buttons with lucide icons (shadcn-port-workspace D6)', async () => {
     mockRoutes(() => new ApiError(503, 'Service Unavailable'), { count: 0 });
     renderFeed(feed);
-    const gen = await screen.findByRole('button', { name: 'Auto Generate' });
+    const gen = await screen.findByRole('button', { name: 'Auto generate' });
     expect(gen.getAttribute('data-variant')).toBe('glass');
     expect(gen.querySelector('svg.lucide-sparkles')).not.toBeNull();
     const insert = screen.getByRole('button', { name: 'Insert' });
@@ -130,7 +130,7 @@ describe.each(CASES)('$feed feed — generate 503 latch (ui-refresh D9)', ({ fee
     mockRoutes(() => new ApiError(503, 'Service Unavailable'), calls);
     renderFeed(feed);
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Auto Generate' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Auto generate' }));
 
     // Latched: still a real focusable button (no `disabled` attribute), marked
     // aria-disabled, described by the always-visible reason span.
@@ -156,7 +156,7 @@ describe.each(CASES)('$feed feed — generate 503 latch (ui-refresh D9)', ({ fee
     mockRoutes(() => new ApiError(500, 'generation exploded'), calls);
     renderFeed(feed);
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Auto Generate' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Auto generate' }));
 
     const alert = await screen.findByRole('alert');
     expect(alert.textContent).toContain('generation exploded');
@@ -175,7 +175,7 @@ describe('transcribe feed — latched reason carries the inline <code> element',
     mockRoutes(() => new ApiError(503, 'Service Unavailable'), calls);
     renderFeed('transcribe');
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Auto Generate' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Auto generate' }));
     await waitFor(() => expect(generateButton().getAttribute('aria-disabled')).toBe('true'));
     const reasonId = generateButton().getAttribute('aria-describedby') as string;
     const code = document.getElementById(reasonId)?.querySelector('code');

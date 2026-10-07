@@ -12,7 +12,7 @@ const ROLLING_POLL_MS = 1_200;
  * finding 2.8) — the single owner of the `'session-status'` literal, guarded
  * by `queryKeyFactories.repo.test.ts`. `bySession(...)` is the per-session
  * entry every reader/invalidator uses; `all()` is the bare prefix
- * (HomeSettingsModal invalidates every session's status after a settings
+ * (a Settings save invalidates every session's status after a settings
  * save, via React Query prefix matching).
  */
 export const sessionStatusKeys = {

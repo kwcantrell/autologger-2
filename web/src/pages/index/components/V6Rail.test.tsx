@@ -1,18 +1,22 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, screen } from '@testing-library/react';
+import { act, fireEvent, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Router } from 'wouter';
 import { memoryLocation } from 'wouter/memory-location';
 import { useProfile } from '../../../api/hooks/useProfile';
 import { useSessions } from '../../../api/hooks/useSessions';
 import type { ProfilePayload, Session, SessionsResponse } from '../../../api/types';
+import {
+  SIDEBAR_STORAGE_KEY,
+  SidebarProvider,
+  SidebarTrigger,
+} from '../../../shared/components/ui/sidebar';
 import { renderStrict } from '../../../test/renderStrict';
 import { setNavigationImplForTesting } from '../navigation';
 import { V6Rail } from './V6Rail';
 
-// --- V6Rail Teams-button same-route guard (teams-settings-nav, task 2.3;
-// design D2 gate decision 1) + rail session search (ui-refresh, task 5.2;
-// spec: web-home-launch "Real rail session search") ---
+// --- V6Rail on the shadcn Sidebar (redesign-show-ignition D8, task 4.1) + rail session search
+// (ui-refresh, task 5.2; spec: web-home-launch "Real rail session search") ---
 //
 // `useSessions` is stubbed at the module boundary; `RecentSessionsList`/
 // `ArchivedSessionsList` are exercised FOR REAL (not mocked) for the search
@@ -21,9 +25,8 @@ import { V6Rail } from './V6Rail';
 // the same "mock at the boundary, not the unit under test" idiom the
 // mounted-hidden AI tab tests use elsewhere. the rail lists scroll in the real shadcn ScrollArea, and a real `QueryClient` is provided so the session
 // cards' `useMutation` hooks (archive/delete/restore/rename) don't throw on
-// mount. The button click reaches the shared `navigate` wrapper, which
-// routes through the test-seam impl into the recorded memory location (same
-// seam SessionRoute.test.tsx and AppShell.test.tsx use).
+// mount. The rail renders inside a real `SidebarProvider` (with a `SidebarTrigger` beside it,
+// standing in for the top bar's), so collapse and persistence are the primitive's real ones.
 
 vi.mock('../../../api/hooks/useSessions', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../../api/hooks/useSessions')>();
@@ -91,82 +94,110 @@ function mockSessions(data: SessionsResponse | undefined) {
   >);
 }
 
-function renderRail(initialPath = '/') {
+function renderRail(initialPath = '/', props: Partial<React.ComponentProps<typeof V6Rail>> = {}) {
   const memory = memoryLocation({ path: initialPath, record: true });
   setNavigationImplForTesting((path, options) => memory.navigate(path, options));
   const client = new QueryClient();
   const view = renderStrict(
     <QueryClientProvider client={client}>
       <Router hook={memory.hook}>
-        <V6Rail
-          activeSessionId=""
-          onSelectSession={() => {}}
-          onCloseSession={() => {}}
-          onNewSession={() => {}}
-          onBatchImport={() => {}}
-          onOpenSettings={() => {}}
-        />
+        <SidebarProvider>
+          <SidebarTrigger />
+          <V6Rail
+            activeSessionId=""
+            onSelectSession={() => {}}
+            onCloseSession={() => {}}
+            onNewSession={() => {}}
+            onBatchImport={() => {}}
+            onOpenSettings={() => {}}
+            {...props}
+          />
+        </SidebarProvider>
       </Router>
     </QueryClientProvider>,
   );
   return { view, memory };
 }
 
+const sidebarState = () =>
+  document.querySelector('[data-slot="sidebar"]')?.getAttribute('data-state') ?? null;
+
 beforeEach(() => {
-  document.body.classList.remove('v6-app--rail-collapsed');
+  window.localStorage.clear();
   mockSessions({ active: [], archived: [] });
   mockProfile(accessProfile());
 });
 
 afterEach(() => {
   setNavigationImplForTesting(null);
-  document.body.classList.remove('v6-app--rail-collapsed');
+  window.localStorage.clear();
 });
 
-describe('V6Rail Teams button same-route guard (gate decision 1)', () => {
-  it('navigates to /teams when not already on /teams', () => {
-    const { memory } = renderRail('/');
-
-    fireEvent.click(screen.getByRole('button', { name: 'Teams' }));
-
-    expect(memory.history).toEqual(['/', '/teams']);
+describe('V6Rail chrome (redesign-show-ignition D8)', () => {
+  it('has no Teams control (team management moves to Settings)', () => {
+    renderRail('/');
+    expect(screen.queryByRole('button', { name: 'Teams' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Teams' })).toBeNull();
+    expect(document.getElementById('v6-btn-teams')).toBeNull();
   });
 
-  it('pushes no history entry when clicked while already on /teams', () => {
-    const { memory } = renderRail('/teams');
+  it('has no rail-local toggle: the top bar trigger (and `[`, Ctrl/⌘+B) own it', () => {
+    renderRail('/');
+    expect(document.getElementById('v6-rail-toggle')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Toggle navigation' })).toBeNull();
+  });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Teams' }));
+  it('is the shadcn icon-collapsible sidebar, keeping the #v6-rail hook the ignition tint reads', () => {
+    renderRail('/');
+    const sidebar = document.querySelector('[data-slot="sidebar"]');
+    expect(sidebar?.getAttribute('data-state')).toBe('expanded');
+    const container = document.getElementById('v6-rail');
+    expect(container?.getAttribute('data-slot')).toBe('sidebar-container');
+    expect(container?.getAttribute('aria-label')).toBe('Navigation');
+  });
 
-    expect(memory.history).toEqual(['/teams']);
+  it('Settings sits in the sidebar footer and calls onOpenSettings', () => {
+    const onOpenSettings = vi.fn();
+    renderRail('/', { onOpenSettings });
+    const settings = screen.getByRole('button', { name: 'Settings' });
+    expect(settings.closest('[data-slot="sidebar-footer"]')).not.toBeNull();
+    fireEvent.click(settings);
+    expect(onOpenSettings).toHaveBeenCalledTimes(1);
+    // The version still sits at the rail bottom.
+    expect(screen.getByText(/^v\d/)).toBeTruthy();
   });
 });
 
-describe('V6Rail Batch Import button', () => {
-  it('calls onBatchImport when clicked', () => {
+describe('V6Rail tooltips only in the icon strip', () => {
+  it('a focused control in the expanded sidebar opens no tooltip layer (it would swallow Escape)', () => {
+    mockSessions({ active: [sessionFixture()], archived: [] });
+    renderRail('/');
+    act(() => {
+      screen.getByRole('button', { name: 'New session' }).focus();
+    });
+    act(() => {
+      screen.getByRole('button', { name: 'Settings' }).focus();
+    });
+    expect(document.querySelector('[data-slot="tooltip-content"]')).toBeNull();
+  });
+});
+
+describe('V6Rail New session and Import (sidebar header)', () => {
+  it('sit in the sidebar header and call their handlers', () => {
+    const onNewSession = vi.fn();
     const onBatchImport = vi.fn();
-    const memory = memoryLocation({ path: '/', record: true });
-    setNavigationImplForTesting((path, options) => memory.navigate(path, options));
-    const client = new QueryClient();
-    renderStrict(
-      <QueryClientProvider client={client}>
-        <Router hook={memory.hook}>
-          <V6Rail
-            activeSessionId=""
-            onSelectSession={() => {}}
-            onCloseSession={() => {}}
-            onNewSession={() => {}}
-            onBatchImport={onBatchImport}
-            onOpenSettings={() => {}}
-          />
-        </Router>
-      </QueryClientProvider>,
-    );
-
-    fireEvent.click(screen.getByRole('button', { name: 'Batch Import' }));
+    renderRail('/', { onNewSession, onBatchImport });
+    const create = screen.getByRole('button', { name: 'New session' });
+    const importBtn = screen.getByRole('button', { name: 'Import' });
+    expect(create.closest('[data-slot="sidebar-header"]')).not.toBeNull();
+    expect(importBtn.closest('[data-slot="sidebar-header"]')).not.toBeNull();
+    fireEvent.click(create);
+    fireEvent.click(importBtn);
+    expect(onNewSession).toHaveBeenCalledTimes(1);
     expect(onBatchImport).toHaveBeenCalledTimes(1);
   });
 
-  it('uses an up-arrow upload icon on the Batch Import rail button', () => {
+  it('uses an up-arrow upload icon on the Import button', () => {
     renderRail();
 
     const batchBtn = document.getElementById('v6-btn-batch-import');
@@ -180,23 +211,57 @@ describe('V6Rail Batch Import button', () => {
   });
 });
 
-describe('V6Rail footer layout (collapsed overflow)', () => {
-  it('footer carries collapsed flex-col + mobile drawer flex-row revert so Teams/Settings stack in the narrow rail', () => {
-    renderRail();
+describe('V6Rail session cards (SidebarMenu)', () => {
+  it('lists sessions as sidebar menu buttons, the open one active', () => {
+    mockSessions({
+      active: [
+        sessionFixture({ id: 'a1', title: 'Alpha Standup' }),
+        sessionFixture({ id: 'b1', title: 'Beta Review' }),
+      ],
+      archived: [],
+    });
+    const onSelectSession = vi.fn();
+    renderRail('/sessions/b1', { activeSessionId: 'b1', onSelectSession });
 
-    const teams = screen.getByRole('button', { name: 'Teams' });
-    const settings = screen.getByRole('button', { name: 'Settings' });
-    const footer = teams.parentElement;
-    expect(footer).not.toBeNull();
-    expect(footer).toBe(settings.parentElement);
-    // Tailwind ancestor variants live on the element; CSS activates under
-    // body.v6-app--rail-collapsed. Lock the class contract (jsdom won't compute
-    // layout for arbitrary utilities).
-    expect(footer?.className).toContain('[.v6-app--rail-collapsed_&]:flex-col');
-    expect(footer?.className).toContain('max-md:[.v6-app--rail-collapsed_&]:flex-row');
+    const alpha = screen.getByText('Alpha Standup').closest('[data-slot="sidebar-menu-button"]');
+    const beta = screen.getByText('Beta Review').closest('[data-slot="sidebar-menu-button"]');
+    expect(alpha?.getAttribute('data-active')).toBe('false');
+    expect(beta?.getAttribute('data-active')).toBe('true');
+    expect(beta?.getAttribute('aria-current')).toBe('page');
+    fireEvent.click(alpha as HTMLElement);
+    expect(onSelectSession).toHaveBeenCalledWith('a1');
+  });
+});
 
-    // Version sits under the Teams/Settings row at the rail bottom.
-    expect(screen.getByText(/^v\d/)).toBeTruthy();
+describe('V6Rail collapse persistence (sidebar primitive, localStorage)', () => {
+  it('the collapsed state survives a remount', () => {
+    const first = renderRail('/');
+    fireEvent.click(screen.getByRole('button', { name: /toggle sidebar/i }));
+    expect(sidebarState()).toBe('collapsed');
+    expect(window.localStorage.getItem(SIDEBAR_STORAGE_KEY)).toBe('collapsed');
+    first.view.unmount();
+
+    renderRail('/');
+    expect(sidebarState()).toBe('collapsed');
+  });
+
+  it('storage that throws defaults to expanded', () => {
+    const own = Object.getOwnPropertyDescriptor(window, 'localStorage');
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      get: () => {
+        throw new Error('denied');
+      },
+    });
+    try {
+      renderRail('/');
+      expect(sidebarState()).toBe('expanded');
+      fireEvent.click(screen.getByRole('button', { name: /toggle sidebar/i }));
+      expect(sidebarState()).toBe('collapsed');
+    } finally {
+      if (own) Object.defineProperty(window, 'localStorage', own);
+      else delete (window as unknown as Record<string, unknown>).localStorage;
+    }
   });
 });
 
@@ -255,35 +320,31 @@ describe('V6Rail session search (spec: "Real rail session search")', () => {
 
   it('collapsed-rail: the search affordance is a real, keyboard-focusable button that expands the rail and moves focus into the visible input', () => {
     mockSessions({ active: [sessionFixture()], archived: [] });
-    document.body.classList.add('v6-app--rail-collapsed');
+    window.localStorage.setItem(SIDEBAR_STORAGE_KEY, 'collapsed');
     renderRail();
+    expect(sidebarState()).toBe('collapsed');
 
     const searchButton = screen.getByRole('button', { name: 'Search sessions' });
-    // The fix vs. the spike (panel finding): this is a genuine <button>, not a
-    // div — so it is reachable by Tab and activatable by Enter/Space like any
-    // other button, unlike a bare `onClick` div.
+    // A genuine <button> (panel finding on the spike's bare div), so Tab reaches it and
+    // Enter/Space activate it; browsers turn those keys into this click.
     expect(searchButton.tagName).toBe('BUTTON');
-    expect(document.body.classList.contains('v6-app--rail-collapsed')).toBe(true);
 
-    // Native browsers translate a keyboard Enter/Space on a focused <button>
-    // into this same click event; that's what the button's own handler acts
-    // on, so exercising it via `fireEvent.click` here is the standard
-    // testing-library idiom for "activatable by keyboard" on a real button
-    // (see e.g. the Teams-button/New-Session-button tests above).
-    fireEvent.click(searchButton);
+    act(() => {
+      fireEvent.click(searchButton);
+    });
 
-    expect(document.body.classList.contains('v6-app--rail-collapsed')).toBe(false);
+    expect(sidebarState()).toBe('expanded');
     const input = screen.getByRole('searchbox', { name: 'Search sessions' });
     expect(document.activeElement).toBe(input);
   });
 });
 
-describe('V6Rail New Session and Batch Import follow show access (show-grants D13)', () => {
+describe('V6Rail New session and Import follow show access (show-grants D13)', () => {
   it('are hidden when the active team has no show the user can access', () => {
     mockProfile(accessProfile([{ id: 'show-1', can_access: false }]));
     renderRail();
-    expect(screen.queryByRole('button', { name: 'New Session' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Batch Import' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'New session' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Import' })).toBeNull();
   });
 
   it('are hidden when the only accessible show belongs to another team', () => {
@@ -294,8 +355,8 @@ describe('V6Rail New Session and Batch Import follow show access (show-grants D1
       ]),
     );
     renderRail();
-    expect(screen.queryByRole('button', { name: 'New Session' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Batch Import' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'New session' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Import' })).toBeNull();
   });
 
   it('are shown with one accessible show in the active team', () => {
@@ -306,7 +367,7 @@ describe('V6Rail New Session and Batch Import follow show access (show-grants D1
       ]),
     );
     renderRail();
-    expect(screen.getByRole('button', { name: 'New Session' })).not.toBeNull();
-    expect(screen.getByRole('button', { name: 'Batch Import' })).not.toBeNull();
+    expect(screen.getByRole('button', { name: 'New session' })).not.toBeNull();
+    expect(screen.getByRole('button', { name: 'Import' })).not.toBeNull();
   });
 });

@@ -22,7 +22,7 @@ import { useRowSeeds } from '../utils/rowHolds';
 import { followServer } from '../utils/seedStore';
 import { clickSortReducer } from '../utils/sortReducer';
 import { formatSpeaker, speakerOffsetFromWords } from '../utils/speakerOffset';
-import { FeedShell } from './FeedShell';
+import { FeedShell, feedCountLabel } from './FeedShell';
 import { type ColumnDef, FeedTable } from './FeedTable';
 import { GenerateToolbar } from './GenerateToolbar';
 import { JUMP_COLUMN } from './JumpToTimeButton';
@@ -45,8 +45,21 @@ const COLUMNS: ColumnDef[] = [
     sortKey: 'session_time',
     thClassName: 'text-left w-[6.5rem]',
   },
-  { key: 'speaker', label: 'Speaker', sortKey: 'speaker', thClassName: 'text-left w-32' },
-  { key: 'word', label: 'Word(s)', sortKey: 'word', thClassName: 'text-left min-w-40' },
+  {
+    key: 'speaker',
+    label: 'Speaker',
+    sortKey: 'speaker',
+    thClassName: 'text-left w-32 max-md:w-px',
+  },
+  // Phones: no floors, so the table fits a 390px card with no sideways scroll (finish review).
+  // The speaker column shrinks to its content ("Person 10") and the word column takes the rest,
+  // so ordinary words show whole at 390 (fix round 2: "defamatio" was cut beside a 102px speaker).
+  {
+    key: 'word',
+    label: 'Word(s)',
+    sortKey: 'word',
+    thClassName: 'text-left min-w-40 max-md:min-w-0 max-md:w-full',
+  },
 ];
 
 // Approximate rendered height of a single TranscribeRow: input/button + cell
@@ -305,15 +318,17 @@ export const TranscribeFeed = memo(function TranscribeFeed({ sessionId }: Props)
 
   return (
     <FeedShell
-      countLabel={`${wordCount} ${wordCount === 1 ? 'Word' : 'Words'}`}
+      countLabel={feedCountLabel(wordCount, 'word')}
       headerId="v5-transcribe-feed-head"
       feedAriaLabel="Transcript feed"
       toolbar={toolbar}
       toolbarAriaLabel="Transcript feed tools"
       // `v5-transcribe-feed` retained as a chrome hook; the flex-column panel layout
       // (was `:global(.v5-transcribe-feed)` in FeedTable.module.css) rides along as
-      // utilities: fill the tab panel on desktop, cap + internal-scroll on phones.
-      modifier="v5-transcribe-feed flex flex-col flex-[1_1_0] min-h-0 overflow-hidden max-md:flex-[0_0_auto] max-md:max-h-[70dvh]"
+      // utilities: fill the tab panel on desktop; on phones the sheet sizes to header + scroll
+      // viewport and only FeedTable's viewport carries the 70dvh cap, as the Event feed does
+      // (fix round 3: capping both ran the rows ~62px past the card's bottom edge).
+      modifier="v5-transcribe-feed flex flex-col flex-[1_1_0] min-h-0 overflow-hidden max-md:flex-[0_0_auto]"
       after={
         // The ONE shared reason node every row's jump control references while
         // unavailable (design D2 gate decision) — never one per row.
@@ -340,7 +355,7 @@ export const TranscribeFeed = memo(function TranscribeFeed({ sessionId }: Props)
             </>
           ) : (
             <>
-              No transcript yet. Click <strong>Auto Generate</strong> to transcribe audio.
+              No transcript yet. Click <strong>Auto generate</strong> to transcribe audio.
             </>
           )
         }

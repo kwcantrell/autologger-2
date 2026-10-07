@@ -19,7 +19,7 @@ export const FEED_SHEET_CLASS = clsx(
   // Feed-only open glass (more transparent than panel strong/regular glass).
   'flex-[1_1_auto] min-w-0 flex flex-col glass-face-feed border border-solid border-v5-border rounded-v5-lg [box-shadow:var(--v5-panel-elevate)]',
   // #v4-log-session .v4-log-sheet.v5-event-feed (panel box) + extracted SW 183 min-h-0.
-  '[#v4-log-session_&]:min-h-0 [#v4-log-session_&]:items-stretch [#v4-log-session_&]:mx-4 [#v4-log-session_&]:box-border [#v4-log-session_&]:relative',
+  '[#v4-log-session_&]:min-h-0 [#v4-log-session_&]:items-stretch [#v4-log-session_&]:mx-4 max-md:[#v4-log-session_&]:mx-3 [#v4-log-session_&]:box-border [#v4-log-session_&]:relative',
   // overflow: extracted SessionWorkspace 183 (x-clip/y-visible) + EventLogSheet event-feed
   // (visible). y stays visible so panel eyebrows/toolbar escape; x clips.
   '[#v4-log-session_&]:overflow-x-clip [#v4-log-session_&]:overflow-y-visible',
@@ -27,7 +27,10 @@ export const FEED_SHEET_CLASS = clsx(
 
 // FeedShell content inset — top half of the former `p-6` so the header sits
 // closer to the sheet edge; horizontal/bottom stay 1.5rem.
-const SHEET_PAD = '[#v4-log-session_&]:px-6 [#v4-log-session_&]:pt-3 [#v4-log-session_&]:pb-6';
+// Phones (redesign-show-ignition task 5.2): a 12px inset and margin, so the feed table has the
+// width to fit a 390px viewport instead of scrolling sideways inside its card.
+const SHEET_PAD =
+  '[#v4-log-session_&]:px-6 [#v4-log-session_&]:pt-3 [#v4-log-session_&]:pb-6 max-md:[#v4-log-session_&]:px-3 max-md:[#v4-log-session_&]:pb-3';
 
 const SHEET = clsx(FEED_SHEET_CLASS, SHEET_PAD);
 
@@ -50,8 +53,18 @@ const FEED_TOOLBAR = 'flex-[0_0_auto] flex flex-row flex-wrap justify-start self
 // `#v4-log-session .v5-panel-main-title--numeric` (extracted SessionWorkspace 741) — the
 // FeedShell-only numeric size delta over the shared `.v5-panel-main-title` base (which stays
 // legacy in SessionWorkspace, still targeting this h2). Ancestor variant so the id is retained.
+// Show Ignition count heading (redesign-show-ignition task 5.2; preview `.feedbar h2`): the UI
+// face at a heading size, sentence case ("10 events"), tabular figures.
 const FEED_TITLE_NUMERIC =
-  '[#v4-log-session_&]:text-[1.75rem] [#v4-log-session_&]:font-semibold [#v4-log-session_&]:[font-variant-numeric:tabular-nums] [#v4-log-session_&]:tracking-[-0.03em]';
+  '[#v4-log-session_&]:font-ui [#v4-log-session_&]:text-[1.25rem] [#v4-log-session_&]:leading-tight [#v4-log-session_&]:font-semibold [#v4-log-session_&]:[font-variant-numeric:tabular-nums] [#v4-log-session_&]:tracking-normal';
+
+/** The feed heading's count copy, shared by every feed (redesign-show-ignition 11.3 item e): the
+ *  Event feed's sentence-case pattern ("10 events", "1 topic"), the bare count, singular only at
+ *  exactly one. `capped` marks a fetch-capped count (`500+ events`), which always reads plural. */
+export function feedCountLabel(count: number, noun: string, opts: { capped?: boolean } = {}) {
+  const capped = opts.capped === true;
+  return `${count}${capped ? '+' : ''} ${noun}${count === 1 && !capped ? '' : 's'}`;
+}
 
 interface Props {
   countLabel: string;

@@ -36,7 +36,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 // NOTE ON THE BARE show ROOT: it is an ordinary English word, so unlike the
 // hyphenated literals it can plausibly collide with an unrelated string (a
 // `describe` title, a discriminant value). That is deliberate and the tradeoff
-// is accepted: the root IS the key prefix `HomeSettingsModal` invalidates by,
+// is accepted: the root IS the key prefix a Settings save invalidates by,
 // so a stray copy is exactly the drift this guard exists to catch. A genuine
 // non-key collision should be renamed, not exempted — an exemption list would
 // reopen the hole.

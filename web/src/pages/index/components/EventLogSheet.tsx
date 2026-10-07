@@ -34,6 +34,7 @@ import {
 import { TableCell, TableRow } from '../../../shared/components/ui/table';
 import { type ConflictField, conflictPromptCopy } from '../../../shared/hooks/conflictPromptCopy';
 import { useVersionedSave } from '../../../shared/hooks/useVersionedSave';
+import { useIsMobile } from '../../../shared/ui/breakpoints';
 import { useConfirm } from '../../../shared/ui/ConfirmDialog';
 import { eventTimelineSec } from '../../../shared/utils/audioClips';
 import { formatWallUtcYmdHms, isAutomaticLogEvent } from '../../../shared/utils/timecode';
@@ -53,7 +54,7 @@ import {
   type RowEditValues,
   serverInlineDraft,
 } from './EventLogRow';
-import { FeedShell } from './FeedShell';
+import { FeedShell, feedCountLabel } from './FeedShell';
 import { type ColumnDef, FeedTable } from './FeedTable';
 import {
   FeedToolbarCaption,
@@ -220,7 +221,7 @@ function TimeDisplayDropdown({
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button variant="glass" disabled={disabled}>
-          <FeedToolbarCaption label="Time Display" icon={<IconClock />} />
+          <FeedToolbarCaption label="Time display" icon={<IconClock />} />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
@@ -402,7 +403,9 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
     [fetchedEvents, loadedLimit],
   );
   const total = data?.total ?? 0;
-  const loggedTotal = data?.logged_event_count ?? 0;
+  // `logged_event_count` is deliberately NOT read here: it excludes internal events, so it
+  // covers a different row set from the feed (web-session-console "Feed count matches the
+  // rows shown"). The heading counts `feedCount` below instead.
 
   // --- View state ---
   // Default direction is oldest-first across all three feeds (owner decision
@@ -645,20 +648,39 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
     };
   }, [inlineEdit]);
 
-  // Memoized (code-health-tail 4.8, perf only): the filter+sort re-ran on
-  // every render (each keystroke in an inline edit re-sorts the whole feed);
-  // keyed on its actual inputs, output unchanged.
-  const sorted = useMemo(() => {
+  // The feed's active filters as one predicate, shared by the rendered rows and the
+  // heading count so the two can never disagree about which events the filters select.
+  const isShown = useMemo(() => {
     // Only hide rows whose category is a known show button the operator
     // toggled off — orphan/unknown categories stay visible.
     const knownIds = new Set(categories.map((c) => c.id));
-    const filtered = events.filter((event) => {
+    return (event: LogEvent) => {
       if (!showInternal && event.category.toLowerCase() === 'internal') return false;
       if (knownIds.has(event.category) && hiddenCategoryIds.has(event.category)) return false;
       return true;
-    });
-    return doSortEvents(filtered, sortState, status);
-  }, [events, hiddenCategoryIds, categories, showInternal, sortState, status]);
+    };
+  }, [categories, hiddenCategoryIds, showInternal]);
+
+  // Heading count (redesign-show-ignition D7; web-session-console "Feed count matches the
+  // rows shown"): the WHOLE filtered fetched set — before the `loadedLimit` render window,
+  // so paging never caps it. "Capped" is read from the response, not guessed from the
+  // length: `total` is the session's whole event count (eventStore.listEvents counts every
+  // row, independent of limit/offset), so a fetch that returned fewer rows than `total`
+  // was cut off at WORKSPACE_EVENTS_LIMIT and the figure gets a trailing `+`.
+  const feedCount = useMemo(() => {
+    let n = 0;
+    for (const event of fetchedEvents) if (isShown(event)) n++;
+    return n;
+  }, [fetchedEvents, isShown]);
+  const fetchCapped = total > fetchedEvents.length;
+
+  // Memoized (code-health-tail 4.8, perf only): the filter+sort re-ran on
+  // every render (each keystroke in an inline edit re-sorts the whole feed);
+  // keyed on its actual inputs, output unchanged.
+  const sorted = useMemo(
+    () => doSortEvents(events.filter(isShown), sortState, status),
+    [events, isShown, sortState, status],
+  );
 
   // `rangeExtractor` runs inside the virtualizer's own measurement, outside the
   // React render it was created in, so it reads the current rendered order
@@ -711,6 +733,11 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
   // `inlineDrafts` store below and read back as `defaultValue` when the row
   // remounts (see `InlineDraftStore`). Batch-edit mode never had the exposure —
   // its drafts have always lived in the parent-owned `batchEdits` Map.
+  // Phones (finish review fix round 1): rows fold the Event category under the timecode, so the
+  // table fits the card with no sideways scroll and the message keeps the rest of the row. Every
+  // line stays nowrap and the folded cell is no taller than the jump control, so ROW_HEIGHT holds.
+  const foldRows = useIsMobile();
+
   const virtualizer = useVirtualizer({
     count: sorted.length,
     getScrollElement: () => scrollEl,
@@ -1202,16 +1229,27 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
       sortKey: viewUtc ? 'utc' : 'timecode',
       thClassName: 'w-[6.5rem]',
     },
+    // Phones fold the category under the timecode (EventLogRow `folded`), so no Event column.
+    ...(foldRows
+      ? []
+      : [
+          {
+            key: 'category',
+            label: 'Event',
+            sortKey: 'category',
+            thClassName: 'w-32 max-md:w-auto',
+          },
+        ]),
+    // Phones: no message floor, so the table fits the card (the cell clips at its max width).
     {
-      key: 'category',
-      label: 'Event',
-      sortKey: 'category',
-      thClassName: 'w-32',
+      key: 'message',
+      label: 'Message',
+      sortKey: 'message',
+      thClassName: 'min-w-48 max-md:min-w-0',
     },
-    { key: 'message', label: 'Message', sortKey: 'message', thClassName: 'min-w-48' },
   ];
 
-  const countLabel = `${loggedTotal} Event${loggedTotal !== 1 ? 's' : ''}`;
+  const countLabel = feedCountLabel(feedCount, 'event', { capped: fetchCapped });
 
   // Shared aria-disabled toolbar fragment (the a11y rationale — focusable
   // aria-disabled button + `aria-describedby` reason span — lives on
@@ -1232,8 +1270,8 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
   );
   const genNoInstructionsReason = (
     <>
-      No event buttons carry auto-generate instructions yet. Add instructions in the Settings
-      event-buttons table first.
+      No event buttons carry auto-generate instructions yet. Add instructions in Settings › Event
+      buttons first.
     </>
   );
   const generateUnavailable = genUnavailable || noInstructions;
@@ -1267,7 +1305,7 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
           }}
         >
           <FeedToolbarCaption
-            label={generatePending ? 'Generating…' : 'Auto Generate'}
+            label={generatePending ? 'Generating…' : 'Auto generate'}
             icon={<IconSparkles />}
           />
         </Button>
@@ -1442,7 +1480,7 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
           <colgroup>
             <col className="col-jump" />
             <col className="col-timecode" />
-            <col className="col-category" />
+            {!foldRows && <col className="col-category" />}
             <col className="col-message" />
           </colgroup>
         }
@@ -1460,6 +1498,7 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
           const ev = sorted[vRow.index];
           return (
             <EventLogRow
+              folded={foldRows}
               // The epoch remounts every copy of the row after Keep theirs (D5).
               key={`${ev.event_id}:${rowEpochs.get(ev.event_id) ?? 0}`}
               event={ev}

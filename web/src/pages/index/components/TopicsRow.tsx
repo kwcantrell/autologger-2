@@ -14,9 +14,11 @@ import { sessionTimeToTimelineSec } from '../../../shared/utils/timelineSec';
 import { type RowSeeds, useRowSeeds } from '../utils/rowHolds';
 import {
   FEED_CELL,
+  FEED_CELL_TEXT,
   FEED_CELL_TIME,
   FEED_INLINE_INPUT,
-  FEED_INLINE_INPUT_MONO,
+  FEED_INLINE_INPUT_NUM,
+  FEED_INLINE_INPUT_TC,
   FEED_ROW,
   FEED_SUMMARY_TEXTAREA,
 } from './FeedTable';
@@ -37,6 +39,20 @@ export const TOPIC_EDIT_FIELDS = [
   'topic_level',
   'summary',
 ] as const satisfies ReadonlyArray<keyof TopicEditState>;
+
+/** The folded Duration/Level line under the time (phones): the desktop headers' words in normal
+ *  case and the muted body face ("Duration 30s", "Level 1"; finish review fix round 2 dropped the
+ *  tracked-caps `Dur`/`Lvl`), the values in the body text colour and the cell's timecode face.
+ *  The two pairs wrap onto their own lines when the time column is narrow (390). */
+const FOLDED_NUMS =
+  'mt-0.5 flex flex-wrap items-center gap-x-2 font-ui text-[0.72rem] font-normal text-muted-foreground [&_input]:font-tc [&_input]:text-[0.75rem] [&_input]:text-(--color-text)';
+const FOLDED_PAIR = 'inline-flex items-center whitespace-nowrap';
+
+/** A folded numeric input exactly as wide as its value in the timecode face, plus its padding and
+ *  border, so the unit sits right after the number ("30s"). */
+function foldedWidth(value: string) {
+  return { width: `calc(${Math.max(1, value.length)}ch + 0.6rem + 2px)` };
+}
 
 export interface TopicPatch {
   session_time?: string;
@@ -122,6 +138,10 @@ interface Props {
    *  jump now plays — so a parseable invented time is the exact silent-
    *  wrong-second hazard this guards against. */
   transcriptAnchored: boolean;
+  /** Phones (finish review fix round 1): Duration and Level fold under the session time, each
+   *  with a short visible label, so the summary keeps the rest of the row and wraps there.
+   *  `TopicsFeed` drops their column headers to match. */
+  folded?: boolean;
 }
 
 // --- feed-row-seek, task 8.2/8.3 (design D4, spec "Topic jumps require an
@@ -164,6 +184,7 @@ export function TopicsRow({
   jumpUnavailable,
   jumpReasonId,
   transcriptAnchored,
+  folded = false,
 }: Props) {
   // The feed's seeds; a standalone row (unit tests) gets a store of its own.
   const rowSeeds = useRowSeeds<SessionTopic>(feedSeeds);
@@ -311,6 +332,38 @@ export function TopicsRow({
 
   const resolvedSec = topicsRowTimelineSec(row, fps, transcriptAnchored);
 
+  // Duration and Level: their own cells on desktop, one folded line under the time on phones.
+  // Named (aria-label) in both layouts; the folded line also shows short visible labels.
+  const durationInput = (
+    <input
+      className={clsx(FEED_INLINE_INPUT, FEED_INLINE_INPUT_NUM, folded ? 'shrink-0' : 'max-w-20')}
+      style={folded ? foldedWidth(vals.duration_sec) : undefined}
+      aria-label="Duration (s)"
+      type="number"
+      min={0}
+      step={1}
+      value={vals.duration_sec}
+      onFocus={startEdit}
+      onChange={(e) => setEdit((p) => (p ? { ...p, duration_sec: e.target.value } : p))}
+      onBlur={(e) => commitField('duration_sec', e.target.value, e.relatedTarget)}
+    />
+  );
+  const levelInput = (
+    <input
+      className={clsx(FEED_INLINE_INPUT, FEED_INLINE_INPUT_NUM, folded ? 'shrink-0' : 'max-w-20')}
+      style={folded ? foldedWidth(vals.topic_level) : undefined}
+      aria-label="Level"
+      type="number"
+      min={1}
+      max={10}
+      step={1}
+      value={vals.topic_level}
+      onFocus={startEdit}
+      onChange={(e) => setEdit((p) => (p ? { ...p, topic_level: e.target.value } : p))}
+      onBlur={(e) => commitField('topic_level', e.target.value, e.relatedTarget)}
+    />
+  );
+
   return (
     <TableRow ref={trRef} className={FEED_ROW}>
       {/* Jump column (feed-row-seek, design D2/D7): its own leading cell,
@@ -327,39 +380,37 @@ export function TopicsRow({
       </TableCell>
       <TableCell className={clsx(FEED_CELL, 'align-top', FEED_CELL_TIME)}>
         <input
-          className={clsx(FEED_INLINE_INPUT, FEED_INLINE_INPUT_MONO, 'mono')}
+          className={clsx(FEED_INLINE_INPUT, FEED_INLINE_INPUT_TC)}
           value={vals.session_time}
           onFocus={startEdit}
           onChange={(e) => setEdit((p) => (p ? { ...p, session_time: e.target.value } : p))}
           onBlur={(e) => commitField('session_time', e.target.value, e.relatedTarget)}
         />
+        {folded && (
+          <span className={FOLDED_NUMS}>
+            <span className={FOLDED_PAIR}>
+              <span aria-hidden="true">Duration</span>
+              {durationInput}
+              <span aria-hidden="true" className="-ml-1">
+                s
+              </span>
+            </span>
+            <span className={FOLDED_PAIR}>
+              <span aria-hidden="true">Level</span>
+              {levelInput}
+            </span>
+          </span>
+        )}
       </TableCell>
-      <TableCell className={clsx(FEED_CELL, 'align-top')}>
-        <input
-          className={clsx(FEED_INLINE_INPUT, FEED_INLINE_INPUT_MONO, 'mono', 'max-w-20')}
-          type="number"
-          min={0}
-          step={1}
-          value={vals.duration_sec}
-          onFocus={startEdit}
-          onChange={(e) => setEdit((p) => (p ? { ...p, duration_sec: e.target.value } : p))}
-          onBlur={(e) => commitField('duration_sec', e.target.value, e.relatedTarget)}
-        />
-      </TableCell>
-      <TableCell className={clsx(FEED_CELL, 'align-top')}>
-        <input
-          className={clsx(FEED_INLINE_INPUT, FEED_INLINE_INPUT_MONO, 'mono', 'max-w-20')}
-          type="number"
-          min={1}
-          max={10}
-          step={1}
-          value={vals.topic_level}
-          onFocus={startEdit}
-          onChange={(e) => setEdit((p) => (p ? { ...p, topic_level: e.target.value } : p))}
-          onBlur={(e) => commitField('topic_level', e.target.value, e.relatedTarget)}
-        />
-      </TableCell>
-      <TableCell className={clsx(FEED_CELL, 'align-top')}>
+      {!folded && (
+        <TableCell className={clsx(FEED_CELL, 'align-top', FEED_CELL_TEXT)}>
+          {durationInput}
+        </TableCell>
+      )}
+      {!folded && (
+        <TableCell className={clsx(FEED_CELL, 'align-top', FEED_CELL_TEXT)}>{levelInput}</TableCell>
+      )}
+      <TableCell className={clsx(FEED_CELL, 'align-top', FEED_CELL_TEXT)}>
         <textarea
           ref={summaryRef}
           className={clsx(FEED_INLINE_INPUT, FEED_SUMMARY_TEXTAREA)}

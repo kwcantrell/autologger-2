@@ -2,7 +2,8 @@
 // layer under `CatalogWidget` (widgetRegistry.tsx). Direct-manipulation
 // affordances (drag/resize handles, retitle-in-place, remove) are task 4.6's
 // job (editing mode) — this unit renders the read-only card shell the design
-// brief's "saved"/"draft"/"degraded" states use.
+// brief's "saved"/"draft"/"degraded" states use. A flat Card surface (panel fill, 1px hairline,
+// 12px card radius; 11.4 cleanup retired the V5 glass fill).
 
 import type { ReactNode } from 'react';
 
@@ -18,7 +19,7 @@ interface Props {
 export function WidgetChrome({ title, meta, children }: Props) {
   return (
     <article
-      className="relative flex min-h-0 min-w-0 flex-col rounded-v5-md border border-v5-border bg-[linear-gradient(180deg,rgba(255,255,255,0.045)_0%,rgba(255,255,255,0)_46%),linear-gradient(180deg,rgba(22,30,52,0.75),rgba(13,19,34,0.72))] p-3.5"
+      className="relative flex min-h-0 min-w-0 flex-col rounded-card border border-si-line bg-card p-3.5 text-card-foreground"
       data-testid="aiv2-widget-card"
     >
       <div className="mb-2 flex shrink-0 items-baseline gap-2">

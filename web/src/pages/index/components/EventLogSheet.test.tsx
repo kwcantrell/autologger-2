@@ -292,10 +292,10 @@ describe('EventLogSheet time display menu', () => {
   it('opens by keyboard as a radio menu and switches the time display', async () => {
     renderSheet();
 
-    const trigger = await screen.findByRole('button', { name: 'Time Display' });
+    const trigger = await screen.findByRole('button', { name: 'Time display' });
     expect(trigger.getAttribute('aria-haspopup')).toBe('menu');
     fireEvent.keyDown(trigger, { key: 'Enter' });
-    expect(await screen.findByRole('menu', { name: 'Time Display' })).toBeTruthy();
+    expect(await screen.findByRole('menu', { name: 'Time display' })).toBeTruthy();
     const session = screen.getByRole('menuitemradio', { name: 'Session Time' });
     const world = screen.getByRole('menuitemradio', { name: 'World Clock' });
     expect(session.getAttribute('aria-checked')).toBe('true');
@@ -303,7 +303,7 @@ describe('EventLogSheet time display menu', () => {
     expect((document.getElementById('view-utc-log') as HTMLInputElement).checked).toBe(false);
 
     fireEvent.click(world);
-    expect(screen.queryByRole('menu', { name: 'Time Display' })).toBeNull();
+    expect(screen.queryByRole('menu', { name: 'Time display' })).toBeNull();
     expect((document.getElementById('view-utc-log') as HTMLInputElement).checked).toBe(true);
   });
 });
@@ -537,6 +537,94 @@ describe('EventLogSheet marker reveal page growth', () => {
         .map((p) => new URLSearchParams(p.split('?')[1] ?? '').get('limit')),
     );
     expect([...eventsLimits]).toEqual([String(WORKSPACE_EVENTS_LIMIT)]);
+  });
+});
+
+// --- Feed count matches the rows shown (redesign-show-ignition D7, task 5.1) ---
+//
+// web-session-console "Feed count matches the rows shown": the heading counts the
+// whole filtered FETCHED set (before the `loadedLimit` render window), never
+// `logged_event_count`, which excludes internal events. A `+` follows when the
+// session holds more events than the workspace fetches (`total` > fetched).
+describe('EventLogSheet feed count', () => {
+  beforeAll(() => {
+    if (typeof window.IntersectionObserver !== 'undefined') return;
+    class StubIntersectionObserver {
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    }
+    window.IntersectionObserver =
+      StubIntersectionObserver as unknown as typeof IntersectionObserver;
+  });
+
+  function rowsFixture(count: number, category = 'general', from = 0): LogEvent[] {
+    return Array.from({ length: count }, (_, j) => {
+      const i = from + j;
+      return {
+        version: 1,
+        event_id: `ev-${i}`,
+        category,
+        category_label: category === 'internal' ? 'Internal' : 'General',
+        category_color: '#4488ff',
+        message: `note ${i}`,
+        timecode: '00:00:10:00',
+        timecode_total_frames: 240 + i * 24,
+        frame_rate: 24,
+        wall_time_utc: new Date(Date.UTC(2026, 6, 21, 0, 0, 10 + i)).toISOString(),
+        metadata: {},
+      };
+    });
+  }
+
+  function serve(events: LogEvent[], total = events.length, logged = events.length) {
+    mockedApiFetch.mockImplementation(async (path: string) => {
+      if (path.includes('/status')) return statusFixture();
+      if (path.includes('/show-categories')) {
+        return { categories: [categoryFixture()], show_name: '', show_code: '' };
+      }
+      if (path.includes('/events')) {
+        return { events, total, logged_event_count: logged, offset: 0, limit: 2000 };
+      }
+      throw new Error(`unexpected apiFetch call: ${path}`);
+    });
+  }
+
+  const heading = () => document.getElementById('v5-event-feed-head') as HTMLElement;
+
+  it('counts internal events while shown and drops them in the same render when hidden', async () => {
+    serve([...rowsFixture(2), ...rowsFixture(8, 'internal', 2)], 10, 2);
+    renderSheet();
+    await screen.findByText('note 9');
+    expect(heading().textContent).toBe('10 events');
+
+    openMenu(screen.getByRole('button', { name: 'Filter' }));
+    fireEvent.click(await screen.findByRole('menuitemcheckbox', { name: 'Internal' }));
+    expect(heading().textContent).toBe('2 events');
+    expect(screen.queryByText('note 9')).toBeNull();
+  });
+
+  it('counts the whole fetched set, not the 200 rows paged into the window', async () => {
+    serve(rowsFixture(450));
+    renderSheet();
+    await screen.findByText('note 0');
+    // Only the first page is rendered…
+    expect(document.querySelector('tr[data-event-id="ev-449"]')).toBeNull();
+    // …but the heading counts every fetched row the filters select.
+    expect(heading().textContent).toBe('450 events');
+  });
+
+  it('adds a trailing + when the session has more events than the workspace fetches', async () => {
+    serve(rowsFixture(WORKSPACE_EVENTS_LIMIT), 2600, 2600);
+    renderSheet();
+    await screen.findByText('note 0');
+    expect(heading().textContent).toBe('2000+ events');
+  });
+
+  it('uses the singular for one event', async () => {
+    renderSheet();
+    await screen.findByText('A logged note');
+    expect(heading().textContent).toBe('1 event');
   });
 });
 
@@ -878,5 +966,33 @@ describe('EventLogSheet batch and delete version conflicts', () => {
     ]);
     expect(putBodies()).toEqual([expect.objectContaining({ message: 'mine 1', version: 2 })]);
     expect(rows.map((r) => [r.event_id, r.message])).toEqual([['ev-1', 'mine 1']]);
+  });
+});
+
+// Finish review fix round 1: below md the feed drops the Event column (the category folds under
+// the timecode in each row), so the table fits a 390px card with no sideways scroll.
+describe('EventLogSheet on phones', () => {
+  it('has no Event column header and folds each row to three cells', async () => {
+    const original = window.matchMedia;
+    window.matchMedia = vi.fn().mockImplementation((query: string) => ({
+      matches: query === '(max-width: 767px)',
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })) as unknown as typeof window.matchMedia;
+    try {
+      renderSheet();
+      await screen.findByText('A logged note');
+      expect(screen.queryByRole('columnheader', { name: 'Event' })).toBeNull();
+      expect(screen.getByRole('columnheader', { name: 'Message' })).not.toBeNull();
+      const row = document.querySelector('tr[data-event-id="ev-1"]') as HTMLTableRowElement;
+      expect(row.querySelectorAll(':scope > td')).toHaveLength(3);
+    } finally {
+      window.matchMedia = original;
+    }
   });
 });

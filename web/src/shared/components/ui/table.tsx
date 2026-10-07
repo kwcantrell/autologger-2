@@ -51,7 +51,10 @@ function TableHead({ className, ...props }: React.ComponentProps<'th'>) {
     <th
       data-slot="table-head"
       className={cn(
-        'sticky top-0 z-[1] px-[0.55rem] py-[0.38rem] text-[0.84rem] font-semibold tracking-[0.05em] uppercase whitespace-nowrap bg-[rgba(19,27,48,0.72)] [border-bottom:1px_solid_var(--v5-line)] text-v5-muted [&_button]:appearance-none [&_button]:bg-transparent [&_button]:border-none [&_button]:text-inherit [&_button]:[font:inherit] [&_button]:[letter-spacing:inherit] [&_button]:cursor-pointer [&_button]:p-0 [&_button]:text-left [&_button]:w-full [&_button]:hover-always:text-v5-primary',
+        // Show Ignition column header (preview `thead th`): the label face, uppercase and
+        // tracked, dim, on the card surface it sticks over, with a hairline under it. The sort
+        // button inherits all of it (a <button> resets text-transform, so it is inherited too).
+        'sticky top-0 z-[1] px-[0.625rem] py-[0.5625rem] font-label text-[0.6875rem] font-semibold leading-none tracking-[0.12em] uppercase whitespace-nowrap bg-card [border-bottom:1px_solid_var(--si-line)] text-si-dim [&_button]:appearance-none [&_button]:bg-transparent [&_button]:border-none [&_button]:text-inherit [&_button]:[font:inherit] [&_button]:[letter-spacing:inherit] [&_button]:[text-transform:inherit] [&_button]:cursor-pointer [&_button]:p-0 [&_button]:text-left [&_button]:w-full [&_button]:hover-always:text-si-fg',
         className,
       )}
       {...props}

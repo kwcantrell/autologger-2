@@ -9,6 +9,7 @@ import {
   AlertDialogDescription,
   AlertDialogTitle,
 } from './alert-dialog';
+import { Avatar, AvatarFallback } from './avatar';
 import { Badge } from './badge';
 import { Button, buttonVariants } from './button';
 import { Card, CardContent, CardHeader, CardTitle } from './card';
@@ -27,6 +28,16 @@ import {
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from './empty';
 import { Field, FieldDescription, FieldGroup, FieldLabel } from './field';
 import { Input } from './input';
+import {
+  Item,
+  ItemActions,
+  ItemContent,
+  ItemDescription,
+  ItemGroup,
+  ItemMedia,
+  ItemTitle,
+} from './item';
+import { Kbd, KbdGroup } from './kbd';
 import { Label } from './label';
 import { Popover, PopoverContent, PopoverTrigger } from './popover';
 import { RadioGroup, RadioGroupItem } from './radio-group';
@@ -40,12 +51,32 @@ import {
   SelectValue,
 } from './select';
 import { Separator } from './separator';
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+} from './sheet';
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarHeader,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarProvider,
+  SidebarTrigger,
+} from './sidebar';
 import { Skeleton } from './skeleton';
 import { Toaster } from './sonner';
 import { Spinner } from './spinner';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './tabs';
 import { Textarea } from './textarea';
+import { ToggleGroup, ToggleGroupItem } from './toggle-group';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './tooltip';
 
 // shadcn-foundation task 3.2: every added primitive renders and exposes its role / slot.
@@ -115,6 +146,39 @@ describe('shadcn primitives render (normalized, V5-themed)', () => {
     expect(screen.getByRole('tablist')).toBeTruthy();
     expect(screen.getByRole('tab', { name: 'A' }).getAttribute('data-state')).toBe('active');
     expect(screen.getByRole('tabpanel').textContent).toBe('Panel A');
+  });
+
+  // redesign-show-ignition 11.3 (owner item e): Radix focuses the trigger from its own mousedown,
+  // which Chrome treats as script focus and paints `:focus-visible` after a pointer click. The
+  // trigger marks pointer focus and suppresses the ring for it; keyboard focus keeps the ring.
+  it.each([
+    ['default', undefined],
+    ['nav', 'nav'],
+  ] as const)('tab triggers (%s) show the focus ring for keyboard focus only', (_name, variant) => {
+    const onMouseDown = vi.fn();
+    const onBlur = vi.fn();
+    render(
+      <Tabs defaultValue="a">
+        <TabsList>
+          <TabsTrigger value="a" variant={variant}>
+            A
+          </TabsTrigger>
+          <TabsTrigger value="b" variant={variant} onMouseDown={onMouseDown} onBlur={onBlur}>
+            B
+          </TabsTrigger>
+        </TabsList>
+      </Tabs>,
+    );
+    const b = screen.getByRole('tab', { name: 'B' });
+    expect(b.className.split(/\s+/)).toContain('data-pointer-focus:focus-visible:outline-none');
+    expect(b.hasAttribute('data-pointer-focus')).toBe(false);
+    fireEvent.mouseDown(b, { button: 0 });
+    expect(b.hasAttribute('data-pointer-focus')).toBe(true);
+    expect(b.getAttribute('data-state')).toBe('active'); // Radix's activation still runs
+    expect(onMouseDown).toHaveBeenCalledTimes(1);
+    fireEvent.blur(b);
+    expect(b.hasAttribute('data-pointer-focus')).toBe(false);
+    expect(onBlur).toHaveBeenCalledTimes(1);
   });
 
   it('table, card, badge, alert, skeleton, separator, empty, spinner, scroll-area', () => {
@@ -548,7 +612,10 @@ describe('workspace primitives (shadcn-port-workspace D1)', () => {
     expect(c.className).not.toContain('bg-input/30');
   });
 
-  it('dropdown checkbox and radio items: indicator, aria state, no selected tint', () => {
+  // Checkbox items carry no selected tint (web-session-console "Event filter checkmarks"); a
+  // checked radio item takes the one selected state (redesign-show-ignition; asserted in the
+  // Show Ignition block below), which this shadcn-leftover regex does not match.
+  it('dropdown checkbox and radio items: indicator, aria state, no shadcn tint leftovers', () => {
     render(
       <DropdownMenu open>
         <DropdownMenuTrigger>Open</DropdownMenuTrigger>
@@ -599,5 +666,140 @@ describe('workspace primitives (shadcn-port-workspace D1)', () => {
     expect(screen.getByRole('button', { name: 'Save' }).getAttribute('data-variant')).toBe(
       'glass-primary',
     );
+  });
+});
+
+// redesign-show-ignition D10: the primitives added for the redesign render and expose their
+// role / slot after the hygiene rewrite.
+describe('Show Ignition primitives (redesign-show-ignition D10)', () => {
+  it('sheet opens as a labelled dialog with header and footer slots', () => {
+    render(
+      <Sheet open>
+        <SheetContent side="right">
+          <SheetHeader>
+            <SheetTitle>Edit member</SheetTitle>
+            <SheetDescription>Role and show access.</SheetDescription>
+          </SheetHeader>
+          <SheetFooter>Footer</SheetFooter>
+        </SheetContent>
+      </Sheet>,
+    );
+    expect(screen.getByRole('dialog', { name: 'Edit member' })).toBeTruthy();
+    for (const s of ['sheet-content', 'sheet-header', 'sheet-footer'])
+      expect(slot(s)).not.toBeNull();
+  });
+
+  it('toggle group (single) marks its value on', () => {
+    render(
+      <ToggleGroup type="single" defaultValue="admin" aria-label="Role">
+        <ToggleGroupItem value="admin">Admin</ToggleGroupItem>
+        <ToggleGroupItem value="member">Member</ToggleGroupItem>
+      </ToggleGroup>,
+    );
+    expect(slot('toggle-group')).not.toBeNull();
+    const items = document.querySelectorAll('[data-slot="toggle-group-item"]');
+    expect(items).toHaveLength(2);
+    expect(items[0].getAttribute('data-state')).toBe('on');
+    expect(items[1].getAttribute('data-state')).toBe('off');
+  });
+
+  it('item rows with avatar initials, and kbd', () => {
+    render(
+      <div>
+        <ItemGroup>
+          <Item>
+            <ItemMedia>
+              <Avatar>
+                <AvatarFallback>KC</AvatarFallback>
+              </Avatar>
+            </ItemMedia>
+            <ItemContent>
+              <ItemTitle>Kalen Cantrell</ItemTitle>
+              <ItemDescription>Owner</ItemDescription>
+            </ItemContent>
+            <ItemActions>Edit</ItemActions>
+          </Item>
+        </ItemGroup>
+        <KbdGroup>
+          <Kbd>[</Kbd>
+        </KbdGroup>
+      </div>,
+    );
+    for (const s of ['item-group', 'item', 'item-media', 'item-content', 'item-actions', 'avatar'])
+      expect(slot(s)).not.toBeNull();
+    expect(screen.getByText('KC')).toBeTruthy();
+    expect(screen.getByText('[').tagName).toBe('KBD');
+  });
+
+  it('sidebar renders header, menu, footer and an accessible trigger', () => {
+    render(
+      <SidebarProvider>
+        <Sidebar collapsible="icon">
+          <SidebarHeader>Header</SidebarHeader>
+          <SidebarContent>
+            <SidebarMenu>
+              <SidebarMenuItem>
+                <SidebarMenuButton isActive>Session one</SidebarMenuButton>
+              </SidebarMenuItem>
+            </SidebarMenu>
+          </SidebarContent>
+          <SidebarFooter>Settings</SidebarFooter>
+        </Sidebar>
+        <SidebarTrigger />
+      </SidebarProvider>,
+    );
+    expect(slot('sidebar')?.getAttribute('data-collapsible')).toBe('');
+    expect(screen.getByRole('button', { name: /toggle sidebar/i })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Session one' }).getAttribute('data-active')).toBe(
+      'true',
+    );
+  });
+
+  // web-ui-system "One selected state everywhere": the pressed segmented control, the checked
+  // menu radio item and the active rail row share the accent tint and 1px inset line. Checkbox
+  // menu items stay checkmark-only (web-session-console "Event filter checkmarks").
+  it('one selected state: toggle item, menu radio item, active sidebar row', () => {
+    const SEL = ['bg-(--sel-bg)', 'shadow-[inset_0_0_0_1px_var(--sel-line)]'];
+    const { unmount } = render(
+      <SidebarProvider>
+        <Sidebar collapsible="icon">
+          <SidebarContent>
+            <SidebarMenu>
+              <SidebarMenuItem>
+                <SidebarMenuButton isActive>Active row</SidebarMenuButton>
+              </SidebarMenuItem>
+            </SidebarMenu>
+          </SidebarContent>
+        </Sidebar>
+        <ToggleGroup type="single" defaultValue="a" aria-label="Kind">
+          <ToggleGroupItem value="a">Pressed</ToggleGroupItem>
+        </ToggleGroup>
+      </SidebarProvider>,
+    );
+    const active = screen.getByRole('button', { name: 'Active row' }).className;
+    const pressed = (document.querySelector('[data-slot="toggle-group-item"]') as HTMLElement)
+      .className;
+    for (const c of SEL) {
+      expect(active).toContain(`data-[active=true]:${c}`);
+      expect(pressed).toContain(`data-[state=on]:${c}`);
+    }
+    unmount();
+    render(
+      <DropdownMenu open>
+        <DropdownMenuTrigger>Team</DropdownMenuTrigger>
+        <DropdownMenuContent>
+          <DropdownMenuRadioGroup value="a">
+            <DropdownMenuRadioItem value="a">Team A</DropdownMenuRadioItem>
+          </DropdownMenuRadioGroup>
+          <DropdownMenuCheckboxItem checked>Internal</DropdownMenuCheckboxItem>
+        </DropdownMenuContent>
+      </DropdownMenu>,
+    );
+    const radio = screen.getByRole('menuitemradio', { name: 'Team A' }).className;
+    const checkbox = screen.getByRole('menuitemcheckbox', { name: 'Internal' }).className;
+    for (const c of SEL) {
+      expect(radio).toContain(`data-[state=checked]:${c}`);
+      expect(checkbox).not.toContain(c);
+    }
   });
 });

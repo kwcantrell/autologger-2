@@ -1,4 +1,3 @@
-import clsx from 'clsx';
 import { MoreVertical } from 'lucide-react';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { useSessionStatus } from '../../../api/hooks/useSessionStatus';
@@ -10,16 +9,24 @@ import {
 } from '../../../api/hooks/useSessions';
 import { useShowAccess } from '../../../api/hooks/useShowAccess';
 import type { Session, SessionsResponse } from '../../../api/types';
+import { Badge } from '../../../shared/components/ui/badge';
 import { Button } from '../../../shared/components/ui/button';
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '../../../shared/components/ui/dropdown-menu';
 import { Field, FieldLabel } from '../../../shared/components/ui/field';
 import { Input } from '../../../shared/components/ui/input';
-import { ScrollArea } from '../../../shared/components/ui/scroll-area';
+import {
+  SidebarMenu,
+  SidebarMenuAction,
+  SidebarMenuButton,
+  SidebarMenuItem,
+} from '../../../shared/components/ui/sidebar';
+import { cn } from '../../../shared/lib/utils';
 import { type ConfirmOptions, useConfirm } from '../../../shared/ui/ConfirmDialog';
 import { Dialog } from '../../../shared/ui/Dialog';
 import { Tooltip } from '../../../shared/ui/Tooltip';
@@ -27,60 +34,34 @@ import { fmtDateOnly } from '../../../shared/utils/fmtDateOnly';
 import { AUTOLOGGER_LOADING_VIDEO_SRC } from '../../../shared/utils/loadingVideo';
 import { showToast } from '../utils/toast';
 
-// --- converted class strings (were RecentSessionsList.module.css) ---
+// --- Session cards on the shadcn Sidebar (redesign-show-ignition D8, D10) ---
+//
+// Each card is a `SidebarMenuItem`: the openable card is a `SidebarMenuButton` (its `isActive`
+// carries the one selected state, its `tooltip` names the session), and the ⋮ options menu is a
+// `SidebarMenuAction` beside it, revealed on hover/focus. Archived and no-access cards are not
+// openable, so they render the same two-line body in a plain row rather than a button. The look
+// comes from the sidebar primitive and its tokens; the class strings below are layout only, plus
+// the live treatment (a LIVE / REC text badge).
 
-// Outer session-card row. `group` drives the ⋮-menu reveal on card hover; the
-// data-menu-open (present when the Popover is open) makes overflow visible so the
-// portal-less trail can escape the fixed-height tile. Hover/focus-within tint the
-// border (unguarded → hover-always:). --v6-rail-session-tile-h is never defined
-// anywhere, so its 2.875rem fallback is load-bearing → inlined literally.
-// ui-refresh: tile grew 2.875rem → 3.15rem so the title/meta type could step up
-// to legible sizes (the 0.55rem meta line measured 8.8px — unreadable in the
-// dim rooms this product targets).
-const RAIL_SESSION =
-  'group relative box-border flex h-[3.15rem] max-h-[3.15rem] min-h-[3.15rem] w-full max-w-full flex-shrink-0 cursor-pointer flex-col items-stretch justify-center overflow-hidden rounded-v5-md border border-v5-border bg-[rgba(255,255,255,0.03)] px-[0.55rem] py-[0.3rem] text-left font-[inherit] text-[inherit] [transition:border-color_0.15s_ease,background_0.15s_ease] hover-always:border-[color-mix(in_srgb,var(--v5-primary)_28%,var(--v5-border))] hover-always:bg-[rgba(255,255,255,0.05)] focus-within:border-[color-mix(in_srgb,var(--v5-primary)_28%,var(--v5-border))] focus-within:bg-[rgba(255,255,255,0.05)] data-menu-open:z-10 data-menu-open:overflow-visible';
+// Two-line card body inside the menu button / plain row.
+const CARD_BODY = 'h-auto min-h-12 flex-col items-stretch justify-center gap-0.5 py-1.5';
+// The plain (non-button) row: the menu button's box without its interactivity.
+const CARD_ROW = 'flex w-full min-w-0 flex-col justify-center gap-0.5 rounded-ctl p-2 text-sm';
+const CARD_TITLE = 'truncate font-semibold';
 
-// Active-session variant: replaces the base border + background (recipe 3 —
-// exclusive branch), including its own heightened hover/focus-within values.
-const RAIL_SESSION_ACTIVE =
-  'border-[color-mix(in_srgb,var(--v5-primary)_40%,var(--v5-border))] bg-[linear-gradient(180deg,rgba(56,189,248,0.12),rgba(15,23,42,0.35))] hover-always:border-[color-mix(in_srgb,var(--v5-primary)_45%,var(--v5-border))] hover-always:bg-[linear-gradient(180deg,rgba(56,189,248,0.16),rgba(15,23,42,0.38))] focus-within:border-[color-mix(in_srgb,var(--v5-primary)_45%,var(--v5-border))] focus-within:bg-[linear-gradient(180deg,rgba(56,189,248,0.16),rgba(15,23,42,0.38))]';
+// Live (rolling and/or recording), in the one-accent world (redesign-show-ignition 11.3, which
+// retired the old rail's red outline): a text badge (LIVE while rolling, REC while recording), so
+// colour is never the only channel, and the timecode in the foreground. Nothing else: the one
+// selected state (tint plus inset line) belongs to the open session alone, so a live card that is
+// not open carries no ring or tint (finish review fix round 1). `!` beats the meta row's muted text.
+const DECK_RUNTIME_LIVE = 'text-foreground!';
+const TITLE_ROW = 'flex min-w-0 items-center gap-1.5';
+const LIVE_BADGE = 'px-1 py-px text-[0.625rem] leading-none';
 
-// Live (rolling and/or recording): a crisp 2px red outline (not a red fill/glow),
-// exclusive branch over the selected cyan tile. `!` beats base hover/focus border
-// utilities on the same element.
-const RAIL_SESSION_LIVE =
-  'border-2! border-[#ef4444]! bg-[rgba(255,255,255,0.03)] hover-always:border-[#ef4444]! hover-always:bg-[rgba(255,255,255,0.05)] focus-within:border-[#ef4444]! focus-within:bg-[rgba(255,255,255,0.05)]';
-
-// `!` beats DECK_RUNTIME's text-v5-muted (utility order is not class-list order).
-const DECK_RUNTIME_LIVE = 'text-[#ef4444]!';
-
-// Inner link fills the row; always transparent (base + the former !important
-// hover/focus neutralizer collapse to a single bg-transparent by layer order).
-const CARD_LINK =
-  'flex min-h-0 min-w-0 max-h-full flex-[1_1_auto] flex-col justify-center gap-[0.06rem] overflow-hidden m-0 p-0 bg-transparent text-inherit no-underline shadow-none';
-
-const DECK_ROW = 'flex min-h-0 min-w-0 flex-[0_0_auto] flex-row items-center gap-[0.35rem]';
-const DECK_TITLE =
-  'flex-[1_1_auto] min-w-0 cursor-pointer overflow-hidden border-none bg-transparent p-0 text-left text-[0.72rem] font-semibold font-[inherit] leading-[1.2] tracking-[0.02em] text-ellipsis whitespace-nowrap text-inherit';
-const DECK_TRAIL =
-  'inline-flex min-w-0 flex-[0_0_auto] flex-row items-center justify-end gap-[0.28rem]';
-const DECK_RUNTIME =
-  'flex-[0_0_auto] text-[0.62rem] font-semibold leading-[1.2] tracking-[0.03em] whitespace-nowrap text-v5-muted';
-
-// ⋮ menu button: hidden until the card is hovered (group-hover-always:) or the
-// Popover is open (data-open:). Hover/data-open also tint the button chrome.
-const RAIL_MENU =
-  'flex-[0_0_auto] m-0 h-[1.2rem] w-[1.2rem] cursor-pointer rounded-v5-sm border border-transparent bg-transparent p-0 text-[1rem] font-bold leading-none text-v5-muted opacity-0 [transition:opacity_0.15s_ease,background_0.15s_ease,border-color_0.15s_ease] group-hover-always:opacity-100 hover-always:border-v5-border-strong hover-always:bg-[rgba(15,23,42,0.55)] hover-always:text-v5-text focus-visible:opacity-100 focus-visible:border-v5-border-strong focus-visible:bg-[rgba(15,23,42,0.55)] focus-visible:text-v5-text data-open:border-v5-border-strong data-open:bg-[rgba(15,23,42,0.55)] data-open:text-v5-text data-open:opacity-100';
-
-const META_ROW =
-  'flex min-w-0 flex-[0_0_auto] flex-row items-baseline justify-between gap-[0.25rem]';
-const CARD_META =
-  'block min-h-0 min-w-0 flex-[1_1_auto] overflow-hidden text-[0.62rem] leading-[1.2] text-ellipsis whitespace-nowrap text-v5-muted';
-// The rail's two scroll surfaces (recent + archived) scroll in the shadcn ScrollArea
-// (shadcn-port-workspace D4): bars reveal on hover and fade after 250ms. The session cards stack
-// in a flex column with a 0.45rem gap, applied to the viewport's content wrapper.
-const RAIL_SESSIONS = 'min-h-0 flex-[1_1_auto]';
-const RAIL_SESSIONS_VIEWPORT = '[&>div]:!flex [&>div]:flex-col [&>div]:gap-[0.45rem]';
+const META_ROW = 'flex min-w-0 flex-row items-baseline justify-between gap-1';
+const CARD_META = 'min-w-0 truncate text-xs font-normal text-muted-foreground';
+const EMPTY_NOTE = 'm-0 px-2 py-1.5 text-[13px] leading-snug text-muted-foreground';
+const DECK_RUNTIME = 'shrink-0 font-tc text-xs text-muted-foreground tabular-nums';
 
 interface RenameModalProps {
   initialTitle: string;
@@ -181,8 +162,8 @@ function sessionCardMeta(s: Session): { metaLine: string; runtime: string } {
 }
 
 /**
- * ⋮ menu scaffold (trail wrapper + Popover + trigger button) shared by both
- * card variants; the menu items differ per variant and arrive as children.
+ * ⋮ menu scaffold (a `SidebarMenuAction` trigger + DropdownMenu) shared by both card variants;
+ * the menu items differ per variant and arrive as children.
  */
 function SessionCardMenu({
   open,
@@ -196,30 +177,26 @@ function SessionCardMenu({
   // shadcn-port-shell D3: a shadcn DropdownMenu (role="menu", arrow keys, typeahead). Non-modal
   // (`modal={false}`): items open dialogs (rename, themed confirms), and a modal Radix menu closing
   // underneath a just-opened dialog leaves `pointer-events: none` stuck on <body>.
-  // Menu items are `div[role=menuitem]` whose events bubble through the portal to the clickable
-  // row — the content stops click/keydown propagation, and the row's guards skip menu targets.
+  // The trigger is a sibling of the card's open button, never inside it, so using the menu can't
+  // select the session; the content still stops click/keydown propagation through the portal.
   const stop = (e: React.SyntheticEvent) => e.stopPropagation();
   return (
-    <div className={DECK_TRAIL}>
-      <DropdownMenu open={open} onOpenChange={onOpenChange} modal={false}>
-        <DropdownMenuTrigger asChild>
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            className={RAIL_MENU}
-            aria-label="Session options"
-            data-open={open || undefined}
-            onClick={stop}
-            onKeyDown={stop}
-          >
-            <MoreVertical aria-hidden="true" />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" sideOffset={6} onClick={stop} onKeyDown={stop}>
-          {children}
-        </DropdownMenuContent>
-      </DropdownMenu>
-    </div>
+    <DropdownMenu open={open} onOpenChange={onOpenChange} modal={false}>
+      <DropdownMenuTrigger asChild>
+        <SidebarMenuAction showOnHover aria-label="Session options">
+          <MoreVertical aria-hidden="true" />
+        </SidebarMenuAction>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        side="right"
+        align="start"
+        sideOffset={6}
+        onClick={stop}
+        onKeyDown={stop}
+      >
+        <DropdownMenuGroup>{children}</DropdownMenuGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -238,17 +215,13 @@ function SessionCardMetaRow({
     <div className={META_ROW}>
       <span className={CARD_META}>{metaLine}</span>
       <Tooltip content={showLive ? 'Current timecode' : 'Total runtime'}>
-        <span className={clsx(DECK_RUNTIME, 'mono', showLive && DECK_RUNTIME_LIVE)}>
+        <span className={cn(DECK_RUNTIME, showLive && DECK_RUNTIME_LIVE)}>
           {showLive ? liveTimecode : runtime}
         </span>
       </Tooltip>
     </div>
   );
 }
-
-/** Row click/keydown targets that must never select the session: real controls and the row's
- * (portaled) menu — DropdownMenu items are `div[role=menuitem]` (shadcn-port-shell D3). */
-const ROW_IGNORE = 'button, a, input, select, textarea, [role="menu"], [role="menuitem"]';
 
 interface SessionCardProps {
   session: Session;
@@ -272,14 +245,9 @@ function SessionCard({ session: s, isActive, onSelect, onClose }: SessionCardPro
   // `rolling_timecode`, refreshed at that poll's ~5s cadence in `HH:MM:SS`
   // form — no frame field; see recent-sessions-single-poll).
   const { data: status } = useSessionStatus(isActive ? s.id : null);
-  const isLive = Boolean(s.is_rolling || status?.is_rolling || status?.audio_recording_lease_alive);
+  const isRecording = Boolean(status?.audio_recording_lease_alive);
+  const isLive = Boolean(s.is_rolling || status?.is_rolling || isRecording);
   const liveTimecode = isLive ? (status?.timecode ?? formatTimecodeHMS(s.rolling_timecode)) : null;
-
-  const handleCardClick = (e: React.MouseEvent) => {
-    const target = e.target as Element;
-    if (target.closest(ROW_IGNORE)) return;
-    onSelect();
-  };
 
   const handleRename = (newTitle: string) => {
     updateSession(
@@ -309,76 +277,71 @@ function SessionCard({ session: s, isActive, onSelect, onClose }: SessionCardPro
     });
   };
 
-  // Live red border is an exclusive branch over the selected cyan tile.
-  const rowClass = clsx(RAIL_SESSION, isLive ? RAIL_SESSION_LIVE : isActive && RAIL_SESSION_ACTIVE);
-
   return (
-    // biome-ignore lint/a11y/noStaticElementInteractions: clickable-card convenience around real <button>s (selection also via the inner title button); a native button is impossible here due to nested interactive children
-    <div
-      className={rowClass}
+    <SidebarMenuItem
       data-session-id={s.id}
       data-live={isLive || undefined}
       data-menu-open={menuOpen || undefined}
-      onClick={handleCardClick}
-      onKeyDown={(e: React.KeyboardEvent) => {
-        if ((e.target as Element).closest(ROW_IGNORE)) return;
-        if (e.key === 'Enter' || e.key === ' ') onSelect();
-      }}
     >
-      <div className={CARD_LINK} data-start-offset={s.start_offset_frames || 0}>
+      {/* The open control. On the active card it is a no-op (the session is already shown;
+          web-session-routing "Re-selecting the active session does not stack history"), and
+          `aria-current` says so to assistive technology. */}
+      <SidebarMenuButton
+        size="lg"
+        isActive={isActive}
+        aria-current={isActive ? 'page' : undefined}
+        tooltip={s.title}
+        className={CARD_BODY}
+        data-start-offset={s.start_offset_frames || 0}
+        onClick={() => {
+          if (!isActive) onSelect();
+        }}
+      >
+        <span className={TITLE_ROW}>
+          <span className={CARD_TITLE}>{s.title}</span>
+          {isLive && (
+            <Badge className={LIVE_BADGE} data-live-badge="">
+              {isRecording ? 'REC' : 'LIVE'}
+            </Badge>
+          )}
+        </span>
+        <SessionCardMetaRow session={s} liveTimecode={liveTimecode} />
         {isActive && <output className="hidden">ACTIVE SESSION</output>}
         {isLive && <output className="hidden">LIVE SESSION</output>}
-        <div className={DECK_ROW}>
-          <button
-            type="button"
-            className={DECK_TITLE}
-            // On the active card the title is a no-op (the session is already
-            // selected); aria-disabled says so to AT without changing the
-            // rendered look or the tab order (code-health-tail 4.8).
-            aria-disabled={isActive || undefined}
-            onClick={(e) => {
-              e.stopPropagation();
-              if (!isActive) onSelect();
+      </SidebarMenuButton>
+      <SessionCardMenu open={menuOpen} onOpenChange={setMenuOpen}>
+        {isActive && (
+          <DropdownMenuItem
+            onSelect={() => {
+              onClose();
             }}
           >
-            {s.title}
-          </button>
-          <SessionCardMenu open={menuOpen} onOpenChange={setMenuOpen}>
-            {isActive && (
-              <DropdownMenuItem
-                onSelect={() => {
-                  onClose();
-                }}
-              >
-                Close session
-              </DropdownMenuItem>
-            )}
-            <DropdownMenuItem
-              onSelect={() => {
-                setEditing(true);
-              }}
-            >
-              Rename
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              onSelect={() => {
-                handleArchive();
-              }}
-            >
-              Archive
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              variant="destructive"
-              onSelect={() => {
-                handleDelete();
-              }}
-            >
-              Delete
-            </DropdownMenuItem>
-          </SessionCardMenu>
-        </div>
-        <SessionCardMetaRow session={s} liveTimecode={liveTimecode} />
-      </div>
+            Close session
+          </DropdownMenuItem>
+        )}
+        <DropdownMenuItem
+          onSelect={() => {
+            setEditing(true);
+          }}
+        >
+          Rename
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          onSelect={() => {
+            handleArchive();
+          }}
+        >
+          Archive
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          variant="destructive"
+          onSelect={() => {
+            handleDelete();
+          }}
+        >
+          Delete
+        </DropdownMenuItem>
+      </SessionCardMenu>
       {editing && (
         <RenameSessionModal
           initialTitle={s.title}
@@ -388,7 +351,7 @@ function SessionCard({ session: s, isActive, onSelect, onClose }: SessionCardPro
         />
       )}
       {confirmElement}
-    </div>
+    </SidebarMenuItem>
   );
 }
 
@@ -413,32 +376,30 @@ function ArchivedSessionCard({ session: s }: { session: Session }) {
   };
 
   return (
-    <div className={RAIL_SESSION} data-session-id={s.id} data-menu-open={menuOpen || undefined}>
-      <div className={CARD_LINK}>
-        <div className={DECK_ROW}>
-          <span className={DECK_TITLE}>{s.title}</span>
-          <SessionCardMenu open={menuOpen} onOpenChange={setMenuOpen}>
-            <DropdownMenuItem
-              onSelect={() => {
-                handleRestore();
-              }}
-            >
-              Restore
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              variant="destructive"
-              onSelect={() => {
-                handleDelete();
-              }}
-            >
-              Delete
-            </DropdownMenuItem>
-          </SessionCardMenu>
-        </div>
+    <SidebarMenuItem data-session-id={s.id} data-menu-open={menuOpen || undefined}>
+      <div className={cn(CARD_ROW, 'pr-8')}>
+        <span className={CARD_TITLE}>{s.title}</span>
         <SessionCardMetaRow session={s} />
       </div>
+      <SessionCardMenu open={menuOpen} onOpenChange={setMenuOpen}>
+        <DropdownMenuItem
+          onSelect={() => {
+            handleRestore();
+          }}
+        >
+          Restore
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          variant="destructive"
+          onSelect={() => {
+            handleDelete();
+          }}
+        >
+          Delete
+        </DropdownMenuItem>
+      </SessionCardMenu>
       {confirmElement}
-    </div>
+    </SidebarMenuItem>
   );
 }
 
@@ -447,20 +408,12 @@ function ArchivedSessionCard({ session: s }: { session: Session }) {
  * menu, no selection. Used for Recent and Archived alike. */
 function NoAccessSessionCard({ session: s }: { session: Session }) {
   return (
-    <div
-      className={clsx(RAIL_SESSION, 'cursor-default')}
-      data-session-id={s.id}
-      data-no-access="true"
-    >
-      <div className={CARD_LINK}>
-        <div className={DECK_ROW}>
-          <span className={clsx(DECK_TITLE, 'cursor-default')}>{s.title}</span>
-        </div>
-        <div className={META_ROW}>
-          <span className={CARD_META}>No access — ask a team admin</span>
-        </div>
+    <SidebarMenuItem data-session-id={s.id} data-no-access="true">
+      <div className={cn(CARD_ROW, 'cursor-default')}>
+        <span className={cn(CARD_TITLE, 'text-muted-foreground')}>{s.title}</span>
+        <span className={CARD_META}>No access — ask a team admin</span>
       </div>
-    </div>
+    </SidebarMenuItem>
   );
 }
 
@@ -518,10 +471,7 @@ export function RecentSessionsList({
 
   if (active.length === 0) {
     return (
-      <p
-        className="muted m-0 px-[0.15rem] py-[0.35rem] text-[0.72rem] leading-[1.35]"
-        id="session-empty"
-      >
+      <p className={EMPTY_NOTE} id="session-empty">
         No sessions yet. Create one to start logging.
       </p>
     );
@@ -531,21 +481,14 @@ export function RecentSessionsList({
 
   if (visible.length === 0) {
     return (
-      <p
-        className="muted m-0 px-[0.15rem] py-[0.35rem] text-[0.72rem] leading-[1.35]"
-        id="session-empty"
-      >
+      <p className={EMPTY_NOTE} id="session-empty">
         No sessions match “{filter.trim()}”.
       </p>
     );
   }
 
   return (
-    <ScrollArea
-      id="session-list"
-      className={RAIL_SESSIONS}
-      viewportClassName={RAIL_SESSIONS_VIEWPORT}
-    >
+    <SidebarMenu id="session-list">
       {visible.map((s) =>
         access.canAccessShow(s.show_id) ? (
           <SessionCard
@@ -559,7 +502,7 @@ export function RecentSessionsList({
           <NoAccessSessionCard key={s.id} session={s} />
         ),
       )}
-    </ScrollArea>
+    </SidebarMenu>
   );
 }
 
@@ -575,19 +518,11 @@ export function ArchivedSessionsList({
   const visible = sessions.filter((s) => matchesFilter(s, filter));
 
   if (visible.length === 0) {
-    return (
-      <p className="muted m-0 px-[0.15rem] py-[0.35rem] text-[0.72rem] leading-[1.35]">
-        No archived sessions match “{filter.trim()}”.
-      </p>
-    );
+    return <p className={EMPTY_NOTE}>No archived sessions match “{filter.trim()}”.</p>;
   }
 
   return (
-    <ScrollArea
-      id="archived-list"
-      className={RAIL_SESSIONS}
-      viewportClassName={RAIL_SESSIONS_VIEWPORT}
-    >
+    <SidebarMenu id="archived-list">
       {visible.map((s) =>
         access.canAccessShow(s.show_id) ? (
           <ArchivedSessionCard key={s.id} session={s} />
@@ -595,6 +530,6 @@ export function ArchivedSessionsList({
           <NoAccessSessionCard key={s.id} session={s} />
         ),
       )}
-    </ScrollArea>
+    </SidebarMenu>
   );
 }

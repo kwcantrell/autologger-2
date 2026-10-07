@@ -12,13 +12,14 @@ import { versionConflictOf } from '../../../api/versionConflict';
 import { showToast } from '../../../shared/components/Toast';
 import { conflictPromptCopy } from '../../../shared/hooks/conflictPromptCopy';
 import { useVersionedSave } from '../../../shared/hooks/useVersionedSave';
+import { useIsMobile } from '../../../shared/ui/breakpoints';
 import { useTranscriptWordsGate } from '../hooks/TranscriptWordsGateContext';
 import { useGatedGenerate } from '../hooks/useGatedGenerate';
 import { useTimelineSeek } from '../hooks/useTimelineSeek';
 import { useRowSeeds } from '../utils/rowHolds';
 import { followServer } from '../utils/seedStore';
 import { clickSortReducer } from '../utils/sortReducer';
-import { FeedShell } from './FeedShell';
+import { FeedShell, feedCountLabel } from './FeedShell';
 import { type ColumnDef, FeedTable } from './FeedTable';
 import { GenerateToolbar } from './GenerateToolbar';
 import { JUMP_COLUMN } from './JumpToTimeButton';
@@ -75,6 +76,15 @@ const COLUMNS: ColumnDef[] = [
   { key: 'summary', label: 'Summary', sortKey: 'summary', thClassName: 'text-left min-w-56' },
 ];
 
+// Phones (finish review fix round 1): Duration and Level fold under the session time in each row
+// (TopicsRow `folded`), and the summary has no floor, so it wraps inside a 390px card instead of
+// pushing the table into a sideways scroll.
+const FOLDED_COLUMNS: ColumnDef[] = [
+  COLUMNS[0],
+  COLUMNS[1],
+  { key: 'summary', label: 'Summary', sortKey: 'summary', thClassName: 'text-left' },
+];
+
 const FIELD_LABELS: Record<keyof TopicEditState, string> = {
   session_time: 'Session time',
   duration_sec: 'Duration (s)',
@@ -106,6 +116,7 @@ export const TopicsFeed = memo(function TopicsFeed({ sessionId }: Props) {
   const { data: status } = useSessionStatus(sessionId);
   const { data: words } = useTranscriptWords(sessionId, { enabled: useTranscriptWordsGate() });
   const { unavailable: jumpUnavailable, jump } = useTimelineSeek(sessionId, false);
+  const foldRows = useIsMobile();
   const jumpReasonId = 'v5-topics-feed-jump-reason';
   const fps = status?.frame_rate ?? null;
   // Task 8.3: computed once here from the session's transcript words, passed
@@ -244,15 +255,17 @@ export const TopicsFeed = memo(function TopicsFeed({ sessionId }: Props) {
 
   return (
     <FeedShell
-      countLabel={`${topicCount} ${topicCount === 1 ? 'Topic' : 'Topics'}`}
+      countLabel={feedCountLabel(topicCount, 'topic')}
       headerId="v5-topics-feed-head"
       feedAriaLabel="Topics feed"
       toolbar={toolbar}
       toolbarAriaLabel="Topics feed tools"
       // `v5-topics-feed` retained as a chrome hook; the flex-column panel layout
       // (was `:global(.v5-topics-feed)` in FeedTable.module.css) rides along as
-      // utilities: fill the tab panel on desktop, cap + internal-scroll on phones.
-      modifier="v5-topics-feed flex flex-col flex-[1_1_0] min-h-0 overflow-hidden max-md:flex-[0_0_auto] max-md:max-h-[70dvh]"
+      // utilities: fill the tab panel on desktop; on phones the sheet sizes to header + scroll
+      // viewport and only FeedTable's viewport carries the 70dvh cap, as the Event feed does
+      // (fix round 3: capping both ran the rows ~62px past the card's bottom edge).
+      modifier="v5-topics-feed flex flex-col flex-[1_1_0] min-h-0 overflow-hidden max-md:flex-[0_0_auto]"
       after={
         // The ONE shared reason node every row's jump control references
         // while unavailable (design D2 gate decision) — never one per row.
@@ -264,7 +277,7 @@ export const TopicsFeed = memo(function TopicsFeed({ sessionId }: Props) {
       }
     >
       <FeedTable
-        columns={COLUMNS}
+        columns={foldRows ? FOLDED_COLUMNS : COLUMNS}
         isLoading={isLoading}
         isEmpty={!topics || topics.length === 0}
         emptyMessage={
@@ -276,7 +289,7 @@ export const TopicsFeed = memo(function TopicsFeed({ sessionId }: Props) {
             </>
           ) : (
             <>
-              No topics yet. Generate a transcript first, then click <strong>Auto Generate</strong>.
+              No topics yet. Generate a transcript first, then click <strong>Auto generate</strong>.
             </>
           )
         }
@@ -295,6 +308,7 @@ export const TopicsFeed = memo(function TopicsFeed({ sessionId }: Props) {
             jumpUnavailable={jumpUnavailable}
             jumpReasonId={jumpReasonId}
             transcriptAnchored={transcriptAnchored}
+            folded={foldRows}
           />
         ))}
       </FeedTable>

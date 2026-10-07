@@ -9,6 +9,7 @@ import {
   useUpdateSession,
 } from '../../../api/hooks/useSessions';
 import type { ProfilePayload, Session, SessionStatus } from '../../../api/types';
+import { SidebarProvider } from '../../../shared/components/ui/sidebar';
 import { renderStrict } from '../../../test/renderStrict';
 import { showToast } from '../utils/toast';
 import { ArchivedSessionsList, RecentSessionsList } from './RecentSessionsList';
@@ -80,6 +81,12 @@ function accessProfile(
   } as unknown as ProfilePayload;
 }
 
+// The cards are sidebar menu items (redesign-show-ignition D8), so they render inside the shell's
+// SidebarProvider, as in the app.
+function renderInSidebar(ui: React.ReactElement) {
+  return renderStrict(<SidebarProvider>{ui}</SidebarProvider>);
+}
+
 function mockProfile(p: ProfilePayload) {
   vi.mocked(useProfile).mockReturnValue({ data: p } as unknown as ReturnType<typeof useProfile>);
 }
@@ -149,7 +156,7 @@ function renderRecent(
     onCloseSession?: () => void;
   } = {},
 ) {
-  return renderStrict(
+  return renderInSidebar(
     <RecentSessionsList
       sessions={{ active: sessions, archived: [] }}
       isLoading={false}
@@ -164,6 +171,16 @@ function card(container: HTMLElement, id: string): HTMLElement {
   const el = container.querySelector(`[data-session-id="${id}"]`);
   expect(el).not.toBeNull();
   return el as HTMLElement;
+}
+
+/** The live card sits in the one-accent world (redesign-show-ignition 11.3) and keeps only its
+ * text badge (finish review fix round 1): no accent ring, tint or inset line on the card, since
+ * the one selected state belongs to the open session alone. Never the old red outline. */
+function expectBadgeOnlyLive(el: HTMLElement) {
+  expect(el.className).not.toMatch(/ef4444|red-/);
+  expect(el.className).not.toMatch(/(^|\s)ring-/);
+  expect(el.className).not.toMatch(/--si-accent|--sel-/);
+  expect(el.querySelector('[data-live-badge]')).not.toBeNull();
 }
 
 // shadcn-port-shell D3: the row menu is a Radix DropdownMenu, which opens on pointer-down (or
@@ -277,14 +294,16 @@ describe('SessionCard (active-list variant)', () => {
     );
 
     const inactiveTitle = within(card(container, 'sess-1')).getByText('Session One');
-    expect(inactiveTitle.getAttribute('aria-disabled')).toBeNull();
+    expect(inactiveTitle.closest('button')?.getAttribute('aria-current')).toBeNull();
     fireEvent.click(inactiveTitle);
     expect(onSelectSession).toHaveBeenCalledWith('sess-1');
 
-    // Active variant: its title is a no-op, marked aria-disabled (4.8), plus
-    // the hidden a11y marker and the Close session menu item.
+    // Active variant: activating it is a no-op, and it says so to assistive technology — once
+    // `aria-disabled` on the title (4.8), now `aria-current="page"` on the card's sidebar menu
+    // button (redesign-show-ignition D8) — plus the hidden a11y marker and the Close session item.
     const activeTitle = within(card(container, 'sess-2')).getByText('Session Two');
-    expect(activeTitle.getAttribute('aria-disabled')).toBe('true');
+    expect(activeTitle.closest('button')?.getAttribute('aria-current')).toBe('page');
+    expect(activeTitle.closest('button')?.getAttribute('data-active')).toBe('true');
     onSelectSession.mockClear();
     fireEvent.click(activeTitle);
     expect(onSelectSession).not.toHaveBeenCalled();
@@ -301,7 +320,7 @@ describe('SessionCard (active-list variant)', () => {
     expect(within(el).getByText('01:02:03')).toBeTruthy();
   });
 
-  it('marks a background rolling session live from list data alone: red border, list-derived HH:MM:SS timecode, no status subscription', () => {
+  it('marks a background rolling session live from list data alone: LIVE badge only (not selected), list-derived HH:MM:SS timecode, no status subscription', () => {
     const { container } = renderRecent([
       sessionFixture({
         is_rolling: true,
@@ -311,8 +330,11 @@ describe('SessionCard (active-list variant)', () => {
     ]);
     const el = card(container, 'sess-1');
     expect(el.getAttribute('data-live')).toBe('true');
-    expect(el.className.split(/\s+/)).toContain('border-[#ef4444]!');
-    expect(within(el).getByText('01:02:03').className.split(/\s+/)).toContain('text-[#ef4444]!');
+    expectBadgeOnlyLive(el);
+    expect(within(el).getByText('01:02:03').className).not.toMatch(/ef4444|red-/);
+    // The live badge is text, so colour is not the only channel: rolling reads LIVE.
+    expect(within(el).getByText('LIVE').getAttribute('data-slot')).toBe('badge');
+    expect(within(el).queryByText('REC')).toBeNull();
     expect(within(el).queryByText('00:10:00')).toBeNull();
     expect(within(el).getByText('LIVE SESSION')).toBeTruthy();
     // Not the open session: the status-query gate must have received null
@@ -367,9 +389,12 @@ describe('SessionCard (active-list variant)', () => {
     });
     const el = card(container, 'sess-1');
     expect(el.getAttribute('data-live')).toBe('true');
-    expect(el.className.split(/\s+/)).toContain('border-[#ef4444]!');
+    expectBadgeOnlyLive(el);
     const tc = within(el).getByText('00:00:45:12');
-    expect(tc.className.split(/\s+/)).toContain('text-[#ef4444]!');
+    expect(tc.className).not.toMatch(/ef4444|red-/);
+    // Recording reads REC, not LIVE.
+    expect(within(el).getByText('REC').getAttribute('data-slot')).toBe('badge');
+    expect(within(el).queryByText('LIVE')).toBeNull();
     // Open-card path unchanged: the shared status query is subscribed keyed
     // to this session.
     expect(useSessionStatus).toHaveBeenCalledWith('sess-1');
@@ -378,7 +403,7 @@ describe('SessionCard (active-list variant)', () => {
 
 describe('ArchivedSessionCard (archived-list variant)', () => {
   function renderArchived(sessions: Session[]) {
-    return renderStrict(<ArchivedSessionsList sessions={sessions} />);
+    return renderInSidebar(<ArchivedSessionsList sessions={sessions} />);
   }
 
   it('deletes via the same shared confirm-then-delete flow', async () => {
@@ -452,7 +477,7 @@ describe('cards of a show the user can’t access (show-grants D13)', () => {
   });
 
   it('search still filters the non-openable rows', () => {
-    const { container } = renderStrict(
+    const { container } = renderInSidebar(
       <RecentSessionsList
         sessions={{
           active: [
@@ -473,7 +498,7 @@ describe('cards of a show the user can’t access (show-grants D13)', () => {
   });
 
   it('an archived card is non-openable too: hint and no menu', () => {
-    const { container } = renderStrict(
+    const { container } = renderInSidebar(
       <ArchivedSessionsList
         sessions={[
           sessionFixture({ id: 'arch-x', title: 'Old Locked', show_id: 'show-x', archived: true }),

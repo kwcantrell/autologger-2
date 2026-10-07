@@ -7,6 +7,7 @@ import { showToast } from '../../../shared/components/Toast';
 import { Button, TOUCH_TARGET } from '../../../shared/components/ui/button';
 import { Field, FieldLabel } from '../../../shared/components/ui/field';
 import { Input } from '../../../shared/components/ui/input';
+import { Kbd } from '../../../shared/components/ui/kbd';
 import { Dialog, DialogActions } from '../../../shared/ui/Dialog';
 import { isOverlayOpen } from '../../../shared/ui/overlayOpen';
 import { AUTOLOGGER_LOADING_VIDEO_SRC } from '../../../shared/utils/loadingVideo';
@@ -15,29 +16,23 @@ import { isTypingTarget } from './ShortcutsDialog';
 // Modal lead text: the former `.modal-lead` values (shadcn-port-modals D6).
 const LEAD = 'm-0 mb-4 text-[0.82rem] leading-[1.45] text-legacy-muted';
 
-// --- converted class strings (were CategoryButtonStrip.module.css) ---
-// Two live ancestor contexts drive layout via arbitrary ancestor variants (the
-// ancestor DOM is rendered by SessionWorkspace, class/id strings retained):
-//   [.v4-cat-buttons__scroll_&]:  the horizontal scroll-strip
-//   [#cat-strip-live-slot_&]:     the live-log grid (always inside #v4-log-session)
-// cat-strip-scrollbar is the named ::-webkit-scrollbar utility (tailwind.css).
-
+// Show Ignition logging strip (redesign-show-ignition task 5.2; preview `.strip` / `.cat`). Each
+// category is a flat shadcn Button (`log` variant) holding a Kbd key cap, a small swatch of the
+// category colour and the label. The colour is user data and stays its own channel (`--cat`,
+// set inline): it tints the swatch, the hover edge and the latched/pressed state, never the
+// label. The buttons are compact (one line at the control height, 11.3) and wrap; the strip
+// fills the lane MaximizeLogStrip sizes to the category-button height token and centres the rows
+// in it, so the lane keeps its height while a long list wraps into more rows.
 const CAT_STRIP =
-  'cat-strip-scrollbar flex w-full flex-row flex-nowrap justify-center gap-[0.32rem] overflow-x-auto overflow-y-hidden px-0 pt-[0.12rem] pb-[0.22rem] mt-2 font-medium [font-variation-settings:"wght"_500,"wdth"_50] [-webkit-overflow-scrolling:touch] [.v4-cat-buttons__scroll_&]:m-0 [.v4-cat-buttons__scroll_&]:min-h-(--v4-cat-btn-h) [.v4-cat-buttons__scroll_&]:items-center [.v4-cat-buttons__scroll_&]:justify-start [.v4-cat-buttons__scroll_&]:gap-3 [.v4-cat-buttons__scroll_&]:px-1 [.v4-cat-buttons__scroll_&]:py-0 [#cat-strip-live-slot_&]:grid [#cat-strip-live-slot_&]:min-w-0 [#cat-strip-live-slot_&]:grid-cols-[repeat(auto-fill,minmax(6.6rem,1fr))] [#cat-strip-live-slot_&]:items-stretch [#cat-strip-live-slot_&]:justify-items-stretch [#cat-strip-live-slot_&]:gap-x-[0.6rem] [#cat-strip-live-slot_&]:gap-y-[0.54rem] [#cat-strip-live-slot_&]:overflow-y-visible [#cat-strip-live-slot_&]:overflow-x-auto';
+  'cat-strip-scrollbar flex w-full min-w-0 flex-wrap content-center items-center gap-1.5';
 
-// Base .catBtn — --cat fallback (recipe 3b arbitrary property; runtime inline
-// --cat: cat.color overrides). Unguarded :hover → hover-always:; :focus-visible;
-// :disabled locks. Ancestor variants re-shape the button per context.
-const CAT_BTN =
-  '[--cat:#7cb7ff] box-border flex-[0_0_auto] cursor-pointer whitespace-nowrap rounded-[5px] border-[5px] border-[var(--cat)] bg-[#25272e] px-[0.62rem] py-[0.32rem] text-[0.76rem] font-medium tracking-[0rem] uppercase text-text [font-variation-settings:"wght"_500,"wdth"_50] [transition:filter_0.12s_ease,box-shadow_0.12s_ease] hover-always:[filter:brightness(1.3)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-dim disabled:cursor-not-allowed disabled:border-legacy-border disabled:bg-surface-btn disabled:text-legacy-muted disabled:opacity-45 disabled:[filter:none] disabled:shadow-none [.v4-cat-buttons__scroll_&]:m-0 [.v4-cat-buttons__scroll_&]:flex [.v4-cat-buttons__scroll_&]:h-(--v4-cat-btn-h) [.v4-cat-buttons__scroll_&]:max-h-(--v4-cat-btn-h) [.v4-cat-buttons__scroll_&]:min-h-(--v4-cat-btn-h) [.v4-cat-buttons__scroll_&]:w-(--v4-cat-btn-w) [.v4-cat-buttons__scroll_&]:flex-[0_0_var(--v4-cat-btn-w)] [.v4-cat-buttons__scroll_&]:items-center [.v4-cat-buttons__scroll_&]:justify-center [.v4-cat-buttons__scroll_&]:whitespace-normal [.v4-cat-buttons__scroll_&]:rounded-[5px] [.v4-cat-buttons__scroll_&]:border-[5px] [.v4-cat-buttons__scroll_&]:border-[var(--cat)] [.v4-cat-buttons__scroll_&]:bg-[#25272e] [.v4-cat-buttons__scroll_&]:p-1 [.v4-cat-buttons__scroll_&]:text-center [.v4-cat-buttons__scroll_&]:text-[1.5rem] [.v4-cat-buttons__scroll_&]:font-normal [.v4-cat-buttons__scroll_&]:tracking-[0em] [.v4-cat-buttons__scroll_&]:leading-[1.15] [.v4-cat-buttons__scroll_&]:font-league-gothic [.v4-cat-buttons__scroll_&]:disabled:border-legacy-border [.v4-cat-buttons__scroll_&]:disabled:bg-surface-btn [.v4-cat-buttons__scroll_&]:disabled:[filter:none] [.v4-cat-buttons__scroll_&]:disabled:shadow-none [#v4-log-session_&]:inline-flex [#v4-log-session_&]:flex-col [#v4-log-session_&]:items-center [#v4-log-session_&]:justify-center [#v4-log-session_&]:whitespace-normal [#cat-strip-live-slot_&]:[--cat:var(--v5-primary)] [#cat-strip-live-slot_&]:aspect-square [#cat-strip-live-slot_&]:w-full [#cat-strip-live-slot_&]:min-w-0 [#cat-strip-live-slot_&]:overflow-hidden [#cat-strip-live-slot_&]:rounded-v5-md [#cat-strip-live-slot_&]:border [#cat-strip-live-slot_&]:border-[color-mix(in_srgb,var(--cat)_55%,rgba(148,163,184,0.35))] [#cat-strip-live-slot_&]:bg-[linear-gradient(165deg,color-mix(in_srgb,var(--cat)_80%,rgba(15,23,42,0.5)),rgba(7,11,20,0.55))] [#cat-strip-live-slot_&]:p-0 [#cat-strip-live-slot_&]:text-[0.8rem] [#cat-strip-live-slot_&]:font-medium [#cat-strip-live-slot_&]:tracking-[0rem] [#cat-strip-live-slot_&]:leading-[1.15] [#cat-strip-live-slot_&]:text-[color:rgba(248,250,252,0.95)] [#cat-strip-live-slot_&]:[font-family:"Inter",var(--font-poppins),system-ui,sans-serif] [#cat-strip-live-slot_&]:[font-variation-settings:normal] [#cat-strip-live-slot_&]:shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] [#cat-strip-live-slot_&]:[transition:border-color_0.15s_ease,box-shadow_0.15s_ease,filter_0.15s_ease] [#cat-strip-live-slot_&]:hover-always:not-disabled:[filter:brightness(1.08)] [#cat-strip-live-slot_&]:hover-always:not-disabled:shadow-[inset_0_1px_0_rgba(255,255,255,0.08),0_0_0_1px_color-mix(in_srgb,var(--cat)_35%,transparent)] [#cat-strip-live-slot_&]:active:not-disabled:[transform:translateY(2px)_scale(0.99)] [#cat-strip-live-slot_&]:active:not-disabled:[filter:brightness(0.94)] [#cat-strip-live-slot_&]:active:not-disabled:shadow-[inset_0_4px_12px_rgba(0,0,0,0.42)]';
+// Button layout only (the look is the Button `log` variant): key cap, swatch and label on one
+// line; a long user label wraps inside the button rather than clipping.
+const CAT_TILE =
+  'min-h-(--h-ctl) min-w-0 max-w-full gap-2 whitespace-normal py-1.5 pr-3 pl-2 text-left';
 
-// ON/OFF latched OFF ("armed" — raised out). Base + live-slot variant.
-const CAT_BTN_ARMED =
-  '[transform:translateY(-1px)] [filter:brightness(1.12)_saturate(1.02)] border-[color-mix(in_srgb,var(--cat)_55%,#25272e)] shadow-[0_5px_0_rgba(0,0,0,0.22),inset_0_1px_0_rgba(255,255,255,0.1)] hover-always:[filter:brightness(1.18)_saturate(1.04)] [#cat-strip-live-slot_&]:[transform:translateY(-1px)] [#cat-strip-live-slot_&]:[filter:brightness(1.06)_saturate(1.02)] [#cat-strip-live-slot_&]:border-[color-mix(in_srgb,var(--cat)_52%,rgba(148,163,184,0.4))] [#cat-strip-live-slot_&]:shadow-[0_6px_0_rgba(0,0,0,0.2),inset_0_1px_0_rgba(255,255,255,0.12)]';
-
-// ON/OFF latched ON ("on" — pressed in). Base + live-slot variant.
-const CAT_BTN_ON =
-  '[transform:translateY(2px)] [filter:brightness(0.72)_saturate(0.98)] border-[color-mix(in_srgb,var(--cat)_42%,#1a1b20)] shadow-[inset_0_5px_14px_rgba(0,0,0,0.55)] hover-always:[filter:brightness(0.78)_saturate(1)] [#cat-strip-live-slot_&]:[transform:translateY(2px)] [#cat-strip-live-slot_&]:[filter:brightness(0.82)_saturate(0.98)] [#cat-strip-live-slot_&]:border-[color-mix(in_srgb,var(--cat)_38%,rgba(15,23,42,0.95))] [#cat-strip-live-slot_&]:shadow-[inset_0_5px_16px_rgba(0,0,0,0.5)]';
+// The category-colour swatch (preview `td.catc i`).
+const CAT_SWATCH = 'size-2 shrink-0 rounded-[2px] bg-(--cat)';
 
 interface TextModalProps {
   category: Category;
@@ -195,15 +190,6 @@ function momentaryPress(el: HTMLElement | null) {
   setTimeout(() => el.classList.remove('cat-btn-press'), 120);
 }
 
-/** Hotkey badge on the live-log tiles (ui-refresh: 1–9 log the first nine
- *  categories while the live dock is shown). Hidden outside the live slot — the
- *  horizontal strip's disabled buttons have no hotkeys to advertise. */
-const CAT_HOTKEY_BADGE =
-  // `[display:none]`/`[display:flex]` (NOT the `hidden` class): the legacy
-  // `.hidden` chrome hook is `display:none !important` and would beat the
-  // live-slot ancestor variant.
-  '[display:none] [#cat-strip-live-slot_&]:[display:flex] absolute top-[0.3rem] right-[0.35rem] h-[1.05rem] min-w-[1.05rem] items-center justify-center rounded-[0.35rem] border border-white/[0.16] bg-black/[0.35] px-[0.2rem] text-[0.6rem] font-semibold leading-none text-white/[0.78] [font-variation-settings:normal]';
-
 export function CategoryButtonStrip({ sessionId, isRolling, onOffState, onToggle }: Props) {
   const { data, isLoading } = useShowCategories(sessionId);
   const logEvent = useLogEvent(sessionId);
@@ -351,7 +337,6 @@ export function CategoryButtonStrip({ sessionId, isRolling, onOffState, onToggle
           const typ = (cat.type || 'BUTTON').toUpperCase();
           const phase = onOffState.get(cat.id) ?? 'off';
           const isOn = typ === 'ON_OFF' && phase === 'on';
-          const isArmed = typ === 'ON_OFF' && phase === 'off';
           const label =
             typ === 'ON_OFF'
               ? isOn
@@ -360,27 +345,26 @@ export function CategoryButtonStrip({ sessionId, isRolling, onOffState, onToggle
               : cat.label;
 
           return (
-            <button
+            <Button
               key={cat.id}
-              type="button"
-              className={clsx(
-                CAT_BTN,
-                '[#cat-strip-live-slot_&]:relative',
-                isOn && CAT_BTN_ON,
-                isArmed && CAT_BTN_ARMED,
-              )}
+              variant="log"
+              // No size: CAT_TILE sets a minimum control height so a wrapped label can grow it.
+              size={null}
+              className={CAT_TILE}
               style={{ '--cat': cat.color } as React.CSSProperties}
               data-category-id={cat.id}
+              data-latched={typ === 'ON_OFF' ? phase : undefined}
               disabled={!isRolling}
               onClick={(e) => handleButtonClick(e, cat)}
             >
-              {label}
-              {isRolling && idx < 9 && (
-                <span className={CAT_HOTKEY_BADGE} aria-hidden="true">
-                  {idx + 1}
-                </span>
-              )}
-            </button>
+              <span className="flex items-center gap-2" aria-hidden="true">
+                {/* Hotkey key cap (ui-refresh: 1–9 log the first nine categories while the
+                    live dock is shown). Only those nine advertise a key. */}
+                {isRolling && idx < 9 && <Kbd>{idx + 1}</Kbd>}
+                <span className={CAT_SWATCH} />
+              </span>
+              <span className="min-w-0 break-words leading-tight">{label}</span>
+            </Button>
           );
         })}
       </div>

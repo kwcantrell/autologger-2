@@ -585,7 +585,7 @@ describe('GET /api/shows?studio_id=… — useStudioShows', () => {
     expect(show.event_palette_custom.length).toBeGreaterThan(0);
     expect(typeof show.event_palette_preset).toBe('string');
     // …and it still carries everything `ShowBrief` promises, which is what
-    // lets HomeSettingsModal drive its show picker off this response alone.
+    // lets the Settings view drive its show picker off this response alone.
     const brief: ShowBrief = showsList.shows[0];
     expect(brief.show_code).toBe(show.show_code);
   });

@@ -1,9 +1,9 @@
-// Single source for the 9-slot event-palette normalization shared by
-// HomeSettingsModal and EventButtonsTable (code-health-tail task 4.5,
-// finding 2.7, D12/W5). The two components previously carried slightly
-// different implementations of the same function (for-loop vs
-// map-over-fixed-indices) with duplicate default arrays; EventButtonsTable's
-// map-over-fixed-indices shape is the one kept.
+// Single source for the 9-slot event-palette normalization, used by the
+// Settings view (code-health-tail task 4.5, finding 2.7, D12/W5). The previous
+// Settings dialog and event-button table each carried slightly different
+// implementations of the same function (for-loop vs map-over-fixed-indices)
+// with duplicate default arrays; the table's map-over-fixed-indices shape is
+// the one kept.
 
 export const DEFAULT_PALETTE = [
   '#64748b',

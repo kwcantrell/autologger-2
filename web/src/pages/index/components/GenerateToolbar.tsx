@@ -99,7 +99,7 @@ export function GenerateToolbar({
           }}
         >
           <FeedToolbarCaption
-            label={generatePending ? 'Generating…' : 'Auto Generate'}
+            label={generatePending ? 'Generating…' : 'Auto generate'}
             icon={<IconSparkles />}
           />
         </Button>

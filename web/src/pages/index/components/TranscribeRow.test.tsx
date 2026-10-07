@@ -552,3 +552,40 @@ describe('TranscribeRow on the shadcn Table parts', () => {
     for (const td of cells) expect(td.getAttribute('data-slot')).toBe('table-cell');
   });
 });
+
+// Finish review fix round 2: at 390 long words were cut mid-word ("defamatio"). On phones the
+// word column takes the width the Speaker column doesn't need; a word that still overflows ends in
+// an ellipsis and carries its full text on hover (title) and to assistive tech on focus.
+describe('TranscribeRow long words on phones', () => {
+  const LONG = 'defamation-proceedings';
+
+  it('ellipsizes an overflowing word and names it in full', () => {
+    renderRow({ row: wordFixture({ word: LONG }) });
+    const input = screen.getByDisplayValue(LONG) as HTMLInputElement;
+    expect(input.className).toMatch(/\btext-ellipsis\b/);
+    expect(input.title).toBe(LONG);
+    expect(input.getAttribute('aria-label')).toBe(`Word: ${LONG}`);
+  });
+
+  it('keeps the full text in the title while the word is being edited', () => {
+    renderRow({ row: wordFixture({ word: LONG }) });
+    const input = screen.getByDisplayValue(LONG) as HTMLInputElement;
+    fireEvent.focus(input);
+    fireEvent.change(input, { target: { value: `${LONG}s` } });
+    expect(input.title).toBe(`${LONG}s`);
+  });
+
+  it('gives the word column the spare width on phones, not the speaker column', async () => {
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const rel = 'src/pages/index/components/TranscribeFeed.tsx';
+    const file = [path.resolve(process.cwd(), rel), path.resolve(process.cwd(), 'web', rel)].find(
+      (f) => fs.existsSync(f),
+    ) as string;
+    const src = fs.readFileSync(file, 'utf8');
+    const speaker = src.match(/key: 'speaker',[\s\S]*?thClassName: '([^']*)'/)?.[1] ?? '';
+    const word = src.match(/key: 'word',[\s\S]*?thClassName: '([^']*)'/)?.[1] ?? '';
+    expect(word).toMatch(/max-md:w-full/);
+    expect(speaker).toMatch(/max-md:w-px/);
+  });
+});

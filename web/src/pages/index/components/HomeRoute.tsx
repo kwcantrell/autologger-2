@@ -26,10 +26,15 @@ import { navigate } from '../navigation';
 // wrong for an archived-only user, who has already created sessions.
 
 const HOME_ROUTE =
-  'relative z-[1] flex min-h-[calc(100vh-4rem)] w-full flex-col items-center justify-center px-6 py-16 text-center';
+  'relative z-[1] flex min-h-[calc(100dvh-var(--topbar-h)-4rem)] w-full flex-col items-center justify-center px-6 py-16 text-center';
 
+// The resume card (finish review fix round 1: no eyebrow). The session name is the card's heading
+// and its one control names the action; the control's `::after` covers the card, so the whole
+// card stays one click target (web-home-launch "Resuming from the card").
 const RESUME_CARD =
-  'group glass-panel box-border flex w-full max-w-[24rem] cursor-pointer flex-col items-stretch gap-[0.35rem] rounded-v5-lg border border-v5-border px-6 py-5 text-left [transition:border-color_0.15s_ease,background_0.15s_ease] hover-always:border-[color-mix(in_srgb,var(--v5-primary)_35%,var(--v5-border))] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[rgba(56,189,248,0.55)]';
+  'group glass-panel relative box-border flex w-full max-w-[24rem] flex-col items-stretch gap-[0.35rem] rounded-v5-lg border border-v5-border px-6 py-5 text-left [transition:border-color_0.15s_ease,background_0.15s_ease] hover-always:border-[color-mix(in_srgb,var(--v5-primary)_35%,var(--v5-border))] has-focus-visible:outline-2 has-focus-visible:outline-offset-2 has-focus-visible:outline-(--si-accent)';
+const RESUME_ACTION =
+  "mt-1.5 inline-flex cursor-pointer items-center gap-1.5 self-start rounded-ctl text-sm font-medium text-(--si-accent-text) outline-none after:absolute after:inset-0 after:rounded-v5-lg after:content-['']";
 
 interface Props {
   onNewSession: () => void;
@@ -60,32 +65,33 @@ export function HomeRoute({ onNewSession }: Props) {
 
         <div className="flex w-full flex-col items-center gap-3">
           {recent && (
-            <button
-              type="button"
-              className={RESUME_CARD}
-              id="home-resume-session"
-              onClick={() => navigate(`/sessions/${encodeURIComponent(recent.id)}`)}
-            >
-              <span className="text-[0.65rem] font-semibold tracking-[0.16em] uppercase text-v5-muted">
-                Jump back in
-              </span>
-              <span className="flex items-baseline justify-between gap-3">
-                <span className="min-w-0 overflow-hidden text-[1.05rem] font-semibold text-ellipsis whitespace-nowrap text-v5-text">
-                  {recent.title}
-                </span>
-                <span
-                  aria-hidden="true"
-                  className="shrink-0 text-v5-muted [transition:transform_0.15s_ease,color_0.15s_ease] group-hover-always:translate-x-[2px] group-hover-always:text-v5-primary"
-                >
-                  <ArrowRight className="size-4" strokeWidth={1.8} aria-hidden="true" />
-                </span>
-              </span>
-              <span className="text-[0.72rem] leading-[1.35] text-v5-muted">
+            <section className={RESUME_CARD} aria-labelledby="home-resume-title">
+              <h2
+                id="home-resume-title"
+                className="m-0 truncate text-[1.05rem] leading-snug font-semibold text-v5-text"
+              >
+                {recent.title}
+              </h2>
+              <p className="m-0 text-[0.72rem] leading-[1.35] text-v5-muted">
                 {fmtDateOnly(recent.episode_date ?? recent.created_at_utc)} ·{' '}
                 {Number.isFinite(Number(recent.event_count)) ? Number(recent.event_count) : 0}{' '}
                 events
-              </span>
-            </button>
+              </p>
+              <button
+                type="button"
+                className={RESUME_ACTION}
+                id="home-resume-session"
+                aria-label={`Jump back in to ${recent.title}`}
+                onClick={() => navigate(`/sessions/${encodeURIComponent(recent.id)}`)}
+              >
+                Jump back in
+                <ArrowRight
+                  className="size-4 [transition:transform_0.15s_ease] group-hover-always:translate-x-[2px] motion-reduce:transition-none"
+                  strokeWidth={1.8}
+                  aria-hidden="true"
+                />
+              </button>
+            </section>
           )}
 
           {canCreate && (

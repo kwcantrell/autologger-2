@@ -21,7 +21,7 @@ function SelectValue({ ...props }: React.ComponentProps<typeof SelectPrimitive.V
 // trigger and LazySelect's inert stand-in (web-ui-system "Event-button rows defer their type
 // control": the two must be indistinguishable). Re-exported by pages/index/components/Select.tsx.
 export const SELECT_TRIGGER_CLASSNAME = [
-  'glass-face-strong inline-flex w-full min-h-9 cursor-pointer items-center justify-between gap-2 rounded-v5-md border border-v5-border-strong px-3 py-2 text-left text-[0.85rem] leading-[1.2] text-v5-text outline-none transition-[border-color,box-shadow] duration-[0.12s] ease-[ease] [font-family:inherit]',
+  'inline-flex w-full min-h-(--h-ctl) cursor-pointer items-center justify-between gap-2 rounded-ctl border border-input bg-(--si-bg) px-3 py-2 text-left text-[0.85rem] leading-[1.2] text-v5-text outline-none transition-[border-color,box-shadow] duration-[0.12s] ease-[ease] [font-family:inherit]',
   'hover-always:not-data-disabled:border-v5-primary',
   'focus-visible:outline-2 focus-visible:outline-v5-primary focus-visible:outline-offset-2',
   'data-[state=open]:border-v5-primary',
@@ -107,7 +107,7 @@ function SelectItem({
     <SelectPrimitive.Item
       data-slot="select-item"
       className={cn(
-        'relative flex cursor-pointer items-center gap-2 rounded-[calc(var(--v5-radius-md)-6px)] py-[0.45rem] pr-7 pl-[0.6rem] text-[0.85rem] text-v5-text outline-none select-none [font-family:inherit] data-highlighted:bg-[rgba(56,189,248,0.14)] data-highlighted:text-v5-primary data-[state=checked]:bg-[rgba(56,189,248,0.14)] data-[state=checked]:text-v5-primary data-disabled:cursor-not-allowed data-disabled:opacity-45',
+        'relative flex cursor-pointer items-center gap-2 rounded-[calc(var(--v5-radius-md)-6px)] py-[0.45rem] pr-7 pl-[0.6rem] text-[0.85rem] text-v5-text outline-none select-none [font-family:inherit] data-highlighted:bg-accent data-highlighted:text-foreground data-[state=checked]:bg-(--sel-bg) data-[state=checked]:shadow-[inset_0_0_0_1px_var(--sel-line)] data-[state=checked]:text-foreground data-disabled:cursor-not-allowed data-disabled:opacity-45',
         className,
       )}
       {...props}

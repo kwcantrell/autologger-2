@@ -47,7 +47,7 @@ export const JUMP_COLUMN: ColumnDef = {
 // TranscribeFeed/TopicsFeed "Auto Generate" precedent — `pointer-events-none`
 // blocks hover/click while the element stays in the accessibility tree.
 const JUMP_BTN =
-  'inline-flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-[0.35rem] border border-transparent bg-transparent p-0 text-v5-muted [transition:border-color_0.15s_ease,color_0.15s_ease,background_0.15s_ease] hover-always:border-[rgba(56,189,248,0.35)] hover-always:bg-[rgba(56,189,248,0.1)] hover-always:text-v5-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[rgba(56,189,248,0.55)] aria-disabled:pointer-events-none aria-disabled:cursor-not-allowed aria-disabled:opacity-45';
+  'inline-flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-[0.35rem] border border-transparent bg-transparent p-0 text-v5-muted [transition:border-color_0.15s_ease,color_0.15s_ease,background_0.15s_ease] hover-always:border-(--sel-line) hover-always:bg-(--sel-bg) hover-always:text-(--si-accent) focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring aria-disabled:pointer-events-none aria-disabled:cursor-not-allowed aria-disabled:opacity-45';
 
 export interface JumpToTimeButtonProps {
   /** This row's resolved position on the timeline, in seconds — the coordinate

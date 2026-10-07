@@ -25,7 +25,12 @@ function DropdownMenuTrigger({
 // Checkbox / radio items reuse it with a left indicator slot; their checked state is shown by the
 // indicator (and aria-checked) only, never a tint (web-session-console "Event filter checkmarks").
 const ITEM_BASE =
-  "relative flex w-full cursor-pointer items-center gap-2 rounded-[calc(var(--v5-radius-md)-6px)] px-[0.55rem] py-[0.45rem] text-left text-[0.78rem] leading-[1.45] font-medium tracking-[0.03em] text-[rgba(248,250,252,0.92)] outline-none select-none data-[highlighted]:bg-[rgba(255,255,255,0.06)] focus-visible:bg-[rgba(56,189,248,0.16)] data-[disabled]:pointer-events-none data-[disabled]:opacity-45 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4";
+  "relative flex w-full cursor-pointer items-center gap-2 rounded-[calc(var(--v5-radius-md)-6px)] px-[0.55rem] py-[0.45rem] text-left text-[0.78rem] leading-[1.45] font-medium tracking-[0.03em] text-foreground outline-none select-none data-[highlighted]:bg-[rgba(255,255,255,0.06)] focus-visible:bg-[rgba(255,255,255,0.06)] data-[disabled]:pointer-events-none data-[disabled]:opacity-45 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4";
+// The one selected state (web-ui-system "Single V5 component vocabulary"): a checked radio item
+// (the top bar's team and show menus) takes the accent tint and 1px inset line. Checkbox items
+// keep the checkmark-only rule above.
+const RADIO_CHECKED =
+  'data-[state=checked]:bg-(--sel-bg) data-[state=checked]:shadow-[inset_0_0_0_1px_var(--sel-line)] data-[state=checked]:font-semibold';
 const INDICATOR_SLOT =
   'pointer-events-none absolute left-[0.55rem] flex size-3.5 items-center justify-center text-v5-primary';
 
@@ -120,7 +125,7 @@ function DropdownMenuRadioItem({
   return (
     <DropdownMenuPrimitive.RadioItem
       data-slot="dropdown-menu-radio-item"
-      className={cn(ITEM_BASE, 'pl-[1.85rem]', className)}
+      className={cn(ITEM_BASE, 'pl-[1.85rem]', RADIO_CHECKED, className)}
       {...props}
     >
       <span className={INDICATOR_SLOT}>

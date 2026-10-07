@@ -17,9 +17,8 @@
   --breakpoint-md: 768px;
 
   /* Moved out of tokens.css (same-name namespace tokens can't be defined twice): */
-  --font-poppins: 'Poppins', 'SF Pro Text', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   --font-league-gothic: 'League Gothic', sans-serif;
-  --font-sans: 'SF Pro Text', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-sans: var(--font-ui);
 
   --animate-toast-enter: toast-enter 0.18s ease-out;
   @keyframes toast-enter {
@@ -146,20 +145,10 @@
   @keyframes event-row-flash {
     0%,
     50% {
-      background-color: rgba(56, 189, 248, 0.16);
+      background-color: color-mix(in oklab, var(--si-accent) 22%, transparent);
     }
     100% {
       background-color: transparent;
-    }
-  }
-  --animate-event-row-flash-accent: event-row-flash-accent 2.5s ease-out forwards;
-  @keyframes event-row-flash-accent {
-    0%,
-    50% {
-      box-shadow: inset 3px 0 0 rgba(56, 189, 248, 0.85);
-    }
-    100% {
-      box-shadow: inset 3px 0 0 transparent;
     }
   }
 
@@ -187,20 +176,35 @@
   --color-legacy-border: #343842;
   --color-accent-dim: #4a8fd9;
   --color-danger: #ff6b6b;
-  --color-v5-bg: #070b14;
-  --color-v5-text: #e5eefc;
-  --color-v5-muted: rgba(229, 238, 252, 0.62);
-  --color-v5-soft: #94a3b8;
-  --color-v5-primary: #38bdf8;
-  --color-v5-primary2: #22d3ee;
-  --color-v5-danger: #f87171;
-  --color-v5-line: rgba(148, 163, 184, 0.16);
-  --color-v5-border: rgba(255, 255, 255, 0.06);
-  --color-v5-border-strong: rgba(255, 255, 255, 0.1);
+  /* The V5 utility names alias Show Ignition (redesign-show-ignition D1): untouched
+   * `text-v5-*` / `bg-v5-*` / `rounded-v5-*` consumers render the new vocabulary. */
+  --color-v5-bg: var(--si-bg);
+  --color-v5-text: var(--si-fg);
+  --color-v5-muted: var(--si-muted);
+  --color-v5-soft: var(--si-dim);
+  --color-v5-primary: var(--si-accent);
+  --color-v5-primary2: var(--si-accent);
+  --color-v5-danger: var(--si-danger);
+  --color-v5-line: var(--si-line);
+  --color-v5-border: var(--si-line);
+  --color-v5-border-strong: var(--si-line-strong);
   --radius-app: 10px;
-  --radius-v5-lg: 1.875rem;
-  --radius-v5-md: 1.25rem;
-  --radius-v5-sm: 1rem;
+  --radius-v5-lg: var(--r-card);
+  --radius-v5-md: var(--r-card);
+  --radius-v5-sm: var(--r-ctl);
+  /* Show Ignition utilities: `rounded-ctl`, `rounded-card`, `bg-si-panel`, `text-si-muted`… */
+  --radius-ctl: var(--r-ctl);
+  --radius-card: var(--r-card);
+  --color-si-bg: var(--si-bg);
+  --color-si-panel: var(--si-panel);
+  --color-si-panel-2: var(--si-panel-2);
+  --color-si-line: var(--si-line);
+  --color-si-fg: var(--si-fg);
+  --color-si-muted: var(--si-muted);
+  --color-si-dim: var(--si-dim);
+  --color-si-ink: var(--si-ink);
+  --color-si-accent: var(--si-accent);
+  --color-si-danger: var(--si-danger);
   --radius-v4-9: 0.5625rem;
   --radius-v4-10: 0.625rem;
 }
@@ -215,7 +219,14 @@
   --color-text: #e8eaed;
   --color-legacy-muted: #9aa0a6;
   --color-legacy-accent: #7cb7ff;
-  --font-mono: 'SF Mono', 'Consolas', 'Liberation Mono', monospace;
+  /* Show Ignition faces (redesign-show-ignition D9): Barlow for the UI and body, Barlow
+   * Condensed for labels, tabs and status, JetBrains Mono for timecode and measured values
+   * only. `font-ui` / `font-label` / `font-tc` utilities; `--font-mono` (the older timecode
+   * token) now names the timecode face. */
+  --font-ui: 'Barlow', 'Segoe UI', system-ui, sans-serif;
+  --font-label: 'Barlow Condensed', 'Arial Narrow', 'Barlow', system-ui, sans-serif;
+  --font-tc: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  --font-mono: var(--font-tc);
 }
 
 /* Non-namespace + legacy-flat tokens (Task 11 — moved verbatim from the deleted
@@ -224,7 +235,7 @@
  * chrome/base rules + SessionWorkspace/AppShell/Timeline escape hatches) and by the
  * remaining component CSS/TSX that reads the v4, v5, surface, and radius tokens. The
  * flat colors also have literal @theme-inline twins above for utility generation;
- * these :root copies serve the plain-CSS var() consumers. The poppins and
+ * these :root copies serve the plain-CSS var() consumers. The UI-face and
  * league-gothic fonts live in @theme; the mono stack became --font-mono. */
 :root {
   /* Matte dark slate + noise (see body::before in baseline.css) */
@@ -239,53 +250,39 @@
   --accent-dim: #4a8fd9;
   --danger: #ff6b6b;
   --radius: 10px;
-  /* --font-poppins / --font-league-gothic moved into @theme (tailwind.css) — same-name
-   * namespace tokens can't be defined twice. Self-hosted Google Fonts: Poppins
-   * 100/300/400/600; League Gothic variable width. */
+  /* --font-league-gothic and the Show Ignition --font-ui/-label/-tc live in @theme (above) —
+   * same-name namespace tokens can't be defined twice. */
 
-  /* V5 design tokens (formerly scoped under body.v5-ui; promoted to :root in v1.15.0). */
-  --v5-bg: #070b14;
-  --v5-text: #e5eefc;
-  --v5-muted: rgba(229, 238, 252, 0.62);
-  --v5-soft: #94a3b8;
-  --v5-primary: #38bdf8;
-  --v5-primary2: #22d3ee;
-  --v5-danger: #f87171;
-  --v5-line: rgba(148, 163, 184, 0.16);
-  /* Slightly more opaque than old "blur glass" so panels stay readable without backdrop-filter */
-  --v5-glass-top: rgba(19, 27, 48, 0.91);
-  --v5-glass-bot: rgba(11, 16, 30, 0.84);
-  --v5-glass-strong-top: rgba(22, 31, 54, 0.94);
-  --v5-glass-strong-bot: rgba(12, 18, 32, 0.9);
-  /* Stacked: specular haze + tinted body (replaces frosted blur visually) */
-  --v5-glass-face: linear-gradient(180deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0) 44%),
-    linear-gradient(180deg, var(--v5-glass-top), var(--v5-glass-bot));
-  --v5-glass-face-strong: linear-gradient(180deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0) 42%),
-    linear-gradient(180deg, var(--v5-glass-strong-top), var(--v5-glass-strong-bot));
-  --v5-glass-face-aside: linear-gradient(180deg, rgba(255, 255, 255, 0.078) 0%, rgba(255, 255, 255, 0) 40%),
-    linear-gradient(180deg, var(--v5-glass-strong-top), var(--v5-glass-bot));
-  /* Feed sheet: open glass so page glow/noise reads through. Top sits close to
-   * bot (subtle fade) — active tabs use --v5-glass-feed-surface-top so they
-   * bleed into the sheet with no color mismatch. */
-  --v5-glass-feed-top: rgba(16, 23, 41, 0.58);
-  --v5-glass-feed-bot: rgba(11, 16, 30, 0.48);
-  --v5-glass-feed-surface-top: color-mix(in srgb, #ffffff 4%, var(--v5-glass-feed-top));
-  --v5-glass-face-feed: linear-gradient(
-    180deg,
-    var(--v5-glass-feed-surface-top),
-    var(--v5-glass-feed-bot)
-  );
-  --v5-glass-rim: inset 0 1px 0 rgba(255, 255, 255, 0.09);
-  --v5-border: rgba(255, 255, 255, 0.06);
-  --v5-border-strong: rgba(255, 255, 255, 0.1);
-  /* Mock .shadow-glow: lift + hairline + cyan/sky bloom */
-  --v5-shadow-glow: 0 1px 0 rgba(255, 255, 255, 0.055), 0 22px 60px rgba(2, 8, 23, 0.58),
-    0 0 0 1px rgba(255, 255, 255, 0.048), 0 0 128px -36px rgba(56, 189, 248, 0.14),
-    0 0 64px -28px rgba(14, 165, 233, 0.09);
+  /* V5 design tokens, re-pointed at Show Ignition (redesign-show-ignition D1). The names stay
+   * so untouched consumers keep resolving; the glass faces and glows are now flat surfaces
+   * and empty shadows, so every V5 glass panel renders as a flat Show Ignition panel. */
+  --v5-bg: var(--si-bg);
+  --v5-text: var(--si-fg);
+  --v5-muted: var(--si-muted);
+  --v5-soft: var(--si-dim);
+  --v5-primary: var(--si-accent);
+  --v5-primary2: var(--si-accent);
+  --v5-danger: var(--si-danger);
+  --v5-line: var(--si-line);
+  --v5-glass-top: var(--si-panel);
+  --v5-glass-bot: var(--si-panel);
+  --v5-glass-strong-top: var(--si-panel-2);
+  --v5-glass-strong-bot: var(--si-panel-2);
+  --v5-glass-face: var(--si-panel);
+  --v5-glass-face-strong: var(--si-panel-2);
+  --v5-glass-face-aside: var(--si-panel);
+  --v5-glass-feed-top: var(--si-panel);
+  --v5-glass-feed-bot: var(--si-panel);
+  --v5-glass-feed-surface-top: var(--si-panel);
+  --v5-glass-face-feed: var(--si-panel);
+  --v5-glass-rim: inset 0 0 #0000;
+  --v5-border: var(--si-line);
+  --v5-border-strong: var(--si-line-strong);
+  --v5-shadow-glow: 0 0 #0000;
   --v5-panel-elevate: var(--v5-shadow-glow), var(--v5-glass-rim);
-  --v5-radius-lg: 1.875rem;
-  --v5-radius-md: 1.25rem;
-  --v5-radius-sm: 1rem;
+  --v5-radius-lg: var(--r-card);
+  --v5-radius-md: var(--r-card);
+  --v5-radius-sm: var(--r-ctl);
   --v5-aside-w: 22.5rem;
   --v5-panel-padding: 1.5rem;
   --v5-panel-head-main-gap: 0.1rem;
@@ -362,6 +359,9 @@
    * dialog overlay/content → popover → top-float (tooltip, select dropdown,
    * audio-save busy overlay) → toast. Intra-component stacking (small 1-30
    * values and the Timeline tooltip layers) stays local to each module. */
+  /* The Settings view (redesign-show-ignition D3): over the workspace in <main>, under the
+     phone rail sheet and every dialog layer. */
+  --z-settings-view: 1400;
   --z-rail-scrim: 1500;
   --z-rail-drawer: 1501;
   --z-dialog-overlay: 5000;
@@ -377,33 +377,304 @@
 
 /* Compound tokens that can't be single-property utilities (audit K). */
 /* ============================================================
- * shadcn semantic tokens (shadcn-foundation design D5). Dark-only: the shadcn names alias V5
- * values on :root (no .dark block, no light theme). The legacy --border/--muted/--accent names
- * were renamed to --legacy-* first (design D3), so these never repaint legacy surfaces.
- * `@theme inline` exposes them as Tailwind colours (`bg-background`, `text-muted-foreground`…).
- * --radius (10px) is shared with legacy and equals shadcn's 0.625rem default.
+ * Show Ignition tokens (redesign-show-ignition D1; the approved preview's `:root` and its
+ * consistency pass). Dark-only and flat: one accent, one control size and radius, one card
+ * radius, one selected state. New and restyled components read the `--si-*` names directly;
+ * the shadcn variables below and the `--v5-*` names above alias them.
  * ============================================================ */
 :root {
-  --background: var(--v5-bg);
-  --foreground: var(--v5-text);
-  /* V5 strong glass top (rgba(22,31,54,.94)) composited over --v5-bg, as a solid. */
-  --card: #151e34;
-  --card-foreground: var(--v5-text);
-  --popover: #151e34;
-  --popover-foreground: var(--v5-text);
-  --primary: var(--v5-primary);
-  --primary-foreground: #e0f2fe;
-  /* V5 raised/hover surface: a faint white wash over glass. */
-  --secondary: rgba(255, 255, 255, 0.06);
-  --secondary-foreground: var(--v5-text);
-  --muted: rgba(255, 255, 255, 0.06);
-  --muted-foreground: var(--v5-muted);
+  --si-bg: #101216;
+  --si-panel: #16181d;
+  --si-panel-2: #1c1f25;
+  --si-line: #272b33;
+  --si-line-strong: #343944;
+  --si-fg: #eceef2;
+  --si-muted: #a6acb7;
+  --si-dim: #858c98;
+  --si-ink: #0b0c0f;
+  --si-accent: #5b7cff;
+  --si-danger: #ff9b9b;
+  --si-danger-line: #5a2e33;
+  /* The waveform's unplayed body (11.4 cleanup, was a slate gradient): a flat foreground wash,
+   * half the stopped played portion (`--tx-wave-progress` 26%), so played vs unplayed reads in
+   * every transport state. */
+  --si-wave-body: color-mix(in oklab, var(--si-fg) 13%, transparent);
+  /* The idle roll/record glyph on the transport controls (preview `.ctl.rec svg`). */
+  --si-rec: #ff6464;
+  /* The accent as text on the dark surfaces (the live hero timecode): lifted toward white so it
+   * clears AA on the live transport card (contrastTokens). */
+  --si-accent-text: color-mix(in oklab, var(--si-accent) 72%, #ffffff);
+  /* The primary button's accent tint and edge (preview `.btn.primary`). */
+  --si-primary-tint: color-mix(in oklab, var(--si-accent) 26%, var(--si-panel-2));
+  --si-primary-line: color-mix(in oklab, var(--si-accent) 55%, var(--si-line));
+
+  --r-ctl: 8px;
+  --r-card: 12px;
+  --h-ctl: 36px;
+  --h-sm: 30px;
+  /* The shell's top bar (redesign-show-ignition D5): full width above the rail and main. */
+  --topbar-h: 52px;
+
+  /* The one selected state: an accent tint with a 1px inset accent line (web-ui-system
+   * "Single V5 component vocabulary"). Apply as `background: var(--sel-bg);
+   * box-shadow: inset 0 0 0 1px var(--sel-line)`. */
+  --sel-bg: color-mix(in oklab, var(--si-accent) 18%, transparent);
+  --sel-line: color-mix(in oklab, var(--si-accent) 48%, transparent);
+
+  /* The four transport mixes: how far the rail tints toward the accent per state. */
+  --si-tx-stopped: color-mix(in oklab, var(--si-accent) 10%, #0c0d10);
+  --si-tx-rolling: color-mix(in oklab, var(--si-accent) 25%, #0a0b0e);
+  --si-tx-recording: color-mix(in oklab, var(--si-accent) 25%, #0a0b0e);
+  --si-tx-playback: color-mix(in oklab, var(--si-accent) 18%, #0c0d10);
+}
+
+/* Transport state (redesign-show-ignition D2). The shell sets `data-transport` on the app
+ * root; these rules only define what each state means. Stopped is the :root default, so a
+ * surface outside any transport root reads stopped. `--tx-rail`/`--tx-bar` tint the rail and
+ * top bar (the same mix, so the two read as one lit frame; 11.3 found an 18% bar invisible
+ * beside the 25% rail), `--tx-live` is the live accent (pressed transport, playhead), `--tx-playhead`
+ * the timeline playhead (the foreground when stopped, the live accent otherwise), `--tx-glow` the soft
+ * glow, `--tx-playhead-glow` the playhead's own halo (strong enough to read beside a 2px line; none
+ * when stopped; finish review fix round 2), `--tx-wave-progress` the waveform's played portion (a
+ * dim neutral when stopped, the accent otherwise; fix round 3), and `--tx-pill-*` the status label (STOPPED / ROLLING / REC / PLAY) and its pill. A
+ * stopped pill is transparent over the bar, so its surface is the bar colour. Every
+ * pill-fg/pill-bg pair clears AA (contrastTokens.test.ts). */
+:root,
+[data-transport='stopped'] {
+  --tx-rail: var(--si-tx-stopped);
+  --tx-bar: var(--si-tx-stopped);
+  --tx-live: var(--si-accent);
+  --tx-playhead: var(--si-fg);
+  --tx-glow: transparent;
+  --tx-playhead-glow: transparent;
+  --tx-wave-progress: color-mix(in oklab, var(--si-fg) 26%, transparent);
+  --tx-pill-bg: var(--si-tx-stopped);
+  --tx-pill-fg: var(--si-muted);
+  --tx-pill-line: var(--si-line);
+}
+[data-transport='rolling'] {
+  --tx-rail: var(--si-tx-rolling);
+  --tx-bar: var(--si-tx-rolling);
+  --tx-live: color-mix(in oklab, var(--si-accent) 88%, #000000);
+  --tx-playhead: var(--tx-live);
+  --tx-glow: color-mix(in oklab, var(--si-accent) 46%, transparent);
+  --tx-playhead-glow: color-mix(in oklab, var(--si-accent) 75%, transparent);
+  --tx-wave-progress: color-mix(in oklab, var(--si-accent) 80%, transparent);
+  --tx-pill-bg: color-mix(in oklab, var(--si-accent) 88%, #000000);
+  --tx-pill-fg: #ffffff;
+  --tx-pill-line: color-mix(in oklab, var(--si-accent) 88%, #000000);
+}
+[data-transport='recording'] {
+  --tx-rail: var(--si-tx-recording);
+  --tx-bar: var(--si-tx-recording);
+  --tx-live: color-mix(in oklab, var(--si-accent) 88%, #000000);
+  --tx-playhead: var(--tx-live);
+  --tx-glow: color-mix(in oklab, var(--si-accent) 46%, transparent);
+  --tx-playhead-glow: color-mix(in oklab, var(--si-accent) 75%, transparent);
+  --tx-wave-progress: color-mix(in oklab, var(--si-accent) 80%, transparent);
+  --tx-pill-bg: color-mix(in oklab, var(--si-accent) 88%, #000000);
+  --tx-pill-fg: #ffffff;
+  --tx-pill-line: color-mix(in oklab, var(--si-accent) 88%, #000000);
+}
+[data-transport='playback'] {
+  --tx-rail: var(--si-tx-playback);
+  --tx-bar: var(--si-tx-playback);
+  --tx-live: color-mix(in oklab, var(--si-accent) 65%, #ffffff);
+  --tx-playhead: var(--tx-live);
+  --tx-glow: color-mix(in oklab, var(--si-accent) 30%, transparent);
+  --tx-playhead-glow: color-mix(in oklab, var(--si-accent) 60%, transparent);
+  --tx-wave-progress: color-mix(in oklab, var(--si-accent) 72%, transparent);
+  --tx-pill-bg: color-mix(in oklab, var(--si-accent) 65%, #ffffff);
+  --tx-pill-fg: var(--si-ink);
+  --tx-pill-line: color-mix(in oklab, var(--si-accent) 65%, #ffffff);
+}
+
+/* ============================================================
+ * shadcn semantic tokens (shadcn-foundation design D5), re-pointed at Show Ignition
+ * (redesign-show-ignition D1). Dark-only: no .dark block, no light theme. The legacy
+ * --border/--muted/--accent names were renamed to --legacy-* first (design D3), so these never
+ * repaint legacy surfaces. `@theme inline` exposes them as Tailwind colours
+ * (`bg-background`, `text-muted-foreground`…). --radius (10px) is shared with legacy; the
+ * primitives take their radii from --r-ctl / --r-card instead.
+ * ============================================================ */
+:root {
+  --background: var(--si-bg);
+  --foreground: var(--si-fg);
+  --card: var(--si-panel);
+  --card-foreground: var(--si-fg);
+  --popover: var(--si-panel-2);
+  --popover-foreground: var(--si-fg);
+  /* Solid accent fills (Badge, checked controls) carry ink; the default Button uses the
+   * --si-primary-tint surface with --si-fg instead. */
+  --primary: var(--si-accent);
+  --primary-foreground: var(--si-ink);
+  --secondary: var(--si-panel-2);
+  --secondary-foreground: var(--si-fg);
+  --muted: var(--si-panel-2);
+  --muted-foreground: var(--si-muted);
+  /* Hover/highlight wash for menus and ghost controls (not the selected state). */
   --accent: rgba(255, 255, 255, 0.06);
-  --accent-foreground: var(--v5-text);
-  --destructive: var(--v5-danger);
-  --border: var(--v5-border-strong);
-  --input: var(--v5-border-strong);
-  --ring: var(--v5-primary);
+  --accent-foreground: var(--si-fg);
+  --destructive: var(--si-danger);
+  --border: var(--si-line);
+  --input: var(--si-line-strong);
+  --ring: var(--si-accent);
+  --sidebar-foreground: var(--si-fg);
+  --sidebar-primary: var(--si-accent);
+  --sidebar-primary-foreground: var(--si-ink);
+  --sidebar-accent: rgba(255, 255, 255, 0.06);
+  --sidebar-accent-foreground: var(--si-fg);
+  --sidebar-ring: var(--si-accent);
+}
+
+/* The sidebar surface follows the transport tint. Redeclared on every transport root (not
+ * only :root) because a custom property's var() resolves where it is declared: declared on
+ * :root alone it would freeze at the stopped rail. */
+:root,
+[data-transport] {
+  --sidebar: var(--tx-rail);
+  --sidebar-border: color-mix(in oklab, var(--si-accent) 22%, var(--si-line));
+}
+
+/* ============================================================
+ * Shell ignition (redesign-show-ignition D2; web-session-console "Transport state tints the
+ * shell"). Pure CSS on the app root's `data-transport` (AppShell, from the transport-status
+ * store). Unlayered on purpose, so it beats the surfaces' own Tailwind utilities. Hooks:
+ *   - rail:            the shadcn Sidebar reads `--sidebar` above; `#v6-rail` is its desktop
+ *                      container (border, glow), and the phone Sheet follows via :has().
+ *   - top bar:         `[data-slot='topbar']` (group 3 puts it on the TopBar root).
+ *   - transport strip: `#v5-maximize-log-strip`.
+ *   - live indicator:  `[data-slot='live-dot']`, blinks while recording (top bar status pill).
+ * Recording and rolling take the full tint and glow, playback a softer one, stopped the muted
+ * tint. Under reduced motion the tint changes instantly and the live dot does not blink.
+ * ============================================================ */
+:root {
+  --tx-dur: 0.6s;
+  --tx-ease: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* The rail is the shadcn Sidebar (group 4): its surface is `bg-sidebar`, which reads `--sidebar`
+ * above, so the tint itself needs no rule here. `#v6-rail` is the desktop sidebar container; its
+ * own width/left transition is the primitive's and is kept in the list. */
+[data-transport] #v6-rail {
+  border-right-color: var(--sidebar-border);
+  transition:
+    left 0.2s linear,
+    width 0.2s linear,
+    border-color var(--tx-dur) var(--tx-ease),
+    box-shadow var(--tx-dur) var(--tx-ease);
+}
+[data-transport] #v6-rail > [data-slot='sidebar-inner'] {
+  transition: background-color var(--tx-dur) var(--tx-ease);
+}
+[data-transport='recording'] #v6-rail,
+[data-transport='rolling'] #v6-rail {
+  border-right-color: color-mix(in oklab, var(--si-accent) 70%, transparent);
+  box-shadow: 12px 0 36px -18px var(--tx-glow);
+}
+[data-transport='playback'] #v6-rail {
+  border-right-color: color-mix(in oklab, var(--si-accent) 40%, var(--si-line));
+}
+
+/* Phones: the sidebar is the primitive's Sheet, portaled to <body> outside the transport root, so
+ * it takes the shell's state through :has() (a stopped shell keeps the :root stopped tint). */
+:root:has([data-transport='rolling']) [data-slot='sidebar'][data-mobile='true'] {
+  --sidebar: var(--si-tx-rolling);
+}
+:root:has([data-transport='recording']) [data-slot='sidebar'][data-mobile='true'] {
+  --sidebar: var(--si-tx-recording);
+}
+:root:has([data-transport='playback']) [data-slot='sidebar'][data-mobile='true'] {
+  --sidebar: var(--si-tx-playback);
+}
+[data-slot='sidebar'][data-mobile='true'] {
+  border-right-color: var(--sidebar-border);
+}
+:root:has([data-transport='recording']) [data-slot='sidebar'][data-mobile='true'],
+:root:has([data-transport='rolling']) [data-slot='sidebar'][data-mobile='true'] {
+  border-right-color: color-mix(in oklab, var(--si-accent) 70%, transparent);
+}
+
+[data-transport] [data-slot='topbar'] {
+  background-color: var(--tx-bar);
+  border-bottom: 1px solid color-mix(in oklab, var(--si-accent) 22%, var(--si-line));
+  transition:
+    background-color var(--tx-dur) var(--tx-ease),
+    border-color var(--tx-dur) var(--tx-ease),
+    box-shadow var(--tx-dur) var(--tx-ease);
+}
+[data-transport='recording'] [data-slot='topbar'],
+[data-transport='rolling'] [data-slot='topbar'] {
+  border-bottom-color: color-mix(in oklab, var(--si-accent) 70%, transparent);
+  box-shadow: 0 12px 36px -18px var(--tx-glow);
+}
+[data-transport='playback'] [data-slot='topbar'] {
+  border-bottom-color: color-mix(in oklab, var(--si-accent) 40%, var(--si-line));
+}
+
+[data-transport] #v5-maximize-log-strip {
+  background-color: var(--si-panel);
+  border-color: var(--si-line);
+  transition:
+    background-color var(--tx-dur) var(--tx-ease),
+    border-color var(--tx-dur) var(--tx-ease),
+    box-shadow var(--tx-dur) var(--tx-ease);
+}
+[data-transport='recording'] #v5-maximize-log-strip,
+[data-transport='rolling'] #v5-maximize-log-strip {
+  background-color: color-mix(in oklab, var(--si-accent) 13%, #121419);
+  border-color: color-mix(in oklab, var(--si-accent) 55%, var(--si-line));
+  box-shadow:
+    0 10px 34px -14px var(--tx-glow),
+    0 0 0 1px color-mix(in oklab, var(--si-accent) 28%, transparent);
+}
+[data-transport='playback'] #v5-maximize-log-strip {
+  background-color: color-mix(in oklab, var(--si-accent) 8%, var(--si-panel));
+  border-color: color-mix(in oklab, var(--si-accent) 38%, var(--si-line));
+  box-shadow: 0 10px 30px -18px var(--tx-glow);
+}
+
+/* The hero session timecode (TimecodeDisplay): the accent, with the soft glow, while the session
+ * rolls or records (finish review fix round 1). `--si-accent-text` keeps it AA on the live card. */
+#session-tc-display {
+  transition:
+    color var(--tx-dur) var(--tx-ease),
+    text-shadow var(--tx-dur) var(--tx-ease);
+}
+[data-transport='recording'] #session-tc-display,
+[data-transport='rolling'] #session-tc-display {
+  color: var(--si-accent-text);
+  text-shadow: 0 0 20px var(--tx-glow);
+}
+
+[data-transport='recording'] [data-slot='live-dot'] {
+  animation: si-blink 1.2s steps(2, jump-none) infinite;
+}
+@keyframes si-blink {
+  50% {
+    opacity: 0.25;
+  }
+}
+
+/* Reduced motion: the tint transition and the blink are dropped (the rail keeps only its own
+ * geometry transition). */
+@media (prefers-reduced-motion: reduce) {
+  [data-transport] #v6-rail {
+    transition:
+      left 0.2s linear,
+      width 0.2s linear;
+  }
+  [data-transport] #v6-rail > [data-slot='sidebar-inner'] {
+    transition: none;
+  }
+  [data-transport] [data-slot='topbar'],
+  [data-transport] #v5-maximize-log-strip,
+  #session-tc-display {
+    transition: none;
+  }
+  [data-transport] [data-slot='live-dot'] {
+    animation: none;
+  }
 }
 
 @theme inline {
@@ -425,6 +696,14 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -475,26 +754,17 @@
     --v6-rail-recent-shelf-mt: 1rem;
     --v6-rail-recent-shelf-pad: 0.6rem;
     --v6-rail-recent-shelf-radius: 1rem;
-    --v6-rail-recent-shelf-bg: linear-gradient(180deg, rgb(54 66 83 / 35%) 0%, rgb(26 26 43 / 50%));
   }
 
-  /* Timeline marker click → temporary Event Feed row highlight.
-   * Same fill on every cell; left accent only on the first so column seams stay even. */
+  /* Timeline marker click → temporary Event Feed row highlight: one accent fill on every cell
+   * (11.3 dropped the cyan left stripe, off the one-accent world). */
   #v4-log-sheet tr.event-row-flash > td {
     animation: var(--animate-event-row-flash);
-  }
-  #v4-log-sheet tr.event-row-flash > td:first-child {
-    animation:
-      var(--animate-event-row-flash),
-      var(--animate-event-row-flash-accent);
   }
   @media (prefers-reduced-motion: reduce) {
     #v4-log-sheet tr.event-row-flash > td {
       animation: none;
-      background-color: rgba(56, 189, 248, 0.12);
-    }
-    #v4-log-sheet tr.event-row-flash > td:first-child {
-      box-shadow: inset 3px 0 0 rgba(56, 189, 248, 0.7);
+      background-color: color-mix(in oklab, var(--si-accent) 18%, transparent);
     }
   }
 }
@@ -507,13 +777,17 @@
   &::-webkit-scrollbar {
     height: 6px;
   }
+  /* The themed scrollbar palette (base layer): strong-hairline thumb, accent on hover. */
   &::-webkit-scrollbar-thumb {
-    background: var(--legacy-border);
+    background: var(--si-line-strong);
     border-radius: 3px;
+  }
+  &::-webkit-scrollbar-thumb:hover {
+    background: var(--si-accent);
   }
 }
 
-/* EventButtonsTable's palette swatch — a native <input type=color> whose rendered swatch is
+/* Settings › Event buttons' palette swatch — a native <input type=color> whose rendered swatch is
  * a ::-webkit-color-swatch / ::-moz-color-swatch pseudo that can't carry inline utilities.
  * The box metrics (size/radius/appearance) are set here alongside the pseudo resets. */
 @utility pal-slot {
@@ -641,11 +915,11 @@
   }
 
   body.perf-dbg--no-v5-waveform-gradients #v4-log-session .timelineWaveformFill {
-    fill: rgba(148, 163, 184, 0.32) !important;
+    fill: var(--si-wave-body) !important;
   }
 
   body.perf-dbg--no-v5-waveform-gradients #v4-log-session .timelineWaveformProgress {
-    fill: rgba(56, 189, 248, 0.4) !important;
+    fill: var(--tx-wave-progress) !important;
   }
 }
 
@@ -895,7 +1169,7 @@
     margin: 0;
     width: 100%;
     text-align: left;
-    font-family: 'Inter', var(--font-poppins, ui-sans-serif), system-ui, sans-serif;
+    font-family: var(--font-ui);
     font-size: 1.35rem;
     font-weight: 600;
     letter-spacing: -0.02em;
@@ -937,32 +1211,12 @@
   }
 }
 
-/* --- Feed-tabs sheet-corner flatten (reaches into FeedShell's sheet) ---
- * SessionWorkspace's `.v5FeedTabsPanel` wraps FeedShell's `.v4-log-sheet.v5-event-feed`;
- * flattening the sheet's TOP corners lets the tab bar sit flush (bottom corners keep
- * their --v5-radius-lg pillow). The target is FeedShell-rendered DOM (Task 9), so this
- * can't be an inline utility on SessionWorkspace's JSX and stays a components-layer rule
- * scoped by the retained `v5FeedTabsPanel` ancestor class. FeedShell sets the sheet's
- * uniform radius with the `rounded-v5-lg` UTILITY (utilities layer, above components), so
- * the two top-radius overrides carry `!important` to beat it — the toggle-contract use of
- * `!` the recipe sanctions for beating a later layer. */
+/* Feed sheet under the workspace tabs (redesign-show-ignition task 5.2). The tabs are line tabs
+ * now, so the sheet is a whole flat card again (no flattened lid corner, no glow); this keeps
+ * only its stacking above the tab row. Scoped by the retained `v5FeedTabsPanel` ancestor class
+ * because the target is FeedShell-rendered DOM. */
 @layer components {
-  /* Square TL under the first tab. No top border / top hairline / top rim so the
-   * active tab bleeds into the sheet; TR stays softly rounded. The sheet's face
-   * comes ONLY from the glass-face-feed UTILITY (utilities layer beats this
-   * components-layer rule, and its `background` shorthand would reset any
-   * `background-color` set here) — the tab↔sheet seam matches because that
-   * gradient's top stop is `--v5-glass-feed-surface-top`, the same var the
-   * active tab uses. */
   .v5FeedTabsPanel .v4-log-sheet.v5-event-feed {
-    border-top-left-radius: 0 !important;
-    border-top-right-radius: 0.7rem !important;
-    border-top-width: 0 !important;
-    /* Drop panel-elevate's top highlight + 1px ring (reads as a seam under the tab). */
-    box-shadow:
-      0 22px 60px rgba(2, 8, 23, 0.58),
-      0 0 128px -36px rgba(56, 189, 248, 0.14),
-      0 0 64px -28px rgba(14, 165, 233, 0.09) !important;
     position: relative;
     z-index: 1;
   }
@@ -978,7 +1232,7 @@
  *   - `.autologger-loading-video` / `__media` base rules target template-string DOM
  *     (shared/utils/loadingVideo.ts) rendered by three components — a components-layer
  *     block, not utilities on one tree.
- *   - `.muted` is a multi-emitter utility class (RecentSessionsList / HomeSettingsModal /
+ *   - `.muted` is a multi-emitter utility class (RecentSessionsList /
  *     SessionWorkspace placeholder — a class family), so it's one components-layer rule.
  * ============================================================ */
 
@@ -1118,27 +1372,26 @@
   input[type='text'],
   textarea {
     font: inherit;
-    color: var(--v5-text);
-    background: rgba(7, 11, 20, 0.6);
-    border: 1px solid var(--v5-border-strong);
-    border-radius: 0.6rem;
+    color: var(--si-fg);
+    background: var(--si-bg);
+    border: 1px solid var(--si-line-strong);
+    border-radius: var(--r-ctl);
     padding: 0.55rem 0.65rem;
     transition: border-color 0.15s ease, background 0.15s ease;
   }
 
   input[type='text']:focus-visible,
   textarea:focus-visible {
-    border-color: rgba(56, 189, 248, 0.55);
+    border-color: var(--ring);
     outline: none;
-    background: rgba(7, 11, 20, 0.75);
   }
 
   /* Placeholder floor (AA): the app-wide default placeholder used to bottom out
-   * near 35% alpha; 62% of the V5 text color clears 4.5:1 on the lightest dialog
-   * field the QA probe measured (shadcn-foundation D7). */
+   * near 35% alpha (shadcn-foundation D7). The muted tier (#a6acb7) clears 4.5:1 on the
+   * ground well and on the raised panel. */
   input::placeholder,
   textarea::placeholder {
-    color: rgba(229, 238, 252, 0.62);
+    color: var(--si-muted);
     opacity: 1;
   }
 
@@ -1157,11 +1410,12 @@
  * need to beat utilities, so they live in @layer components (below / perf-debug section).
  * ============================================================ */
 @layer base {
-  /* Self-hosted (OFL via Google Fonts): League Gothic, Poppins, Inter, Roboto —
-   * .woff2 in src/assets/fonts/, EXCEPT the two preload targets (deduped Inter
-   * latin + League Gothic latin), which live at stable /static/fonts/ URLs so
-   * `<link rel="preload">` in the root layout can name them (perf C4b). Chivo
-   * Mono and Oswald were deleted in C4c — zero references anywhere in web/src. */
+  /* Self-hosted (OFL via Google Fonts): League Gothic, Barlow, Barlow Condensed, JetBrains
+   * Mono; Roboto (Apache 2.0) for the Google sign-in button — .woff2 in src/assets/fonts/,
+   * EXCEPT the three preload targets (Barlow latin 400 and 600, League Gothic latin), which
+   * live at stable /static/fonts/ URLs so `<link rel="preload">` in the root layout can name
+   * them (perf C4b; redesign-show-ignition D9). Chivo Mono and Oswald were deleted in C4c;
+   * Inter and Poppins were retired by redesign-show-ignition once nothing referenced them. */
   /* vietnamese */
   @font-face {
     font-family: 'League Gothic';
@@ -1195,129 +1449,78 @@
     src: url("/static/fonts/league-gothic-latin.woff2") format('woff2');
     unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
   }
-  /* devanagari */
+  /* Barlow, Barlow Condensed and JetBrains Mono: SIL Open Font License 1.1 (Barlow © The
+   * Barlow Project Authors; JetBrains Mono © The JetBrains Mono Project Authors), vendored from
+   * Google Fonts, latin subset only (the UI is English). Barlow ships static per-weight files,
+   * one file per declared weight. Barlow 400 and 600 are preload targets — served from /public
+   * at stable, non-content-hashed URLs so the root layout's `<link rel="preload">` and these
+   * `src:` hit one request; 500/700 stay bundler-emitted asset imports. */
+  /* latin — preload target */
   @font-face {
-    font-family: 'Poppins';
-    font-style: normal;
-    font-weight: 100;
-    font-display: swap;
-    src: url("../../assets/fonts/pxiGyp8kv8JHgFVrLPTucXtAOvWDSHFF.woff2") format('woff2');
-    unicode-range: U+0900-097F, U+1CD0-1CF9, U+200C-200D, U+20A8, U+20B9, U+20F0, U+25CC, U+A830-A839, U+A8E0-A8FF, U+11B00-11B09;
-  }
-  /* latin-ext */
-  @font-face {
-    font-family: 'Poppins';
-    font-style: normal;
-    font-weight: 100;
-    font-display: swap;
-    src: url("../../assets/fonts/pxiGyp8kv8JHgFVrLPTufntAOvWDSHFF.woff2") format('woff2');
-    unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
-  }
-  /* latin */
-  @font-face {
-    font-family: 'Poppins';
-    font-style: normal;
-    font-weight: 100;
-    font-display: swap;
-    src: url("../../assets/fonts/pxiGyp8kv8JHgFVrLPTucHtAOvWDSA.woff2") format('woff2');
-    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
-  }
-  /* devanagari */
-  @font-face {
-    font-family: 'Poppins';
-    font-style: normal;
-    font-weight: 300;
-    font-display: swap;
-    src: url("../../assets/fonts/pxiByp8kv8JHgFVrLDz8Z11lFd2JQEl8qw.woff2") format('woff2');
-    unicode-range: U+0900-097F, U+1CD0-1CF9, U+200C-200D, U+20A8, U+20B9, U+20F0, U+25CC, U+A830-A839, U+A8E0-A8FF, U+11B00-11B09;
-  }
-  /* latin-ext */
-  @font-face {
-    font-family: 'Poppins';
-    font-style: normal;
-    font-weight: 300;
-    font-display: swap;
-    src: url("../../assets/fonts/pxiByp8kv8JHgFVrLDz8Z1JlFd2JQEl8qw.woff2") format('woff2');
-    unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
-  }
-  /* latin */
-  @font-face {
-    font-family: 'Poppins';
-    font-style: normal;
-    font-weight: 300;
-    font-display: swap;
-    src: url("../../assets/fonts/pxiByp8kv8JHgFVrLDz8Z1xlFd2JQEk.woff2") format('woff2');
-    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
-  }
-  /* devanagari */
-  @font-face {
-    font-family: 'Poppins';
+    font-family: 'Barlow';
     font-style: normal;
     font-weight: 400;
     font-display: swap;
-    src: url("../../assets/fonts/pxiEyp8kv8JHgFVrJJbecnFHGPezSQ.woff2") format('woff2');
-    unicode-range: U+0900-097F, U+1CD0-1CF9, U+200C-200D, U+20A8, U+20B9, U+20F0, U+25CC, U+A830-A839, U+A8E0-A8FF, U+11B00-11B09;
-  }
-  /* latin-ext */
-  @font-face {
-    font-family: 'Poppins';
-    font-style: normal;
-    font-weight: 400;
-    font-display: swap;
-    src: url("../../assets/fonts/pxiEyp8kv8JHgFVrJJnecnFHGPezSQ.woff2") format('woff2');
-    unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
-  }
-  /* latin */
-  @font-face {
-    font-family: 'Poppins';
-    font-style: normal;
-    font-weight: 400;
-    font-display: swap;
-    src: url("../../assets/fonts/pxiEyp8kv8JHgFVrJJfecnFHGPc.woff2") format('woff2');
+    src: url("/static/fonts/barlow-400-latin.woff2") format('woff2');
     unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
   }
-  /* devanagari */
   @font-face {
-    font-family: 'Poppins';
+    font-family: 'Barlow';
     font-style: normal;
-    font-weight: 600;
+    font-weight: 500;
     font-display: swap;
-    src: url("../../assets/fonts/pxiByp8kv8JHgFVrLEj6Z11lFd2JQEl8qw.woff2") format('woff2');
-    unicode-range: U+0900-097F, U+1CD0-1CF9, U+200C-200D, U+20A8, U+20B9, U+20F0, U+25CC, U+A830-A839, U+A8E0-A8FF, U+11B00-11B09;
-  }
-  /* latin-ext */
-  @font-face {
-    font-family: 'Poppins';
-    font-style: normal;
-    font-weight: 600;
-    font-display: swap;
-    src: url("../../assets/fonts/pxiByp8kv8JHgFVrLEj6Z1JlFd2JQEl8qw.woff2") format('woff2');
-    unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
-  }
-  /* latin */
-  @font-face {
-    font-family: 'Poppins';
-    font-style: normal;
-    font-weight: 600;
-    font-display: swap;
-    src: url("../../assets/fonts/pxiByp8kv8JHgFVrLEj6Z1xlFd2JQEk.woff2") format('woff2');
+    src: url("../../assets/fonts/barlow-500-latin.woff2") format('woff2');
     unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
   }
-
-  /* Inter (vendored from Google Fonts CDN, stage 0a): latin subset only —
-   * app renders English UI text; matches the CDN link's family/weight set.
-   * ONE face, not three (perf C4a): inter-400/500/600.woff2 were byte-identical
-   * copies of the same variable font carrying the full weight axis, so the
-   * browser downloaded 48KB three times to render the same file. A single face
-   * with a `font-weight` RANGE lets the variable axis serve 400/500/600.
-   * Preload target — served from /public at a stable, non-content-hashed URL
-   * so the root layout's `<link rel="preload">` and this `src:` hit one request. */
+  /* latin — preload target */
   @font-face {
-    font-family: 'Inter';
+    font-family: 'Barlow';
     font-style: normal;
-    font-weight: 400 600;
+    font-weight: 600;
     font-display: swap;
-    src: url("/static/fonts/inter-latin-var.woff2") format('woff2');
+    src: url("/static/fonts/barlow-600-latin.woff2") format('woff2');
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+  }
+  @font-face {
+    font-family: 'Barlow';
+    font-style: normal;
+    font-weight: 700;
+    font-display: swap;
+    src: url("../../assets/fonts/barlow-700-latin.woff2") format('woff2');
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+  }
+  /* Labels, tabs and status. */
+  @font-face {
+    font-family: 'Barlow Condensed';
+    font-style: normal;
+    font-weight: 500;
+    font-display: swap;
+    src: url("../../assets/fonts/barlow-condensed-500-latin.woff2") format('woff2');
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+  }
+  @font-face {
+    font-family: 'Barlow Condensed';
+    font-style: normal;
+    font-weight: 600;
+    font-display: swap;
+    src: url("../../assets/fonts/barlow-condensed-600-latin.woff2") format('woff2');
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+  }
+  @font-face {
+    font-family: 'Barlow Condensed';
+    font-style: normal;
+    font-weight: 700;
+    font-display: swap;
+    src: url("../../assets/fonts/barlow-condensed-700-latin.woff2") format('woff2');
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+  }
+  /* Timecode and measured values. One variable file serves 500–600 (Google serves the same bytes for both weights), so one face with a weight range, not two. */
+  @font-face {
+    font-family: 'JetBrains Mono';
+    font-style: normal;
+    font-weight: 500 600;
+    font-display: swap;
+    src: url("../../assets/fonts/jetbrains-mono-latin-var.woff2") format('woff2');
     unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
   }
   /* Roboto (vendored from Google Fonts CDN, stage 0a): latin subset only. */
@@ -1343,12 +1546,55 @@
     outline-offset: 2px;
   }
 
+  /* Browser surfaces in the palette (craft floor; 11.3 found the default blue selection and
+   * light native scrollbars on the dark panels): selection is the accent tint, the caret the
+   * accent. Scrollbars (finish review fix round 1, which still found a light native bar on the
+   * phone Settings view): thin, on the page's dark track, a muted thumb that takes the accent on
+   * hover. Chromium and Safari draw them through `::-webkit-scrollbar` (which Chromium ignores on
+   * any element that also sets the standard `scrollbar-color`/`scrollbar-width`, so those are
+   * Firefox-only here); utilities that hide a scrollbar still win. */
+  ::selection {
+    background-color: color-mix(in oklab, var(--si-accent) 45%, var(--si-bg));
+    color: var(--si-fg);
+  }
+  :root {
+    caret-color: var(--si-accent);
+  }
+  @supports (-moz-appearance: none) {
+    :root {
+      /* Inherited, so every scroller takes it. */
+      scrollbar-color: var(--si-line-strong) var(--si-bg);
+    }
+    * {
+      scrollbar-width: thin;
+    }
+  }
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-track {
+    background-color: var(--si-bg);
+  }
+  ::-webkit-scrollbar-thumb {
+    border: 2px solid transparent;
+    border-radius: 8px;
+    background-color: var(--si-line-strong);
+    background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: var(--si-accent);
+  }
+  ::-webkit-scrollbar-corner {
+    background-color: var(--si-bg);
+  }
+
   body {
     margin: 0;
     min-height: 100vh;
     min-height: 100dvh;
     overscroll-behavior-y: none;
-    font-family: "Inter", var(--font-poppins, ui-sans-serif), system-ui, sans-serif;
+    font-family: var(--font-ui);
     font-size: 15px;
     line-height: 1.45;
     color: var(--v5-text);
@@ -1363,19 +1609,7 @@
     position: relative;
     z-index: 1;
   }
-
-  /* Fine film-grain / ISO noise over flat slate */
-  body::before {
-    content: "";
-    position: fixed;
-    inset: 0;
-    z-index: -1;
-    pointer-events: none;
-    opacity: 0.055;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23g)'/%3E%3C/svg%3E");
-    background-size: 200px 200px;
-    background-repeat: repeat;
-  }
+  /* The V5 film-grain layer (body::before) is retired: Show Ignition surfaces are flat. */
 }
 
 /* Ambient background glow — DOM nodes rendered by ThemeProvider (bgGlow.css). */
@@ -1387,21 +1621,11 @@
     pointer-events: none;
   }
 
-  /* Top grid + cool sky-blue wash from the page header */
-  .v5-bg-glow--grid {
-    background-image:
-      radial-gradient(circle at 50% -8%, rgba(56, 189, 248, 0.09), transparent 32%),
-      linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
-    background-size: auto, 24px 24px, 24px 24px;
-    background-position: center top, center, center;
-  }
-
-  /* Corner glows: bottom-left purple, top-right cyan */
+  /* The V5 sky grid and corner glows are retired (redesign-show-ignition D1: flat surfaces).
+   * ThemeProvider still renders the nodes; they paint nothing. */
+  .v5-bg-glow--grid,
   .v5-bg-glow--corners {
-    background:
-      radial-gradient(ellipse 120% 80% at 0% 100%, rgba(168, 85, 247, 0.08), transparent 45%),
-      radial-gradient(ellipse 100% 70% at 100% 35%, rgba(14, 165, 233, 0.07), transparent 40%);
+    background: none;
   }
 }
 

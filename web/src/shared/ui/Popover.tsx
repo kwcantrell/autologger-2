@@ -100,15 +100,15 @@ export function PopoverItem({
           ? 'hover-always:not-disabled:bg-[color-mix(in_srgb,var(--danger)_14%,transparent)]'
           : 'hover-always:not-disabled:bg-[rgba(255,255,255,0.06)]',
         // Focus-visible ring + tint.
-        'focus-visible:bg-[rgba(56,189,248,0.16)] focus-visible:outline-1 focus-visible:outline-v5-primary focus-visible:-outline-offset-1',
+        'focus-visible:bg-[rgba(255,255,255,0.06)] focus-visible:outline-1 focus-visible:outline-v5-primary focus-visible:-outline-offset-1',
         // Disabled.
         'disabled:cursor-not-allowed disabled:opacity-45',
         // aria-checked/aria-selected true → selected tint (mirrors .item[aria-*="true"]; wins on specificity).
-        'aria-checked:bg-[rgba(56,189,248,0.14)] aria-checked:text-v5-primary aria-selected:bg-[rgba(56,189,248,0.14)] aria-selected:text-v5-primary',
-        // Base text colour — danger / selected replace it (exclusive; danger wins over selected, matching source order).
-        danger ? 'text-danger' : selected ? 'text-v5-primary' : 'text-[rgba(248,250,252,0.92)]',
+        'aria-checked:bg-(--sel-bg) aria-checked:shadow-[inset_0_0_0_1px_var(--sel-line)] aria-selected:bg-(--sel-bg) aria-selected:shadow-[inset_0_0_0_1px_var(--sel-line)]',
+        // Base text colour — danger replaces it; selected keeps the text colour (the selected state is the tint + inset line).
+        danger ? 'text-danger' : 'text-v5-text',
         // Selected static background (.itemSelected).
-        selected && 'bg-[rgba(56,189,248,0.14)]',
+        selected && 'bg-(--sel-bg) shadow-[inset_0_0_0_1px_var(--sel-line)]',
         className,
       )}
     >

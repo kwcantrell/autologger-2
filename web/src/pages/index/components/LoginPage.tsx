@@ -1,11 +1,8 @@
-import brandStripAsset from '../../../assets/logos/logo-autologger-transparent.png';
 import { Alert, AlertDescription } from '../../../shared/components/ui/alert';
 import { Button } from '../../../shared/components/ui/button';
+import { Card } from '../../../shared/components/ui/card';
 import { Separator } from '../../../shared/components/ui/separator';
-import { assetSrc } from '../../../shared/utils/assetSrc';
 import { stashLoginReturnPathIfDeepLink } from '../../../shared/utils/loginReturnStash';
-
-const brandStripUrl = assetSrc(brandStripAsset);
 
 // --- LoginPage (add-login-screen, task 2.1) ---
 // Full-screen branded login view. Mounted by the root gate whenever
@@ -47,25 +44,41 @@ function readLoginErrorCode(): string | null {
 
 // --- class strings (V6Rail-style constants; v5 tokens throughout) ---
 
-// Body supplies the deep-navy ground + film grain; ThemeProvider's ambient
-// glow nodes sit behind everything at z-index 0, so the wrapper stays z-[1].
+// The page ground is the body's flat --si-bg; the wrapper stays z-[1] above any shell layer.
 const PAGE =
   'relative z-[1] flex min-h-screen min-h-[100dvh] w-full items-center justify-center px-5 py-10';
 
-// Glass card: the shared floating-panel chrome (glass-face-strong + hairline
-// border + the sky-bloom panel shadow) — the login card glows exactly like the
-// app's own panels. overflow-hidden clips the full-bleed brand strip.
+// The panel is the flat shadcn Card on --si-panel (redesign-show-ignition fix round 3: it was the
+// glass panel). A short fade in, none under reduced motion.
+const MAIN = 'w-full max-w-[25rem]';
 const CARD =
-  'glass-panel relative box-border w-full max-w-[25rem] overflow-hidden rounded-v5-lg px-7 pb-9 pt-0 text-center animate-overlay-fade-in motion-reduce:animate-none max-md:px-5 max-md:pb-8';
+  'gap-0 px-7 pb-9 pt-8 text-center animate-overlay-fade-in motion-reduce:animate-none max-md:px-5 max-md:pb-8';
 
-// Brand strip: the logo asset is a glowing session-timeline band centered in a
-// square transparent canvas; object-cover center-crop turns it into an
-// edge-to-edge title band — the product's timeline opening the slate. The
-// vertical mask fades the playhead's cropped ends so the band reads as a
-// vignette, not a cut.
-const BRAND_STRIP_WRAP =
-  'pointer-events-none -mx-7 mb-4 select-none [mask-image:linear-gradient(180deg,transparent,black_30%,black_70%,transparent)] max-md:-mx-5';
-const BRAND_STRIP_IMG = 'block h-24 w-full max-w-none object-cover';
+// Brand mark (fix round 3, owner decision): the product's timeline in the redesign's own
+// vocabulary, replacing the PNG strip whose red/cyan/purple markers broke the one-accent world.
+// A slim band on the panel ground, neutral markers plus one accent marker, and the signature
+// glowing accent playhead (the timeline playhead's `0 0 10px 1px` halo). No gradients.
+const MARK = 'relative mx-auto mb-6 h-12 w-64 max-w-full select-none pointer-events-none';
+const MARK_BAND =
+  'absolute inset-x-0 top-1/2 h-1.5 -translate-y-1/2 rounded-full border border-si-line bg-si-panel-2';
+const MARK_DOT = 'absolute top-1/2 size-2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-si-dim';
+const MARK_DOT_ACCENT =
+  'absolute top-1/2 h-2 w-5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-si-accent';
+const MARK_PLAYHEAD =
+  'absolute inset-y-0 left-[46%] w-0.5 -translate-x-1/2 rounded-full bg-si-accent [box-shadow:0_0_10px_1px_color-mix(in_oklab,var(--si-accent)_75%,transparent),0_0_4px_1px_color-mix(in_oklab,var(--si-accent)_75%,transparent)]';
+
+function BrandMark() {
+  return (
+    <div className={MARK} data-slot="login-brand-mark" aria-hidden="true">
+      <div className={MARK_BAND} data-part="band" />
+      <span className={`${MARK_DOT} left-[12%]`} data-part="marker" />
+      <span className={`${MARK_DOT_ACCENT} left-[34%]`} data-part="marker" />
+      <span className={`${MARK_DOT} left-[64%]`} data-part="marker" />
+      <span className={`${MARK_DOT} left-[86%]`} data-part="marker" />
+      <span className={MARK_PLAYHEAD} data-part="playhead" />
+    </div>
+  );
+}
 
 // Wordmark in the brand's own display face (League Gothic drives the category
 // buttons in-session; here it carries the name).
@@ -76,11 +89,12 @@ const TAGLINE = 'mx-auto mb-0 mt-2 max-w-[19rem] text-[0.9rem] leading-[1.5] tex
 
 // Error banner: danger-tinted glass, house dialog radius. role="alert" lives
 // on the element; the retry link starts a fresh /auth/google/start.
-// shadcn-port-shell D4: the error banner is the destructive Alert (tinted as before); retry is a
-// link-variant Button rendered as the same <a>.
+// shadcn-port-shell D4: the error banner is the destructive Alert; retry is a link-variant Button
+// rendered as the same <a>. 11.4 cleanup: the DESIGN.md danger tokens (rose text, the danger-line
+// edge) on the Alert's raised-panel surface replace the off-token reds.
 const ERROR_BANNER =
-  'mt-6 block bg-[rgba(248,113,113,0.1)] border-[rgba(248,113,113,0.35)] text-left';
-const ERROR_TEXT = 'm-0 block text-[0.85rem] leading-[1.45] text-v5-text';
+  'mt-6 block border-(--si-danger-line) text-left *:data-[slot=alert-description]:text-si-danger';
+const ERROR_TEXT = 'm-0 block text-[0.85rem] leading-[1.45]';
 const ERROR_RETRY =
   'mt-1 h-auto p-0 text-[0.85rem] font-semibold normal-case tracking-normal underline underline-offset-2 hover-always:text-v5-primary2';
 
@@ -137,64 +151,64 @@ export function LoginPage() {
 
   return (
     <div className={PAGE}>
-      <main className={CARD} aria-labelledby="login-wordmark">
-        <div className={BRAND_STRIP_WRAP} aria-hidden="true">
-          <img className={BRAND_STRIP_IMG} src={brandStripUrl} alt="" draggable={false} />
-        </div>
+      <main className={MAIN} aria-labelledby="login-wordmark">
+        <Card className={CARD}>
+          <BrandMark />
 
-        <h1 className={WORDMARK} id="login-wordmark">
-          AutoLogger
-        </h1>
-        <p className={TAGLINE}>Sign in to open your sessions, markers, and transcripts.</p>
+          <h1 className={WORDMARK} id="login-wordmark">
+            AutoLogger
+          </h1>
+          <p className={TAGLINE}>Sign in to open your sessions, markers, and transcripts.</p>
 
-        {errorCode !== null && (
-          <Alert variant="destructive" className={ERROR_BANNER} id="login-error-banner">
-            <AlertDescription className={ERROR_TEXT}>
-              {loginErrorMessage(errorCode)}
-            </AlertDescription>
-            <Button variant="link" asChild className={ERROR_RETRY}>
-              <a
-                href="/auth/google/start"
-                id="login-error-retry"
-                onClick={stashLoginReturnPathIfDeepLink}
-              >
-                Try again
-              </a>
-            </Button>
-          </Alert>
-        )}
+          {errorCode !== null && (
+            <Alert variant="destructive" className={ERROR_BANNER} id="login-error-banner">
+              <AlertDescription className={ERROR_TEXT}>
+                {loginErrorMessage(errorCode)}
+              </AlertDescription>
+              <Button variant="link" asChild className={ERROR_RETRY}>
+                <a
+                  href="/auth/google/start"
+                  id="login-error-retry"
+                  onClick={stashLoginReturnPathIfDeepLink}
+                >
+                  Try again
+                </a>
+              </Button>
+            </Alert>
+          )}
 
-        <a
-          className={BTN_GOOGLE}
-          href="/auth/google/start"
-          id="login-btn-google"
-          onClick={stashLoginReturnPathIfDeepLink}
-        >
-          <GoogleGMark />
-          <span>Sign in with Google</span>
-        </a>
-
-        <div className={SECTION_ROW} aria-hidden="true">
-          <Separator className={SECTION_RULE} />
-          <span className={SECTION_LABEL}>New to AutoLogger?</span>
-          <Separator className={SECTION_RULE} />
-        </div>
-
-        {/* Outline Button rendered as the same <a> (id/href/stash unchanged); BTN_CREATE keeps the
-            0.78-alpha label the AA floor needs (contrastTokens.test.ts reads this constant). */}
-        <Button variant="outline" asChild className={BTN_CREATE}>
           <a
+            className={BTN_GOOGLE}
             href="/auth/google/start"
-            id="login-btn-create-account"
+            id="login-btn-google"
             onClick={stashLoginReturnPathIfDeepLink}
           >
-            Create an account with Google
+            <GoogleGMark />
+            <span>Sign in with Google</span>
           </a>
-        </Button>
-        <p className={FINE_PRINT}>
-          Your account is created automatically the first time you sign in with Google. There is no
-          separate sign-up form.
-        </p>
+
+          <div className={SECTION_ROW} aria-hidden="true">
+            <Separator className={SECTION_RULE} />
+            <span className={SECTION_LABEL}>New to AutoLogger?</span>
+            <Separator className={SECTION_RULE} />
+          </div>
+
+          {/* Outline Button rendered as the same <a> (id/href/stash unchanged); BTN_CREATE keeps the
+            0.78-alpha label the AA floor needs (contrastTokens.test.ts reads this constant). */}
+          <Button variant="outline" asChild className={BTN_CREATE}>
+            <a
+              href="/auth/google/start"
+              id="login-btn-create-account"
+              onClick={stashLoginReturnPathIfDeepLink}
+            >
+              Create an account with Google
+            </a>
+          </Button>
+          <p className={FINE_PRINT}>
+            Your account is created automatically the first time you sign in with Google. There is
+            no separate sign-up form.
+          </p>
+        </Card>
       </main>
     </div>
   );

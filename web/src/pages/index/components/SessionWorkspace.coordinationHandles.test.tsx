@@ -219,7 +219,7 @@ describe('SessionWorkspace owning effects release their coordination handles (ph
   // `SessionWorkspace` is rendered here for real — `renderWorkspace` above
   // mounts the actual imported `SessionWorkspace`, not a stub — unlike
   // `AppShell.test.tsx`, which module-mocks `SessionRoute` and
-  // `HomeSettingsModal` so those components' owning effects never run there.
+  // the Settings view so those components' owning effects never run there.
   // `SessionWorkspace` owns four handles (seekAudio, seekAudioAndPlay,
   // stopTransportIfNeeded, invalidateEvents); this is where a regression
   // that reintroduced a `window.AutoLogger_*` write inside any of its four

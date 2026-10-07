@@ -66,20 +66,18 @@ const TL_STACK =
 // Body carries the full chrome border; the accent is absolutely painted over the
 // left/top/bottom strokes so ONLY its right hairline remains visible.
 const MARKER_CHIP =
-  'relative flex h-[1.7rem] min-h-[1.7rem] max-h-[1.7rem] w-full min-w-0 items-stretch overflow-hidden rounded-t-[0.45rem] rounded-b-none border-0 [--marker-chip-border:var(--v5-border)] [--marker-chip-accent-w:0.28rem] [background:color-mix(in_srgb,var(--nav-cat-col,#6b7280)_20%,rgba(11,16,30,0.82)_80%)] [transition:opacity_0.45s_ease,background_0.3s_ease]';
-const MARKER_CHIP_LIT =
-  'opacity-100 [--marker-chip-border:rgba(148,163,184,0.28)] shadow-[0_0_18px_-6px_color-mix(in_srgb,var(--nav-cat-col,#38bdf8)_45%,transparent)]';
+  'relative flex h-[1.7rem] min-h-[1.7rem] max-h-[1.7rem] w-full min-w-0 items-stretch overflow-hidden rounded-t-[6px] rounded-b-none border-0 [--marker-chip-border:var(--si-line)] [--marker-chip-accent-w:0.25rem] [background:color-mix(in_oklab,var(--nav-cat-col,var(--si-dim))_14%,var(--si-panel-2))] [transition:opacity_0.45s_ease,background_0.3s_ease]';
+const MARKER_CHIP_LIT = 'opacity-100';
 const MARKER_CHIP_IDLE = 'opacity-[0.52]';
 // Overpaints the body's left + TL/BL corner strokes (borders paint under
 // descendants). Right edge is the only hairline.
 const MARKER_CHIP_ACCENT =
-  'pointer-events-none absolute -inset-y-[2px] -left-[2px] z-[1] w-[calc(var(--marker-chip-accent-w)+2px)] rounded-tl-[0.45rem] rounded-tr-none rounded-b-none border-0 [box-shadow:1px_0_0_0_var(--marker-chip-border)]';
+  'pointer-events-none absolute -inset-y-[2px] -left-[2px] z-[1] w-[calc(var(--marker-chip-accent-w)+2px)] rounded-tl-[6px] rounded-tr-none rounded-b-none border-0';
 const MARKER_CHIP_BODY =
-  'relative flex min-w-0 max-w-full flex-1 items-center gap-[0.4rem] overflow-visible rounded-t-[0.45rem] rounded-b-none border border-solid [border-color:var(--marker-chip-border)] py-0 pl-[calc(var(--marker-chip-accent-w)+0.45rem)] pr-[0.45rem] shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]';
+  'relative flex min-w-0 max-w-full flex-1 items-center gap-[0.4rem] overflow-visible rounded-t-[6px] rounded-b-none border border-solid [border-color:var(--marker-chip-border)] py-0 pl-[calc(var(--marker-chip-accent-w)+0.45rem)] pr-[0.45rem]';
 const MARKER_CHIP_CAT =
-  '[font-family:"Inter",var(--font-poppins),system-ui,sans-serif] relative z-[2] shrink-0 text-[0.62rem] font-bold leading-none tracking-[0.12em] uppercase text-white';
-const MARKER_CHIP_SEP =
-  'relative z-[2] shrink-0 self-center text-white/40 leading-none select-none';
+  'font-label relative z-[2] shrink-0 text-[0.6875rem] font-semibold leading-none tracking-[0.12em] uppercase text-si-fg';
+const MARKER_CHIP_SEP = 'relative z-[2] shrink-0 self-center text-si-dim leading-none select-none';
 // Marquee cell/track/value — same overflow dance as before (imperative class toggle).
 // leading-snug keeps descenders (g/y) inside the line box so overflow-x clip doesn't
 // bite the glyph tails.
@@ -88,7 +86,7 @@ const NAV_MSG_CELL =
 const NAV_MSG_TRACK =
   'inline-flex min-w-[max-content] items-center translate-x-0 motion-reduce:animate-none!';
 const NAV_MSG_VALUE =
-  '[font-family:"Inter",var(--font-poppins),system-ui,sans-serif] text-[0.78rem] font-medium leading-snug tracking-[0.02em] normal-case text-white whitespace-nowrap';
+  'font-ui text-[0.8125rem] font-medium leading-snug normal-case text-si-muted whitespace-nowrap';
 // `[display:inline]` NOT `inline` — bare `inline` collides with chrome.css `.inline`.
 const NAV_MSG_GAP = '[display:inline]';
 // Hang = chip height exactly — chip sits flush on the track (one joined element).
@@ -128,7 +126,7 @@ const TIMELINE_INNER = 'flex flex-col min-w-full box-border min-h-0 gap-[0.25rem
 // Square top joins flush with the marker chip; no left border (would frame the
 // accent swatch above); bottom/right keep the lane pillow.
 const TIMELINE_TRACK_CHROME =
-  'timelineTrack relative w-full overflow-hidden cursor-ew-resize flex-shrink-0 isolate [--v5-timeline-r:0.65rem] rounded-t-none rounded-b-[var(--v5-timeline-r)] border border-t-0 border-l-0 border-white/[0.055] shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] [background:linear-gradient(180deg,rgba(10,14,24,0.9),rgba(4,6,12,0.82))] before:content-[""] before:absolute before:inset-0 before:rounded-[inherit] before:pointer-events-none before:z-0 before:opacity-60 before:[background-image:linear-gradient(100deg,rgba(34,138,179,0.2)_0%,rgba(29,49,61,0.3)_17%,rgba(49,94,143,0.3)_36%,rgba(29,49,61,0.3)_56%,rgba(49,94,143,0.3)_75%,rgba(34,138,179,0.2)_94%)] before:[background-size:200%_100%] before:[background-repeat:repeat-x] before:animate-v5-timeline-mock-shimmer motion-reduce:before:animate-none motion-reduce:before:[background-position:0_0]';
+  'timelineTrack relative w-full overflow-hidden cursor-ew-resize flex-shrink-0 isolate [--v5-timeline-r:6px] rounded-t-none rounded-b-[var(--v5-timeline-r)] border border-t-0 border-si-line bg-[rgba(0,0,0,0.28)]';
 const TIMELINE_TRACK_STRIP = `${TIMELINE_TRACK_CHROME} ${TIMELINE_TRACK_STRIP_H}`;
 // .timelineTrackLayers base + #v4-log-session (z-1) + ::before divider (z-3, v5 color).
 const TIMELINE_TRACK_LAYERS =
@@ -145,9 +143,11 @@ const TIMELINE_HOVER_PLAYHEAD_VISIBLE = 'opacity-55 bg-[rgba(229,238,252,0.28)]'
 // --marker-glow-col is runtime-set. base opacity/transform driven by JS inline styles.
 const TIMELINE_MARKER_PLAYHEAD_GLOW =
   'timelineMarkerPlayheadGlow absolute top-1/2 left-0 w-[0.32rem] h-[0.32rem] m-0 rounded-full pointer-events-none z-[1] opacity-0 [will-change:opacity,transform] [transition:opacity_0.16s_ease-out,transform_0.16s_ease-out,left_0.05s_linear] bg-transparent [box-shadow:0_0_14px_color-mix(in_srgb,var(--marker-glow-col,var(--v5-primary))_16%,transparent)]';
-// .timelinePlayhead base (white) + #v4-log-session (v5 color, no shadow).
+// .timelinePlayhead: the shell's playhead colour (foreground when stopped, the live accent in
+// playback and while live) with its halo, the reference's `0 0 10px 1px` plus a tight inner ring on
+// `--tx-playhead-glow` (finish review fix rounds 1 and 2: the soft --tx-glow read ~2/255).
 const TIMELINE_PLAYHEAD =
-  'timelinePlayhead absolute top-1/2 bottom-auto left-0 w-0.5 h-[calc(100%-0.85rem)] m-0 rounded-[999px] -translate-x-1/2 -translate-y-1/2 z-[6] pointer-events-none bg-[rgba(229,238,252,0.82)] shadow-none';
+  'timelinePlayhead absolute top-1/2 bottom-auto left-0 w-0.5 h-[calc(100%-0.85rem)] m-0 rounded-[999px] -translate-x-1/2 -translate-y-1/2 z-[6] pointer-events-none bg-(--tx-playhead) [box-shadow:0_0_10px_1px_var(--tx-playhead-glow),0_0_4px_1px_var(--tx-playhead-glow)] [transition:background-color_var(--tx-dur)_var(--tx-ease)] motion-reduce:transition-none';
 
 // .timelineMarkerTooltip (fixed, v5 glass-face-aside — the second .timelineMarkerTooltip
 // block wins in source order). Visible modifier toggles opacity/visibility.
@@ -164,22 +164,22 @@ const HOVER_TOOLTIP =
 // ---- zoom rail ----
 // .timelineZoomTooltip (v4 variant) + #v4-log-session (v5 glass). Positioned above rail.
 const ZOOM_TOOLTIP =
-  'absolute left-1/2 bottom-[calc(100%+6px)] top-auto -translate-x-1/2 px-[0.5em] py-[0.2em] [font-family:var(--font-poppins)] text-[0.65rem] font-extrabold leading-[1.2] whitespace-nowrap z-[5] pointer-events-none rounded-[0.45rem] glass-face-strong border border-v5-border text-v5-text panel-elevate';
+  'absolute left-1/2 bottom-[calc(100%+6px)] top-auto -translate-x-1/2 px-[0.5em] py-[0.2em] font-ui text-[0.65rem] font-extrabold leading-[1.2] whitespace-nowrap z-[5] pointer-events-none rounded-[0.45rem] glass-face-strong border border-v5-border text-v5-text panel-elevate';
 // .timelineZoomValue + .v4TimelineZoomPct + #v4-log-session (v5 bg/border/color).
 // NOTE: the source `input.timelineZoomValue` started from `font: inherit` then re-set
 // line-height/size/family in later rules. Expressing `font:inherit` as an arbitrary
 // property here would (by generated-stylesheet order) reset the explicit line-height back
 // to the inherited value and inflate the box height, so the final resolved metrics are
-// written directly instead (family Inter, size 0.62rem, weight 600, line-height 1.2).
+// written directly instead (family Barlow via font-ui, size 0.62rem, weight 600, line-height 1.2).
 const ZOOM_VALUE =
-  'appearance-none leading-[1.2] box-border m-0 flex-[0_0_3.65rem] w-[3.65rem] min-w-[3.65rem] max-w-[3.65rem] [direction:ltr] [text-indent:0] text-center rounded-[0.45rem] border border-v5-border-strong bg-[rgba(7,11,20,0.72)] text-v5-primary [font-family:"Inter",var(--font-poppins),system-ui,sans-serif] text-[0.62rem] font-semibold [font-variant-numeric:tabular-nums] px-[0.2rem] py-[0.1rem] focus:outline focus:outline-1 focus:outline-legacy-accent focus:outline-offset-1';
+  'appearance-none leading-[1.2] box-border m-0 flex-[0_0_3.65rem] w-[3.65rem] min-w-[3.65rem] max-w-[3.65rem] [direction:ltr] [text-indent:0] text-center rounded-[6px] border border-si-line bg-si-bg text-si-muted font-tc text-[0.6875rem] font-medium [font-variant-numeric:tabular-nums] px-[0.2rem] py-[0.15rem] focus-visible:outline-2 focus-visible:outline-ring focus-visible:outline-offset-1';
 // .v4ZoomRange + .timelineZoomRange + `.v4TimelineZoomRail .timelineZoomRange` +
 // #v4-log-session (v5 bg/border, radius). --v4-zoom-handle-h drives min-height.
 const ZOOM_RANGE =
-  'relative flex-[1_1_0] min-w-0 min-h-(--v4-zoom-handle-h) h-(--v4-zoom-handle-h) isolate rounded-[0.55rem] bg-white/[0.08] border border-white/[0.06]';
+  'relative flex-[1_1_0] min-w-0 min-h-(--v4-zoom-handle-h) h-(--v4-zoom-handle-h) isolate rounded-full bg-si-panel-2 border border-si-line';
 // .v4ZoomBar + .timelineZoomBar + #v4-log-session (v5 gradient + glow). base 2.75rem×120%.
 const ZOOM_BAR =
-  'absolute top-1/2 left-0 w-[2.75rem] h-[120%] -translate-y-1/2 z-[1] box-border pointer-events-auto cursor-grab [touch-action:none] select-none active:cursor-grabbing [background:linear-gradient(90deg,var(--v5-primary),var(--v5-primary2))] shadow-[0_0_12px_rgba(56,189,248,0.25)]';
+  'absolute top-1/2 left-0 w-[2.75rem] h-[120%] -translate-y-1/2 z-[1] box-border pointer-events-auto cursor-grab [touch-action:none] select-none active:cursor-grabbing bg-[color-mix(in_oklab,var(--si-accent)_55%,var(--si-panel-2))]';
 // .v4ZoomHandle + button.v4ZoomHandle + .timelineZoomHandle + #v4-log-session (v5 bg/border).
 // base handle is round 1.2× the token size; button variant sets transparent text + display block.
 // NOTE: the base rule set `background-clip: padding-box`, but the later #v4-log-session
@@ -187,7 +187,7 @@ const ZOOM_BAR =
 // converted handle omits background-clip (border-box default), matching the baseline (the dark
 // bg fills under the 45%-cyan border, keeping the ring dim instead of letting the bar show).
 const ZOOM_HANDLE =
-  'absolute top-1/2 left-0 [transform:translate3d(-50%,-50%,0)] w-[calc(var(--v4-zoom-handle-w)*1.2)] h-[calc(var(--v4-zoom-handle-h)*1.2)] min-w-[calc(var(--v4-zoom-handle-w)*1.2)] min-h-[calc(var(--v4-zoom-handle-h)*1.2)] p-0 m-0 rounded-full box-border z-[2] flex-shrink-0 [touch-action:none] cursor-grab appearance-none block text-transparent text-[0px] leading-none active:cursor-grabbing bg-[rgba(15,23,42,0.95)] border-2 border-[rgba(56,189,248,0.45)] hover-always:border-[#11141b] hover-always:bg-white active:border-[#11141b] active:bg-white [&::-moz-focus-inner]:border-0 [&::-moz-focus-inner]:p-0';
+  'absolute top-1/2 left-0 [transform:translate3d(-50%,-50%,0)] w-[calc(var(--v4-zoom-handle-w)*1.2)] h-[calc(var(--v4-zoom-handle-h)*1.2)] min-w-[calc(var(--v4-zoom-handle-w)*1.2)] min-h-[calc(var(--v4-zoom-handle-h)*1.2)] p-0 m-0 rounded-full box-border z-[2] flex-shrink-0 [touch-action:none] cursor-grab appearance-none block text-transparent text-[0px] leading-none active:cursor-grabbing bg-si-fg border-2 border-si-accent hover-always:bg-white active:bg-white focus-visible:outline-2 focus-visible:outline-ring focus-visible:outline-offset-2 [&::-moz-focus-inner]:border-0 [&::-moz-focus-inner]:p-0';
 
 /** Marker tooltip placement matches session.js's showTimelineMarkerTooltip math. */
 function placeTooltip(
@@ -1026,13 +1026,13 @@ export function Timeline({
                   {/* Position readout only — full session TC lives in the transport aside. */}
                   <div className="flex shrink-0 flex-row items-baseline gap-[0.15rem] whitespace-nowrap [font-variant-numeric:tabular-nums]">
                     <span
-                      className="text-[0.85rem] font-semibold tracking-[0.02em] text-v5-text"
+                      className="font-tc text-[0.8125rem] font-semibold text-si-fg"
                       id="timeline-readout-pos"
                     >
                       {fmtHmsFromSec(activeSec)}
                     </span>
                     <span
-                      className="text-[0.65rem] font-medium tracking-[0.04em] text-v5-muted"
+                      className="font-tc text-[0.6875rem] font-medium text-si-dim"
                       id="timeline-readout-total"
                     >
                       {` / ${fmtHmsFromSec(rollingSec)}`}

@@ -7,6 +7,7 @@ import { useYoutubeImport } from '../../api/hooks/useSessions';
 import { renderStrict } from '../../test/renderStrict';
 import { AppShell } from './AppShell';
 import { register } from './coordination/registry';
+import { clearTransportStatus, publishTransportStatus } from './coordination/transportStatus';
 import { navigate, setNavigationImplForTesting } from './navigation';
 import { markOriginated, resetOriginationForTesting } from './transportOrigination';
 
@@ -20,14 +21,19 @@ import { markOriginated, resetOriginationForTesting } from './transportOriginati
 // (the deep-link resolution layer that now wraps WorkspaceStatic — task 4.2;
 // its own resolution states are covered in SessionRoute.test.tsx) reports the
 // sessionId it received (the "workspace mount" observable) and a button
-// standing in for HomeSettingsModal's studio-switch save branch (its own
-// branch logic is covered in HomeSettingsModal.test.tsx). Location is driven
+// standing in for a close-session caller (the team switch's own branch
+// logic is covered in TopBar.test.tsx). Location is driven
 // by `wouter/memory-location` (recorded history) except for the browser-Back
 // test, which uses jsdom's real history.
 
 vi.mock('../../api/hooks/useProfile', () => ({
   useProfile: vi.fn(),
+  // The top bar's switch write (redesign-show-ignition 3.2); its body and refetches are
+  // TopBar.test.tsx's concern, this file only needs it to resolve.
+  useProfileMutation: () => ({ mutateAsync: profileWrite, isPending: false }),
 }));
+
+const profileWrite = vi.hoisted(() => vi.fn());
 
 vi.mock('../../api/hooks/useSessions', () => ({
   useYoutubeImport: vi.fn(),
@@ -55,33 +61,45 @@ vi.mock('../../shared/utils/perfDebug', () => ({
   initPerfDebugUI: () => {},
 }));
 
-vi.mock('./components/V6Rail', () => ({
-  V6Rail: (props: {
+// The rail mock reads the shell's real `SidebarProvider` (redesign-show-ignition D8): it reports
+// the sidebar state and holds a search input, for the `[` shortcut tests.
+vi.mock('./components/V6Rail', async () => {
+  const { useSidebar } = await import('../../shared/components/ui/sidebar');
+  function V6Rail(props: {
     activeSessionId: string;
     onSelectSession: (sid: string) => void;
     onCloseSession: () => void;
     onNewSession: () => void;
     onBatchImport: () => void;
     onOpenSettings: () => void;
-  }) => (
-    <div data-testid="rail" data-active-session-id={props.activeSessionId}>
-      <button
-        type="button"
-        data-testid="rail-select-s1"
-        onClick={() => props.onSelectSession('sess-1')}
-      />
-      <button
-        type="button"
-        data-testid="rail-select-s2"
-        onClick={() => props.onSelectSession('sess-2')}
-      />
-      <button type="button" data-testid="rail-close" onClick={() => props.onCloseSession()} />
-      <button type="button" data-testid="rail-new" onClick={() => props.onNewSession()} />
-      <button type="button" data-testid="rail-batch" onClick={() => props.onBatchImport()} />
-      <button type="button" id="v6-btn-settings" onClick={() => props.onOpenSettings()} />
-    </div>
-  ),
-}));
+  }) {
+    const { state } = useSidebar();
+    return (
+      <div
+        data-testid="rail"
+        data-active-session-id={props.activeSessionId}
+        data-sidebar-state={state}
+      >
+        <input type="search" aria-label="Search sessions" />
+        <button
+          type="button"
+          data-testid="rail-select-s1"
+          onClick={() => props.onSelectSession('sess-1')}
+        />
+        <button
+          type="button"
+          data-testid="rail-select-s2"
+          onClick={() => props.onSelectSession('sess-2')}
+        />
+        <button type="button" data-testid="rail-close" onClick={() => props.onCloseSession()} />
+        <button type="button" data-testid="rail-new" onClick={() => props.onNewSession()} />
+        <button type="button" data-testid="rail-batch" onClick={() => props.onBatchImport()} />
+        <button type="button" id="v6-btn-settings" onClick={() => props.onOpenSettings()} />
+      </div>
+    );
+  }
+  return { V6Rail };
+});
 
 // --- render-isolation probe (settings-modal-mount-cost, task 2.1; design D0)
 // ---
@@ -90,7 +108,7 @@ vi.mock('./components/V6Rail', () => ({
 // below this mock, inside the real `SessionRoute`. This file mocks
 // `SessionRoute` wholesale (see the comment above), so the memo boundary
 // itself isn't exercised here — but `SessionRoute` forwards `sessionId` /
-// `ytImportPending` / `onOpenMobileNav` into `WorkspaceStatic` completely
+// `ytImportPending` into `WorkspaceStatic` completely
 // unchanged (no new object/closure created in between; see
 // `SessionRoute.tsx`). So asserting that those props keep a stable identity
 // as received by THIS mock is equivalent to asserting the real memo holds —
@@ -101,7 +119,6 @@ const sessionRouteProbe = vi.hoisted(() => ({
     sessionId: string;
     ytImportPending?: boolean;
     onNewSession: () => void;
-    onOpenMobileNav?: () => void;
   }>,
 }));
 
@@ -110,22 +127,17 @@ vi.mock('./components/SessionRoute', () => ({
     sessionId: string;
     ytImportPending?: boolean;
     onNewSession: () => void;
-    onOpenMobileNav?: () => void;
   }) => {
     sessionRouteProbe.renders.push(props);
     return <div data-testid="session-route" data-session-id={props.sessionId} />;
   },
 }));
 
-// HomeSettingsModal is the lift target (D1): AppShell now mounts it directly
-// (beside the route switch, not routed-component-owned), so this file's
-// concern is the WIRING (isOpen/onClose/onCloseSession reach the modal and
-// survive route changes) — not the modal's own internals (profile hydration,
-// save semantics), which HomeSettingsModal.test.tsx covers against the real
-// component. The mock renders a real `role="dialog"` node only while open
-// (mirroring Dialog/Radix's own mount-on-open behavior) plus a stand-in
-// button for the studio-switch save branch, rewired here from the old
-// SessionRoute-mock button (teams-settings-nav, design D1).
+// The Settings view (redesign-show-ignition D3) is mounted by AppShell beside the route switch, so
+// this file's concern is the WIRING: the shell's `settings` state (open, which section, closed),
+// the `/teams` route opening it, and its close paths. The view's own internals (nav, deferral,
+// guard, modal semantics) are SettingsView.test.tsx's, against the real component. The mock is a
+// real `role="dialog"` node carrying the view's `data-slot`, plus stand-ins for its controls.
 //
 // `settingsChunk.fail` makes the settings surface throw a webpack
 // ChunkLoadError on render — the same observable a rejected `React.lazy`
@@ -139,9 +151,18 @@ vi.mock('./components/SessionRoute', () => ({
 // failing, which is what the idle warm-up can hit with no UI to fall back on. It cannot be
 // modelled by throwing from the factory — vitest calls the factory at most once per module
 // graph, and the open-path tests above have already resolved it by the time the warm-up test
-// runs — so the export is exposed as a GETTER, the one step `loadHomeSettingsModal` repeats
+// runs — so the export is exposed as a GETTER, the one step `loadSettingsView` repeats
 // on every call, and throwing from it rejects that loader's promise exactly like a dead chunk.
-const settingsChunk = vi.hoisted(() => ({ fail: false, importFails: false }));
+// `settingsChunk.loads` counts those getter reads: zero means the loader never ran, i.e. the
+// view's module was not fetched.
+const settingsChunk = vi.hoisted(() => ({
+  fail: false,
+  importFails: false,
+  loads: 0,
+  renders: 0,
+  // A discard guard the mocked view registers, standing in for one with unsaved edits.
+  guard: null as null | (() => true | Promise<boolean>),
+}));
 
 function chunkLoadError() {
   const err = new Error('Loading chunk 42 failed. (error: /_next/static/chunks/42-abc.js)');
@@ -149,30 +170,57 @@ function chunkLoadError() {
   return err;
 }
 
-vi.mock('./components/HomeSettingsModal', () => {
-  const HomeSettingsModal = (props: {
-    isOpen: boolean;
+vi.mock('./components/settings/SettingsView', async () => {
+  const { useEffect } = await import('react');
+  const SettingsView = (props: {
+    section: string;
+    onSectionChange: (section: string) => void;
     onClose: () => void;
     onCloseSession: () => void;
+    backLabel: string;
+    registerCloseGuard?: (guard: (() => true | Promise<boolean>) | null) => void;
   }) => {
     if (settingsChunk.fail) {
       throw chunkLoadError();
     }
-    return props.isOpen ? (
-      <div role="dialog" aria-label="Settings" data-testid="home-settings-modal">
-        <button type="button" data-testid="settings-modal-close" onClick={props.onClose} />
+    settingsChunk.renders += 1;
+    const { registerCloseGuard } = props;
+    useEffect(() => {
+      const guard = settingsChunk.guard;
+      if (!guard || !registerCloseGuard) return;
+      registerCloseGuard(guard);
+      return () => registerCloseGuard(null);
+    }, [registerCloseGuard]);
+    return (
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Settings"
+        data-slot="settings-view"
+        data-testid="settings-view"
+        data-section={props.section}
+      >
+        <button type="button" data-testid="settings-modal-close" onClick={props.onClose}>
+          {props.backLabel}
+        </button>
         <button
           type="button"
           data-testid="studio-switch-close"
           onClick={() => props.onCloseSession()}
         />
+        <button
+          type="button"
+          data-testid="settings-go-account"
+          onClick={() => props.onSectionChange('account')}
+        />
       </div>
-    ) : null;
+    );
   };
   return {
-    get HomeSettingsModal() {
+    get SettingsView() {
+      settingsChunk.loads += 1;
       if (settingsChunk.importFails) throw chunkLoadError();
-      return HomeSettingsModal;
+      return SettingsView;
     },
   };
 });
@@ -200,6 +248,52 @@ vi.mock('./components/YouTubeImportErrorModal', () => ({
 }));
 
 const mockedUseProfile = vi.mocked(useProfile);
+
+// A signed-in profile with two teams, for the top-bar tests (the default `undefined` profile is
+// the loading window most tests here want).
+const twoTeamProfile = {
+  active_studio_id: 'team-a',
+  active_show_id: 'show-a',
+  active_studio: { id: 'team-a', name: 'Team A', categories: [] },
+  studios: [
+    { id: 'team-a', name: 'Team A' },
+    { id: 'team-b', name: 'Team B' },
+  ],
+  studio_settings: {},
+  shows: [
+    {
+      id: 'show-a',
+      studio_id: 'team-a',
+      name: 'Show A',
+      show_code: 'A',
+      title_suffix: 'date',
+      can_access: true,
+    },
+    {
+      id: 'show-b',
+      studio_id: 'team-b',
+      name: 'Show B',
+      show_code: 'B',
+      title_suffix: 'date',
+      can_access: true,
+    },
+  ],
+  auth: {
+    logged_in: true,
+    oauth_configured: true,
+    user: {
+      id: 'u1',
+      email: 'u1@example.com',
+      given_name: 'U',
+      family_name: 'One',
+      picture_url: null,
+      teams: [
+        { id: 'team-a', name: 'Team A', role: 'owner' },
+        { id: 'team-b', name: 'Team B', role: 'member' },
+      ],
+    },
+  },
+};
 const mockedUseYoutubeImport = vi.mocked(useYoutubeImport);
 
 function renderShell(initialPath = '/') {
@@ -216,10 +310,18 @@ function renderShell(initialPath = '/') {
 const workspaceSessionId = () =>
   screen.getByTestId('session-route').getAttribute('data-session-id');
 
+const settingsSection = () => screen.getByTestId('settings-view').getAttribute('data-section');
+const openSettingsFromRail = () =>
+  fireEvent.click(document.getElementById('v6-btn-settings') as HTMLElement);
+
 beforeEach(() => {
   settingsChunk.fail = false;
   settingsChunk.importFails = false;
+  settingsChunk.loads = 0;
+  settingsChunk.renders = 0;
+  settingsChunk.guard = null;
   mockedUseProfile.mockReturnValue({ data: undefined } as unknown as ReturnType<typeof useProfile>);
+  profileWrite.mockResolvedValue(undefined);
   mockedUseYoutubeImport.mockReturnValue({
     mutateAsync: vi.fn().mockResolvedValue(undefined),
   } as unknown as ReturnType<typeof useYoutubeImport>);
@@ -317,9 +419,8 @@ describe('AppShell routing (URL-addressed session state)', () => {
     const { memory } = renderShell('/sessions/sess-1');
     markOriginated('sess-1');
 
-    // Rewired to the AppShell-level modal (teams-settings-nav, D1): the
-    // studio-switch save branch lives inside HomeSettingsModal, now mounted
-    // directly by AppShell rather than threaded through a mocked SessionRoute.
+    // The studio-switch save branch lives in Settings (the view's interim legacy dialog until
+    // group 7), mounted directly by AppShell rather than threaded through a mocked SessionRoute.
     fireEvent.click(document.getElementById('v6-btn-settings') as HTMLElement);
     fireEvent.click(await screen.findByTestId('studio-switch-close'));
 
@@ -344,7 +445,7 @@ describe('AppShell routing (URL-addressed session state)', () => {
     await waitFor(() => expect(workspaceSessionId()).toBe(''));
   });
 
-  it('navigating to /teams hides the session/home view and mounts TeamsRoute; browser Back restores the previous view (teams-self-serve, task 5.2)', async () => {
+  it('Teams route is a first-class app route: /teams renders the home view with Settings open on Members, and browser Back returns to the previous view', async () => {
     // Real jsdom history (no memory-location Router), same idiom as the
     // "browser Back leaves the session" test above — Back needs real
     // popstate behavior.
@@ -357,30 +458,48 @@ describe('AppShell routing (URL-addressed session state)', () => {
 
     navigate('/teams');
     await waitFor(() => expect(window.location.pathname).toBe('/teams'));
-    await waitFor(() => expect(screen.queryByTestId('teams-route')).not.toBeNull());
-    expect(screen.queryByTestId('session-route')).toBeNull();
+    // The home view underneath (no session), the view over it on Members.
+    await waitFor(() => expect(workspaceSessionId()).toBe(''));
+    expect(await screen.findByTestId('settings-view')).not.toBeNull();
+    expect(settingsSection()).toBe('members');
 
     window.history.back();
     await waitFor(() => expect(window.location.pathname).toBe('/sessions/sess-1'));
     await waitFor(() => expect(workspaceSessionId()).toBe('sess-1'));
-    expect(screen.queryByTestId('teams-route')).toBeNull();
+    // Shell state, not the URL, gates the view: it stays open across the route change.
+    expect(settingsSection()).toBe('members');
   });
 
-  it('the /teams chunk fallback announces TEAMS, not "Loading session" (PR review finding 3)', () => {
+  it('The teams route announces its own chunk wait: the home view with nothing overlaid', () => {
     // Synchronous on purpose: `LazyChunk`'s `lazy()` suspends on its FIRST render whatever
-    // the module cache holds (the loader hands back a promise either way), so the fallback
-    // is what the initial `/teams` commit paints — no waiting required, and waiting would
-    // only race the resolution that replaces it.
+    // the module cache holds, so the overlay boundary's `null` fallback is what the initial
+    // `/teams` commit paints. `/teams` has no chunk or loading frame of its own any more.
     renderShell('/teams');
 
-    const loading = document.querySelector('#teams-route-loading');
-    expect(loading).not.toBeNull();
-    expect(loading?.getAttribute('aria-label')).toBe('Loading teams');
-    // Reused prop-less, this wait announced "Loading session" on a route with no session in
-    // it and duplicated the session route's id onto an element that is not it. `/teams`
-    // renders in SessionRoute's PLACE, so neither may appear here.
+    expect(workspaceSessionId()).toBe('');
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(document.querySelector('#teams-route-loading')).toBeNull();
     expect(document.querySelector('#session-route-loading')).toBeNull();
-    expect(screen.queryByLabelText('Loading session')).toBeNull();
+  });
+
+  it('The teams route announces its own chunk failure: a dismissible card over the home view', async () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      settingsChunk.fail = true;
+      const { memory } = renderShell('/teams');
+
+      const card = await screen.findByTestId('chunk-load-error');
+      expect(card.getAttribute('data-variant')).toBe('overlay');
+      expect(workspaceSessionId()).toBe('');
+      expect(screen.getByTestId('rail')).not.toBeNull();
+
+      // Dismissing closes the view, which on /teams goes home.
+      fireEvent.click(screen.getByTestId('chunk-load-dismiss'));
+      expect(screen.queryByTestId('chunk-load-error')).toBeNull();
+      expect(memory.history).toEqual(['/teams', '/']);
+    } finally {
+      logged.mockRestore();
+    }
   });
 
   it('an unmatched path renders the home view without rewriting the URL', () => {
@@ -406,70 +525,110 @@ describe('AppShell routing (URL-addressed session state)', () => {
   });
 });
 
-describe('AppShell settings modal (teams-settings-nav, D1: lifted to AppShell)', () => {
-  // Assertions on the dialog are `findBy*`/`waitFor` since the bundle
-  // route-split (plan C5.5) put HomeSettingsModal behind `React.lazy`: the
-  // mount now lands a microtask after the click, not synchronously with it.
-  // The negative assertions stay synchronous on purpose — "no dialog yet"
-  // must hold at the instant it is checked, and awaiting one would weaken it
-  // into "no dialog eventually".
+describe('AppShell Settings view state (redesign-show-ignition D3)', () => {
+  // Assertions on the view are `findBy*`/`waitFor` since it sits behind `React.lazy`: the
+  // mount lands a microtask after the click, not synchronously with it. The negative
+  // assertions stay synchronous on purpose — "no dialog yet" must hold at the instant it is
+  // checked, and awaiting one would weaken it into "no dialog eventually".
 
-  it('settings opens on /teams (the rail Settings button now works there)', async () => {
-    renderShell('/teams');
-
-    expect(screen.queryByRole('dialog')).toBeNull();
-    fireEvent.click(document.getElementById('v6-btn-settings') as HTMLElement);
-    expect(await screen.findByRole('dialog')).not.toBeNull();
+  it('Settings opens from /teams: loading /teams shows Settings › Members', async () => {
+    const { memory } = renderShell('/teams');
+    expect(await screen.findByTestId('settings-view')).not.toBeNull();
+    expect(settingsSection()).toBe('members');
+    expect(workspaceSessionId()).toBe('');
+    expect(memory.history).toEqual(['/teams']);
   });
 
-  it('settings still opens on /', async () => {
+  it('settings opens on /', async () => {
     renderShell('/');
-    fireEvent.click(document.getElementById('v6-btn-settings') as HTMLElement);
+    openSettingsFromRail();
     expect(await screen.findByRole('dialog')).not.toBeNull();
   });
 
-  it('settings still opens on /sessions/:id', async () => {
+  it('settings opens on /sessions/:id, with a back control that names the session', async () => {
     renderShell('/sessions/sess-1');
-    fireEvent.click(document.getElementById('v6-btn-settings') as HTMLElement);
+    openSettingsFromRail();
     expect(await screen.findByRole('dialog')).not.toBeNull();
+    expect(screen.getByTestId('settings-modal-close').textContent).toBe('Back to session');
   });
 
-  it('closes via its own onClose control, wired straight through AppShell to handleCloseSettings (web-coordination-seam D4: replaces the retired AutoLogger_closeSettingsModal global)', async () => {
+  it('the first open lands on Show details; a later open returns to the section last visited', async () => {
     renderShell('/');
-    fireEvent.click(document.getElementById('v6-btn-settings') as HTMLElement);
+    openSettingsFromRail();
+    await screen.findByTestId('settings-view');
+    expect(settingsSection()).toBe('show-details');
+
+    fireEvent.click(screen.getByTestId('settings-go-account'));
+    expect(settingsSection()).toBe('account');
+    fireEvent.click(screen.getByTestId('settings-modal-close'));
+    expect(screen.queryByTestId('settings-view')).toBeNull();
+
+    openSettingsFromRail();
+    expect(await screen.findByTestId('settings-view')).not.toBeNull();
+    expect(settingsSection()).toBe('account');
+  });
+
+  it('closes via its own onClose control, wired straight through AppShell (web-coordination-seam D4: replaces the retired AutoLogger_closeSettingsModal global)', async () => {
+    const { memory } = renderShell('/');
+    openSettingsFromRail();
     expect(await screen.findByRole('dialog')).not.toBeNull();
 
     fireEvent.click(screen.getByTestId('settings-modal-close'));
     expect(screen.queryByRole('dialog')).toBeNull();
+    // Off /teams, closing navigates nowhere.
+    expect(memory.history).toEqual(['/']);
   });
 
-  it('an open modal survives a route change (browser Back between / and /teams)', async () => {
+  it('Teams page offers a way back in every state: closing on /teams lands on /', async () => {
+    const { memory } = renderShell('/teams');
+    await screen.findByTestId('settings-view');
+
+    fireEvent.click(screen.getByTestId('settings-modal-close'));
+
+    expect(memory.history).toEqual(['/teams', '/']);
+    expect(screen.queryByTestId('settings-view')).toBeNull();
+    expect(workspaceSessionId()).toBe('');
+  });
+
+  it('Open modal survives route changes: a route change with Settings open never desynchronises', async () => {
     window.history.replaceState(null, '', '/');
     renderStrict(<AppShell />);
 
-    fireEvent.click(document.getElementById('v6-btn-settings') as HTMLElement);
+    openSettingsFromRail();
     expect(await screen.findByRole('dialog')).not.toBeNull();
+    expect(settingsSection()).toBe('show-details');
 
     navigate('/teams');
     await waitFor(() => expect(window.location.pathname).toBe('/teams'));
-    // Still open and functional: the shell's Settings state never
-    // desynchronizes from what is rendered (spec scenario). Route-independence
-    // is what the C5.5 split had to preserve — the mount gate is `showSettings`
-    // (AppShell state), never the URL — so this stays a SYNCHRONOUS assertion:
-    // the route change must not unmount and re-suspend an already-open modal.
+    // Still open — SYNCHRONOUSLY (the route change must not unmount and re-suspend an
+    // already-open view) — and now on Members, because arriving at /teams opens it there.
     expect(screen.getByRole('dialog')).not.toBeNull();
+    expect(settingsSection()).toBe('members');
 
     window.history.back();
     await waitFor(() => expect(window.location.pathname).toBe('/'));
     expect(screen.getByRole('dialog')).not.toBeNull();
+    expect(settingsSection()).toBe('members');
+
+    // Closed through its own close path on `/`: no navigation.
+    fireEvent.click(screen.getByTestId('settings-modal-close'));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(window.location.pathname).toBe('/');
+  });
+
+  it('An open modal is unaffected: it keeps its section across a route change', async () => {
+    const { memory } = renderShell('/');
+    openSettingsFromRail();
+    await screen.findByTestId('settings-view');
+    fireEvent.click(screen.getByTestId('settings-go-account'));
+
+    fireEvent.click(screen.getByTestId('rail-select-s1'));
+    expect(memory.history).toEqual(['/', '/sessions/sess-1']);
+    expect(settingsSection()).toBe('account');
+    expect(workspaceSessionId()).toBe('sess-1');
   });
 
   it('renders no dialog during the profile-loading window until Settings is clicked (profile still undefined)', () => {
-    // beforeEach stubs useProfile to `{ data: undefined }` — the
-    // profile-loading window (before `needsOnboarding` can resolve). No dialog
-    // is present without a click. (Since C5.5 the modal is not mounted at all
-    // while closed, rather than mounted-but-rendering-null; the observable
-    // asserted here — nothing in the DOM — is unchanged.)
     renderShell('/');
     expect(screen.queryByRole('dialog')).toBeNull();
   });
@@ -477,22 +636,48 @@ describe('AppShell settings modal (teams-settings-nav, D1: lifted to AppShell)',
   it('studio-switch save on /teams does not navigate (no open session to close)', async () => {
     const { memory } = renderShell('/teams');
 
-    fireEvent.click(document.getElementById('v6-btn-settings') as HTMLElement);
     fireEvent.click(await screen.findByTestId('studio-switch-close'));
 
     expect(memory.history).toEqual(['/teams']);
   });
 });
 
+// --- The Settings view costs nothing while closed (web-ui-system "The Settings modal costs
+// nothing while closed"): the shell's mount gate. The view owns both initialisation scopes, so a
+// view that is neither fetched nor rendered initialises nothing; the per-scope assertions arrive
+// with the sections that own them (groups 7-9).
+describe('The Settings modal costs nothing while closed', () => {
+  it('A closed modal renders nothing: not mounted, and its module not fetched', () => {
+    renderShell('/');
+    expect(screen.queryByTestId('settings-view')).toBeNull();
+    expect(settingsChunk.loads).toBe(0);
+    expect(settingsChunk.renders).toBe(0);
+  });
+
+  it('Initialisation is deferred until the modal opens', async () => {
+    mockedUseProfile.mockReturnValue({
+      data: twoTeamProfile,
+    } as unknown as ReturnType<typeof useProfile>);
+    renderShell('/');
+    // The profile resolved while closed: still nothing fetched or rendered.
+    expect(settingsChunk.loads).toBe(0);
+    expect(settingsChunk.renders).toBe(0);
+
+    openSettingsFromRail();
+    expect(await screen.findByTestId('settings-view')).not.toBeNull();
+    expect(settingsChunk.loads).toBeGreaterThan(0);
+  });
+});
+
 // --- Settings chunk splitting (bundle route-splitting, plan C5.5) ---
 //
-// HomeSettingsModal moved from an always-mounted child to a `showSettings`-
-// gated `React.lazy` mount, with an idle prefetch warming the chunk. Two
+// The Settings view is a `settings`-state-gated `React.lazy` mount (it took
+// over the previous Settings dialog's split point), with an idle prefetch warming the chunk. Two
 // properties are pinned here: the open path still works across the async
 // boundary, and the prefetch is import-only — it must never mount, render, or
 // otherwise put the modal on screen on its own.
 describe('AppShell settings modal code-splitting (plan C5.5)', () => {
-  it('opens asynchronously on click — nothing on screen at the instant of the click, dialog after the lazy boundary resolves', async () => {
+  it('A cold first open traverses the chunk boundary: nothing on screen at the instant of the click, the view after the lazy boundary resolves', async () => {
     renderShell('/');
     expect(screen.queryByRole('dialog')).toBeNull();
 
@@ -500,7 +685,7 @@ describe('AppShell settings modal code-splitting (plan C5.5)', () => {
 
     const dialog = await screen.findByRole('dialog');
     expect(dialog).not.toBeNull();
-    expect(screen.getByTestId('home-settings-modal')).not.toBeNull();
+    expect(screen.getByTestId('settings-view')).not.toBeNull();
   });
 
   it('the idle prefetch mounts nothing — advancing past its delay leaves the DOM unchanged', async () => {
@@ -520,7 +705,7 @@ describe('AppShell settings modal code-splitting (plan C5.5)', () => {
 
       // Warming the chunk is not opening the modal.
       expect(screen.queryByRole('dialog')).toBeNull();
-      expect(screen.queryByTestId('home-settings-modal')).toBeNull();
+      expect(screen.queryByTestId('settings-view')).toBeNull();
     } finally {
       vi.useRealTimers();
     }
@@ -581,7 +766,7 @@ describe('AppShell settings modal code-splitting (plan C5.5)', () => {
       // in an overlay-level chunk.
       expect(workspaceSessionId()).toBe('sess-1');
       expect(screen.getByTestId('rail')).not.toBeNull();
-      expect(screen.queryByTestId('home-settings-modal')).toBeNull();
+      expect(screen.queryByTestId('settings-view')).toBeNull();
 
       // The overlay's dismiss closes the shell state that opened it, so the
       // user is not stuck behind a card whose own close button is inside the
@@ -633,7 +818,6 @@ describe('AppShell workspace render isolation (settings-modal-mount-cost, D0)', 
 
     const after = lastRender();
     expect(after.sessionId).toBe('sess-1');
-    expect(after.onOpenMobileNav).toBe(before.onOpenMobileNav);
     expect(after.onNewSession).toBe(before.onNewSession);
   });
 
@@ -647,7 +831,6 @@ describe('AppShell workspace render isolation (settings-modal-mount-cost, D0)', 
     expect(screen.queryByRole('dialog')).toBeNull();
 
     const after = lastRender();
-    expect(after.onOpenMobileNav).toBe(before.onOpenMobileNav);
     expect(after.onNewSession).toBe(before.onNewSession);
   });
 
@@ -659,7 +842,6 @@ describe('AppShell workspace render isolation (settings-modal-mount-cost, D0)', 
     expect(await screen.findByTestId('new-session-create')).not.toBeNull();
 
     const after = lastRender();
-    expect(after.onOpenMobileNav).toBe(before.onOpenMobileNav);
     expect(after.onNewSession).toBe(before.onNewSession);
   });
 
@@ -671,27 +853,23 @@ describe('AppShell workspace render isolation (settings-modal-mount-cost, D0)', 
     expect(await screen.findByTestId('batch-import-modal')).not.toBeNull();
 
     const after = lastRender();
-    expect(after.onOpenMobileNav).toBe(before.onOpenMobileNav);
     expect(after.onNewSession).toBe(before.onNewSession);
   });
 
-  it('toggling the mobile nav rail (invoking the boundary prop itself) keeps it referentially stable across the resulting shell render', () => {
-    // The mobile-rail-open trigger IS the prop under test
-    // (`onOpenMobileNav={() => setRailOpen(true)}` in production): the
-    // workspace's own session strip calls it on mobile to open the rail. So
-    // "toggling the mobile navigation rail" (the spec's second scenario) is
-    // exercised by invoking the captured callback and checking its own
-    // identity survives the shell render that results.
+  it('toggling the navigation sidebar keeps the SessionRoute boundary props referentially stable', () => {
+    // redesign-show-ignition D8: the rail opens and closes from the top bar's sidebar trigger
+    // (on phones, the sidebar's sheet), not from a callback threaded into the workspace.
     renderShell('/sessions/sess-1');
     const before = lastRender();
-    expect(typeof before.onOpenMobileNav).toBe('function');
 
-    act(() => {
-      before.onOpenMobileNav?.();
-    });
+    fireEvent.click(screen.getByRole('button', { name: /toggle sidebar/i }));
+    expect(screen.getByTestId('rail').getAttribute('data-sidebar-state')).toBe('collapsed');
 
     const after = lastRender();
-    expect(after.onOpenMobileNav).toBe(before.onOpenMobileNav);
+    expect(after.sessionId).toBe(before.sessionId);
+    expect(after.ytImportPending).toBe(before.ytImportPending);
+    expect(after.onNewSession).toBe(before.onNewSession);
+    expect('onOpenMobileNav' in after).toBe(false);
   });
 });
 
@@ -713,7 +891,7 @@ describe('AppShell legacy spine retirement', () => {
   // context where that handle's owning component actually mounts") ---
   //
   // `AppShell` is the real, unmocked SUT in every test in this file — unlike
-  // `SessionRoute` and `HomeSettingsModal`, which ARE module-mocked here
+  // `SessionRoute` and the Settings view, which ARE module-mocked here
   // (design D8's counter-example) and so cannot host a meaningful assertion
   // for handles either of THEM owns (seekAudio, stopTransportIfNeeded, ...).
   // These three globals were different: `AppShell.tsx`'s own mount-once boot
@@ -733,5 +911,278 @@ describe('AppShell legacy spine retirement', () => {
     expect('AutoLogger_closeSettingsModal' in window).toBe(false);
     expect('Home_reloadSessionList' in window).toBe(false);
     expect('Home_clearSessionList' in window).toBe(false);
+  });
+});
+
+// --- Shell transport tint (redesign-show-ignition D2, task 2.3) ---
+//
+// AppShell reads the transport-status store and sets `data-transport` on the
+// app root, which wraps the rail and main; the tints are pure CSS on it.
+describe('AppShell transport tint (data-transport)', () => {
+  const appRoot = () => {
+    const roots = document.querySelectorAll('[data-transport]');
+    expect(roots).toHaveLength(1);
+    const root = roots[0] as HTMLElement;
+    expect(root.contains(screen.getByTestId('rail'))).toBe(true);
+    expect(root.contains(screen.getByTestId('session-route'))).toBe(true);
+    return root;
+  };
+
+  it('is stopped with no session open', () => {
+    renderShell('/');
+    expect(appRoot().getAttribute('data-transport')).toBe('stopped');
+  });
+
+  it("follows the store's four states", () => {
+    renderShell('/sessions/sess-1');
+    const owner = {};
+    for (const state of ['recording', 'rolling', 'playback', 'stopped'] as const) {
+      act(() => {
+        publishTransportStatus(owner, { state, sessionId: 'sess-1', title: 'Ep 1' });
+      });
+      expect(appRoot().getAttribute('data-transport')).toBe(state);
+    }
+    act(() => {
+      publishTransportStatus(owner, { state: 'recording', sessionId: 'sess-1', title: 'Ep 1' });
+    });
+    act(() => {
+      clearTransportStatus(owner);
+    });
+    expect(appRoot().getAttribute('data-transport')).toBe('stopped');
+  });
+});
+
+// --- Top bar (redesign-show-ignition 3.1-3.3; web-ui-system "Top bar names the active team, show
+// and transport state"; web-session-routing "Studio-switch close path still works") ---
+//
+// The real TopBar, mounted by AppShell: a team switch goes through AppShell's close-session path,
+// and the status control returns to the open session, closing Settings.
+describe('AppShell top bar', () => {
+  beforeEach(() => {
+    mockedUseProfile.mockReturnValue({
+      data: twoTeamProfile,
+    } as unknown as ReturnType<typeof useProfile>);
+  });
+
+  async function chooseTeamB() {
+    fireEvent.pointerDown(screen.getByRole('button', { name: /switch team/i }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    fireEvent.click(await screen.findByRole('menuitemradio', { name: /team b/i }));
+    await waitFor(() => expect(profileWrite).toHaveBeenCalledWith({ active_studio_id: 'team-b' }));
+  }
+
+  it('spans the shell above the rail and the main column, inside the transport root', () => {
+    renderShell('/');
+    // By slot, not role: the retained void `#v4-app-top-bar` <header> inside <main> is also
+    // reported as a banner by jsdom (browsers scope a header inside <main> out of the role).
+    const bar = document.querySelector("[data-slot='topbar']") as HTMLElement;
+    expect(bar).not.toBeNull();
+    expect(bar.tagName).toBe('HEADER');
+    const root = document.querySelector('[data-transport]') as HTMLElement;
+    expect(root.contains(bar)).toBe(true);
+    const rail = screen.getByTestId('rail');
+    // Not inside the rail's row: the bar precedes the row that holds rail and main.
+    expect(bar.contains(rail)).toBe(false);
+    expect(bar.compareDocumentPosition(rail) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(document.getElementById('v6-app')?.contains(bar)).toBe(false);
+  });
+
+  it('switching team on /sessions/:id follows the close-session path to /', async () => {
+    const stop = vi.fn();
+    register('stopTransportIfNeeded', stop);
+    const { memory } = renderShell('/sessions/sess-1');
+    markOriginated('sess-1');
+
+    await chooseTeamB();
+
+    await waitFor(() => expect(memory.history).toEqual(['/sessions/sess-1', '/']));
+    expect(workspaceSessionId()).toBe('');
+    expect(stop).toHaveBeenCalledTimes(1);
+  });
+
+  it('switching team on /teams does not navigate', async () => {
+    const { memory } = renderShell('/teams');
+    await chooseTeamB();
+    expect(memory.history).toEqual(['/teams']);
+  });
+
+  it('with Settings open over a recording session, the status closes Settings and shows the console', async () => {
+    const { memory } = renderShell('/sessions/sess-1');
+    act(() => {
+      publishTransportStatus({}, { state: 'recording', sessionId: 'sess-1', title: 'Ep 1' });
+    });
+    fireEvent.click(document.getElementById('v6-btn-settings') as HTMLElement);
+    expect(await screen.findByRole('dialog', { name: 'Settings' })).not.toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: /REC, Ep 1\. Return to session/ }));
+
+    expect(screen.queryByRole('dialog', { name: 'Settings' })).toBeNull();
+    expect(workspaceSessionId()).toBe('sess-1');
+    expect(memory.history).toEqual(['/sessions/sess-1']);
+  });
+
+  it('the status asks the view first: a declined discard keeps Settings open, a confirmed one closes it', async () => {
+    let answer = false;
+    settingsChunk.guard = () => Promise.resolve(answer);
+    const { memory } = renderShell('/');
+    act(() => {
+      publishTransportStatus({}, { state: 'recording', sessionId: 'sess-1', title: 'Ep 1' });
+    });
+    fireEvent.click(document.getElementById('v6-btn-settings') as HTMLElement);
+    await screen.findByRole('dialog', { name: 'Settings' });
+    const status = screen.getByRole('button', { name: /REC, Ep 1\. Return to session/ });
+
+    await act(async () => {
+      fireEvent.click(status);
+    });
+    expect(screen.getByRole('dialog', { name: 'Settings' })).not.toBeNull();
+    expect(memory.history).toEqual(['/']);
+
+    answer = true;
+    await act(async () => {
+      fireEvent.click(status);
+    });
+    expect(screen.queryByRole('dialog', { name: 'Settings' })).toBeNull();
+    expect(memory.history).toEqual(['/', '/sessions/sess-1']);
+  });
+
+  it('a team switch with unsaved Settings edits asks first: declining keeps the edits and the team, confirming switches', async () => {
+    let answer = false;
+    const guard = vi.fn(() => Promise.resolve(answer));
+    settingsChunk.guard = guard;
+    const { memory } = renderShell('/');
+    fireEvent.click(document.getElementById('v6-btn-settings') as HTMLElement);
+    await screen.findByRole('dialog', { name: 'Settings' });
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: /switch team/i }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    await act(async () => {
+      fireEvent.click(await screen.findByRole('menuitemradio', { name: /team b/i }));
+    });
+    expect(guard).toHaveBeenCalledTimes(1);
+    expect(profileWrite).not.toHaveBeenCalled();
+    expect(screen.getByRole('dialog', { name: 'Settings' })).not.toBeNull();
+
+    answer = true;
+    await chooseTeamB();
+    expect(guard).toHaveBeenCalledTimes(2);
+    // The view stays open on the new team; only the edits went.
+    expect(screen.getByRole('dialog', { name: 'Settings' })).not.toBeNull();
+    expect(memory.history).toEqual(['/']);
+  });
+
+  it('a team switch with Settings closed consults no guard', async () => {
+    const guard = vi.fn(() => Promise.resolve(false));
+    settingsChunk.guard = guard;
+    renderShell('/');
+    await chooseTeamB();
+    expect(guard).not.toHaveBeenCalled();
+  });
+
+  it('the status returns to its session from another route', () => {
+    const { memory } = renderShell('/teams');
+    act(() => {
+      publishTransportStatus({}, { state: 'rolling', sessionId: 'sess-9', title: 'Ep 9' });
+    });
+    fireEvent.click(screen.getByRole('button', { name: /return to session/i }));
+    expect(memory.history).toEqual(['/teams', '/sessions/sess-9']);
+  });
+});
+
+// --- Shell-level sidebar shortcut (redesign-show-ignition D8, task 4.1; web-ui-system
+// "Shell-level sidebar shortcut") ---
+//
+// AppShell owns one `[` listener on every signed-in route, with or without a session; it yields
+// to typing targets and open dialogs/menus. Ctrl/⌘+B stays the primitive's own.
+describe('AppShell sidebar shortcut', () => {
+  const railState = () => screen.getByTestId('rail').getAttribute('data-sidebar-state');
+  const press = (target: Element = document.body, init: KeyboardEventInit = {}) =>
+    fireEvent.keyDown(target, { key: '[', code: 'BracketLeft', ...init });
+
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+  afterEach(() => {
+    window.localStorage.clear();
+  });
+
+  it('on / with no session, `[` collapses the sidebar and `[` again expands it', () => {
+    renderShell('/');
+    expect(workspaceSessionId()).toBe('');
+    expect(railState()).toBe('expanded');
+    press();
+    expect(railState()).toBe('collapsed');
+    press();
+    expect(railState()).toBe('expanded');
+  });
+
+  it('also toggles with a session open', () => {
+    renderShell('/sessions/sess-1');
+    press();
+    expect(railState()).toBe('collapsed');
+  });
+
+  it('does nothing while focus is in the search input', () => {
+    renderShell('/');
+    const input = screen.getByRole('searchbox', { name: 'Search sessions' });
+    input.focus();
+    press(input);
+    expect(railState()).toBe('expanded');
+  });
+
+  it('does nothing while a dialog is open', async () => {
+    renderShell('/');
+    fireEvent.click(screen.getByTestId('rail-batch'));
+    expect(await screen.findByRole('dialog', { name: 'Batch Import' })).not.toBeNull();
+    press();
+    expect(railState()).toBe('expanded');
+  });
+
+  it('still toggles over the Settings view, the one dialog that lets `[` through', async () => {
+    renderShell('/');
+    openSettingsFromRail();
+    expect(await screen.findByTestId('settings-view')).not.toBeNull();
+    press();
+    expect(railState()).toBe('collapsed');
+  });
+
+  it('ignores modified brackets', () => {
+    renderShell('/');
+    press(document.body, { ctrlKey: true });
+    press(document.body, { metaKey: true });
+    press(document.body, { altKey: true });
+    expect(railState()).toBe('expanded');
+  });
+
+  it('the state set by `[` persists across a remount', () => {
+    const first = renderShell('/');
+    press();
+    expect(railState()).toBe('collapsed');
+    first.view.unmount();
+    renderShell('/');
+    expect(railState()).toBe('collapsed');
+  });
+
+  it('storage that throws defaults to expanded, and `[` still toggles', () => {
+    const own = Object.getOwnPropertyDescriptor(window, 'localStorage');
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      get: () => {
+        throw new Error('denied');
+      },
+    });
+    try {
+      renderShell('/');
+      expect(railState()).toBe('expanded');
+      press();
+      expect(railState()).toBe('collapsed');
+    } finally {
+      if (own) Object.defineProperty(window, 'localStorage', own);
+      else delete (window as unknown as Record<string, unknown>).localStorage;
+    }
   });
 });

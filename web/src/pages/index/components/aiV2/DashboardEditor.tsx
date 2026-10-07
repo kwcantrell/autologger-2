@@ -259,7 +259,7 @@ export function DashboardEditor({ config, onChange, widgetData = {}, unavailable
               >
                 <span
                   aria-hidden="true"
-                  className="absolute -top-1 -left-1 z-10 h-3 w-3 cursor-grab rounded-full border border-v5-border-strong bg-[rgba(56,189,248,0.35)]"
+                  className="absolute -top-1 -left-1 z-10 h-3 w-3 cursor-grab rounded-full border border-v5-border-strong bg-[color-mix(in_oklab,var(--si-accent)_35%,transparent)]"
                   data-testid="aiv2-editor-drag-handle"
                   onPointerDown={(e) => startPointerDrag(e, widget, 'move')}
                 />
@@ -267,7 +267,7 @@ export function DashboardEditor({ config, onChange, widgetData = {}, unavailable
                   type="button"
                   aria-label="Remove widget"
                   data-testid="aiv2-editor-remove"
-                  className="absolute -top-2 -right-2 z-10 flex h-5 w-5 items-center justify-center rounded-full border border-v5-border-strong bg-[rgba(13,19,34,0.9)] text-[0.65rem] text-v5-muted hover:text-v5-danger"
+                  className="absolute -top-2 -right-2 z-10 flex h-5 w-5 items-center justify-center rounded-full border border-v5-border-strong bg-si-panel-2 text-[0.65rem] text-v5-muted hover:text-v5-danger"
                   onClick={() => removeWidget(widget.id)}
                 >
                   ✕
@@ -275,10 +275,10 @@ export function DashboardEditor({ config, onChange, widgetData = {}, unavailable
                 <span
                   aria-hidden="true"
                   data-testid="aiv2-editor-resize-handle"
-                  className="absolute -bottom-1 -right-1 z-10 h-3 w-3 cursor-nwse-resize rounded-full border border-v5-border-strong bg-[rgba(56,189,248,0.35)]"
+                  className="absolute -bottom-1 -right-1 z-10 h-3 w-3 cursor-nwse-resize rounded-full border border-v5-border-strong bg-[color-mix(in_oklab,var(--si-accent)_35%,transparent)]"
                   onPointerDown={(e) => startPointerDrag(e, widget, 'resize')}
                 />
-                <div className="h-full w-full rounded-v5-md border border-[rgba(56,189,248,0.28)]">
+                <div className="h-full w-full rounded-v5-md border border-[color-mix(in_oklab,var(--si-accent)_28%,transparent)]">
                   {isRetitling ? (
                     <div className="flex h-full flex-col gap-2 p-3.5">
                       <input
@@ -299,7 +299,7 @@ export function DashboardEditor({ config, onChange, widgetData = {}, unavailable
                           }
                         }}
                         onBlur={commitRetitle}
-                        className="w-full rounded-v5-sm border border-[rgba(56,189,248,0.5)] bg-transparent px-2 py-1 text-[0.8rem] text-v5-text focus:outline-none"
+                        className="w-full rounded-v5-sm border border-[color-mix(in_oklab,var(--si-accent)_50%,transparent)] bg-transparent px-2 py-1 text-[0.8rem] text-v5-text focus:outline-none"
                       />
                     </div>
                   ) : data && KNOWN_WIDGET_TYPES.has(widget.type) ? (
@@ -321,7 +321,7 @@ export function DashboardEditor({ config, onChange, widgetData = {}, unavailable
             type="button"
             data-testid="aiv2-editor-add-widget"
             aria-label="Add widget"
-            className="flex h-full w-full items-center justify-center gap-1.5 rounded-v5-md border border-dashed border-v5-border-strong text-[0.85rem] text-v5-muted transition-colors hover:border-[rgba(56,189,248,0.5)] hover:text-v5-text"
+            className="flex h-full w-full items-center justify-center gap-1.5 rounded-v5-md border border-dashed border-v5-border-strong text-[0.85rem] text-v5-muted transition-colors hover:border-[color-mix(in_oklab,var(--si-accent)_50%,transparent)] hover:text-v5-text"
             onClick={() => setPickerOpen(true)}
           >
             <span aria-hidden="true">＋</span> Add widget

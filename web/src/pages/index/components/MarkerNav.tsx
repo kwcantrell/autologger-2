@@ -3,24 +3,22 @@ import { useEffect, useMemo, useState } from 'react';
 import { useEvents, WORKSPACE_EVENTS_LIMIT } from '../../../api/hooks/useEvents';
 import { useSessionStatus } from '../../../api/hooks/useSessionStatus';
 import type { LogEvent } from '../../../api/types';
+import { Button } from '../../../shared/components/ui/button';
 import { parseSmpteToSec, sessionFrameRate } from '../../../shared/utils/audioClips';
 import { resolveCategoryColor } from '../../../shared/utils/categoryColor';
 import { groupTimelineMarkers, type TimelineMarkerGroup } from '../utils/markerGrouping';
 import { jumpTimelineToSec } from '../utils/timelineJump';
 import { TIMELINE_SEC_EVENT } from '../utils/timelineSecEvent';
 
-// Match compact transport tiles (same size + chrome as stop/roll/mic).
-const NAV_BTN =
-  'relative isolate box-border grid h-(--v4-ctrl-btn-h) max-h-(--v4-ctrl-btn-h) min-h-(--v4-ctrl-btn-h) w-(--v4-ctrl-btn-w) flex-[0_0_var(--v4-ctrl-btn-w)] cursor-pointer place-items-center overflow-visible rounded-v5-md border border-[rgba(148,163,184,0.22)] p-0 [background:linear-gradient(180deg,rgba(255,255,255,0.07)_0%,rgba(255,255,255,0)_42%),linear-gradient(180deg,rgba(19,27,48,0.88),rgba(11,16,30,0.78))] shadow-[inset_0_1px_0_rgba(255,255,255,0.07),0_4px_16px_rgba(2,8,23,0.42)] [--session-ctl-accent:#e2e8f0] [transition:border-color_0.15s_ease,box-shadow_0.15s_ease,opacity_0.15s_ease] hover-always:not-disabled:[border-color:color-mix(in_srgb,var(--session-ctl-accent)_28%,rgba(148,163,184,0.22))] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[rgba(56,189,248,0.55)] disabled:cursor-not-allowed disabled:border-dashed disabled:border-[rgba(148,163,184,0.14)] disabled:bg-[rgba(7,11,20,0.55)] disabled:opacity-[0.48] disabled:shadow-none';
-// Desktop strip (ungrouped): grow equally with transport / ? tiles.
-// `!` beats the fixed flex-basis/width utilities on NAV_BTN.
-const NAV_BTN_DESKTOP_GROW = 'md:min-w-(--v4-ctrl-btn-w) md:w-auto! md:max-w-none md:flex-1!';
+// The same flat `transport` Button as the transport controls (redesign-show-ignition task 5.2).
+// Desktop strip (ungrouped): grow equally with transport / ? controls.
+const NAV_BTN_DESKTOP_GROW = 'md:w-auto md:min-w-(--h-ctl) md:flex-1';
 
-const NAV_ICON =
-  'pointer-events-none relative z-[1] inline-flex h-[1.15rem] w-[1.15rem] items-center justify-center text-[color:color-mix(in_srgb,var(--session-ctl-accent)_70%,#e2e8f0)]';
-
-// Category-color hint centered on the outer border (prev = left, next = right).
-const NAV_HINT = 'pointer-events-none absolute top-1/2 z-[2] h-[0.45rem] w-[0.45rem] rounded-full';
+// The neighbouring marker's category colour, as a small swatch INSIDE the button on its outer
+// side (prev = left, next = right). It used to straddle the border and, on the last control of
+// a phone-width row, reached the viewport edge.
+const NAV_HINT =
+  'pointer-events-none absolute top-1/2 size-1.5 -translate-y-1/2 rounded-full transition-opacity';
 
 // Marker positions MUST use the same coordinate space as the rendered timeline
 // markers and audio clips (eventTimelineSec, frame-rate aware — the shared
@@ -156,21 +154,17 @@ export function MarkerNav({ sessionId, disabled = false, ungrouped = false }: Pr
   return (
     // biome-ignore lint/a11y/useAriaPropsSupportedByRole: false positive — the label travels with role="toolbar" (both undefined when ungrouped); the rule can't see the conditional pairing.
     <div
-      className={
-        ungrouped
-          ? 'contents'
-          : 'box-border flex h-(--v4-ctrl-btn-h) max-h-(--v4-ctrl-btn-h) min-h-(--v4-ctrl-btn-h) shrink-0 flex-row flex-nowrap items-center gap-[0.3rem]'
-      }
+      className={ungrouped ? 'contents' : 'flex shrink-0 flex-row flex-nowrap items-center gap-1.5'}
       role={ungrouped ? undefined : 'toolbar'}
       aria-label={ungrouped ? undefined : 'Marker navigation'}
     >
-      <button
-        type="button"
+      <Button
+        variant="transport"
+        size="icon"
         className={clsx(
-          NAV_BTN,
+          'relative',
           ungrouped && NAV_BTN_DESKTOP_GROW,
-          // `!` beats the base `grid` display utility on NAV_BTN.
-          ungrouped && !enabled && 'max-md:hidden!',
+          ungrouped && !enabled && 'max-md:hidden',
         )}
         id="btn-prev-marker-aside"
         aria-label="Previous marker"
@@ -178,27 +172,22 @@ export function MarkerNav({ sessionId, disabled = false, ungrouped = false }: Pr
         onClick={() => handleJump(-1)}
       >
         <span
-          className={clsx(NAV_HINT, 'left-0 -translate-x-1/2 -translate-y-1/2')}
+          className={clsx(NAV_HINT, 'left-1.5')}
           aria-hidden={true}
           style={{
             backgroundColor: prevColor,
             opacity: enabled && prevEvent ? 1 : 0,
-            boxShadow:
-              enabled && prevEvent
-                ? `0 0 6px color-mix(in srgb, ${prevColor} 55%, transparent)`
-                : undefined,
           }}
         />
-        <span className={NAV_ICON}>
-          <NavGlyph direction="prev" />
-        </span>
-      </button>
-      <button
-        type="button"
+        <NavGlyph direction="prev" />
+      </Button>
+      <Button
+        variant="transport"
+        size="icon"
         className={clsx(
-          NAV_BTN,
+          'relative',
           ungrouped && NAV_BTN_DESKTOP_GROW,
-          ungrouped && !enabled && 'max-md:hidden!',
+          ungrouped && !enabled && 'max-md:hidden',
         )}
         id="btn-next-marker-aside"
         aria-label="Next marker"
@@ -206,21 +195,15 @@ export function MarkerNav({ sessionId, disabled = false, ungrouped = false }: Pr
         onClick={() => handleJump(1)}
       >
         <span
-          className={clsx(NAV_HINT, 'right-0 translate-x-1/2 -translate-y-1/2')}
+          className={clsx(NAV_HINT, 'right-1.5')}
           aria-hidden={true}
           style={{
             backgroundColor: nextColor,
             opacity: enabled && nextEvent ? 1 : 0,
-            boxShadow:
-              enabled && nextEvent
-                ? `0 0 6px color-mix(in srgb, ${nextColor} 55%, transparent)`
-                : undefined,
           }}
         />
-        <span className={NAV_ICON}>
-          <NavGlyph direction="next" />
-        </span>
-      </button>
+        <NavGlyph direction="next" />
+      </Button>
     </div>
   );
 }

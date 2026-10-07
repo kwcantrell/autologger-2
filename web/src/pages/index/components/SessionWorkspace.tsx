@@ -13,6 +13,11 @@ import { ConfirmDialog } from '../../../shared/ui/ConfirmDialog';
 import { isOverlayOpen } from '../../../shared/ui/overlayOpen';
 import { AUTOLOGGER_LOADING_VIDEO_SRC } from '../../../shared/utils/loadingVideo';
 import { register, unregister } from '../coordination/registry';
+import {
+  clearTransportStatus,
+  publishTransportStatus,
+  type ShellTransportState,
+} from '../coordination/transportStatus';
 import { AudioClipsProvider } from '../hooks/AudioClipsContext';
 import { TranscriptWordsGateProvider } from '../hooks/TranscriptWordsGateContext';
 import { useAudioClips } from '../hooks/useAudioClips';
@@ -34,7 +39,6 @@ import { MaximizeLogStrip } from './MaximizeLogStrip';
 import { isTypingTarget, ShortcutsDialog } from './ShortcutsDialog';
 import { TopicsFeed } from './TopicsFeed';
 import { TranscribeFeed } from './TranscribeFeed';
-import { getTransportState } from './TransportControls';
 
 // Feed tab inventory — one source for the tablist buttons AND the tabpanel
 // wrappers below (code-health-tail 4.8). `label` doubles as each panel's
@@ -49,6 +53,18 @@ const FEED_TABS = [
 ] as const;
 
 type FeedTabId = (typeof FEED_TABS)[number]['id'];
+
+// The workspace's effective transport → the shell store's state (D2). The perf
+// debug override flows through `effectiveTransport`, so the shell follows it.
+const SHELL_TRANSPORT: Record<
+  'audio-recording' | 'rolling' | 'play' | 'stop',
+  ShellTransportState
+> = {
+  'audio-recording': 'recording',
+  rolling: 'rolling',
+  play: 'playback',
+  stop: 'stopped',
+};
 
 // Tabs whose content is UNCONDITIONALLY derived from the transcript word list
 // (perf plan B4). Activating any of them is what opens the deferred-words gate
@@ -66,10 +82,9 @@ const WORDS_DEPENDENT_TABS: ReadonlySet<FeedTabId> = new Set<FeedTabId>([
 interface Props {
   sessionId: string;
   ytImportPending?: boolean;
-  onOpenMobileNav?: () => void;
 }
 
-export function SessionWorkspace({ sessionId, ytImportPending, onOpenMobileNav }: Props) {
+export function SessionWorkspace({ sessionId, ytImportPending }: Props) {
   const { data: status } = useSessionStatus(sessionId || null);
 
   // Wide events query feeding the timeline marker rendering.
@@ -102,7 +117,6 @@ export function SessionWorkspace({ sessionId, ytImportPending, onOpenMobileNav }
   const isRolling = Boolean(status?.is_rolling);
   const isRecording = Boolean(status?.audio_recording_lease_alive);
 
-  const transportState = debugOverride ?? getTransportState(isRolling, isRecording);
   const intrinsicState = isRecording
     ? 'audio-recording'
     : isRolling
@@ -113,17 +127,25 @@ export function SessionWorkspace({ sessionId, ytImportPending, onOpenMobileNav }
   const effectiveTransport = debugOverride ?? intrinsicState;
   const liveDock = effectiveTransport === 'rolling' || effectiveTransport === 'audio-recording';
 
-  const statusText =
-    transportState === 'audio-recording'
-      ? 'Recording'
-      : transportState === 'rolling'
-        ? 'Rolling'
-        : 'Stopped';
-
   // Set body.dataset.v4Transport — CSS reads this to swap capture/playback panels.
   useEffect(() => {
     document.body.dataset.v4Transport = effectiveTransport;
   }, [effectiveTransport]);
+
+  // Publish the shell's transport status (redesign-show-ignition D2): AppShell's
+  // `data-transport` tint and the top bar read it. The deps are the mapped
+  // state, id and title only, so this re-runs on transitions — never on the
+  // playback tick. Each run publishes under its own owner token and clears only
+  // that token on cleanup (identity-scoped, as the coordination registry).
+  const shellTransport = SHELL_TRANSPORT[effectiveTransport];
+  const sessionTitle = (status?.title ?? '').trim() || null;
+  useEffect(() => {
+    const owner = {};
+    publishTransportStatus(owner, { state: shellTransport, sessionId, title: sessionTitle });
+    return () => {
+      clearTransportStatus(owner);
+    };
+  }, [shellTransport, sessionId, sessionTitle]);
 
   const [showShortcuts, setShowShortcuts] = useState(false);
 
@@ -467,7 +489,7 @@ export function SessionWorkspace({ sessionId, ytImportPending, onOpenMobileNav }
             reflows to plain block flow (see the column-reflow group below). */}
           <div
             id="v3-session-active"
-            className="v3-session-active-root relative flex flex-1 flex-col [overflow-x:clip] overflow-y-visible min-h-[calc(100vh-2.2rem)] max-md:block max-md:min-h-0 max-md:h-auto"
+            className="v3-session-active-root relative flex flex-1 flex-col [overflow-x:clip] overflow-y-visible min-h-[calc(100dvh-var(--topbar-h)-2.2rem)] max-md:block max-md:min-h-0 max-md:h-auto"
           >
             {/* #v3-session-grid.v4-session-workspace — min-h-0 !important quintet
               member; desktop flex column, max-md plain block. The empty-id
@@ -512,10 +534,7 @@ export function SessionWorkspace({ sessionId, ytImportPending, onOpenMobileNav }
                     liveDock={liveDock}
                     onOffState={onOffState}
                     onToggle={handleToggle}
-                    statusText={statusText}
-                    isRecording={isRecording}
-                    isRolling={isRolling}
-                    onOpenMobileNav={onOpenMobileNav}
+                    transport={shellTransport}
                   />
                 </div>
 
@@ -530,10 +549,10 @@ export function SessionWorkspace({ sessionId, ytImportPending, onOpenMobileNav }
                     onValueChange={(v) => setFeedTab(v as FeedTabId)}
                     className="v5FeedTabsPanel flex-[1_1_0] min-h-0"
                   >
-                    {/* Tabs share the sheet's mx-4 edge — no extra pad — so the lid
-                        aligns with the feed container. */}
-                    <div className="relative z-0 mx-4 flex shrink-0 items-end pt-[0.3rem] max-md:overflow-x-auto max-md:overflow-y-hidden max-md:[-webkit-overflow-scrolling:touch] max-md:[scrollbar-width:none]">
-                      <TabsList aria-label="Feed tabs">
+                    {/* Line tabs (redesign-show-ignition task 5.2; preview `.tabs`) on the sheet's
+                        mx-4 edge, a short gap above the feed card. */}
+                    <div className="relative z-0 mx-4 mb-3 max-md:mx-3 flex shrink-0 items-end pt-[0.3rem] max-md:overflow-x-auto max-md:overflow-y-hidden max-md:[-webkit-overflow-scrolling:touch] max-md:[scrollbar-width:none]">
+                      <TabsList variant="line" aria-label="Feed tabs">
                         {FEED_TABS.map((tab) => (
                           <TabsTrigger key={tab.id} value={tab.id}>
                             {tab.label}

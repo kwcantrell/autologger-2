@@ -103,7 +103,7 @@ function SheetDialog({
     (next: boolean) => {
       onOpenChange(next);
       if (next) return;
-      // A consumer may veto the close (e.g. HomeSettingsModal's dirty → "Keep editing"): `open`
+      // A consumer may veto the close (e.g. a dirty form's "Keep editing"): `open`
       // stays true. vaul's closeDrawer() then leaves the sheet at its dragged translate without
       // resetting it, so put it back at rest in place — no remount (child state, scroll, and
       // any confirm open inside the sheet must survive).

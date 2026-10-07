@@ -9,7 +9,7 @@ import { TIMELINE_ZOOM_EVENT } from '../../utils/timelineZoomEvent';
 // Centered on the track's bottom border; sibling of the track (not inside it)
 // so track overflow:hidden can't clip. Parent reserves 0.5rem hang-space.
 const TICKS =
-  'pointer-events-none absolute inset-x-0 top-full z-[7] flex w-full -translate-y-1/2 justify-between gap-[0.5rem] px-[0.35rem] [font-family:"Inter",var(--font-poppins),system-ui,sans-serif] text-[0.62rem] font-semibold leading-none tracking-[0.06em] [font-variant-numeric:tabular-nums] text-[rgba(229,238,252,0.88)] [text-shadow:0_1px_1px_rgba(2,8,23,0.95),0_0_6px_rgba(2,8,23,0.75),0_-1px_1px_rgba(2,8,23,0.55)]';
+  'pointer-events-none absolute inset-x-0 top-full z-[7] flex w-full -translate-y-1/2 justify-between gap-[0.5rem] px-[0.35rem] font-tc text-[0.6875rem] font-medium leading-none [font-variant-numeric:tabular-nums] text-si-dim [text-shadow:0_1px_2px_var(--si-bg)]';
 
 function getZoom(): number {
   const z = getTimelineZoom();

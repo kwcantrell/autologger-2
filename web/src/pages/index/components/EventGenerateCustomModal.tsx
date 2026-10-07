@@ -164,7 +164,7 @@ export function EventGenerateCustomModal({ showId, onSubmit, onClose }: Props) {
             promise without starting a fetch. `onlineManager` is what resumes a
             paused query on reconnect, button or no button, so the offline branch
             says that instead of offering a control that does nothing. Mirrors
-            `HomeSettingsModal`'s shows section. */}
+            the Settings view's show-backed sections. */}
         {unavailable !== null && (
           <div className="flex flex-col items-start gap-2">
             <p className={clsx(HINT, 'mb-0')}>
