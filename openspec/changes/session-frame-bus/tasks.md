@@ -28,7 +28,9 @@
 
 ## 2. Connection limit (design D7)
 
-- [ ] 2.1 Test first, pg project: `rolconnlimit` for `autologger_app` is 45 (owner, after approval; first 60), the role snapshot test re-applies the migration and reads the role in one transaction, retrying once on "tuple concurrently updated" (D8 category 2), and the migration refuses when `max_connections` is below 100. Red, then add `supabase/migrations/20261013000000_app_role_connection_limit.sql`. Green, plus `sh docker/supabase/test_migrate.sh`.
+- [x] 2.1 Test first, pg project: `rolconnlimit` for `autologger_app` is 45 (owner, after approval; first 60), the role snapshot test re-applies the migration and reads the role in one transaction, retrying once on "tuple concurrently updated" (D8 category 2), and the migration refuses when `max_connections` is below 100. Red, then add `supabase/migrations/20261013000000_app_role_connection_limit.sql`. Green, plus `sh docker/supabase/test_migrate.sh`.
+  - Evidence: red, migration absent: `cd server && npx vitest run --project pg src/test/pg/appRoleConnectionLimit.pg.test.ts src/test/pg/catalogSchema.pg.test.ts` -> `Error: ENOENT: no such file or directory, open '…/20261013000000_app_role_connection_limit.sql'`, `Tests 3 failed | 24 passed (27)` (log `9a-2.1-red2.log`); green after adding it (limit 45) -> `Tests 27 passed (27)` (log `9a-2.1-green2.log`). Both tests share `server/src/test/pg/appRoleLimit.ts`: the migration and the role read in one transaction, rolled back, retried once on "tuple concurrently updated".
+  - Evidence: `sh docker/supabase/test_migrate.sh` -> `test_migrate: 35 passed, 0 failed` (log `9a-2.1-migrate2.log`); full `npx vitest run --project pg` three times -> `Tests 107 passed | 1 skipped (108)` (logs `9a-2.1-pg-run1.log`, `9a-2.1-pg-run3.log`); run 2 hit the known `catalogContention.pg` cross-team retry flake (`1 failed | 106 passed`, log `9a-2.1-pg-run2.log`), rerun -> `107 passed | 1 skipped` (log `9a-2.1-pg-run2b.log`).
 
 ## 3. The port, the local bus and commands (design D1, D3, D4)
 
