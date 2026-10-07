@@ -8,37 +8,25 @@ import {
   CardTitle,
 } from '../../../../shared/components/ui/card';
 import { HomeSettingsModal } from '../HomeSettingsModal';
+import { AccountSection } from './AccountSection';
 import { LegacyTeamsPanel } from './LegacyTeamsPanel';
 import type { SettingsSectionProps } from './SettingsView';
+import { ShowDetailsSection } from './ShowDetailsSection';
 import type { SettingsSectionId } from './sections';
+import { SettingsSectionHeader } from './settingsParts';
+import { TeamDetailsSection } from './TeamDetailsSection';
 
-// --- Settings sections (interim, redesign-show-ignition 6.1) ---
+// --- Settings sections (redesign-show-ignition 6.1, 7.1-7.3) ---
 //
-// Group 6 builds the Settings view's shell; each section's real content lands in groups 7-9
-// (Account, Show details, Team details: 7; Members, Shows: 8; Event buttons: 9). Until then each
-// section says so plainly and keeps what users rely on reachable:
+// Account, Show details and Team details are the real inline sections (group 7). The rest land in
+// groups 8-9 (Members, Shows: 8; Event buttons: 9); until then each says so plainly and keeps what
+// users rely on reachable:
 //   - Members embeds the retired `/teams` page body (`LegacyTeamsPanel`), so every team action
 //     that page offered is still here;
-//   - Team details points at Members, where those actions live for now;
-//   - Account, Shows, Show details and Event buttons open the previous Settings dialog
-//     (`HomeSettingsModal`, retired by task 10.1), which still edits all of them.
+//   - Shows and Event buttons open the previous Settings dialog (`HomeSettingsModal`, retired by
+//     task 10.1), which still edits them.
 // The legacy dialog is imported statically: it rides in the Settings view's chunk, which is the
 // one overlay split point for Settings (web-frontend-platform's five).
-
-export function SettingsSectionHeader({
-  title,
-  description,
-}: {
-  title: string;
-  description?: string;
-}) {
-  return (
-    <header className="flex flex-col gap-1.5">
-      <h3 className="m-0 font-ui text-2xl leading-tight font-semibold">{title}</h3>
-      {description && <p className="m-0 text-sm text-muted-foreground">{description}</p>}
-    </header>
-  );
-}
 
 function PreviousSettingsCard({
   what,
@@ -69,18 +57,6 @@ function PreviousSettingsCard({
   );
 }
 
-function AccountSection({ onCloseSession }: SettingsSectionProps) {
-  return (
-    <>
-      <SettingsSectionHeader
-        title="Account"
-        description="Your profile on this AutoLogger server."
-      />
-      <PreviousSettingsCard what="Your name and sign-out" onCloseSession={onCloseSession} />
-    </>
-  );
-}
-
 function MembersSection() {
   return (
     <>
@@ -98,42 +74,6 @@ function ShowsSection({ onCloseSession }: SettingsSectionProps) {
     <>
       <SettingsSectionHeader title="Shows" description="The active team’s shows." />
       <PreviousSettingsCard what="Adding and editing shows" onCloseSession={onCloseSession} />
-    </>
-  );
-}
-
-function TeamDetailsSection({ onGoToSection }: SettingsSectionProps) {
-  return (
-    <>
-      <SettingsSectionHeader
-        title="Team details"
-        description="The team’s name, ownership and membership."
-      />
-      <Card>
-        <CardHeader>
-          <CardTitle>Moving here soon</CardTitle>
-          <CardDescription>
-            Renaming, creating, transferring, leaving and deleting a team are under Members for now.
-          </CardDescription>
-        </CardHeader>
-        <CardFooter>
-          <Button variant="outline" onClick={() => onGoToSection('members')}>
-            Go to Members
-          </Button>
-        </CardFooter>
-      </Card>
-    </>
-  );
-}
-
-function ShowDetailsSection({ onCloseSession }: SettingsSectionProps) {
-  return (
-    <>
-      <SettingsSectionHeader title="Show details" description="The active show’s name and code." />
-      <PreviousSettingsCard
-        what="The show’s name, code, suffix and default frame rate"
-        onCloseSession={onCloseSession}
-      />
     </>
   );
 }

@@ -2,22 +2,31 @@ import { useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { useEffect, useMemo, useState } from 'react';
 import { useCreateShow, useProfile, useProfileMutation } from '../../../api/hooks/useProfile';
-import { sessionStatusKeys } from '../../../api/hooks/useSessionStatus';
 import { showAccessFrom } from '../../../api/hooks/useShowAccess';
-import { showKeys, useStudioShows } from '../../../api/hooks/useShows';
-import type { ProfilePayload, Show } from '../../../api/types';
+import { useStudioShows } from '../../../api/hooks/useShows';
+import type { Show } from '../../../api/types';
 import { Button, TOUCH_TARGET } from '../../../shared/components/ui/button';
 import { Field, FieldDescription, FieldLabel } from '../../../shared/components/ui/field';
 import { Input } from '../../../shared/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../../shared/components/ui/tabs';
 import { useConfirm } from '../../../shared/ui/ConfirmDialog';
 import { Dialog, DialogActions } from '../../../shared/ui/Dialog';
-import { normalizePalette9 } from '../utils/palette9';
 import { showToast } from '../utils/toast';
-import type { EventButtonDraft } from './EventButtonsTable';
 import { EventButtonsTable } from './EventButtonsTable';
 import { FpsSelect } from './FpsSelect';
 import { LazySelect } from './LazySelect';
+import {
+  activeShowIdForSave as activeShowIdForSaveRule,
+  getDefaultFps,
+  initDraftsForStudio,
+  invalidateAfterProfileSave,
+  pickShowIdForStudio,
+  type ShowDraft,
+  showDraftToUpdate,
+  showsUnavailableState,
+  showToShowDraft,
+  teamSettingsWithFps,
+} from './settings/settingsModel';
 
 // Compact toolbar-select box (ports the .teamSelect/.showSelect layout): auto width
 // bounded 7–18rem, toolbar row height (2.5rem), slim horizontal padding, centered. `!` so it
@@ -79,87 +88,7 @@ interface Props {
   onCloseSession: () => void;
 }
 
-interface ShowDraft {
-  name: string;
-  show_code: string;
-  title_suffix: 'date' | 'episode';
-  categories: EventButtonDraft[];
-  event_palette: string[];
-  event_palette_preset: string;
-  event_palette_custom: string[];
-}
-
 type TabId = 'general' | 'event-buttons' | 'autosync' | 'debug';
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-function showToShowDraft(show: Show): ShowDraft {
-  const palette = normalizePalette9(show.event_palette ?? []);
-  const custom = normalizePalette9(
-    show.event_palette_custom?.length ? show.event_palette_custom : palette,
-  );
-  return {
-    name: show.name ?? '',
-    show_code: show.show_code ?? '',
-    // session-title-suffix task 2.1: hydrate from the show's persisted Suffix
-    // preference. Defensive default to 'date' if a payload ever omits it —
-    // the real server always emits it (showApiDict, task 1.4).
-    title_suffix: show.title_suffix === 'episode' ? 'episode' : 'date',
-    categories: (show.categories ?? []).map((c) => ({
-      id: c.id,
-      // `show.categories` is wire-accurate `name`-keyed (server: `showApiDict` passes
-      // stored `CategoryRecord` JSON through verbatim — `server/src/db/showsStore.ts`);
-      // `c.label` falls back defensively should a `label`-keyed shape ever feed this
-      // (teams-settings-nav, D3).
-      name: c.name ?? c.label ?? '',
-      type: c.type,
-      color: c.color,
-      // Options pass through verbatim, per-option `auto_instruction` included
-      // (auto-generate-event-logs).
-      dropdown_options: c.dropdown_options ?? [],
-      on_label: c.on_label ?? '',
-      off_label: c.off_label ?? '',
-      // Draft-local `''` = absent; the save mapping emits the wire key only when
-      // non-empty, so hydrate→save round-trips stay snapshot-clean.
-      auto_instruction: c.auto_instruction ?? '',
-    })),
-    event_palette: palette,
-    event_palette_preset: show.event_palette_preset ?? 'custom',
-    event_palette_custom: custom,
-  };
-}
-
-/** `shows` comes from `useStudioShows(studioId)` and is already studio-scoped;
- * the filter stays as a belt against a cache entry ever being read under the
- * wrong key (profile-shows-slimming — the drafts used to be built from
- * `profile.shows`, which spanned every studio and HAD to be filtered). */
-function initDraftsForStudio(shows: Show[], studioId: string): Record<string, ShowDraft> {
-  const result: Record<string, ShowDraft> = {};
-  for (const s of shows) {
-    if (s.studio_id === studioId) {
-      result[s.id] = showToShowDraft(s);
-    }
-  }
-  return result;
-}
-
-function getDefaultFps(profile: ProfilePayload, studioId: string): number {
-  const s = (profile.studio_settings?.[studioId] ?? {}) as { default_frame_rate?: number };
-  return typeof s.default_frame_rate === 'number' ? s.default_frame_rate : 24;
-}
-
-// Which show to select for a studio: the profile's actually-active show when the studio in
-// question IS the profile's active studio, else that studio's first show. Shared by the init
-// effect and handleStudioChange so re-selecting the originally-active studio reproduces the
-// exact initial selection (D11: view-only selection round-tripping back must not read dirty).
-function pickShowIdForStudio(profile: ProfilePayload, shows: Show[], studioId: string): string {
-  const showsForStudio = shows.filter((s) => s.studio_id === studioId);
-  const isActiveStudio = studioId === (profile.active_studio_id ?? profile.studios[0]?.id ?? '');
-  const preferredShow = isActiveStudio
-    ? (showsForStudio.find((s) => s.id === profile.active_show_id) ?? showsForStudio[0])
-    : showsForStudio[0];
-  return preferredShow?.id ?? '';
-}
 
 // Shapes compared to derive dirtiness (D11: DERIVED, not hand-armed — a forgotten setDirty
 // call at some future callsite fails in the dangerous direction, so dirtiness is instead
@@ -316,13 +245,7 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
   // Either way this scopes the SHOWS section only: neither state reaches `showsReady`, so
   // the shows scope contributes nothing to `dirty` and `handleSave` omits `show_updates` —
   // but the account scope stays fully editable and saveable regardless (review finding 2).
-  const showsUnavailable: 'error' | 'offline' | null = !targetStudioId
-    ? null
-    : studioShowsQuery.isError
-      ? 'error'
-      : studioShowsQuery.fetchStatus === 'paused' && studioShowsQuery.isPending
-        ? 'offline'
-        : null;
+  const showsUnavailable = showsUnavailableState(studioShowsQuery, targetStudioId);
 
   // ACCOUNT init — once per open, from the profile ALONE. Gated on `isOpen`
   // (settings-modal-mount-cost, D4): without it, this runs the moment `useProfile` resolves
@@ -514,84 +437,22 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
     const prevStudioId = profile.active_studio_id;
 
     // Preserve existing studio settings, only update default_frame_rate
-    const existingSettings = (profile.studio_settings?.[activeStudioId] ?? {}) as Record<
-      string,
-      unknown
-    >;
-    const settings = { ...existingSettings, default_frame_rate: defaultFps };
+    const settings = teamSettingsWithFps(profile, activeStudioId, defaultFps);
 
     const show_updates = showsForStudio
       .map((s) => {
         const draft = showDrafts[s.id];
-        if (!draft) return null;
-        return {
-          show_id: s.id,
-          name: draft.name,
-          show_code: draft.show_code,
-          title_suffix: draft.title_suffix,
-          categories: draft.categories.map((c) => ({
-            id: c.id,
-            // The update validator requires `name` (`server/src/studio.ts`
-            // `validateCategoriesList`), matching the `name`-keyed read shape above.
-            name: c.name,
-            color: c.color,
-            type: c.type,
-            // Per-option belt (auto-generate-event-logs audit M6): the same
-            // trim/omit gate as the category level below, applied here as a
-            // second enforcing site alongside EventOptionsModal's confirm
-            // mapping — a draft option that never went through that modal
-            // (hydrated then saved untouched, or padded by a future editor)
-            // must still post the wire rule: key only when trim-non-empty,
-            // emitted TRIMMED, matching server normalization.
-            dropdown_options: c.dropdown_options.map(
-              ({ label, needs_context, auto_instruction }) => ({
-                label,
-                needs_context,
-                ...(auto_instruction?.trim() ? { auto_instruction: auto_instruction.trim() } : {}),
-              }),
-            ),
-            on_label: c.on_label,
-            off_label: c.off_label,
-            // Wire key `auto_instruction` (auto-generate-event-logs): this mapping
-            // rebuilds categories from a fixed field set, so the key must be carried
-            // explicitly or a save would silently strip saved instructions. Gated on
-            // trim() and emitted trimmed, matching server normalization (which trims,
-            // drops empties, and drops it on ON_OFF) — a truthy whitespace-only draft
-            // would otherwise post a key the server drops, leaving a phantom local
-            // value after the post-save rebaseline.
-            ...(c.auto_instruction.trim() ? { auto_instruction: c.auto_instruction.trim() } : {}),
-          })),
-          event_palette: normalizePalette9(draft.event_palette),
-          event_palette_preset: draft.event_palette_preset,
-          event_palette_custom: normalizePalette9(draft.event_palette_custom),
-        };
+        return draft ? showDraftToUpdate(s.id, draft) : null;
       })
       .filter((x) => x !== null);
 
-    // ABSENT `active_show_id` DOES NOT MEAN "leave unchanged" (review finding 3 follow-up).
-    // `server/src/routers/profile.ts` treats a missing/blank field as a RESET:
-    //   `nextShow = showsNow.length ? String(showsNow[0].id) : ''`
-    // — i.e. it re-points the caller at the studio's FIRST show. `activeShowId` is only
-    // populated by the shows-init effect, which needs `showsReady`; so on an account-only
-    // save made while the shows query is erroring or still in flight it is `''`, and omitting
-    // the field would silently switch the user's active show (changing the event-button strip
-    // and new-session defaults) as a side effect of, say, editing a display name. Echo the
-    // server's own current value back instead, making that save a genuine no-op for show
-    // selection. (Before profile-shows-slimming `profile.shows` was synchronous, so
-    // `activeShowId` was always populated by save time and the omission never fired.)
-    //
-    // `undefined` stays CORRECT in two cases, both preserved below:
-    //   • shows loaded but the studio genuinely has no shows — `activeShowId` is `''` and
-    //     there is nothing to preserve; the server's `''` fallback is the right answer.
-    //   • a mid-switch save (`activeStudioId` is not the profile's active studio) — the
-    //     profile's show belongs to the OLD team, so echoing it would 400 ("active_show_id
-    //     must belong to the selected team"), and switching teams legitimately re-picks the
-    //     show anyway.
-    const activeShowIdForSave = showsReady
-      ? activeShowId || undefined
-      : activeStudioId === profile.active_studio_id
-        ? profile.active_show_id || undefined
-        : undefined;
+    // The `active_show_id` rule (settingsModel `activeShowIdForSave`): an absent field makes the
+    // server pick the team's first show, so an account-only save made while the shows query is
+    // erroring or in flight echoes the profile's show back instead, and a mid-switch save omits it.
+    const activeShowIdForSave = activeShowIdForSaveRule(profile, activeStudioId, {
+      ready: showsReady,
+      selectedShowId: activeShowId,
+    });
 
     const body: Parameters<typeof mutation.mutateAsync>[0] = {
       active_studio_id: activeStudioId,
@@ -626,28 +487,9 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
       if (activeStudioId !== prevStudioId) {
         onCloseSession();
       }
-      queryClient.invalidateQueries({ queryKey: ['sessions'] });
-      queryClient.invalidateQueries({ queryKey: ['events'] });
-      queryClient.invalidateQueries({ queryKey: sessionStatusKeys.all() });
-      // A now-working save can rename/delete categories; without this, an open session's
-      // button strip keeps serving stale ones for its 30s staleTime (design D4).
-      queryClient.invalidateQueries({ queryKey: ['show-categories'] });
-      // Same 30s-staleness argument, for the two caches this save just made
-      // wrong (profile-shows-slimming): the studio-shows list is THIS modal's
-      // own draft source, and the per-show entries back EventGenerateCustomModal
-      // — which would otherwise list the auto-instructions as they were before
-      // this save. Both are addressed through `showKeys`, never a bare literal
-      // (`queryKeyFactories.repo.test.ts`).
-      //
-      // Scoped to saves that actually carried `show_updates`: both roots are
-      // BARE prefixes, so an unconditional drop invalidates every studio's list
-      // and every per-show entry — refetching every show's full config for a
-      // save that only changed the account name or the active-studio pointer,
-      // neither of which any show payload reflects.
-      if (body.show_updates) {
-        queryClient.invalidateQueries({ queryKey: showKeys.allStudios() });
-        queryClient.invalidateQueries({ queryKey: showKeys.all() });
-      }
+      // Sessions, events, status and show categories; both lazy show caches only when this
+      // save carried `show_updates` (settingsModel `invalidateAfterProfileSave`).
+      invalidateAfterProfileSave(queryClient, { showUpdates: Boolean(body.show_updates) });
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Save failed.', true);
     }

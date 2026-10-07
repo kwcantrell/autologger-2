@@ -29,13 +29,15 @@ interface FpsSelectProps {
   onChange: (fps: number) => void;
   id?: string;
   className?: string;
+  disabled?: boolean;
 }
 
-export function FpsSelect({ value, onChange, id, className }: FpsSelectProps) {
+export function FpsSelect({ value, onChange, id, className, disabled }: FpsSelectProps) {
   return (
     <LazySelect
       id={id}
       className={className}
+      disabled={disabled}
       ariaLabel="Frame rate"
       value={fpsToPresetValue(value)}
       onChange={(next) => onChange(Number.parseFloat(next))}

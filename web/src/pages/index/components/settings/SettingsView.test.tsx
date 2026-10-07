@@ -55,6 +55,10 @@ vi.mock('../../../../api/hooks/useShowCategories', () => ({ useShowCategories: v
 vi.mock('../../../../api/hooks/useEvents', () => ({ useLogEvent: vi.fn() }));
 vi.mock('../../../../shared/components/Toast', () => ({ showToast: vi.fn() }));
 vi.mock('../../../../api/hooks/useProfile', () => ({ useProfile: () => ({ data: undefined }) }));
+// The view owns the shows scope; with no profile its query is disabled (no team, no request).
+vi.mock('../../../../api/hooks/useShows', () => ({
+  useStudioShows: () => ({ data: undefined, isSuccess: false, isError: false, refetch: vi.fn() }),
+}));
 
 const mounts = (id: SettingsSectionId) => probe.mounts[id] ?? 0;
 

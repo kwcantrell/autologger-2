@@ -20,6 +20,7 @@ import {
   SettingsGuardContext,
   type SettingsGuardRegistry,
 } from './settingsGuard';
+import { SettingsShowsContext, useSettingsShowsScopeState } from './settingsScopes';
 
 // --- SettingsView (redesign-show-ignition D3, D10; task 6.1) ---
 //
@@ -77,6 +78,10 @@ export function SettingsView({
   const rootRef = useRef<HTMLDivElement>(null);
   const headingId = useId();
   const { data: profile } = useProfile();
+  // The view owns the shows scope (the drafts' saved baseline and the shows query), so every
+  // show-backed section saves the same thing whichever sections were visited, and the query runs
+  // only while the view is mounted, i.e. open.
+  const showsScope = useSettingsShowsScopeState(profile);
 
   // Sections visited during this open. Adjusted during render, not in an effect, so the commit
   // that activates a section already mounts it (no empty frame) — and since the view unmounts on
@@ -187,98 +192,103 @@ export function SettingsView({
 
   return (
     <SettingsGuardContext.Provider value={registry}>
-      <div
-        ref={rootRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={headingId}
-        data-slot="settings-view"
-        className="absolute inset-0 z-(--z-settings-view) flex flex-col bg-background max-md:bottom-auto max-md:min-h-full"
-      >
-        <Tabs
-          value={section}
-          onValueChange={requestSection}
-          orientation="vertical"
-          className="min-h-0 flex-1 flex-row max-md:flex-col"
+      <SettingsShowsContext.Provider value={showsScope}>
+        <div
+          ref={rootRef}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby={headingId}
+          data-slot="settings-view"
+          className="absolute inset-0 z-(--z-settings-view) flex flex-col bg-background max-md:bottom-auto max-md:min-h-full"
         >
-          <div className="flex w-[250px] shrink-0 flex-col gap-4 overflow-y-auto border-r border-(--si-line) px-3 pt-4 pb-5 max-md:w-full max-md:overflow-visible max-md:border-r-0 max-md:border-b max-md:pb-4">
-            <Button
-              variant="ghost"
-              size="sm"
-              className="self-start"
-              data-slot="settings-back"
-              onClick={requestClose}
-            >
-              <ChevronLeftIcon data-icon="inline-start" aria-hidden="true" />
-              {backLabel}
-            </Button>
-            <h2 id={headingId} className="mx-2 font-ui text-[1.375rem] leading-tight font-semibold">
-              Settings
-            </h2>
-            <TabsList
-              variant="nav"
-              aria-label="Settings sections"
-              className="max-md:grid max-md:grid-cols-2 max-md:gap-x-2"
-            >
-              {SETTINGS_SECTION_GROUPS.map((group, i) => (
-                <Fragment key={group.label}>
-                  <div
-                    aria-hidden="true"
-                    className={cn(
-                      'mx-2 mb-1 flex min-w-0 flex-col gap-1 max-md:col-span-full',
-                      i > 0 && 'mt-4 max-md:mt-2',
-                    )}
-                  >
-                    <span
-                      data-slot="settings-nav-group"
-                      className="font-label text-[0.6875rem] leading-none font-semibold tracking-[0.12em] text-muted-foreground uppercase"
+          <Tabs
+            value={section}
+            onValueChange={requestSection}
+            orientation="vertical"
+            className="min-h-0 flex-1 flex-row max-md:flex-col"
+          >
+            <div className="flex w-[250px] shrink-0 flex-col gap-4 overflow-y-auto border-r border-(--si-line) px-3 pt-4 pb-5 max-md:w-full max-md:overflow-visible max-md:border-r-0 max-md:border-b max-md:pb-4">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="self-start"
+                data-slot="settings-back"
+                onClick={requestClose}
+              >
+                <ChevronLeftIcon data-icon="inline-start" aria-hidden="true" />
+                {backLabel}
+              </Button>
+              <h2
+                id={headingId}
+                className="mx-2 font-ui text-[1.375rem] leading-tight font-semibold"
+              >
+                Settings
+              </h2>
+              <TabsList
+                variant="nav"
+                aria-label="Settings sections"
+                className="max-md:grid max-md:grid-cols-2 max-md:gap-x-2"
+              >
+                {SETTINGS_SECTION_GROUPS.map((group, i) => (
+                  <Fragment key={group.label}>
+                    <div
+                      aria-hidden="true"
+                      className={cn(
+                        'mx-2 mb-1 flex min-w-0 flex-col gap-1 max-md:col-span-full',
+                        i > 0 && 'mt-4 max-md:mt-2',
+                      )}
                     >
-                      {group.label}
-                    </span>
-                    {scopeName[group.label] && (
-                      <span className="truncate text-[0.8125rem] font-semibold">
-                        {scopeName[group.label]}
+                      <span
+                        data-slot="settings-nav-group"
+                        className="font-label text-[0.6875rem] leading-none font-semibold tracking-[0.12em] text-muted-foreground uppercase"
+                      >
+                        {group.label}
                       </span>
-                    )}
-                  </div>
-                  {group.sections.map((s) => (
-                    <TabsTrigger
-                      key={s.id}
-                      variant="nav"
-                      value={s.id}
-                      id={settingsTabId(s.id)}
-                      aria-controls={settingsPanelId(s.id)}
-                    >
-                      {s.label}
-                    </TabsTrigger>
-                  ))}
-                </Fragment>
-              ))}
-            </TabsList>
-          </div>
+                      {scopeName[group.label] && (
+                        <span className="truncate text-[0.8125rem] font-semibold">
+                          {scopeName[group.label]}
+                        </span>
+                      )}
+                    </div>
+                    {group.sections.map((s) => (
+                      <TabsTrigger
+                        key={s.id}
+                        variant="nav"
+                        value={s.id}
+                        id={settingsTabId(s.id)}
+                        aria-controls={settingsPanelId(s.id)}
+                      >
+                        {s.label}
+                      </TabsTrigger>
+                    ))}
+                  </Fragment>
+                ))}
+              </TabsList>
+            </div>
 
-          <div className="min-w-0 flex-1 overflow-y-auto max-md:overflow-visible">
-            {SETTINGS_SECTIONS.map(({ id }) => {
-              const Content = SETTINGS_SECTION_CONTENT[id];
-              return (
-                <TabsContent
-                  key={id}
-                  value={id}
-                  forceMount
-                  id={settingsPanelId(id)}
-                  aria-labelledby={settingsTabId(id)}
-                  hidden={section !== id}
-                  className="flex max-w-[860px] flex-col gap-[18px] px-8 pt-6 pb-10 max-md:px-4 max-md:pt-[18px] max-md:pb-7"
-                >
-                  {visited.has(id) && (
-                    <Content onGoToSection={goToSection} onCloseSession={onCloseSession} />
-                  )}
-                </TabsContent>
-              );
-            })}
-          </div>
-        </Tabs>
-      </div>
+            <div className="min-w-0 flex-1 overflow-y-auto max-md:overflow-visible">
+              {SETTINGS_SECTIONS.map(({ id }) => {
+                const Content = SETTINGS_SECTION_CONTENT[id];
+                return (
+                  <TabsContent
+                    key={id}
+                    value={id}
+                    forceMount
+                    id={settingsPanelId(id)}
+                    aria-labelledby={settingsTabId(id)}
+                    hidden={section !== id}
+                    className="flex max-w-[860px] flex-col gap-[18px] px-8 pt-6 pb-10 max-md:px-4 max-md:pt-[18px] max-md:pb-7"
+                  >
+                    {visited.has(id) && (
+                      <Content onGoToSection={goToSection} onCloseSession={onCloseSession} />
+                    )}
+                  </TabsContent>
+                );
+              })}
+            </div>
+          </Tabs>
+        </div>
+      </SettingsShowsContext.Provider>
       {confirmElement}
     </SettingsGuardContext.Provider>
   );
