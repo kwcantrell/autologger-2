@@ -5,7 +5,9 @@
 // claim upsert has one winner even without the session row lock; (c) a lease whose holder died
 // reads not alive once expired and is taken over in one write; (d) two processes' alarms for one
 // expiry free it once; (e) a process whose clock runs 500 ms ahead never frees a lease that is
-// heartbeated every 8 s.
+// heartbeated every 8 s. The run leases (session-run-leases D6, task 3.2): (f) concurrent ai-turn
+// claims from two processes have one winner per round and never move the revision; (g) a dead
+// process's youtube-import lease is taken over by process B after expiry in one write.
 
 import type { CatalogDb } from '@autologger/ports';
 import { LeaseStore } from '@autologger/session-core/leaseStore';
@@ -25,6 +27,7 @@ import {
 
 const T = 1_750_000_000_000;
 const TTL = LeaseStore.TTL_MS.recording;
+const RUN_TTL = LeaseStore.TTL_MS['ai-turn'];
 
 const others: PostgresCatalogDb[] = [];
 const registries: TestRegistry[] = [];
@@ -357,4 +360,78 @@ describe('the recording lease across two processes (session-leases D6)', () => {
       `[leaseRace e] ${MINUTES} min fake time: ${heartbeats} heartbeats, B's alarm ran ${runsTwo.runs} times`,
     );
   }, 60_000);
+});
+
+describe('run leases across two processes (session-run-leases D2, D6)', () => {
+  it('(f) 200 rounds of two processes claiming ai-turn for different users: one winner per round, revision unchanged', async () => {
+    const { a, b, ids } = await team();
+    const [id] = ids;
+    const time = { now: T };
+    const [one, two] = twoProcesses(time);
+    const [hubOne, hubTwo] = await Promise.all([one.get(id), two.get(id)]);
+    const va = hubOne.as(userCaller(a));
+    const vb = hubTwo.as(userCaller(b));
+    const start = await revision(id);
+    const bad: string[] = [];
+    const winners = { a: 0, b: 0 };
+    for (let round = 0; round < 200; round += 1) {
+      const ha = `srv:one:${round}`;
+      const hb = `srv:two:${round}`;
+      // Alternate who is sent first, so neither process is always ahead.
+      const [okA, okB] =
+        round % 2 === 0
+          ? await Promise.all([va.claimRunLease('ai-turn', ha), vb.claimRunLease('ai-turn', hb)])
+          : await Promise.all([
+              vb.claimRunLease('ai-turn', hb),
+              va.claimRunLease('ai-turn', ha),
+            ]).then(([y, x]) => [x, y] as const);
+      if (Number(okA) + Number(okB) !== 1) {
+        bad.push(`round ${round}: a=${okA} b=${okB}`);
+        await catalogRoot()
+          .bindSystem('test')
+          .run('DELETE FROM session_leases WHERE session_id = ?', id);
+        continue;
+      }
+      const [row] = await leaseRows(id);
+      if (row?.holder_user_id !== (okA ? a : b))
+        bad.push(`round ${round}: row held by ${row?.holder_user_id}`);
+      if (okA) {
+        winners.a += 1;
+        await va.releaseRunLease('ai-turn', ha);
+      } else {
+        winners.b += 1;
+        await vb.releaseRunLease('ai-turn', hb);
+      }
+    }
+    expect(bad).toEqual([]);
+    expect(winners.a + winners.b).toBe(200);
+    expect(await revision(id)).toBe(start);
+    expect(await leaseRows(id)).toEqual([]);
+    console.info(`[leaseRace f] 200 rounds: a won ${winners.a}, b won ${winners.b}`);
+  }, 90_000);
+
+  it("(g) a dead process's youtube-import lease is taken over through process B after expiry, replacing the row", async () => {
+    const { a, b, ids } = await team();
+    const [id] = ids;
+    const time = { now: T };
+    const [one, two] = twoProcesses(time);
+    const [hubOne, hubTwo] = await Promise.all([one.get(id), two.get(id)]);
+    expect(await hubOne.as(userCaller(a)).claimRunLease('youtube-import', 'srv:one:1')).toBe(true);
+    await one.closeAll(); // dies without releasing
+    const vb = hubTwo.as(userCaller(b));
+    const before = await revision(id);
+    time.now = T + RUN_TTL - 1;
+    expect(await vb.claimRunLease('youtube-import', 'srv:two:1')).toBe(false);
+    expect((await leaseRows(id)).map((r) => r.holder_client_id)).toEqual(['srv:one:1']);
+    time.now = T + RUN_TTL + 1_000; // 41 s later
+    expect(await vb.claimRunLease('youtube-import', 'srv:two:1')).toBe(true);
+    expect(await leaseRows(id)).toEqual([
+      {
+        holder_client_id: 'srv:two:1',
+        holder_user_id: b,
+        expires_at_ms: T + RUN_TTL + 1_000 + RUN_TTL,
+      },
+    ]);
+    expect(await revision(id)).toBe(before);
+  });
 });
