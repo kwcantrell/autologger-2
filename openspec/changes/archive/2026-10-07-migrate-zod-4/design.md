@@ -122,7 +122,7 @@ answer `500`, as in the bump-mcp-sdk-advisory incident. The D3 lockfile guard an
 - **Teams 400 and the dashboard 422 string:** zod 4 default wording.
 - **Tool input JSON Schema:**
   - `additionalProperties: false` is gone;
-  - in MCP chat tools, `.int()` fields become `type: "integer"`, possibly with safe-integer bounds;
+  - MCP chat tools have no `.int()` fields, so none becomes `type: "integer"` (corrected at archive);
   - in Agent SDK aggregate tools, `transcript_excerpt` `offset`/`limit` lose `integer` and
     `minimum` and become a plain `number`;
   - records gain `propertyNames`;

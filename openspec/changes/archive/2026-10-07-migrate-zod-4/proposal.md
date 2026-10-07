@@ -39,7 +39,7 @@ Approved-by: Kalen 2026-10-07
    `400` detail and the AI v2 dashboard `422` string. Messages written in our own code are unchanged.
 4. **AI tool input schemas take the zod 4 JSON Schema output.** They lose `additionalProperties:
    false`.
-   - **MCP chat tools:** `.int()` fields become `type: "integer"`.
+   - **MCP chat tools:** no `.int()` fields exist, so nothing becomes `integer` (corrected at archive).
    - **AI v2 aggregate tools:** these go through the Agent SDK's bundled converter, so
      `transcript_excerpt`'s `offset` and `limit` are advertised as a plain `number`, with no
      `integer` and no `minimum` (panel).

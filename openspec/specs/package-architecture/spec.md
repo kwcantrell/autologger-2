@@ -146,7 +146,8 @@ requirement SHALL NOT be read as licensing a private copy wherever no `instanceo
 `@autologger/ai-runtime` SHALL likewise declare `zod` as a peerDependency: it hands zod
 schema objects to `@anthropic-ai/claude-agent-sdk`'s `tool()`, which carries its own `zod`
 peer, so a second resolved copy is a **schema-identity** hazard independent of any error
-mapping. No `ZodError` raised inside an AI-runtime tool body can reach the app's error mapper
+mapping. The resolved `zod` SHALL satisfy that peer (`zod ^4`), and `@autologger/ai-runtime`
+SHALL declare `@anthropic-ai/sdk` (the Agent SDK's type-only peer) as a devDependency. No `ZodError` raised inside an AI-runtime tool body can reach the app's error mapper
 — every such parse uses `safeParse`, and the MCP SDK converts validation failures into
 `{content, isError: true}` tool results rather than exceptions — so the error-mapping ground
 is explicitly **not** claimed here. The single-copy property is the requirement; `instanceof`
@@ -154,7 +155,7 @@ is one reason to need it.
 
 #### Scenario: One zod in the tree
 - **WHEN** `npm ls zod --json` output is inspected after install
-- **THEN** exactly one resolved copy exists (the property is the resolved-copy count in the JSON output, not the command's exit code — pre-existing unrelated peer-range warnings from other dependencies, including a resolved `zod` major that does not satisfy a third-party peer range, do not fail this gate), and every package declaring `zod` declares it as a peerDependency
+- **THEN** exactly one resolved copy exists, it is a zod 4 release, no package reports it `invalid` (it satisfies `@anthropic-ai/claude-agent-sdk`'s `zod ^4` peer and the MCP SDK's range), and every workspace package declaring `zod` declares it as a peerDependency except `server`, the installing package
 
 #### Scenario: One better-sqlite3 in the tree
 - **WHEN** `npm ls better-sqlite3 --json` output is inspected after install
@@ -167,6 +168,10 @@ is one reason to need it.
 #### Scenario: The design turn's tool schemas survive the package move
 - **WHEN** a design turn runs through the real app after the AI runtime moves into its package, with the aggregate MCP server's zod-schema'd tools registered
 - **THEN** the tools are recognized and callable, proving the agent SDK and the package resolve the same `zod` copy
+
+#### Scenario: The Agent SDK's peers are met
+- **WHEN** `npm ls @anthropic-ai/claude-agent-sdk zod @anthropic-ai/sdk` runs after a full install
+- **THEN** it exits `0` with no `invalid`, `missing` or `UNMET PEER` line
 
 ### Requirement: Every process-wide singleton has exactly one package home
 
