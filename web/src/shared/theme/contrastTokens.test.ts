@@ -197,14 +197,15 @@ describe('AA contrast floor — source colours over their lightest measured surf
     expect(contrast(fg, SURFACE.loginLink)).toBeGreaterThanOrEqual(AA);
   });
 
-  it('event-button "AI Rules" label without instructions on its row', () => {
-    const m = read('pages/index/components/EventButtonsTable.tsx').match(
-      /bearing \? 'text-v5-primary' : '([^']+)'/,
-    );
-    expect(m).not.toBeNull();
-    expect(
-      contrast(parseColor(textColour((m as RegExpMatchArray)[1])), SURFACE.eventButtonRow),
-    ).toBeGreaterThanOrEqual(AA);
+  it('event-button row summary and Edit on the Event buttons card', () => {
+    // Settings › Event buttons (redesign-show-ignition 9.1): each row's summary is an
+    // ItemDescription (muted text) and its Edit a ghost Button (foreground text), both on the card.
+    const src = read('pages/index/components/settings/EventButtonsSection.tsx');
+    expect(src).toMatch(/<ItemDescription[^>]*>\s*\{summary\}/);
+    expect(src).toMatch(/<Button\s+variant="ghost"[^>]*?>\s*Edit\s*</);
+    const card = colour('--card');
+    expect(contrast(colour('--muted-foreground'), card)).toBeGreaterThanOrEqual(AA);
+    expect(contrast(colour('--foreground'), card)).toBeGreaterThanOrEqual(AA);
   });
 
   it('timeline total-duration readout carries no extra opacity reduction', () => {

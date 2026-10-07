@@ -6,6 +6,7 @@ import { Field, FieldLabel } from '../../../shared/components/ui/field';
 import { Input } from '../../../shared/components/ui/input';
 import { Textarea } from '../../../shared/components/ui/textarea';
 import { Dialog, DialogActions } from '../../../shared/ui/Dialog';
+import { cleanDropdownOptions } from './settings/eventButtonsModel';
 
 interface Props {
   type: 'DROPDOWN' | 'ON_OFF';
@@ -66,17 +67,9 @@ export function EventOptionsModal({
 
   function handleConfirm() {
     if (type === 'DROPDOWN') {
-      const opts: ShowDropdownOption[] = localOpts
-        .filter((o) => o.label.trim())
-        .map(({ label, needs_context, auto_instruction }) => ({
-          label,
-          needs_context,
-          // Wire rule: empty means absent — emit the `auto_instruction` key only
-          // when trim-non-empty, and emit it TRIMMED, matching server normalization
-          // (trims, empty ⇒ omitted) so an untouched round-trip stays snapshot-clean
-          // and a saved value matches what the post-save rebaseline reads back.
-          ...(auto_instruction?.trim() ? { auto_instruction: auto_instruction.trim() } : {}),
-        }));
+      // Blank labels dropped; each option's instruction keyed only when trim-non-empty and sent
+      // trimmed (server normalization), so an untouched round-trip stays snapshot-clean.
+      const opts = cleanDropdownOptions(localOpts);
       onConfirm({ options: opts, onLabel: '', offLabel: '', autoInstruction: localInstruction });
     } else {
       // ON_OFF buttons never carry generation instructions (auto-event-generation

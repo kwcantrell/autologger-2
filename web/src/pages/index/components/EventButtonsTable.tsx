@@ -1,16 +1,32 @@
 import clsx from 'clsx';
 import { GripVertical, Trash2 } from 'lucide-react';
 import { useState } from 'react';
-import type { Show, ShowDropdownOption } from '../../../api/types';
+import type { Show } from '../../../api/types';
 import { Button, TOUCH_TARGET } from '../../../shared/components/ui/button';
 import { Input } from '../../../shared/components/ui/input';
 import { Popover } from '../../../shared/ui/Popover';
 import { RadioGroup } from '../../../shared/ui/RadioGroup';
-import { DEFAULT_PALETTE, normalizePalette9, PALETTE_SLOT_INDICES } from '../utils/palette9';
+import { normalizePalette9, PALETTE_SLOT_INDICES } from '../utils/palette9';
 import { EventInstructionModal } from './EventInstructionModal';
 import { EventOptionsModal } from './EventOptionsModal';
 import { LazySelect } from './LazySelect';
 import { Select } from './Select';
+import {
+  applyPalettePreset,
+  copyButtonsFrom,
+  type EventButtonDraft,
+  isInstructionBearing,
+  newEventButton,
+  PALETTE_PRESET_IDS,
+  presetLabel,
+  setPaletteSlot,
+  withButtonType,
+} from './settings/eventButtonsModel';
+import { showToShowDraft } from './settings/settingsModel';
+
+// The draft type and its rules live in `settings/eventButtonsModel.ts` (redesign-show-ignition
+// D6), shared with Settings › Event buttons.
+export type { EventButtonDraft };
 
 // Compact event-buttons table (--v6-events-row-h/head-h were both 1.5rem = h-6). The legacy
 // `!important` flags on td/dragHandle/colColorCell metrics only beat chrome/legacy rules; as
@@ -53,39 +69,6 @@ const BUTTON_TYPE_OPTIONS = [
   { value: 'ON_OFF', label: 'ON / OFF' },
 ];
 
-// ── Types ─────────────────────────────────────────────────────────────────────
-
-export interface EventButtonDraft {
-  id: string;
-  name: string;
-  type: 'BUTTON' | 'DROPDOWN' | 'TEXT' | 'ON_OFF';
-  color: string;
-  /** Options carry their own optional `auto_instruction` (wire key) — the draft
-   * passes them through verbatim (auto-generate-event-logs). */
-  dropdown_options: ShowDropdownOption[];
-  on_label: string;
-  off_label: string;
-  /** Whole-button generation instruction (auto-generate-event-logs). Draft-local
-   * `''` means absent; the save mapping emits the `auto_instruction` wire key only
-   * when non-empty. ON_OFF drafts always hold `''` (never instruction-bearing). */
-  auto_instruction: string;
-}
-
-/**
- * Single instruction-bearing definition (auto-event-generation spec): the button's
- * own instruction is non-empty, or — DROPDOWN only — at least one option's is.
- * ON_OFF never bears, and option instructions lingering on a non-DROPDOWN draft
- * (after a type switch away from DROPDOWN) do not count.
- */
-function isInstructionBearing(btn: EventButtonDraft): boolean {
-  if (btn.type === 'ON_OFF') return false;
-  if (btn.auto_instruction.trim()) return true;
-  return (
-    btn.type === 'DROPDOWN' &&
-    btn.dropdown_options.some((o) => (o.auto_instruction ?? '').trim().length > 0)
-  );
-}
-
 interface Props {
   buttons: EventButtonDraft[];
   palette: string[];
@@ -102,52 +85,6 @@ interface Props {
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const EVENT_COLOR_PRESETS: Record<string, string[]> = {
-  default: [
-    '#ff7a7a',
-    '#ffd98a',
-    '#e7ff95',
-    '#83fff3',
-    '#50caff',
-    '#aa57ff',
-    '#ff87d9',
-    '#e1a8ff',
-    '#d6dfff',
-  ],
-  neon: [
-    '#ff2525',
-    '#ff9229',
-    '#fff725',
-    '#7aff25',
-    '#25ffec',
-    '#2567ff',
-    '#4c25ff',
-    '#be25ff',
-    '#ff25b8',
-  ],
-  desert: [
-    '#ebe1bd',
-    '#fad0ba',
-    '#f18565',
-    '#d34c34',
-    '#a53f45',
-    '#967d62',
-    '#a9bb96',
-    '#85cb48',
-    '#57b4e4',
-  ],
-  aqua: [
-    '#a6d5dd',
-    '#6fa9c2',
-    '#038c95',
-    '#3ee6e0',
-    '#47f39b',
-    '#7fcba4',
-    '#9cde56',
-    '#bdee11',
-    '#cfe583',
-  ],
-};
 function onOffSummary(onLabel: string, offLabel: string): string {
   const s = `${onLabel.trim() || 'ON'}, ${offLabel.trim() || 'OFF'}`;
   return s.length > 42 ? `${s.slice(0, 40)}…` : s;
@@ -179,21 +116,28 @@ export function EventButtonsTable({
   // ── Helpers ────────────────────────────────────────────────────────────────
 
   function applyPreset(preset: string) {
-    let newPalette: string[];
-    let newCustom: string[];
-    if (preset === 'custom') {
-      newPalette = normalizePalette9(paletteCustom.length ? paletteCustom : palette);
-      newCustom = newPalette.slice();
-    } else {
-      newPalette = normalizePalette9(EVENT_COLOR_PRESETS[preset] ?? DEFAULT_PALETTE);
-      newCustom = paletteCustom.length ? normalizePalette9(paletteCustom) : newPalette.slice();
-    }
-    onChange(buttons, newPalette, preset, newCustom);
+    const next = applyPalettePreset(
+      {
+        event_palette: palette,
+        event_palette_preset: palettePreset,
+        event_palette_custom: paletteCustom,
+      },
+      preset,
+    );
+    onChange(buttons, next.event_palette, next.event_palette_preset, next.event_palette_custom);
   }
 
   function updatePaletteSlot(idx: number, hex: string) {
-    const next = normPalette.map((c, i) => (i === idx ? hex.toLowerCase() : c));
-    onChange(buttons, next, 'custom', next.slice());
+    const next = setPaletteSlot(
+      {
+        event_palette: palette,
+        event_palette_preset: palettePreset,
+        event_palette_custom: paletteCustom,
+      },
+      idx,
+      hex,
+    );
+    onChange(buttons, next.event_palette, next.event_palette_preset, next.event_palette_custom);
   }
 
   function updateButton(id: string, patch: Partial<EventButtonDraft>) {
@@ -216,19 +160,7 @@ export function EventButtonsTable({
 
   function addButton() {
     onChange(
-      [
-        {
-          id: crypto.randomUUID(),
-          name: 'Sample Button',
-          type: 'BUTTON',
-          color: normPalette[0] ?? '#64748b',
-          dropdown_options: [],
-          on_label: '',
-          off_label: '',
-          auto_instruction: '',
-        },
-        ...buttons,
-      ],
+      [newEventButton(normPalette, 'Sample Button'), ...buttons],
       palette,
       palettePreset,
       paletteCustom,
@@ -239,25 +171,14 @@ export function EventButtonsTable({
     if (!copyFromId) return;
     const src = otherShows.find((s) => s.id === copyFromId);
     if (!src) return;
-    const newButtons: EventButtonDraft[] = (src.categories ?? []).map((c) => ({
-      id: crypto.randomUUID(),
-      // `src.categories` (from `otherShows`, i.e. `profile.shows[]`) is wire-accurate
-      // `name`-keyed; `c.label` falls back defensively (teams-settings-nav, D3).
-      name: c.name ?? c.label ?? '',
-      type: c.type,
-      color: c.color,
-      // Options ride along verbatim, per-option `auto_instruction` included.
-      dropdown_options: c.dropdown_options ?? [],
-      on_label: c.on_label ?? '',
-      off_label: c.off_label ?? '',
-      auto_instruction: c.auto_instruction ?? '',
-    }));
-    const srcPalette = normalizePalette9(src.event_palette ?? []);
-    const srcPreset = src.event_palette_preset ?? 'custom';
-    const srcCustom = normalizePalette9(
-      src.event_palette_custom?.length ? src.event_palette_custom : srcPalette,
+    // Buttons under fresh ids with their instructions, and the source's palette.
+    const copied = copyButtonsFrom(showToShowDraft(src));
+    onChange(
+      copied.categories,
+      copied.event_palette,
+      copied.event_palette_preset,
+      copied.event_palette_custom,
     );
-    onChange(newButtons, srcPalette, srcPreset, srcCustom);
     setCopyFromId('');
   }
 
@@ -295,10 +216,7 @@ export function EventButtonsTable({
               className="flex flex-wrap items-center gap-x-[0.45rem] gap-y-[0.35rem] m-0"
               value={palettePreset}
               onChange={applyPreset}
-              options={(['custom', 'default', 'neon', 'desert', 'aqua'] as const).map((id) => ({
-                value: id,
-                label: id.charAt(0).toUpperCase() + id.slice(1),
-              }))}
+              options={PALETTE_PRESET_IDS.map((id) => ({ value: id, label: presetLabel(id) }))}
               itemClassName={(_id, checked) =>
                 clsx(
                   'px-[0.65rem] py-[0.28rem] text-[0.72rem] font-semibold tracking-[0.04em] rounded-full border cursor-pointer',
@@ -480,25 +398,9 @@ export function EventButtonsTable({
                         // Radix Value is the first span — truncate so DROPDOWN/ON_OFF never spill.
                         '[&>span:first-child]:min-w-0 [&>span:first-child]:truncate',
                       )}
-                      onChange={(value) => {
-                        const t = value as EventButtonDraft['type'];
-                        const patch: Partial<EventButtonDraft> = { type: t };
-                        if (t === 'DROPDOWN' && !btn.dropdown_options.length) {
-                          patch.dropdown_options = [
-                            { label: 'Option 1', needs_context: false },
-                            { label: 'Option 2', needs_context: false },
-                          ];
-                        }
-                        if (t === 'ON_OFF') {
-                          patch.dropdown_options = [];
-                          patch.on_label = btn.on_label || 'ON';
-                          patch.off_label = btn.off_label || 'OFF';
-                          // ON_OFF buttons never carry generation instructions — a
-                          // type switch drops them from the draft (web-ui-system spec).
-                          patch.auto_instruction = '';
-                        }
-                        updateButton(btn.id, patch);
-                      }}
+                      onChange={(value) =>
+                        updateButton(btn.id, withButtonType(btn, value as EventButtonDraft['type']))
+                      }
                       options={BUTTON_TYPE_OPTIONS}
                     />
                   </td>

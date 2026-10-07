@@ -53,10 +53,13 @@ export function SettingRow({
   labelId,
   description,
   disabled,
+  row,
   children,
 }: {
   label: ReactNode;
   htmlFor?: string;
+  /** Names the row (`data-row`) where a list mixes setting rows with item rows. */
+  row?: string;
   /** For a control labelled by `aria-labelledby` (a toggle group) rather than `htmlFor`. */
   labelId?: string;
   description?: ReactNode;
@@ -67,6 +70,7 @@ export function SettingRow({
     <Field
       orientation="horizontal"
       data-disabled={disabled || undefined}
+      data-row={row}
       className="justify-between gap-4 max-sm:flex-col max-sm:items-stretch"
     >
       <FieldContent className="min-w-0">

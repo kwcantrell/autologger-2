@@ -3,7 +3,7 @@ import { sessionStatusKeys } from '../../../../api/hooks/useSessionStatus';
 import { showKeys } from '../../../../api/hooks/useShows';
 import type { ProfilePayload, Show, ShowUpdateEntry } from '../../../../api/types';
 import { normalizePalette9 } from '../../utils/palette9';
-import type { EventButtonDraft } from '../EventButtonsTable';
+import type { EventButtonDraft } from './eventButtonsModel';
 
 // --- Settings save model (redesign-show-ignition D4) ---
 //
