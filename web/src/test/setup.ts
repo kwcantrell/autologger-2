@@ -1,6 +1,7 @@
 import { cleanup } from '@testing-library/react';
 import { afterEach, vi } from 'vitest';
 import { reset as resetCoordinationRegistry } from '../pages/index/coordination/registry';
+import { resetTransportStatus } from '../pages/index/coordination/transportStatus';
 
 // jsdom has no matchMedia; the shared `useIsMobile` breakpoint hook (Dialog,
 // AppShell, ShortcutsDialog) calls it on mount. A minimal never-matches stub
@@ -68,6 +69,13 @@ afterEach(() => {
 // deliberate.
 afterEach(() => {
   resetCoordinationRegistry();
+});
+
+// Same reason for the transport-status store (redesign-show-ignition D2): its
+// clear is identity-scoped too, so a test's direct publish would otherwise
+// leak into the next test.
+afterEach(() => {
+  resetTransportStatus();
 });
 
 // Radix primitives that measure themselves (a Checkbox inside a <form> renders a bubble input
