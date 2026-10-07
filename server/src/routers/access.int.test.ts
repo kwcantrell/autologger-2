@@ -18,7 +18,6 @@ import { wireApp } from '../app';
 import type { AppEnv } from '../appEnv';
 import { anonApp, env, envWith } from '../test/harness';
 import { seedAccessMatrix, type TestCaller } from '../test/helpers';
-import { __resetAiChatIssuedSessionIdsForTests } from './ai';
 
 const SESSION_NOT_FOUND = JSON.stringify({ detail: 'Session not found' });
 const SHOW_NOT_FOUND = JSON.stringify({ detail: 'Show not found.' });
@@ -153,7 +152,6 @@ describe('one concrete call per family is 200 for the granted member and the adm
     try {
       for (const who of [m.granted, m.admin, m.ungranted]) {
         aiChatTurns.reset();
-        __resetAiChatIssuedSessionIdsForTests();
         const res = await anonApp.request(
           `/api/sessions/${m.sessionId}/ai/chat`,
           {
@@ -170,7 +168,6 @@ describe('one concrete call per family is 200 for the granted member and the adm
       }
     } finally {
       aiChatTurns.reset();
-      __resetAiChatIssuedSessionIdsForTests();
       rmSync(stableSessionCwd(m.sessionId), { recursive: true, force: true });
     }
   });

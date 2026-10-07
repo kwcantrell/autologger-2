@@ -168,6 +168,9 @@ export function createBindings(
       // `procEnv`-driven override: see the Config field's own doc comment for
       // why (ruling E6).
       AI_V2_CREDENTIAL_SOURCE_PATH: join(homedir(), '.claude', '.credentials.json'),
+      // shared-request-state D3: where the AI chat CLI keeps its conversations (the spawn passes
+      // this process's HOME, which `homedir()` reads).
+      AI_CHAT_CLI_HOME: homedir(),
     },
   };
   // Spec "Login fallback is announced, not silent" (design D9): say so once,

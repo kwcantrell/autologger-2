@@ -106,4 +106,10 @@ export interface Config {
    * working design turn degrading to a scrubbed auth error with nothing to
    * notice. Every full-object `Config` literal must supply it. */
   AI_V2_CREDENTIAL_SOURCE_PATH: string;
+  /** The AI chat CLI's home: the `HOME` its spawn passes (`buildAiChatChildEnv` forwards the
+   * server's own), resolved once at the composition root (`homedir()` in `node/config.ts`), with
+   * no environment override. A resume is accepted only when the CLI's conversation file exists
+   * under it (shared-request-state D3); tests point it at a temp dir. Optional so the hand-built
+   * `Config` literals in tests that never resume need not name it; unset reads as `homedir()`. */
+  AI_CHAT_CLI_HOME?: string;
 }

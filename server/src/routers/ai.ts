@@ -1,9 +1,10 @@
 // ai-topics-chat — the AI chat endpoint (POST /api/sessions/:sessionId/ai/chat).
 // New frozen API surface authorized by the ai-topics-chat delta spec. This file
 // is the route SHELL plus the two pieces of state the ai router module is the
-// preassigned shared home for (apply ledger): the resume-binding
-// issued-`claude_session_id`→`:sessionId` map (design "Multi-turn continuity
-// bound to the autologger session") and the guard order itself. Once every
+// preassigned shared home for (apply ledger): the resume binding
+// `claude_session_id` → {sessionId, userId} (design "Multi-turn continuity
+// bound to the autologger session"; in the catalog kv since
+// shared-request-state D3) and the guard order itself. Once every
 // guard passes, it registers an MCP turn (task 2.1), spawns the locked-down
 // CLI (task 3.2's `spawnAiChatTurn`), and relays its stdout to the client via
 // the JSONL→SSE relay (task 3.3's `relayAiChatTurn`), all orchestrated by
@@ -20,11 +21,14 @@
 // subprocess) → single-flight & process-wide concurrency (409). All error
 // bodies are the repo `{ detail }` shape; none of these steps spawns.
 
+import { stat } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { aiChatTurns } from '@autologger/ai-runtime/aiChatRegistry';
+import { aiChatConversationFile } from '@autologger/ai-runtime/aiChatRunner';
 import type { AiMcpToolName } from '@autologger/ai-runtime/aiMcpServer';
 import { driveAiTurn } from '@autologger/ai-runtime/aiTurn';
 import { chatRequestSchema } from '@autologger/contract';
-import { Hono } from 'hono';
+import { type Context, Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import type { AppEnv } from '../appEnv';
 import {
@@ -35,7 +39,7 @@ import {
 } from '../env';
 import { ApiError } from '../httpError';
 import { claimAiLease } from './_aiSlot';
-import { requireSession, sessionCaller } from './_helpers';
+import { requireSession, requireUser, sessionCaller } from './_helpers';
 
 export const aiRouter = new Hono<AppEnv>();
 
@@ -73,24 +77,45 @@ const AT_CAPACITY_DETAIL =
   'The server is at its AI turn concurrency limit (AI_CHAT_MAX_CONCURRENT, shared between AI chat, AI v2, ' +
   'topic generation, and event generation); try again shortly.';
 
-// ── Multi-turn continuity: issued-claude_session_id → autologger :sessionId ──
-// (design "Multi-turn continuity bound to the autologger session"). Recorded
-// when a turn's `done` event carries a session id; consulted before a LATER
-// turn is allowed to pass that id as `--resume`. An id this map has never
-// seen, or has seen for a DIFFERENT :sessionId, is foreign/stale/forged and
-// MUST be rejected with 422 before any subprocess spawns (spec scenario
-// "Foreign session id is rejected, not resumed"). Module-level singleton,
-// mirroring `aiChatTurns` — one process, one map.
-const issuedClaudeSessionIds = new Map<string, string>();
+// ── Multi-turn continuity: the resume binding (shared-request-state D3) ──
+// (design "Multi-turn continuity bound to the autologger session"). Written to
+// the catalog kv when a turn's `done` event carries a session id, as
+// `{v:1, sessionId, userId}` with a 7-day expiry, so any server process sharing
+// the database sees it; consulted before a LATER turn may pass that id as
+// `--resume`. An id that is malformed, unbound, bound to a DIFFERENT
+// :sessionId or user (a co-member of the session included), expired, or whose
+// conversation file is not at the exact path the CLI will read under this
+// process's CLI home, is rejected with 422 before any subprocess spawns (spec
+// scenarios "Foreign session id is rejected, not resumed", "A co-member cannot
+// resume another user's conversation", "A missing conversation file is a 422").
 
-function isClaudeSessionIdIssuedFor(claudeSessionId: string, sessionId: string): boolean {
-  return issuedClaudeSessionIds.get(claudeSessionId) === sessionId;
-}
+const RESUME_KEY_PREFIX = 'ai-chat-resume:';
+const RESUME_TTL_S = 7 * 24 * 60 * 60;
+/** Checked first, before any key or path is built from the id (D3). */
+const CLAUDE_SESSION_ID_RE = /^[A-Za-z0-9-]{1,64}$/;
 
-/** Test-only: drop all resume bindings so the shared module singleton doesn't
- * leak across test cases. Not used on any request path. */
-export function __resetAiChatIssuedSessionIdsForTests(): void {
-  issuedClaudeSessionIds.clear();
+async function resumeAccepted(
+  c: Context<AppEnv>,
+  claudeSessionId: string,
+  sessionId: string,
+  userId: string,
+): Promise<boolean> {
+  if (!CLAUDE_SESSION_ID_RE.test(claudeSessionId)) return false;
+  const raw = await c.env.ports.kv.get(RESUME_KEY_PREFIX + claudeSessionId);
+  if (raw === null) return false;
+  let binding: { sessionId?: unknown; userId?: unknown } | null;
+  try {
+    binding = JSON.parse(raw) as { sessionId?: unknown; userId?: unknown } | null;
+  } catch {
+    return false;
+  }
+  if (binding?.sessionId !== sessionId || binding.userId !== userId) return false;
+  const cliHome = c.env.config.AI_CHAT_CLI_HOME ?? homedir();
+  try {
+    return (await stat(aiChatConversationFile(cliHome, sessionId, claudeSessionId))).isFile();
+  } catch {
+    return false;
+  }
 }
 
 aiRouter.post('/api/sessions/:sessionId/ai/chat', async (c) => {
@@ -112,14 +137,16 @@ aiRouter.post('/api/sessions/:sessionId/ai/chat', async (c) => {
   const body = chatRequestSchema.parse(await c.req.json());
 
   // 4b. Multi-turn continuity ownership — a claude_session_id not issued for
-  // THIS :sessionId (foreign, stale, or forged) is rejected with 422 BEFORE
-  // any subprocess spawns (spec "Multi-turn continuity bound to the
-  // autologger session"; design "Multi-turn continuity" 422 scenario). The
-  // schema above only enforces "non-empty string when present" — ownership
-  // is checked here, against the map this same handler writes on `done`.
+  // THIS :sessionId and THIS user (foreign, another user's, expired, or
+  // forged), or whose conversation file is missing here, is rejected with 422
+  // BEFORE any subprocess spawns (spec "Multi-turn continuity bound to the
+  // autologger session"; shared-request-state D3). The schema above only
+  // enforces "non-empty string when present" — ownership is checked here,
+  // against the kv binding this same handler writes on `done`.
+  const userId = requireUser(c).id;
   let resumeSessionId: string | undefined;
   if (body.claude_session_id) {
-    if (!isClaudeSessionIdIssuedFor(body.claude_session_id, sessionId)) {
+    if (!(await resumeAccepted(c, body.claude_session_id, sessionId, userId))) {
       throw new ApiError(422, FOREIGN_CLAUDE_SESSION_ID_DETAIL);
     }
     resumeSessionId = body.claude_session_id;
@@ -175,7 +202,18 @@ aiRouter.post('/api/sessions/:sessionId/ai/chat', async (c) => {
         abortSignal: c.req.raw.signal,
       });
       if (outcome.ok) {
-        issuedClaudeSessionIds.set(outcome.claudeSessionId, sessionId);
+        // A write error is logged and does not fail the turn; the next resume then gets 422 (D3).
+        try {
+          await c.env.ports.kv.put(
+            RESUME_KEY_PREFIX + outcome.claudeSessionId,
+            JSON.stringify({ v: 1, sessionId, userId }),
+            { expirationTtl: RESUME_TTL_S },
+          );
+        } catch (err) {
+          console.warn(
+            `[ai-chat] could not record the resume binding (${err instanceof Error ? err.message : String(err)})`,
+          );
+        }
       }
     } finally {
       // Lease, then slot, before the stream closes (session-run-leases D4).
