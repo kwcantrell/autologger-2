@@ -141,6 +141,15 @@ the last step inside each revoking transaction's body (the six call sites above)
 - **Inside the transaction** it re-checks access per show on the transaction's own handle (it reads
   its own uncommitted revoke), lists the lost sessions, and publishes `{k:'close', u, s:[…], c:4403}`
   messages. Each carries at most 150 session ids (about 6 KB signed).
+- **Leave (owner, 2026-10-07, after approval).** `POST /api/teams/:id/leave` runs as the leaving
+  user, and row-level security hides the team's shows and sessions from them once their
+  membership is deleted. So the leave route lists the team's sessions in the same transaction
+  before `authRemoveMembership`, and publishes closes for all of them after it: with no membership
+  the user reaches none of the team's shows. A session another user creates between the pre-list and the
+  commit, on which the leaver opens a socket inside that window, survives the leave: a negligible
+  edge case (re-panel). The other five sites run as an owner, an admin or the support-plane system
+  caller, who still see the rows, so they re-check after the write as above. The support-plane
+  delete (`admin.ts` ~133) is wrapped in `catalog.tx` so its close publishes in its transaction.
 - **On commit,** every process, the revoking one included, closes the user's sockets on those
   sessions. On the local bus, the messages are held and delivered after COMMIT through
   `afterCommit`.

@@ -58,7 +58,8 @@
   - removing a member of a 300-session team closes their socket on B;
   - an injected publish failure makes the revoke answer `500`, and the grant is still there;
   - on the local bus, every existing access-loss test keeps its observable closes (D8 category 1).
-  Red, then add the catalog transaction `notify`, replace `closeSocketsAfterAccessLoss` with `publishAccessLossInTx` in the six call sites (`teams.ts`, `admin.ts`), and split closes at 150 ids. Green.
+  - leaving a team through A closes the leaver's sockets on B (the sessions are listed before the membership delete, D5).
+  Red, then add the catalog transaction `notify`, replace `closeSocketsAfterAccessLoss` with `publishAccessLossInTx` in the six call sites (`teams.ts`, `admin.ts`; leave pre-lists its sessions; the support-plane delete is wrapped in `catalog.tx`), and split closes at 150 ids. Green.
 
 ## 6. Wiring, secret and docs (design D1, D2, D7)
 
