@@ -36,6 +36,13 @@ import { DashboardStore } from './dashboardStore';
 import { timecodeWallAnchors, wallTimeUtcForTimecode } from './eventAnchors';
 import { EventStore } from './eventStore';
 import { FifoLock } from './fifoLock';
+import {
+  type BusMessage,
+  CommandBucket,
+  isSessionCommand,
+  LocalFrameBus,
+  type SessionFrameBus,
+} from './frameBus';
 import { LeaseStore, type RunLeaseKind } from './leaseStore';
 import { type SessionCaller, systemCaller } from './sessionCaller';
 import type {
@@ -130,7 +137,9 @@ export interface SessionHubFacade {
   // -- WebSocket fan-out ---------------------------------------------------
   attachSocket: (ws: HubSocketLike, role: 'browser' | 'companion', userId?: string) => void;
   detachSocket: (ws: { send(data: string): void }) => void;
-  handleSocketMessage: (raw: string) => void;
+  /** `ws` is the socket the message came on, whose own command bucket applies (session-frame-bus
+   * D4); without it, the hub's one bucket does. */
+  handleSocketMessage: (raw: string, ws?: { send(data: string): void }) => void;
   broadcastCommand: (command: string) => void;
 
   // -- lifecycle -------------------------------------------------------------
@@ -374,7 +383,7 @@ export interface SessionHubRegistryFacade {
 export interface SessionHubEntry {
   attachSocket: (ws: HubSocketLike, role: 'browser' | 'companion', userId?: string) => void;
   detachSocket: (ws: { send(data: string): void }) => void;
-  handleSocketMessage: (raw: string) => void;
+  handleSocketMessage: (raw: string, ws?: { send(data: string): void }) => void;
   broadcastCommand: (command: string) => void;
   as: (caller: SessionCaller) => SessionHubFacade;
 }
@@ -407,10 +416,12 @@ export class ImportWhileRollingError extends Error {
   override name = 'ImportWhileRollingError';
 }
 
-/** The registry's construction (session-tables design D9): each session's storage, and the clock. */
+/** The registry's construction (session-tables design D9): each session's storage, the clock, and
+ * the frame bus (session-frame-bus D1; without one, the local bus delivering to this registry). */
 export interface SessionHubRegistryOptions {
   storage: (sessionId: string) => SessionStorage;
   clock?: Clock;
+  bus?: SessionFrameBus;
 }
 
 /** What a hub body runs against (design D3): the stores over one core. A write body gets them
@@ -504,6 +515,12 @@ export class SessionHub implements SessionHubEntry {
   private alarmTimer: ReturnType<typeof setTimeout> | null = null;
   /** The last lease-alarm retry delay; 0 after a successful run (design D6). */
   private alarmBackoffMs = 0;
+  /** Where the hub's frames and relayed commands go (session-frame-bus D1). */
+  private readonly bus: SessionFrameBus;
+  /** Relayed-command buckets per socket, and the hub's own for a message with no socket
+   * (session-frame-bus D4). */
+  private readonly commandBuckets = new WeakMap<object, CommandBucket>();
+  private readonly hubCommandBucket = new CommandBucket();
   private state: 'open' | 'closing' | 'closed' = 'open';
   /** Held in a wrapper, so the memo is tested as an object, never as a promise (design D9). */
   private closing: { promise: Promise<void> } | null = null;
@@ -516,8 +533,11 @@ export class SessionHub implements SessionHubEntry {
     sessionId: string,
     private readonly storage: SessionStorage,
     private readonly clock: Clock,
+    bus: SessionFrameBus | undefined,
   ) {
     this.lastTouchedMs = clock.now();
+    // A hub opened on its own delivers to its own sockets (session-frame-bus D1).
+    this.bus = bus ?? new LocalFrameBus((msg) => this.deliver(msg));
     this.core = new SessionCore({
       sessionId,
       clock,
@@ -529,13 +549,15 @@ export class SessionHub implements SessionHubEntry {
   /** Opens session `sessionId`'s hub over `storage` (session-tables design D9): in one write
    * transaction, which locks the session's catalog row first, it seeds the session's rows and runs
    * the stale-lease cleanup, so no caller can use a hub whose session is not seeded. A session with
-   * no catalog row rejects (the adapter's `SessionNotFoundError`). */
+   * no catalog row rejects (the adapter's `SessionNotFoundError`). Its frames go through `bus`
+   * (session-frame-bus D1), by default the local bus delivering to this hub's own sockets. */
   static async open(
     sessionId: string,
     storage: SessionStorage,
     clock: Clock = DEFAULT_CLOCK,
+    bus?: SessionFrameBus,
   ): Promise<SessionHub> {
-    const hub = new SessionHub(sessionId, storage, clock);
+    const hub = new SessionHub(sessionId, storage, clock, bus);
     try {
       // A lease that went stale while the process was down: clean it up now and
       // re-arm the timer if it is still live (spec: expireIfStale on open).
@@ -607,16 +629,23 @@ export class SessionHub implements SessionHubEntry {
    * broadcasts and alarm are dropped, so only the committed attempt's are applied, after COMMIT.
    * The alarm is armed here, outside the storage call's async context. A body that changed the
    * events or the transport writes the catalog projection after it returns, before COMMIT
-   * (session-tables design D8), so a failed projection fails the write. */
+   * (session-tables design D8), so a failed projection fails the write.
+   *
+   * The held frames are published on the frame bus inside the transaction, after the projection,
+   * on the storage's raw handle `t`: the core's counting handle would advance the revision. Each
+   * attempt publishes its own, which roll back with it, and a publish error fails the write. After
+   * COMMIT the committed attempt's frames go to `afterCommit`, which delivers them on the local bus
+   * (session-frame-bus D3). */
   private async transaction<T>(
     caller: SessionCaller,
     body: (s: HubStores) => Promise<T>,
   ): Promise<T> {
     const parent = SessionHub.txContext.getStore();
-    const bound: { core: SessionCore | null } = { core: null };
+    const bound: { core: SessionCore | null; frames: BusMessage[] } = { core: null, frames: [] };
     const drop = () => {
       bound.core?.discardHeldBroadcasts();
       bound.core?.discardHeldAlarm();
+      bound.frames = [];
     };
     try {
       const value = await this.storage.tx(caller, (t) => {
@@ -628,13 +657,18 @@ export class SessionHub implements SessionHubEntry {
             const result = await body(storesFor(bound.core));
             // The live projection commits with the write (session-tables design D8).
             await bound.core.writeProjectionIfDirty();
+            const sessionId = this.core.sessionId;
+            bound.frames = bound.core
+              .takeHeldBroadcasts()
+              .map((f): BusMessage => ({ k: 'frame', s: sessionId, f }));
+            if (bound.frames.length > 0) await this.bus.publishInTx(t, bound.frames);
             return result;
           } finally {
             ctx.open = false;
           }
         });
       });
-      bound.core?.flushHeldBroadcasts();
+      if (bound.frames.length > 0) this.bus.afterCommit(bound.frames);
       bound.core?.armHeldAlarm();
       return value;
     } catch (err) {
@@ -758,13 +792,40 @@ export class SessionHub implements SessionHubEntry {
     return closed;
   }
 
+  /** Close (with `code`) and detach every attached socket; returns how many (session-frame-bus
+   * D6, the `1012` after the bus's listener came back). */
+  closeAllSockets(code: number): number {
+    const sockets = [...this.socketSet];
+    this.socketSet.clear();
+    for (const s of sockets) {
+      try {
+        s.raw.close?.(code);
+      } catch {
+        // already closed
+      }
+    }
+    return sockets.length;
+  }
+
   detachSocket(ws: { send(data: string): void }): void {
     for (const s of this.socketSet) if (s.raw === ws) this.socketSet.delete(s);
   }
 
-  /** A relayed command goes out through the root core, so an open transaction never holds or
-   * drops it (design D3). */
-  handleSocketMessage(raw: string): void {
+  /** A message the frame bus delivered for this session (session-frame-bus D1): a frame goes to
+   * every attached socket, a close to the user's sockets when it names this session. */
+  deliver(msg: BusMessage): void {
+    if (msg.k === 'frame') {
+      if (msg.s === this.core.sessionId) this.core.sendFrame(msg.f);
+    } else if (msg.s === 'all' || msg.s.includes(this.core.sessionId)) {
+      this.closeUserSockets(msg.u, msg.c);
+    }
+  }
+
+  /** A relayed command is published at once on the frame bus, so an open transaction never holds
+   * or drops it (design D3). Only a contract command is relayed, at most 10 per second per socket
+   * `ws`, or per hub when the message names no socket; the rest are dropped (session-frame-bus
+   * D4). */
+  handleSocketMessage(raw: string, ws?: { send(data: string): void }): void {
     let parsed: unknown;
     try {
       parsed = JSON.parse(raw);
@@ -773,8 +834,13 @@ export class SessionHub implements SessionHubEntry {
     }
     if (parsed && typeof parsed === 'object') {
       const p = parsed as Record<string, unknown>;
-      if (p.type === 'command' && typeof p.command === 'string') {
-        this.core.broadcastCommand(p.command);
+      if (p.type === 'command' && isSessionCommand(p.command)) {
+        let bucket = this.hubCommandBucket;
+        if (ws) {
+          bucket = this.commandBuckets.get(ws) ?? new CommandBucket();
+          this.commandBuckets.set(ws, bucket);
+        }
+        if (bucket.take(this.clock.now())) this.relayCommand(p.command);
       }
       // Bare `{type:'ping'}` keepalives are simply ignored.
     }
@@ -784,8 +850,19 @@ export class SessionHub implements SessionHubEntry {
     return this.core.presence();
   }
 
+  /** The Companion route's command, already validated there and not rate-limited here
+   * (session-frame-bus D4); any other value is dropped. */
   broadcastCommand(command: string): void {
-    this.core.broadcastCommand(command);
+    if (isSessionCommand(command)) this.relayCommand(command);
+  }
+
+  /** A publish error is logged, never thrown into the route or the socket handler
+   * (session-frame-bus D4). */
+  private relayCommand(command: string): void {
+    const f = JSON.stringify({ type: 'command', command });
+    this.bus.publishNow({ k: 'frame', s: this.core.sessionId, f }).catch((err: unknown) => {
+      console.error('[hub] relaying a command failed', err);
+    });
   }
 }
 
@@ -824,8 +901,8 @@ export class SessionHubView implements SessionHubFacade {
   detachSocket(ws: { send(data: string): void }): void {
     this.hub.detachSocket(ws);
   }
-  handleSocketMessage(raw: string): void {
-    this.hub.handleSocketMessage(raw);
+  handleSocketMessage(raw: string, ws?: { send(data: string): void }): void {
+    this.hub.handleSocketMessage(raw, ws);
   }
   broadcastCommand(command: string): void {
     this.hub.broadcastCommand(command);
@@ -1281,12 +1358,16 @@ export class SessionHubRegistry implements SessionHubRegistryFacade {
 
   private readonly storage: (sessionId: string) => SessionStorage;
   private readonly clock: Clock;
+  /** Every hub's frame bus (session-frame-bus D1). */
+  readonly bus: SessionFrameBus;
 
   /** session-tables design D9: each hub runs over `storage(sessionId)`; the registry owns no
-   * connection and creates nothing. */
+   * connection and creates nothing. session-frame-bus D1: without a bus, the local bus delivers to
+   * this registry. */
   constructor(options: SessionHubRegistryOptions) {
     this.storage = options.storage;
     this.clock = options.clock ?? DEFAULT_CLOCK;
+    this.bus = options.bus ?? new LocalFrameBus((msg) => this.deliver(msg));
   }
 
   /** An open hub is touched and returned; otherwise the hub is opened, and joins the map only
@@ -1312,7 +1393,7 @@ export class SessionHubRegistry implements SessionHubRegistryFacade {
 
   private async openHub(sessionId: string): Promise<SessionHub> {
     try {
-      const hub = await SessionHub.open(sessionId, this.storage(sessionId), this.clock);
+      const hub = await SessionHub.open(sessionId, this.storage(sessionId), this.clock, this.bus);
       this.hubs.set(sessionId, hub);
       return hub;
     } finally {
@@ -1330,6 +1411,21 @@ export class SessionHubRegistry implements SessionHubRegistryFacade {
       const hub = this.hubs.get(id);
       if (hub) closed += hub.closeUserSockets(userId, code);
     }
+    return closed;
+  }
+
+  /** A message the frame bus received (session-frame-bus D1): a frame goes to the session's live
+   * hub, which sends it to its sockets (no live hub means no socket, so it is dropped); a close goes
+   * to `closeUserSockets`. */
+  deliver(msg: BusMessage): void {
+    if (msg.k === 'frame') this.hubs.get(msg.s)?.deliver(msg);
+    else this.closeUserSockets(msg.u, msg.s === 'all' ? 'all' : new Set(msg.s), msg.c);
+  }
+
+  /** Close every socket of every live hub with `code` (session-frame-bus D6); returns how many. */
+  closeAllSockets(code: number): number {
+    let closed = 0;
+    for (const hub of this.hubs.values()) closed += hub.closeAllSockets(code);
     return closed;
   }
 

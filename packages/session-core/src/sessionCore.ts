@@ -393,6 +393,18 @@ export class SessionCore {
     this.flushPendingBroadcasts();
   }
 
+  /** The hub, inside this transaction-bound core's transaction and after its body: take the held
+   * frames, in enqueue order, to publish on the frame bus (session-frame-bus D3). */
+  takeHeldBroadcasts(): string[] {
+    return this.pendingBroadcasts.splice(0);
+  }
+
+  /** The hub, delivering a frame the frame bus received (session-frame-bus D1): send it to every
+   * attached socket, as a flush does. */
+  sendFrame(data: string): void {
+    this.sendToSockets(data);
+  }
+
   /** The hub, after this transaction-bound core's transaction failed: drop
    * the held frames, so nothing is announced for a rolled-back write. */
   discardHeldBroadcasts(): void {

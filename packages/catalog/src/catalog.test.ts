@@ -133,6 +133,21 @@ describe('createCatalog and the bindings (catalog-roles D7)', () => {
     ]);
   });
 
+  it('notify sends pg_notify on the transaction handle, under its binding (session-frame-bus D5)', async () => {
+    const f = fakeRoot();
+    const user = createCatalog(f.root).forUser('u-1');
+    await user.tx(async (cat) => {
+      await cat.notify('autologger_session_frames', '{"v":1}');
+    });
+    expect(f.sent).toEqual([
+      { binding: 'user:u-1', sql: 'TX' },
+      { binding: 'user:u-1', sql: 'SELECT pg_notify(?, ?)' },
+    ]);
+    await expect(createCatalog(f.root).notify('c', 'p')).rejects.toBeInstanceOf(
+      CatalogUnboundError,
+    );
+  });
+
   it('a Catalog built without a root throws on forUser and system', () => {
     const cat = new Catalog({} as CatalogDb);
     expect(() => cat.forUser('u-1')).toThrow(TypeError);

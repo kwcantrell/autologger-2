@@ -1,5 +1,6 @@
-import { fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useRef, useState } from 'react';
+import { createRoot } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderStrict } from '../../../test/renderStrict';
 import {
@@ -437,6 +438,110 @@ describe('AiV2Design — question round trip', () => {
     const button = within(card).getByText('No type').closest('button');
     expect(button).not.toBeNull();
     expect((button as HTMLButtonElement).disabled).toBe(true);
+  });
+});
+
+// --- Draft state per pending question (fix-aiv2-draft-reset) ---
+//
+// The draft (selected options, free text) belongs to one pending question, by requestId. These
+// tests drive `pendingQuestion` directly as a prop, the way AiV2Panel does.
+
+function twoQuestionPending(requestId: string): AiV2PendingQuestion {
+  return {
+    requestId,
+    turnId: `turn-${requestId}`,
+    questions: [
+      {
+        question: 'Pick a talk-time style',
+        header: '',
+        multiSelect: false,
+        options: [
+          { label: 'Compact bars', widgetType: 'talk_time_by_speaker' },
+          { label: 'Detailed bars', widgetType: 'talk_time_by_speaker' },
+        ],
+      },
+      // Unanswered, so selecting on the first question never fires the POST.
+      {
+        question: 'And event counts?',
+        header: '',
+        multiSelect: false,
+        options: [{ label: 'Counts', widgetType: 'event_count_by_category' }],
+      },
+    ],
+  } as AiV2PendingQuestion;
+}
+
+function ControlledDesign({ pendingQuestion }: { pendingQuestion: AiV2PendingQuestion | null }) {
+  const abortControllerRef = useRef<AbortController | null>(null);
+  return (
+    <AiV2Design
+      sessionId="sess-1"
+      messages={[]}
+      onMessagesChange={() => {}}
+      isStreaming={false}
+      onStreamingChange={() => {}}
+      abortControllerRef={abortControllerRef}
+      pendingQuestion={pendingQuestion}
+      onPendingQuestionChange={() => {}}
+    />
+  );
+}
+
+function optionButton(root: ParentNode, cardIndex: number, label: string): HTMLButtonElement {
+  const card = root.querySelectorAll('[data-testid="aiv2-question-card"]')[cardIndex];
+  const button = [...(card?.querySelectorAll('button') ?? [])].find((b) =>
+    b.textContent?.includes(label),
+  );
+  if (!button) throw new Error(`no option "${label}" on card ${cardIndex}`);
+  return button;
+}
+
+describe('AiV2Design — draft state per pending question', () => {
+  it('keeps a selection made right after a new question commits, before effects run', async () => {
+    // The race behind the flaky "keys the pressed option by its index" test: the question renders
+    // on the default lane (as from the SSE reader), and a click lands after commit but before
+    // passive effects flush. A reset-in-effect then wiped the selection. `act` flushes effects
+    // before returning, so this test drives a raw root with the act environment off (restored by
+    // the file's `vi.unstubAllGlobals()` afterEach).
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', false);
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    try {
+      root.render(<ControlledDesign pendingQuestion={null} />);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      const clicked = new Promise<void>((resolve) => {
+        const observer = new MutationObserver(() => {
+          if (!container.querySelector('[data-testid="aiv2-question-card"]')) return;
+          observer.disconnect();
+          optionButton(container, 0, 'Detailed bars').click();
+          resolve();
+        });
+        observer.observe(container, { childList: true, subtree: true });
+      });
+      root.render(<ControlledDesign pendingQuestion={twoQuestionPending('req-a')} />);
+      await clicked;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      expect(optionButton(container, 0, 'Detailed bars').getAttribute('aria-pressed')).toBe('true');
+      expect(optionButton(container, 0, 'Compact bars').getAttribute('aria-pressed')).toBe('false');
+    } finally {
+      root.unmount();
+      container.remove();
+    }
+  });
+
+  it('starts a new question (new requestId) with no option selected', () => {
+    const { rerender } = render(<ControlledDesign pendingQuestion={twoQuestionPending('req-a')} />);
+    fireEvent.click(optionButton(document, 0, 'Detailed bars'));
+    expect(optionButton(document, 0, 'Detailed bars').getAttribute('aria-pressed')).toBe('true');
+
+    rerender(<ControlledDesign pendingQuestion={twoQuestionPending('req-b')} />);
+    for (const label of ['Compact bars', 'Detailed bars']) {
+      expect(optionButton(document, 0, label).getAttribute('aria-pressed')).toBe('false');
+    }
+    expect(optionButton(document, 1, 'Counts').getAttribute('aria-pressed')).toBe('false');
   });
 });
 

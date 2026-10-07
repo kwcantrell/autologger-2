@@ -29,8 +29,10 @@ export function mountSessionWs(app: Hono<AppEnv>, upgradeWebSocket: UpgradeWebSo
         onOpen(_evt, ws) {
           hub.attachSocket(ws, role, userId);
         },
-        onMessage(evt, _ws) {
-          if (typeof evt.data === 'string') hub.handleSocketMessage(evt.data);
+        // The socket goes with its message, so the command limit is per socket
+        // (session-frame-bus D4).
+        onMessage(evt, ws) {
+          if (typeof evt.data === 'string') hub.handleSocketMessage(evt.data, ws);
         },
         onClose(evt, ws) {
           hub.detachSocket(ws);

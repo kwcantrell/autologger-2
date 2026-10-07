@@ -479,7 +479,8 @@ describe('PostgresCatalogDb: bindings (catalog-roles)', () => {
 
   // session-tables core-ports-architecture "The connection count stays within the role's limit"
   // (design D2): with every root, transaction and session slot busy at the defaults, the adapter
-  // holds at most 3 + 5 + 4 = 12 connections, under the app role's limit of 20.
+  // holds at most 3 + 5 + 4 = 12 connections; with the frame bus's two that is 14 per process, three
+  // processes within the app role's limit of 45 (session-frame-bus D7).
   it('with every pool saturated at the defaults, the adapter holds at most 12 connections', async () => {
     const e = await make();
     const sys = e.root.bindSystem('test');

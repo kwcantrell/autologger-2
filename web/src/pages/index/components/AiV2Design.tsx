@@ -238,8 +238,19 @@ export function AiV2Design({
   renderOptionPreview,
   onDashboardProposed,
 }: AiV2DesignProps) {
-  const [draftAnswers, setDraftAnswers] = useState<Record<number, AiV2DraftAnswer>>({});
-  const [freeTextInputs, setFreeTextInputs] = useState<Record<number, string>>({});
+  // In-progress answers belong to one pending question, by requestId. A draft tagged with another
+  // requestId reads as empty, so a new question starts clean. This is derived during render, not
+  // reset in an effect: an effect ran after the cards painted, and a click in that gap was wiped
+  // (fix-aiv2-draft-reset).
+  const [draft, setDraft] = useState<{
+    requestId: string | undefined;
+    answers: Record<number, AiV2DraftAnswer>;
+    freeText: Record<number, string>;
+  }>({ requestId: undefined, answers: {}, freeText: {} });
+  const currentRequestId = pendingQuestion?.requestId;
+  const draftIsCurrent = draft.requestId === currentRequestId;
+  const draftAnswers = draftIsCurrent ? draft.answers : {};
+  const freeTextInputs = draftIsCurrent ? draft.freeText : {};
   const [answering, setAnswering] = useState(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
@@ -298,15 +309,6 @@ export function AiV2Design({
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages, pendingQuestion]);
 
-  // A new pending question (by requestId) resets any in-progress draft
-  // answers/free-text so a stale selection from a previous question never
-  // leaks into the next one's submission.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: deliberately keyed on requestId alone, not the whole pendingQuestion object, so a same-question re-render never re-triggers the reset
-  useEffect(() => {
-    setDraftAnswers({});
-    setFreeTextInputs({});
-  }, [pendingQuestion?.requestId]);
-
   // Controlled "start a turn from outside" seam (e.g. the canvas empty
   // state's "Design with AI" CTA) — consumed exactly once per value.
   // biome-ignore lint/correctness/useExhaustiveDependencies: sendMessage/onPendingStartConsumed intentionally omitted — this effect fires only on pendingStart changing, not on every render
@@ -356,7 +358,7 @@ export function AiV2Design({
 
   function answerQuestion(questionIndex: number, answer: AiV2DraftAnswer) {
     const next = { ...draftAnswers, [questionIndex]: answer };
-    setDraftAnswers(next);
+    setDraft({ requestId: currentRequestId, answers: next, freeText: freeTextInputs });
     if (!pendingQuestion) return;
     const answers: AiV2AnswerItem[] = [];
     for (let i = 0; i < pendingQuestion.questions.length; i += 1) {
@@ -412,7 +414,14 @@ export function AiV2Design({
                       answerQuestion(qi, { kind: 'option', widgetType, optionIndex })
                     }
                     onFreeTextChange={(value) =>
-                      setFreeTextInputs((prev) => ({ ...prev, [qi]: value }))
+                      setDraft((prev) => {
+                        const current = prev.requestId === currentRequestId;
+                        return {
+                          requestId: currentRequestId,
+                          answers: current ? prev.answers : {},
+                          freeText: { ...(current ? prev.freeText : {}), [qi]: value },
+                        };
+                      })
                     }
                     onSubmitFreeText={() => {
                       const text = (freeTextInputs[qi] ?? '').trim();

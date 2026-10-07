@@ -71,6 +71,7 @@ describe('main.ts boot order', () => {
         PUBLIC_BASE_URL: 'http://localhost:8787',
         // owner-bootstrap D8: also required before the catalog wait.
         BOOTSTRAP_OWNER_EMAIL: 'bootstrap-owner@example.com',
+        FRAME_BUS_SECRET: 'b'.repeat(40),
       }),
       45_000,
     );

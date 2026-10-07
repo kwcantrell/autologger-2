@@ -2,6 +2,10 @@
 
 - Date: 2026-10-01
 - Status: Proposed (the owner picks direct or relay before slice 9)
+- Status note (owner, 2026-10-07, ADR 0021 slice 9a): Realtime is deferred. Slice 9a keeps the
+  WebSocket protocol and carries frames between server processes over a Postgres `NOTIFY` bridge
+  (the session frame bus), so neither direct nor relay mode is built now. The finding stands for
+  a later decision to adopt Realtime.
 - Rule: none. This records a spike finding. No code was committed; the spike ran from the
   session scratchpad and was removed.
 
