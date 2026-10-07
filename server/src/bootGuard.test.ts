@@ -98,6 +98,21 @@ describe('checkBootEnv', () => {
     expect(msg).not.toContain(kelvin);
     expect(msg).not.toContain('alen@gmail.com');
   });
+  // run-status-and-sweeper D9: an approved-users entry is matched as exact ASCII too.
+  it('refuses a non-ASCII RUN_FEATURE_EMAILS entry, naming it and not the value', () => {
+    const kelvin = '\u212Aalen@gmail.com';
+    const msg = checkBootEnv({ ...ok, RUN_FEATURE_EMAILS: `a@example.com, ${kelvin}` });
+    expect(msg).toMatch(/RUN_FEATURE_EMAILS/);
+    expect(msg).toMatch(/ASCII/);
+    expect(msg).not.toContain(kelvin);
+    expect(msg).not.toContain('alen@gmail.com');
+    expect(msg).not.toContain('a@example.com');
+  });
+  it('allows an unset, blank or ASCII RUN_FEATURE_EMAILS', () => {
+    for (const v of [undefined, '', ',', 'a@example.com, B@Example.com']) {
+      expect(checkBootEnv({ ...ok, RUN_FEATURE_EMAILS: v }), JSON.stringify(v)).toBeNull();
+    }
+  });
   it('allows exactly the environments the compose wrapper sets (docker/scripts/compose-run.mjs ENVS)', () => {
     const src = readFileSync(join(__dirname, '../../docker/scripts/compose-run.mjs'), 'utf8');
     const envs = JSON.parse(

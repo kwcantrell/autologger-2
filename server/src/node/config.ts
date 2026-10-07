@@ -143,6 +143,7 @@ export function createBindings(
       GOOGLE_CLIENT_ID: procEnv.GOOGLE_CLIENT_ID || '',
       GOOGLE_CLIENT_SECRET: procEnv.GOOGLE_CLIENT_SECRET || '',
       BOOTSTRAP_OWNER_EMAIL: procEnv.BOOTSTRAP_OWNER_EMAIL || '',
+      RUN_FEATURE_EMAILS: procEnv.RUN_FEATURE_EMAILS || '',
       SESSION_COOKIE: procEnv.SESSION_COOKIE || '',
       SESSION_DAYS: procEnv.SESSION_DAYS || '14',
       NEW_USER_ALL_TEAMS: procEnv.NEW_USER_ALL_TEAMS || '0',

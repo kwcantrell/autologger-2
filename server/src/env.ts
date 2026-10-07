@@ -70,6 +70,27 @@ export function maskBootstrapOwnerEmail(value: string): string {
   return `${domain || '(no domain)'} #${hash}`;
 }
 
+// ── Approved users for run features (run-status-and-sweeper D9) ────────────
+
+/** The approved users' emails, ASCII-normalized: the bootstrap owner first (a grant never locks
+ * the owner out), then the `RUN_FEATURE_EMAILS` entries (comma-separated, each trimmed, blanks and
+ * duplicates dropped). Unset, blank or all-blank gives the owner alone. */
+export function runFeatureEmails(env: Config): string[] {
+  const out = [bootstrapOwnerEmail(env)];
+  for (const raw of (env.RUN_FEATURE_EMAILS || '').split(',')) {
+    const e = asciiEmailNorm(raw);
+    if (e !== '' && !out.includes(e)) out.push(e);
+  }
+  return out;
+}
+
+/** Whether `user` may run the run features: their email matches an approved entry under the
+ * bootstrap owner's exact-ASCII rule. Strict `=== true`: `'non-ascii'` is truthy and never a
+ * match. */
+export function runFeatureAllowed(env: Config, user: { email: string }): boolean {
+  return runFeatureEmails(env).some((e) => bootstrapEmailMatch(user.email, e) === true);
+}
+
 export function sessionTtlDays(env: Config): number {
   const n = Number(env.SESSION_DAYS ?? '14');
   return Number.isFinite(n) && n > 0 ? n : 14.0;

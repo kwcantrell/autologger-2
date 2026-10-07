@@ -115,6 +115,14 @@ Other rules:
   value refuses `make <env>-up` (`compose-run`) and refuses the server's boot; a non-ASCII value
   also refuses boot. At boot the server logs a masked form, `bootstrap owner: <domain> #<8 hex>`,
   never the local part, so you can check the value for a typo.
+- **`RUN_FEATURE_EMAILS` is optional** (run-status-and-sweeper D9). It lists, comma-separated, the
+  users approved for the run features: the AI chat, AI v2 design, topic and event generation,
+  YouTube import and transcript generation (including the log import's). The bootstrap owner is
+  always approved in addition; anyone else gets `403` on those routes. Entries match like the
+  bootstrap owner (trimmed, ASCII case-insensitive), and a non-ASCII entry refuses boot. To grant
+  someone, add their email to the key in the stack's KV secret and restart the stack
+  (`make <env>-up`). At boot the server logs `run-feature users: <count> (<masked forms>)`, never
+  the addresses.
 - **Never reuse prod secrets in dev or stage.** Use separate, low-limit keys and separate OAuth
   clients.
 - **Ports are set in OpenBao.** `DEV_PORT=9000 make dev-up` does not override them, because the

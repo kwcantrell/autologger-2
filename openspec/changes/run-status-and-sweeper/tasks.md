@@ -99,14 +99,15 @@ Anything else is a stop: update the artifacts and ask the owner.
 
 ## 7. Approved users (design D9)
 
-- [ ] 7.1 Test first: unit tests for `runFeatureEmails` and `runFeatureAllowed`.
+- [x] 7.1 Test first: unit tests for `runFeatureEmails` and `runFeatureAllowed`.
   - Unset, blank and `","` all give the bootstrap owner alone.
   - A set list adds to the owner, who stays approved.
   - A comma list with blanks and duplicates.
   - Case folding.
   - A non-ASCII token email never matches (strict `=== true`; `'non-ascii'` is truthy).
-
   Plus the `bootGuard` non-ASCII refusal. Red, then add them, `Config.RUN_FEATURE_EMAILS` (port and `node/config.ts`), the masked boot log (count plus masked forms, next to `main.ts:43`), and the entries in `server/.env.example`, `docker/.env{,.dev,.stage}.example`, `docker/secrets-env.yaml` and `docs/openbao-secrets.md` (optional key, how to grant). Green.
+  - Evidence: red, `cd server && npx vitest run src/env.test.ts src/bootGuard.test.ts` -> `TypeError: runFeatureAllowed is not a function` / `runFeatureEmails is not a function` (6 env cases) and `refuses a non-ASCII RUN_FEATURE_EMAILS entry, naming it and not the value` failing, `Tests  7 failed | 39 passed (46)` (log `9c-7.1-red.log`). Green: same command -> `Tests  46 passed (46)`; server unit suite `npx vitest run --project unit` -> `Tests  346 passed | 3 skipped (349)`; `npm run typecheck` clean; `docker/scripts/check-envs.sh` -> `check-envs: ok (all)` (log `9c-7.1-green.log`).
+  - Evidence: `server/src/env.ts` `runFeatureEmails(env)` (`[bootstrapOwnerEmail(env)]`, then `RUN_FEATURE_EMAILS` split on `,`, `asciiEmailNorm`, blanks and duplicates dropped) and `runFeatureAllowed(env, {email})` (`bootstrapEmailMatch(user.email, e) === true` for some entry); `bootGuard.ts` refuses a non-ASCII `RUN_FEATURE_EMAILS` naming the key, never the value; `Config.RUN_FEATURE_EMAILS` (ports, `node/config.ts` `procEnv.RUN_FEATURE_EMAILS || ''`); `main.ts` logs `run-feature users: <count> (<masked forms>)` after the bootstrap-owner line; optional key documented in `server/.env.example`, `docker/.env{,.dev,.stage}.example`, `docker/secrets-env.yaml` and `docs/openbao-secrets.md` (add the email, restart). Existing tests: the full `Config` literals in `upgradeDispatch.test.ts` and `aiV2.int.test.ts` gain `RUN_FEATURE_EMAILS: ''` (D7 category 2).
 - [ ] 7.2 Test first: integration cases on each of the six routes. A non-approved member gets `403` with the D9 detail, with no fixture CLI invocation and no lease row. An approved user is admitted. An unconfigured feature still gives `503` to a non-approved user. A log-import job by a non-approved creator records the skip line and claims no `transcript-generation` lease. Red, then add `requireRunFeature` to the routes (AI v2: after `guardAiV2Route`, so the answer route stays ungated, with a test that it does) and the creator flag to log-import, and make the D7 category 5 harness change. Green. Existing route tests change only under D7 category 5.
 
 ## 8. Docs and verify

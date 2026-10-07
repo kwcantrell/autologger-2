@@ -9,7 +9,7 @@ import { Hono } from 'hono';
 import { wireApp } from './app';
 import type { AppEnv } from './appEnv';
 import { checkBootEnv } from './bootGuard';
-import { maskBootstrapOwnerEmail } from './env';
+import { maskBootstrapOwnerEmail, runFeatureEmails } from './env';
 import { createBindings } from './node/config';
 import { createNextFrontend } from './node/nextFrontend';
 import { purgeExpiredAtBoot, startLeaseSweeper, startPeriodicPurge } from './startupPurge';
@@ -41,6 +41,12 @@ const { bindings, close, startFrameBus } = created;
 // owner-bootstrap D8: the masked bootstrap owner (domain and a short hash, never the local part),
 // so the operator can check the configured value for a typo.
 console.info(`bootstrap owner: ${maskBootstrapOwnerEmail(bindings.config.BOOTSTRAP_OWNER_EMAIL)}`);
+// run-status-and-sweeper D9: the approved users for run features, as a count and masked forms
+// (never the addresses), so the operator can check the list.
+const runFeatureList = runFeatureEmails(bindings.config);
+console.info(
+  `run-feature users: ${runFeatureList.length} (${runFeatureList.map(maskBootstrapOwnerEmail).join(', ')})`,
+);
 // catalog-on-postgres D2: listen only once the catalog answers. Exit 1 otherwise, so the
 // supervisor retries (the stack's migrations service may still be creating the schema).
 try {

@@ -11,6 +11,9 @@ export interface Config {
   /** The bootstrap owner's email (owner-bootstrap D8): required in every stack; a matching
    * verified sign-in claims every team that has no owner. */
   BOOTSTRAP_OWNER_EMAIL: string;
+  /** The approved users for the run features (run-status-and-sweeper D9): comma-separated
+   * emails, optional; the bootstrap owner is always approved in addition. */
+  RUN_FEATURE_EMAILS: string;
   SESSION_COOKIE: string;
   SESSION_DAYS: string;
   NEW_USER_ALL_TEAMS: string;

@@ -1,5 +1,6 @@
 // src/bootGuard.ts — the server boots only inside a compose stack (retire-host-dev D1), with
-// sign-in configured (require-login D1) and a bootstrap owner named (owner-bootstrap D8).
+// sign-in configured (require-login D1) and a bootstrap owner named (owner-bootstrap D8). An
+// approved-users entry must be ASCII (run-status-and-sweeper D9).
 // The stacks set AUTOLOGGER_STACK (docker/secrets-env.yaml), an absolute DATA_DIR and the catalog's
 // PG* settings (catalog-on-postgres D2); a host run has none. Messages name variables only, never
 // their values.
@@ -49,6 +50,11 @@ export function checkBootEnv(env: Record<string, string | undefined>): string | 
   }
   if ([...owner].some((ch) => (ch.codePointAt(0) ?? 0) > 0x7f)) {
     return 'BOOTSTRAP_OWNER_EMAIL has a non-ASCII character (the bootstrap owner match is exact ASCII; fix it in OpenBao, see docs/openbao-secrets.md).';
+  }
+  // run-status-and-sweeper D9: the approved-users list is optional, and matched as exact ASCII.
+  const runFeature = env.RUN_FEATURE_EMAILS ?? '';
+  if ([...runFeature].some((ch) => (ch.codePointAt(0) ?? 0) > 0x7f)) {
+    return 'RUN_FEATURE_EMAILS has a non-ASCII character (the approved-users match is exact ASCII; fix it in OpenBao, see docs/openbao-secrets.md).';
   }
   return null;
 }
