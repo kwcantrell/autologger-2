@@ -5,6 +5,7 @@ import { mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { sweepStaleYoutubeImportTempDirs } from '@autologger/media-import';
+import type { Clock } from '@autologger/ports';
 import {
   SESSION_COMMANDS,
   SESSION_FRAME_TYPES,
@@ -31,6 +32,9 @@ import { systemClock } from './systemClock';
  * listener, in every process sharing the database. Only `main.ts` chooses `'postgres'`. */
 export interface CreateBindingsOptions {
   frameBus?: 'local' | 'postgres';
+  /** The Postgres bus's clock for its send times and replay checks (session-frame-bus D2); the
+   * system clock unless a test injects one. */
+  frameBusClock?: Clock;
 }
 
 export function createBindings(
@@ -93,6 +97,7 @@ export function createBindings(
           secret: busSecret,
           frameTypes: SESSION_FRAME_TYPES,
           commands: SESSION_COMMANDS,
+          clock: options.frameBusClock ?? clock,
         });
   const registry = new SessionHubRegistry({
     storage: (id) => sessions.forSession(id),

@@ -14,11 +14,14 @@
 //   process closes its session sockets with `1012`, once per loss, and the clients reconnect and
 //   re-read (D6).
 //
-// Every message is signed and checked (D2, `frameBusEnvelope.ts`).
+// Every message is signed and checked, and checked against replays from the first LISTEN on (D2,
+// `frameBusEnvelope.ts`).
 
+import type { Clock } from '@autologger/ports';
 import postgres from 'postgres';
 import {
   type FrameBusMessage,
+  FrameBusReplayGuard,
   type FrameBusRules,
   FrameBusSealer,
   openFrameBusMessage,
@@ -52,6 +55,8 @@ export interface PostgresFrameBusOptions extends FrameBusRules {
   secret: string;
   /** Drop and failure lines; never a payload. */
   log?: (line: string) => void;
+  /** Send times and replay checks (D2); the real clock by default, injectable for tests. */
+  clock?: Clock;
 }
 
 interface ListenerState {
@@ -60,6 +65,7 @@ interface ListenerState {
 
 export class PostgresFrameBus {
   private readonly sealer: FrameBusSealer;
+  private readonly guard: FrameBusReplayGuard;
   private readonly secret: string;
   private readonly rules: FrameBusRules;
   private readonly log: (line: string) => void;
@@ -73,7 +79,8 @@ export class PostgresFrameBus {
   private stopped = false;
 
   constructor(opts: PostgresFrameBusOptions) {
-    this.sealer = new FrameBusSealer(opts.secret);
+    this.sealer = new FrameBusSealer(opts.secret, opts.clock);
+    this.guard = new FrameBusReplayGuard(opts.clock);
     this.secret = opts.secret;
     this.rules = { frameTypes: [...opts.frameTypes], commands: [...opts.commands] };
     this.log = opts.log ?? ((line) => console.warn(line));
@@ -114,6 +121,8 @@ export class PostgresFrameBus {
 
   private onListen(): void {
     this.listens += 1;
+    // D2: messages sent before the first LISTEN are dropped; no socket can attach before it.
+    if (this.listens === 1) this.guard.listening();
     if (this.listens === 1 || this.stopped) return;
     // D6: a re-listen follows a loss; frames sent meanwhile are gone, so the clients re-read.
     this.log(
@@ -127,7 +136,7 @@ export class PostgresFrameBus {
   }
 
   private onMessage(payload: string): void {
-    const opened = openFrameBusMessage(payload, this.secret, this.rules);
+    const opened = openFrameBusMessage(payload, this.secret, this.rules, this.guard);
     if (!opened.ok) {
       this.log(`frame bus: dropped ${opened.reason}`);
       return;

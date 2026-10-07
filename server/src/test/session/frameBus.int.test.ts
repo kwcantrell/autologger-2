@@ -13,6 +13,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { Clock } from '@autologger/ports';
 import { type SessionHubEntry, systemCaller } from '@autologger/session-core';
 import { type ServerType, serve } from '@hono/node-server';
 import { createNodeWebSocket } from '@hono/node-ws';
@@ -40,8 +41,9 @@ afterEach(async () => {
   }
 });
 
-/** One server process on the test database, with the Postgres bus started. */
-async function process_(): Promise<Made> {
+/** One server process on the test database, with the Postgres bus started; `frameBusClock` is the
+ * bus's injected clock (session-frame-bus D2). */
+async function process_(frameBusClock?: Clock): Promise<Made> {
   const db = testDatabase();
   const dir = mkdtempSync(join(tmpdir(), 'autologger-bus-'));
   const m = createBindings(
@@ -62,7 +64,7 @@ async function process_(): Promise<Made> {
       PGDATABASE: db.database,
       FRAME_BUS_SECRET: SECRET,
     },
-    { frameBus: 'postgres' },
+    { frameBus: 'postgres', frameBusClock },
   );
   made.push({ m, dir });
   await m.startFrameBus();
@@ -261,6 +263,69 @@ describe('the Postgres frame bus across two processes (session-frame-bus D3)', (
       warn.mockRestore();
     }
   });
+
+  it('a replayed message is dropped, right away and 31 s later, and both drops are logged (D2)', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    // One injected clock for both processes: real time plus an offset the test advances.
+    let offset = 0;
+    const clock: Clock = { now: () => Date.now() + offset };
+    const admin = postgres({
+      ...connOptions('postgres', testDatabase().database),
+      max: 1,
+      onnotice: () => {},
+    });
+    try {
+      const id = await createSessionRow();
+      const [a, b] = [await process_(clock), await process_(clock)];
+      const onA = socket();
+      const onB = socket();
+      const hubA = await hubOf(a, id);
+      hubA.attachSocket(onA, 'browser');
+      (await hubOf(b, id)).attachSocket(onB, 'browser');
+      // Another database role captures the signed command off the channel.
+      const captured: string[] = [];
+      const capture = await admin.listen('autologger_session_frames', (p) => {
+        if (p.includes('record-start')) captured.push(p);
+      });
+      hubA.broadcastCommand('record-start');
+      await until(
+        () => captured.length === 1 && onA.frames.length === 1 && onB.frames.length === 1,
+      );
+      await capture.unlisten();
+      const replay = async () => {
+        await admin`select pg_notify('autologger_session_frames', ${captured[0] ?? ''})`;
+      };
+      const sentinel = async (command: string, frames: number) => {
+        // A genuine command after the replay: once it arrives, the replay was handled.
+        hubA.broadcastCommand(command);
+        await until(() => onA.frames.length === frames && onB.frames.length === frames);
+      };
+      await replay();
+      await sentinel('play-toggle', 2);
+      offset = 31_000;
+      await replay();
+      await sentinel('record-stop', 3);
+      for (const s of [onA, onB]) {
+        expect(s.frames).toEqual([
+          { type: 'command', command: 'record-start' },
+          { type: 'command', command: 'play-toggle' },
+          { type: 'command', command: 'record-stop' },
+        ]);
+      }
+      const lines = warn.mock.calls.map((c) => c.join(' '));
+      // Each receiving process logs each drop once: A and B, right away and 31 s later.
+      expect(lines.filter((l) => l.includes('frame bus: dropped replayed message'))).toHaveLength(
+        2,
+      );
+      const stale = lines.filter((l) => l.includes('frame bus: dropped stale message'));
+      expect(stale).toHaveLength(2);
+      for (const l of stale) expect(l).toMatch(/skew 3\d{4} ms/);
+      expect(lines.join('\n')).not.toContain('record-start');
+    } finally {
+      await admin.end();
+      warn.mockRestore();
+    }
+  }, 30_000);
 });
 
 const servers: ServerType[] = [];

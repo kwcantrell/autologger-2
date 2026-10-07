@@ -86,12 +86,17 @@ These live in the forge, not the repo, so the template can't apply them:
   keep a revoked user's socket open. The defence: every message is HMAC-SHA256-signed with
   `FRAME_BUS_SECRET`, a server-only secret of at least 32 characters held in OpenBao, and
   receivers drop and log (`frame bus: dropped <reason>`, never the payload) any message whose
-  signature, version, frame type, command or close code is wrong. **Residuals:** the secret sits
-  in the app process's environment, readable like `PGPASSWORD` above, and anything holding it can
-  forge messages; a database login can `LISTEN` and re-send a captured signed message, since
-  receivers don't reject a repeated sequence number (a replayed frame only makes clients re-read
-  and a replayed close re-closes, but a replayed `command` repeats that record/play action); a flood of
-  forged notifications costs each process a signature check per message and can fill the
+  signature, version, frame type, command or close code is wrong. A database login can also
+  `LISTEN` and re-send a captured signed message, so each message carries its sending bus's id and
+  send time under the signature, and a receiver drops and logs a message sent before its own first
+  `LISTEN`, a message other than a close sent more than 30 s before or after its clock (logged with
+  the skew), and a bus id and sequence number it already accepted in the last 60 s. A replayed
+  frame or `command` therefore never reaches a socket. This assumes the server processes keep
+  their clocks within a few seconds of each other (NTP); a skew over 30 s drops real frames until
+  it is fixed. A close is exempt from the 30 s check so skew never leaves a revoked user's socket
+  open; a replayed close inside its window only disconnects that user's sockets again.
+  **Residuals:** the secret sits in the app process's environment, readable like `PGPASSWORD`
+  above, and anything holding it can forge messages; a flood of forged notifications costs each process a signature check per message and can fill the
   notification queue, which fails writes. Rotation needs every process restarted together.
 - PUBLIC keeps `CONNECT` on every database and `TEMP` on `postgres`, so `autologger_app` can
   connect to databases where it has no grants and create session-local temp tables. Revoking
