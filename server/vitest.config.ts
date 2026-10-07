@@ -7,6 +7,10 @@ import { defineConfig } from 'vitest/config';
 //   via setup.int.ts (catalog-on-postgres D6; needs a docker daemon).
 // - pg: `*.pg.test.ts`, against the pinned supabase/postgres image started by
 //   ../test/pg/globalSetup.ts (catalog-pg-schema design D6; needs a docker daemon).
+// SKIP_DB_TESTS=1 leaves out integration and pg; the lifecycle gate sets it when no
+// db_test_paths changed (ci-db-test-selection D2).
+const skipDbTests = process.env.SKIP_DB_TESTS === '1';
+
 export default defineConfig({
   test: {
     projects: [
@@ -18,26 +22,30 @@ export default defineConfig({
           environment: 'node',
         },
       },
-      {
-        test: {
-          name: 'integration',
-          include: ['src/**/*.int.test.ts'],
-          environment: 'node',
-          setupFiles: ['./src/test/setup.int.ts'],
-          globalSetup: ['./src/test/pgIntegrationSetup.ts'],
-          hookTimeout: 600_000,
-        },
-      },
-      {
-        test: {
-          name: 'pg',
-          include: ['src/**/*.pg.test.ts'],
-          environment: 'node',
-          globalSetup: ['../test/pg/globalSetup.ts'],
-          hookTimeout: 600_000,
-          testTimeout: 30_000,
-        },
-      },
+      ...(skipDbTests
+        ? []
+        : [
+            {
+              test: {
+                name: 'integration',
+                include: ['src/**/*.int.test.ts'],
+                environment: 'node',
+                setupFiles: ['./src/test/setup.int.ts'],
+                globalSetup: ['./src/test/pgIntegrationSetup.ts'],
+                hookTimeout: 600_000,
+              },
+            },
+            {
+              test: {
+                name: 'pg',
+                include: ['src/**/*.pg.test.ts'],
+                environment: 'node',
+                globalSetup: ['../test/pg/globalSetup.ts'],
+                hookTimeout: 600_000,
+                testTimeout: 30_000,
+              },
+            },
+          ]),
     ],
   },
 });

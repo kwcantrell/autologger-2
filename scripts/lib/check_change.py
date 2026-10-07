@@ -89,8 +89,9 @@ def load_config() -> dict:
     return (data or {}).get("lifecycle") or {}
 
 
-# Settings that exempt files from gates. A PR can change them, but its own gates use the base's.
-EXEMPTION_KEYS = ("managed_paths", "test_globs")
+# Settings that exempt files from gates (or tests). A PR can change them, but its own gates use the
+# base's.
+EXEMPTION_KEYS = ("managed_paths", "test_globs", "db_test_paths")
 
 
 def with_base_exemptions(cfg: dict, base: str | None) -> dict:
@@ -511,22 +512,55 @@ def check_openspec(ctx: Context):
     return "PASS", "openspec validate --strict"
 
 
+def db_selection(ctx: Context) -> tuple[bool, str]:
+    """(run the pg/integration tests?, why). Anything unclear means run (ci-db-test-selection D3)."""
+    if os.environ.get("FULL_TESTS") == "1":
+        return True, "FULL_TESTS=1"
+    event = os.environ.get("GITHUB_EVENT_NAME")
+    if ctx.in_ci and event != "pull_request":
+        return True, f"CI event {event or 'unknown'} is not a pull request"
+    if not ctx.base:
+        return True, "no base"
+    paths = ctx.cfg.get("db_test_paths")
+    paths = [p for p in paths if isinstance(p, str)] if isinstance(paths, list) else []
+    if not paths:
+        return True, "no db_test_paths on the base"
+    hit = next((f for f in ctx.changed if matches(f, paths)), None)
+    if hit:
+        return True, f"{hit} matches db_test_paths"
+    return False, "no db_test_paths changed"
+
+
+def test_env(ctx: Context) -> tuple[dict[str, str], str]:
+    """The test command's environment, and a note saying which DB tests it runs."""
+    env = {k: v for k, v in os.environ.items() if k != "SKIP_DB_TESTS"}  # never inherited
+    if ctx.in_ci and os.environ.get("DB_TESTS_IN_SHARDS") == "1":  # CI runs them in db-shard (D5)
+        return {**env, "SKIP_DB_TESTS": "1"}, "pg/integration: db-tests job"
+    run, reason = db_selection(ctx)
+    if not run:
+        return {**env, "SKIP_DB_TESTS": "1"}, f"pg/integration skipped: {reason}"
+    return env, f"full: {reason}"
+
+
 def run_commands(ctx: Context, names: list[str]):
     cmds = ctx.cfg.get("commands") or {}
-    ran, empty = [], []
+    ran, empty, note = [], [], ""
     for name in names:
         cmd = (cmds.get(name) or "").strip()
         if not cmd:
             empty.append(name)
             continue
-        r = subprocess.run(cmd, shell=True, cwd=ROOT, capture_output=True, text=True)
+        env = None
+        if name == "test":
+            env, note = test_env(ctx)
+        r = subprocess.run(cmd, shell=True, cwd=ROOT, capture_output=True, text=True, env=env)
         if r.returncode != 0:
             tail = "\n".join((r.stdout + r.stderr).strip().splitlines()[-30:])
-            return "FAIL", f"`{cmd}` exited {r.returncode}:\n{tail}"
+            return "FAIL", f"`{cmd}` exited {r.returncode}" + (f" ({note})" if note else "") + f":\n{tail}"
         ran.append(name)
     if empty and not ran:
         return "WARN", f"no commands configured for {empty} in lifecycle.commands"
-    return "PASS", f"ran {ran}" + (f"; not configured: {empty}" if empty else "")
+    return "PASS", f"ran {ran}" + (f" ({note})" if note else "") + (f"; not configured: {empty}" if empty else "")
 
 
 CHECKS = {
@@ -561,6 +595,8 @@ def main() -> int:
     ap.add_argument("--only", help="comma-separated checks to run")
     ap.add_argument("--base", help="base ref (default: PR base, origin/main or main)")
     ap.add_argument("--quiet", action="store_true", help="print failures only")
+    ap.add_argument("--db-selection", action="store_true",
+                    help="print `run: <why>` or `skip: <why>` for the pg/integration tests, run no gates")
     args = ap.parse_args()
 
     if args.only is not None:
@@ -579,6 +615,10 @@ def main() -> int:
     ctx.stage = "custom" if args.only else args.stage
     ctx.cfg = with_base_exemptions(ctx.cfg, ctx.base)
     ctx.changed = changed_files(ctx.base)
+    if args.db_selection:  # one line on stdout; CI's db-shard parses it (ci-db-test-selection D5)
+        run, reason = db_selection(ctx)
+        print(f"{'run' if run else 'skip'}: {reason}")
+        return 0
     # Local override, e.g. LIFECYCLE_OVERRIDE="tests_with_code: generated client"; CI uses PR labels.
     if os.environ.get("LIFECYCLE_OVERRIDE") and not ctx.in_ci:
         ctx.overrides = {os.environ["LIFECYCLE_OVERRIDE"].split(":")[0].strip()}
@@ -599,7 +639,8 @@ def main() -> int:
         else:
             status, msg = CHECKS[name](ctx)
         failed |= status == "FAIL"
-        if not args.quiet or status == "FAIL" or (status == "WARN" and name == "yaml"):
+        skipped_db = name == "commands" and "pg/integration skipped" in msg
+        if not args.quiet or status == "FAIL" or (status == "WARN" and name == "yaml") or skipped_db:
             print(f"{status:<4}  {name:<16} {msg}")
     return 1 if failed else 0
 

@@ -6,25 +6,28 @@ the old behavior before the change and the new behavior after it.
 
 ## 1. Vitest configs honor SKIP_DB_TESTS
 
-- [ ] 1.1 Baseline. The per-project timings were measured before approval and are in design.md's
+- [x] 1.1 Baseline. The per-project timings were measured before approval and are in design.md's
   Assumptions table. This task records them as evidence and characterizes the one baseline
   failure: run `npx vitest run --project integration src/test/session/crossProcess.int.test.ts`
   in `server/` 5 times on `origin/supabase-migration` and record pass/fail counts. Fixing that
   test is out of scope. If it also fails in the CI shards (tasks 3.4, 5.2), stop and raise it with
   the owner rather than retrying it green. Check: the evidence lists the timing row and the 5
   results.
-- [ ] 1.2 `server/vitest.config.ts` and `packages/storage/vitest.config.ts` drop their
+  Evidence: timings (design.md Assumptions, measured 2026-10-07 on `origin/supabase-migration` 415cca6b plus artifacts): server unit 21s, integration 511s (rc=1), pg 35s; storage unit 2s, pg 51s; web 49s; typecheck 24s; full `npm test` 502s (rc=1; the `&&` chain stops after `server`). The integration failure was a re-run of `--project integration` -> `FAIL |integration| src/test/session/crossProcess.int.test.ts > two processes on one session > concurrent writes from two processes leave the last committed state in the catalog`, `Error: Test timed out in 5000ms.`, `Tests 1 failed | 1228 passed (1229)`. Isolated, 5 runs of `npx vitest run --project integration src/test/session/crossProcess.int.test.ts` (this branch; the vitest config edits are inert without `SKIP_DB_TESTS`) -> `Tests 3 passed (3)` 5/5, 34-39s each. So it times out only under full-suite load.
+- [x] 1.2 `server/vitest.config.ts` and `packages/storage/vitest.config.ts` drop their
   `integration`/`pg` projects when `SKIP_DB_TESTS=1`. Before: `SKIP_DB_TESTS=1 npx vitest run
   --project pg` in `packages/storage` runs the pg tests. After: vitest reports that no project
   matched, and `SKIP_DB_TESTS=1 npx vitest run` in `server/` runs only `unit`. Without the variable,
   `npx vitest run --project pg` still runs. Also passes `npm run typecheck`.
+  Evidence: before, `SKIP_DB_TESTS=1 npx vitest list --project pg --filesOnly` (storage) -> 3 `[pg]` files, rc=0; `SKIP_DB_TESTS=1 npx vitest list --filesOnly` (server) -> `89 integration / 12 pg / 34 unit`. After, storage `SKIP_DB_TESTS=1 npx vitest run --project pg` -> `Error: No projects matched the filter "pg".` rc=1; without the variable, storage lists 3 `[pg]` files; server with the variable lists `34 unit` only, and `SKIP_DB_TESTS=1 npx vitest run` -> `Test Files 32 passed | 2 skipped (34)`; server without it -> `89 integration / 12 pg / 34 unit`; `npm run typecheck` rc=0; `biome check` on the storage config -> no fixes.
 
 ## 2. The commands gate selects
 
-- [ ] 2.1 Add `db_test_paths` to `openspec/config.yaml` (the D1 list) and to `EXEMPTION_KEYS` in
+- [x] 2.1 Add `db_test_paths` to `openspec/config.yaml` (the D1 list) and to `EXEMPTION_KEYS` in
   `scripts/lib/check_change.py`. Check: `scripts/check-change.sh --only yaml,openspec` passes, and
   `git grep -n db_test_paths` shows the config key and the `EXEMPTION_KEYS` entry.
-- [ ] 2.2 The `commands` gate applies D3. It sets `SKIP_DB_TESTS=1` for `test` only when every
+  Evidence: `scripts/check-change.sh --only yaml,openspec` -> `PASS yaml 105 YAML file(s) parse`, `PASS openspec openspec validate --strict`; `git grep -n db_test_paths -- openspec/config.yaml scripts/` -> `openspec/config.yaml:57:  db_test_paths:`, `scripts/lib/check_change.py:94:EXEMPTION_KEYS = ("managed_paths", "test_globs", "db_test_paths")`
+- [x] 2.2 The `commands` gate applies D3. It sets `SKIP_DB_TESTS=1` for `test` only when every
   condition holds, strips an inherited `SKIP_DB_TESTS` otherwise, and names the outcome in its
   message. Check, on a scratch branch off this one, with `--base` pointing at a commit whose config
   already has the list:
@@ -36,23 +39,25 @@ the old behavior before the change and the new behavior after it.
   - `--stage hook --quiet` on the `web/` diff still prints the `commands` skip line.
   Before the change, all six give `ran ['typecheck', 'test']` (or print nothing under `--quiet`)
   with no qualifier.
-- [ ] 2.3 With `--base origin/supabase-migration` (no `db_test_paths` on that base), the gate runs
+  Evidence: scratch clone of this branch, base commit = branch + stub `commands` (`test` writes `${SKIP_DB_TESTS:-unset}` to a file, `typecheck: 'true'`) + the D1 list; runner `scratchpad/scen.sh`. Before (old checker): web-only, server, FULL_TESTS, push CI -> `ran ['typecheck', 'test']; not configured: ['lint']`, test saw `unset` in all four; server + exported `SKIP_DB_TESTS=1` -> test saw `1` (the leak); `--stage hook --quiet` printed nothing. After: web-only -> `(pg/integration skipped: no db_test_paths changed)`, saw `1`; server -> `(full: server/src/x.ts matches db_test_paths)`, saw `unset`; web + `FULL_TESTS=1` -> `(full: FULL_TESTS=1)`, `unset`; web + `CI=1 GITHUB_EVENT_NAME=push` -> `(full: CI event push is not a pull request)`, `unset`; server + exported `SKIP_DB_TESTS=1` -> `(full: ...)`, saw `unset` (stripped, so the pg project runs per 1.2); web `--stage hook --quiet` -> prints `PASS commands ... (pg/integration skipped: no db_test_paths changed)`.
+- [x] 2.3 With `--base origin/supabase-migration` (no `db_test_paths` on that base), the gate runs
   the full suite. Check: `scripts/check-change.sh --only commands --base origin/supabase-migration`
   shows `full`.
-
-- [ ] 2.4 `scripts/check-change.sh --db-selection` prints `run: <reason>` or `skip: <reason>` from
+  Evidence: real repo `env -u CI scripts/check-change.sh --base origin/supabase-migration --db-selection` -> `run: no db_test_paths on the base`, rc=0. Scratch, base = branch tip before the list (`git show $B:openspec/config.yaml | grep -c db_test_paths` -> 0), web-only diff, `--only commands` -> `(full: no db_test_paths on the base)`, test saw `unset`. (The real-repo `--only commands` form would run the full 10-minute suite; the scratch form runs the same code path with stub commands.)
+- [x] 2.4 `scripts/check-change.sh --db-selection` prints `run: <reason>` or `skip: <reason>` from
   the same function the `commands` gate uses, runs no gates, and exits 0. Check, on the scratch
   setup from 2.2: the `web/`-only diff prints `skip: no db_test_paths changed`, the `server/` diff
   prints `run: server/... matches db_test_paths`, and `FULL_TESTS=1` prints `run: FULL_TESTS=1`.
   In every case stdout is exactly one line (`| wc -l` -> 1), and no gate or `change` line is
   printed. Before: `--db-selection` is an unknown argument (exit 2).
-- [ ] 2.5 With `CI=1 DB_TESTS_IN_SHARDS=1`, the `commands` gate runs the test command with
+  Evidence: before, `--db-selection` -> `check_change.py: error: unrecognized arguments: --db-selection`, rc=2. After (scratch): web-only -> `[skip: no db_test_paths changed] lines=1 rc=0`; server -> `[run: server/src/x.ts matches db_test_paths] lines=1 rc=0`; `FULL_TESTS=1` -> `[run: FULL_TESTS=1] lines=1 rc=0`; no gate or `change` line on stdout.
+- [x] 2.5 With `CI=1 DB_TESTS_IN_SHARDS=1`, the `commands` gate runs the test command with
   `SKIP_DB_TESTS=1` on any diff and reports `(pg/integration: db-tests job)`. Without `CI`,
   `DB_TESTS_IN_SHARDS` is ignored. Check: on the `server/` diff, `CI=1 DB_TESTS_IN_SHARDS=1
   GITHUB_EVENT_NAME=pull_request scripts/check-change.sh --only commands` shows the `db-tests job`
   message, and `DB_TESTS_IN_SHARDS=1 scripts/check-change.sh --only commands` (no `CI`) shows
   `full`.
-
+  Evidence (scratch, server diff): `CI=1 GITHUB_EVENT_NAME=pull_request DB_TESTS_IN_SHARDS=1 --only commands` -> `(pg/integration: db-tests job)`, test saw `1`; `DB_TESTS_IN_SHARDS=1` without `CI` -> `(full: server/src/x.ts matches db_test_paths)`, saw `unset`; push form `CI=1 GITHUB_EVENT_NAME=push FULL_TESTS=1 DB_TESTS_IN_SHARDS=1 --only commands,audit` -> `(pg/integration: db-tests job)`, rc=0.
 ## 3. CI runs the full suite after merge, sharded
 
 - [ ] 3.1 `.github/workflows/lifecycle.yml`: `push.branches: [main, supabase-migration]`. A push to
