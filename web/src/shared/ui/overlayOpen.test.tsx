@@ -38,4 +38,14 @@ describe('isOverlayOpen', () => {
     const other = document.createElement('div');
     expect(isOverlayOpen(other)).toBe(false);
   });
+  it('looks past the one overlay named by `except`, and only that one', () => {
+    const view = document.createElement('div');
+    view.setAttribute('role', 'dialog');
+    view.setAttribute('data-slot', 'settings-view');
+    document.body.appendChild(view);
+    expect(isOverlayOpen(document, '[data-slot="settings-view"]')).toBe(false);
+    expect(isOverlayOpen()).toBe(true);
+    add('menu');
+    expect(isOverlayOpen(document, '[data-slot="settings-view"]')).toBe(true);
+  });
 });

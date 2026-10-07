@@ -1,12 +1,15 @@
 import type * as React from 'react';
 import { cn } from '@/shared/lib/utils';
 
+// Local edit (redesign-show-ignition 6.4): the bare `border` takes `border-border`, since Tailwind
+// v4's default border colour is `currentColor` and the card's edge rendered in the text colour.
+
 function Card({ className, ...props }: React.ComponentProps<'div'>) {
   return (
     <div
       data-slot="card"
       className={cn(
-        'flex flex-col gap-6 rounded-card border bg-card py-6 text-card-foreground',
+        'flex flex-col gap-6 rounded-card border border-border bg-card py-6 text-card-foreground',
         className,
       )}
       {...props}

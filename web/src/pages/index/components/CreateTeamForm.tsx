@@ -8,7 +8,7 @@ import { Input } from '../../../shared/components/ui/input';
 
 // --- CreateTeamForm (teams-self-serve, task 6.1) ---
 //
-// Lives in its own module rather than inside `TeamsRoute.tsx` for a bundling
+// Lives in its own module rather than inside the (since retired) `TeamsRoute.tsx` for a bundling
 // reason (bundle route-splitting, plan C5.3): it has two consumers — the
 // `/teams` page and `OnboardingPanel` — and `OnboardingPanel` is part of the
 // eagerly-loaded homepage graph (AppShell early-returns to it for a logged-in

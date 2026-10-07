@@ -1,5 +1,6 @@
 import { fireEvent, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { apiFetch } from '../../api/client';
 import { useProfile } from '../../api/hooks/useProfile';
 import type { ProfilePayload } from '../../api/types';
 import { renderStrict } from '../../test/renderStrict';
@@ -15,6 +16,11 @@ import { RootGate } from './RootGate';
 
 vi.mock('../../api/hooks/useProfile', () => ({
   useProfile: vi.fn(),
+}));
+
+vi.mock('../../api/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../api/client')>()),
+  apiFetch: vi.fn(),
 }));
 
 vi.mock('./AppShell', () => ({
@@ -126,6 +132,25 @@ describe('RootGate', () => {
 
     expect(screen.getByTestId('login-page-sentinel')).not.toBeNull();
     expect(screen.queryByTestId('app-shell-sentinel')).toBeNull();
+  });
+
+  // team-management "Teams management page": "Signed-out visitor gets the login view" — `/teams`
+  // signed out is the login view, never an anonymous teams notice, and it asks nothing of
+  // `/api/teams/*` (the Settings view that `/teams` opens lives inside AppShell).
+  it('a signed-out /teams renders login with no /api/teams request', () => {
+    useMock({ data: profilePayload({ oauth_configured: true, logged_in: false }) });
+    window.history.replaceState(null, '', '/teams');
+    try {
+      renderStrict(<RootGate />);
+
+      expect(screen.getByTestId('login-page-sentinel')).not.toBeNull();
+      expect(screen.queryByTestId('app-shell-sentinel')).toBeNull();
+      expect(
+        vi.mocked(apiFetch).mock.calls.filter(([path]) => String(path).startsWith('teams')),
+      ).toEqual([]);
+    } finally {
+      window.history.replaceState(null, '', '/');
+    }
   });
 
   it('renders AppShell when logged in', () => {

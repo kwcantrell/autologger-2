@@ -1,15 +1,19 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, screen, waitFor, within } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ApiError, apiFetch } from '../../../api/client';
-import { useProfile } from '../../../api/hooks/useProfile';
-import type { ProfilePayload, TeamDetail, TeamMembershipBrief } from '../../../api/types';
-import { renderStrict } from '../../../test/renderStrict';
-import { setNavigationImplForTesting } from '../navigation';
-import { TeamsRoute } from './TeamsRoute';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { ApiError, apiFetch } from '../../../../api/client';
+import { useProfile } from '../../../../api/hooks/useProfile';
+import type { ProfilePayload, TeamDetail, TeamMembershipBrief } from '../../../../api/types';
+import { renderStrict } from '../../../../test/renderStrict';
+import { LegacyTeamsPanel } from './LegacyTeamsPanel';
 
-// --- TeamsRoute page tests (teams-self-serve, task 6.2; owner-bootstrap 8.2; spec:
+// --- LegacyTeamsPanel tests (teams-self-serve, task 6.2; owner-bootstrap 8.2; spec:
 // team-management "Teams management page") ---
+//
+// The retired `/teams` page body, now Settings › Members' interim content (redesign-show-ignition
+// 6.2); these are the TeamsRoute page tests moved with it. The page's own back-to-sessions button
+// went with the route: the Settings view's back control replaces it, and AppShell.test.tsx pins
+// that closing on `/teams` lands on `/`.
 //
 // Mocked at module boundaries (the SessionRoute.test.tsx idiom): `useProfile`
 // is replaced (this page reads the teams list + roles off it, and the real
@@ -19,12 +23,12 @@ import { TeamsRoute } from './TeamsRoute';
 // hooks and a REAL QueryClient, so invalidation-driven UI updates (the invite
 // round-trip, the owner 409) are exercised for real, not simulated.
 
-vi.mock('../../../api/hooks/useProfile', () => ({
+vi.mock('../../../../api/hooks/useProfile', () => ({
   useProfile: vi.fn(),
 }));
 
-vi.mock('../../../api/client', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../../api/client')>();
+vi.mock('../../../../api/client', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../../api/client')>();
   return { ...actual, apiFetch: vi.fn() };
 });
 
@@ -120,7 +124,7 @@ function renderPage(profile: ProfilePayload) {
   mockedUseProfile.mockReturnValue({ data: profile } as unknown as ReturnType<typeof useProfile>);
   return renderStrict(
     <QueryClientProvider client={makeClient()}>
-      <TeamsRoute />
+      <LegacyTeamsPanel />
     </QueryClientProvider>,
   );
 }
@@ -128,48 +132,19 @@ function renderPage(profile: ProfilePayload) {
 const teamsApiCalls = () =>
   mockedApiFetch.mock.calls.filter(([path]) => String(path).startsWith('teams'));
 
-let navRecord: string[] = [];
-
 beforeEach(() => {
   mockedApiFetch.mockReset();
-  navRecord = [];
-  setNavigationImplForTesting((path) => navRecord.push(path));
-});
-
-afterEach(() => {
-  setNavigationImplForTesting(null);
 });
 
 describe('no anonymous mode (require-login D8)', () => {
   it('renders no anonymous-mode panel and issues no /api/teams requests for a null user', () => {
     renderPage(signedOutProfile());
 
-    expect(screen.getByTestId('teams-route')).not.toBeNull();
+    expect(screen.getByTestId('legacy-teams-panel')).not.toBeNull();
     expect(document.getElementById('teams-signed-in-required')).toBeNull();
     expect(screen.queryByText(/sign in required/i)).toBeNull();
     expect(screen.queryByText(/anonymous mode/i)).toBeNull();
     expect(teamsApiCalls()).toHaveLength(0);
-  });
-});
-
-describe('back-to-sessions affordance (spec: "Teams page offers a way back in every state")', () => {
-  it('is present for a null user and navigates to / via the shared navigate wrapper', () => {
-    renderPage(signedOutProfile());
-
-    fireEvent.click(screen.getByRole('button', { name: /back to sessions/i }));
-    expect(navRecord).toEqual(['/']);
-  });
-
-  it('is present in the signed-in state and navigates to / via the shared navigate wrapper', () => {
-    renderPage(teamsProfile([{ id: 'team-a', name: 'Team A', role: 'admin' }]));
-
-    expect(screen.getByTestId('teams-list')).not.toBeNull();
-    // shadcn-port-shell D5: the shared outline Button.
-    expect(
-      screen.getByRole('button', { name: /back to sessions/i }).getAttribute('data-variant'),
-    ).toBe('outline');
-    fireEvent.click(screen.getByRole('button', { name: /back to sessions/i }));
-    expect(navRecord).toEqual(['/']);
   });
 });
 

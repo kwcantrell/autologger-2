@@ -28,7 +28,7 @@ function TabsList({
   className,
   variant = 'default',
   ...props
-}: React.ComponentProps<typeof TabsPrimitive.List> & { variant?: 'default' | 'line' }) {
+}: React.ComponentProps<typeof TabsPrimitive.List> & { variant?: 'default' | 'line' | 'nav' }) {
   return (
     <TabsPrimitive.List
       data-slot="tabs-list"
@@ -36,6 +36,7 @@ function TabsList({
       className={cn(
         'group/tabs-list flex min-w-0 flex-1 flex-nowrap items-end gap-[0.12rem]',
         variant === 'line' && 'gap-0.5 border-b border-border',
+        variant === 'nav' && 'flex-none flex-col items-stretch gap-0.5',
         className,
       )}
       {...props}
@@ -63,11 +64,27 @@ const TRIGGER_INACTIVE =
 const TRIGGER_LINE =
   'group-data-[variant=line]/tabs-list:-mb-px group-data-[variant=line]/tabs-list:rounded-none group-data-[variant=line]/tabs-list:border-0 group-data-[variant=line]/tabs-list:border-b-2 group-data-[variant=line]/tabs-list:border-solid group-data-[variant=line]/tabs-list:border-transparent group-data-[variant=line]/tabs-list:bg-transparent group-data-[variant=line]/tabs-list:px-3 group-data-[variant=line]/tabs-list:pt-[0.5625rem] group-data-[variant=line]/tabs-list:pb-2.5 group-data-[variant=line]/tabs-list:text-[0.8125rem] group-data-[variant=line]/tabs-list:tracking-[0.1em] group-data-[variant=line]/tabs-list:before:hidden group-data-[variant=line]/tabs-list:data-[state=active]:border-primary group-data-[variant=line]/tabs-list:data-[state=active]:bg-transparent group-data-[variant=line]/tabs-list:data-[state=inactive]:hover-always:border-transparent';
 
-function TabsTrigger({ className, ...props }: React.ComponentProps<typeof TabsPrimitive.Trigger>) {
+// Nav tabs (redesign-show-ignition D10; the preview's `.hubnav` rows): a vertical list of
+// sentence-case rows in the UI face, muted until hovered, the current one in the single selected
+// state (accent tint + 1px inset accent line; web-ui-system "One selected state everywhere").
+// Its own string, not overrides of the lid: none of the lid's border, padding or `::before` apply.
+const TRIGGER_NAV =
+  'flex w-full min-w-0 items-center rounded-ctl px-2.5 py-2 text-left font-ui text-sm font-medium whitespace-nowrap text-muted-foreground cursor-pointer transition-[color,background-color,box-shadow] duration-150 outline-none data-[state=inactive]:hover-always:bg-accent data-[state=inactive]:hover-always:text-foreground focus-visible:outline-2 focus-visible:[outline-color:var(--si-accent)] focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-45 data-[state=active]:bg-(--sel-bg) data-[state=active]:shadow-[inset_0_0_0_1px_var(--sel-line)] data-[state=active]:font-semibold data-[state=active]:text-foreground';
+
+function TabsTrigger({
+  className,
+  variant = 'default',
+  ...props
+}: React.ComponentProps<typeof TabsPrimitive.Trigger> & { variant?: 'default' | 'nav' }) {
   return (
     <TabsPrimitive.Trigger
       data-slot="tabs-trigger"
-      className={cn(TRIGGER_BASE, TRIGGER_ACTIVE, TRIGGER_INACTIVE, TRIGGER_LINE, className)}
+      className={cn(
+        variant === 'nav'
+          ? TRIGGER_NAV
+          : [TRIGGER_BASE, TRIGGER_ACTIVE, TRIGGER_INACTIVE, TRIGGER_LINE],
+        className,
+      )}
       {...props}
     />
   );

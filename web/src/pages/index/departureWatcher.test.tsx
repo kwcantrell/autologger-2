@@ -109,13 +109,11 @@ vi.mock('./components/YouTubeImportErrorModal', () => ({
   YouTubeImportErrorModal: () => null,
 }));
 
-// AppShell now mounts HomeSettingsModal directly, beside the route switch
-// (teams-settings-nav, design D1) — irrelevant to this file's departure/
-// transport-stop concern, and the real component would pull
-// useProfileMutation/useCreateShow off the useProfile module mock above,
-// which only stubs useProfile.
-vi.mock('./components/HomeSettingsModal', () => ({
-  HomeSettingsModal: () => null,
+// AppShell mounts the Settings view beside the route switch (redesign-show-ignition D3) —
+// irrelevant to this file's departure/transport-stop concern, and the real view would pull the
+// profile mutations off the useProfile module mock above, which only stubs useProfile.
+vi.mock('./components/settings/SettingsView', () => ({
+  SettingsView: () => null,
 }));
 
 function renderShell(initialPath = '/') {

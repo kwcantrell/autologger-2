@@ -7,6 +7,10 @@
  */
 const OVERLAY_SELECTOR = '[role="dialog"],[role="alertdialog"],[role="menu"]';
 
-export function isOverlayOpen(root: ParentNode = document): boolean {
-  return root.querySelector(OVERLAY_SELECTOR) !== null;
+export function isOverlayOpen(root: ParentNode = document, except?: string): boolean {
+  if (!except) return root.querySelector(OVERLAY_SELECTOR) !== null;
+  // `except` names one overlay to look past (the Settings view, for the two keys it lets
+  // through: the shell's `[` and its own Escape). Any other open overlay still counts.
+  for (const el of root.querySelectorAll(OVERLAY_SELECTOR)) if (!el.matches(except)) return true;
+  return false;
 }

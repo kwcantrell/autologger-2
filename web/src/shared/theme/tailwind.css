@@ -369,6 +369,9 @@
    * dialog overlay/content → popover → top-float (tooltip, select dropdown,
    * audio-save busy overlay) → toast. Intra-component stacking (small 1-30
    * values and the Timeline tooltip layers) stays local to each module. */
+  /* The Settings view (redesign-show-ignition D3): over the workspace in <main>, under the
+     phone rail sheet and every dialog layer. */
+  --z-settings-view: 1400;
   --z-rail-scrim: 1500;
   --z-rail-drawer: 1501;
   --z-dialog-overlay: 5000;
