@@ -540,6 +540,94 @@ describe('EventLogSheet marker reveal page growth', () => {
   });
 });
 
+// --- Feed count matches the rows shown (redesign-show-ignition D7, task 5.1) ---
+//
+// web-session-console "Feed count matches the rows shown": the heading counts the
+// whole filtered FETCHED set (before the `loadedLimit` render window), never
+// `logged_event_count`, which excludes internal events. A `+` follows when the
+// session holds more events than the workspace fetches (`total` > fetched).
+describe('EventLogSheet feed count', () => {
+  beforeAll(() => {
+    if (typeof window.IntersectionObserver !== 'undefined') return;
+    class StubIntersectionObserver {
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    }
+    window.IntersectionObserver =
+      StubIntersectionObserver as unknown as typeof IntersectionObserver;
+  });
+
+  function rowsFixture(count: number, category = 'general', from = 0): LogEvent[] {
+    return Array.from({ length: count }, (_, j) => {
+      const i = from + j;
+      return {
+        version: 1,
+        event_id: `ev-${i}`,
+        category,
+        category_label: category === 'internal' ? 'Internal' : 'General',
+        category_color: '#4488ff',
+        message: `note ${i}`,
+        timecode: '00:00:10:00',
+        timecode_total_frames: 240 + i * 24,
+        frame_rate: 24,
+        wall_time_utc: new Date(Date.UTC(2026, 6, 21, 0, 0, 10 + i)).toISOString(),
+        metadata: {},
+      };
+    });
+  }
+
+  function serve(events: LogEvent[], total = events.length, logged = events.length) {
+    mockedApiFetch.mockImplementation(async (path: string) => {
+      if (path.includes('/status')) return statusFixture();
+      if (path.includes('/show-categories')) {
+        return { categories: [categoryFixture()], show_name: '', show_code: '' };
+      }
+      if (path.includes('/events')) {
+        return { events, total, logged_event_count: logged, offset: 0, limit: 2000 };
+      }
+      throw new Error(`unexpected apiFetch call: ${path}`);
+    });
+  }
+
+  const heading = () => document.getElementById('v5-event-feed-head') as HTMLElement;
+
+  it('counts internal events while shown and drops them in the same render when hidden', async () => {
+    serve([...rowsFixture(2), ...rowsFixture(8, 'internal', 2)], 10, 2);
+    renderSheet();
+    await screen.findByText('note 9');
+    expect(heading().textContent).toBe('10 events');
+
+    openMenu(screen.getByRole('button', { name: 'Filter' }));
+    fireEvent.click(await screen.findByRole('menuitemcheckbox', { name: 'Internal' }));
+    expect(heading().textContent).toBe('2 events');
+    expect(screen.queryByText('note 9')).toBeNull();
+  });
+
+  it('counts the whole fetched set, not the 200 rows paged into the window', async () => {
+    serve(rowsFixture(450));
+    renderSheet();
+    await screen.findByText('note 0');
+    // Only the first page is rendered…
+    expect(document.querySelector('tr[data-event-id="ev-449"]')).toBeNull();
+    // …but the heading counts every fetched row the filters select.
+    expect(heading().textContent).toBe('450 events');
+  });
+
+  it('adds a trailing + when the session has more events than the workspace fetches', async () => {
+    serve(rowsFixture(WORKSPACE_EVENTS_LIMIT), 2600, 2600);
+    renderSheet();
+    await screen.findByText('note 0');
+    expect(heading().textContent).toBe('2000+ events');
+  });
+
+  it('uses the singular for one event', async () => {
+    renderSheet();
+    await screen.findByText('A logged note');
+    expect(heading().textContent).toBe('1 event');
+  });
+});
+
 // --- Version conflicts on batch save and delete (session-edit-conflicts task 6.2, D3/D9) ---
 //
 // A stateful server of three rows with 7c-1's version check: a stale `version`

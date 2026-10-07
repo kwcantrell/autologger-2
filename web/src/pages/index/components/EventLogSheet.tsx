@@ -402,7 +402,9 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
     [fetchedEvents, loadedLimit],
   );
   const total = data?.total ?? 0;
-  const loggedTotal = data?.logged_event_count ?? 0;
+  // `logged_event_count` is deliberately NOT read here: it excludes internal events, so it
+  // covers a different row set from the feed (web-session-console "Feed count matches the
+  // rows shown"). The heading counts `feedCount` below instead.
 
   // --- View state ---
   // Default direction is oldest-first across all three feeds (owner decision
@@ -645,20 +647,39 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
     };
   }, [inlineEdit]);
 
-  // Memoized (code-health-tail 4.8, perf only): the filter+sort re-ran on
-  // every render (each keystroke in an inline edit re-sorts the whole feed);
-  // keyed on its actual inputs, output unchanged.
-  const sorted = useMemo(() => {
+  // The feed's active filters as one predicate, shared by the rendered rows and the
+  // heading count so the two can never disagree about which events the filters select.
+  const isShown = useMemo(() => {
     // Only hide rows whose category is a known show button the operator
     // toggled off — orphan/unknown categories stay visible.
     const knownIds = new Set(categories.map((c) => c.id));
-    const filtered = events.filter((event) => {
+    return (event: LogEvent) => {
       if (!showInternal && event.category.toLowerCase() === 'internal') return false;
       if (knownIds.has(event.category) && hiddenCategoryIds.has(event.category)) return false;
       return true;
-    });
-    return doSortEvents(filtered, sortState, status);
-  }, [events, hiddenCategoryIds, categories, showInternal, sortState, status]);
+    };
+  }, [categories, hiddenCategoryIds, showInternal]);
+
+  // Heading count (redesign-show-ignition D7; web-session-console "Feed count matches the
+  // rows shown"): the WHOLE filtered fetched set — before the `loadedLimit` render window,
+  // so paging never caps it. "Capped" is read from the response, not guessed from the
+  // length: `total` is the session's whole event count (eventStore.listEvents counts every
+  // row, independent of limit/offset), so a fetch that returned fewer rows than `total`
+  // was cut off at WORKSPACE_EVENTS_LIMIT and the figure gets a trailing `+`.
+  const feedCount = useMemo(() => {
+    let n = 0;
+    for (const event of fetchedEvents) if (isShown(event)) n++;
+    return n;
+  }, [fetchedEvents, isShown]);
+  const fetchCapped = total > fetchedEvents.length;
+
+  // Memoized (code-health-tail 4.8, perf only): the filter+sort re-ran on
+  // every render (each keystroke in an inline edit re-sorts the whole feed);
+  // keyed on its actual inputs, output unchanged.
+  const sorted = useMemo(
+    () => doSortEvents(events.filter(isShown), sortState, status),
+    [events, isShown, sortState, status],
+  );
 
   // `rangeExtractor` runs inside the virtualizer's own measurement, outside the
   // React render it was created in, so it reads the current rendered order
@@ -1211,7 +1232,7 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
     { key: 'message', label: 'Message', sortKey: 'message', thClassName: 'min-w-48' },
   ];
 
-  const countLabel = `${loggedTotal} Event${loggedTotal !== 1 ? 's' : ''}`;
+  const countLabel = `${feedCount}${fetchCapped ? '+' : ''} event${feedCount === 1 && !fetchCapped ? '' : 's'}`;
 
   // Shared aria-disabled toolbar fragment (the a11y rationale — focusable
   // aria-disabled button + `aria-describedby` reason span — lives on
