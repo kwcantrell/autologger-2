@@ -12,6 +12,7 @@ import {
   createTestDatabase,
   testPg,
 } from '../../../../test/pg/testDb';
+import { readAppRoleWithLimitMigration } from './appRoleLimit';
 import { CONTENT_INSERT, seedPolicyFixture } from './policyFixture';
 import { holdRoleGuardLock } from './roleGuardLock';
 
@@ -595,10 +596,15 @@ describe('the app role (design D3)', () => {
   it('has only the designed attributes, limits and settings, and exactly the two memberships', async () => {
     const db = await createTestDatabase();
     const sql = connect(db.admin);
-    const [r] = await sql`
-      select rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls, rolcanlogin,
-             rolconnlimit, rolconfig
-      from pg_roles where rolname = 'autologger_app'`;
+    // session-frame-bus D8 category 2: the connection-limit migration (45) is re-applied and the
+    // role read in one transaction, since a parallel file replays the catalog schema's limit of 20.
+    const [r] = await readAppRoleWithLimitMigration(
+      sql,
+      (tx) => tx`
+        select rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls, rolcanlogin,
+               rolconnlimit, rolconfig
+        from pg_roles where rolname = 'autologger_app'`,
+    );
     expect(r).toMatchObject({
       rolsuper: false,
       rolcreatedb: false,
@@ -606,7 +612,7 @@ describe('the app role (design D3)', () => {
       rolreplication: false,
       rolbypassrls: false,
       rolcanlogin: true,
-      rolconnlimit: 20,
+      rolconnlimit: 45,
     });
     expect([...(r?.rolconfig ?? [])].sort()).toEqual([
       'idle_in_transaction_session_timeout=15s',

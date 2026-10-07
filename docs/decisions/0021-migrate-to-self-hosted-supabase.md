@@ -60,6 +60,10 @@ Postgres as the source of truth. Build it in slices on an integration branch, th
 - **Live updates:** Supabase Realtime replaces the WebSocket protocol. Whether Companion can join
   a Realtime channel is unknown. A spike decides this, and a Companion-only relay is the fallback.
   The slice 2 spike found that it can (ADR 0023, direct mode recommended for slice 9).
+  **Amended by slice 9a (owner, 2026-10-07):** the WebSocket protocol stays. A Postgres `NOTIFY`
+  bridge (the session frame bus) carries every frame to every server process, so the server can
+  run as several processes with the web and the Companion unchanged. Replacing the WebSocket with
+  Realtime is deferred, not planned.
 - **Blobs:** audio moves to Supabase Storage. Consumers that need a real file path spool the
   audio to scratch first.
 - **Operations:**
@@ -464,7 +468,9 @@ Slice order:
      the one server process. With several processes (slice 8's leases) or Realtime (slice 9),
      drive the close from the database: a row trigger with `pg_notify` and a `LISTEN`ing server,
      or Realtime RLS authorization. Spike first how promptly Realtime re-checks policies on a channel a client
-     has already joined.
+     has already joined. **Resolved by slice 9a:** the close is published on the session frame bus
+     inside the revoking transaction, so every process closes the sockets, and a revoke whose
+     close cannot be published fails and changes nothing; no trigger and no Realtime.
    - 6b-1 `catalog-roles`: every catalog statement runs as a user or a named system task, with
      row-level security on and policies that allow everything, so behaviour does not change.
      Implemented 2026-10-02 on `supabase-6b1-catalog-roles`. Owner decisions (owner, 2026-10-02):
@@ -822,7 +828,9 @@ Slice order:
    2. **serialization by row lock under `READ COMMITTED`:** every session write transaction
       first locks the session's `catalog.sessions` row (`FOR UPDATE`); a multi-statement read
       runs in one `REPEATABLE READ READ ONLY` snapshot. The in-process FIFO lock stays, to keep
-      broadcast order, until slice 9;
+      broadcast order, until slice 9 (slice 9a: frames are published inside the write
+      transaction and delivered from the frame bus listener, so broadcast order is the commit
+      order across processes; the FIFO lock stays for in-process serialization);
    3. **start empty,** as 4c did: the `sessions/*.db` files stay untouched for slice 11's
       import, and every existing session's live projection resets to an empty session's;
    4. **backups** (1.3) were never built: a cutover blocker, done as their own change before
@@ -866,7 +874,8 @@ Slice order:
 
    **The 7b hazards after 7b-1:**
    1. resolved: the row lock first and one snapshot per read; the FIFO lock also stays;
-   2. held in-process by the FIFO lock; carried to slice 9 for several processes;
+   2. held in-process by the FIFO lock; carried to slice 9 for several processes (slice 9a:
+      resolved for broadcast order, which is the commit order through the frame bus);
    3. S4/S5 resolved (the anchor re-checks inside its transaction); S1, S2, S7, S8 and S11
       carried, and their windows widen from one tick to any concurrent request: each response
       field is still one a serial order produces, with unchanged shapes and statuses;
@@ -1075,7 +1084,19 @@ Slice order:
      `'recording'` only. This is a documented step, not a migration file.
    - **Follow-ups for slice 9:** deployment-wide ceilings, a cross-process transcript status, and a
      sweeper for expired run rows.
-9. Realtime replaces the WebSocket protocol.
+9. Realtime replaces the WebSocket protocol. **Amended (owner, 2026-10-07):** slice 9 keeps the
+   WebSocket and runs as sub-slices; Realtime is deferred.
+   - 9a `session-frame-bus`: every session frame, relayed command and access-loss close travels
+     through a Postgres `NOTIFY` channel that every server process listens on. Write frames are
+     published inside the write transaction, so each socket gets a session's frames in commit
+     order; messages are HMAC-signed with `FRAME_BUS_SECRET`; access-loss closes are published in
+     the revoking transaction; a process closes its sockets with `1012` after its listener
+     re-listens; the app role's connection limit rises to 45 (14 per process, three processes).
+     Only `main.ts` uses the Postgres bus; tests keep the in-process bus. The topology stays one
+     replica.
+   - 9b per-process request state (log-import jobs, AI v2 answers, chat resume); 9c
+     deployment-wide ceilings, a cross-process transcript status and sweepers; 9d the Companion
+     device credential.
 10. Blobs to Supabase Storage.
 11. The import script, parity check, cutover runbook and rollback plan. It must not import users,
     memberships, prefs, invites or login sessions (slice 5a above).
@@ -1093,8 +1114,11 @@ Slice order:
 ## Consequences
 
 - Every slice is tier 2 (contracts, auth, concurrency, migrations).
-- The HTTP/WS contract changes: auth endpoints, WebSocket replaced by Realtime, and new `409`
-  conflicts. Each change needs a delta amending `api-contract-freeze`.
+- The HTTP/WS contract changes: auth endpoints and new `409` conflicts. The WebSocket stays
+  (slice 9a amends the Realtime replacement: cross-process `4403` closes and a `1012` close after
+  the frame bus listener comes back). Each change needs a delta amending `api-contract-freeze`.
+- From slice 9a every server process holds a Postgres listener and a publisher, and the stacks
+  hold one more secret, `FRAME_BUS_SECRET`, whose rotation restarts every process together.
 - The dev loop gains roughly 10 containers per stack. Offline native dev goes away.
 - Self-hosting makes backups, upgrades and secret rotation the owner's job.
 - Backups are a cutover blocker (owner, 2026-10-03): from slice 7b-1 session content is in

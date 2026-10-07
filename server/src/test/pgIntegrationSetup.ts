@@ -1,9 +1,10 @@
 // Test Postgres for the `integration` vitest project (catalog-on-postgres D6): the shared
 // test/pg global setup, then a higher connection limit for the app role in THIS container only.
 // Every integration test builds the server's own catalog adapter (up to 12 connections: 3 root,
-// 5 transaction and 4 session, session-tables D2) and vitest runs about 19 files at once, past the
-// role's production limit of 20. The `pg` project's container keeps 20, which
-// catalogSchema.pg.test.ts asserts.
+// 5 transaction and 4 session, session-tables D2; 14 with the Postgres frame bus's listener and
+// publisher, session-frame-bus D7) and vitest runs about 19 files at once, past the role's
+// production limit of 45. The `pg` project's container keeps 45, which catalogSchema.pg.test.ts
+// asserts.
 
 import postgres from 'postgres';
 import type { TestProject } from 'vitest/node';

@@ -96,6 +96,30 @@ refactor of this one.
   the transport updates the index's few live fields in the same transaction. Each hub call runs as
   its caller: the signed-in user (under the session content policies), or a reviewed system task
   for the hub's own open and lease alarm, token-only Companion calls and a request's undo steps.
+- **Live updates go through the session frame bus** (session-frame-bus, ADR 0021 slice 9a). Every
+  server process sharing the database listens on one Postgres `NOTIFY` channel
+  (`autologger_session_frames`), and every WebSocket frame travels through it:
+  - a write's frames are published with `pg_notify` inside its transaction, and every process,
+    the writer included, delivers them from its listener, so each socket gets a session's frames
+    in commit order whichever process wrote them;
+  - a relayed Companion `command` is published at once on the bus's own connection (contract
+    commands only, at most 10 per second per browser socket);
+  - an access-loss close (`4403`) is published inside the revoking transaction, so a revoke whose
+    close cannot be published fails and changes nothing;
+  - when a process's listener reconnects after a loss, it closes its session sockets with `1012`,
+    and the web reconnects and re-reads (frames sent while it was down are not replayed).
+
+  Every message is HMAC-signed with `FRAME_BUS_SECRET` (at least 32 characters, server-only), and
+  receivers drop unsigned or invalid ones. Rotating the secret means restarting **every process
+  together**: a process with the old key drops the new key's messages. `main.ts` is the only entry
+  point on the Postgres bus and refuses to boot without a valid secret; tests and other
+  `createBindings` callers keep the in-process bus. Watch `select pg_notification_queue_usage()`
+  (the fraction of Postgres's 8 GB notification queue in use): a full queue fails writes, and a
+  rising value means a listener has stopped reading.
+- **Connections per process: 14** — the catalog pool's 12 (3 root, 5 transaction, 4 session) plus
+  the frame bus's listener and publisher. The `autologger_app` role's limit, 45, counts every
+  process together, so it fits **three processes (42 of 45)**; a fourth needs the limit raised in
+  its own change. Postgres's 100 connections stay shared with the Supabase services and `migrate`.
 - **Filesystem blobs** = audio bytes under `DATA_DIR/blobs/audio/<session_id>/<ordinal>_<uuid>.<ext>`;
   the hub holds only metadata + relative keys. Download streams bytes back with HTTP range
   support (416 on unsatisfiable ranges).
@@ -483,7 +507,11 @@ DATA_DIR/
 
 ### Invariants (spec)
 
-- **Single Node process** — no clustering, no multi-worker fan-out.
+- **Writes and frames hold across processes; the topology is still one replica.** Session writes
+  lock their row and leases are database-backed, and frames reach every process through the frame
+  bus, in commit order. The stacks still run a single app replica (`container_name`, one Caddy
+  upstream, a local `DATA_DIR`); per-process request state (log-import jobs, AI v2 answers, chat
+  resume) moves in a later slice.
 - **SessionHub RPC bodies await only their own SQL** — a hub method awaits its statements
   inside its transaction (an in-process FIFO lock keeps one body per session at a time); all other
   async work (fetch, streaming, etc.) lives in the router layer, not the hub.
@@ -857,7 +885,9 @@ reaches a show only with a grant (the routes above). Without access:
   **404** `Session not found`, and `state`, `categories`, `log`, `transport` and `command` answer as
   if there were no active session (token-only calls are unchanged);
 - a revoke, a removal, a leave or a demotion to member closes the user's open session sockets on
-  sessions they no longer reach with close code **4403**; the reconnect gets the masked 404;
+  sessions they no longer reach with close code **4403**, in every server process sharing the
+  database (the close is published inside the revoking transaction); the reconnect gets the
+  masked 404;
 - the database enforces the same rule on session content for signed-in callers (row-level
   policies on the nine session tables): a request that passed the route's check and races a
   revoke gets the same masked answer (404, or the Companion's no-active-session answers) and leaves
@@ -979,6 +1009,7 @@ only: nothing reads `server/.env`. The stacks take values from OpenBao
 | `ADMIN_TOKEN` | *(empty)* | Bearer token gating the `/api/admin/*` routes (user + studio-definition admin). |
 | `SESSION_COOKIE` / `SESSION_DAYS` | `autologger_sid` / `14` | Session cookie name and lifetime (days). |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | *(required)* | Google OAuth credentials. The server refuses to boot when either, or `PUBLIC_BASE_URL`, is blank. |
+| `FRAME_BUS_SECRET` | *(required)* | Signs every session frame bus message (HMAC-SHA256, at least 32 characters, server-only; set in OpenBao). `main.ts` refuses to boot without it. Rotate it by restarting every process together. |
 | `BOOTSTRAP_OWNER_EMAIL` | *(required)* | The bootstrap owner's email. A sign-in whose verified Google email matches it (trimmed, ASCII case-insensitive) becomes owner of every team with no owner. The server refuses to boot when it is blank or non-ASCII, and logs it masked (domain plus a short hash). |
 
 **Config-gated feature keys** (each endpoint returns a frozen `503` until its key/binary is
