@@ -579,7 +579,10 @@ describe('workspace primitives (shadcn-port-workspace D1)', () => {
     expect(c.className).not.toContain('bg-input/30');
   });
 
-  it('dropdown checkbox and radio items: indicator, aria state, no selected tint', () => {
+  // Checkbox items carry no selected tint (web-session-console "Event filter checkmarks"); a
+  // checked radio item takes the one selected state (redesign-show-ignition; asserted in the
+  // Show Ignition block below), which this shadcn-leftover regex does not match.
+  it('dropdown checkbox and radio items: indicator, aria state, no shadcn tint leftovers', () => {
     render(
       <DropdownMenu open>
         <DropdownMenuTrigger>Open</DropdownMenuTrigger>
@@ -717,5 +720,53 @@ describe('Show Ignition primitives (redesign-show-ignition D10)', () => {
     expect(screen.getByRole('button', { name: 'Session one' }).getAttribute('data-active')).toBe(
       'true',
     );
+  });
+
+  // web-ui-system "One selected state everywhere": the pressed segmented control, the checked
+  // menu radio item and the active rail row share the accent tint and 1px inset line. Checkbox
+  // menu items stay checkmark-only (web-session-console "Event filter checkmarks").
+  it('one selected state: toggle item, menu radio item, active sidebar row', () => {
+    const SEL = ['bg-(--sel-bg)', 'shadow-[inset_0_0_0_1px_var(--sel-line)]'];
+    const { unmount } = render(
+      <SidebarProvider>
+        <Sidebar collapsible="icon">
+          <SidebarContent>
+            <SidebarMenu>
+              <SidebarMenuItem>
+                <SidebarMenuButton isActive>Active row</SidebarMenuButton>
+              </SidebarMenuItem>
+            </SidebarMenu>
+          </SidebarContent>
+        </Sidebar>
+        <ToggleGroup type="single" defaultValue="a" aria-label="Kind">
+          <ToggleGroupItem value="a">Pressed</ToggleGroupItem>
+        </ToggleGroup>
+      </SidebarProvider>,
+    );
+    const active = screen.getByRole('button', { name: 'Active row' }).className;
+    const pressed = (document.querySelector('[data-slot="toggle-group-item"]') as HTMLElement)
+      .className;
+    for (const c of SEL) {
+      expect(active).toContain(`data-[active=true]:${c}`);
+      expect(pressed).toContain(`data-[state=on]:${c}`);
+    }
+    unmount();
+    render(
+      <DropdownMenu open>
+        <DropdownMenuTrigger>Team</DropdownMenuTrigger>
+        <DropdownMenuContent>
+          <DropdownMenuRadioGroup value="a">
+            <DropdownMenuRadioItem value="a">Team A</DropdownMenuRadioItem>
+          </DropdownMenuRadioGroup>
+          <DropdownMenuCheckboxItem checked>Internal</DropdownMenuCheckboxItem>
+        </DropdownMenuContent>
+      </DropdownMenu>,
+    );
+    const radio = screen.getByRole('menuitemradio', { name: 'Team A' }).className;
+    const checkbox = screen.getByRole('menuitemcheckbox', { name: 'Internal' }).className;
+    for (const c of SEL) {
+      expect(radio).toContain(`data-[state=checked]:${c}`);
+      expect(checkbox).not.toContain(c);
+    }
   });
 });

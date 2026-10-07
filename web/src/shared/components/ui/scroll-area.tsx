@@ -38,7 +38,7 @@ function ScrollArea({
         ref={viewportRef}
         data-slot="scroll-area-viewport"
         className={cn(
-          'size-full rounded-[inherit] outline-none focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:[outline-color:rgba(56,189,248,0.55)] [&>div]:!block',
+          'size-full rounded-[inherit] outline-none focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:[outline-color:var(--si-accent)] [&>div]:!block',
           viewportClassName,
         )}
       >
