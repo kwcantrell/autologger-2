@@ -7,7 +7,7 @@ import { SERVER_BOOT_ID } from '@autologger/session-core/runLease';
 import { userCaller } from '@autologger/session-core/sessionCaller';
 import { vi } from 'vitest';
 import { defaultUser, env } from './harness';
-import { rawRows, testStorage } from './session/sessionRows';
+import { insertRaw, rawRows, testStorage } from './session/sessionRows';
 
 /** Claims a live `kind` lease on `sessionId` for the default user under a holder id no run of
  * this process uses: what a second process running the same request would hold. Returns the
@@ -16,6 +16,24 @@ export async function holdAsAnotherProcess(sessionId: string, kind: RunLeaseKind
   const holderId = `srv:another-process:${crypto.randomUUID()}`;
   const hub = (await env.ports.sessions.get(sessionId)).as(userCaller((await defaultUser()).id));
   if (!(await hub.claimRunLease(kind, holderId))) throw new Error(`could not hold ${kind}`);
+  return holderId;
+}
+
+/** Writes a `kind` lease on `sessionId` for the default user that expired 10 s ago: what a
+ * process that died mid-run leaves behind. Returns the holder id. */
+export async function expiredLeaseOfAnotherProcess(
+  sessionId: string,
+  kind: RunLeaseKind,
+): Promise<string> {
+  const holderId = `srv:dead-process:${crypto.randomUUID()}`;
+  const now = Date.now();
+  await insertRaw(testStorage(sessionId), 'session_leases', {
+    kind,
+    holder_client_id: holderId,
+    holder_user_id: (await defaultUser()).id,
+    heartbeat_at_ms: now - 50_000,
+    expires_at_ms: now - 10_000,
+  });
   return holderId;
 }
 
