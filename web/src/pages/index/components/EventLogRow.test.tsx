@@ -664,3 +664,42 @@ describe('EventLogRow internal category colour (shadcn-port-workspace D8)', () =
     expect(styled).not.toContain('var(--muted)');
   });
 });
+
+// Finish review fix round 1: on phones the Event category folds under the timecode, so the
+// message takes the rest of the row instead of clipping mid-word or scrolling the table
+// sideways. Row height stays the fixed estimate (web-session-console "The event feed renders a
+// windowed row set"): every line stays nowrap.
+describe('EventLogRow folded for phones', () => {
+  it('folds the category under the timecode and gives the message the rest of the row', () => {
+    renderRow({ folded: true, event: eventFixture({ message: 'Recording 1 Started' }) });
+    const tr = document.querySelector('tbody > tr') as HTMLTableRowElement;
+    const cells = Array.from(tr.querySelectorAll(':scope > td'));
+    expect(cells).toHaveLength(3);
+    const tc = cells[1] as HTMLElement;
+    expect(tc.textContent).toContain('00:00:10');
+    expect(tc.textContent).toContain('General');
+    const label = Array.from(tc.querySelectorAll('span')).find((s) => s.textContent === 'General');
+    expect(label?.className).toMatch(/whitespace-nowrap|truncate/);
+    const msg = cells[2] as HTMLElement;
+    expect(msg.textContent).toBe('Recording 1 Started');
+    const text = msg.querySelector('[data-slot="feed-message"]') as HTMLElement;
+    expect(text.className).toMatch(/truncate/);
+    expect(text.getAttribute('title')).toBe('Recording 1 Started');
+  });
+
+  it('keeps the category Select editable under the timecode input while inline editing', () => {
+    renderRow({ folded: true, inlineEdit: true });
+    const tr = document.querySelector('tbody > tr') as HTMLTableRowElement;
+    const cells = Array.from(tr.querySelectorAll(':scope > td'));
+    expect(cells).toHaveLength(3);
+    expect(cells[1].contains(screen.getByLabelText('Timecode'))).toBe(true);
+    expect(cells[1].contains(screen.getByLabelText('Category'))).toBe(true);
+    expect(cells[2].contains(screen.getByLabelText('Message'))).toBe(true);
+  });
+
+  it('is unfolded (four cells) on desktop', () => {
+    renderRow();
+    const tr = document.querySelector('tbody > tr') as HTMLTableRowElement;
+    expect(tr.querySelectorAll(':scope > td')).toHaveLength(4);
+  });
+});

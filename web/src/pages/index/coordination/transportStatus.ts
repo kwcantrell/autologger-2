@@ -30,6 +30,17 @@ export interface TransportStatus {
   readonly title: string | null;
 }
 
+/**
+ * The status label for each state (web-session-console "Transport state tints the shell"). One
+ * map, read by the top bar and the transport card's pill, so the two always say the same word.
+ */
+export const TRANSPORT_STATUS_LABEL: Readonly<Record<ShellTransportState, string>> = Object.freeze({
+  stopped: 'STOPPED',
+  rolling: 'ROLLING',
+  recording: 'REC',
+  playback: 'PLAY',
+});
+
 /** The snapshot with no session open, or after the current owner clears. */
 export const STOPPED_TRANSPORT_STATUS: TransportStatus = Object.freeze({
   state: 'stopped',

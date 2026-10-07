@@ -135,6 +135,27 @@ describe('TopBar: names and menus (task 3.1)', () => {
     expect(within(teamTrigger()).queryByText(/owner/i)).toBeNull();
   });
 
+  // Finish review fix round 1: at 390 both names must stay readable on one line. The show name
+  // and the status keep priority: the team trigger gives way first (it shrinks harder, down to a
+  // floor), the show name is allowed more room, and the status drops the session title on phones
+  // (the transport card shows it). Both names stay present and truncate rather than wrap.
+  it('on phones the team gives way before the show, and neither name wraps', () => {
+    setup();
+    const team = teamTrigger();
+    const show = showTrigger();
+    expect(team.className).toMatch(/max-md:shrink-\[\d+\]/);
+    expect(team.className).toMatch(/max-md:min-w-/);
+    expect(show.className).not.toMatch(/max-md:shrink-\[/);
+    const teamName = within(team).getByText('Youtube Studio');
+    const showName = within(show).getByText('Autolog Test Show');
+    for (const name of [teamName, showName]) expect(name.className).toMatch(/\btruncate\b/);
+    const cap = (el: HTMLElement) => Number(el.className.match(/max-md:max-w-\[(\d+)ch\]/)?.[1]);
+    expect(cap(showName)).toBeGreaterThan(cap(teamName));
+    // No tighter phone cap than the md one squeezes the names further.
+    expect(teamName.className).not.toMatch(/max-\[\d+px\]:max-w/);
+    expect(showName.className).not.toMatch(/max-\[\d+px\]:max-w/);
+  });
+
   it('the team menu lists each team with its role and show count, the active one checked', async () => {
     setup();
     openMenu(teamTrigger());

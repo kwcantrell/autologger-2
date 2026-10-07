@@ -41,7 +41,7 @@ import { showToast } from '../utils/toast';
 // `SidebarMenuAction` beside it, revealed on hover/focus. Archived and no-access cards are not
 // openable, so they render the same two-line body in a plain row rather than a button. The look
 // comes from the sidebar primitive and its tokens; the class strings below are layout only, plus
-// the live treatment (an accent ring and tint plus a LIVE / REC text badge).
+// the live treatment (a LIVE / REC text badge).
 
 // Two-line card body inside the menu button / plain row.
 const CARD_BODY = 'h-auto min-h-12 flex-col items-stretch justify-center gap-0.5 py-1.5';
@@ -50,11 +50,10 @@ const CARD_ROW = 'flex w-full min-w-0 flex-col justify-center gap-0.5 rounded-ct
 const CARD_TITLE = 'truncate font-semibold';
 
 // Live (rolling and/or recording), in the one-accent world (redesign-show-ignition 11.3, which
-// retired the old rail's red outline): an accent ring and tint on the card, the timecode in the
-// foreground, and a text badge (LIVE while rolling, REC while recording), so colour is never the
-// only channel. Ring only, no fill: the selected state is the fill plus an inset line, so a live
-// card that is not open must not read as selected. `!` beats the meta row's muted text.
-const CARD_LIVE = 'rounded-ctl ring-1 ring-[color-mix(in_oklab,var(--si-accent)_70%,transparent)]';
+// retired the old rail's red outline): a text badge (LIVE while rolling, REC while recording), so
+// colour is never the only channel, and the timecode in the foreground. Nothing else: the one
+// selected state (tint plus inset line) belongs to the open session alone, so a live card that is
+// not open carries no ring or tint (finish review fix round 1). `!` beats the meta row's muted text.
 const DECK_RUNTIME_LIVE = 'text-foreground!';
 const TITLE_ROW = 'flex min-w-0 items-center gap-1.5';
 const LIVE_BADGE = 'px-1 py-px text-[0.625rem] leading-none';
@@ -280,7 +279,6 @@ function SessionCard({ session: s, isActive, onSelect, onClose }: SessionCardPro
 
   return (
     <SidebarMenuItem
-      className={cn(isLive && CARD_LIVE)}
       data-session-id={s.id}
       data-live={isLive || undefined}
       data-menu-open={menuOpen || undefined}

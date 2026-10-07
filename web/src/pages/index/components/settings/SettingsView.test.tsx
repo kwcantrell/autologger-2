@@ -27,6 +27,7 @@ const probe = vi.hoisted(() => ({
   mounts: {} as Record<string, number>,
   dirty: {} as Record<string, boolean>,
   discards: {} as Record<string, number>,
+  profile: undefined as unknown,
 }));
 
 vi.mock('./SettingsSections', async () => {
@@ -54,7 +55,9 @@ vi.mock('./SettingsSections', async () => {
 vi.mock('../../../../api/hooks/useShowCategories', () => ({ useShowCategories: vi.fn() }));
 vi.mock('../../../../api/hooks/useEvents', () => ({ useLogEvent: vi.fn() }));
 vi.mock('../../../../shared/components/Toast', () => ({ showToast: vi.fn() }));
-vi.mock('../../../../api/hooks/useProfile', () => ({ useProfile: () => ({ data: undefined }) }));
+vi.mock('../../../../api/hooks/useProfile', () => ({
+  useProfile: () => ({ data: probe.profile }),
+}));
 // The view owns the shows scope; with no profile its query is disabled (no team, no request).
 vi.mock('../../../../api/hooks/useShows', () => ({
   useStudioShows: () => ({ data: undefined, isSuccess: false, isError: false, refetch: vi.fn() }),
@@ -145,8 +148,71 @@ describe('Settings modal defers inactive tab content', () => {
       (g) => g.textContent,
     );
     expect(labels).toEqual(['You', 'Team', 'Show']);
+    // No kicker-over-name pairs (finish review fix round 1): without a team or show name the
+    // scope word is the heading itself, and no muted scope hint is drawn.
+    expect(list.querySelectorAll('[data-slot="settings-nav-scope"]')).toHaveLength(0);
     // The section shows its own heading.
     expect(screen.getByRole('tab', { name: 'Account' }).getAttribute('aria-selected')).toBe('true');
+  });
+
+  it('names the team and show as the group headings, with the scope as a muted hint after it', () => {
+    probe.profile = {
+      studios: [{ id: 'team-1', name: 'Test Team' }],
+      active_studio_id: 'team-1',
+      shows: [{ id: 'show-1', name: 'Test show', studio_id: 'team-1' }],
+      active_show_id: 'show-1',
+    };
+    try {
+      renderStrict(<Shell initial={{ section: 'account' }} />);
+      const list = screen.getByRole('tablist', { name: 'Settings sections' });
+      const headings = [...list.querySelectorAll('[data-slot="settings-nav-group"]')].map(
+        (g) => g.textContent,
+      );
+      expect(headings).toEqual(['You', 'Test Team', 'Test show']);
+      // The scope word follows the name as a hint, never sits above it as a kicker.
+      const hints = [...list.querySelectorAll('[data-slot="settings-nav-scope"]')];
+      expect(hints.map((h) => h.textContent)).toEqual(['Team', 'Show']);
+      for (const hint of hints) {
+        const heading = hint.parentElement?.querySelector('[data-slot="settings-nav-group"]');
+        expect(
+          heading && heading.compareDocumentPosition(hint) & Node.DOCUMENT_POSITION_FOLLOWING,
+        ).toBeTruthy();
+      }
+    } finally {
+      probe.profile = undefined;
+    }
+  });
+
+  // Finish review fix round 1: on phones the nav is one horizontally scrolling row of section
+  // chips (not a ragged two-column grid), so the section's content starts in the first viewport.
+  it('the phone nav is a single scrolling row, not a grid', () => {
+    renderStrict(<Shell initial={{ section: 'account' }} />);
+    const list = screen.getByRole('tablist', { name: 'Settings sections' });
+    expect(list.className).not.toMatch(/grid/);
+    expect(list.className).toMatch(/max-md:flex-row/);
+    expect(list.className).toMatch(/max-md:overflow-x-auto/);
+    for (const tab of screen.getAllByRole('tab')) {
+      expect(tab.getAttribute('aria-controls')).toBeTruthy();
+    }
+  });
+
+  it('keeps the current section chip in view in the phone row', () => {
+    const calls: Array<{ el: Element; opts: unknown }> = [];
+    const proto = Element.prototype as unknown as { scrollIntoView?: (o?: unknown) => void };
+    const original = proto.scrollIntoView;
+    proto.scrollIntoView = function (this: Element, opts?: unknown) {
+      calls.push({ el: this, opts });
+    };
+    try {
+      renderStrict(<Shell initial={{ section: 'event-buttons' }} />);
+      const last = () => calls[calls.length - 1];
+      expect(last()?.el).toBe(screen.getByRole('tab', { name: 'Event buttons' }));
+      expect(last()?.opts).toEqual({ block: 'nearest', inline: 'nearest' });
+      clickNav('Members');
+      expect(last()?.el).toBe(screen.getByRole('tab', { name: 'Members' }));
+    } finally {
+      proto.scrollIntoView = original;
+    }
   });
 
   it('Activating a tab mounts its content and keeps it mounted', () => {

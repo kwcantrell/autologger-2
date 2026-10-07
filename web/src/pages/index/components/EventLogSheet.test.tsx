@@ -968,3 +968,31 @@ describe('EventLogSheet batch and delete version conflicts', () => {
     expect(rows.map((r) => [r.event_id, r.message])).toEqual([['ev-1', 'mine 1']]);
   });
 });
+
+// Finish review fix round 1: below md the feed drops the Event column (the category folds under
+// the timecode in each row), so the table fits a 390px card with no sideways scroll.
+describe('EventLogSheet on phones', () => {
+  it('has no Event column header and folds each row to three cells', async () => {
+    const original = window.matchMedia;
+    window.matchMedia = vi.fn().mockImplementation((query: string) => ({
+      matches: query === '(max-width: 767px)',
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })) as unknown as typeof window.matchMedia;
+    try {
+      renderSheet();
+      await screen.findByText('A logged note');
+      expect(screen.queryByRole('columnheader', { name: 'Event' })).toBeNull();
+      expect(screen.getByRole('columnheader', { name: 'Message' })).not.toBeNull();
+      const row = document.querySelector('tr[data-event-id="ev-1"]') as HTMLTableRowElement;
+      expect(row.querySelectorAll(':scope > td')).toHaveLength(3);
+    } finally {
+      window.matchMedia = original;
+    }
+  });
+});

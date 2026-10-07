@@ -39,7 +39,6 @@ import { MaximizeLogStrip } from './MaximizeLogStrip';
 import { isTypingTarget, ShortcutsDialog } from './ShortcutsDialog';
 import { TopicsFeed } from './TopicsFeed';
 import { TranscribeFeed } from './TranscribeFeed';
-import { getTransportState } from './TransportControls';
 
 // Feed tab inventory — one source for the tablist buttons AND the tabpanel
 // wrappers below (code-health-tail 4.8). `label` doubles as each panel's
@@ -118,7 +117,6 @@ export function SessionWorkspace({ sessionId, ytImportPending }: Props) {
   const isRolling = Boolean(status?.is_rolling);
   const isRecording = Boolean(status?.audio_recording_lease_alive);
 
-  const transportState = debugOverride ?? getTransportState(isRolling, isRecording);
   const intrinsicState = isRecording
     ? 'audio-recording'
     : isRolling
@@ -128,13 +126,6 @@ export function SessionWorkspace({ sessionId, ytImportPending }: Props) {
         : 'stop';
   const effectiveTransport = debugOverride ?? intrinsicState;
   const liveDock = effectiveTransport === 'rolling' || effectiveTransport === 'audio-recording';
-
-  const statusText =
-    transportState === 'audio-recording'
-      ? 'Recording'
-      : transportState === 'rolling'
-        ? 'Rolling'
-        : 'Stopped';
 
   // Set body.dataset.v4Transport — CSS reads this to swap capture/playback panels.
   useEffect(() => {
@@ -543,7 +534,7 @@ export function SessionWorkspace({ sessionId, ytImportPending }: Props) {
                     liveDock={liveDock}
                     onOffState={onOffState}
                     onToggle={handleToggle}
-                    statusText={statusText}
+                    transport={shellTransport}
                   />
                 </div>
 

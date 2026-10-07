@@ -43,7 +43,8 @@ function StopGlyph({ size = 15 }: { size?: number }) {
 // Show Ignition timecode (redesign-show-ignition task 5.2; preview `.tc`): JetBrains Mono through
 // the timecode token, tabular figures, no box. The two state glyphs keep their meaning (mic: this
 // session is recording audio; roll: timecode is live). While timecode rolls the digits take the
-// full foreground and the shell's live glow (`--tx-glow`, transparent when stopped).
+// full foreground; while the shell is rolling or recording (perf override included) tailwind.css
+// gives `#session-tc-display` the accent and the live glow (finish review fix round 1).
 export function TimecodeDisplay({ sessionId, compact = false }: Props) {
   const { data: status } = useSessionStatus(sessionId);
   const isRolling = Boolean(status?.is_rolling);
@@ -76,9 +77,8 @@ export function TimecodeDisplay({ sessionId, compact = false }: Props) {
         </span>
         <span
           className={clsx(
-            'font-tc font-semibold leading-none tracking-[-0.01em] [font-variant-numeric:tabular-nums] [transition:text-shadow_0.5s]',
+            'font-tc font-semibold leading-none tracking-[-0.01em] [font-variant-numeric:tabular-nums]',
             compact ? 'text-[1.625rem] max-md:text-[1.5rem]' : 'text-[2.125rem]',
-            live && '[text-shadow:0_0_20px_var(--tx-glow)]',
           )}
           id="session-tc-display"
         >

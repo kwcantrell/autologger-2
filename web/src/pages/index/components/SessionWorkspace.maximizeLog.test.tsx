@@ -164,7 +164,7 @@ describe('SessionWorkspace fused strip layout', () => {
   it('shows Status above timecode in the strip', () => {
     renderWorkspace();
     expect(document.getElementById('v5-controls-recording-head')).toBeTruthy();
-    expect(document.getElementById('v5-controls-status-value')?.textContent).toBe('Stopped');
+    expect(document.getElementById('v5-controls-status-value')?.textContent).toBe('STOPPED');
   });
 
   it('shows YouTube import in Status when pending', () => {
@@ -174,13 +174,21 @@ describe('SessionWorkspace fused strip layout', () => {
     );
   });
 
+  // Fix round 1 (finish review): the card's pill follows the shell state the top bar reads, so
+  // playback (this client playing, or the perf override) reads PLAY on both.
+  it('reads PLAY in playback, as the top bar does', () => {
+    useDebugTransportOverrideMock.mockReturnValue('play');
+    renderWorkspace();
+    expect(document.getElementById('v5-controls-status-value')?.textContent).toBe('PLAY');
+  });
+
   it('swaps timeline lane for category buttons while rolling', () => {
     rollingStatus();
     renderWorkspace();
     expect(document.getElementById('v5-maximize-log-strip')).toBeTruthy();
     expect(screen.getByTestId('strip-lane-slot')).toBeTruthy();
     expect(screen.getByTestId('category-strip-stub')).toBeTruthy();
-    expect(document.getElementById('v5-controls-status-value')?.textContent).toBe('Rolling');
+    expect(document.getElementById('v5-controls-status-value')?.textContent).toBe('ROLLING');
     // Mic level meter is local-recording-only (web-session-console spec:
     // "Truthful recording indication") — its CSS reveal keys on
     // `body.v4-is-recording`, which only AudioRecorder (mocked out here)
@@ -190,12 +198,12 @@ describe('SessionWorkspace fused strip layout', () => {
     expect(document.getElementById('v4-log-session')?.getAttribute('data-v5-live-log')).toBeNull();
   });
 
-  it('keeps strip and shows Recording status while recording', () => {
+  it('keeps strip and shows REC status while recording (session-wide lease)', () => {
     recordingStatus();
     renderWorkspace();
     expect(document.getElementById('v5-maximize-log-strip')).toBeTruthy();
     expect(screen.getByTestId('category-strip-stub')).toBeTruthy();
-    expect(document.getElementById('v5-controls-status-value')?.textContent).toBe('Recording');
+    expect(document.getElementById('v5-controls-status-value')?.textContent).toBe('REC');
     // Meter/duration elements exist for AudioRecorder to drive, but their CSS
     // reveal keys on `body.v4-is-recording` (this client's recorder), NOT the
     // session-wide lease this fixture sets — a REMOTE client's recording shows
@@ -245,6 +253,6 @@ describe('SessionWorkspace fused strip layout', () => {
       );
     });
     expect(screen.queryByTestId('strip-lane-slot')).toBeNull();
-    expect(document.getElementById('v5-controls-status-value')?.textContent).toBe('Stopped');
+    expect(document.getElementById('v5-controls-status-value')?.textContent).toBe('STOPPED');
   });
 });

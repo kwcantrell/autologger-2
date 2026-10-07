@@ -108,9 +108,12 @@ describe('HomeRoute', () => {
     expect(screen.getByRole('heading', { name: 'AutoLogger' })).not.toBeNull();
     // Resume card is the FIRST entry of the active list (server order), not
     // some other active session.
-    const resumeCard = screen.getByRole('button', { name: /jump back in/i });
-    expect(resumeCard.textContent).toContain('First Active');
-    expect(resumeCard.textContent).not.toContain('Second Active');
+    // Finish review fix round 1 (craft floor: no eyebrow): the session name is the card's
+    // heading, and the control names its action and the session it resumes.
+    expect(screen.getByRole('heading', { name: 'First Active' })).not.toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Second Active' })).toBeNull();
+    const resumeCard = screen.getByRole('button', { name: 'Jump back in to First Active' });
+    expect(resumeCard.textContent).toContain('Jump back in');
     expect(screen.getByRole('button', { name: /new session/i })).not.toBeNull();
   });
 
@@ -119,7 +122,7 @@ describe('HomeRoute', () => {
 
     renderStrict(<HomeRoute onNewSession={() => {}} />);
 
-    fireEvent.click(screen.getByRole('button', { name: /jump back in/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^jump back in/i }));
     expect(navRecord).toEqual(['/sessions/sess-7']);
   });
 

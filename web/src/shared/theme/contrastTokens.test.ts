@@ -360,22 +360,73 @@ describe('Show Ignition tokens (redesign-show-ignition D1)', () => {
   // web-session-console "Transport state tints the shell": the top bar, rail and strip tint
   // together. The bar takes the rail's own mix (11.3: at 18% it read as untinted beside the
   // 25% rail), and the text on it still clears AA.
-  it.each(['stopped', 'rolling', 'recording', 'playback'])(
-    'the %s top bar takes the rail mix and its text clears AA',
-    (state) => {
-      const scope = blockVars(`[data-transport='${state}']`);
-      expect(scope['--tx-bar']).toBe(`var(--si-tx-${state})`);
-      const bar = colour(scope['--tx-bar'], scope);
-      expect(contrast(colour('--si-fg'), bar)).toBeGreaterThanOrEqual(AA);
-      expect(contrast(colour('--si-muted'), bar)).toBeGreaterThanOrEqual(AA);
-    },
-  );
+  it.each([
+    'stopped',
+    'rolling',
+    'recording',
+    'playback',
+  ])('the %s top bar takes the rail mix and its text clears AA', (state) => {
+    const scope = blockVars(`[data-transport='${state}']`);
+    expect(scope['--tx-bar']).toBe(`var(--si-tx-${state})`);
+    const bar = colour(scope['--tx-bar'], scope);
+    expect(contrast(colour('--si-fg'), bar)).toBeGreaterThanOrEqual(AA);
+    expect(contrast(colour('--si-muted'), bar)).toBeGreaterThanOrEqual(AA);
+  });
 
   it('the live top bar carries the soft glow, as the rail and strip do', () => {
     const live = CSS.match(
       /\[data-transport='recording'\] \[data-slot='topbar'\],\s*\[data-transport='rolling'\] \[data-slot='topbar'\]\s*\{([^}]*)\}/,
     );
     expect(live?.[1]).toMatch(/box-shadow:[^;]*var\(--tx-glow\)/);
+  });
+
+  // Finish review fix round 1: the timeline playhead takes the live colour with the soft glow in
+  // every state but stopped, and the hero timecode takes the accent (with the glow) while rolling
+  // or recording, at AA on the live transport card.
+  it.each([
+    'playback',
+    'rolling',
+    'recording',
+  ])('the %s playhead is the live accent, not the plain foreground', (state) => {
+    const scope = blockVars(`[data-transport='${state}']`);
+    expect(scope['--tx-playhead']).toBe('var(--tx-live)');
+  });
+
+  it('the stopped playhead stays the foreground', () => {
+    expect(blockVars(`[data-transport='stopped']`)['--tx-playhead']).toBe('var(--si-fg)');
+  });
+
+  it('the Timeline playhead reads the playhead colour and the soft glow', () => {
+    const src = read('pages/index/components/Timeline.tsx');
+    const line = src.split('\n').find((l) => l.includes("'timelinePlayhead absolute"));
+    expect(line).toMatch(/bg-\(--tx-playhead\)/);
+    expect(line).toMatch(/var\(--tx-glow\)/);
+    expect(line).not.toMatch(/bg-si-fg/);
+  });
+
+  it('the live hero timecode takes the accent with the glow and clears AA on the live card', () => {
+    const rule = CSS.match(
+      /\[data-transport='recording'\] #session-tc-display,\s*\[data-transport='rolling'\] #session-tc-display\s*\{([^}]*)\}/,
+    );
+    expect(rule).not.toBeNull();
+    const body = (rule as RegExpMatchArray)[1];
+    expect(body).toMatch(/color:\s*var\(--si-accent-text\)/);
+    expect(body).toMatch(/text-shadow:[^;]*var\(--tx-glow\)/);
+    // The live transport card's surface (the strip rule in this file).
+    const card = colour('color-mix(in oklab, var(--si-accent) 13%, #121419)');
+    expect(token('--si-accent-text')).toMatch(/var\(--si-accent\)/);
+    expect(contrast(colour('--si-accent-text'), card)).toBeGreaterThanOrEqual(AA);
+    // Reduced motion: the glow appears without a transition.
+    expect(CSS).toMatch(
+      /@media \(prefers-reduced-motion: reduce\)\s*\{[^@]*#session-tc-display[^}]*transition:\s*none/,
+    );
+  });
+
+  it('scrollbars are themed from the palette everywhere (thin, muted thumb, accent on hover)', () => {
+    expect(CSS).toMatch(/::-webkit-scrollbar\s*\{[^}]*width:\s*8px/);
+    expect(CSS).toMatch(/::-webkit-scrollbar-thumb\s*\{[^}]*var\(--si-line-strong\)/);
+    expect(CSS).toMatch(/::-webkit-scrollbar-thumb:hover\s*\{[^}]*var\(--si-accent\)/);
+    expect(CSS).toMatch(/::-webkit-scrollbar-track\s*\{[^}]*var\(--si-bg\)/);
   });
 
   it('stopped is the :root default (the same rule declares both)', () => {

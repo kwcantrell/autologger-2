@@ -172,6 +172,15 @@ export function SettingsView({
     return () => document.removeEventListener('keydown', onKey);
   }, [requestClose]);
 
+  // The phone nav is one horizontally scrolling row (finish review fix round 1): keep the current
+  // section's chip in view when the view opens on it or the section changes. `nearest` leaves the
+  // desktop column (and the page) where they are when the control is already visible.
+  useEffect(() => {
+    rootRef.current
+      ?.querySelector<HTMLElement>(`#${settingsTabId(section)}`)
+      ?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+  }, [section]);
+
   // Focus moves in on open (to the current section's nav control) and back to the invoking
   // control on close. Under StrictMode the cleanup refocuses the invoker, so the re-run reads it
   // again rather than a control inside the view.
@@ -224,45 +233,58 @@ export function SettingsView({
               >
                 Settings
               </h2>
+              {/* Phones (finish review fix round 1): one horizontally scrolling row of section
+                  chips instead of a ragged two-column grid, so the section's content starts in
+                  the first viewport. The group headings are desktop-only; the top bar already
+                  names the team and show there. The tablist stays vertical for arrow keys. */}
               <TabsList
                 variant="nav"
                 aria-label="Settings sections"
-                className="max-md:grid max-md:grid-cols-2 max-md:gap-x-2"
+                className="max-md:-mx-3 max-md:flex-row max-md:gap-1.5 max-md:overflow-x-auto max-md:px-3 max-md:pb-1"
               >
-                {SETTINGS_SECTION_GROUPS.map((group, i) => (
-                  <Fragment key={group.label}>
-                    <div
-                      aria-hidden="true"
-                      className={cn(
-                        'mx-2 mb-1 flex min-w-0 flex-col gap-1 max-md:col-span-full',
-                        i > 0 && 'mt-4 max-md:mt-2',
-                      )}
-                    >
-                      <span
-                        data-slot="settings-nav-group"
-                        className="font-label text-[0.6875rem] leading-none font-semibold tracking-[0.12em] text-muted-foreground uppercase"
+                {SETTINGS_SECTION_GROUPS.map((group, i) => {
+                  const name = scopeName[group.label];
+                  return (
+                    <Fragment key={group.label}>
+                      {/* The team or show NAME is the group heading, the scope a muted hint after
+                          it (no kicker over the name; craft floor). "You" has no name. */}
+                      <div
+                        aria-hidden="true"
+                        className={cn(
+                          'mx-2 mb-1 flex min-w-0 items-baseline gap-2 max-md:hidden',
+                          i > 0 && 'mt-4',
+                        )}
                       >
-                        {group.label}
-                      </span>
-                      {scopeName[group.label] && (
-                        <span className="truncate text-[0.8125rem] font-semibold">
-                          {scopeName[group.label]}
+                        <span
+                          data-slot="settings-nav-group"
+                          className="min-w-0 truncate text-[0.8125rem] leading-tight font-semibold"
+                        >
+                          {name ?? group.label}
                         </span>
-                      )}
-                    </div>
-                    {group.sections.map((s) => (
-                      <TabsTrigger
-                        key={s.id}
-                        variant="nav"
-                        value={s.id}
-                        id={settingsTabId(s.id)}
-                        aria-controls={settingsPanelId(s.id)}
-                      >
-                        {s.label}
-                      </TabsTrigger>
-                    ))}
-                  </Fragment>
-                ))}
+                        {name && (
+                          <span
+                            data-slot="settings-nav-scope"
+                            className="shrink-0 text-xs leading-tight text-muted-foreground"
+                          >
+                            {group.label}
+                          </span>
+                        )}
+                      </div>
+                      {group.sections.map((s) => (
+                        <TabsTrigger
+                          key={s.id}
+                          variant="nav"
+                          value={s.id}
+                          id={settingsTabId(s.id)}
+                          aria-controls={settingsPanelId(s.id)}
+                          className="max-md:w-auto max-md:shrink-0 max-md:border max-md:border-(--si-line) max-md:px-3 max-md:py-1.5"
+                        >
+                          {s.label}
+                        </TabsTrigger>
+                      ))}
+                    </Fragment>
+                  );
+                })}
               </TabsList>
             </div>
 

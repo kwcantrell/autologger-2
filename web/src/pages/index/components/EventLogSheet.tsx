@@ -34,6 +34,7 @@ import {
 import { TableCell, TableRow } from '../../../shared/components/ui/table';
 import { type ConflictField, conflictPromptCopy } from '../../../shared/hooks/conflictPromptCopy';
 import { useVersionedSave } from '../../../shared/hooks/useVersionedSave';
+import { useIsMobile } from '../../../shared/ui/breakpoints';
 import { useConfirm } from '../../../shared/ui/ConfirmDialog';
 import { eventTimelineSec } from '../../../shared/utils/audioClips';
 import { formatWallUtcYmdHms, isAutomaticLogEvent } from '../../../shared/utils/timecode';
@@ -732,6 +733,11 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
   // `inlineDrafts` store below and read back as `defaultValue` when the row
   // remounts (see `InlineDraftStore`). Batch-edit mode never had the exposure —
   // its drafts have always lived in the parent-owned `batchEdits` Map.
+  // Phones (finish review fix round 1): rows fold the Event category under the timecode, so the
+  // table fits the card with no sideways scroll and the message keeps the rest of the row. Every
+  // line stays nowrap and the folded cell is no taller than the jump control, so ROW_HEIGHT holds.
+  const foldRows = useIsMobile();
+
   const virtualizer = useVirtualizer({
     count: sorted.length,
     getScrollElement: () => scrollEl,
@@ -1223,12 +1229,17 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
       sortKey: viewUtc ? 'utc' : 'timecode',
       thClassName: 'w-[6.5rem]',
     },
-    {
-      key: 'category',
-      label: 'Event',
-      sortKey: 'category',
-      thClassName: 'w-32 max-md:w-auto',
-    },
+    // Phones fold the category under the timecode (EventLogRow `folded`), so no Event column.
+    ...(foldRows
+      ? []
+      : [
+          {
+            key: 'category',
+            label: 'Event',
+            sortKey: 'category',
+            thClassName: 'w-32 max-md:w-auto',
+          },
+        ]),
     // Phones: no message floor, so the table fits the card (the cell clips at its max width).
     {
       key: 'message',
@@ -1469,7 +1480,7 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
           <colgroup>
             <col className="col-jump" />
             <col className="col-timecode" />
-            <col className="col-category" />
+            {!foldRows && <col className="col-category" />}
             <col className="col-message" />
           </colgroup>
         }
@@ -1487,6 +1498,7 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
           const ev = sorted[vRow.index];
           return (
             <EventLogRow
+              folded={foldRows}
               // The epoch remounts every copy of the row after Keep theirs (D5).
               key={`${ev.event_id}:${rowEpochs.get(ev.event_id) ?? 0}`}
               event={ev}

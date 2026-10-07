@@ -397,6 +397,9 @@
   --si-danger-line: #5a2e33;
   /* The idle roll/record glyph on the transport controls (preview `.ctl.rec svg`). */
   --si-rec: #ff6464;
+  /* The accent as text on the dark surfaces (the live hero timecode): lifted toward white so it
+   * clears AA on the live transport card (contrastTokens). */
+  --si-accent-text: color-mix(in oklab, var(--si-accent) 72%, #ffffff);
   /* The primary button's accent tint and edge (preview `.btn.primary`). */
   --si-primary-tint: color-mix(in oklab, var(--si-accent) 26%, var(--si-panel-2));
   --si-primary-line: color-mix(in oklab, var(--si-accent) 55%, var(--si-line));
@@ -425,7 +428,8 @@
  * root; these rules only define what each state means. Stopped is the :root default, so a
  * surface outside any transport root reads stopped. `--tx-rail`/`--tx-bar` tint the rail and
  * top bar (the same mix, so the two read as one lit frame; 11.3 found an 18% bar invisible
- * beside the 25% rail), `--tx-live` is the live accent (pressed transport, playhead), `--tx-glow` the soft
+ * beside the 25% rail), `--tx-live` is the live accent (pressed transport, playhead), `--tx-playhead`
+ * the timeline playhead (the foreground when stopped, the live accent otherwise), `--tx-glow` the soft
  * glow, and `--tx-pill-*` the status label (STOPPED / ROLLING / REC / PLAY) and its pill. A
  * stopped pill is transparent over the bar, so its surface is the bar colour. Every
  * pill-fg/pill-bg pair clears AA (contrastTokens.test.ts). */
@@ -434,6 +438,7 @@
   --tx-rail: var(--si-tx-stopped);
   --tx-bar: var(--si-tx-stopped);
   --tx-live: var(--si-accent);
+  --tx-playhead: var(--si-fg);
   --tx-glow: transparent;
   --tx-pill-bg: var(--si-tx-stopped);
   --tx-pill-fg: var(--si-muted);
@@ -443,6 +448,7 @@
   --tx-rail: var(--si-tx-rolling);
   --tx-bar: var(--si-tx-rolling);
   --tx-live: color-mix(in oklab, var(--si-accent) 88%, #000000);
+  --tx-playhead: var(--tx-live);
   --tx-glow: color-mix(in oklab, var(--si-accent) 46%, transparent);
   --tx-pill-bg: color-mix(in oklab, var(--si-accent) 88%, #000000);
   --tx-pill-fg: #ffffff;
@@ -452,6 +458,7 @@
   --tx-rail: var(--si-tx-recording);
   --tx-bar: var(--si-tx-recording);
   --tx-live: color-mix(in oklab, var(--si-accent) 88%, #000000);
+  --tx-playhead: var(--tx-live);
   --tx-glow: color-mix(in oklab, var(--si-accent) 46%, transparent);
   --tx-pill-bg: color-mix(in oklab, var(--si-accent) 88%, #000000);
   --tx-pill-fg: #ffffff;
@@ -461,6 +468,7 @@
   --tx-rail: var(--si-tx-playback);
   --tx-bar: var(--si-tx-playback);
   --tx-live: color-mix(in oklab, var(--si-accent) 65%, #ffffff);
+  --tx-playhead: var(--tx-live);
   --tx-glow: color-mix(in oklab, var(--si-accent) 30%, transparent);
   --tx-pill-bg: color-mix(in oklab, var(--si-accent) 65%, #ffffff);
   --tx-pill-fg: var(--si-ink);
@@ -612,6 +620,19 @@
   box-shadow: 0 10px 30px -18px var(--tx-glow);
 }
 
+/* The hero session timecode (TimecodeDisplay): the accent, with the soft glow, while the session
+ * rolls or records (finish review fix round 1). `--si-accent-text` keeps it AA on the live card. */
+#session-tc-display {
+  transition:
+    color var(--tx-dur) var(--tx-ease),
+    text-shadow var(--tx-dur) var(--tx-ease);
+}
+[data-transport='recording'] #session-tc-display,
+[data-transport='rolling'] #session-tc-display {
+  color: var(--si-accent-text);
+  text-shadow: 0 0 20px var(--tx-glow);
+}
+
 [data-transport='recording'] [data-slot='live-dot'] {
   animation: si-blink 1.2s steps(2, jump-none) infinite;
 }
@@ -633,7 +654,8 @@
     transition: none;
   }
   [data-transport] [data-slot='topbar'],
-  [data-transport] #v5-maximize-log-strip {
+  [data-transport] #v5-maximize-log-strip,
+  #session-tc-display {
     transition: none;
   }
   [data-transport] [data-slot='live-dot'] {
@@ -1510,19 +1532,45 @@
 
   /* Browser surfaces in the palette (craft floor; 11.3 found the default blue selection and
    * light native scrollbars on the dark panels): selection is the accent tint, the caret the
-   * accent, scrollbars a thin line-coloured thumb on a clear track. */
+   * accent. Scrollbars (finish review fix round 1, which still found a light native bar on the
+   * phone Settings view): thin, on the page's dark track, a muted thumb that takes the accent on
+   * hover. Chromium and Safari draw them through `::-webkit-scrollbar` (which Chromium ignores on
+   * any element that also sets the standard `scrollbar-color`/`scrollbar-width`, so those are
+   * Firefox-only here); utilities that hide a scrollbar still win. */
   ::selection {
     background-color: color-mix(in oklab, var(--si-accent) 45%, var(--si-bg));
     color: var(--si-fg);
   }
   :root {
     caret-color: var(--si-accent);
-    /* Inherited, so every scroller takes it. */
-    scrollbar-color: var(--si-line-strong) transparent;
   }
-  /* Not inherited: set per element (utilities that hide a scrollbar still win). */
-  * {
-    scrollbar-width: thin;
+  @supports (-moz-appearance: none) {
+    :root {
+      /* Inherited, so every scroller takes it. */
+      scrollbar-color: var(--si-line-strong) var(--si-bg);
+    }
+    * {
+      scrollbar-width: thin;
+    }
+  }
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-track {
+    background-color: var(--si-bg);
+  }
+  ::-webkit-scrollbar-thumb {
+    border: 2px solid transparent;
+    border-radius: 8px;
+    background-color: var(--si-line-strong);
+    background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: var(--si-accent);
+  }
+  ::-webkit-scrollbar-corner {
+    background-color: var(--si-bg);
   }
 
   body {

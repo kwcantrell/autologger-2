@@ -45,7 +45,7 @@ function baseProps() {
     liveDock: false,
     onOffState: new Map(),
     onToggle: vi.fn(),
-    statusText: 'Stopped',
+    transport: 'stopped' as const,
     isRecording: false,
   };
 }
@@ -105,5 +105,44 @@ describe('MaximizeLogStrip has no navigation control (redesign-show-ignition D8)
   it('draws no Open navigation button: the top bar trigger opens the sidebar', () => {
     renderStrict(<MaximizeLogStrip {...baseProps()} status={null} />);
     expect(screen.queryByRole('button', { name: 'Open navigation' })).toBeNull();
+  });
+});
+
+// Fix round 1 (finish review): the transport card's pill reads the same label as the top bar
+// (redesign-show-ignition D10), from the same shell state, so the two never disagree (the
+// review saw STOPPED on the card beside PLAY in the top bar during playback).
+describe('MaximizeLogStrip status pill agrees with the top bar', () => {
+  it.each([
+    ['stopped', 'STOPPED'],
+    ['rolling', 'ROLLING'],
+    ['recording', 'REC'],
+    ['playback', 'PLAY'],
+  ] as const)('the %s state reads %s on the transport pill', (transport, label) => {
+    renderStrict(<MaximizeLogStrip {...baseProps()} transport={transport} status={null} />);
+    const value = document.getElementById('v5-controls-status-value');
+    expect(value?.textContent).toBe(label);
+    // The pill takes the shell's transport colours, so its colour always matches its word.
+    expect(value?.closest('[data-slot="badge"]')?.getAttribute('data-variant')).toBe('transport');
+  });
+
+  it('a pending YouTube import still reads Importing YouTube Audio', () => {
+    renderStrict(
+      <MaximizeLogStrip {...baseProps()} transport="rolling" ytImportPending status={null} />,
+    );
+    expect(document.getElementById('v5-controls-status-value')?.textContent).toBe(
+      'Importing YouTube Audio',
+    );
+  });
+});
+
+describe('MaximizeLogStrip keyboard-shortcuts control', () => {
+  it('draws an icon, not a "?" text glyph, and keeps its accessible name', () => {
+    renderStrict(<MaximizeLogStrip {...baseProps()} status={null} />);
+    const button = screen.getByRole('button', { name: 'Keyboard shortcuts' });
+    expect(button.textContent).toBe('');
+    const icon = button.querySelector('svg');
+    expect(icon).not.toBeNull();
+    expect(icon?.getAttribute('data-icon')).toBe('inline-start');
+    expect(icon?.getAttribute('aria-hidden')).toBe('true');
   });
 });

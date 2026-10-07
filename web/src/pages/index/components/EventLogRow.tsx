@@ -47,6 +47,15 @@ const CELL_TC = clsx('text-left align-middle', FEED_TC); // shared with Transcri
 const CELL_CAT = 'text-left align-middle font-semibold whitespace-nowrap';
 /** Message cell max-width (was `.sheet-dense .msg`, which beat `.sheet .msg`). */
 const CELL_MSG = 'max-w-[min(28rem,38vw)] max-md:max-w-[28vw]';
+/** Phones (finish review fix round 1): the row folds the category under the timecode, and the
+ *  message cell takes the rest of the row (the `w-full max-w-0` auto-table idiom), ending in an
+ *  ellipsis only past that width. Every line stays nowrap, so the fixed row estimate holds. */
+const CELL_MSG_FOLDED = 'w-full max-w-0';
+/** The folded category line under the timecode: the Event column's face, a step smaller. With the
+ *  cell's vertical padding dropped, the two lines fit inside the 24px jump control's row, so the
+ *  fixed ROW_HEIGHT estimate still holds. */
+const FOLDED_CAT =
+  'mt-[0.2rem] block truncate font-ui text-[0.68rem] leading-none font-semibold whitespace-nowrap';
 /** Message/actions cell chrome (was `.msg` + `.rowActions`). NOTE: `.rowActions`'s
  *  `text-align: center` was DEAD in the legacy cascade — `.sheet td { text-align: left }`
  *  (0,1,1) beat `.rowActions` (0,1,0), so the cell rendered LEFT. We keep that effective
@@ -275,6 +284,10 @@ interface Props {
   onBatchChange: (eventId: string, values: RowEditValues) => void;
   onDelete: (eventId: string) => void;
   onUndelete: (eventId: string) => void;
+  /** Phones: three cells (jump, timecode with the category under it, message) instead of four,
+   *  so the message is not squeezed and the table never scrolls sideways. `EventLogSheet` drops
+   *  the Event column header to match. */
+  folded?: boolean;
 }
 
 function buildWallIso(wallInput: string, orig: string | null): string {
@@ -303,6 +316,7 @@ export function EventLogRow({
   onBatchChange,
   onDelete,
   onUndelete,
+  folded = false,
 }: Props) {
   const isAuto = isAutomaticLogEvent(event);
   const editable = !isAuto && (inlineEdit || batchEdit);
@@ -338,6 +352,8 @@ export function EventLogRow({
   const isInternal = event.category.toLowerCase() === 'internal';
 
   const catStyle = color ? { color } : undefined;
+  const categoryLabel = event.category_label ?? event.category ?? '—';
+  const message = event.message ?? '';
   const msgStyle = isInternal ? catStyle : { color: 'var(--color-text)' };
 
   // --- Refs for inline rolling edit (uncontrolled, blur-to-save) ---
@@ -866,12 +882,29 @@ export function EventLogRow({
           )}
         >
           {tcStack}
+          {folded && (
+            <div className="mt-[0.2rem] text-left font-ui font-semibold" style={catStyle}>
+              {catSelect}
+            </div>
+          )}
         </TableCell>
       ) : (
-        <TableCell className={clsx(CELL_BASE, CELL_TC, CELL_HOVER)}>{col1View}</TableCell>
+        // Folded: no vertical padding, so the two lines stay inside the jump control's row height.
+        <TableCell className={clsx(CELL_BASE, CELL_TC, CELL_HOVER, folded && '!py-0')}>
+          {folded ? (
+            <>
+              <span className="block">{col1View}</span>
+              <span className={FOLDED_CAT} style={catStyle}>
+                {categoryLabel}
+              </span>
+            </>
+          ) : (
+            col1View
+          )}
+        </TableCell>
       )}
 
-      {editable ? (
+      {folded ? null : editable ? (
         // `.sheetCatEdit`: edit bg; pending → white text + strikethrough (left:0 right:0).
         <TableCell
           className={clsx(
@@ -886,7 +919,7 @@ export function EventLogRow({
         </TableCell>
       ) : (
         <TableCell className={clsx(CELL_BASE, CELL_CAT, CELL_HOVER)} style={catStyle}>
-          {event.category_label ?? event.category ?? '—'}
+          {categoryLabel}
         </TableCell>
       )}
 
@@ -895,7 +928,7 @@ export function EventLogRow({
         <TableCell
           className={clsx(
             CELL_BASE,
-            CELL_MSG,
+            folded ? CELL_MSG_FOLDED : CELL_MSG,
             CELL_ACTIONS,
             editCellBg,
             pendingDelete && clsx(strike, 'after:left-0 after:right-[9.25rem]'),
@@ -918,14 +951,23 @@ export function EventLogRow({
         </TableCell>
       ) : (
         <TableCell
-          className={clsx(CELL_BASE, CELL_MSG, CELL_ACTIONS, CELL_HOVER)}
+          className={clsx(CELL_BASE, folded ? CELL_MSG_FOLDED : CELL_MSG, CELL_ACTIONS, CELL_HOVER)}
           data-event-id={event.event_id}
           style={msgStyle}
         >
-          <span className="block">
-            {event.message ?? ''}
-            {autoMarker}
-          </span>
+          {folded ? (
+            <span className="flex min-w-0 items-center">
+              <span data-slot="feed-message" className="min-w-0 truncate" title={message}>
+                {message}
+              </span>
+              {autoMarker}
+            </span>
+          ) : (
+            <span className="block" data-slot="feed-message">
+              {message}
+              {autoMarker}
+            </span>
+          )}
           {rowActions}
         </TableCell>
       )}

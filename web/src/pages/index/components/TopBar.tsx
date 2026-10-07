@@ -17,11 +17,12 @@ import {
   DropdownMenuTrigger,
 } from '../../../shared/components/ui/dropdown-menu';
 import { SidebarTrigger } from '../../../shared/components/ui/sidebar';
+import { cn } from '../../../shared/lib/utils';
 import {
   getTransportStatus,
-  type ShellTransportState,
   STOPPED_TRANSPORT_STATUS,
   subscribeTransportStatus,
+  TRANSPORT_STATUS_LABEL,
 } from '../coordination/transportStatus';
 import { showToast } from '../utils/toast';
 
@@ -44,20 +45,17 @@ import { showToast } from '../utils/toast';
 // With Settings open and holding unsaved edits, a switch first asks through the view's discard
 // guard (`confirmSwitch`); declining keeps the edits and the selection.
 
-const STATUS_LABEL: Record<ShellTransportState, string> = {
-  stopped: 'STOPPED',
-  rolling: 'ROLLING',
-  recording: 'REC',
-  playback: 'PLAY',
-};
-
 const ROLE_LABEL: Record<TeamRole, string> = { owner: 'Owner', admin: 'Admin', member: 'Member' };
 
-// Crumb triggers: ghost buttons whose name truncates (22ch of the name's own size on desktop,
-// narrower on phones so team, show and status stay on one line at 390px).
-const CRUMB = 'min-w-0 shrink px-2 max-md:px-1.5';
-const CRUMB_NAME =
-  'min-w-0 max-w-[22ch] truncate text-[15px] max-md:max-w-[11ch] max-md:text-sm max-[400px]:max-w-[8ch]';
+// Crumb triggers: ghost buttons whose name truncates (22ch of the name's own size on desktop).
+// Phones keep team, show and status on one line at 390px with the show and the status taking
+// priority (finish review fix round 1): the team trigger shrinks three times harder, down to a
+// floor that still shows the start of its name, and the show name is allowed more room.
+const CRUMB = 'min-w-0 shrink px-2 max-md:gap-0.5 max-md:px-1!';
+const TEAM_CRUMB = 'max-md:min-w-[5.75rem] max-md:shrink-[3]';
+const CRUMB_NAME = 'min-w-0 max-w-[22ch] truncate text-[15px] max-md:text-sm';
+const TEAM_NAME = 'max-md:max-w-[10ch]';
+const SHOW_NAME = 'max-md:max-w-[18ch]';
 const CRUMB_SEP = 'size-3.5 shrink-0 text-si-dim';
 
 interface Props {
@@ -125,7 +123,7 @@ export function TopBar({ onCloseSession, onReturnToSession, confirmSwitch }: Pro
     });
   }
 
-  const label = STATUS_LABEL[status.state];
+  const label = TRANSPORT_STATUS_LABEL[status.state];
   const sessionTitle = status.title?.trim() || 'Untitled session';
   const statusBadge = (
     <Badge variant="transport">
@@ -137,7 +135,7 @@ export function TopBar({ onCloseSession, onReturnToSession, confirmSwitch }: Pro
   return (
     <header
       data-slot="topbar"
-      className="flex h-(--topbar-h) w-full min-w-0 shrink-0 items-center gap-2 px-3 md:gap-3 md:px-4"
+      className="flex h-(--topbar-h) w-full min-w-0 shrink-0 items-center gap-1.5 px-2.5 md:gap-3 md:px-4"
     >
       {/* The shell's SidebarProvider (AppShell) owns the state; `[` and Ctrl/⌘+B toggle it too. */}
       <SidebarTrigger className="size-(--h-ctl) shrink-0" title="Toggle sidebar ( [ )" />
@@ -148,9 +146,13 @@ export function TopBar({ onCloseSession, onReturnToSession, confirmSwitch }: Pro
       >
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" className={CRUMB} title={activeTeamName || 'Switch team'}>
+            <Button
+              variant="ghost"
+              className={cn(CRUMB, TEAM_CRUMB)}
+              title={activeTeamName || 'Switch team'}
+            >
               <span className="sr-only">Switch team: </span>
-              <span className={CRUMB_NAME}>{activeTeamName || 'No team'}</span>
+              <span className={cn(CRUMB_NAME, TEAM_NAME)}>{activeTeamName || 'No team'}</span>
               <ChevronDownIcon data-icon="inline-end" />
             </Button>
           </DropdownMenuTrigger>
@@ -184,7 +186,7 @@ export function TopBar({ onCloseSession, onReturnToSession, confirmSwitch }: Pro
           <DropdownMenuTrigger asChild disabled={teamShows.length === 0}>
             <Button variant="ghost" className={CRUMB} title={activeShowName || 'Switch show'}>
               <span className="sr-only">Switch show: </span>
-              <span className={CRUMB_NAME}>{activeShowName || 'No show'}</span>
+              <span className={cn(CRUMB_NAME, SHOW_NAME)}>{activeShowName || 'No show'}</span>
               <ChevronDownIcon data-icon="inline-end" />
             </Button>
           </DropdownMenuTrigger>

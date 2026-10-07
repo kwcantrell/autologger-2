@@ -143,9 +143,10 @@ const TIMELINE_HOVER_PLAYHEAD_VISIBLE = 'opacity-55 bg-[rgba(229,238,252,0.28)]'
 // --marker-glow-col is runtime-set. base opacity/transform driven by JS inline styles.
 const TIMELINE_MARKER_PLAYHEAD_GLOW =
   'timelineMarkerPlayheadGlow absolute top-1/2 left-0 w-[0.32rem] h-[0.32rem] m-0 rounded-full pointer-events-none z-[1] opacity-0 [will-change:opacity,transform] [transition:opacity_0.16s_ease-out,transform_0.16s_ease-out,left_0.05s_linear] bg-transparent [box-shadow:0_0_14px_color-mix(in_srgb,var(--marker-glow-col,var(--v5-primary))_16%,transparent)]';
-// .timelinePlayhead base (white) + #v4-log-session (v5 color, no shadow).
+// .timelinePlayhead: the shell's playhead colour (foreground when stopped, the live accent in
+// playback and while live) with the soft glow (finish review fix round 1).
 const TIMELINE_PLAYHEAD =
-  'timelinePlayhead absolute top-1/2 bottom-auto left-0 w-0.5 h-[calc(100%-0.85rem)] m-0 rounded-[999px] -translate-x-1/2 -translate-y-1/2 z-[6] pointer-events-none bg-si-fg shadow-[0_0_10px_var(--tx-glow)]';
+  'timelinePlayhead absolute top-1/2 bottom-auto left-0 w-0.5 h-[calc(100%-0.85rem)] m-0 rounded-[999px] -translate-x-1/2 -translate-y-1/2 z-[6] pointer-events-none bg-(--tx-playhead) shadow-[0_0_12px_1px_var(--tx-glow)] [transition:background-color_var(--tx-dur)_var(--tx-ease)] motion-reduce:transition-none';
 
 // .timelineMarkerTooltip (fixed, v5 glass-face-aside — the second .timelineMarkerTooltip
 // block wins in source order). Visible modifier toggles opacity/visibility.

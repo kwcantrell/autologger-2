@@ -312,3 +312,29 @@ describe('TopicsRow on the shadcn Table parts', () => {
     for (const td of cells) expect(td.getAttribute('data-slot')).toBe('table-cell');
   });
 });
+
+// Finish review fix round 1: on phones Duration and Level fold under the session time (each with
+// a visible short label), so the summary keeps the rest of the row and wraps there instead of
+// pushing the table into a sideways scroll.
+describe('TopicsRow folded for phones', () => {
+  it('folds duration and level under the time and leaves the summary its own cell', () => {
+    renderRow({ folded: true });
+    const tr = document.querySelector('tbody > tr') as HTMLTableRowElement;
+    const cells = Array.from(tr.querySelectorAll(':scope > td'));
+    expect(cells).toHaveLength(3);
+    expect(cells[1].contains(screen.getByDisplayValue('00:00:10:00'))).toBe(true);
+    const duration = screen.getByLabelText('Duration (s)');
+    const level = screen.getByLabelText('Level');
+    expect(cells[1].contains(duration)).toBe(true);
+    expect(cells[1].contains(level)).toBe(true);
+    expect((duration as HTMLInputElement).value).toBe('30');
+    expect((level as HTMLInputElement).value).toBe('1');
+    expect(cells[2].contains(screen.getByDisplayValue('A summary'))).toBe(true);
+  });
+
+  it('keeps five cells on desktop', () => {
+    renderRow();
+    const tr = document.querySelector('tbody > tr') as HTMLTableRowElement;
+    expect(tr.querySelectorAll(':scope > td')).toHaveLength(5);
+  });
+});

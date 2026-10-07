@@ -45,8 +45,19 @@ const COLUMNS: ColumnDef[] = [
     sortKey: 'session_time',
     thClassName: 'text-left w-[6.5rem]',
   },
-  { key: 'speaker', label: 'Speaker', sortKey: 'speaker', thClassName: 'text-left w-32' },
-  { key: 'word', label: 'Word(s)', sortKey: 'word', thClassName: 'text-left min-w-40' },
+  {
+    key: 'speaker',
+    label: 'Speaker',
+    sortKey: 'speaker',
+    thClassName: 'text-left w-32 max-md:w-auto',
+  },
+  // Phones: no floors, so the table fits a 390px card with no sideways scroll (finish review).
+  {
+    key: 'word',
+    label: 'Word(s)',
+    sortKey: 'word',
+    thClassName: 'text-left min-w-40 max-md:min-w-0',
+  },
 ];
 
 // Approximate rendered height of a single TranscribeRow: input/button + cell

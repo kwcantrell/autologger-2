@@ -1,9 +1,11 @@
 import clsx from 'clsx';
+import { KeyboardIcon } from 'lucide-react';
 import type { LogEvent, SessionStatus } from '../../../api/types';
 import { Badge } from '../../../shared/components/ui/badge';
 import { Button } from '../../../shared/components/ui/button';
 import { Tooltip } from '../../../shared/ui/Tooltip';
 import type { AudioClipLite } from '../../../shared/utils/waveformMerge';
+import { type ShellTransportState, TRANSPORT_STATUS_LABEL } from '../coordination/transportStatus';
 import { CategoryButtonStrip } from './CategoryButtonStrip';
 import { MarkerNav } from './MarkerNav';
 import { TimecodeDisplay } from './TimecodeDisplay';
@@ -29,7 +31,12 @@ interface Props {
   liveDock: boolean;
   onOffState: Map<string, 'on' | 'off'>;
   onToggle: (categoryId: string) => void;
-  statusText: string;
+  /**
+   * The shell transport state SessionWorkspace publishes to the top bar (perf override
+   * included): the pill reads the top bar's label for it. Recording comes from the session-wide
+   * lease ("Truthful recording indication"), so a remote client's recording reads REC here too.
+   */
+  transport: ShellTransportState;
 }
 
 // Live category buttons fill --v4-cat-btn-h (~6.7rem); do not clamp to the
@@ -62,7 +69,7 @@ export function MaximizeLogStrip({
   liveDock,
   onOffState,
   onToggle,
-  statusText,
+  transport,
 }: Props) {
   const code = (status?.show_code ?? '').trim();
   const showName = (status?.show_name ?? '').trim();
@@ -73,7 +80,9 @@ export function MaximizeLogStrip({
   const stripShow = showName || code || sessionTitle || '—';
   const stripSessionName = sessionTitle && sessionTitle !== stripShow ? sessionTitle : '';
   const dateText = fmtSessionDate(status?.session_created_at_utc ?? status?.now_utc);
-  const displayStatus = ytImportPending ? 'Importing YouTube Audio' : statusText;
+  const displayStatus = ytImportPending
+    ? 'Importing YouTube Audio'
+    : TRANSPORT_STATUS_LABEL[transport];
   const statusIsYtImport = displayStatus === 'Importing YouTube Audio';
   // Lock transport / marker / scrub / shortcuts while YouTube audio is importing.
   const controlsLocked = statusIsYtImport;
@@ -97,12 +106,9 @@ export function MaximizeLogStrip({
     </div>
   );
 
-  // The strip's own status reads the session truth (statusText: Recording from the session-wide
-  // lease, Rolling, else Stopped). Its pill only ignites for Rolling/Recording; Stopped (which
-  // includes this client playing — the top bar says PLAY) stays the neutral outline, so the pill's
-  // colour never contradicts its word.
-  const statusLive = displayStatus === 'Rolling' || displayStatus === 'Recording';
-
+  // The strip's pill says what the top bar says (finish review fix round 1: the card read STOPPED
+  // beside the bar's PLAY during playback). Both read the same shell state and the same label
+  // map, and the pill takes the shell's transport colours, so its colour always matches its word.
   const sessionMeta = (
     <div className="flex min-w-0 flex-row flex-wrap items-center justify-between gap-x-3 gap-y-1.5">
       {/* Date lives in a hover/focus tooltip — saves a meta row; rail already
@@ -150,8 +156,8 @@ export function MaximizeLogStrip({
             <span id="v5-controls-status-value">{displayStatus}</span>
           </Badge>
         ) : (
-          <Badge variant={statusLive ? 'transport' : 'outline'}>
-            {displayStatus === 'Recording' && (
+          <Badge variant="transport">
+            {transport === 'recording' && (
               <span
                 data-slot="live-dot"
                 className="size-1.5 shrink-0 rounded-full bg-current"
@@ -214,9 +220,7 @@ export function MaximizeLogStrip({
           disabled={controlsLocked}
           onClick={onOpenShortcuts}
         >
-          <span aria-hidden="true" className="font-tc text-[0.9375rem]">
-            ?
-          </span>
+          <KeyboardIcon data-icon="inline-start" aria-hidden="true" />
         </Button>
       </Tooltip>
     </div>

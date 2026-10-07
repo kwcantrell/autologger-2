@@ -19,7 +19,7 @@ import {
   FEED_INLINE_INPUT,
   FEED_INLINE_INPUT_NUM,
   FEED_INLINE_INPUT_TC,
-    FEED_ROW,
+  FEED_ROW,
   FEED_SUMMARY_TEXTAREA,
 } from './FeedTable';
 import { JumpToTimeButton } from './JumpToTimeButton';
@@ -39,6 +39,11 @@ export const TOPIC_EDIT_FIELDS = [
   'topic_level',
   'summary',
 ] as const satisfies ReadonlyArray<keyof TopicEditState>;
+
+/** The folded Duration/Level line under the time (phones): short labels in the label face, the
+ *  values in the body text colour and the cell's timecode face. */
+const FOLDED_NUMS =
+  'mt-0.5 flex items-center gap-1 font-label text-[0.65rem] font-semibold tracking-[0.08em] text-muted-foreground uppercase [&_input]:font-tc [&_input]:text-[0.75rem] [&_input]:tracking-normal [&_input]:text-(--color-text)';
 
 export interface TopicPatch {
   session_time?: string;
@@ -124,6 +129,10 @@ interface Props {
    *  jump now plays — so a parseable invented time is the exact silent-
    *  wrong-second hazard this guards against. */
   transcriptAnchored: boolean;
+  /** Phones (finish review fix round 1): Duration and Level fold under the session time, each
+   *  with a short visible label, so the summary keeps the rest of the row and wraps there.
+   *  `TopicsFeed` drops their column headers to match. */
+  folded?: boolean;
 }
 
 // --- feed-row-seek, task 8.2/8.3 (design D4, spec "Topic jumps require an
@@ -166,6 +175,7 @@ export function TopicsRow({
   jumpUnavailable,
   jumpReasonId,
   transcriptAnchored,
+  folded = false,
 }: Props) {
   // The feed's seeds; a standalone row (unit tests) gets a store of its own.
   const rowSeeds = useRowSeeds<SessionTopic>(feedSeeds);
@@ -313,6 +323,44 @@ export function TopicsRow({
 
   const resolvedSec = topicsRowTimelineSec(row, fps, transcriptAnchored);
 
+  // Duration and Level: their own cells on desktop, one folded line under the time on phones.
+  // Named (aria-label) in both layouts; the folded line also shows short visible labels.
+  const durationInput = (
+    <input
+      className={clsx(
+        FEED_INLINE_INPUT,
+        FEED_INLINE_INPUT_NUM,
+        folded ? 'w-[calc(4ch+0.6rem+2px)]' : 'max-w-20',
+      )}
+      aria-label="Duration (s)"
+      type="number"
+      min={0}
+      step={1}
+      value={vals.duration_sec}
+      onFocus={startEdit}
+      onChange={(e) => setEdit((p) => (p ? { ...p, duration_sec: e.target.value } : p))}
+      onBlur={(e) => commitField('duration_sec', e.target.value, e.relatedTarget)}
+    />
+  );
+  const levelInput = (
+    <input
+      className={clsx(
+        FEED_INLINE_INPUT,
+        FEED_INLINE_INPUT_NUM,
+        folded ? 'w-[calc(2ch+0.6rem+2px)]' : 'max-w-20',
+      )}
+      aria-label="Level"
+      type="number"
+      min={1}
+      max={10}
+      step={1}
+      value={vals.topic_level}
+      onFocus={startEdit}
+      onChange={(e) => setEdit((p) => (p ? { ...p, topic_level: e.target.value } : p))}
+      onBlur={(e) => commitField('topic_level', e.target.value, e.relatedTarget)}
+    />
+  );
+
   return (
     <TableRow ref={trRef} className={FEED_ROW}>
       {/* Jump column (feed-row-seek, design D2/D7): its own leading cell,
@@ -335,32 +383,23 @@ export function TopicsRow({
           onChange={(e) => setEdit((p) => (p ? { ...p, session_time: e.target.value } : p))}
           onBlur={(e) => commitField('session_time', e.target.value, e.relatedTarget)}
         />
+        {folded && (
+          <span className={FOLDED_NUMS}>
+            <span aria-hidden="true">Dur</span>
+            {durationInput}
+            <span aria-hidden="true">Lvl</span>
+            {levelInput}
+          </span>
+        )}
       </TableCell>
-      <TableCell className={clsx(FEED_CELL, 'align-top', FEED_CELL_TEXT)}>
-        <input
-          className={clsx(FEED_INLINE_INPUT, FEED_INLINE_INPUT_NUM, 'max-w-20')}
-          type="number"
-          min={0}
-          step={1}
-          value={vals.duration_sec}
-          onFocus={startEdit}
-          onChange={(e) => setEdit((p) => (p ? { ...p, duration_sec: e.target.value } : p))}
-          onBlur={(e) => commitField('duration_sec', e.target.value, e.relatedTarget)}
-        />
-      </TableCell>
-      <TableCell className={clsx(FEED_CELL, 'align-top', FEED_CELL_TEXT)}>
-        <input
-          className={clsx(FEED_INLINE_INPUT, FEED_INLINE_INPUT_NUM, 'max-w-20')}
-          type="number"
-          min={1}
-          max={10}
-          step={1}
-          value={vals.topic_level}
-          onFocus={startEdit}
-          onChange={(e) => setEdit((p) => (p ? { ...p, topic_level: e.target.value } : p))}
-          onBlur={(e) => commitField('topic_level', e.target.value, e.relatedTarget)}
-        />
-      </TableCell>
+      {!folded && (
+        <TableCell className={clsx(FEED_CELL, 'align-top', FEED_CELL_TEXT)}>
+          {durationInput}
+        </TableCell>
+      )}
+      {!folded && (
+        <TableCell className={clsx(FEED_CELL, 'align-top', FEED_CELL_TEXT)}>{levelInput}</TableCell>
+      )}
       <TableCell className={clsx(FEED_CELL, 'align-top', FEED_CELL_TEXT)}>
         <textarea
           ref={summaryRef}

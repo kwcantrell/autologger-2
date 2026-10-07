@@ -12,6 +12,7 @@ import { versionConflictOf } from '../../../api/versionConflict';
 import { showToast } from '../../../shared/components/Toast';
 import { conflictPromptCopy } from '../../../shared/hooks/conflictPromptCopy';
 import { useVersionedSave } from '../../../shared/hooks/useVersionedSave';
+import { useIsMobile } from '../../../shared/ui/breakpoints';
 import { useTranscriptWordsGate } from '../hooks/TranscriptWordsGateContext';
 import { useGatedGenerate } from '../hooks/useGatedGenerate';
 import { useTimelineSeek } from '../hooks/useTimelineSeek';
@@ -75,6 +76,15 @@ const COLUMNS: ColumnDef[] = [
   { key: 'summary', label: 'Summary', sortKey: 'summary', thClassName: 'text-left min-w-56' },
 ];
 
+// Phones (finish review fix round 1): Duration and Level fold under the session time in each row
+// (TopicsRow `folded`), and the summary has no floor, so it wraps inside a 390px card instead of
+// pushing the table into a sideways scroll.
+const FOLDED_COLUMNS: ColumnDef[] = [
+  COLUMNS[0],
+  COLUMNS[1],
+  { key: 'summary', label: 'Summary', sortKey: 'summary', thClassName: 'text-left' },
+];
+
 const FIELD_LABELS: Record<keyof TopicEditState, string> = {
   session_time: 'Session time',
   duration_sec: 'Duration (s)',
@@ -106,6 +116,7 @@ export const TopicsFeed = memo(function TopicsFeed({ sessionId }: Props) {
   const { data: status } = useSessionStatus(sessionId);
   const { data: words } = useTranscriptWords(sessionId, { enabled: useTranscriptWordsGate() });
   const { unavailable: jumpUnavailable, jump } = useTimelineSeek(sessionId, false);
+  const foldRows = useIsMobile();
   const jumpReasonId = 'v5-topics-feed-jump-reason';
   const fps = status?.frame_rate ?? null;
   // Task 8.3: computed once here from the session's transcript words, passed
@@ -264,7 +275,7 @@ export const TopicsFeed = memo(function TopicsFeed({ sessionId }: Props) {
       }
     >
       <FeedTable
-        columns={COLUMNS}
+        columns={foldRows ? FOLDED_COLUMNS : COLUMNS}
         isLoading={isLoading}
         isEmpty={!topics || topics.length === 0}
         emptyMessage={
@@ -295,6 +306,7 @@ export const TopicsFeed = memo(function TopicsFeed({ sessionId }: Props) {
             jumpUnavailable={jumpUnavailable}
             jumpReasonId={jumpReasonId}
             transcriptAnchored={transcriptAnchored}
+            folded={foldRows}
           />
         ))}
       </FeedTable>
