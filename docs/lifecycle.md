@@ -52,7 +52,7 @@ Size the proposal to the change: a tier 1 proposal can be ten lines.
 | change | x | x | x | More than one change on the branch, no `Tier:` line, tier 1-2 without a change, or a tier 0 change dir. A grandfathered change WARNs, and in CI fails unless the PR body says `Grandfathered: <id>`. A tasks.md-only edit to an archive already on the base isn't counted, and is named in the message (ADR 0016) |
 | risk-floor | x | x | x | A high-risk path is touched below tier 2 (a grandfathered change WARNs with the paths) |
 | evidence | | x | x | A ticked task has no `Evidence:` |
-| commands | | x | x | lint, typecheck or test fails |
+| commands | | x | x | lint, typecheck or test fails. Whether the test run includes the pg and integration projects depends on the changed paths; see below |
 | approval | | | x | Tier 1-2 proposal lacks `Approved-by:` |
 | panel | | | x | Tier 2 lacks panel.md. Or panel.md has no `- [ ] [severity]` findings and no `No findings.` line, a finding lacks a `[critical\|major\|minor]` tag, a critical is open, or a ticked critical or major lacks `Resolved:` or `Declined` |
 | tasks | | | x | An unticked task remains |
@@ -60,11 +60,33 @@ Size the proposal to the change: a tier 1 proposal can be ten lines.
 | tests-with-code | | | x | Source changed without a test change. Test folders count at any depth; `managed_paths` files are ignored (label `no-test-needed` overrides) |
 | audit | | | x | `lifecycle.commands.audit` fails |
 
-`managed_paths` and `test_globs` are read from the base branch's
+`managed_paths`, `test_globs` and `db_test_paths` are read from the base branch's
 config, so a PR can't exempt itself. Changes to them apply from the next PR.
 
 The Stop hook runs the `hook` stage. pre-commit runs `commit` on commit and `hook` on push.
 CI runs `pr` on pull requests.
+
+### Which tests run (ADR 0026)
+
+The pg and integration vitest projects (`server`, `packages/storage`) start a Postgres container
+and take most of the test time. They run only when the change can affect them:
+
+- **The decision.** If any changed file matches `lifecycle.db_test_paths` (code, migrations, the
+  pg harness, `docker/`, `fixtures/`, root manifests, and the selection machinery itself), they
+  run. If none does, the test command runs with `SKIP_DB_TESTS=1`, and the vitest configs leave
+  those projects out. Anything unclear runs them: no base, no list on the base, a non-PR CI run,
+  or `FULL_TESTS=1`. An inherited `SKIP_DB_TESTS` is always stripped.
+- **What it says.** The `commands` line ends with `(full: <why>)` or `(pg/integration skipped:
+  <why>)`. The skip line prints even under `--quiet`, so pre-push shows it.
+- **Forcing a full run locally.** `FULL_TESTS=1 scripts/check-change.sh --stage hook`.
+- **In CI**, `gates` sets `DB_TESTS_IN_SHARDS=1` and runs typecheck, unit tests and audit. The DB
+  tests run in `db-shard`, a 3-way matrix that splits the server files with `vitest --shard`
+  (storage's 3 files run whole on shard 1). Each shard asks
+  `scripts/check-change.sh --db-selection`, and skips only when that exits 0 with exactly one
+  `skip: ` line. `db-tests` is green only when every shard succeeded, and it's the check to
+  require.
+- **After merge**, a push to `supabase-migration` runs `gates` with `--only commands,audit` and
+  all three shards with `FULL_TESTS=1`. That run catches anything the path list missed.
 
 ## Setup
 

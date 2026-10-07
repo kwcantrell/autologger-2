@@ -60,11 +60,12 @@ the old behavior before the change and the new behavior after it.
   Evidence (scratch, server diff): `CI=1 GITHUB_EVENT_NAME=pull_request DB_TESTS_IN_SHARDS=1 --only commands` -> `(pg/integration: db-tests job)`, test saw `1`; `DB_TESTS_IN_SHARDS=1` without `CI` -> `(full: server/src/x.ts matches db_test_paths)`, saw `unset`; push form `CI=1 GITHUB_EVENT_NAME=push FULL_TESTS=1 DB_TESTS_IN_SHARDS=1 --only commands,audit` -> `(pg/integration: db-tests job)`, rc=0.
 ## 3. CI runs the full suite after merge, sharded
 
-- [ ] 3.1 `.github/workflows/lifecycle.yml`: `push.branches: [main, supabase-migration]`. A push to
+- [x] 3.1 `.github/workflows/lifecycle.yml`: `push.branches: [main, supabase-migration]`. A push to
   `supabase-migration` runs only `FULL_TESTS=1 DB_TESTS_IN_SHARDS=1 scripts/check-change.sh --only commands,audit`. A
   push to `main` keeps `--stage commit`, and PRs keep `--stage pr`. Actions stay SHA-pinned.
   Check: `scripts/check-change.sh --only workflows,yaml` passes, and loading the workflow with
   `python3 -c` shows both branches and the per-ref command.
+  Evidence: `scripts/check-change.sh --only workflows,yaml` -> `PASS workflows actions pinned, token scoped`, `PASS yaml 105 YAML file(s) parse`; `python3 -I -c` loading the workflow -> `push ['main', 'supabase-migration']`, `gates env: {'DB_TESTS_IN_SHARDS': '1'}`, `perms: {'contents': 'read'}`. The "Run lifecycle gates" step branches on `EVENT`/`REF`: `pull_request` -> `--stage pr`; `refs/heads/supabase-migration` -> `FULL_TESTS=1 scripts/check-change.sh --only commands,audit`; else `--stage commit`. `DB_TESTS_IN_SHARDS=1` comes from `gates`' job-level `env`.
 - [ ] 3.2 `.github/workflows/lifecycle.yml` gets the `db-shard` matrix job (`shard: [1, 2, 3]`)
   and the `db-tests` result job from D5, and `gates` sets `DB_TESTS_IN_SHARDS=1`. `db-tests` uses
   `db-shard`'s event condition with `!cancelled()`. Storage pg runs unsharded on shard 1 only.
@@ -77,7 +78,7 @@ the old behavior before the change and the new behavior after it.
     exit 1 fails the step.
   - Loading the workflow with `python3 -c` shows `db-tests`' `if` matching `db-shard`'s plus
     `!cancelled()`.
-- [ ] 3.3 Simulate the push run before merge. In a clone checked out at `origin/supabase-migration`
+- [x] 3.3 Simulate the push run before merge. In a clone checked out at `origin/supabase-migration`
   with this branch's checker and vitest configs applied, run
   the push run's two halves:
   `env -u GITHUB_BASE_REF CI=1 GITHUB_EVENT_NAME=push FULL_TESTS=1 DB_TESTS_IN_SHARDS=1 scripts/check-change.sh --only commands,audit`
@@ -85,6 +86,7 @@ the old behavior before the change and the new behavior after it.
   decision). Check: the first exits 0 with `(pg/integration: db-tests job)`, and no `change`
   failure blocks it. The second prints `run: FULL_TESTS=1`. For contrast, `--stage commit` under the same env shows the "one
   change per branch" failure that the push path avoids.
+  Evidence: fresh clone at `origin/supabase-migration` 415cca6b, with this branch's `check_change.py`, `openspec/config.yaml` and both vitest configs copied in, `npm ci`. `env -u GITHUB_BASE_REF CI=1 GITHUB_EVENT_NAME=push FULL_TESTS=1 DB_TESTS_IN_SHARDS=1 scripts/check-change.sh --only commands,audit` -> `PASS commands ran ['typecheck', 'test'] (pg/integration: db-tests job)`, `PASS audit ran ['audit']`, rc=0, 92s; same env `FULL_TESTS=1 --db-selection` -> `run: FULL_TESTS=1`, rc=0; contrast `--stage commit` -> `FAIL change one change per branch; found ['openspec/changes/archive/2026-09-30-infisical-secrets', ...`, `SKIP risk-floor blocked: change failed`, rc=1.
 - [ ] 3.4 On the PR's own CI run (it touches `scripts/`, so the shards run), record each
   `db-shard` job's duration and the `gates` duration next to the 509s baseline. Check: `gh api
   repos/:owner/:repo/actions/runs/<id>/jobs` shows 3 `db-shard` jobs, `db-tests` green, and the
@@ -96,16 +98,17 @@ the old behavior before the change and the new behavior after it.
 
 ## 4. Docs and ADR
 
-- [ ] 4.1 New ADR `docs/decisions/0026-select-db-tests-by-path.md`, with the measurements from
+- [x] 4.1 New ADR `docs/decisions/0026-select-db-tests-by-path.md`, with the measurements from
   1.1 and design.md as evidence. `docs/lifecycle.md` explains the selection, `db_test_paths`,
   `FULL_TESTS=1`, the shards (`db-shard`, `db-tests`, `DB_TESTS_IN_SHARDS`) and the post-merge run, and says
   the owner adds `db-tests` to the required checks. Check: `grep -n 'db_test_paths\|FULL_TESTS'
   docs/lifecycle.md docs/decisions/0026-*.md` hits both files.
-
-- [ ] 4.2 `docs/security.md` (the required-checks setup list, line ~25) and the header comment
+  Evidence: new `docs/decisions/0026-select-db-tests-by-path.md` (Context, Decision, Evidence with the 509s / 1.8s / 597s / 92s numbers, Consequences); `docs/lifecycle.md` gains "### Which tests run (ADR 0026)" and `db_test_paths` in the base-read sentence. `grep -n 'db_test_paths\|FULL_TESTS' docs/lifecycle.md docs/decisions/0026-*.md` -> `docs/lifecycle.md:63,74,78,81,89`, `docs/decisions/0026-select-db-tests-by-path.md:5,18`.
+- [x] 4.2 `docs/security.md` (the required-checks setup list, line ~25) and the header comment
   of `.github/workflows/lifecycle.yml` name `db-tests` among the required checks. Check:
   `grep -n 'db-tests' docs/security.md .github/workflows/lifecycle.yml` hits the setup line and
   the header.
+  Evidence: `grep -n 'db-tests' docs/security.md .github/workflows/lifecycle.yml` -> `docs/security.md:26:   \`dependency-review\` and \`db-tests\` (the pg and integration tests, ADR 0026), code owner`, `.github/workflows/lifecycle.yml:1:# The enforced gates. Make the \`gates\`, \`secrets\`, \`dependency-review\` and \`db-tests\` jobs`.
 - [ ] 4.3 Owner step, done before archive: add `db-tests` to the `main-protect` ruleset's
   required status checks. Check: `gh api repos/:owner/:repo/rulesets/19850235 --jq
   '.rules[]|select(.type=="required_status_checks")'` lists `db-tests` alongside `gates`,
