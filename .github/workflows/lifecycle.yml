@@ -1,5 +1,5 @@
-# The enforced gates. Make the `gates`, `secrets` and `dependency-review` jobs required
-# status checks in the main branch ruleset. Actions are pinned to full commit SHAs;
+# The enforced gates. Make the `gates`, `secrets`, `dependency-review` and `db-tests` jobs
+# required status checks in the main branch ruleset. Actions are pinned to full commit SHAs;
 # Dependabot keeps them current.
 name: lifecycle
 
@@ -7,7 +7,8 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, edited, labeled, unlabeled]
   push:
-    branches: [main]
+    # supabase-migration: the full suite after every merge (ci-db-test-selection D4).
+    branches: [main, supabase-migration]
 
 permissions:
   contents: read
@@ -19,6 +20,9 @@ concurrency:
 jobs:
   gates:
     runs-on: ubuntu-latest
+    env:
+      # The pg and integration tests run in db-shard instead (ci-db-test-selection D5).
+      DB_TESTS_IN_SHARDS: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -43,7 +47,81 @@ jobs:
       - name: Install the stack
         run: npm ci
       - name: Run lifecycle gates
-        run: scripts/check-change.sh --stage ${{ github.event_name == 'pull_request' && 'pr' || 'commit' }}
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+        run: |
+          if [ "$EVENT" = pull_request ]; then
+            scripts/check-change.sh --stage pr
+          elif [ "$REF" = refs/heads/supabase-migration ]; then
+            # A push has no PR base, so the commit stage would diff against main; the PR already
+            # ran the file gates (ci-db-test-selection D4).
+            FULL_TESTS=1 scripts/check-change.sh --only commands,audit
+          else
+            scripts/check-change.sh --stage commit
+          fi
+
+  # The pg and integration tests, split across runners (ci-db-test-selection D5). Each shard asks
+  # the checker whether the PR's paths need them, and skips only on a clean `skip:` answer.
+  db-shard:
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/supabase-migration'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    env:
+      FULL_TESTS: ${{ github.event_name == 'push' && '1' || '' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install gate tooling
+        run: python3 -m pip install pyyaml==6.0.2
+      - name: Select
+        id: select
+        run: |
+          out="$(scripts/check-change.sh --db-selection)"  # a non-zero exit fails the shard
+          echo "$out"
+          if [ "$(printf '%s\n' "$out" | wc -l)" -eq 1 ] && [[ "$out" == "skip: "* ]]; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        if: steps.select.outputs.run == 'true'
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install the stack
+        if: steps.select.outputs.run == 'true'
+        run: npm ci
+      - name: server pg and integration
+        if: steps.select.outputs.run == 'true'
+        working-directory: server
+        run: npx vitest run --project integration --project pg --shard=${{ matrix.shard }}/${{ strategy.job-total }}
+      # 3 files: vitest refuses more shards than files, so storage runs whole on shard 1.
+      - name: storage pg
+        if: steps.select.outputs.run == 'true' && matrix.shard == 1
+        working-directory: packages/storage
+        run: npx vitest run --project pg
+
+  # The one name to require: green only when every shard passed (or skipped by path).
+  db-tests:
+    if: ${{ !cancelled() && (github.event_name == 'pull_request' || github.ref == 'refs/heads/supabase-migration') }}
+    needs: db-shard
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every shard passed
+        env:
+          RESULT: ${{ needs.db-shard.result }}
+        run: |
+          echo "db-shard: $RESULT"
+          test "$RESULT" = success
 
   secrets:
     runs-on: ubuntu-latest
