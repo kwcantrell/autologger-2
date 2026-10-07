@@ -536,6 +536,11 @@ def test_env(ctx: Context) -> tuple[dict[str, str], str]:
     env = {k: v for k, v in os.environ.items() if k != "SKIP_DB_TESTS"}  # never inherited
     if ctx.in_ci and os.environ.get("DB_TESTS_IN_SHARDS") == "1":  # CI runs them in db-shard (D5)
         return {**env, "SKIP_DB_TESTS": "1"}, "pg/integration: db-tests job"
+    if os.environ.get("FULL_TESTS") == "1":
+        return env, "full: FULL_TESTS=1"
+    if not ctx.in_ci:  # the full DB suite is CI's job on the PR; TDD runs the targeted test (D3a)
+        return {**env, "SKIP_DB_TESTS": "1"}, \
+            "pg/integration skipped: local run; CI runs them on the PR, FULL_TESTS=1 runs them here"
     run, reason = db_selection(ctx)
     if not run:
         return {**env, "SKIP_DB_TESTS": "1"}, f"pg/integration skipped: {reason}"

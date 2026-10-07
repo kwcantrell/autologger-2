@@ -69,15 +69,21 @@ CI runs `pr` on pull requests.
 ### Which tests run (ADR 0026)
 
 The pg and integration vitest projects (`server`, `packages/storage`) start a Postgres container
-and take most of the test time. They run only when the change can affect them:
+and take most of the test time. They run in CI on the PR, and only when the change can affect
+them:
 
-- **The decision.** If any changed file matches `lifecycle.db_test_paths` (code, migrations, the
+- **Locally, never by default.** Pre-push, the Stop hook and manual runs skip them, with
+  `(pg/integration skipped: local run; ...)`. Test-first work runs the test being written
+  directly, for example `npx vitest run --project integration src/foo.int.test.ts`. Catching
+  regressions elsewhere is the PR's `db-tests` check.
+- **The CI decision.** If any changed file matches `lifecycle.db_test_paths` (code, migrations, the
   pg harness, `docker/`, `fixtures/`, root manifests, and the selection machinery itself), they
   run. If none does, the test command runs with `SKIP_DB_TESTS=1`, and the vitest configs leave
   those projects out. Anything unclear runs them: no base, no list on the base, a non-PR CI run,
   or `FULL_TESTS=1`. An inherited `SKIP_DB_TESTS` is always stripped.
-- **What it says.** The `commands` line ends with `(full: <why>)` or `(pg/integration skipped:
-  <why>)`. The skip line prints even under `--quiet`, so pre-push shows it.
+- **What it says.** The `commands` line ends with `(full: <why>)`, `(pg/integration skipped:
+  <why>)` or `(pg/integration: db-tests job)`. The skip line prints even under `--quiet`, so
+  pre-push shows it. `scripts/check-change.sh --db-selection` prints CI's path decision locally.
 - **Forcing a full run locally.** `FULL_TESTS=1 scripts/check-change.sh --stage hook`.
 - **In CI**, `gates` sets `DB_TESTS_IN_SHARDS=1` and runs typecheck, unit tests and audit. The DB
   tests run in `db-shard`, a 3-way matrix that splits the server files with `vitest --shard`

@@ -59,7 +59,7 @@ the old behavior before the change and the new behavior after it.
   `full`.
   Evidence: (scratch, server diff) `CI=1 GITHUB_EVENT_NAME=pull_request DB_TESTS_IN_SHARDS=1 --only commands` -> `(pg/integration: db-tests job)`, test saw `1`; `DB_TESTS_IN_SHARDS=1` without `CI` -> `(full: server/src/x.ts matches db_test_paths)`, saw `unset`; push form `CI=1 GITHUB_EVENT_NAME=push FULL_TESTS=1 DB_TESTS_IN_SHARDS=1 --only commands,audit` -> `(pg/integration: db-tests job)`, rc=0.
 
-- [ ] 2.6 (Owner delta, D3a.) With `CI` unset, the `commands` gate runs the test command with
+- [x] 2.6 (Owner delta, D3a.) With `CI` unset, the `commands` gate runs the test command with
   `SKIP_DB_TESTS=1` on any diff, `server/` included, and reports `(pg/integration skipped: local
   run; ...)` unless `FULL_TESTS=1`. CI behavior (2.5, `--db-selection`) is unchanged. Check on the
   scratch setup: before, a `server/` diff gives `(full: server/src/x.ts matches db_test_paths)`.
@@ -68,6 +68,7 @@ the old behavior before the change and the new behavior after it.
   `full`. `CI=1 DB_TESTS_IN_SHARDS=1` gives `db-tests job`. `--stage hook --quiet` prints the skip
   line. `--db-selection` on the `server/` diff still prints `run: ...`. Docs: `docs/lifecycle.md`
   and ADR 0026 say local runs skip the DB suite and that TDD runs the targeted test.
+  Evidence: (scratch, stub commands) before D3a, local `server/` diff `--only commands` -> `(full: server/src/x.ts matches db_test_paths)`, test saw `unset`; `--stage hook --quiet` printed nothing. After: local `server/` -> `(pg/integration skipped: local run; CI runs them on the PR, FULL_TESTS=1 runs them here)`, saw `1`; `FULL_TESTS=1` -> `(full: FULL_TESTS=1)`, `unset`; `CI=1 GITHUB_EVENT_NAME=pull_request` -> `(full: server/src/x.ts matches db_test_paths)`, `unset`; CI PR web-only -> `(pg/integration skipped: no db_test_paths changed)`; `CI=1 DB_TESTS_IN_SHARDS=1` -> `(pg/integration: db-tests job)`; push-gates env -> `db-tests job`; `--stage hook --quiet` -> prints the local-skip line; local `--db-selection` -> `run: server/src/x.ts matches db_test_paths`; `SKIP_DB_TESTS=0 FULL_TESTS=1` -> `full`, `unset`. Docs: `grep -n 'Not locally\|Locally, never' docs/lifecycle.md docs/decisions/0026-*.md` -> `docs/lifecycle.md:75`, `docs/decisions/0026-select-db-tests-by-path.md:18`.
 
 ## 3. CI runs the full suite after merge, sharded
 
@@ -128,9 +129,10 @@ the old behavior before the change and the new behavior after it.
   and every `db-shard` shows `run:`.
   Evidence: PR #83, run 37607424547: every gate except `tasks` passed. `tasks` listed only the then-unticked 3.4, 5.1, 5.2 and the two owner items now moved below. `gates` -> `PASS commands ran ['typecheck', 'test'] (pg/integration: db-tests job)`, `PASS audit`, `WARN tests-with-code source changed without tests (overridden)` (label `no-test-needed`); each `db-shard` Select -> `run: no db_test_paths on the base`; shards -> `Test Files 34 passed (34)` + storage `3 passed (3)`, `33 passed | 1 skipped (34)`, `33 passed (33)`; `db-tests` success. `crossProcess.int.test.ts` passed in CI. An earlier run, 37607423603, was cancelled by the label-add re-trigger, and its `db-tests` shows `cancelled`, not failed (D5 `!cancelled()`). The push after this tick is the fully green run.
 
-- [ ] 5.3 After D3a, `scripts/check-change.sh --stage hook` on the branch passes without starting
+- [x] 5.3 After D3a, `scripts/check-change.sh --stage hook` on the branch passes without starting
   Postgres, and its `commands` line shows the local skip. Check: the run passes, the `commands`
   line shows `(pg/integration skipped: local run; ...)`, and it's quicker than 5.1's 446s.
+  Evidence: `scripts/check-change.sh --stage hook` -> all PASS, `PASS commands ran ['typecheck', 'test'] (pg/integration skipped: local run; CI runs them on the PR, FULL_TESTS=1 runs them here)`, rc=0, 81s (5.1's full local run took 446s); `docker ps` -> no `supabase/postgres` container started during the run (`grep -c` -> 0).
 - [ ] 5.4 The PR's CI run after D3a passes, with `db-tests` green and `gates` all PASS. Check: `gh
   api .../runs/<id>/jobs` shows every job `success`.
 
