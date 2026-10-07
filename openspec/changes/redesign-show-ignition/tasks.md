@@ -249,10 +249,16 @@ Every task names the test written first. A task is ticked only with an `Evidence
 
 ## 11. Integration checks
 
-- [ ] 11.1 Run `scripts/check-change.sh --stage hook --base origin/supabase-migration`, then the full `scripts/check-change.sh --base origin/supabase-migration`.
+- [x] 11.1 Run `scripts/check-change.sh --stage hook --base origin/supabase-migration`, then the full `scripts/check-change.sh --base origin/supabase-migration`.
   - Verify: every gate reports PASS, or a SKIP the script explains.
-- [ ] 11.2 Re-measure the homepage island chunk set from `react-loadable-manifest` after `npm run build -w web` (web-frontend-platform's instrument).
+  - Evidence: `scripts/check-change.sh --stage hook --base origin/supabase-migration` -> all 9 gates PASS (openspec, yaml, workflows, skills-sync, guide-size, change "tier 1", risk-floor "0 high-risk path(s) touched", evidence, commands "ran ['typecheck', 'test']"). The full `scripts/check-change.sh --base origin/supabase-migration` -> PASS on every gate (approval, panel "12 finding(s), no open criticals", artifacts-first, tests-with-code "96 source / 45 test file(s)", audit, …) except `tasks` "4 unticked task(s)", which is 11.1–11.4 themselves while group 11 is in flight. The script explains it, and it is re-run after 11.4.
+- [x] 11.2 Re-measure the homepage island chunk set from `react-loadable-manifest` after `npm run build -w web` (web-frontend-platform's instrument).
   - Verify: the recorded figure is no larger than the 218,401 B baseline, or the difference is explained in Evidence.
+  - Evidence: ran `npm run build -w web` (exit 0), then summed the files under `.next/react-loadable-manifest.json` for `app/(index)/IndexIsland.tsx -> @/pages/index/IndexRoot`: **350,469 B** on this branch.
+    - The 218,401 B figure is from 2026-08. The same instrument on the base `origin/supabase-migration`, built the same way in a temporary worktree (removed afterwards), reads **355,326 B**. The drift came from changes merged since August, before this one.
+    - So this change shrinks the homepage island set by **4,857 B**.
+    - Split points are now five, as the delta requires: BatchImport 37,842, NewSession 35,520, YouTubeImportError 1,637, SettingsView 120,562 and WorkspaceStatic 309,586 B.
+    - SettingsView replaces HomeSettingsModal (83,413) plus TeamsRoute (16,771) = 100,184 B. It is 20,378 B larger, but it is lazy and idle-prefetched, so it is off the homepage-critical path.
 - [ ] 11.3 Visual verification on a dev stack running this checkout. This needs the owner's go-ahead to run `make dev-up` from `autologger-ui`, since `:8787` currently mounts `autologger-2`.
   - Capture desktop (1440) and mobile (390) shots into `.impeccable/review/`:
     - console in all four transport states;
