@@ -142,7 +142,10 @@ the old behavior before the change and the new behavior after it.
 - After merge (was 3.5): the push run on `supabase-migration` runs all 3 shards with
   `FULL_TESTS=1`. Check: `gh run view <id> --log | grep 'run: FULL_TESTS=1'` hits each shard, and
   `db-tests` is green. Recorded in the archive PR.
+  Evidence: PR #83 merged 2026-10-07T10:59:53Z as 90082e05. Push run 37611085485 on `supabase-migration`: each `db-shard` Select -> `run: FULL_TESTS=1`; `db-shard (1)` success 221s (`Test Files 34 passed (34)`, storage `3 passed (3)`), `(2)` success 128s (`33 passed | 1 skipped (34)`), `(3)` success 187s (`33 passed (33)`); `db-tests` success (`db-shard: success`). The run's `gates` job failed on a flaky web unit test unrelated to this change: `web/src/pages/index/components/AiV2Design.test.tsx:382` `waitFor` on `aria-pressed` -> `Expected: "true" Received: "false"`. The merge tree equals the PR head 006c5417 (`git diff --stat 006c5417 origin/supabase-migration` is empty), whose run 37611028481 was fully green. The same test also failed in run 37422924436 (`shadcn-foundation`, 2026-10-06). It was not re-run to green.
+
 - Before archive (was 4.3): add `db-tests` to the `main-protect` ruleset's required status
   checks. Check: `gh api repos/:owner/:repo/rulesets/19850235 --jq
   '.rules[]|select(.type=="required_status_checks")'` lists `db-tests` alongside `gates`,
   `secrets` and `dependency-review`.
+  Evidence: done by the owner 2026-10-07 (jq + `gh api -X PUT` on ruleset 19850235) -> `["gates","secrets","dependency-review","db-tests"]`. `gh api repos/kwcantrell/autologger-2/rulesets/19850235` -> `main-protect active target=branch include=["refs/heads/main"] rules=deletion,non_fast_forward,pull_request,required_status_checks`.
