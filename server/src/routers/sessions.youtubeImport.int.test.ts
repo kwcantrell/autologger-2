@@ -419,6 +419,23 @@ describe('concurrency guards through the real route (matrix: both 409 causes; Ph
       lease?.release();
     }
   });
+
+  it('imports on three sessions are all admitted: two held on OTHER sessions do not 409 a third (no ceiling, run-status-and-sweeper D2)', async () => {
+    const session = (await seededSession()).sessionId;
+    const { binaryPath, markerPath } = freshBinary();
+    const held = ['no-ceiling-other-0', 'no-ceiling-other-1'].map((id) =>
+      youtubeImportGuard.tryAcquire(id),
+    );
+    expect(held.every((l) => l !== null)).toBe(true);
+    try {
+      const res = await postImport(session, VALID_BODY, configuredEnv(binaryPath));
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ ok: true });
+      expect(existsSync(markerPath)).toBe(true);
+    } finally {
+      for (const l of held) l?.release();
+    }
+  });
 });
 
 // ── Matrix row: post-validation failures → 502, audio unchanged ────────────

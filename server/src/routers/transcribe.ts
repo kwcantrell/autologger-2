@@ -247,9 +247,6 @@ const NO_TRANSCRIPT_DETAIL = 'This session has no transcript words to generate t
 const TOPIC_GENERATE_SESSION_BUSY_DETAIL =
   'A turn (AI chat, AI v2, topic generation, or event generation) is already in progress for this session; ' +
   'wait for it to finish before generating topics again. These features share one per-session AI slot by design.';
-const TOPIC_GENERATE_AT_CAPACITY_DETAIL =
-  'The server is at its AI turn concurrency limit (AI_CHAT_MAX_CONCURRENT, shared between AI chat, AI v2, ' +
-  'topic generation, and event generation); try again shortly.';
 // Fixed, handler-owned — never the CLI's raw output or its internal outcome
 // token (design D3/spec "Failure mapping").
 const TOPIC_GENERATE_FAILURE_DETAIL = 'Topic generation failed.';
@@ -270,18 +267,11 @@ transcribeRouter.post('/api/sessions/:sessionId/topics/generate', async (c) => {
     throw new ApiError(400, NO_TRANSCRIPT_DETAIL);
   }
 
-  // Single-flight (per session) + process-wide concurrency ceiling — 409,
-  // spawning nothing. Acquired here (not inside generateTopicsTurn) and
+  // Single-flight (per session) — 409, spawning nothing. There is no
+  // process-wide ceiling (run-status-and-sweeper D2). Acquired here (not inside generateTopicsTurn) and
   // released in this handler's own finally.
   const proc = aiChatTurns.tryAcquire(sessionId);
-  if (!proc.ok) {
-    throw new ApiError(
-      409,
-      proc.reason === 'session-busy'
-        ? TOPIC_GENERATE_SESSION_BUSY_DETAIL
-        : TOPIC_GENERATE_AT_CAPACITY_DETAIL,
-    );
-  }
+  if (!proc.ok) throw new ApiError(409, TOPIC_GENERATE_SESSION_BUSY_DETAIL);
   // The session's `ai-turn` lease (session-run-leases D4), behind the slot: a
   // refusal means another process runs a turn here, so it reads as session-busy.
   const slot = await claimAiLease(c, sessionId, proc);

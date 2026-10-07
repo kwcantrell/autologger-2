@@ -273,6 +273,20 @@ describe('topics/generate — configured behavior (topic-generation)', () => {
     }
   });
 
+  it('configured + turns in flight on two OTHER sessions: no 409, the run proceeds (no ceiling, run-status-and-sweeper D2)', async () => {
+    const others = [await newSession(), await newSession()];
+    const s = await newSession();
+    await seedMultiPageTranscript(s);
+    const held = others.map((o) => aiChatTurns.tryAcquire(o));
+    expect(held.every((h) => h.ok)).toBe(true);
+    try {
+      const res = await generateReq(s, claudeConfiguredEnv(REAL_SUCCESS_FIXTURE));
+      expect(res.status).toBe(200);
+    } finally {
+      for (const h of held) if (h.ok) h.release();
+    }
+  });
+
   it(
     'configured + MULTI-PAGE transcript + success: 200 {topics} — the OLD topics are gone, the ' +
       'fresh set (real create_topic calls) replaces them, and the shape matches GET …/topics',

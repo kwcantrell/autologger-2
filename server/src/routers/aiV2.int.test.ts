@@ -416,6 +416,20 @@ describe('ai/v2/design — turn slot (409), shared with the AI chat registry by 
     }
   });
 
+  it('turns in flight on two OTHER sessions do not 409 a new session (no ceiling, run-status-and-sweeper D2)', async () => {
+    const others = [(await seededSession()).sessionId, (await seededSession()).sessionId];
+    const s = (await seededSession()).sessionId;
+    const held = others.map((o) => aiChatTurns.tryAcquire(o));
+    expect(held.every((h) => h.ok)).toBe(true);
+    try {
+      const res = await post(s, { message: 'hi' }, loopbackEnv());
+      expect(res.status).toBe(200);
+      await res.text();
+    } finally {
+      for (const h of held) if (h.ok) h.release();
+    }
+  });
+
   it(
     'a slot held by a REAL AI CHAT turn (live subprocess, not a direct registry poke) 409s an AI v2 ' +
       'request for the SAME session — genuine cross-route sharing — and frees once the chat turn completes',

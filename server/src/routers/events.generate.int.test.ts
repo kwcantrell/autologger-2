@@ -15,8 +15,9 @@
 // Frozen-surface self-check: this suite asserts only statuses/shapes the
 // auto-event-generation delta authorizes for this NEW route — 404 (unchanged
 // requireSession mask), 503 (unconfigured), 400 ×3
-// (anchorless transcript / no instructions / aggregate bound), 409 ×2
-// (session-busy / at-capacity, reworded shared details), 200 {created,
+// (anchorless transcript / no instructions / aggregate bound), 409
+// (session-busy, reworded shared details; at-capacity is gone,
+// run-status-and-sweeper D2), 200 {created,
 // cap_hit}, 502 {detail} opaque — and the reworded 409 detail on the
 // pre-existing ai/chat route (authorized by the same delta). No other
 // route's status or shape is asserted.
@@ -455,6 +456,20 @@ describe('events/generate — guard ladder', () => {
       expect(neverSpawned(sessionId)).toBe(true);
     } finally {
       if (slot.ok) slot.release();
+    }
+  });
+
+  it('7b. turns in flight on two OTHER sessions do not 409 a new session (no ceiling, run-status-and-sweeper D2)', async () => {
+    const others = [(await newSession()).sessionId, (await newSession()).sessionId];
+    const { sessionId } = await newSession();
+    await seedAnchoredTranscript(sessionId);
+    const held = others.map((o) => aiChatTurns.tryAcquire(o));
+    expect(held.every((h) => h.ok)).toBe(true);
+    try {
+      const res = await generateReq(sessionId, configuredEnv(EVENTS_SUCCESS_FIXTURE));
+      expect(res.status).toBe(200);
+    } finally {
+      for (const h of held) if (h.ok) h.release();
     }
   });
 

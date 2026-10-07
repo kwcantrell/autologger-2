@@ -324,8 +324,6 @@ const YOUTUBE_IMPORT_BAD_BODY_DETAIL = 'Invalid youtube-import request body.';
 const YOUTUBE_IMPORT_BAD_URL_DETAIL =
   'url must be an http(s) link to youtube.com, youtu.be, or music.youtube.com.';
 const YOUTUBE_IMPORT_SESSION_BUSY_DETAIL = 'An import is already in progress for this session.';
-const YOUTUBE_IMPORT_AT_CAPACITY_DETAIL =
-  'The server is already running the maximum number of concurrent YouTube imports; try again shortly.';
 const YOUTUBE_IMPORT_ROLLING_DETAIL =
   'YouTube import is refused while this session is actively recording; stop the recording and try again.';
 const LOCAL_AUDIO_IMPORT_INVALID_DURATION_DETAIL = 'duration_s must be a positive finite number.';
@@ -481,14 +479,10 @@ sessionsRouter.post('/api/sessions/:sessionId/youtube-import', async (c) => {
     throw new ApiError(400, YOUTUBE_IMPORT_BAD_URL_DETAIL);
   }
 
-  // Concurrency guards (design D8), synchronous and unchanged (session-run-leases D4 step 1).
+  // The per-session concurrency guard (design D8), synchronous (session-run-leases D4 step 1).
+  // There is no global ceiling (run-status-and-sweeper D2), so every refusal is session-busy.
   const guard = youtubeImportGuard.tryAcquire(sessionId);
-  if (!guard) {
-    const detail = youtubeImportGuard.isSessionInFlight(sessionId)
-      ? YOUTUBE_IMPORT_SESSION_BUSY_DETAIL
-      : YOUTUBE_IMPORT_AT_CAPACITY_DETAIL;
-    throw new ApiError(409, detail);
-  }
+  if (!guard) throw new ApiError(409, YOUTUBE_IMPORT_SESSION_BUSY_DETAIL);
   // Then the session's `youtube-import` run lease (session-run-leases D4 step 2). The guard
   // already excludes this process, so a refusal means another process imports into this session:
   // session-busy. A claim that throws frees the guard and rethrows (500), outside the 502 mapping

@@ -731,6 +731,21 @@ describe('ai/chat — single-flight & concurrency (409)', () => {
       if (slot.ok) slot.release();
     }
   });
+
+  it('turns in flight on two OTHER sessions do not 409 a new session (no ceiling, run-status-and-sweeper D2)', async () => {
+    const others = [await seededSession(), await seededSession()];
+    const s = await seededSession();
+    const held = others.map((o) => aiChatTurns.tryAcquire(o));
+    expect(held.every((h) => h.ok)).toBe(true);
+    try {
+      const res = await post(s, { message: 'hi' }, fixtureEnv());
+      expect(res.status).toBe(200);
+      const events = parseSse(await res.text());
+      expect(events.some((e) => e.event === 'done')).toBe(true);
+    } finally {
+      for (const h of held) if (h.ok) h.release();
+    }
+  });
 });
 
 describe('ai/chat — guaranteed turn timeout kills the subprocess (task 3.4, spec "Subprocess lifecycle")', () => {

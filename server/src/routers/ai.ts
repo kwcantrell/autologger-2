@@ -18,7 +18,8 @@
 // 404 — masks unauthorized sessions before anything below) → configuration
 // gate (503) → body validation (422 schema / 400
 // malformed JSON) → foreign/stale claude_session_id (422, before any
-// subprocess) → single-flight & process-wide concurrency (409). All error
+// subprocess) → per-session single-flight (409; no process-wide ceiling,
+// run-status-and-sweeper D2). All error
 // bodies are the repo `{ detail }` shape; none of these steps spawns.
 
 import { stat } from 'node:fs/promises';
@@ -68,9 +69,6 @@ const FOREIGN_CLAUDE_SESSION_ID_DETAIL =
 const SESSION_BUSY_DETAIL =
   'A turn (AI chat, AI v2, topic generation, or event generation) is already in progress for this session; ' +
   'wait for it to finish before sending another. These features share one per-session AI slot by design.';
-const AT_CAPACITY_DETAIL =
-  'The server is at its AI turn concurrency limit (AI_CHAT_MAX_CONCURRENT, shared between AI chat, AI v2, ' +
-  'topic generation, and event generation); try again shortly.';
 
 // ── Multi-turn continuity: the resume binding (shared-request-state D3) ──
 // (design "Multi-turn continuity bound to the autologger session"). Written to
@@ -147,16 +145,11 @@ aiRouter.post('/api/sessions/:sessionId/ai/chat', async (c) => {
     resumeSessionId = body.claude_session_id;
   }
 
-  // 5. Single-flight (per session) + process-wide concurrency ceiling — 409,
-  // spawning nothing. The slot is held for the whole turn and released when the
+  // 5. Single-flight (per session) — 409, spawning nothing. There is no
+  // process-wide ceiling (run-status-and-sweeper D2). The slot is held for the whole turn and released when the
   // stream ends.
   const proc = aiChatTurns.tryAcquire(sessionId);
-  if (!proc.ok) {
-    throw new ApiError(
-      409,
-      proc.reason === 'session-busy' ? SESSION_BUSY_DETAIL : AT_CAPACITY_DETAIL,
-    );
-  }
+  if (!proc.ok) throw new ApiError(409, SESSION_BUSY_DETAIL);
   // 5b. The session's `ai-turn` lease (session-run-leases D4), behind the slot:
   // a refusal means another process runs a turn here, so it reads as session-busy.
   const slot = await claimAiLease(c, sessionId, proc);
