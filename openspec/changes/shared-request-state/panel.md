@@ -19,3 +19,10 @@ Edits since approval: design.md (D4 category 4: the registry's own unit tests ch
 Scope change: no
 Checked: every requirement and scenario in the six spec deltas maps to a ticked task with evidence and a named unit or integration test (pg/integration runs pending in the PR's CI); D1-D4 match the code; edits to pre-existing tests fall under D4 categories 1-4; README matches behaviour. Implementer deviations (`isLost`/`release`, seeded 61 s stale record, `register(…, turnDeadlineMs)` returning `{result}` plus `rowState`, optional `Config.AI_CHAT_CLI_HOME`) are additive and contradict no artifact.
 No findings.
+Minors (below major, recorded): fixed in fb898758: abandon racing register; the README now names the dead-process late-answer exception. Accepted as is:
+- a final job write that fails once can make a completed job read as "stopped" after 60 s;
+- a `replaceIf` that throws after committing marks its job lost;
+- kv read errors answer `500` in the resume check and the job GET;
+- `replaceIf` with `expirationTtl: 0` keeps the old expiry (no caller passes 0);
+- one formatter-only line wrap in `logImport.int.test.ts:686`;
+- heartbeat staleness compares clocks across processes, which relies on NTP, as in 9a.
