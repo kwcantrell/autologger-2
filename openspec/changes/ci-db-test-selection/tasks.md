@@ -13,7 +13,7 @@ the old behavior before the change and the new behavior after it.
   test is out of scope. If it also fails in the CI shards (tasks 3.4, 5.2), stop and raise it with
   the owner rather than retrying it green. Check: the evidence lists the timing row and the 5
   results.
-  Evidence: timings (design.md Assumptions, measured 2026-10-07 on `origin/supabase-migration` 415cca6b plus artifacts): server unit 21s, integration 511s (rc=1), pg 35s; storage unit 2s, pg 51s; web 49s; typecheck 24s; full `npm test` 502s (rc=1; the `&&` chain stops after `server`). The integration failure was a re-run of `--project integration` -> `FAIL |integration| src/test/session/crossProcess.int.test.ts > two processes on one session > concurrent writes from two processes leave the last committed state in the catalog`, `Error: Test timed out in 5000ms.`, `Tests 1 failed | 1228 passed (1229)`. Isolated, 5 runs of `npx vitest run --project integration src/test/session/crossProcess.int.test.ts` (this branch; the vitest config edits are inert without `SKIP_DB_TESTS`) -> `Tests 3 passed (3)` 5/5, 34-39s each. So it times out only under full-suite load.
+  Evidence: timings (design.md Assumptions, measured 2026-10-07 on `origin/supabase-migration` 415cca6b plus artifacts): server unit 21s, integration 511s (rc=1), pg 35s; storage unit 2s, pg 51s; web 49s; typecheck 24s; full `npm test` 502s (rc=1; the `&&` chain stops after `server`). The integration failure was a re-run of `--project integration` -> `FAIL |integration| src/test/session/crossProcess.int.test.ts > two processes on one session > concurrent writes from two processes leave the last committed state in the catalog`, `Error: Test timed out in 5000ms.`, `Tests 1 failed | 1228 passed (1229)`. Isolated, 5 runs of `npx vitest run --project integration src/test/session/crossProcess.int.test.ts` (this branch; the vitest config edits are inert without `SKIP_DB_TESTS`) -> `Tests 3 passed (3)` 5/5, 34-39s each. So it times out only under full-suite load. The host was contended throughout (load average 7-10; a concurrent agent's `npm test`; orphaned `main.ts` boot-test processes at ~70% CPU, per that agent's report), which fits the timeout and inflates every local timing here.
 - [x] 1.2 `server/vitest.config.ts` and `packages/storage/vitest.config.ts` drop their
   `integration`/`pg` projects when `SKIP_DB_TESTS=1`. Before: `SKIP_DB_TESTS=1 npx vitest run
   --project pg` in `packages/storage` runs the pg tests. After: vitest reports that no project
@@ -57,7 +57,8 @@ the old behavior before the change and the new behavior after it.
   GITHUB_EVENT_NAME=pull_request scripts/check-change.sh --only commands` shows the `db-tests job`
   message, and `DB_TESTS_IN_SHARDS=1 scripts/check-change.sh --only commands` (no `CI`) shows
   `full`.
-  Evidence (scratch, server diff): `CI=1 GITHUB_EVENT_NAME=pull_request DB_TESTS_IN_SHARDS=1 --only commands` -> `(pg/integration: db-tests job)`, test saw `1`; `DB_TESTS_IN_SHARDS=1` without `CI` -> `(full: server/src/x.ts matches db_test_paths)`, saw `unset`; push form `CI=1 GITHUB_EVENT_NAME=push FULL_TESTS=1 DB_TESTS_IN_SHARDS=1 --only commands,audit` -> `(pg/integration: db-tests job)`, rc=0.
+  Evidence: (scratch, server diff) `CI=1 GITHUB_EVENT_NAME=pull_request DB_TESTS_IN_SHARDS=1 --only commands` -> `(pg/integration: db-tests job)`, test saw `1`; `DB_TESTS_IN_SHARDS=1` without `CI` -> `(full: server/src/x.ts matches db_test_paths)`, saw `unset`; push form `CI=1 GITHUB_EVENT_NAME=push FULL_TESTS=1 DB_TESTS_IN_SHARDS=1 --only commands,audit` -> `(pg/integration: db-tests job)`, rc=0.
+
 ## 3. CI runs the full suite after merge, sharded
 
 - [x] 3.1 `.github/workflows/lifecycle.yml`: `push.branches: [main, supabase-migration]`. A push to

@@ -35,8 +35,14 @@ Change: `openspec/changes/archive/*-ci-db-test-selection` (design D1-D5, panel a
   DB tests. Server unit 21s, storage unit 2s, web 49s, typecheck 24s. The push-path `gates` half
   (typecheck, every unit suite, audit) took 92s.
 - 27 of the last 40 merged PRs touched only `openspec/`.
-- One baseline integration test (`crossProcess.int.test.ts`) timed out under full-suite load
-  (1228/1229 passed) and passed 5/5 alone. It's not addressed here.
+- The local timings were taken on a shared 8-core host with load average 7-10. Another agent's
+  test runs were going at the same time, and in part of the window orphaned `main.ts` processes
+  from a boot test were running at about 70% CPU each. The seconds are inflated. The conclusion
+  (DB tests dominate) is not affected. Task 3.4's CI per-shard and `gates` times are the clean
+  numbers.
+- One baseline integration test (`crossProcess.int.test.ts`) timed out at 5000ms in the
+  contended full-suite run (1228/1229 passed) and passed 5/5 alone. That fits the load above
+  rather than a defect. It's not addressed here.
 
 ## Consequences
 

@@ -21,3 +21,7 @@ Scope change: yes (sharding). Re-panel above; re-approval requested.
 - [x] [major] Task 1.1 still said "fill the TIMING row" (already filled), and design.md pointed at it for the baseline integration failure, which it didn't cover. Resolved: the Assumptions row names the failing test (`crossProcess.int.test.ts`, 5000ms timeout, 1228/1229 passed). Task 1.1 records 5 isolated runs and says to raise a CI-shard failure with the owner. Fixing the test is out of scope.
 - [x] [major] The panel's timing finding pointed at task 3.3, which after renumbering is the push simulation. Resolved: it now points at 3.4.
 - [x] [major] What a `skip` shard does differed between files: proposal "without installing anything", Risks "right after checkout", D5 "installs PyYAML first". Resolved: the proposal and Risks now say it stops after checkout and the PyYAML install, before `npm ci` or the image pull.
+
+## Consistency read 2026-10-07 (evidence note)
+Edits since re-approval: design.md Assumptions timing row (contention caveat), task 1.1 evidence, and task formatting. No scope, contract or accepted-risk change.
+No findings.
