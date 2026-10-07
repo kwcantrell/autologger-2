@@ -384,8 +384,13 @@ session in any server process sharing the database (ADR 0021 slice 9a), through 
 - **Signed.** Every message SHALL carry an HMAC-SHA256 over its content, keyed by the server-only
   `FRAME_BUS_SECRET`. A receiver SHALL drop, and log, a message whose signature does not verify,
   whose version is unknown, whose frame type is not one of the five session frame types, or whose
-  command is not a contract command. A database role without the secret therefore cannot inject a
-  frame, a command or a close.
+  command is not a contract command. Each message SHALL also carry its sending bus's id and send
+  time under the signature. A receiver SHALL drop a message sent before its own listener first
+  started, a message other than a close sent more than 30 s before or after its own clock, and a
+  message whose bus id and sequence number it already accepted in the last 60 s; it SHALL log each
+  drop, with the clock skew for a stale one. A database role without the secret therefore cannot
+  inject a frame, a command or a close, and cannot replay a captured frame or command. The server
+  processes SHALL keep their clocks within a few seconds of each other (NTP).
 - **Commands.** A relayed command SHALL be checked against the contract's command values before it
   is published, at most 10 per second per socket (excess dropped), and published on the bus's own
   publisher connection, never on a catalog or session connection.
@@ -421,6 +426,12 @@ built without a bus deliver in process, after commit, as before this change.
 - **WHEN** a database role without the secret calls `pg_notify` on the channel with a well-formed
   command frame for session S
 - **THEN** no socket in any process receives it, and the receiving processes log the drop
+
+#### Scenario: A replayed message is dropped
+- **WHEN** a database role captures a signed command message from the channel and calls
+  `pg_notify` with the same payload, once right away and again 31 s later
+- **THEN** no socket in any process receives either copy, and the receiving processes log both
+  drops
 
 #### Scenario: A large team's revoke still closes every socket
 - **WHEN** a member of a team with 300 sessions is removed through process A while they hold a

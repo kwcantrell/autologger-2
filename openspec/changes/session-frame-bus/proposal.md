@@ -6,7 +6,7 @@ the WebSocket emission semantics of the frozen contract: access-loss closes and 
 bus loss. It touches `packages/session-core`, `packages/storage` and the composition root. ADR 0021
 slice 9a.
 
-Approved-by: Kalen 2026-10-07 (reapprove again)
+Approved-by: Kalen 2026-10-07 (reapprove again again)
 
 ## Why
 

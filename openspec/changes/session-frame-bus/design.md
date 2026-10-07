@@ -100,6 +100,25 @@ export interface SessionFrameBus {
   and prod. With the Postgres bus, `main.ts` refuses to boot without it.
 - **Sequence numbers.** `n` is a per-process counter. It makes every payload unique, so Postgres
   never folds two equal frames (panel finding).
+- **Replay (owner, 2026-10-07, after implementation of 6.2).** Any login role can LISTEN, capture a
+  signed message and re-send it. So the envelope also carries `b`, the sending bus's id (a random
+  UUID per bus instance, so two buses in one Node process never share it; re-panel), and `t`, the
+  sender's time in ms from the Clock port (`PostgresFrameBusOptions.clock`, injectable for tests).
+  Both are covered by the HMAC. A receiver drops a message when any of these holds:
+  - `t` is earlier than the receiver's own first successful LISTEN (re-panel). A freshly started
+    process has seen nothing, so without this a replay inside the window would reach it. No socket
+    can attach before that LISTEN (`main.ts` awaits it before `listen()`), so nothing real is lost.
+  - `|now - t|` is more than 30 s. This does not apply to a `close`: a validly signed close is
+    harmless to repeat and must not be lost to clock skew, since losing it would leave a revoked
+    user's socket open (re-panel).
+  - The pair `(b, n)` was already accepted in the last 60 s. The receiver keeps a Map of accepted
+    pairs in arrival order, pruned past 60 s. Messages from one bus arrive in commit order, not `n`
+    order, so a set is needed rather than a high-water mark. Only validly signed messages enter it,
+    so its size is bounded by the legitimate message rate.
+
+  Every drop is logged with its reason; a stale drop also logs the skew `now - t`. **Processes must
+  keep their clocks within a few seconds of each other (NTP).** The spec states this, because a
+  skew over 30 s drops real frames until it is fixed.
 - **Size.** A payload over 7900 bytes (`Buffer.byteLength`) is an error at publish time. Frames
   are under 400 bytes signed. Closes are split (D5).
 
