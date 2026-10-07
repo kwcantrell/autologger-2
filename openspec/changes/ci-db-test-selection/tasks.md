@@ -67,7 +67,7 @@ the old behavior before the change and the new behavior after it.
   Check: `scripts/check-change.sh --only workflows,yaml` passes, and loading the workflow with
   `python3 -c` shows both branches and the per-ref command.
   Evidence: `scripts/check-change.sh --only workflows,yaml` -> `PASS workflows actions pinned, token scoped`, `PASS yaml 105 YAML file(s) parse`; `python3 -I -c` loading the workflow -> `push ['main', 'supabase-migration']`, `gates env: {'DB_TESTS_IN_SHARDS': '1'}`, `perms: {'contents': 'read'}`. The "Run lifecycle gates" step branches on `EVENT`/`REF`: `pull_request` -> `--stage pr`; `refs/heads/supabase-migration` -> `FULL_TESTS=1 scripts/check-change.sh --only commands,audit`; else `--stage commit`. `DB_TESTS_IN_SHARDS=1` comes from `gates`' job-level `env`.
-- [ ] 3.2 `.github/workflows/lifecycle.yml` gets the `db-shard` matrix job (`shard: [1, 2, 3]`)
+- [x] 3.2 `.github/workflows/lifecycle.yml` gets the `db-shard` matrix job (`shard: [1, 2, 3]`)
   and the `db-tests` result job from D5, and `gates` sets `DB_TESTS_IN_SHARDS=1`. `db-tests` uses
   `db-shard`'s event condition with `!cancelled()`. Storage pg runs unsharded on shard 1 only.
   Actions stay SHA-pinned, and permissions stay `contents: read`. Checks:
@@ -79,6 +79,7 @@ the old behavior before the change and the new behavior after it.
     exit 1 fails the step.
   - Loading the workflow with `python3 -c` shows `db-tests`' `if` matching `db-shard`'s plus
     `!cancelled()`.
+  Evidence: `scripts/check-change.sh --only workflows,yaml` -> `PASS workflows actions pinned, token scoped`, `PASS yaml 105 YAML file(s) parse`. In `server/`, `npx vitest run --project integration --project pg --shard=<i>/3 --reporter=json` for i = 1..3 -> `shard 1 rc=0 Test Files 34 passed (34)`, `shard 2 rc=0 Test Files 33 passed | 1 skipped (34)`, `shard 3 rc=0 Test Files 33 passed (33)`; file sets from the JSON reports -> `sizes [34, 34, 33] union 101 overlap 0`. The Select step's `run:` was extracted from the workflow with PyYAML and run (`bash -e`) against a fake `scripts/check-change.sh`: `skip: no db_test_paths changed`/0 -> `run=false`; `run: ...`/0, empty/0, `garbage`/0, two lines (`warning...` + `skip: ...`)/0 and `skip:no`/0 -> `run=true`; `skip: ...`/exit 1 -> step rc=1. Loading the workflow: `db-tests if: ${{ !cancelled() && (github.event_name == 'pull_request' || github.ref == 'refs/heads/supabase-migration') }}`, which is `db-shard`'s condition plus `!cancelled()`. Storage pg runs unsharded on shard 1 (`if: ... && matrix.shard == 1`). Implementation note: the server command uses `--shard=${{ matrix.shard }}/${{ strategy.job-total }}`, so the count lives only in the matrix.
 - [x] 3.3 Simulate the push run before merge. In a clone checked out at `origin/supabase-migration`
   with this branch's checker and vitest configs applied, run
   the push run's two halves:
