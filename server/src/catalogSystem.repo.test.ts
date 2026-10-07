@@ -104,11 +104,6 @@ const ALLOWLIST: readonly { file: string; reason: string; why: string }[] = [
     why: 'token-only Companion calls (no user), catalog and session hub, until the slice 9 credential',
   },
   {
-    file: 'server/src/routers/_helpers.ts',
-    reason: 'access-loss-check',
-    why: "reads another user's access after a committed access loss",
-  },
-  {
     file: 'server/src/routers/teams.ts',
     reason: 'team-invite',
     why: 'the invite transaction looks users up by email and adds their memberships',

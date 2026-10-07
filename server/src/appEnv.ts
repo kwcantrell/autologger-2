@@ -15,7 +15,7 @@
 
 import type { AuthUser, CatalogFacade } from '@autologger/catalog';
 import type { Ports as BasePorts, Config } from '@autologger/ports';
-import type { SessionHubRegistryFacade } from '@autologger/session-core';
+import type { SessionFrameBus, SessionHubRegistryFacade } from '@autologger/session-core';
 
 export type { Config };
 
@@ -25,6 +25,9 @@ export type { Config };
  * concrete `SessionHubRegistry` class. */
 export interface Ports extends BasePorts {
   sessions: SessionHubRegistryFacade;
+  /** The registry's frame bus (session-frame-bus D1), on which a revoking route publishes its
+   * access-loss closes inside its transaction (D5). */
+  frameBus: SessionFrameBus;
 }
 
 /** The per-request env object. Callers MUST pass a fresh env per request and

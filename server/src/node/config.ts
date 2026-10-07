@@ -113,6 +113,7 @@ export function createBindings(
       catalog: catalogDb,
       kv,
       sessions: registry,
+      frameBus: registry.bus,
       audio: audioBlobStore,
       presence: new PresenceRegistry(clock),
     },

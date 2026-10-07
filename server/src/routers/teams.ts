@@ -28,7 +28,7 @@ import { type Context, Hono } from 'hono';
 import type { ZodTypeAny, z } from 'zod';
 import type { AppEnv } from '../appEnv';
 import { ApiError } from '../httpError';
-import { closeSocketsAfterAccessLoss, requireUser, teamShowIds } from './_helpers';
+import { publishAccessLossInTx, publishClosesInTx, requireUser, teamShowIds } from './_helpers';
 
 /** The frozen contract calls out `400` (not the codebase-wide ZodError→422
  * convention) for this family's body validation — "validation errors 400" on
@@ -317,12 +317,15 @@ teamsRouter.delete('/api/teams/:id/shows/:showId/grants/:userId', async (c) => {
   await requireTeamShow(c, teamId, showId);
   const targetUserId = c.req.param('userId').trim();
   // Idempotent, also for a non-member target (like invite revocation).
-  await c.get('catalog').tx(async (cat) => {
+  const bus = c.env.ports.frameBus;
+  const closes = await c.get('catalog').tx(async (cat) => {
     await requireTeamRoleIn(cat, caller.id, teamId, OWNER_OR_ADMIN);
     await cat.auth.authRevokeShow(targetUserId, showId);
+    // The target's sockets on this show's sessions close, published in this transaction
+    // (show-grants D20, session-frame-bus D5).
+    return publishAccessLossInTx(cat, bus, targetUserId, [showId]);
   });
-  // After the commit: the target's sockets on this show's sessions close (show-grants D20).
-  await closeSocketsAfterAccessLoss(c, targetUserId, [showId]);
+  bus.afterCommit(closes);
   return c.json({ ok: true });
 });
 
@@ -334,23 +337,24 @@ teamsRouter.post('/api/teams/:id/members/:userId/role', async (c) => {
   const targetUserId = c.req.param('userId').trim();
   const body = parseTeamBody(teamRoleChangeBodySchema, await c.req.json());
 
-  const changed = await c.get('catalog').tx(async (catalog) => {
+  const bus = c.env.ports.frameBus;
+  const closes = await c.get('catalog').tx(async (catalog) => {
     await requireTeamRoleIn(catalog, owner.id, teamId, OWNER_ONLY);
     const currentRole = await catalog.auth.authGetMembershipRole(targetUserId, teamId);
     if (currentRole === null) throw new ApiError(404, 'Member not found');
     if (currentRole === 'owner') throw new ApiError(409, OWNER_TARGET_MESSAGE);
-    if (currentRole === body.role) return false; // idempotent
+    if (currentRole === body.role) return []; // idempotent
     // Updates an existing membership only, so a raced removal is never undone.
     if (!(await catalog.auth.authSetExistingMembershipRole(targetUserId, teamId, body.role))) {
       throw new ApiError(404, 'Member not found');
     }
-    return true;
+    // A demotion to member closes the target's sockets on the team's shows they hold no grant
+    // for, published in this transaction (show-grants D20, session-frame-bus D5; granted shows
+    // keep theirs).
+    if (body.role !== 'member') return [];
+    return publishAccessLossInTx(catalog, bus, targetUserId, await teamShowIds(catalog, teamId));
   });
-  // After the commit, a demotion to member closes the target's sockets on the team's shows they
-  // hold no grant for (show-grants D20; granted shows keep theirs).
-  if (changed && body.role === 'member') {
-    await closeSocketsAfterAccessLoss(c, targetUserId, (cat) => teamShowIds(cat, teamId));
-  }
+  bus.afterCommit(closes);
   return c.json({ ok: true, role: body.role });
 });
 
@@ -360,7 +364,8 @@ teamsRouter.delete('/api/teams/:id/members/:userId', async (c) => {
   const teamId = c.req.param('id').trim();
   const { user: caller } = await requireTeamRole(c, teamId, OWNER_OR_ADMIN);
   const targetUserId = c.req.param('userId').trim();
-  await c.get('catalog').tx(async (catalog) => {
+  const bus = c.env.ports.frameBus;
+  const closes = await c.get('catalog').tx(async (catalog) => {
     const callerRole = await requireTeamRoleIn(catalog, caller.id, teamId, OWNER_OR_ADMIN);
     const targetRole = await catalog.auth.authGetMembershipRole(targetUserId, teamId);
     if (targetRole === null) throw new ApiError(404, 'Member not found');
@@ -371,9 +376,11 @@ teamsRouter.delete('/api/teams/:id/members/:userId', async (c) => {
     if (!(await catalog.auth.authRemoveMembership(targetUserId, teamId))) {
       throw new ApiError(404, 'Member not found');
     }
+    // The removed member's sockets in this team close, published in this transaction
+    // (show-grants D20, session-frame-bus D5).
+    return publishAccessLossInTx(catalog, bus, targetUserId, await teamShowIds(catalog, teamId));
   });
-  // After the commit: the removed member's sockets in this team close (show-grants D20).
-  await closeSocketsAfterAccessLoss(c, targetUserId, (cat) => teamShowIds(cat, teamId));
+  bus.afterCommit(closes);
   return c.json({ ok: true });
 });
 
@@ -382,17 +389,26 @@ teamsRouter.delete('/api/teams/:id/members/:userId', async (c) => {
 teamsRouter.post('/api/teams/:id/leave', async (c) => {
   const teamId = c.req.param('id').trim();
   const { user } = await requireTeamMember(c, teamId);
-  await c.get('catalog').tx(async (catalog) => {
+  const bus = c.env.ports.frameBus;
+  const closes = await c.get('catalog').tx(async (catalog) => {
     // Re-read under FOR SHARE: a transfer to the caller that commits first makes them the owner.
     const role = await catalog.auth.authGetMembershipRoleForShare(user.id, teamId);
     if (role === null) throw new ApiError(404, 'Member not found');
     if (role === 'owner') throw new ApiError(409, OWNER_TARGET_MESSAGE);
+    // session-frame-bus D5: the caller's team sessions are listed BEFORE the delete, because the
+    // caller's own policies hide them once the membership is gone. With no membership the caller
+    // reaches none of the team's shows, so every one of them closes.
+    const sessionIds = await catalog.sessions.listSessionIdsForShows(
+      await teamShowIds(catalog, teamId),
+    );
     if (!(await catalog.auth.authRemoveMembership(user.id, teamId))) {
       throw new ApiError(404, 'Member not found');
     }
+    // The caller's own sockets in this team close, published in this transaction (show-grants
+    // D20).
+    return publishClosesInTx(catalog, bus, user.id, sessionIds);
   });
-  // After the commit: the caller's own sockets in this team close (show-grants D20).
-  await closeSocketsAfterAccessLoss(c, user.id, (cat) => teamShowIds(cat, teamId));
+  bus.afterCommit(closes);
   return c.json({ ok: true });
 });
 

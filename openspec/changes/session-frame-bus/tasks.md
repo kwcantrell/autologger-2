@@ -53,13 +53,17 @@
 
 ## 5. Access-loss closes inside the revoke (design D5)
 
-- [ ] 5.1 Test first, new cases in `sessionWs.access.int.test.ts` with two `'postgres'` apps:
+- [x] 5.1 Test first, new cases in `sessionWs.access.int.test.ts` with two `'postgres'` apps:
   - a grant revoke through A closes M's socket on B with `4403`, and other sockets stay open;
   - removing a member of a 300-session team closes their socket on B;
   - an injected publish failure makes the revoke answer `500`, and the grant is still there;
   - on the local bus, every existing access-loss test keeps its observable closes (D8 category 1).
   - leaving a team through A closes the leaver's sockets on B (the sessions are listed before the membership delete, D5).
   Red, then add the catalog transaction `notify`, replace `closeSocketsAfterAccessLoss` with `publishAccessLossInTx` in the six call sites (`teams.ts`, `admin.ts`; leave pre-lists its sessions; the support-plane delete is wrapped in `catalog.tx`), and split closes at 150 ids. Green.
+  - Evidence: red: `cd server && npx vitest run --project integration src/routers/sessionWs.access.int.test.ts` -> the four new two-process cases fail (`Error: timeout` for the revoke, 300-session removal and leave on B; `AssertionError: expected 200 to be 500` for the injected publish failure), `Tests 4 failed | 7 passed (11)` (log `9a-5.1-red.log`); `npx vitest run --project unit src/routers/_helpers.test.ts` -> `TypeError: publishAccessLossInTx is not a function`, 5 failed (log `9a-5.1-red-unit.log`); catalog `npx vitest run src/catalog.test.ts` -> `TypeError: cat.notify is not a function` (log `9a-5.1-red-catalog.log`).
+  - Evidence: green after `Catalog.notify`, `publishAccessLossInTx`/`publishClosesInTx` in `_helpers.ts` (closes of at most 150 ids; `Ports.frameBus` is the registry's bus; local bus delivers via `afterCommit` after COMMIT), the six call sites in `teams.ts`/`admin.ts` (leave pre-lists; the support-plane delete in `catalog.tx`) -> access `Tests 11 passed (11)` three runs (logs `9a-5.1-green.log`, `9a-5.1-run2.log`, `9a-5.1-run3.log`), `_helpers.test.ts` `Tests 8 passed (8)` (log `9a-5.1-green-unit.log`), catalog `Tests 8 passed (8)` (log `9a-5.1-green-catalog.log`). The 300-session removal shows B receiving two closes of 150 ids each.
+  - Evidence: D8 category 1: `_helpers.test.ts`'s three fail-closed tests of `closeSocketsAfterAccessLoss` are replaced by five `publishAccessLossInTx` tests (the fallback is removed by D5); `catalogSystem.repo.test.ts` drops the now unused `access-loss-check` allowlist entry (the binding left with the old helper). The existing access-loss route cases are unchanged except the helpers taking an optional port, and keep their closes on the local bus.
+  - Evidence: `cd server && npx vitest run --project unit --project integration --project pg` -> `Test Files 135 passed | 3 skipped (138)`, `Tests 1675 passed | 4 skipped (1679)` (1669 + 4 route + 5 unit - 3 replaced; log `9a-5.1-server2.log`); session-core `Tests 55 passed (55)`, catalog `Tests 51 passed (51)` (logs `9a-5.1-session-core.log`, `9a-5.1-catalog.log`); `npm run typecheck` -> 0 `error TS` (log `9a-5.1-typecheck.log`).
 
 ## 6. Wiring, secret and docs (design D1, D2, D7)
 

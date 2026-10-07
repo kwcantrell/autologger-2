@@ -19,10 +19,14 @@ export type BusMessage =
   | { k: 'frame'; s: string; f: string }
   | { k: 'close'; u: string; s: readonly string[] | 'all'; c: number };
 
+/** The open transaction a bus publishes on: a session write's raw handle, or (an access-loss
+ * close, session-frame-bus D5) a catalog transaction's `notify` behind the same `all`. */
+export type BusTxHandle = Pick<SessionSql, 'all'>;
+
 export interface SessionFrameBus {
   /** Publishes `msgs` inside the open transaction `t` (before COMMIT), so they go out only if it
    * commits. A no-op on the local bus. */
-  publishInTx(t: SessionSql, msgs: readonly BusMessage[]): Promise<void>;
+  publishInTx(t: BusTxHandle, msgs: readonly BusMessage[]): Promise<void>;
   /** After the transaction that issued `msgs` committed: the local bus delivers them now; the
    * Postgres bus does nothing (its listener delivers). */
   afterCommit(msgs: readonly BusMessage[]): void;
@@ -52,7 +56,7 @@ export function isSessionCommand(command: unknown): command is string {
 export class LocalFrameBus implements SessionFrameBus {
   constructor(private readonly deliver: (msg: BusMessage) => void) {}
 
-  async publishInTx(_t: SessionSql, _msgs: readonly BusMessage[]): Promise<void> {}
+  async publishInTx(_t: BusTxHandle, _msgs: readonly BusMessage[]): Promise<void> {}
 
   afterCommit(msgs: readonly BusMessage[]): void {
     for (const msg of msgs) this.deliver(msg);

@@ -3,13 +3,16 @@
 // lost"). Real upgrades on a listening @hono/node-ws server, like companion-ws.int.test.ts: a grant
 // revoke, a member removal, a leave, the support-plane membership delete, and a demotion to
 // `member` (team plane or support plane) close the affected user's sockets on sessions they no
-// longer reach with code 4403, after the write commits; every other socket stays open.
+// longer reach with code 4403, after the write commits; every other socket stays open. The close is
+// published inside the revoking transaction (session-frame-bus D5): with two processes on the
+// Postgres frame bus, a revoke through A closes the socket on B, and a revoke whose close cannot be
+// published answers 500 and changes nothing.
 
 import type { AddressInfo } from 'node:net';
 import { type ServerType, serve } from '@hono/node-server';
 import { createNodeWebSocket } from '@hono/node-ws';
 import { Hono } from 'hono';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { wireApp } from '../app';
 import type { AppEnv } from '../appEnv';
 import { env } from '../test/harness';
@@ -23,6 +26,7 @@ import {
   seedUser,
   type TestCaller,
 } from '../test/helpers';
+import { type BusProcess, busProcess, closeBusProcesses } from '../test/session/busProcesses';
 
 let server: ServerType;
 let port: number;
@@ -51,11 +55,11 @@ interface Sock {
   messages: string[];
 }
 
-async function connect(sessionId: string, caller: TestCaller): Promise<Sock> {
+async function connect(sessionId: string, caller: TestCaller, at = port): Promise<Sock> {
   const messages: string[] = [];
   let code: number | null = null;
   const ws = await new Promise<WebSocket>((resolve, reject) => {
-    const w = new WebSocket(`ws://127.0.0.1:${port}/api/sessions/${sessionId}/ws`, {
+    const w = new WebSocket(`ws://127.0.0.1:${at}/api/sessions/${sessionId}/ws`, {
       headers: { cookie: caller.cookie },
     } as unknown as string[]);
     w.addEventListener('open', () => resolve(w));
@@ -83,9 +87,13 @@ function within<T>(p: Promise<T>, ms = 3000): Promise<T> {
 
 /** A broadcast on `sessionId` reaches every socket in `open` (proving each is still open; a
  * close frame sent earlier on the same connection would arrive first). */
-async function expectStillOpen(sessionId: string, open: Sock[]): Promise<void> {
+async function expectStillOpen(
+  sessionId: string,
+  open: Sock[],
+  sessions = env.ports.sessions,
+): Promise<void> {
   const before = open.map((s) => s.messages.length);
-  (await env.ports.sessions.get(sessionId)).broadcastCommand('play-toggle');
+  (await sessions.get(sessionId)).broadcastCommand('play-toggle');
   for (const [i, s] of open.entries()) {
     await within(
       (async () => {
@@ -105,8 +113,14 @@ async function expectRefused(sessionId: string, caller: TestCaller): Promise<voi
   await expect(connect(sessionId, caller)).rejects.toBeTruthy();
 }
 
-async function call(path: string, method: string, headers: Record<string, string>, body?: unknown) {
-  const res = await fetch(`http://127.0.0.1:${port}${path}`, {
+async function call(
+  path: string,
+  method: string,
+  headers: Record<string, string>,
+  body?: unknown,
+  at = port,
+) {
+  const res = await fetch(`http://127.0.0.1:${at}${path}`, {
     method,
     headers: body === undefined ? headers : { 'content-type': 'application/json', ...headers },
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -248,4 +262,116 @@ describe('session sockets close when access is lost (show-grants D20)', () => {
       mS.ws.close();
     });
   }
+});
+
+describe('access-loss closes cross processes on the Postgres frame bus (session-frame-bus D5)', () => {
+  afterEach(() => closeBusProcesses());
+
+  /** The `BusMessage`s a process's registry received from its listener. */
+  function received(p: BusProcess) {
+    const registry = p.bindings.ports.sessions as unknown as { deliver(msg: unknown): void };
+    return vi.spyOn(registry, 'deliver');
+  }
+
+  it('a grant revoke through A closes M’s socket on B with 4403; other sockets stay open', async () => {
+    const t = await team();
+    const [a, b] = [await busProcess(), await busProcess()];
+    const mS = await connect(t.sS, t.m, b.port);
+    const mT = await connect(t.sT, t.m, b.port);
+    const nS = await connect(t.sS, t.n, b.port);
+    const aS = await connect(t.sS, t.admin, a.port);
+
+    await call(
+      `/api/teams/${t.studio}/shows/${t.showS}/grants/${t.m.id}`,
+      'DELETE',
+      { cookie: t.owner.cookie },
+      undefined,
+      a.port,
+    );
+
+    expect(await within(mS.closed)).toBe(4403);
+    await expectRefused(t.sS, t.m);
+    await expectStillOpen(t.sT, [mT], b.bindings.ports.sessions);
+    await expectStillOpen(t.sS, [nS, aS], a.bindings.ports.sessions);
+    for (const s of [mT, nS, aS]) s.ws.close();
+  });
+
+  it('removing M from a 300-session team through A closes M’s sockets on B, in closes of 150', async () => {
+    const t = await team();
+    for (let i = 0; i < 298; i += 25) {
+      await Promise.all(
+        Array.from({ length: Math.min(25, 298 - i) }, (_, j) =>
+          seedSession({ showId: t.showS, title: `More ${i + j}` }),
+        ),
+      );
+    }
+    const [a, b] = [await busProcess(), await busProcess()];
+    const onB = received(b);
+    const mS = await connect(t.sS, t.m, b.port);
+    const mT = await connect(t.sT, t.m, b.port);
+    const nS = await connect(t.sS, t.n, b.port);
+
+    await call(
+      `/api/teams/${t.studio}/members/${t.m.id}`,
+      'DELETE',
+      { cookie: t.admin.cookie },
+      undefined,
+      a.port,
+    );
+
+    expect(await within(mS.closed)).toBe(4403);
+    expect(await within(mT.closed)).toBe(4403);
+    const closes = onB.mock.calls
+      .map(([msg]) => msg as { k: string; u: string; s: string[]; c: number })
+      .filter((msg) => msg.k === 'close');
+    expect(closes.map((msg) => [msg.u, msg.c, msg.s.length])).toEqual([
+      [t.m.id, 4403, 150],
+      [t.m.id, 4403, 150],
+    ]);
+    expect(new Set(closes.flatMap((msg) => msg.s)).size).toBe(300);
+    await expectStillOpen(t.sS, [nS], b.bindings.ports.sessions);
+    nS.ws.close();
+  }, 30_000);
+
+  it('leaving the team through A closes the leaver’s sockets on B (D5: listed before the delete)', async () => {
+    const t = await team();
+    const [a, b] = [await busProcess(), await busProcess()];
+    const mS = await connect(t.sS, t.m, b.port);
+    const mT = await connect(t.sT, t.m, b.port);
+    const nS = await connect(t.sS, t.n, b.port);
+
+    await call(`/api/teams/${t.studio}/leave`, 'POST', { cookie: t.m.cookie }, undefined, a.port);
+
+    expect(await within(mS.closed)).toBe(4403);
+    expect(await within(mT.closed)).toBe(4403);
+    await expectRefused(t.sS, t.m);
+    await expectStillOpen(t.sS, [nS], b.bindings.ports.sessions);
+    nS.ws.close();
+  });
+
+  it('a revoke whose close cannot be published answers 500 and the grant is still there', async () => {
+    const t = await team();
+    const [a, b] = [await busProcess(), await busProcess()];
+    const mS = await connect(t.sS, t.m, b.port);
+    const bus = a.frameBus;
+    if (bus === null) throw new Error('process A has no Postgres bus');
+    vi.spyOn(bus, 'publishInTx').mockRejectedValueOnce(new Error('injected publish failure'));
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const res = await fetch(
+        `http://127.0.0.1:${a.port}/api/teams/${t.studio}/shows/${t.showS}/grants/${t.m.id}`,
+        { method: 'DELETE', headers: { cookie: t.owner.cookie } },
+      );
+      expect(res.status).toBe(500);
+    } finally {
+      error.mockRestore();
+    }
+
+    expect(await catalogFor().auth.authCanAccessShow(t.m.id, t.showS)).toBe(true);
+    expect(
+      (await catalogFor().auth.authListShowGrants(t.showS)).map((r) => String(r.user_id)),
+    ).toContain(t.m.id);
+    await expectStillOpen(t.sS, [mS], b.bindings.ports.sessions);
+    mS.ws.close();
+  });
 });

@@ -1,12 +1,17 @@
 // Shared router helpers — the session and show access gates (_session_access_gate,
-// requireShowAccess, canAccessSession; show-grants D3), closing sockets after access is lost
-// (closeSocketsAfterAccessLoss; show-grants D20), per-session hub resolution, timecode context,
+// requireShowAccess, canAccessSession; show-grants D3), publishing the closes of sockets whose user
+// lost access inside the revoking transaction (publishAccessLossInTx; show-grants D20,
+// session-frame-bus D5), per-session hub resolution, timecode context,
 // marked-at parsing, and the version-check answers (session-row-versions D4).
 
 import type { AuthUser, CatalogFacade, Row } from '@autologger/catalog';
 import {
+  type BusMessage,
+  type BusTxHandle,
   type SessionCaller,
+  type SessionFrameBus,
   type SessionHubFacade,
+  type SqlValue,
   type TimecodeCtx,
   userCaller,
   type VersionExpectation,
@@ -113,42 +118,70 @@ export async function canAccessSession(c: Context<AppEnv>, sessionId: string): P
  * api-contract-freeze "Session sockets close when access is lost"). */
 export const ACCESS_LOST_CLOSE_CODE = 4403;
 
-/** Close `userId`'s session sockets on the shows in `showIds` they can no longer access
- * (show-grants D20). Call it only AFTER the write that removed the access has committed, so the
- * access check below reads the committed state: a show the user still reaches (a grant that
- * survived, an admin role) keeps its sockets. In-process only (owner decision E); a failure here
- * never fails the committed write, whose response has already been decided. */
-export async function closeSocketsAfterAccessLoss(
-  c: Context<AppEnv>,
-  userId: string,
-  showIds: readonly string[] | ((catalog: CatalogFacade) => Promise<readonly string[]>),
-): Promise<void> {
-  try {
-    // catalog-roles D10: it reads another user's access, so it runs as a system task; the
-    // `showIds` thunk gets this catalog, so the admin path never reaches the unbound one.
-    const catalog = c.get('catalog').system('access-loss-check');
-    const shows = typeof showIds === 'function' ? await showIds(catalog) : showIds;
-    const lost: string[] = [];
-    for (const showId of shows) {
-      if (!(await catalog.auth.authCanAccessShow(userId, showId))) lost.push(showId);
-    }
-    const sessionIds = await catalog.sessions.listSessionIdsForShows(lost);
-    if (sessionIds.length === 0) return;
-    c.env.ports.sessions.closeUserSockets(userId, new Set(sessionIds), ACCESS_LOST_CLOSE_CODE);
-  } catch (e) {
-    // Name and code only: a database error's message can echo the values involved.
-    const err = e as { name?: unknown; code?: unknown } | null;
-    console.error("closeSocketsAfterAccessLoss failed; closing all of the user's sockets", {
-      name: err?.name,
-      code: err?.code,
-    });
-    // Fail closed: the write committed, so close every socket of the user; one that still has
-    // access reconnects through the gate.
-    c.env.ports.sessions.closeUserSockets(userId, 'all', ACCESS_LOST_CLOSE_CODE);
-  }
+/** At most this many session ids per close message (session-frame-bus D5): about 6 KB signed,
+ * under the NOTIFY payload limit. */
+export const ACCESS_LOSS_CLOSE_CHUNK = 150;
+
+/** A catalog transaction as the bus's transaction handle: the bus's one statement, `pg_notify`,
+ * runs through the transaction's `notify`, under its binding (session-frame-bus D5). */
+function catalogNotifyHandle(cat: CatalogFacade): BusTxHandle {
+  return {
+    all: async <T>(sql: string, ...binds: SqlValue[]): Promise<T[]> => {
+      const [channel, payload] = binds;
+      if (
+        !/^select pg_notify\(/i.test(sql) ||
+        typeof channel !== 'string' ||
+        typeof payload !== 'string'
+      ) {
+        throw new TypeError('a catalog transaction publishes only pg_notify(channel, payload)');
+      }
+      await cat.notify(channel, payload);
+      return [];
+    },
+  };
 }
 
-/** The ids of every show of a team, for `closeSocketsAfterAccessLoss` after a team-wide loss. */
+/** Publish closes (code 4403) of `userId`'s sockets on `sessionIds`, split at
+ * `ACCESS_LOSS_CLOSE_CHUNK` ids per message, inside the open transaction `cat` (session-frame-bus
+ * D5). Returns the messages; the caller hands them to `bus.afterCommit` once the transaction
+ * committed (the local bus delivers then; the Postgres bus's listener already does in every
+ * process). A publish failure rejects, so the revoke fails and changes nothing. */
+export async function publishClosesInTx(
+  cat: CatalogFacade,
+  bus: SessionFrameBus,
+  userId: string,
+  sessionIds: readonly string[],
+): Promise<BusMessage[]> {
+  const msgs: BusMessage[] = [];
+  for (let i = 0; i < sessionIds.length; i += ACCESS_LOSS_CLOSE_CHUNK) {
+    const s = sessionIds.slice(i, i + ACCESS_LOSS_CLOSE_CHUNK);
+    msgs.push({ k: 'close', u: userId, s, c: ACCESS_LOST_CLOSE_CODE });
+  }
+  if (msgs.length > 0) await bus.publishInTx(catalogNotifyHandle(cat), msgs);
+  return msgs;
+}
+
+/** The last step inside a revoking transaction (session-frame-bus D5; show-grants D20): re-check
+ * `userId`'s access to each of `showIds` on the transaction's own handle, which reads its own
+ * uncommitted revoke, and publish closes of their sockets on the sessions of the shows they lost. A
+ * show they still reach (a surviving grant, an admin role) keeps its sockets. Any failure rejects
+ * and fails the revoke. The handle must still see the rows: the leave route, whose caller loses
+ * them with the membership, lists its sessions before the delete and uses `publishClosesInTx`. */
+export async function publishAccessLossInTx(
+  cat: CatalogFacade,
+  bus: SessionFrameBus,
+  userId: string,
+  showIds: readonly string[],
+): Promise<BusMessage[]> {
+  const lost: string[] = [];
+  for (const showId of showIds) {
+    if (!(await cat.auth.authCanAccessShow(userId, showId))) lost.push(showId);
+  }
+  const sessionIds = lost.length === 0 ? [] : await cat.sessions.listSessionIdsForShows(lost);
+  return publishClosesInTx(cat, bus, userId, sessionIds);
+}
+
+/** The ids of every show of a team, for `publishAccessLossInTx` after a team-wide loss. */
 export async function teamShowIds(catalog: CatalogFacade, teamId: string): Promise<string[]> {
   return (await catalog.shows.listShowsForStudio(teamId)).map((r) => String(r.id));
 }

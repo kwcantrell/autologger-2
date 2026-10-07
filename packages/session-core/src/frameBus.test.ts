@@ -7,6 +7,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   type BusMessage,
+  type BusTxHandle,
   LocalFrameBus,
   SESSION_COMMANDS,
   SESSION_FRAME_TYPES,
@@ -267,7 +268,7 @@ describe('the hub on the local bus', () => {
 describe('the hub on a supplied bus', () => {
   function spyBus(failPublish: () => boolean = () => false) {
     const calls: Array<
-      | { op: 'publishInTx'; t: SessionSql; msgs: readonly BusMessage[] }
+      | { op: 'publishInTx'; t: BusTxHandle; msgs: readonly BusMessage[] }
       | { op: 'afterCommit'; msgs: readonly BusMessage[] }
       | { op: 'publishNow'; msg: BusMessage }
     > = [];

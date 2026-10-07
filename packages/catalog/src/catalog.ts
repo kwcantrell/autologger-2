@@ -42,6 +42,9 @@ export interface CatalogFacade {
   system: (reason: string) => CatalogFacade;
   /** A catalog whose every statement is refused with `CatalogUnboundError` (catalog-roles D7). */
   unbound: () => CatalogFacade;
+  /** `pg_notify(channel, payload)` under this catalog's binding; inside `tx`, on the transaction,
+   * so it is delivered only if the transaction commits (session-frame-bus D5). */
+  notify: (channel: string, payload: string) => Promise<void>;
 }
 
 /** A catalog call with neither a user nor a system binding: a programming error, refused before
@@ -109,6 +112,11 @@ export class Catalog implements CatalogFacade {
 
   unbound(): CatalogFacade {
     return this.#derive(UNBOUND_DB);
+  }
+
+  /** Session-frame-bus D5: an access-loss close is published inside the revoking transaction. */
+  async notify(channel: string, payload: string): Promise<void> {
+    await this.#db.all('SELECT pg_notify(?, ?)', channel, payload);
   }
 
   #derive(db: CatalogDb): Catalog {
