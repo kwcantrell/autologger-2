@@ -63,14 +63,26 @@ export class KvStore implements KvStorePort {
     return row.value;
   }
 
-  async replaceIf(key: string, expected: string, next: string): Promise<boolean> {
-    const res = await this.db.run(
-      'UPDATE kv SET value = ? WHERE key = ? AND value = ? AND (expires_at IS NULL OR expires_at > ?)',
-      next,
-      key,
-      expected,
-      this.clock.now(),
-    );
+  /** With `{expirationTtl}`, the new expiry is set in the same conditional UPDATE; without it the
+   * row keeps its expiry (shared-request-state D1). */
+  async replaceIf(
+    key: string,
+    expected: string,
+    next: string,
+    opts: { expirationTtl?: number } = {},
+  ): Promise<boolean> {
+    const now = this.clock.now();
+    const live = 'WHERE key = ? AND value = ? AND (expires_at IS NULL OR expires_at > ?)';
+    const res = opts.expirationTtl
+      ? await this.db.run(
+          `UPDATE kv SET value = ?, expires_at = ? ${live}`,
+          next,
+          now + opts.expirationTtl * 1000,
+          key,
+          expected,
+          now,
+        )
+      : await this.db.run(`UPDATE kv SET value = ? ${live}`, next, key, expected, now);
     return res.changes > 0;
   }
 

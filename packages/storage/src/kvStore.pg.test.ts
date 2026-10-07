@@ -162,6 +162,28 @@ describe('KvStore.replaceIf (catalog-concurrency-hazards D7)', () => {
     tick(2_000);
     expect(await s.replaceIf('k', 'a', 'b')).toBe(false);
   });
+
+  // shared-request-state D1: the log-import job store refreshes its record's expiry on every write.
+  it('with {expirationTtl} sets the new expiry in the same swap; without it keeps the old one', async () => {
+    const { s, tick } = await env();
+    await s.put('k', 'a', { expirationTtl: 60 });
+    expect(await s.replaceIf('k', 'a', 'b', { expirationTtl: 600 })).toBe(true);
+    tick(61_000);
+    expect(await s.get('k')).toBe('b'); // the old 60 s expiry was replaced
+    expect(await s.replaceIf('k', 'b', 'c')).toBe(true);
+    tick(538_000);
+    expect(await s.get('k')).toBe('c'); // 599 s after the swap: kept the 600 s expiry
+    tick(2_000);
+    expect(await s.get('k')).toBeNull();
+  });
+
+  it('with {expirationTtl} still refuses a stale expected value and leaves the expiry alone', async () => {
+    const { s, tick } = await env();
+    await s.put('k', 'a', { expirationTtl: 60 });
+    expect(await s.replaceIf('k', 'stale', 'x', { expirationTtl: 600 })).toBe(false);
+    tick(61_000);
+    expect(await s.get('k')).toBeNull();
+  });
 });
 
 // core-ports-architecture "The Postgres catalog adapter": a key/value call never joins a catalog
