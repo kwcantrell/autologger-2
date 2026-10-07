@@ -20,6 +20,7 @@ import {
   KvStore,
   PostgresCatalogDb,
   PostgresFrameBus,
+  PostgresLeaseDirectory,
   PostgresSessionDb,
 } from '@autologger/storage';
 import type { Bindings } from '../appEnv';
@@ -132,6 +133,8 @@ export function createBindings(
       presence: new PresenceRegistry(clock),
       logImportJobs: createLogImportJobStore(kv, clock),
       aiV2Questions: new AiV2PendingQuestionRegistry(kv, clock),
+      // run-status-and-sweeper D5: binds its own reviewed reason, system:lease-directory.
+      leases: new PostgresLeaseDirectory(catalogDb),
     },
     config: {
       PUBLIC_BASE_URL: procEnv.PUBLIC_BASE_URL || '',
