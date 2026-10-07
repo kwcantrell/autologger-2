@@ -3,7 +3,7 @@
 Tier: 2
 Tier reason: changes the lifecycle itself: `scripts/lib/check_change.py`, `.github/workflows/lifecycle.yml` and `openspec/config.yaml` are all high-risk paths.
 
-Approved-by: Kalen 2026-10-07 (reapproved)
+Approved-by: Kalen 2026-10-07 (reapproved reapproved)
 
 ## Why
 
@@ -21,13 +21,18 @@ test. These are the slow tests, and they only exercise `server/`, `packages/`, `
   pg and integration tests depend on, plus the files that decide the selection (the checker, the
   workflow, the vitest configs, root `package.json`/`package-lock.json`). Like `test_globs`, a PR's
   own gates read this list from the merge-base, so a PR can't shrink it to skip its own tests.
-- **`scripts/lib/check_change.py`, `commands` gate.** Whenever the gate runs (any stage, or
-  `--only`) on a pull request or locally, if a base is known and no changed file matches
-  `db_test_paths`, the test command runs with `SKIP_DB_TESTS=1`. The gate's message says the pg
-  and integration projects were skipped and why, and that line is printed even under `--quiet`,
-  so pre-push shows it. In every other case (any match, no base, a non-PR CI run, or
-  `FULL_TESTS=1`), the full suite runs as today. In CI, the DB tests always run in `db-shard`
-  instead (see the sharding bullet), and `gates` runs typecheck, unit tests and audit.
+- **`scripts/lib/check_change.py`, `commands` gate.**
+  - **Locally (owner delta, 2026-10-07):** pre-push, the Stop hook and manual runs never run the
+    pg and integration projects. The test command always gets `SKIP_DB_TESTS=1` unless
+    `FULL_TESTS=1` is set. During TDD the agent runs the specific DB test it's working on (for
+    example `npx vitest run --project integration <file>`). The full DB suite belongs to CI on
+    PR push.
+  - **In CI,** if a base is known and no changed file matches `db_test_paths`, the DB tests are
+    skipped. In every other case (any match, no base, a non-PR run, or `FULL_TESTS=1`), they run.
+    They run in `db-shard` (see the sharding bullet), and `gates` runs typecheck, unit tests and
+    audit.
+  - **Output:** the gate's message says whether the DB tests ran, were skipped (and why), or were
+    left to the `db-tests` job. A skip line prints even under `--quiet`, so pre-push shows it.
 - **`server/vitest.config.ts` and `packages/storage/vitest.config.ts`.** When `SKIP_DB_TESTS=1`,
   the `integration` and `pg` projects are left out of `test.projects`. Unit projects always run.
   Without the variable, nothing changes.

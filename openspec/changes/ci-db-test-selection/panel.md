@@ -29,3 +29,7 @@ No findings.
 ## Consistency read 2026-10-07 (post-merge tasks)
 Edits since re-approval: tasks.md. 3.5 (post-merge push run) and 4.3 (owner ruleset edit) can't be ticked before merge, which would keep `tasks` red. They move to an "Owner-owed, after merge" section with no checkboxes, as `adopt-agent-lifecycle` did. Both are still tracked with their checks. No scope change.
 No findings.
+
+## Owner delta 2026-10-07 (local runs skip the DB suite, D3a)
+Delta: with `CI` unset, the `commands` gate never runs the pg/integration projects unless `FULL_TESTS=1`. The full DB suite runs only in CI on PR push. Tasks 2.6, 5.3 and 5.4 are new.
+Re-panel waived by the owner ("fold it, do not re-panel"). Re-approval requested.

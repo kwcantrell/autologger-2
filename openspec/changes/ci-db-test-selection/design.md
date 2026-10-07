@@ -22,8 +22,10 @@ See proposal.md for why. Today:
 **Goals:**
 
 - A PR whose changed files can't affect a pg or integration test skips those two projects, and
-  says so in the output that decides it: the `commands` line locally, and each `db-shard`'s
-  `--db-selection` line in CI (D5).
+  says so in each `db-shard`'s `--db-selection` line (D5).
+- Local runs (pre-push, the Stop hook, manual) never start the DB suite unless `FULL_TESTS=1`
+  (D3a). The full suite is CI's job on PR push. Locally the agent runs the targeted test it's
+  writing.
 - The selection fails safe: if anything is unclear, run everything.
 - Every merge into `supabase-migration` gets a full run.
 
@@ -77,14 +79,33 @@ When `SKIP_DB_TESTS=1`, the two configs drop the `integration` and `pg` entries 
 so the root script would need a second, parallel chain of workspace commands to keep in sync.
 Vitest also fails when `--project` matches nothing.
 
-### D3. When the gate selects
+### D3a. Local runs skip the DB suite (owner delta, 2026-10-07)
+
+With `CI` unset, the `commands` gate runs the test command with `SKIP_DB_TESTS=1` regardless of
+paths, unless `FULL_TESTS=1` is set. Its message reads `(pg/integration skipped: local run; CI
+runs them on the PR, FULL_TESTS=1 runs them here)`. This covers `--stage hook` (pre-push and the
+Stop hook), `--stage pr` run by hand, and `--only commands`.
+
+**Why:** the owner's call. The hook stage ran the full Docker-backed suite on every push and every
+agent stop, about 7.5 minutes each. Several agents on one host doing that at once starved each
+other, which produced the `crossProcess.int.test.ts` timeouts. Test-first work needs the one
+test being written to fail and then pass, and that test is run directly. Catching regressions
+elsewhere is what the PR's `db-tests` check is for.
+
+`--db-selection` still prints the path decision locally, as CI would make it, so it can be
+tried without CI.
+
+**Precedence in `test_env`:** CI with `DB_TESTS_IN_SHARDS=1` defers to `db-tests` (D5). Then
+`FULL_TESTS=1` runs everything. Then a local run skips (this decision). Then D3 decides
+(CI only).
+
+### D3. When the gate selects (CI)
 
 The `commands` gate sets `SKIP_DB_TESTS=1` for the `test` command only when all of these hold:
 
 1. `FULL_TESTS` is not `1`;
-2. the run is a pull request (`GITHUB_EVENT_NAME == pull_request`), or it is local (`CI` unset).
-   There is no stage condition: `--stage hook`, `--stage pr` and `--only commands` all select the
-   same way;
+2. the run is a pull request (`GITHUB_EVENT_NAME == pull_request`). Local runs are decided by
+   D3a, so this list applies to CI and to `--db-selection`. There is no stage condition;
 3. `ctx.base` is known;
 4. `db_test_paths` (as read from the base) is a non-empty list;
 5. no file in `ctx.changed` matches `db_test_paths`.
@@ -203,8 +224,11 @@ projects.
   would. Human PR review is the control there, as it is today.
 - [Post-merge failures land after the PR merged] → the run is visible on the branch. It isn't a
   required check (non-goal). Expect a red X on `supabase-migration` and a fix-forward.
-- [Local `hook` runs skip DB tests that the agent needed] → the skip line prints even under
-  `--quiet` (D3), and `FULL_TESTS=1 scripts/check-change.sh --stage hook` forces the full suite.
+- [Local `hook` runs never run the DB suite (D3a), so a DB regression is caught only on the PR]
+  → that's the intent. The agent runs the targeted DB test it's writing, the PR's `db-tests` is
+  the required check, and `FULL_TESTS=1 scripts/check-change.sh --stage hook` runs everything
+  locally on request. The skip line prints under `--quiet`, so nobody mistakes a local pass for
+  a DB pass.
 
 - [A shard gets most of the slow files, because vitest balances by file count, not duration] →
   task 3.4 records per-shard times. Rebalancing (more shards, or splitting a slow file) is a
