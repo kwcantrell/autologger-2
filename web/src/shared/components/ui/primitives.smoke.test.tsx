@@ -9,6 +9,7 @@ import {
   AlertDialogDescription,
   AlertDialogTitle,
 } from './alert-dialog';
+import { Avatar, AvatarFallback } from './avatar';
 import { Badge } from './badge';
 import { Button, buttonVariants } from './button';
 import { Card, CardContent, CardHeader, CardTitle } from './card';
@@ -27,6 +28,16 @@ import {
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from './empty';
 import { Field, FieldDescription, FieldGroup, FieldLabel } from './field';
 import { Input } from './input';
+import {
+  Item,
+  ItemActions,
+  ItemContent,
+  ItemDescription,
+  ItemGroup,
+  ItemMedia,
+  ItemTitle,
+} from './item';
+import { Kbd, KbdGroup } from './kbd';
 import { Label } from './label';
 import { Popover, PopoverContent, PopoverTrigger } from './popover';
 import { RadioGroup, RadioGroupItem } from './radio-group';
@@ -40,12 +51,32 @@ import {
   SelectValue,
 } from './select';
 import { Separator } from './separator';
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+} from './sheet';
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarHeader,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarProvider,
+  SidebarTrigger,
+} from './sidebar';
 import { Skeleton } from './skeleton';
 import { Toaster } from './sonner';
 import { Spinner } from './spinner';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './tabs';
 import { Textarea } from './textarea';
+import { ToggleGroup, ToggleGroupItem } from './toggle-group';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './tooltip';
 
 // shadcn-foundation task 3.2: every added primitive renders and exposes its role / slot.
@@ -598,6 +629,93 @@ describe('workspace primitives (shadcn-port-workspace D1)', () => {
     expect(edit.className).toContain('disabled:cursor-not-allowed');
     expect(screen.getByRole('button', { name: 'Save' }).getAttribute('data-variant')).toBe(
       'glass-primary',
+    );
+  });
+});
+
+// redesign-show-ignition D10: the primitives added for the redesign render and expose their
+// role / slot after the hygiene rewrite.
+describe('Show Ignition primitives (redesign-show-ignition D10)', () => {
+  it('sheet opens as a labelled dialog with header and footer slots', () => {
+    render(
+      <Sheet open>
+        <SheetContent side="right">
+          <SheetHeader>
+            <SheetTitle>Edit member</SheetTitle>
+            <SheetDescription>Role and show access.</SheetDescription>
+          </SheetHeader>
+          <SheetFooter>Footer</SheetFooter>
+        </SheetContent>
+      </Sheet>,
+    );
+    expect(screen.getByRole('dialog', { name: 'Edit member' })).toBeTruthy();
+    for (const s of ['sheet-content', 'sheet-header', 'sheet-footer'])
+      expect(slot(s)).not.toBeNull();
+  });
+
+  it('toggle group (single) marks its value on', () => {
+    render(
+      <ToggleGroup type="single" defaultValue="admin" aria-label="Role">
+        <ToggleGroupItem value="admin">Admin</ToggleGroupItem>
+        <ToggleGroupItem value="member">Member</ToggleGroupItem>
+      </ToggleGroup>,
+    );
+    expect(slot('toggle-group')).not.toBeNull();
+    const items = document.querySelectorAll('[data-slot="toggle-group-item"]');
+    expect(items).toHaveLength(2);
+    expect(items[0].getAttribute('data-state')).toBe('on');
+    expect(items[1].getAttribute('data-state')).toBe('off');
+  });
+
+  it('item rows with avatar initials, and kbd', () => {
+    render(
+      <div>
+        <ItemGroup>
+          <Item>
+            <ItemMedia>
+              <Avatar>
+                <AvatarFallback>KC</AvatarFallback>
+              </Avatar>
+            </ItemMedia>
+            <ItemContent>
+              <ItemTitle>Kalen Cantrell</ItemTitle>
+              <ItemDescription>Owner</ItemDescription>
+            </ItemContent>
+            <ItemActions>Edit</ItemActions>
+          </Item>
+        </ItemGroup>
+        <KbdGroup>
+          <Kbd>[</Kbd>
+        </KbdGroup>
+      </div>,
+    );
+    for (const s of ['item-group', 'item', 'item-media', 'item-content', 'item-actions', 'avatar'])
+      expect(slot(s)).not.toBeNull();
+    expect(screen.getByText('KC')).toBeTruthy();
+    expect(screen.getByText('[').tagName).toBe('KBD');
+  });
+
+  it('sidebar renders header, menu, footer and an accessible trigger', () => {
+    render(
+      <SidebarProvider>
+        <Sidebar collapsible="icon">
+          <SidebarHeader>Header</SidebarHeader>
+          <SidebarContent>
+            <SidebarMenu>
+              <SidebarMenuItem>
+                <SidebarMenuButton isActive>Session one</SidebarMenuButton>
+              </SidebarMenuItem>
+            </SidebarMenu>
+          </SidebarContent>
+          <SidebarFooter>Settings</SidebarFooter>
+        </Sidebar>
+        <SidebarTrigger />
+      </SidebarProvider>,
+    );
+    expect(slot('sidebar')?.getAttribute('data-collapsible')).toBe('');
+    expect(screen.getByRole('button', { name: /toggle sidebar/i })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Session one' }).getAttribute('data-active')).toBe(
+      'true',
     );
   });
 });
