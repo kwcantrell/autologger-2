@@ -198,6 +198,11 @@ then repeat the key cases on the real Postgres kv.
    the CLI home in tests that expect a resume to be accepted, such as `ai.int.test.ts:492`, whose
    fake CLI writes no conversation file.
 3. The `BatchImportModal` 404-hint assertion follows the new text.
+4. (Owner, 2026-10-07, during 3.1.) The registry's own unit tests in
+   `packages/ai-runtime/src/aiV2PendingQuestions.test.ts` (the 16 cases that build a registry and
+   call `register`, `resolveAnswer`, `abandonTurn`, `size` or `has`) change shape with the same
+   assertions: they build the registry over the in-package `MemoryKv` and a clock, await the now
+   async calls, and expect `'accepted'` where they expected `'ok'`.
 
 Any other change is a stop.
 
