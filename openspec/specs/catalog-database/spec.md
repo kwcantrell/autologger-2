@@ -683,9 +683,11 @@ privileges.
 - **THEN** each statement is refused with `42501`
 
 ### Requirement: Session leases are stored in the catalog
-Session leases SHALL be stored in `catalog.session_leases` (ADR 0021 slice 8a), with these columns:
+Session leases SHALL be stored in `catalog.session_leases` (ADR 0021 slices 8a and 8b), with these
+columns:
 - `session_id`, non-null, referencing `catalog.sessions (id)` with no cascade;
-- `kind`, non-null, checked by the named constraint `session_leases_kind_check` to `'recording'`;
+- `kind`, non-null, checked by the named constraint `session_leases_kind_check` to one of
+  `'recording'`, `'ai-turn'`, `'transcript-generation'` and `'youtube-import'` (slice 8b);
 - `holder_client_id`, non-null, non-empty, at most 256 characters;
 - `holder_user_id`, null only when a reviewed system task holds the lease;
 - `heartbeat_at_ms` and `expires_at_ms`, non-null `bigint` epoch milliseconds read from the Clock
@@ -707,6 +709,8 @@ Row-level security SHALL be enabled with these policies:
 Row-level security SHALL NOT be relied on to tie a live lease to its holder: the access rule cannot
 judge expiry, so a user with access could rewrite a live lease to itself with a direct `UPDATE`. The
 server's lease statements are the only writers, and they enforce the holder.
+
+The migration that widens the kind check (slice 8b) SHALL change no row and no policy.
 
 The migration that creates the table SHALL copy no lease. It SHALL leave the `lease_holder` and
 `lease_seen_ms` meta rows unchanged.
@@ -734,3 +738,8 @@ The migration that creates the table SHALL copy no lease. It SHALL leave the `le
 #### Scenario: Only known kinds are stored
 - **WHEN** `catalog_system` inserts a lease with kind `x`
 - **THEN** the insert fails with `23514`
+
+#### Scenario: The run kinds are stored
+- **WHEN** a `catalog_user` binding for user U inserts leases of kinds `ai-turn`,
+  `transcript-generation` and `youtube-import` naming U, in a session U can access
+- **THEN** all three succeed, and their rows coexist with a `recording` lease of the same session

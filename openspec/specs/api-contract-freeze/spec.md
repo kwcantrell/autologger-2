@@ -1861,7 +1861,9 @@ lease's state. For the recording lease, a claim that takes or refreshes the leas
 expiry that frees it SHALL each count as a change; a heartbeat SHALL NOT, even though it extends the
 lease. A transaction that changes no row, and every read, SHALL leave it unchanged. Two internal writes SHALL NOT count as changes: the seed a session's runtime writes
 when it first opens the session, and the bookkeeping the event list's orphan relink check writes;
-so listing events SHALL leave it unchanged unless the relink changes an event. It SHALL never decrease, and two committed writes of one session SHALL never carry the
+so listing events SHALL leave it unchanged unless the relink changes an event. A run lease
+(kinds `ai-turn`, `transcript-generation` and `youtube-import`, ADR 0021 slice 8b) is not content:
+claiming, renewing, releasing or overwriting one SHALL leave the revision unchanged. It SHALL never decrease, and two committed writes of one session SHALL never carry the
 same value.
 
 The existing fields carry this revision, with their names and shapes unchanged:
@@ -1901,6 +1903,12 @@ event SHALL still emit none. A transaction that changes several events (an impor
   client claims it again, and the lease then expires and is freed
 - **THEN** the revision advanced by exactly one for the first claim, the release, the second claim
   and the expiry each, and not at all for the refused claim
+
+#### Scenario: Run leases leave the revision unchanged
+- **WHEN** a client reads the session status, runs an AI chat turn on the session that calls no
+  write tool (the `ai-turn` lease is claimed, renewed and released around it), and reads the status
+  again
+- **THEN** `events_stream_revision` is the same in both reads
 
 ### Requirement: The recording lease is held by one user and client
 A session's recording lease (`POST /api/sessions/:id/audio-recording-lease`, `/heartbeat`,
