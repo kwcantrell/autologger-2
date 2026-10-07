@@ -50,7 +50,7 @@ Keep each task's text, and later its `Evidence:`, in one block with no blank lin
 
 ## 3. Silent run leases in the store (design D2)
 
-- [ ] 3.1 Test first, in `server/src/test/session/runLease.int.test.ts`, covering every D6 store case:
+- [x] 3.1 Test first, in `server/src/test/session/runLease.int.test.ts`, covering every D6 store case:
   - claim, re-claim and release of each run kind, with the revision unchanged, no `lease.changed`
     and no alarm armed;
   - a claim refused while another holder's lease is live, and a takeover after expiry;
@@ -61,6 +61,7 @@ Keep each task's text, and later its `Evidence:`, in one block with no blank lin
   - `leaseStatus` ignoring run rows.
 
   Red, then implement `LeaseKind`/`RunLeaseKind`/TTL, the raw-handle `SessionCore` helpers, `claimRunLease`/`releaseRunLease`, the narrowed `expireIfStale`, and the facade methods. Green. Then run every existing `server/src/test/session/*` lease test, unchanged or changed only under D6 category 2.
+  - Evidence: `server/src/test/session/runLease.int.test.ts` (11 cases on the bound-core harness plus one through a registry hub: the per-kind TTL map; claim, re-claim and release of each kind with revision unchanged, no frame, no alarm; refused for another run id of the same user, the same run id of another user and another user's run while live, another kind independent, takeover at expiry; the holder re-taking its own lapsed row; a former holder's release leaving the new row; blank/NUL ids; `expireIfStale` leaving expired and live run rows, re-arming at the recording expiry not the earlier run expiry, then freeing only the recording row with one frame and revision +1; `leaseStatus` ignoring run rows; the facade `claimRunLease`/`releaseRunLease` as a user, silent). `cd server && npx vitest run --project integration src/test/session/runLease.int.test.ts` -> `Tests  11 failed (11)`: `TypeError: s.lease.claimRunLease is not a function`, `TypeError: va.claimRunLease is not a function`, `expected { recording: 40000 } to deeply equal { recording: 40000, …(3) }`, `expected [ { kind: 'youtube-import', …(4) } ] to deeply equal [ { kind: 'ai-turn', …(4) }, …(1) ]` (log `8b-3.1-red.log`). Implemented `RunLeaseKind`, `LeaseKind = 'recording' | RunLeaseKind`, `RUN_LEASE_RENEW_MS`, `TTL_MS` 40 000 per run kind, `LeaseStore.claimRunLease`/`releaseRunLease`, `SessionCore.claimLeaseUncounted`/`releaseLeaseUncounted` (raw handle), `expireIfStale` narrowed to `kind = 'recording'` (delete and re-arm), facade `claimRunLease`/`releaseRunLease` (`inTxn`) -> `Tests  11 passed (11)` (log `8b-3.1-green.log`). Every existing session test unchanged (no D6 category 2 change was needed): `npx vitest run --project integration src/test/session/` -> `Test Files  34 passed (34)`, `Tests  335 passed (335)` (log `8b-3.1-session.log`); `packageBoundaries.repo.test.ts` `Tests  84 passed (84)` (log `8b-3.1-boundaries.log`); `npm run typecheck` exit 0 (log `8b-3.1-typecheck.log`).
 - [ ] 3.2 Test first, in `leaseRace.int.test.ts`:
   - (f) 200 rounds of two processes claiming `ai-turn` for different users: one winner per round,
     revision unchanged;
