@@ -179,3 +179,49 @@ describe('LoginPage -> post-login consume round trip', () => {
     expect(sessionStorage.getItem(LOGIN_RETURN_STASH_KEY)).toBeNull();
   });
 });
+
+// Finish review fix round 3 (owner decision): the PNG brand strip (red/cyan/purple markers on a
+// glowing band) broke the one-accent world. The login draws its own mark in the redesign's
+// vocabulary: a slim band, neutral markers plus one accent marker, and a glowing accent playhead
+// (the timeline playhead's halo). The panel is a flat shadcn Card, not glass.
+describe('LoginPage brand mark and panel (fix round 3)', () => {
+  it('shows no raster brand strip', () => {
+    renderStrict(<LoginPage />);
+    expect(document.querySelector('main img')).toBeNull();
+  });
+
+  it('draws the mark as a decorative band with markers and a glowing accent playhead', () => {
+    renderStrict(<LoginPage />);
+    const mark = document.querySelector('[data-slot="login-brand-mark"]') as HTMLElement;
+    expect(mark).not.toBeNull();
+    expect(mark.getAttribute('aria-hidden')).toBe('true');
+    expect(mark.querySelector('[data-part="band"]')).not.toBeNull();
+    const markers = [...mark.querySelectorAll('[data-part="marker"]')];
+    expect(markers.length).toBeGreaterThanOrEqual(3);
+    // One accent marker; the rest neutral. No other hue.
+    expect(markers.filter((m) => m.className.includes('bg-si-accent'))).toHaveLength(1);
+    for (const m of markers) expect(m.className).toMatch(/bg-si-(accent|dim)\b/);
+    const playhead = mark.querySelector('[data-part="playhead"]') as HTMLElement;
+    expect(playhead.className).toMatch(/bg-si-accent\b/);
+    expect(playhead.className).toMatch(
+      /0_0_10px_1px_color-mix\(in_oklab,var\(--si-accent\)_75%,transparent\)/,
+    );
+    expect(mark.outerHTML).not.toMatch(/gradient|#[0-9a-f]{3,6}\b/i);
+  });
+
+  it('keeps the League Gothic wordmark as the heading', () => {
+    renderStrict(<LoginPage />);
+    const h1 = screen.getByRole('heading', { level: 1, name: 'AutoLogger' });
+    expect(h1.className).toMatch(/font-league-gothic/);
+  });
+
+  it('sits on a flat shadcn Card with no glass, entering with a reduced-motion-safe fade', () => {
+    renderStrict(<LoginPage />);
+    const card = document.querySelector('main [data-slot="card"]') as HTMLElement;
+    expect(card).not.toBeNull();
+    expect(card.className).not.toMatch(/glass/);
+    expect(card.className).toMatch(/animate-overlay-fade-in/);
+    expect(card.className).toMatch(/motion-reduce:animate-none/);
+    expect(card.contains(document.getElementById('login-btn-google'))).toBe(true);
+  });
+});

@@ -18,9 +18,11 @@ const WAVEFORM_FULL =
 const WAVEFORM_SVG = 'block relative w-full h-full [shape-rendering:geometricPrecision]';
 const WAVEFORM_FILL = 'timelineWaveformFill [fill:url(#timeline-wf-v5-fill)] stroke-none';
 // The played portion is the one accent, flat (finish review fix round 2: it was a sky-blue ramp,
-// a second hue beside #5b7cff).
+// a second hue beside #5b7cff). Fix round 3: it follows the transport (`--tx-wave-progress`): a dim
+// neutral when stopped, the accent in playback and live, easing between states (still under
+// reduced motion).
 const WAVEFORM_PROGRESS =
-  'timelineWaveformProgress [fill:color-mix(in_oklab,var(--si-accent)_72%,transparent)] stroke-none';
+  'timelineWaveformProgress [fill:var(--tx-wave-progress)] stroke-none [transition:fill_var(--tx-dur)_var(--tx-ease)] motion-reduce:transition-none';
 const WAVEFORM_DECODING_LABEL =
   'absolute inset-0 flex items-center justify-center pointer-events-none z-[2] text-[2rem] font-medium tracking-[0.06em] uppercase text-[rgba(229,238,252,0.42)] animate-wf-label-pulse motion-reduce:animate-none motion-reduce:opacity-85';
 

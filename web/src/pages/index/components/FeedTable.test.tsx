@@ -1,5 +1,9 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
+import { feedCountLabel } from './FeedShell';
 import {
   type ColumnDef,
   FEED_CELL,
@@ -12,7 +16,6 @@ import {
   FEED_TC,
   FeedTable,
 } from './FeedTable';
-import { feedCountLabel } from './FeedShell';
 
 describe('feedCountLabel (the Event feed heading pattern, shared)', () => {
   it('reads sentence case with the bare count, singular at 1', () => {
@@ -146,5 +149,28 @@ describe('Transcript/Topics row chrome on the Show Ignition type system', () => 
   it('inputs take the Event feed size and the accent, with no V5 cyan', () => {
     expect(FEED_INLINE_INPUT).not.toMatch(/56,189,248/);
     expect(FEED_INLINE_INPUT).not.toMatch(/text-\[0\.8rem\]/);
+  });
+});
+
+// Finish review fix round 3: at 390 the Transcript and Topics sheets were capped at 70dvh AND
+// their scroll viewports were capped at 70dvh, so the viewport ran the feed header's height
+// (~62px) past the card's bottom edge (the sheet's overflow is visible). The Event feed's
+// pattern is the bound for all three: the sheet sizes to header + viewport, and only the
+// viewport carries the phone cap, so every row stays inside the card.
+describe('phone feed bounds (fix round 3)', () => {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const src = (f: string) => fs.readFileSync(path.join(here, f), 'utf8');
+
+  it.each([
+    'TranscribeFeed.tsx',
+    'TopicsFeed.tsx',
+  ])('%s does not cap its sheet on phones (the viewport carries the cap)', (file) => {
+    const modifier = src(file).match(/modifier="([^"]*)"/)?.[1] ?? '';
+    expect(modifier).toMatch(/min-h-0/);
+    expect(modifier).not.toMatch(/max-md:max-h-/);
+  });
+
+  it('the shared scroll viewport carries the 70dvh phone cap', () => {
+    expect(src('FeedTable.tsx')).toMatch(/viewportClassName="[^"]*max-md:max-h-\[70dvh\]/);
   });
 });

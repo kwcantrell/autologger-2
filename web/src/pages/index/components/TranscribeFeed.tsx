@@ -325,8 +325,10 @@ export const TranscribeFeed = memo(function TranscribeFeed({ sessionId }: Props)
       toolbarAriaLabel="Transcript feed tools"
       // `v5-transcribe-feed` retained as a chrome hook; the flex-column panel layout
       // (was `:global(.v5-transcribe-feed)` in FeedTable.module.css) rides along as
-      // utilities: fill the tab panel on desktop, cap + internal-scroll on phones.
-      modifier="v5-transcribe-feed flex flex-col flex-[1_1_0] min-h-0 overflow-hidden max-md:flex-[0_0_auto] max-md:max-h-[70dvh]"
+      // utilities: fill the tab panel on desktop; on phones the sheet sizes to header + scroll
+      // viewport and only FeedTable's viewport carries the 70dvh cap, as the Event feed does
+      // (fix round 3: capping both ran the rows ~62px past the card's bottom edge).
+      modifier="v5-transcribe-feed flex flex-col flex-[1_1_0] min-h-0 overflow-hidden max-md:flex-[0_0_auto]"
       after={
         // The ONE shared reason node every row's jump control references while
         // unavailable (design D2 gate decision) — never one per row.

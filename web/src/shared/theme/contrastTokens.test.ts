@@ -197,6 +197,17 @@ describe('AA contrast floor — source colours over their lightest measured surf
     expect(contrast(fg, SURFACE.loginLink)).toBeGreaterThanOrEqual(AA);
   });
 
+  // Fix round 3: the login panel is the flat Card now (was glass); its copy clears AA on it.
+  it.each([
+    'TAGLINE',
+    'FINE_PRINT',
+    'SECTION_LABEL',
+    'BTN_CREATE',
+  ])('login %s clears AA on the login Card', (name) => {
+    const fg = parseColor(textColour(classConst('pages/index/components/LoginPage.tsx', name)));
+    expect(contrast(fg, colour('--card'))).toBeGreaterThanOrEqual(AA);
+  });
+
   it('event-button row summary and Edit on the Event buttons card', () => {
     // Settings › Event buttons (redesign-show-ignition 9.1): each row's summary is an
     // ItemDescription (muted text) and its Edit a ghost Button (foreground text), both on the card.
@@ -435,10 +446,39 @@ describe('Show Ignition tokens (redesign-show-ignition D1)', () => {
     const src = read('pages/index/components/timeline/TimelineWaveform.tsx');
     for (const sky of ['#7dd3fc', '#38bdf8', '#0284c7']) expect(src).not.toContain(sky);
     const prog = src.match(/const WAVEFORM_PROGRESS =\s*'([^']*)'/)?.[1] ?? '';
-    expect(prog).toMatch(/var\(--si-accent\)/);
+    expect(prog).toMatch(/var\(--tx-wave-progress\)/);
     const perf = CSS.match(/\.timelineWaveformProgress\s*\{([^}]*)\}/)?.[1] ?? '';
-    expect(perf).toMatch(/var\(--si-accent\)/);
+    expect(perf).toMatch(/var\(--tx-wave-progress\)/);
     expect(perf).not.toMatch(/56, 189, 248/);
+  });
+
+  // Finish review fix round 3: the played portion stayed full accent while stopped, so a stopped
+  // session still looked ignited. It follows the transport now, like --tx-playhead-glow: a dim
+  // neutral when stopped, the 72% accent in playback, the accent while rolling or recording.
+  it('the stopped waveform progress is a dim neutral, not the accent', () => {
+    const v = blockVars(`[data-transport='stopped']`)['--tx-wave-progress'] ?? '';
+    const m = v.match(/^color-mix\(in oklab, var\(--si-fg\) (\d+)%, transparent\)$/);
+    expect(m).not.toBeNull();
+    expect(Number((m as RegExpMatchArray)[1])).toBeLessThanOrEqual(35);
+    expect(v).not.toMatch(/--si-accent/);
+  });
+
+  it.each([
+    ['playback', 72],
+    ['rolling', 72],
+    ['recording', 72],
+  ])('the %s waveform progress is the accent at its floor', (state, floor) => {
+    const v = blockVars(`[data-transport='${state}']`)['--tx-wave-progress'] ?? '';
+    const m = v.match(/color-mix\(in oklab, var\(--si-accent\) (\d+)%, transparent\)/);
+    expect(m).not.toBeNull();
+    expect(Number((m as RegExpMatchArray)[1])).toBeGreaterThanOrEqual(floor as number);
+  });
+
+  it('the waveform progress fill eases between states and holds still under reduced motion', () => {
+    const src = read('pages/index/components/timeline/TimelineWaveform.tsx');
+    const prog = src.match(/const WAVEFORM_PROGRESS =\s*'([^']*)'/)?.[1] ?? '';
+    expect(prog).toMatch(/\[transition:fill_var\(--tx-dur\)_var\(--tx-ease\)\]/);
+    expect(prog).toMatch(/motion-reduce:transition-none/);
   });
 
   it('the live hero timecode takes the accent with the glow and clears AA on the live card', () => {
