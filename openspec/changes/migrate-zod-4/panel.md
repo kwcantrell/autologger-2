@@ -9,3 +9,8 @@ Tier: 2 · Reviewers: assumption tester, failure and abuse, scope and simplicity
 - [x] [major] Nothing automated keeps the single-copy and peer-met properties, so the next bump could bring back the incident. Raised by scope. Resolved: the new `server/src/zodSingleCopy.repo.test.ts` (D3, task 2.2) checks the lockfile: one zod 4, `@anthropic-ai/sdk` present, and zod in no workspace's `dependencies` except server.
 - [x] [major] D2's deprecation clean-ups weren't required, and they contradicted keeping `superRefine`. Raised by scope. Resolved: D2 is limited to the five one-argument `z.record` calls plus typecheck-forced changes. The deprecated-but-working APIs are a non-goal.
 - [x] [major] The "Defaults and transforms" scenario wasn't observable at route level, and the before/after body capture duplicated the route tests. Raised by scope. Resolved: the scenario is restated at the schema level and mapped to D3 (c) plus the 1.2/4.2 parse-output diff. The body capture is dropped, and only the tool-schema and parse-output diffs remain.
+
+## Consistency read 2026-10-07
+Edits since approval: tasks.md only (1.1 to 4.3 ticked, each with `Evidence:`; 4.4 still open). proposal.md, design.md and both spec deltas are unchanged since e645e421.
+Scope change: no
+No findings.
