@@ -253,6 +253,8 @@ export interface SessionHubFacade {
   /** Silent run leases (session-run-leases D2): no revision change, no broadcast, no alarm. */
   claimRunLease: (kind: RunLeaseKind, holderId: string) => Promise<boolean>;
   releaseRunLease: (kind: RunLeaseKind, holderId: string) => Promise<void>;
+  /** The live run lease's start, else null (run-status-and-sweeper D3); a read under the caller. */
+  runLeaseStartedAt: (kind: RunLeaseKind) => Promise<number | null>;
 
   // --- audio RPCs ---
   addAudioSegment: (input: {
@@ -1164,6 +1166,9 @@ export class SessionHubView implements SessionHubFacade {
   }
   releaseRunLease(kind: RunLeaseKind, holderId: string) {
     return this.inTxn((s) => s.lease.releaseRunLease(kind, holderId));
+  }
+  runLeaseStartedAt(kind: RunLeaseKind) {
+    return this.read((s) => s.lease.runLeaseStartedAt(kind));
   }
 
   // --- audio delegates ---

@@ -18,6 +18,7 @@ import { wireApp } from '../app';
 import type { AppEnv } from '../appEnv';
 import { anonApp, env, envWith } from '../test/harness';
 import { seedAccessMatrix, type TestCaller } from '../test/helpers';
+import { liveLeaseOfAnotherProcess } from '../test/runLeases';
 
 const SESSION_NOT_FOUND = JSON.stringify({ detail: 'Session not found' });
 const SHOW_NOT_FOUND = JSON.stringify({ detail: 'Show not found.' });
@@ -249,7 +250,8 @@ describe('the transcript-generation lock status follows show access (show-grants
   it('names the holder for the granted member and nulls it for the ungranted member', async () => {
     const m = await seedAccessMatrix();
     const startedAtMs = 1_700_000_000_000;
-    expect(transcriptGenerationLock.tryAcquire(m.sessionId, startedAtMs)).toBe(true);
+    // The status reads the lease (run-status-and-sweeper D5): a live run held by another process.
+    await liveLeaseOfAnotherProcess(m.sessionId, 'transcript-generation', startedAtMs);
     const status = async (who: TestCaller): Promise<Record<string, unknown>> => {
       const res = await anonApp.request(
         '/api/transcript-generation/status',

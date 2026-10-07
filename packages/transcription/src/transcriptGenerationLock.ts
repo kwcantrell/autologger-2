@@ -1,38 +1,37 @@
-// Process-wide single slot for transcript generation (transcript-gen-lock-status,
-// design D1). At most one DeepGram run across every session; cleared in the
-// route's `finally` so it cannot wedge true across requests.
+// Per-session transcript generation runs (run-status-and-sweeper D3; was the process-wide single
+// slot of transcript-gen-lock-status D1). At most one run per session in this process, any number
+// of sessions at once; the session's `transcript-generation` run lease excludes other processes.
+// Cleared in the route's `finally` so a session cannot wedge busy across requests.
 
-export type TranscriptGenerationLockHolder = {
-  sessionId: string;
-  startedAtMs: number;
-};
+export class TranscriptGenerationRuns {
+  private readonly runs = new Map<string, number>();
 
-export class TranscriptGenerationLock {
-  private holder: TranscriptGenerationLockHolder | null = null;
-
-  /** Claim the slot for `sessionId`. Returns false when already held. */
+  /** Claim the run of `sessionId`. Returns false when that session already runs here. */
   tryAcquire(sessionId: string, nowMs: number = Date.now()): boolean {
-    if (this.holder !== null) return false;
-    this.holder = { sessionId, startedAtMs: nowMs };
+    if (this.runs.has(sessionId)) return false;
+    this.runs.set(sessionId, nowMs);
     return true;
   }
 
-  getLock(): TranscriptGenerationLockHolder | null {
-    return this.holder;
+  /** When this process started the run of `sessionId`, or null when it runs none. */
+  startedAt(sessionId: string): number | null {
+    return this.runs.get(sessionId) ?? null;
   }
 
-  release(): void {
-    this.holder = null;
+  /** Free the run of `sessionId`; a no-op when it runs none. */
+  release(sessionId: string): void {
+    this.runs.delete(sessionId);
   }
 
-  /** Test-only: drop the slot so the module singleton does not leak across cases. */
+  /** Test-only: drop every run so the module singleton does not leak across cases. */
   reset(): void {
-    this.holder = null;
+    this.runs.clear();
   }
 }
 
-/** Process-wide singleton — shared by generate and status routes. */
-export const transcriptGenerationLock = new TranscriptGenerationLock();
+/** Process singleton, shared by the generate route and log-import. The name is kept from the
+ * single-slot lock so imports don't churn (run-status-and-sweeper D3). */
+export const transcriptGenerationLock = new TranscriptGenerationRuns();
 
 /** Build the frozen `{detail}` string for a concurrent generate (design D6). */
 export function generationInFlightDetail(

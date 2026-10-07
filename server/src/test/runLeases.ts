@@ -6,17 +6,56 @@ import { LeaseStore, type RunLeaseKind } from '@autologger/session-core/leaseSto
 import { SERVER_BOOT_ID } from '@autologger/session-core/runLease';
 import { userCaller } from '@autologger/session-core/sessionCaller';
 import { vi } from 'vitest';
+import type { Bindings } from '../appEnv';
 import { defaultUser, env } from './harness';
 import { insertRaw, rawRows, testStorage } from './session/sessionRows';
 
 /** Claims a live `kind` lease on `sessionId` for the default user under a holder id no run of
- * this process uses: what a second process running the same request would hold. Returns the
- * holder id. */
-export async function holdAsAnotherProcess(sessionId: string, kind: RunLeaseKind): Promise<string> {
+ * this process uses: what a second process running the same request would hold. The claim sets
+ * `started_at_ms` to the claim time (run-status-and-sweeper D4). `on` claims through another
+ * app's bindings sharing the database (default: the harness's). Returns the holder id. */
+export async function holdAsAnotherProcess(
+  sessionId: string,
+  kind: RunLeaseKind,
+  on: Bindings = env,
+): Promise<string> {
   const holderId = `srv:another-process:${crypto.randomUUID()}`;
-  const hub = (await env.ports.sessions.get(sessionId)).as(userCaller((await defaultUser()).id));
+  const hub = (await on.ports.sessions.get(sessionId)).as(userCaller((await defaultUser()).id));
   if (!(await hub.claimRunLease(kind, holderId))) throw new Error(`could not hold ${kind}`);
   return holderId;
+}
+
+/** Writes a live `kind` lease on `sessionId` for the default user, as another process would hold
+ * it: started at `startedAtMs` (null: written by pre-9c code, which set no start), expiring 40 s
+ * from now. Returns the holder id. */
+export async function liveLeaseOfAnotherProcess(
+  sessionId: string,
+  kind: RunLeaseKind,
+  startedAtMs: number | null,
+): Promise<string> {
+  const holderId = `srv:another-process:${crypto.randomUUID()}`;
+  const now = Date.now();
+  await insertRaw(testStorage(sessionId), 'session_leases', {
+    kind,
+    holder_client_id: holderId,
+    holder_user_id: (await defaultUser()).id,
+    heartbeat_at_ms: now,
+    expires_at_ms: now + LeaseStore.RUN_LEASE_TTL_MS,
+    started_at_ms: startedAtMs,
+  });
+  return holderId;
+}
+
+/** The session's `kind` lease start (`started_at_ms`), or null when there is no row. */
+export async function runLeaseStartedAtMs(
+  sessionId: string,
+  kind: RunLeaseKind,
+): Promise<number | null> {
+  const rows = (await rawRows(testStorage(sessionId), 'session_leases', {
+    columns: 'kind, started_at_ms',
+  })) as Array<{ kind: string; started_at_ms: number | null }>;
+  const v = rows.find((r) => r.kind === kind)?.started_at_ms;
+  return v === null || v === undefined ? null : Number(v);
 }
 
 /** Writes a `kind` lease on `sessionId` for the default user that expired 10 s ago: what a

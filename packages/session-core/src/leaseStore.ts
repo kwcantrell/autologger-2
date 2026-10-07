@@ -136,6 +136,21 @@ export class LeaseStore {
     await this.core.releaseLeaseUncounted(kind, hid, this.core.callerUserId);
   }
 
+  /** The start of the live run of `kind` (run-status-and-sweeper D3): the row's `started_at_ms`
+   * while `expires_at_ms > now`; null when there is no row, it expired, or it was written with no
+   * start (pre-9c code). Read under the caller, whom RLS lets read the session's leases. */
+  async runLeaseStartedAt(kind: RunLeaseKind): Promise<number | null> {
+    const r = await this.core.first(
+      `SELECT started_at_ms FROM session_leases
+       WHERE session_id = ? AND kind = ? AND expires_at_ms > ?`,
+      this.core.sessionId,
+      kind,
+      this.core.now(),
+    );
+    const started = r?.started_at_ms;
+    return started === null || started === undefined ? null : Number(started);
+  }
+
   /** Status of the recording lease (D3, D4): alive from the stored expiry, age from the last
    * heartbeat; the holder's client id only for the holding user (or a system caller reading a
    * system-held lease), `MASKED_HOLDER_ID` for everyone else. */

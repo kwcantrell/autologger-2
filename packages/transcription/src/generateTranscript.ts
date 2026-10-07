@@ -47,7 +47,7 @@ export class TranscriptGenerateError extends Error {
       | 'upstream'
       | 'oversize',
     message: string,
-    /** in_flight only: the lock holder whose identifiers `message` names. */
+    /** in_flight only: the session whose identifiers `message` names (always the requested one). */
     readonly holderSessionId?: string,
   ) {
     super(message);
@@ -61,11 +61,6 @@ function sizeLimitDetail(bytes: number): string {
 
 export function exceedsGroupSizeLimit(bytes: number): boolean {
   return bytes > DEEPGRAM_MAX_GROUP_BYTES;
-}
-
-/** Process-wide slot — shared by HTTP generate, status GET, and log-import. */
-export function isTranscriptGenerationInFlight(): boolean {
-  return transcriptGenerationLock.getLock() !== null;
 }
 
 export interface GenerateTranscriptDeps {
@@ -82,6 +77,24 @@ export interface GenerateTranscriptDeps {
   resolveSessionTitle?: (sessionId: string) => string | null | Promise<string | null>;
 }
 
+/** The `in_flight` refusal for `deps.sessionId` (run-status-and-sweeper D3): the holder-named
+ * detail when the run's start is known, else `GENERATION_IN_FLIGHT_DETAIL`. Either way the holder
+ * is the requested session. */
+async function inFlightError(
+  deps: GenerateTranscriptDeps,
+  startedAtMs: number | null,
+): Promise<TranscriptGenerateError> {
+  const detail =
+    startedAtMs === null
+      ? GENERATION_IN_FLIGHT_DETAIL
+      : generationInFlightDetail(
+          deps.sessionId,
+          (await deps.resolveSessionTitle?.(deps.sessionId)) ?? null,
+          startedAtMs,
+        );
+  return new TranscriptGenerateError('in_flight', detail, deps.sessionId);
+}
+
 /** Run DeepGram transcription and atomically replace session words. */
 export async function generateTranscriptWords(
   deps: GenerateTranscriptDeps,
@@ -89,18 +102,13 @@ export async function generateTranscriptWords(
   if (!deepgramConfigured(deps.config)) {
     throw new TranscriptGenerateError('unavailable', TRANSCRIPT_UNAVAILABLE);
   }
+  // The session's run in this process (run-status-and-sweeper D3): only the same session is
+  // refused, with the holder-named detail at this process's start of the run. The holder is always
+  // the requested session; it rides on the error so the route redacts by the session the detail
+  // names (async-session-callers D5).
   if (!transcriptGenerationLock.tryAcquire(deps.sessionId)) {
-    const holder = transcriptGenerationLock.getLock();
-    const detail =
-      holder === null
-        ? GENERATION_IN_FLIGHT_DETAIL
-        : generationInFlightDetail(
-            holder.sessionId,
-            (await deps.resolveSessionTitle?.(holder.sessionId)) ?? null,
-            holder.startedAtMs,
-          );
-    // The holder this detail names, so the route redacts by it (async-session-callers D5).
-    throw new TranscriptGenerateError('in_flight', detail, holder?.sessionId);
+    const startedAtMs = transcriptGenerationLock.startedAt(deps.sessionId);
+    throw await inFlightError(deps, startedAtMs);
   }
 
   const blobStore = deps.audio;
@@ -108,16 +116,18 @@ export async function generateTranscriptWords(
   let lease: RunLeaseHold | null = null;
   try {
     // The session's `transcript-generation` run lease, inside the try so a claim that throws still
-    // frees the lock (session-run-leases D4). The lock already excludes this process, so a refusal
-    // means another process generates for this session: the generic in-flight detail, with no
-    // holder to name, so the route redacts nothing.
+    // frees the session's run (session-run-leases D4). The run already excludes this process, so a
+    // refusal means another process generates for this session: the holder-named detail at the
+    // lease's start, or the generic detail when the live row has no start (it expired or was
+    // released in between, or pre-9c code wrote it; run-status-and-sweeper D3).
     lease = await holdRunLease({
       getHub: deps.getHub,
       kind: 'transcript-generation',
       sessionId: deps.sessionId,
     });
     if (lease === null) {
-      throw new TranscriptGenerateError('in_flight', GENERATION_IN_FLIGHT_DETAIL);
+      const startedAtMs = await (await deps.getHub()).runLeaseStartedAt('transcript-generation');
+      throw await inFlightError(deps, startedAtMs);
     }
 
     const segments = await (await deps.getHub()).listAudioSegments();
@@ -190,7 +200,7 @@ export async function generateTranscriptWords(
     // The anchors read, the remap and the replace are one hub transaction (async-session-hub
     // design D7, S9), so the words are remapped against the anchors the replace commits with. A
     // `no_speech` throw from inside the remap rolls it back and writes nothing. `return await`:
-    // the finally below releases the lease and then the generation lock only after the replace
+    // the finally below releases the lease and then the session's run only after the replace
     // has committed.
     const hub = await deps.getHub();
     return await hub.replaceTranscriptWordsRemapped((events) => {
@@ -210,9 +220,9 @@ export async function generateTranscriptWords(
       };
     });
   } finally {
-    // The lease, then the lock (session-run-leases D4 step 3), then the scratch dir.
+    // The lease, then the session's run (session-run-leases D4 step 3), then the scratch dir.
     if (lease !== null) await lease.release();
-    transcriptGenerationLock.release();
+    transcriptGenerationLock.release(deps.sessionId);
     if (scratchDir) await rm(scratchDir, { recursive: true, force: true });
   }
 }

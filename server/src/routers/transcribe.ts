@@ -26,7 +26,6 @@ import {
   generateTranscriptWords,
   TRANSCRIPT_UNAVAILABLE,
   TranscriptGenerateError,
-  transcriptGenerationLock,
 } from '@autologger/transcription';
 import { Hono } from 'hono';
 import type { AppEnv } from '../appEnv';
@@ -108,25 +107,29 @@ async function resolveCatalogSessionTitle(
   return String(row.title ?? '');
 }
 
-// ── Transcript generation lock status (transcript-gen-lock-status) ───────────
+// ── Transcript generation status (transcript-gen-lock-status; run-status-and-sweeper D5) ───────
 
 transcribeRouter.get('/api/transcript-generation/status', async (c) => {
-  const holder = transcriptGenerationLock.getLock();
-  if (holder === null) {
+  // The earliest live `transcript-generation` run lease in the database, whichever process holds it.
+  const run = await c.env.ports.leases.earliestLiveRun(
+    'transcript-generation',
+    c.env.ports.clock.now(),
+  );
+  if (run === null) {
     return c.json({ in_flight: false });
   }
-  // Cross-tenant redaction: the lock is process-wide, so the holder may be a
+  // Cross-tenant redaction: the status is deployment-wide, so the holder may be a
   // session the requester can't access (another team's, or a show they hold no
   // grant for; show-grants D12). Busy-ness stays truthful; the identifiers are
   // nulled (same key set, null values, never absent keys).
-  const visible = await canAccessSession(c, holder.sessionId);
+  const visible = await canAccessSession(c, run.sessionId);
   return c.json({
     in_flight: true,
-    session_id: visible ? holder.sessionId : null,
+    session_id: visible ? run.sessionId : null,
     session_title: visible
-      ? await resolveCatalogSessionTitle(c.get('catalog'), holder.sessionId)
+      ? await resolveCatalogSessionTitle(c.get('catalog'), run.sessionId)
       : null,
-    started_at: new Date(holder.startedAtMs).toISOString(),
+    started_at: new Date(run.startedAtMs).toISOString(),
   });
 });
 
@@ -173,7 +176,9 @@ transcribeRouter.post('/api/sessions/:sessionId/transcript-words/generate', asyn
     // detail actually names (carried on the error), never a fresh lock read,
     // which could see a different holder after an await (async-session-callers
     // D5); no named holder means the detail is already the generic one.
-    // Same 409 status either way.
+    // Same 409 status either way. The holder is now always the requested
+    // session (run-status-and-sweeper D3), so a caller who passed
+    // `requireSession` keeps the named detail; the check is unchanged.
     if (err instanceof TranscriptGenerateError && err.code === 'in_flight') {
       const named = err.holderSessionId;
       if (named === undefined || !(await canAccessSession(c, named))) {

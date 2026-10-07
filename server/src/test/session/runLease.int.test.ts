@@ -295,6 +295,48 @@ describe('the run-lease facade (session-run-leases D2)', () => {
     expect(await storedRevision(sessionId)).toBe(before);
     expect(frames).toEqual([]);
   });
+
+  it('runLeaseStartedAt: the live row’s started_at_ms, else null (run-status-and-sweeper D3)', async () => {
+    const studio = await seedStudio();
+    const a = await seedUser({ studios: [studio], role: 'owner' });
+    const b = await seedUser({ studios: [studio], role: 'admin' });
+    const show = await seedShow({ studioId: studio });
+    const sessionId = await seedSession({ showId: show });
+    const storage = testStorage(sessionId);
+    const time = { now: 1_750_000_000_000 };
+    const registry = testRegistry({ clock: { now: () => time.now } });
+    registries.push(registry);
+    const entry = await registry.get(sessionId);
+    const va = entry.as(userCaller(a));
+    const vb = entry.as(userCaller(b));
+    // No row.
+    expect(await va.runLeaseStartedAt('transcript-generation')).toBeNull();
+    // A's live run: read under the caller, by the holder and by another member alike.
+    const t0 = time.now;
+    expect(await va.claimRunLease('transcript-generation', 'srv:x:1')).toBe(true);
+    time.now += 10_000;
+    expect(await va.claimRunLease('transcript-generation', 'srv:x:1')).toBe(true);
+    expect(await va.runLeaseStartedAt('transcript-generation')).toBe(t0);
+    expect(await vb.runLeaseStartedAt('transcript-generation')).toBe(t0);
+    // Another kind of the same session is its own row.
+    expect(await va.runLeaseStartedAt('ai-turn')).toBeNull();
+    // Expired: expires_at_ms <= now gives null, though the row is still there.
+    time.now += TTL;
+    expect(await va.runLeaseStartedAt('transcript-generation')).toBeNull();
+    expect(await rawRows(storage, 'session_leases', { columns: 'kind' })).toEqual([
+      { kind: 'transcript-generation' },
+    ]);
+    // A live row with no started_at_ms (written by pre-9c code) gives null.
+    await va.releaseRunLease('transcript-generation', 'srv:x:1');
+    await insertRaw(storage, 'session_leases', {
+      kind: 'transcript-generation',
+      holder_client_id: 'srv:old:1',
+      holder_user_id: a,
+      heartbeat_at_ms: time.now,
+      expires_at_ms: time.now + TTL,
+    });
+    expect(await va.runLeaseStartedAt('transcript-generation')).toBeNull();
+  });
 });
 
 // The lease-hold helper on Postgres (session-run-leases D3; the stub-hub cases are in

@@ -24,7 +24,6 @@
 // (assert-only otherwise — see `server/src/test/apiFixtures.ts` for why a
 // missing fixture fails instead of being written.)
 
-import { transcriptGenerationLock } from '@autologger/transcription';
 import { describe, expect, it, vi } from 'vitest';
 import { expectCapturedResponse } from '../test/apiFixtures';
 import { anonApp, app, env, envWith } from '../test/harness';
@@ -39,6 +38,7 @@ import {
   seedUser,
   testDb,
 } from '../test/helpers';
+import { liveLeaseOfAnotherProcess } from '../test/runLeases';
 
 const JSON_HEADERS = { 'content-type': 'application/json' };
 
@@ -1259,26 +1259,23 @@ describe('GET /api/transcript-generation/status', () => {
     const studioId = await seedMemberStudio();
     const showId = await seedShow({ studioId });
     const sessionId = await seedSession({ showId, episode: '002', title: 'ATS - 2' });
-    // Fixed acquisition instant — redacted to `#`s anyway, but deterministic.
-    expect(transcriptGenerationLock.tryAcquire(sessionId, 1_700_000_000_000)).toBe(true);
-    try {
-      const res = await app.request(
-        '/api/transcript-generation/status',
-        { method: 'GET' },
-        { ...env },
-      );
-      await expectCapturedResponse(
-        {
-          name: 'transcriptGenerationStatusBusy',
-          endpoint: 'GET /api/transcript-generation/status (busy, holder visible)',
-          format: 'ts',
-          exportName: 'transcriptGenerationStatusBusy',
-        },
-        res,
-      );
-    } finally {
-      transcriptGenerationLock.reset();
-    }
+    // Fixed run start — redacted to `#`s anyway, but deterministic. The status reads the live
+    // lease (run-status-and-sweeper D5), so the case seeds one.
+    await liveLeaseOfAnotherProcess(sessionId, 'transcript-generation', 1_700_000_000_000);
+    const res = await app.request(
+      '/api/transcript-generation/status',
+      { method: 'GET' },
+      { ...env },
+    );
+    await expectCapturedResponse(
+      {
+        name: 'transcriptGenerationStatusBusy',
+        endpoint: 'GET /api/transcript-generation/status (busy, holder visible)',
+        format: 'ts',
+        exportName: 'transcriptGenerationStatusBusy',
+      },
+      res,
+    );
   });
 });
 
