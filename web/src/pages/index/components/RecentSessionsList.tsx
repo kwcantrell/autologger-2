@@ -9,6 +9,7 @@ import {
 } from '../../../api/hooks/useSessions';
 import { useShowAccess } from '../../../api/hooks/useShowAccess';
 import type { Session, SessionsResponse } from '../../../api/types';
+import { Badge } from '../../../shared/components/ui/badge';
 import { Button } from '../../../shared/components/ui/button';
 import {
   DropdownMenu,
@@ -40,7 +41,7 @@ import { showToast } from '../utils/toast';
 // `SidebarMenuAction` beside it, revealed on hover/focus. Archived and no-access cards are not
 // openable, so they render the same two-line body in a plain row rather than a button. The look
 // comes from the sidebar primitive and its tokens; the class strings below are layout only, plus
-// the live treatment (a live badge: the 2px red outline and red timecode, kept from the old rail).
+// the live treatment (an accent ring and tint plus a LIVE / REC text badge).
 
 // Two-line card body inside the menu button / plain row.
 const CARD_BODY = 'h-auto min-h-12 flex-col items-stretch justify-center gap-0.5 py-1.5';
@@ -48,10 +49,15 @@ const CARD_BODY = 'h-auto min-h-12 flex-col items-stretch justify-center gap-0.5
 const CARD_ROW = 'flex w-full min-w-0 flex-col justify-center gap-0.5 rounded-ctl p-2 text-sm';
 const CARD_TITLE = 'truncate font-semibold';
 
-// Live (rolling and/or recording): a crisp 2px red outline on the card and a red timecode.
-// `!` beats the menu button's own selected-state box shadow and the meta row's muted text.
-const CARD_LIVE = 'rounded-ctl border-2! border-[#ef4444]!';
-const DECK_RUNTIME_LIVE = 'text-[#ef4444]!';
+// Live (rolling and/or recording), in the one-accent world (redesign-show-ignition 11.3, which
+// retired the old rail's red outline): an accent ring and tint on the card, the timecode in the
+// foreground, and a text badge (LIVE while rolling, REC while recording), so colour is never the
+// only channel. Ring only, no fill: the selected state is the fill plus an inset line, so a live
+// card that is not open must not read as selected. `!` beats the meta row's muted text.
+const CARD_LIVE = 'rounded-ctl ring-1 ring-[color-mix(in_oklab,var(--si-accent)_70%,transparent)]';
+const DECK_RUNTIME_LIVE = 'text-foreground!';
+const TITLE_ROW = 'flex min-w-0 items-center gap-1.5';
+const LIVE_BADGE = 'px-1 py-px text-[0.625rem] leading-none';
 
 const META_ROW = 'flex min-w-0 flex-row items-baseline justify-between gap-1';
 const CARD_META = 'min-w-0 truncate text-xs font-normal text-muted-foreground';
@@ -240,7 +246,8 @@ function SessionCard({ session: s, isActive, onSelect, onClose }: SessionCardPro
   // `rolling_timecode`, refreshed at that poll's ~5s cadence in `HH:MM:SS`
   // form — no frame field; see recent-sessions-single-poll).
   const { data: status } = useSessionStatus(isActive ? s.id : null);
-  const isLive = Boolean(s.is_rolling || status?.is_rolling || status?.audio_recording_lease_alive);
+  const isRecording = Boolean(status?.audio_recording_lease_alive);
+  const isLive = Boolean(s.is_rolling || status?.is_rolling || isRecording);
   const liveTimecode = isLive ? (status?.timecode ?? formatTimecodeHMS(s.rolling_timecode)) : null;
 
   const handleRename = (newTitle: string) => {
@@ -292,7 +299,14 @@ function SessionCard({ session: s, isActive, onSelect, onClose }: SessionCardPro
           if (!isActive) onSelect();
         }}
       >
-        <span className={CARD_TITLE}>{s.title}</span>
+        <span className={TITLE_ROW}>
+          <span className={CARD_TITLE}>{s.title}</span>
+          {isLive && (
+            <Badge className={LIVE_BADGE} data-live-badge="">
+              {isRecording ? 'REC' : 'LIVE'}
+            </Badge>
+          )}
+        </span>
         <SessionCardMetaRow session={s} liveTimecode={liveTimecode} />
         {isActive && <output className="hidden">ACTIVE SESSION</output>}
         {isLive && <output className="hidden">LIVE SESSION</output>}

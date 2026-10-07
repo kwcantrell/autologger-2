@@ -3,10 +3,10 @@
 exports[`TranscribeRow on the shadcn Table parts > is a table-row of table-cells with unchanged cell classes 1`] = `
 {
   "cells": [
-    "px-[0.4rem] py-[0.1rem] [border-bottom:1px_solid_rgba(255,255,255,0.04)] text-legacy-muted align-middle text-center",
-    "px-[0.4rem] py-[0.1rem] [border-bottom:1px_solid_rgba(255,255,255,0.04)] text-legacy-muted align-middle font-[family-name:var(--font-mono)] text-legacy-accent whitespace-nowrap",
-    "px-[0.4rem] py-[0.1rem] [border-bottom:1px_solid_rgba(255,255,255,0.04)] text-legacy-muted align-middle",
-    "px-[0.4rem] py-[0.1rem] [border-bottom:1px_solid_rgba(255,255,255,0.04)] text-legacy-muted align-middle",
+    "px-[0.4rem] py-[0.1rem] text-[0.78rem] [border-bottom:1px_solid_rgba(255,255,255,0.04)] text-legacy-muted align-middle text-center",
+    "px-[0.4rem] py-[0.1rem] text-[0.78rem] [border-bottom:1px_solid_rgba(255,255,255,0.04)] text-legacy-muted align-middle font-[family-name:var(--font-mono)] text-legacy-accent whitespace-nowrap",
+    "px-[0.4rem] py-[0.1rem] text-[0.78rem] [border-bottom:1px_solid_rgba(255,255,255,0.04)] text-legacy-muted align-middle",
+    "px-[0.4rem] py-[0.1rem] text-[0.78rem] [border-bottom:1px_solid_rgba(255,255,255,0.04)] text-legacy-muted align-middle",
   ],
   "row": "hover-always:bg-[rgba(255,255,255,0.03)]",
 }

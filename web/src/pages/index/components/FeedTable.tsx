@@ -31,16 +31,16 @@ export const FEED_ROW = 'hover-always:bg-[rgba(255,255,255,0.03)]';
  *  don't collide on one element (generated-order, not class-order, decides). Default
  *  grey mirrors Event Feed's internal-row `color: var(--color-legacy-muted)`. */
 export const FEED_CELL =
-  'px-[0.4rem] py-[0.1rem] [border-bottom:1px_solid_rgba(255,255,255,0.04)] text-legacy-muted';
+  'px-[0.4rem] py-[0.1rem] text-[0.78rem] [border-bottom:1px_solid_rgba(255,255,255,0.04)] text-legacy-muted';
 /** Time column — blue monospaced, mirrors `.sheet .tc`. */
 export const FEED_CELL_TIME =
   'font-[family-name:var(--font-mono)] text-legacy-accent whitespace-nowrap';
-/** Inline editable input. `mono` variant swaps the family to `monospace` (was
- *  `.feedInlineInput:global(.mono)` → `var(--mono-font, monospace)`, undefined var →
- *  `monospace`); pass `FEED_INLINE_INPUT_MONO` alongside for those cells. */
+/** Inline editable input: inherits the cell's face and size (the Event feed's 0.78rem). Timecode
+ *  cells pass `FEED_INLINE_INPUT_MONO` alongside for the timecode face. */
 export const FEED_INLINE_INPUT =
-  'w-full px-[0.3rem] py-[0.18rem] bg-transparent border border-solid border-transparent rounded-[3px] text-inherit [font-family:inherit] [font-weight:inherit] [font-style:inherit] [line-height:inherit] text-[0.8rem] focus:border-[rgba(56,189,248,0.5)] focus:bg-[rgba(56,189,248,0.06)] [&[type=number]]:[-moz-appearance:textfield] [&[type=number]::-webkit-inner-spin-button]:appearance-none [&[type=number]::-webkit-inner-spin-button]:m-0 [&[type=number]::-webkit-outer-spin-button]:appearance-none [&[type=number]::-webkit-outer-spin-button]:m-0';
-export const FEED_INLINE_INPUT_MONO = '[font-family:monospace]';
+  'w-full px-[0.3rem] py-[0.18rem] bg-transparent border border-solid border-transparent rounded-[3px] text-inherit [font-family:inherit] [font-size:inherit] [font-weight:inherit] [font-style:inherit] [line-height:inherit] focus:border-[color-mix(in_oklab,var(--si-accent)_55%,transparent)] focus:bg-[color-mix(in_oklab,var(--si-accent)_8%,transparent)] [&[type=number]]:[-moz-appearance:textfield] [&[type=number]::-webkit-inner-spin-button]:appearance-none [&[type=number]::-webkit-inner-spin-button]:m-0 [&[type=number]::-webkit-outer-spin-button]:appearance-none [&[type=number]::-webkit-outer-spin-button]:m-0';
+// Show Ignition (11.3): timecodes in the timecode face, not the platform `monospace`.
+export const FEED_INLINE_INPUT_MONO = 'font-tc! tabular-nums'; // `!` beats the base's inherit
 /** Auto-growing wrapping summary textarea (Topics). Composes with FEED_INLINE_INPUT. */
 export const FEED_SUMMARY_TEXTAREA =
   'block box-border min-h-[1.6rem] resize-none overflow-hidden whitespace-pre-wrap [overflow-wrap:anywhere] leading-[1.35]';

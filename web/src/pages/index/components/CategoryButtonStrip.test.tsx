@@ -147,6 +147,21 @@ describe('CategoryButtonStrip 1–9 hotkeys', () => {
   });
 });
 
+// redesign-show-ignition 11.3: compact buttons (preview `.cat`: key cap, swatch and label on one
+// line at the control height) that wrap in the lane, not tall tiles filling a grid row.
+describe('CategoryButtonStrip layout', () => {
+  it('renders one-line buttons at the control height that wrap in the lane', () => {
+    renderStrip();
+    const tile = screen.getByRole('button', { name: /Alpha/ });
+    const classes = tile.className.split(/\s+/);
+    expect(classes).toContain('min-h-(--h-ctl)');
+    expect(classes).not.toContain('flex-col');
+    const strip = screen.getByRole('toolbar', { name: 'Log category' });
+    expect(strip.className.split(/\s+/)).toEqual(expect.arrayContaining(['flex', 'flex-wrap']));
+    expect(strip.className).not.toMatch(/auto-rows/);
+  });
+});
+
 // shadcn-port-modals D6: the TEXT note modal and the two-step DROPDOWN modal on the shadcn layer
 // (no tests existed for either).
 describe('CategoryButtonStrip modals', () => {

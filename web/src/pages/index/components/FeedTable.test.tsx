@@ -1,6 +1,12 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import { type ColumnDef, FeedTable } from './FeedTable';
+import {
+  type ColumnDef,
+  FEED_CELL,
+  FEED_INLINE_INPUT,
+  FEED_INLINE_INPUT_MONO,
+  FeedTable,
+} from './FeedTable';
 
 // shadcn-port-workspace D3: FeedTable scrolls in the shadcn ScrollArea and renders through the
 // Table parts. The virtualizers' contract is the element published through `scrollRef`.
@@ -74,5 +80,22 @@ describe('FeedTable (shadcn-port-workspace D3)', () => {
     );
     expect(screen.getByRole('cell', { name: 'Nothing yet' })).toBeTruthy();
     expect(screen.queryByText('Loading…')).toBeNull();
+  });
+});
+
+// redesign-show-ignition 11.3 (owner feedback): the Transcript and Topics feeds share these
+// strings and must sit on the Show Ignition type system, matching the Event feed rows.
+describe('Transcript/Topics row chrome on the Show Ignition type system', () => {
+  it('timecode inputs use the timecode face (JetBrains Mono), not the generic monospace', () => {
+    expect(FEED_INLINE_INPUT_MONO).not.toMatch(/monospace/);
+    expect(FEED_INLINE_INPUT_MONO.split(/\s+/)).toEqual(
+      expect.arrayContaining(['font-tc!', 'tabular-nums']),
+    );
+  });
+
+  it('cells and inputs take the Event feed size and the accent, with no V5 cyan', () => {
+    expect(FEED_CELL.split(/\s+/)).toContain('text-[0.78rem]');
+    expect(FEED_INLINE_INPUT).not.toMatch(/56,189,248/);
+    expect(FEED_INLINE_INPUT).not.toMatch(/text-\[0\.8rem\]/);
   });
 });

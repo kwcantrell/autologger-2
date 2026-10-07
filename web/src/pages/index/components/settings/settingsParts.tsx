@@ -123,7 +123,9 @@ export function SectionSaveBar({
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       )}
-      <div className="flex items-center justify-end gap-3">
+      {/* `pr-16` keeps Save clear of the bottom-right corner, where the perf-debug toggle sits
+          (the same reservation as SidePanel's actions row; 11.3 found it under Save at 390). */}
+      <div className="flex items-center justify-end gap-3 pr-16">
         <span className="text-sm text-muted-foreground" aria-live="polite">
           {saving ? '' : dirty ? 'Unsaved changes' : ''}
         </span>

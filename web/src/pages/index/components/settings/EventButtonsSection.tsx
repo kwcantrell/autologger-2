@@ -679,7 +679,7 @@ function EventButtonPanel({
           asChild
           variant="log"
           size={null}
-          className="min-h-16 w-full max-w-56 flex-col items-start justify-between gap-2 p-2.5 text-left"
+          className="min-h-(--h-ctl) w-fit! max-w-full gap-2 whitespace-normal py-1.5 pr-3 pl-2 text-left"
           style={{ '--cat': btn.color } as CSSProperties}
           data-latched={btn.type === 'ON_OFF' ? 'off' : undefined}
         >

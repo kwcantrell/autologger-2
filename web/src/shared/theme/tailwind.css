@@ -145,20 +145,10 @@
   @keyframes event-row-flash {
     0%,
     50% {
-      background-color: rgba(56, 189, 248, 0.16);
+      background-color: color-mix(in oklab, var(--si-accent) 22%, transparent);
     }
     100% {
       background-color: transparent;
-    }
-  }
-  --animate-event-row-flash-accent: event-row-flash-accent 2.5s ease-out forwards;
-  @keyframes event-row-flash-accent {
-    0%,
-    50% {
-      box-shadow: inset 3px 0 0 rgba(56, 189, 248, 0.85);
-    }
-    100% {
-      box-shadow: inset 3px 0 0 transparent;
     }
   }
 
@@ -434,23 +424,24 @@
 /* Transport state (redesign-show-ignition D2). The shell sets `data-transport` on the app
  * root; these rules only define what each state means. Stopped is the :root default, so a
  * surface outside any transport root reads stopped. `--tx-rail`/`--tx-bar` tint the rail and
- * top bar, `--tx-live` is the live accent (pressed transport, playhead), `--tx-glow` the soft
+ * top bar (the same mix, so the two read as one lit frame; 11.3 found an 18% bar invisible
+ * beside the 25% rail), `--tx-live` is the live accent (pressed transport, playhead), `--tx-glow` the soft
  * glow, and `--tx-pill-*` the status label (STOPPED / ROLLING / REC / PLAY) and its pill. A
  * stopped pill is transparent over the bar, so its surface is the bar colour. Every
  * pill-fg/pill-bg pair clears AA (contrastTokens.test.ts). */
 :root,
 [data-transport='stopped'] {
   --tx-rail: var(--si-tx-stopped);
-  --tx-bar: color-mix(in oklab, var(--si-accent) 7%, #0c0d10);
+  --tx-bar: var(--si-tx-stopped);
   --tx-live: var(--si-accent);
   --tx-glow: transparent;
-  --tx-pill-bg: color-mix(in oklab, var(--si-accent) 7%, #0c0d10);
+  --tx-pill-bg: var(--si-tx-stopped);
   --tx-pill-fg: var(--si-muted);
   --tx-pill-line: var(--si-line);
 }
 [data-transport='rolling'] {
   --tx-rail: var(--si-tx-rolling);
-  --tx-bar: color-mix(in oklab, var(--si-accent) 18%, #0a0b0e);
+  --tx-bar: var(--si-tx-rolling);
   --tx-live: color-mix(in oklab, var(--si-accent) 88%, #000000);
   --tx-glow: color-mix(in oklab, var(--si-accent) 46%, transparent);
   --tx-pill-bg: color-mix(in oklab, var(--si-accent) 88%, #000000);
@@ -459,7 +450,7 @@
 }
 [data-transport='recording'] {
   --tx-rail: var(--si-tx-recording);
-  --tx-bar: color-mix(in oklab, var(--si-accent) 18%, #0a0b0e);
+  --tx-bar: var(--si-tx-recording);
   --tx-live: color-mix(in oklab, var(--si-accent) 88%, #000000);
   --tx-glow: color-mix(in oklab, var(--si-accent) 46%, transparent);
   --tx-pill-bg: color-mix(in oklab, var(--si-accent) 88%, #000000);
@@ -468,7 +459,7 @@
 }
 [data-transport='playback'] {
   --tx-rail: var(--si-tx-playback);
-  --tx-bar: color-mix(in oklab, var(--si-accent) 12%, #0c0d10);
+  --tx-bar: var(--si-tx-playback);
   --tx-live: color-mix(in oklab, var(--si-accent) 65%, #ffffff);
   --tx-glow: color-mix(in oklab, var(--si-accent) 30%, transparent);
   --tx-pill-bg: color-mix(in oklab, var(--si-accent) 65%, #ffffff);
@@ -587,11 +578,16 @@
   border-bottom: 1px solid color-mix(in oklab, var(--si-accent) 22%, var(--si-line));
   transition:
     background-color var(--tx-dur) var(--tx-ease),
-    border-color var(--tx-dur) var(--tx-ease);
+    border-color var(--tx-dur) var(--tx-ease),
+    box-shadow var(--tx-dur) var(--tx-ease);
 }
 [data-transport='recording'] [data-slot='topbar'],
 [data-transport='rolling'] [data-slot='topbar'] {
-  border-bottom-color: color-mix(in oklab, var(--si-accent) 55%, transparent);
+  border-bottom-color: color-mix(in oklab, var(--si-accent) 70%, transparent);
+  box-shadow: 0 12px 36px -18px var(--tx-glow);
+}
+[data-transport='playback'] [data-slot='topbar'] {
+  border-bottom-color: color-mix(in oklab, var(--si-accent) 40%, var(--si-line));
 }
 
 [data-transport] #v5-maximize-log-strip {
@@ -725,23 +721,15 @@
     --v6-rail-recent-shelf-bg: linear-gradient(180deg, rgb(54 66 83 / 35%) 0%, rgb(26 26 43 / 50%));
   }
 
-  /* Timeline marker click → temporary Event Feed row highlight.
-   * Same fill on every cell; left accent only on the first so column seams stay even. */
+  /* Timeline marker click → temporary Event Feed row highlight: one accent fill on every cell
+   * (11.3 dropped the cyan left stripe, off the one-accent world). */
   #v4-log-sheet tr.event-row-flash > td {
     animation: var(--animate-event-row-flash);
-  }
-  #v4-log-sheet tr.event-row-flash > td:first-child {
-    animation:
-      var(--animate-event-row-flash),
-      var(--animate-event-row-flash-accent);
   }
   @media (prefers-reduced-motion: reduce) {
     #v4-log-sheet tr.event-row-flash > td {
       animation: none;
-      background-color: rgba(56, 189, 248, 0.12);
-    }
-    #v4-log-sheet tr.event-row-flash > td:first-child {
-      box-shadow: inset 3px 0 0 rgba(56, 189, 248, 0.7);
+      background-color: color-mix(in oklab, var(--si-accent) 18%, transparent);
     }
   }
 }
@@ -1518,6 +1506,23 @@
   :focus-visible {
     outline: 2px solid var(--v5-primary);
     outline-offset: 2px;
+  }
+
+  /* Browser surfaces in the palette (craft floor; 11.3 found the default blue selection and
+   * light native scrollbars on the dark panels): selection is the accent tint, the caret the
+   * accent, scrollbars a thin line-coloured thumb on a clear track. */
+  ::selection {
+    background-color: color-mix(in oklab, var(--si-accent) 45%, var(--si-bg));
+    color: var(--si-fg);
+  }
+  :root {
+    caret-color: var(--si-accent);
+    /* Inherited, so every scroller takes it. */
+    scrollbar-color: var(--si-line-strong) transparent;
+  }
+  /* Not inherited: set per element (utilities that hide a scrollbar still win). */
+  * {
+    scrollbar-width: thin;
   }
 
   body {

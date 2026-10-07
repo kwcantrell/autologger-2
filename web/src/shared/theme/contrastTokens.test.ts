@@ -357,6 +357,27 @@ describe('Show Ignition tokens (redesign-show-ignition D1)', () => {
     expect(scope['--tx-rail']).toBe(`var(--si-tx-${state})`);
   });
 
+  // web-session-console "Transport state tints the shell": the top bar, rail and strip tint
+  // together. The bar takes the rail's own mix (11.3: at 18% it read as untinted beside the
+  // 25% rail), and the text on it still clears AA.
+  it.each(['stopped', 'rolling', 'recording', 'playback'])(
+    'the %s top bar takes the rail mix and its text clears AA',
+    (state) => {
+      const scope = blockVars(`[data-transport='${state}']`);
+      expect(scope['--tx-bar']).toBe(`var(--si-tx-${state})`);
+      const bar = colour(scope['--tx-bar'], scope);
+      expect(contrast(colour('--si-fg'), bar)).toBeGreaterThanOrEqual(AA);
+      expect(contrast(colour('--si-muted'), bar)).toBeGreaterThanOrEqual(AA);
+    },
+  );
+
+  it('the live top bar carries the soft glow, as the rail and strip do', () => {
+    const live = CSS.match(
+      /\[data-transport='recording'\] \[data-slot='topbar'\],\s*\[data-transport='rolling'\] \[data-slot='topbar'\]\s*\{([^}]*)\}/,
+    );
+    expect(live?.[1]).toMatch(/box-shadow:[^;]*var\(--tx-glow\)/);
+  });
+
   it('stopped is the :root default (the same rule declares both)', () => {
     expect(CSS).toMatch(/:root,\s*\[data-transport='stopped'\]\s*\{/);
   });

@@ -20,15 +20,16 @@ const LEAD = 'm-0 mb-4 text-[0.82rem] leading-[1.45] text-legacy-muted';
 // category is a flat shadcn Button (`log` variant) holding a Kbd key cap, a small swatch of the
 // category colour and the label. The colour is user data and stays its own channel (`--cat`,
 // set inline): it tints the swatch, the hover edge and the latched/pressed state, never the
-// label. The grid fills the strip's lane (MaximizeLogStrip sizes it to the category-button
-// height token), so a short list makes tall tiles and a long one wraps into rows.
+// label. The buttons are compact (one line at the control height, 11.3) and wrap; the strip
+// fills the lane MaximizeLogStrip sizes to the category-button height token and centres the rows
+// in it, so the lane keeps its height while a long list wraps into more rows.
 const CAT_STRIP =
-  'cat-strip-scrollbar grid w-full min-w-0 grid-cols-[repeat(auto-fill,minmax(8.5rem,1fr))] auto-rows-[minmax(var(--h-ctl),1fr)] gap-1.5';
+  'cat-strip-scrollbar flex w-full min-w-0 flex-wrap content-center items-center gap-1.5';
 
-// Tile layout only (the look is the Button `log` variant): key cap and swatch on top, the label
-// below, wrapping rather than clipping long user labels.
+// Button layout only (the look is the Button `log` variant): key cap, swatch and label on one
+// line; a long user label wraps inside the button rather than clipping.
 const CAT_TILE =
-  'min-w-0 flex-col items-start justify-between gap-2 whitespace-normal p-2.5 text-left';
+  'min-h-(--h-ctl) min-w-0 max-w-full gap-2 whitespace-normal py-1.5 pr-3 pl-2 text-left';
 
 // The category-colour swatch (preview `td.catc i`).
 const CAT_SWATCH = 'size-2 shrink-0 rounded-[2px] bg-(--cat)';
@@ -347,7 +348,7 @@ export function CategoryButtonStrip({ sessionId, isRolling, onOffState, onToggle
             <Button
               key={cat.id}
               variant="log"
-              // No size: the tile takes its height from the strip's grid row, not the control height.
+              // No size: CAT_TILE sets a minimum control height so a wrapped label can grow it.
               size={null}
               className={CAT_TILE}
               style={{ '--cat': cat.color } as React.CSSProperties}

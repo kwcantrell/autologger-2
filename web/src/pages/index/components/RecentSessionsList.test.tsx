@@ -173,6 +173,15 @@ function card(container: HTMLElement, id: string): HTMLElement {
   return el as HTMLElement;
 }
 
+/** The live card sits in the one-accent world (redesign-show-ignition 11.3): an accent ring,
+ * never the old red outline. */
+function expectAccentLive(el: HTMLElement) {
+  const classes = el.className.split(/\s+/);
+  expect(el.className).not.toMatch(/ef4444|red-/);
+  expect(classes).toContain('ring-1');
+  expect(classes.some((c) => c.startsWith('ring-[') && c.includes('--si-accent'))).toBe(true);
+}
+
 // shadcn-port-shell D3: the row menu is a Radix DropdownMenu, which opens on pointer-down (or
 // the keyboard), not on a synthetic click.
 function openMenu(cardEl: HTMLElement) {
@@ -310,7 +319,7 @@ describe('SessionCard (active-list variant)', () => {
     expect(within(el).getByText('01:02:03')).toBeTruthy();
   });
 
-  it('marks a background rolling session live from list data alone: red border, list-derived HH:MM:SS timecode, no status subscription', () => {
+  it('marks a background rolling session live from list data alone: accent ring, LIVE badge, list-derived HH:MM:SS timecode, no status subscription', () => {
     const { container } = renderRecent([
       sessionFixture({
         is_rolling: true,
@@ -320,8 +329,11 @@ describe('SessionCard (active-list variant)', () => {
     ]);
     const el = card(container, 'sess-1');
     expect(el.getAttribute('data-live')).toBe('true');
-    expect(el.className.split(/\s+/)).toContain('border-[#ef4444]!');
-    expect(within(el).getByText('01:02:03').className.split(/\s+/)).toContain('text-[#ef4444]!');
+    expectAccentLive(el);
+    expect(within(el).getByText('01:02:03').className).not.toMatch(/ef4444|red-/);
+    // The live badge is text, so colour is not the only channel: rolling reads LIVE.
+    expect(within(el).getByText('LIVE').getAttribute('data-slot')).toBe('badge');
+    expect(within(el).queryByText('REC')).toBeNull();
     expect(within(el).queryByText('00:10:00')).toBeNull();
     expect(within(el).getByText('LIVE SESSION')).toBeTruthy();
     // Not the open session: the status-query gate must have received null
@@ -376,9 +388,12 @@ describe('SessionCard (active-list variant)', () => {
     });
     const el = card(container, 'sess-1');
     expect(el.getAttribute('data-live')).toBe('true');
-    expect(el.className.split(/\s+/)).toContain('border-[#ef4444]!');
+    expectAccentLive(el);
     const tc = within(el).getByText('00:00:45:12');
-    expect(tc.className.split(/\s+/)).toContain('text-[#ef4444]!');
+    expect(tc.className).not.toMatch(/ef4444|red-/);
+    // Recording reads REC, not LIVE.
+    expect(within(el).getByText('REC').getAttribute('data-slot')).toBe('badge');
+    expect(within(el).queryByText('LIVE')).toBeNull();
     // Open-card path unchanged: the shared status query is subscribed keyed
     // to this session.
     expect(useSessionStatus).toHaveBeenCalledWith('sess-1');
