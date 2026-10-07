@@ -133,8 +133,9 @@ the old behavior before the change and the new behavior after it.
   Postgres, and its `commands` line shows the local skip. Check: the run passes, the `commands`
   line shows `(pg/integration skipped: local run; ...)`, and it's quicker than 5.1's 446s.
   Evidence: `scripts/check-change.sh --stage hook` -> all PASS, `PASS commands ran ['typecheck', 'test'] (pg/integration skipped: local run; CI runs them on the PR, FULL_TESTS=1 runs them here)`, rc=0, 81s (5.1's full local run took 446s); `docker ps` -> no `supabase/postgres` container started during the run (`grep -c` -> 0).
-- [ ] 5.4 The PR's CI run after D3a passes, with `db-tests` green and `gates` all PASS. Check: `gh
+- [x] 5.4 The PR's CI run after D3a passes, with `db-tests` green and `gates` all PASS. Check: `gh
   api .../runs/<id>/jobs` shows every job `success`.
+  Evidence: PR #83, run 37610453938 (commit ef7be091): `dependency-review`, `secrets` and `db-shard (1|2|3)` succeeded (241s, 122s, 182s), and `db-tests` succeeded (4s). `gates` (213s) passed every gate except `tasks`: `FAIL tasks 1 unticked task(s)`, which was this task. The task was circular as written (CI can't pass until 5.4 is ticked), the same as 5.2. `gates` -> `PASS commands ran ['typecheck', 'test'] (pg/integration: db-tests job)`, `PASS audit`, `WARN tests-with-code (overridden)`. The push after this tick is the fully green run.
 
 ## Owner-owed, after merge (tracked here, done by the human; no checkboxes, so the tasks gate ignores them)
 
