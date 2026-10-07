@@ -7,10 +7,12 @@
 // (`PostgresCatalogDb`, the CatalogDb port on postgres.js; ADR 0021 slices 4b-4c, the server's
 // only catalog adapter since the SQLite one was retired in slice 4e) and `postgresSessionSql`
 // (`PostgresSessionDb`, the session storage over it; session-tables, ADR 0021 slice 7b-1).
+// `frameBusEnvelope` is the session frame bus's signed message (session-frame-bus, slice 9a).
 
 export * from './blobStore';
 export * from './catalogErrors';
 export * from './dataDirLock';
+export * from './frameBusEnvelope';
 export * from './kvStore';
 export * from './postgresCatalogStore';
 export * from './postgresSessionSql';
