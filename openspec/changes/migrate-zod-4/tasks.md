@@ -22,8 +22,10 @@
 
 ## 1. Baselines
 
-- [ ] 1.1 On the base commit, run the full suites and record the counts, plus `npm ls zod @anthropic-ai/claude-agent-sdk @anthropic-ai/sdk` (expect `invalid`). Known flakes, record if they recur: storage "8 contending", `catalogContention.pg` cross-team retry, `aiMcpServer` "Cap holds under concurrent calls".
-- [ ] 1.2 Record the tool input schemas on the base: a one-off script, not committed, dumps `tools/list` for each MCP chat tool set (chat, generation) and for the aggregate tools. Save the JSON as `z4-1.2-tools-before.json`. Also record the parsed outputs of every request schema with a `.default` or `.transform`, for the inputs (c) uses, as `z4-1.2-parse-before.json`.
+- [x] 1.1 On the base commit, run the full suites and record the counts, plus `npm ls zod @anthropic-ai/claude-agent-sdk @anthropic-ai/sdk` (expect `invalid`). Known flakes, record if they recur: storage "8 contending", `catalogContention.pg` cross-team retry, `aiMcpServer` "Cap holds under concurrent calls".
+  - Evidence: base e645e421; server `npx vitest run --project unit --project integration --project pg` -> `Test Files 130 passed | 3 skipped (133)`, `Tests 1651 passed | 4 skipped (1655)`; contract 60, session-core 41, ai-runtime 181, storage 133 passed; web 1689 passed; `npm run typecheck` exit 0; `npm ls zod @anthropic-ai/claude-agent-sdk @anthropic-ai/sdk` -> `zod@3.25.76 invalid: "^4.0.0" from node_modules/@anthropic-ai/claude-agent-sdk`, exit 1; no known flake recurred (logs `z4-1.1-server.log`, `z4-1.1-{contract,session-core,ai-runtime,storage,web,typecheck,npmls}.log`)
+- [x] 1.2 Record the tool input schemas on the base: a one-off script, not committed, dumps `tools/list` for each MCP chat tool set (chat, generation) and for the aggregate tools. Save the JSON as `z4-1.2-tools-before.json`. Also record the parsed outputs of every request schema with a `.default` or `.transform`, for the inputs (c) uses, as `z4-1.2-parse-before.json`.
+  - Evidence: `tsx z4/dump.mts` (scratchpad, not committed) -> `tools: chat=get_transcript_words,list_topics,create_topic | generation_event=…,create_event | generation_topic=… | aggregate=speaker_stats,utterance_stats,topic_timeline,event_stats,transcript_excerpt,propose_dashboard`, `parse schemas: 15` (26 inputs, all parsed) (log `z4-1.2-before.log`; `z4-1.2-tools-before.json`, `z4-1.2-parse-before.json`)
 
 ## 2. Tests first (design D3)
 
