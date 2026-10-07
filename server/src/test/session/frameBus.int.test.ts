@@ -3,18 +3,28 @@
 // `createBindings({ frameBus: 'postgres' })` instances over the test database stand in for two
 // processes: each has its own catalog adapter, registry and bus, and a socket is a recording stand-in
 // attached to a process's hub. Every process, the writer included, delivers from its listener.
-// The 300-session revoke is task 5.1's (sessionWs.access.int.test.ts).
+// The 300-session revoke is task 5.1's (sessionWs.access.int.test.ts). The `1012` cases
+// (api-contract-freeze "Session sockets close after live updates were interrupted", D6) serve
+// process B's bindings on a real listening server and terminate only B's listener, by the backend
+// pid the bus exposes, so no other file's listener is touched.
 
 import { createHmac } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
+import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { type SessionHubEntry, systemCaller } from '@autologger/session-core';
+import { type ServerType, serve } from '@hono/node-server';
+import { createNodeWebSocket } from '@hono/node-ws';
+import { Hono } from 'hono';
 import postgres from 'postgres';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { connOptions } from '../../../../test/pg/testDb';
+import { wireApp } from '../../app';
+import type { AppEnv } from '../../appEnv';
 import { createBindings } from '../../node/config';
-import { testDatabase } from '../harness';
+import { defaultUser, testDatabase } from '../harness';
+import { seededSession } from '../helpers';
 import { catalogRoot, createSessionRow } from './sessionRows';
 
 const CTX = { frameRate: 24, startOffsetFrames: 0 };
@@ -37,6 +47,14 @@ async function process_(): Promise<Made> {
   const m = createBindings(
     {
       DATA_DIR: dir,
+      // As the harness's env (test/harness.ts), so a route served on these bindings admits the
+      // harness's signed-in users.
+      PUBLIC_BASE_URL: 'https://example.com',
+      GOOGLE_CLIENT_ID: 'test-client-id',
+      GOOGLE_CLIENT_SECRET: 'test-secret',
+      BOOTSTRAP_OWNER_EMAIL: 'bootstrap-owner@example.com',
+      SESSION_COOKIE: 'autologger_sid',
+      SESSION_DAYS: '14',
       PGHOST: db.host,
       PGPORT: String(db.port),
       PGUSER: db.user,
@@ -243,4 +261,102 @@ describe('the Postgres frame bus across two processes (session-frame-bus D3)', (
       warn.mockRestore();
     }
   });
+});
+
+const servers: ServerType[] = [];
+const clients: WebSocket[] = [];
+afterEach(async () => {
+  // Every client socket is closed first, so a failed case cannot keep a server open; a server's
+  // close is waited for at most 2 s.
+  for (const ws of clients.splice(0)) ws.close();
+  for (const srv of servers.splice(0)) {
+    await Promise.race([new Promise((r) => srv.close(r)), new Promise((r) => setTimeout(r, 2000))]);
+  }
+});
+
+/** Serves `p`'s bindings on a real listening server, as main.ts does; returns its port. */
+async function serveProcess(p: Made): Promise<number> {
+  const app = new Hono<AppEnv>();
+  const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
+  wireApp(app, upgradeWebSocket, { bindings: p.bindings });
+  return new Promise<number>((resolve) => {
+    const srv = serve({ fetch: app.fetch, port: 0, hostname: '127.0.0.1' }, (info: AddressInfo) =>
+      resolve(info.port),
+    );
+    injectWebSocket(srv);
+    servers.push(srv);
+  });
+}
+
+/** A browser socket on `sessionId` through the server on `port`, as the default user. */
+async function browser(port: number, sessionId: string) {
+  const { cookie } = await defaultUser();
+  const messages: Array<Record<string, unknown>> = [];
+  const closes: number[] = [];
+  const ws = await new Promise<WebSocket>((resolve, reject) => {
+    const w = new WebSocket(`ws://127.0.0.1:${port}/api/sessions/${sessionId}/ws`, {
+      headers: { cookie },
+    } as unknown as string[]);
+    w.addEventListener('open', () => resolve(w));
+    w.addEventListener('error', (e) => reject(e));
+  });
+  clients.push(ws);
+  ws.addEventListener('message', (e) => void messages.push(JSON.parse(String(e.data))));
+  ws.addEventListener('close', (e) => void closes.push(e.code));
+  return { ws, messages, closes };
+}
+
+/** Terminates `p`'s listener backend only, as the migrations user. */
+async function killListener(p: Made): Promise<number> {
+  const pid = p.frameBus?.listenerPid;
+  if (!pid) throw new Error('the frame bus has no listener pid');
+  const admin = postgres({
+    ...connOptions('postgres', testDatabase().database),
+    max: 1,
+    onnotice: () => {},
+  });
+  try {
+    const [r] = await admin`select pg_terminate_backend(${pid}) as ok`;
+    expect(r?.ok).toBe(true);
+  } finally {
+    await admin.end();
+  }
+  return pid;
+}
+
+describe('sockets close after live updates were interrupted (session-frame-bus D6)', () => {
+  it('B’s sockets close with 1012 once when its listener comes back, and the reconnect is admitted', async () => {
+    const { sessionId } = await seededSession();
+    const [a, b] = await twoProcesses();
+    const [portA, portB] = [await serveProcess(a), await serveProcess(b)];
+    const onA = await browser(portA, sessionId);
+    const onB = [await browser(portB, sessionId), await browser(portB, sessionId)];
+    const before = await killListener(b);
+    await until(() => onB.every((s) => s.closes.length > 0), 15_000);
+    expect(b.frameBus?.listenerPid).not.toBe(before);
+    for (const s of onB) expect(s.closes).toEqual([1012]);
+    // A's listener was not touched: its socket is still open and gets the next frame.
+    expect(onA.closes).toEqual([]);
+    const again = await browser(portB, sessionId);
+    expect(again.ws.readyState).toBe(WebSocket.OPEN);
+    await addEvent(await hubOf(a, sessionId), 'after');
+    await until(() => onA.messages.length > 0 && again.messages.length > 0);
+    // Once per loss: nothing else closed meanwhile.
+    for (const s of onB) expect(s.closes).toEqual([1012]);
+    expect([onA.closes, again.closes]).toEqual([[], []]);
+  }, 30_000);
+
+  it('after the reconnect, a write through A reaches the browser on B', async () => {
+    const { sessionId } = await seededSession();
+    const [a, b] = await twoProcesses();
+    const portB = await serveProcess(b);
+    const first = await browser(portB, sessionId);
+    await killListener(b);
+    await until(() => first.closes.length > 0, 15_000);
+    const again = await browser(portB, sessionId);
+    await addEvent(await hubOf(a, sessionId), 'after reconnect');
+    await until(() => again.messages.some((m) => m.type === 'event.changed'));
+    expect(again.messages.filter((m) => m.type === 'event.changed')).toHaveLength(1);
+    expect(first.closes).toEqual([1012]);
+  }, 30_000);
 });
