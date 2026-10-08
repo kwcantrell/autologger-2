@@ -124,7 +124,7 @@ Anything else is a stop: update the artifacts and ask the owner.
   Red, then add the schemas. Green.
   - Evidence: red, `cd packages/contract && npx vitest run src/schemas.providers.test.ts` -> `TypeError: providerPutBodySchema is not a function` (log `byo-4.1-red.log`). Green, `cd packages/contract && npx vitest run` -> `Test Files  5 passed (5)`, `Tests  121 passed (121)` (was 109; log `byo-4.1-green.log`); `npm run typecheck` -> exit 0, 0 `error TS`. In `packages/contract/src/schemas.ts`: `providerKindSchema`; `providerPutBodySchema(kind, {production})` (provider pinned per kind; `base_url` required for `llm` and null or absent for `stt`; model 1-200 and key 8-4096 printable ASCII without spaces after trimming; key optional); `providerBaseUrlProblem` (no userinfo, query or fragment, at most 2048 characters, http or https; production mode needs https on the default port); strict `providerCredentialSchema`, `providersResponseSchema` and `providerTestResponseSchema`; the fixed `PROVIDER_TEST_DETAIL` strings. The tests cover each rule, including spaces, CR, LF, tab, DEL and non-ASCII refused in a key or model, and no key field accepted in any response.
 
-- [ ] 4.2 Test first, unit tests for `outbound.ts`:
+- [x] 4.2 Test first, unit tests for `outbound.ts`:
   - every blocked range in D5, in IPv4, IPv6, v4-mapped and NAT64 forms, is refused in production
     mode and allowed in development mode;
   - a refused host and an unreachable host give the same result;
@@ -134,6 +134,9 @@ Anything else is a stop: update the artifacts and ask the owner.
   - an error whose message holds the key is classified, and the capturing logger and the result
     hold neither.
   Red, then implement. Green.
+  - Evidence: red, `cd server && npx vitest run --project unit src/providers/outbound.test.ts` -> `Error: Cannot find module './outbound'` (log `byo-4.2-red.log`). Green -> `Test Files  1 passed (1)`, `Tests  39 passed (39)` (log `byo-4.2-green.log`); `npm run typecheck` -> exit 0, 0 `error TS`.
+  - Evidence: `server/src/providers/outbound.ts` uses Node's own `http`/`https` with a pinned `lookup`, so no new dependency. The blocked ranges are a `net.BlockList` of the D5 IPv4 and IPv6 ranges plus the documentation and discard ranges, with the IPv4 embedded in `::ffff:0:0/96` and `64:ff9b::/96` checked as IPv4. `providerRequest` resolves within the caller's `AbortSignal`, refuses in production mode when any resolved address is blocked, connects to the vetted address with the original `Host`/SNI, never follows a redirect, caps the body at 1 MB, and turns every failure into `OutboundFailure('unreachable'|'timeout')` with a fixed message and no cause. `normalizeOrigin` and `normalizeBaseUrl` are added too. The tests cover 24 blocked and 6 allowed addresses (v4, v6, mapped, NAT64), normalization, no connection to a blocked address in production mode (including one blocked among public ones), the pinned connection keeping `Host`, a 302 not followed, a never-resolving lookup and a silent server each timing out, a refused connection being unreachable, a header holding the key and a newline classified with no key in the error, its JSON, its cause or any captured console line, and the 1 MB cap.
+
 - [ ] 4.3 Test first, integration tests for `/api/me/providers` covering every scenario of
   api-contract-freeze "Provider credential routes":
   - save, read (with `run_features_allowed`), replace and delete;
