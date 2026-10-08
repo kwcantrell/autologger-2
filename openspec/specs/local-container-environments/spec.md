@@ -139,7 +139,11 @@ The following SHALL be settable through the OpenBao `dev` KV secret:
 - `AI_V2_ENABLED`
 - `AI_V2_API_KEY`
 - `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`
-- `API_TOKEN`
+
+`API_TOKEN` is no longer read by the server (ADR 0021 slice 9d). `docker/secrets-env.yaml` SHALL
+keep allowing it, commented as ignored, until every OpenBao secret has dropped it, because the
+allowlist refuses a whole secret that holds an unlisted key. The env examples SHALL NOT list it
+and SHALL point to Settings › Companion devices instead.
 
 Sign-in is required, as in every stack:
 - The OpenBao `dev` KV secret SHALL hold its own Google OAuth client
@@ -148,7 +152,7 @@ Sign-in is required, as in every stack:
 - Google sign-in works against `PUBLIC_BASE_URL=http://localhost:${DEV_PORT}`, which the
   compose file pins.
 - The documentation SHALL state the redirect URI the OAuth client needs, and that dev needs
-  the Google client and an `API_TOKEN` in the OpenBao `dev` KV secret.
+  the Google client in the OpenBao `dev` KV secret.
 
 #### Scenario: Server edit hot-reloads
 - **WHEN** the dev environment is up and a file under `server/src/` is edited on the host
@@ -370,7 +374,8 @@ The documentation SHALL state:
   - anonymous `/api/sessions` returns `401`.
 
 #### Scenario: Scoped token through the stage router
-- **WHEN** the stage `API_TOKEN` is sent as a Bearer token through the stage router
+- **WHEN** a Companion device token created in stage's Settings › Companion devices is sent as a
+  Bearer token through the stage router
 - **THEN** `/api/companion/state` returns `200` and `/api/sessions` returns `401`
 
 #### Scenario: AI v2 without a key is refused, as in production
@@ -396,8 +401,10 @@ The dev environment SHALL include a `companion` service. The service SHALL:
 
 The connection's base URL SHALL be entered once in the Companion UI, and the documentation
 SHALL give its value. Companion reaches the dev app through the app's gate on the dev
-network, authenticating with the `API_TOKEN` from the OpenBao `dev` KV secret, which is
-also entered once in the Companion UI.
+network, authenticating with a Companion device token that the operator creates in the dev
+app's Settings › Companion devices and enters once in the Companion UI, where the module keeps it
+as a secret. After the deploy that retires `API_TOKEN`, the dev connection SHALL be re-paired with
+such a token.
 
 The build's per-Dockerfile ignore file SHALL be in allowlist form. It begins by excluding
 everything, then re-admits only the root manifest, the lockfile, and the `companion/`
@@ -409,8 +416,9 @@ sources.
 - **AND** the packaged manifest in the image carries `runtime.apiVersion` `1.14.x`
 
 #### Scenario: Dev Companion drives the app
-- **WHEN** a dev Companion connection is configured with the documented base URL and the
-  dev `API_TOKEN`
+- **WHEN** a dev Companion connection is configured with the documented base URL and a device
+  token created in the dev app's Settings, while a signed-in browser of that token's user has a
+  session open
 - **THEN**:
   - it reaches status OK;
   - a Companion "log event" action creates an event visible in the dev app.

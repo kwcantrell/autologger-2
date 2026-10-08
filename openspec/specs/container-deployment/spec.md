@@ -169,7 +169,8 @@ them.
 
 #### Scenario: Traversal cannot reach a non-Companion route
 - **WHEN** `GET /api/companion/%2e%2e/sessions/x`, `GET /api/companion/.%2E/admin/users`, or
-  `GET /api/companion/state/..%2Fsessions` is sent to the router with a valid `API_TOKEN`
+  `GET /api/companion/state/..%2Fsessions` is sent to the router with a live Companion device
+  token as a `Bearer`
 - **THEN** the response is the server's own `404`, and no session or admin route handler
   runs
 
@@ -296,6 +297,8 @@ The documentation SHALL state:
 - that the upstream proxy's Companion bypass rules name exactly the five paths the Companion
   module calls (`/api/companion/state`, `/categories`, `/log`, `/transport`, `/command`),
   never wildcards;
+- that `API_TOKEN` is ignored since ADR 0021 slice 9d, and every Companion install must be given
+  a device token from Settings › Companion devices after the deploy that ships it (re-pairing);
 - that a Google OAuth client with redirect URI `${PUBLIC_BASE_URL}/auth/google/callback`
   must exist and be verified before cutover;
 - that existing sessions and teams become visible to signed-in users only after memberships
@@ -328,15 +331,55 @@ plain HTTP and raw TCP, and SHALL print case names and statuses only. It SHALL c
 - the request list of "Differential parity with the single-process server", compared with a
   committed expectation table of status and header presence;
 - stray upgrades closed with no bytes written, and the session WebSocket path still proxied;
-- traversal to a non-Companion route with a valid `API_TOKEN`, including a non-GET and a query
-  string carrying a dot-segment;
-- `API_TOKEN` scope: Companion state is allowed; sessions, admin routes and the browser-role
+- traversal to a non-Companion route with a live Companion device token, including a non-GET and
+  a query string carrying a dot-segment;
+- device-token scope: Companion state is allowed; sessions, admin routes and the browser-role
   WebSocket are handled as unauthenticated;
 - `web` unable to connect to `api`, and the router's port unreachable on a non-loopback host
   address.
 
-It SHALL run against stage (`make stage-up`) by hand. CI has no docker.
+The device token SHALL be supplied to the script by the operator, created in the stack's
+Settings › Companion devices, and SHALL be held only in the script's process environment, never
+printed. It SHALL run against stage (`make stage-up`) by hand. CI has no docker.
 
 #### Scenario: A router regression is caught
 - **WHEN** the router is misconfigured so that `POST /sessions/abc` reaches `web`
 - **THEN** `test_router.sh stage` fails and names that request
+
+### Requirement: The Companion module authenticates with a device token kept as a secret
+The Bitfocus Companion module in `companion/` SHALL authenticate with a Companion device token
+(api-contract-freeze "Companion device tokens authenticate only the Companion surface"), sent as
+`Authorization: Bearer <token>` on the five paths it calls
+(`/api/companion/{state,categories,log,transport,command}`), which are unchanged, so the upstream
+proxy's Companion bypass rules do not change. The module SHALL NOT post presence.
+
+- **Secret field.** The token SHALL be a `secret-text` configuration field labelled "Device token
+  (required)", so Companion keeps its value in its secrets store rather than in the plain
+  connection config. The module SHALL read the token from its secrets on start and on every
+  configuration update.
+- **Upgrade.** The module SHALL ship one upgrade script: when a connection's plain config holds a
+  non-empty `token` and its secrets hold none, the script SHALL move the value into the secrets and
+  remove it from the plain config; otherwise it SHALL change nothing.
+- **Status on 401.** A `401` from the server SHALL set the connection status to bad configuration
+  with the message "Device token invalid or revoked: create one in AutoLogger Settings → Companion
+  devices".
+- **Help and version.** The module's help SHALL explain how to create a device token in Settings
+  and that an install must be re-paired after the deploy that retires `API_TOKEN`, and the module
+  version SHALL be bumped.
+
+#### Scenario: An existing token is moved into secrets
+- **WHEN** the upgrade script runs on a connection whose plain config holds `token: "abc"` and
+  whose secrets hold no token, then on one whose secrets already hold a token, then on one with
+  no token at all
+- **THEN** the first comes out with the secret token `abc` and no plain `token`, and the other two
+  are unchanged
+
+#### Scenario: The module reads the token from secrets
+- **WHEN** the module starts with a device token in its secrets and calls the server
+- **THEN** each request carries `Authorization: Bearer <that token>`, and no token is read from
+  the plain config
+
+#### Scenario: A revoked token tells the operator what to do
+- **WHEN** the server answers the module's state poll with `401`
+- **THEN** the connection status is bad configuration with the device-token message naming
+  Settings → Companion devices
