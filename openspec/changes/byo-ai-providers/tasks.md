@@ -26,11 +26,23 @@ Anything else is a stop: update the artifacts and ask the owner.
 
 ## 1. Baselines
 
-- [ ] 1.1 On the base, run the unit suites (server, packages, web) and typecheck, and record the
+- [x] 1.1 On the base, run the unit suites (server, packages, web) and typecheck, and record the
   counts.
   - Then list every existing test that design D7 categories 1-9 may touch, using
     `grep -rln "DEEPGRAM_API_KEY\|TRANSCRIPT_UNAVAILABLE\|deepgramConfigured\|ensureTimedTranscript\|companion-devices'\|isn.t configured on this server\|companion-device'\|FRAME_BUS_SECRET\|BOOTSTRAP_OWNER_EMAIL" --include=*.test.ts --include=*.test.tsx --include=*.sh --include=*.mjs server/src packages web/src docker/scripts`.
   - Classify each hit by category, or as unchanged.
+  - Evidence: base `8b241154`. `cd server && npx vitest run --project unit` -> `Tests  350 passed | 3 skipped (353)`; `npx vitest run` in ports -> `Tests  1 passed (1)`, contract -> `Tests  109 passed (109)`, transcription -> `Tests  70 passed (70)`, catalog -> `Tests  51 passed (51)`, ai-runtime -> `Tests  199 passed (199)`, session-core -> `Tests  55 passed (55)`, media-import -> `Tests  31 passed | 2 skipped (33)`, log-import -> `Tests  41 passed (41)`, domain -> `Tests  50 passed (50)`; `cd packages/storage && npx vitest run --project unit` -> `Tests  60 passed (60)`; `cd web && npx vitest run` -> `Tests  1907 passed (1907)`; `npm run typecheck` -> exit 0, 0 `error TS` (log `byo-1.1-baseline.log`). DB baseline: the last full CI run on `supabase-migration` (PR #97/#98).
+  - Evidence: the grep matches 28 files (log `byo-1.1-grep.log`).
+    - Category 1: `routers/transcribe.int.test.ts` (the unconfigured case at :65 and the `deepgramConfiguredEnv` helper at :801).
+    - Category 2: `test/session/generateTranscript.remap.int.test.ts:79` and `packages/transcription/src/generateTranscript.inflight.test.ts:11` (`config: {DEEPGRAM_API_KEY}` -> `stt`).
+    - Category 3: `routers/logImport.int.test.ts` and `routers/logImport.test.ts` (`ensureTimedTranscript`).
+    - Category 5: `catalogSystem.repo.test.ts:113`.
+    - Category 6: `settings/SettingsView.test.tsx:38,125`.
+    - Category 7: `generateLatch.test.tsx:21,112,173`.
+    - Category 8: `bootOrder.int.test.ts:73` and `bootFrameBus.int.test.ts:59`.
+    - Category 9: `docker/scripts/compose-run.test.mjs` (and the code `compose-run.mjs:253-255`).
+    - Unchanged: `bootGuard.test.ts`, `env.test.ts`, `ai.int.test.ts`, `auth.int.test.ts`, `test/session/frameBus.int.test.ts` and `node/config.test.ts` (bootstrap or frame-bus env only; `createBindings` without the new option is unchanged); `companionDevices.int.test.ts`, `companionDeviceAuth.int.test.ts` and `CompanionDevicesSection.test.tsx` (path strings); `supabase-keys.test.mjs` and `frameBusEnvelope.test.ts`; `packages/transcription/src/deepgramConfig.test.ts` (the functions stay); `routers/sessionHub.interleave.int.test.ts:459` (configures generation with `DEEPGRAM_API_KEY`, which still works because vitest runs with `NODE_ENV=test`, development mode); `apiResponseFixtures.int.test.ts` (gains new cases only, nothing changes).
+  - Evidence: for the owner, one spot near the edge of the categories. `upgradeDispatch.test.ts:23` and `aiV2.int.test.ts:320` build complete `Config` literals ("no optional/default fields"), so a required `PROVIDER_DEV_MODE` field would break their typecheck, and no D7 category covers that. To stay inside D7, the field will be optional, `PROVIDER_DEV_MODE?: boolean`, where absent means production mode. This is the safe default the spec requires, and it leaves both literals unchanged. `grep -rln "satisfies Config\|: Config = {" --include=*.ts server/src packages` -> only those two files.
 
 ## 2. Table and store (design D1)
 
