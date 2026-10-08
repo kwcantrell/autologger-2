@@ -7,7 +7,7 @@
 // logs or throws key material.
 
 import { createCipheriv, createDecipheriv, createHmac, hkdfSync, randomBytes } from 'node:crypto';
-import type { ProviderKind, StoredProviderKey } from '@autologger/ports';
+import type { ProviderCredentialStore, ProviderKind, StoredProviderKey } from '@autologger/ports';
 
 export const PROVIDER_KEY_VERSION = 1;
 const NONCE_BYTES = 12;
@@ -102,5 +102,20 @@ export class ProviderKeyCipher {
   /** HMAC-SHA256 of a fixed label under the derived check key, hex. Never the secret. */
   checkValue(): string {
     return createHmac('sha256', this.checkKey).update(CHECK_LABEL).digest('hex');
+  }
+}
+
+/** The production boot check (design D2): records this secret's check value on the first boot and
+ * refuses, with ProviderKeysSecretError, a secret whose value differs from the recorded one. */
+export async function verifyProviderKeysCheck(
+  store: Pick<ProviderCredentialStore, 'writeCheckIfAbsent'>,
+  cipher: ProviderKeyCipher,
+): Promise<void> {
+  const mine = cipher.checkValue();
+  const stored = await store.writeCheckIfAbsent(mine);
+  if (stored !== mine) {
+    throw new ProviderKeysSecretError(
+      'PROVIDER_KEYS_SECRET does not match the stored provider keys (restore the original secret, or reset the stored keys as the runbook describes)',
+    );
   }
 }

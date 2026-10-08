@@ -28,6 +28,7 @@ import {
 } from '@autologger/storage';
 import type { Bindings } from '../appEnv';
 import { GoogleIdentityVerifier } from '../auth/oauth_google';
+import { ProviderKeyCipher, parseProviderKeysSecret } from '../auth/providerKeyCrypto';
 import { CATALOG_PG_VARS } from '../bootGuard';
 import {
   aiV2UsesLoginFallback,
@@ -45,6 +46,17 @@ export interface CreateBindingsOptions {
   /** The Postgres bus's clock for its send times and replay checks (session-frame-bus D2); the
    * system clock unless a test injects one. */
   frameBusClock?: Clock;
+  /** byo-ai-providers D2: `'required'` refuses a missing or malformed PROVIDER_KEYS_SECRET before
+   * the lock. Only `main.ts` passes it; elsewhere an unset secret becomes a per-process random one. */
+  providerKeys?: 'required';
+}
+
+function optionalProviderKeys(secret: string | undefined): ProviderKeyCipher {
+  try {
+    return new ProviderKeyCipher(parseProviderKeysSecret(secret));
+  } catch {
+    return ProviderKeyCipher.random();
+  }
 }
 
 export function createBindings(
@@ -68,6 +80,12 @@ export function createBindings(
   // session-frame-bus D2: the Postgres bus signs with FRAME_BUS_SECRET; refused before the lock.
   const busSecret =
     options.frameBus === 'postgres' ? checkFrameBusSecret(procEnv.FRAME_BUS_SECRET) : null;
+  // byo-ai-providers D2: the provider-key cipher. A required secret is refused before the lock;
+  // elsewhere a valid secret is used and anything else becomes a per-process random one.
+  const providerKeys =
+    options.providerKeys === 'required'
+      ? new ProviderKeyCipher(parseProviderKeysSecret(procEnv.PROVIDER_KEYS_SECRET))
+      : optionalProviderKeys(procEnv.PROVIDER_KEYS_SECRET);
   // run-status-and-sweeper D1: an unknown AI_PROVIDER is refused before the lock.
   const aiProvider = parseAiProvider(procEnv.AI_PROVIDER);
   // retire-host-dev D2: one server per DATA_DIR. Taken before anything is created or swept; a
@@ -142,6 +160,7 @@ export function createBindings(
       companionDevices: new PostgresCompanionDeviceStore(catalogDb, clock),
       // byo-ai-providers D1: binds its own reviewed reason, system:provider-credentials.
       providerCredentials: new PostgresProviderCredentialStore(catalogDb, clock),
+      providerKeys,
     },
     config: {
       PUBLIC_BASE_URL: procEnv.PUBLIC_BASE_URL || '',

@@ -25,6 +25,8 @@ import type {
 } from '@autologger/ports';
 import type { SessionFrameBus, SessionHubRegistryFacade } from '@autologger/session-core';
 
+import type { ProviderKeyCipher } from './auth/providerKeyCrypto';
+
 export type { Config };
 
 /** Constructed services, role-named. Extends the package's base Ports shape
@@ -48,6 +50,9 @@ export interface Ports extends BasePorts {
   /** Users' provider credentials (ciphertext only) and the master-key check value, each credential
    * statement scoped by user id in SQL (byo-ai-providers D1). */
   providerCredentials: ProviderCredentialStore;
+  /** The provider-key cipher on PROVIDER_KEYS_SECRET, or a per-process random one where the secret
+   * isn't required (byo-ai-providers D2). */
+  providerKeys: ProviderKeyCipher;
 }
 
 /** The per-request env object. Callers MUST pass a fresh env per request and

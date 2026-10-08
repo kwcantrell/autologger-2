@@ -58,6 +58,8 @@ function stackEnv(extra: Record<string, string>): Record<string, string> {
     PUBLIC_BASE_URL: 'http://localhost:8787',
     BOOTSTRAP_OWNER_EMAIL: 'bootstrap-owner@example.com',
     SESSION_COOKIE: 'autologger_sid',
+    // byo-ai-providers D2: required by main.ts; the refusal cases still fail on the bus secret first.
+    PROVIDER_KEYS_SECRET: Buffer.alloc(32, 3).toString('base64'),
     ...extra,
   };
 }

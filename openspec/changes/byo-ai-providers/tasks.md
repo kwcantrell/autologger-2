@@ -93,7 +93,7 @@ Anything else is a stop: update the artifacts and ask the owner.
   field. Green.
   - Evidence: red, `cd server && npx vitest run --project unit src/node/config.test.ts` -> six `× NODE_ENV … gives PROVIDER_DEV_MODE …`, `Tests  6 failed | 14 passed (20)` (log `byo-3.2-red.log`). Green -> `Tests  20 passed (20)` (log `byo-3.2-green.log`); `npm run typecheck` -> exit 0, 0 `error TS`. `Config.PROVIDER_DEV_MODE?: boolean` (`packages/ports/src/config.ts`, optional, so absent is production mode and the two complete `Config` literals from 1.1 stay unchanged) is set in `createBindings` to `NODE_ENV === 'development' || NODE_ENV === 'test'`. The new cases cover `development` and `test` (true), and `production`, `staging`, `Development` and unset (false).
 
-- [ ] 3.3 Test first, boot tests:
+- [x] 3.3 Test first, boot tests:
   - `main.ts` with no secret, or a malformed one, exits 1 naming the variable before the
     `DATA_DIR` lock is taken;
   - a second boot with a different valid secret exits 1 with the mismatch error before listening,
@@ -101,6 +101,9 @@ Anything else is a stop: update the artifacts and ask the owner.
   - `createBindings` without the `providerKeys` option and without the secret still works.
   Red, then wire it. Add the secret to the env of `bootOrder.int.test.ts` and
   `bootFrameBus.int.test.ts` (D7 category 8). Green.
+  - Evidence: red, `cd server && npx vitest run --project unit src/node/config.test.ts` -> `Tests  3 failed | 20 passed (23)`; `npx vitest run --project integration src/bootProviderKeys.int.test.ts` -> all three cases `×` (main.ts booted instead of refusing), `Tests  3 failed (3)` (logs `byo-3.3-red-unit.log`, `byo-3.3-red-int.log`). Green: `cd server && npx vitest run --project unit` -> `Tests  374 passed | 3 skipped (377)` (log `byo-3.3-green-unit.log`); `npx vitest run --project integration src/bootProviderKeys.int.test.ts src/bootOrder.int.test.ts src/bootFrameBus.int.test.ts` -> `Test Files  3 passed (3)`, `Tests  10 passed (10)` (log `byo-3.3-green-int.log`); `npm run typecheck` -> exit 0, 0 `error TS`.
+  - Evidence: `createBindings` option `providerKeys: 'required'`, passed only by `main.ts`, parses `PROVIDER_KEYS_SECRET` after the frame-bus check and before the lock. Without the option, a valid secret is used and anything else becomes `ProviderKeyCipher.random()`. That keeps the existing Proxy test in `config.test.ts`, which answers every unset key with `/etc/attacker`, unchanged, so no test outside D7 moves. The cipher is wired as `Bindings.ports.providerKeys`. `main.ts` catches `ProviderKeysSecretError` before the lock, and after `waitForCatalog` runs `verifyProviderKeysCheck` (`writeCheckIfAbsent` then compare). A mismatch goes through the existing catch, so it logs `autologger: PROVIDER_KEYS_SECRET does not match the stored provider keys …`, calls `close()` and exits 1. The new `bootProviderKeys.int.test.ts` covers: no secret, and a 16-byte secret, each exit 1 naming the variable with an empty data directory; a first boot with S1 listens, a boot with S2 exits 1 with the mismatch error and never listens, and S1 then boots again (the lock was released and the value kept). D7 category 8: `bootOrder.int.test.ts` (the unreachable-catalog case) and `bootFrameBus.int.test.ts` (`stackEnv`) gain `PROVIDER_KEYS_SECRET`.
+
 - [ ] 3.4 Test first, `compose-run` tests: a stack whose OpenBao secret lacks
   `PROVIDER_KEYS_SECRET`, or holds 16 bytes, is refused naming it, printing no value and running
   no docker command (D7 category 9). Red, then add the check and the allowlist entry. Green.

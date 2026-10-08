@@ -72,6 +72,8 @@ describe('main.ts boot order', () => {
         // owner-bootstrap D8: also required before the catalog wait.
         BOOTSTRAP_OWNER_EMAIL: 'bootstrap-owner@example.com',
         FRAME_BUS_SECRET: 'b'.repeat(40),
+        // byo-ai-providers D2: also required before the catalog wait.
+        PROVIDER_KEYS_SECRET: Buffer.alloc(32, 3).toString('base64'),
       }),
       45_000,
     );
