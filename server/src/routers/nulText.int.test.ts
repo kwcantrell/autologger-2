@@ -4,7 +4,7 @@
 
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { putOauthState } from '../auth/identity';
-import { app, env, envWith } from '../test/harness';
+import { app, defaultUser, env, envWith } from '../test/harness';
 import {
   catalogFor,
   loginCookie,
@@ -115,7 +115,8 @@ describe('NUL in request values reaching the catalog is a 400', () => {
       '/api/companion/presence',
       {
         method: 'POST',
-        headers: { ...J, ...(await seedCompanionDevice()).bearer },
+        // D9 category 7: presence is posted by the browser (a cookie); a device now gets 403.
+        headers: { ...J, cookie: (await defaultUser()).cookie },
         body: JSON.stringify({ client_id: 'c-nul', session_id: `s${NUL}1`, visible: true }),
       },
       { ...env },

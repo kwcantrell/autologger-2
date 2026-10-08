@@ -119,11 +119,6 @@ const ALLOWLIST: readonly { file: string; reason: string; why: string }[] = [
     why: "Companion presence rows, every user's, shared by every process; each statement is scoped by client id and user id in SQL (companion-devices D4)",
   },
   {
-    file: 'server/src/routers/companion.ts',
-    reason: 'companion-token',
-    why: 'token-only Companion calls (no user), catalog and session hub, until the slice 9 credential',
-  },
-  {
     file: 'server/src/routers/teams.ts',
     reason: 'team-invite',
     why: 'the invite transaction looks users up by email and adds their memberships',

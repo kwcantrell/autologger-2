@@ -10,6 +10,7 @@ import {
   seedMemberStudio,
   seedSession,
   seedShow,
+  seedUser,
   setCompanionPresence,
 } from '../test/helpers';
 import { harnessHub } from '../test/session/sessionRows';
@@ -255,12 +256,15 @@ describe('categories + commands/wait', () => {
   });
 });
 
-describe('primarySession is global / unscoped (current behavior)', () => {
-  it('selects the visibly-fresher session regardless of studio', async () => {
+// D9 category 3: the pick is per user (companion-devices D3), no longer global.
+describe('primarySession is per user', () => {
+  it('selects the visibly-fresher of its own user’s sessions; another user’s rows are ignored', async () => {
     const sA = (await seededSession()).sessionId;
     const sB = (await seededSession()).sessionId;
+    const sC = (await seededSession()).sessionId;
     await setCompanionPresence('cA', sA, { visible: false });
     await setCompanionPresence('cB', sB, { visible: true });
+    await setCompanionPresence('cC', sC, { visible: true, user_id: await seedUser() });
     expect((await state()).active_session_id).toBe(sB);
   });
 });
@@ -270,9 +274,11 @@ describe('ordering on async storage (async-session-callers D4/D5)', () => {
     const s = (await seededSession()).sessionId;
     await setCompanionPresence('c1', s);
     const hub = await harnessHub(s);
+    const deviceId = (await seedCompanionDevice()).id;
     let storedAtBroadcast: Promise<string | null> | null = null;
     const spy = vi.spyOn(hub, 'broadcastCommand').mockImplementation(() => {
-      storedAtBroadcast = env.ports.kv.get('companion:last_command');
+      // D9 category 3: the last command is stored under the device's own key (D3).
+      storedAtBroadcast = env.ports.kv.get(`companion:last_command:${deviceId}`);
     });
     try {
       const res = await app.request(
@@ -351,7 +357,17 @@ describe('Companion routes check a signed-in caller’s session access (show-gra
       { ...env },
     );
   }
-  /** D9 category 3: the former token-only caller is a device of `userId`, scoped as that user. */
+  /** D9 category 3: the former token-only caller is a device of `userId`, scoped as that user:
+   * one device per user (user ids are unique per test), since the last command is per device. */
+  const devices = new Map<string, ReturnType<typeof seedCompanionDevice>>();
+  const deviceOf = (userId: string) => {
+    let d = devices.get(userId);
+    if (!d) {
+      d = seedCompanionDevice(userId);
+      devices.set(userId, d);
+    }
+    return d;
+  };
   async function asToken(
     userId: string,
     path: string,
@@ -361,18 +377,19 @@ describe('Companion routes check a signed-in caller’s session access (show-gra
       path,
       {
         method: init.method ?? 'GET',
-        headers: { ...JSON_H, ...(await seedCompanionDevice(userId)).bearer },
+        headers: { ...JSON_H, ...(await deviceOf(userId)).bearer },
         body: init.body === undefined ? undefined : JSON.stringify(init.body),
       },
       { ...env },
     );
   }
-  const counts = async (sessionId: string) => {
+  // D9 category 3: the recorded command is the device's own key (D3).
+  const counts = async (sessionId: string, deviceUser: string) => {
     const hub = await (await harnessHub(sessionId)).ensure();
     return {
       events: hub.event_count,
       take: hub.current_take,
-      cmd: await env.ports.kv.get('companion:last_command'),
+      cmd: await env.ports.kv.get(`companion:last_command:${(await deviceOf(deviceUser)).id}`),
     };
   };
 
@@ -455,7 +472,7 @@ describe('Companion routes check a signed-in caller’s session access (show-gra
         body: { type: 'record-start' },
       });
       expect(cmd.status).toBe(200);
-      const before = await counts(held);
+      const before = await counts(held, deviceUser);
 
       const st = (await (
         await asCookie(m.ungranted.cookie, '/api/companion/state')
@@ -479,7 +496,7 @@ describe('Companion routes check a signed-in caller’s session access (show-gra
         expect(`${path} ${res.status}`).toBe(`${path} 409`);
         expect(await res.json()).toEqual(NO_ACTIVE);
       }
-      expect(await counts(held)).toEqual(before);
+      expect(await counts(held, deviceUser)).toEqual(before);
 
       // The token and (for the teammate's session) the granted member still get the session.
       const tok = (await (await asToken(deviceUser, '/api/companion/state')).json()) as Record<
@@ -495,7 +512,8 @@ describe('Companion routes check a signed-in caller’s session access (show-gra
           await asCookie(m.granted.cookie, '/api/companion/state')
         ).json()) as Record<string, unknown>;
         expect(g.active_session_id).toBe(held);
-        expect(g.last_command).not.toBeNull();
+        // D9 category 3 (amended): a cookie caller has no device key, so no last command (D3).
+        expect(g.last_command).toBeNull();
         const cats = await asCookie(m.granted.cookie, '/api/companion/categories');
         expect(cats.status).toBe(200);
       }

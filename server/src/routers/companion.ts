@@ -1,12 +1,13 @@
 // Companion routes — ported from web/routers/companion.py + companion_state.py.
 // The Python CompanionHub (in-memory presence + long-poll command queue) becomes:
-//   • presence  → short-TTL KV keys (browser heartbeats), scanned to find the
-//     freshest visible tab and its active session;
+//   • presence  → the caller's own fresh rows in the shared presence table (browser
+//     heartbeats, companion-devices D4), scanned for the freshest visible tab's session;
 //   • commands  → broadcast over the session hub's WebSocket (the browser executes
 //     record/play because it owns the mic), replacing the long-poll relay.
-// The thin HTTP endpoints still drive the per-session hub.
+// The thin HTTP endpoints still drive the per-session hub. Every route runs as a user: the
+// signed-in user, or a Companion device's user (companion-devices D3).
 
-import { type CatalogFacade, type Row, showCategoriesApiShape } from '@autologger/catalog';
+import { type Row, showCategoriesApiShape } from '@autologger/catalog';
 import {
   companionCommandAckBodySchema,
   companionCommandBodySchema,
@@ -20,12 +21,18 @@ import {
   sessionDeckDisplayTitle,
 } from '@autologger/domain';
 import type { PresenceRow } from '@autologger/ports';
-import { type SessionHubFacade, systemCaller } from '@autologger/session-core';
+import type { SessionHubFacade } from '@autologger/session-core';
 import { SessionAccessDeniedError } from '@autologger/storage';
 import { type Context, Hono } from 'hono';
 import type { AppEnv } from '../appEnv';
 import { ApiError } from '../httpError';
-import { canAccessSession, requireSession, sessionCaller, timecodeCtx } from './_helpers';
+import {
+  canAccessSession,
+  getSessionHub,
+  requireSession,
+  requireUser,
+  timecodeCtx,
+} from './_helpers';
 
 export const companionRouter = new Hono<AppEnv>();
 
@@ -72,10 +79,16 @@ interface CompanionStatePayload {
   last_command: CompanionLastCommand | null;
 }
 
-const LAST_COMMAND_KEY = 'companion:last_command';
+/** The calling device's last-command key (companion-devices D3, owner decision 6), or null for a
+ * cookie caller, which has no device: its commands are delivered but recorded under no key. */
+function lastCommandKey(c: Context<AppEnv>): string | null {
+  const device = c.get('companionDevice');
+  return device === null ? null : `companion:last_command:${device.id}`;
+}
 
-/** Freshest live presence with a session open, preferring visible tabs (hub.primary). Takes
- *  one presence snapshot so callers derive every value from the same list. */
+/** The active session among the caller's own presence rows (companion-devices D3): rows with a
+ * session open, visible first, then freshest. Takes one presence snapshot so callers derive every
+ * value from the same list. */
 function primarySession(presences: PresenceRow[]): string | null {
   const live = presences.filter((p) => p.session_id);
   if (!live.length) return null;
@@ -86,28 +99,17 @@ function primarySession(presences: PresenceRow[]): string | null {
   return live[0].session_id;
 }
 
-/** Whether the caller may see `sessionId` through the Companion routes (show-grants D10): a
- * token-only caller (no user; the Companion's device credential until slice 9) is the system
- * caller and may; a signed-in caller needs access to the session's show. */
-/** The Companion routes' catalog (catalog-roles D10): a token-only caller (no user) runs as the
- * system task `companion-token`; a signed-in caller keeps its user-bound catalog. */
-function companionCatalog(c: Context<AppEnv>): CatalogFacade {
-  const catalog = c.get('catalog');
-  return c.get('user') === null ? catalog.system('companion-token') : catalog;
-}
-
-/** The Companion routes' hub (session-content-policies D7): a token-only caller runs as the
- * system task `companion-token` (until slice 9's credential); a signed-in caller as their user. */
-async function companionHub(c: Context<AppEnv>, sessionId: string): Promise<SessionHubFacade> {
-  const entry = await c.env.ports.sessions.get(sessionId);
-  return entry.as(c.get('user') === null ? systemCaller('companion-token') : sessionCaller(c));
+/** The caller's own fresh presence rows: the signed-in user's, or the device's user's (every
+ * Companion request has a user, companion-devices D2/D3). */
+function ownPresences(c: Context<AppEnv>): Promise<PresenceRow[]> {
+  return c.env.ports.presence.list(requireUser(c).id);
 }
 
 const NO_ACTIVE_SESSION_DETAIL =
   'No active session — open AutoLogger in a browser and open a session.';
 
-/** A signed-in caller's hub call refused for missing access after `requireActiveSession`
- * (session-content-policies D8) answers the no-active-session `409`, as the check itself would. */
+/** A hub call refused for missing access after `requireActiveSession` (session-content-policies
+ * D8) answers the no-active-session `409`, as the check itself would. */
 async function activeSessionCall<T>(call: () => Promise<T>): Promise<T> {
   try {
     return await call();
@@ -117,91 +119,80 @@ async function activeSessionCall<T>(call: () => Promise<T>): Promise<T> {
   }
 }
 
-/** The presence rows the caller's Companion pick reads (companion-devices D4: the port lists one
- * user's rows). A signed-in caller reads their own rows. A token-only caller (no user) keeps
- * today's view across every user, read user by user through the port, until section 5 of
- * companion-devices gives the device a user and deletes this branch with `companion-token`. */
-async function companionPresences(c: Context<AppEnv>): Promise<PresenceRow[]> {
-  const user = c.get('user');
-  const presence = c.env.ports.presence;
-  if (user !== null) return presence.list(user.id);
-  const users = await companionCatalog(c).auth.authListUsersAdmin();
-  const lists = await Promise.all(users.map((u) => presence.list(String(u.id))));
-  return lists.flat();
-}
-
-async function callerMaySee(c: Context<AppEnv>, sessionId: string): Promise<boolean> {
-  if (c.get('user') === null) return true;
-  return canAccessSession(c, sessionId);
-}
-
-/** Resolve the primary session AND its catalog row — callers reuse the row
- *  instead of re-fetching (and non-null-casting) it per handler. A signed-in caller who can't
- *  access the active session gets exactly the no-active-session answer (show-grants D10), so its
- *  existence doesn't leak. */
+/** Resolve the primary session AND its catalog row — callers reuse the row instead of
+ * re-fetching it per handler. A caller who can't access the session their own presence names
+ * gets exactly the no-active-session answer (show-grants D10, companion-devices D3), so its
+ * existence doesn't leak. */
 async function requireActiveSession(c: Context<AppEnv>): Promise<{ sid: string; row: Row }> {
-  const sid = primarySession(await companionPresences(c));
+  const sid = primarySession(await ownPresences(c));
   const row = sid
-    ? await companionCatalog(c).sessions.getSessionIndexRow(sid, { includeHidden: true })
+    ? await c.get('catalog').sessions.getSessionIndexRow(sid, { includeHidden: true })
     : null;
-  if (!sid || row === null || !(await callerMaySee(c, sid))) {
+  if (!sid || row === null || !(await canAccessSession(c, sid))) {
     throw new ApiError(409, NO_ACTIVE_SESSION_DETAIL);
   }
   return { sid, row };
 }
 
+const DEVICE_PRESENCE_DETAIL =
+  'Presence is posted by the AutoLogger browser app, not by a Companion device.';
+const NUL_DETAIL = 'Text must not contain NUL characters.';
+
 companionRouter.post('/api/companion/presence', async (c) => {
+  // Presence comes from the browser (companion-devices D3, owner decision 7): a device caller is
+  // refused first, before the body is read or anything is written.
+  if (c.get('companionDevice') !== null) throw new ApiError(403, DEVICE_PRESENCE_DETAIL);
+  const user = requireUser(c);
   const body = companionPresenceBodySchema.parse(await c.req.json());
   const cid = body.client_id.trim();
-  // Presence belongs to a user (companion-devices D4). A token-only caller has none, so its post
-  // stores and removes nothing, until section 5 answers it 403.
-  const user = c.get('user');
+  // A NUL can't be stored (catalog-on-postgres D5) and a blank id would fail the table's check
+  // (a 500): both are refused before any write, closing included.
+  if (cid.includes('\u0000') || body.session_id?.includes('\u0000')) {
+    throw new ApiError(400, NUL_DETAIL);
+  }
+  if (!cid) throw new ApiError(400, 'client_id must not be blank.');
   if (body.closing) {
-    if (user !== null) await c.env.ports.presence.remove(cid, user.id);
+    // Deletes only the caller's own row (companion-devices D3/D4); another user's is untouched.
+    await c.env.ports.presence.remove(cid, user.id);
     return c.json({ ok: true });
   }
-  // A stored NUL id would make every later Companion request's catalog lookup a 400
-  // (catalog-on-postgres D5), so it is refused here, before anything is stored.
-  if (body.session_id?.includes('\u0000')) {
-    throw new ApiError(400, 'Text must not contain NUL characters.');
-  }
   const sessionId = (body.session_id ?? '').trim();
-  // A signed-in caller may only point presence at a session they can access (show-grants D10);
-  // a session they can't access and one that doesn't exist get the same masked 404, and nothing
-  // is stored. Token-only calls are unchanged.
-  if (user !== null && sessionId) {
-    await requireSession(c, sessionId, { includeHidden: true });
-  }
-  if (user === null) return c.json({ ok: true });
-  const meta = {
+  // The caller may only point presence at a session they can access (show-grants D10); a session
+  // they can't access and one that doesn't exist get the same masked 404, and nothing is stored.
+  if (sessionId) await requireSession(c, sessionId, { includeHidden: true });
+  // An upsert for a live row another user owns changes nothing and still answers 200 (the port's
+  // ownership rule, companion-devices D4), so the answer reveals nothing about other users' rows.
+  await c.env.ports.presence.upsert(cid, {
     user_id: user.id,
     session_id: sessionId || null,
     visible: body.visible,
     is_playing: body.is_playing,
     updated: c.env.ports.clock.now(),
-  };
-  await c.env.ports.presence.upsert(cid, meta);
+  });
   return c.json({ ok: true });
 });
 
 companionRouter.get('/api/companion/state', async (c) => {
-  const catalog = companionCatalog(c);
-  const presences = await companionPresences(c);
+  const catalog = c.get('catalog');
+  const presences = await ownPresences(c);
   const activeSid = primarySession(presences);
   let sessionOut: CompanionSessionState | null = null;
   let resolvedSid: string | null = activeSid;
-  // A signed-in caller without access to the active session sees none (show-grants D10).
-  if (activeSid && !(await callerMaySee(c, activeSid))) resolvedSid = null;
+  // A caller without access to the session their own presence names sees none (show-grants D10,
+  // companion-devices D3).
+  if (activeSid && !(await canAccessSession(c, activeSid))) resolvedSid = null;
   if (resolvedSid !== null && activeSid) {
     const row = await catalog.sessions.getSessionJoinedRow(activeSid, { includeHidden: true });
     if (row === null) {
       resolvedSid = null;
     } else {
-      const hub = await companionHub(c, activeSid);
-      let status: [
-        Awaited<ReturnType<SessionHubFacade['statusLive']>>,
-        Awaited<ReturnType<SessionHubFacade['leaseStatus']>>,
-      ] | null;
+      const hub = await getSessionHub(c, activeSid);
+      let status:
+        | [
+            Awaited<ReturnType<SessionHubFacade['statusLive']>>,
+            Awaited<ReturnType<SessionHubFacade['leaseStatus']>>,
+          ]
+        | null;
       try {
         status = [await hub.statusLive(timecodeCtx(row)), await hub.leaseStatus()];
       } catch (err) {
@@ -234,10 +225,14 @@ companionRouter.get('/api/companion/state', async (c) => {
       }
     }
   }
-  const lastRaw = await c.env.ports.kv.get(LAST_COMMAND_KEY);
+  // The calling device's own last command; a cookie caller has none (companion-devices D3).
+  const key = lastCommandKey(c);
+  const lastRaw = key === null ? null : await c.env.ports.kv.get(key);
   let lastCommand = lastRaw ? (JSON.parse(lastRaw) as CompanionLastCommand) : null;
-  // The last command names its session: hidden from a signed-in caller who can't access it.
-  if (lastCommand !== null && !(await callerMaySee(c, lastCommand.session_id))) lastCommand = null;
+  // The last command names its session: hidden from a caller who can't access it.
+  if (lastCommand !== null && !(await canAccessSession(c, lastCommand.session_id))) {
+    lastCommand = null;
+  }
   const payload: CompanionStatePayload = {
     connected_clients: presences.length,
     active_session_id: resolvedSid,
@@ -250,7 +245,7 @@ companionRouter.get('/api/companion/state', async (c) => {
 companionRouter.post('/api/companion/log', async (c) => {
   const body = companionLogBodySchema.parse(await c.req.json());
   const { sid, row } = await requireActiveSession(c);
-  const catalog = companionCatalog(c);
+  const catalog = c.get('catalog');
   const profile = await catalog.sessions.studioProfileForSession(sid);
   let cat = null;
   if (body.category_id?.trim()) {
@@ -265,7 +260,7 @@ companionRouter.post('/api/companion/log', async (c) => {
   }
   const meta = mergeCategoryUiSnapshotsIntoMetadata({}, cat);
   const { event } = await activeSessionCall(async () =>
-    (await companionHub(c, sid)).addEvent({
+    (await getSessionHub(c, sid)).addEvent({
       category: cat.id,
       message: body.message,
       metadataJson: JSON.stringify(meta),
@@ -280,7 +275,7 @@ companionRouter.post('/api/companion/transport', async (c) => {
   const body = companionTransportBodySchema.parse(await c.req.json());
   const { sid, row } = await requireActiveSession(c);
   const ctx = timecodeCtx(row);
-  const hub = await companionHub(c, sid);
+  const hub = await getSessionHub(c, sid);
   // A toggle reads the transport and starts or stops the take in one hub transaction
   // (async-session-hub design D7, S6), so two concurrent toggles equal a serial order.
   const { state } = await activeSessionCall(() =>
@@ -310,15 +305,18 @@ companionRouter.post('/api/companion/command', async (c) => {
     ok: false,
     error: null,
   };
-  // Stored before the broadcast, so a fast ack always finds it (async-session-callers D5).
-  await c.env.ports.kv.put(LAST_COMMAND_KEY, JSON.stringify(last));
-  (await companionHub(c, sid)).broadcastCommand(body.type);
+  // Stored under the calling device's key before the broadcast, so a fast ack always finds it
+  // (async-session-callers D5). A cookie caller's command is delivered but recorded under no key
+  // (companion-devices D3).
+  const key = lastCommandKey(c);
+  if (key !== null) await c.env.ports.kv.put(key, JSON.stringify(last));
+  (await getSessionHub(c, sid)).broadcastCommand(body.type);
   return c.json({ ok: true, command_id: commandId, active_session_id: sid });
 });
 
 companionRouter.get('/api/companion/categories', async (c) => {
   const { sid, row } = await requireActiveSession(c);
-  const catalog = companionCatalog(c);
+  const catalog = c.get('catalog');
   const raw = await catalog.sessions.getSessionShowCategories(sid);
   if (raw === null) throw new ApiError(409, 'Active session has no show categories.');
   const showId = (row.show_id as string | null) ?? null;
@@ -342,8 +340,10 @@ companionRouter.get('/api/companion/commands/wait', async (c) => {
 companionRouter.post('/api/companion/commands/:commandId/ack', async (c) => {
   const commandId = c.req.param('commandId');
   const body = companionCommandAckBodySchema.parse(await c.req.json());
-  const lastRaw = await c.env.ports.kv.get(LAST_COMMAND_KEY);
-  if (lastRaw) {
+  // Matched only against the calling device's own last command; a cookie caller has none.
+  const key = lastCommandKey(c);
+  const lastRaw = key === null ? null : await c.env.ports.kv.get(key);
+  if (key !== null && lastRaw) {
     const last = JSON.parse(lastRaw) as CompanionLastCommand;
     if (last.id === commandId) {
       last.ok = body.ok;
@@ -351,11 +351,7 @@ companionRouter.post('/api/companion/commands/:commandId/ack', async (c) => {
       last.delivered_to = body.client_id;
       // Only while A is still the latest command: a newer one stored meanwhile wins, and this ack
       // gets the superseded-command answer (catalog-concurrency-hazards D7).
-      const marked = await c.env.ports.kv.replaceIf(
-        LAST_COMMAND_KEY,
-        lastRaw,
-        JSON.stringify(last),
-      );
+      const marked = await c.env.ports.kv.replaceIf(key, lastRaw, JSON.stringify(last));
       return c.json({ ok: marked });
     }
   }
