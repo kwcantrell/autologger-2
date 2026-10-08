@@ -106,12 +106,18 @@ statuses only.
 | Command | What it does |
 | --- | --- |
 | `make dev-up`, `make stage-up` | Start the stack (Supabase included), apply migrations, print the URLs |
+| `make prod-up` | Clean `main` only: apply migrations, then start prod |
 | `make dev-migrate` | Apply migrations to dev. It starts `db` and waits for it to be healthy. |
 | `make dev-psql` | psql in the dev `db` as `postgres`, with no history file |
 | `make dev-reset CONFIRM=yes`, `make stage-reset CONFIRM=yes` | **Delete** every volume of that stack, Postgres and Supabase storage included |
 
-Nothing migrates prod or opens a shell in it. The compose wrapper refuses `compose run` and
-`compose exec` for prod.
+Prod is migrated only by `make prod-up`. It runs `compose run --rm migrate` after the tag and
+resolved-config guards and before `compose up -d`, from the clean `main` checkout (the wrapper
+checks the tree again right before the runner), and a failed migration stops it before `up`. A
+re-run applies nothing new. For prod, the compose wrapper runs only the Makefile's own compose
+steps: it refuses `compose exec`, any other `compose run`, and extra flags such as `-f`. Nothing
+opens a shell in the prod database. No backup is taken first: see README "Update order and
+rollback".
 
 ## Re-initialising Postgres (when the init SQL changes)
 

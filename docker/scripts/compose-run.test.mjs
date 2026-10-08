@@ -465,8 +465,9 @@ describe('start-up checks (H1, H10, H11)', () => {
   it('test hooks without AUTOLOGGER_TEST=1 are ignored', async () => {
     // prod: honored hooks would be refused for prod; ignored hooks fall through to the repo-root
     // credentials file, which never exists for prod on a dev host or in CI. (dev/stage would use
-    // a real .env.openbao.<env> once the owner has one, and reach the real OpenBao.)
-    const r = await run(['prod', 'compose version'], { env: { AUTOLOGGER_TEST: '' } });
+    // a real .env.openbao.<env> once the owner has one, and reach the real OpenBao.) `prod-tags`
+    // alone: prod runs only the Makefile's compose steps (prod-migrate D2).
+    const r = await run(['prod', 'prod-tags'], { env: { AUTOLOGGER_TEST: '' } });
     assert.notEqual(r.code, 0);
     assert.match(r.out, /\.env\.openbao\.prod is missing/);
     assert.doesNotMatch(r.out, /TEST HOOKS ACTIVE|test hooks/);
@@ -607,9 +608,13 @@ describe('guard steps (resolved, urls, prod-tags, reset; H8)', () => {
     assert.notEqual(r.code, 0);
     assert.match(r.out, /CONFIRM=yes/);
     assert.equal(seen.length, 0);
-    r = await run(['prod', 'reset', 'compose down -v'], { env: { CONFIRM: 'yes', AUTOLOGGER_TEST: '' } });
+    r = await run(['prod', 'reset'], { env: { CONFIRM: 'yes', AUTOLOGGER_TEST: '' } });
     assert.notEqual(r.code, 0);
     assert.match(r.out, /reset.*prod|prod.*reset/);
+    r = await run(['prod', 'compose down -v'], { env: { CONFIRM: 'yes', AUTOLOGGER_TEST: '' } });
+    assert.notEqual(r.code, 0);
+    assert.match(r.out, /'compose down -v' is refused for prod/);
+    assert.equal(seen.length, 0);
     r = await run(['dev', 'reset', 'compose down -v'], { env: { CONFIRM: 'yes' } });
     assert.equal(r.code, 0, r.out);
     assert.match(log('argv'), /down -v/);
@@ -642,11 +647,13 @@ describe('Postgres password and prod run/exec (supabase-db D4, D6)', () => {
     assert.match(r.out, /POSTGRES_PASSWORD/);
     assert.equal(log('argv'), '');
   });
-  it('prod refuses compose run and exec before any request', async () => {
-    for (const step of ['compose run --rm migrate', 'compose exec db psql -U postgres', 'compose --profile tools run migrate']) {
+  it('prod refuses compose run and exec before any request, except the guarded migrate step (prod-migrate D2)', async () => {
+    // Only refused prod plans reach the real wrapper here: a prod deploy checkout holds real prod
+    // credentials, so an allowed prod step is tested through checkProdPlan alone (below).
+    for (const step of ['compose run --rm migrate', 'compose exec db psql -U postgres', 'compose --profile tools run migrate', 'compose -f /tmp/o.yaml up -d migrate']) {
       const r = await run(['prod', step], { env: { AUTOLOGGER_TEST: '' } });
       assert.notEqual(r.code, 0, step);
-      assert.match(r.out, /prod.*(run|exec)|(run|exec).*prod/, step);
+      assert.match(r.out, /refused for prod/, step);
     }
     assert.equal(seen.length, 0);
     writeCreds('dev');
@@ -1121,6 +1128,68 @@ describe('stage public mode (stage-public-https)', () => {
   it('the stage values cannot come from OpenBao', () => {
     for (const k of ['STAGE_IMAGE_TAG', 'STAGE_WEB_IMAGE', 'STAGE_API_IMAGE', 'STAGE_PUBLIC_BASE_URL', 'STAGE_COOKIE_SECURE', 'DOCKER_CONFIG']) {
       assert.throws(() => validateSecrets(kv([secret(k, 'x')]), allowedNames('stage')), /not-allowed/, k);
+    }
+  });
+});
+
+describe('prod plan and tree (prod-migrate D2, D5)', () => {
+  const plan = (...s) => s.map((x) => (x.startsWith('compose ') ? { kind: 'compose', args: splitStep(x) } : { kind: x }));
+  it('accepts exactly the Makefile prod steps, and the migrate step only after prod-tags and resolved', async () => {
+    const { checkProdPlan } = await import('./compose-run.mjs');
+    for (const p of [
+      plan('resolved', 'prod-tags', 'compose config --quiet'),
+      plan('prod-tags', 'compose pull'),
+      plan('prod-tags', 'resolved', 'compose run --rm migrate', 'compose up -d'),
+      plan('prod-tags', 'compose down'),
+      plan('prod-tags', 'compose logs -f --tail=200'),
+    ]) assert.doesNotThrow(() => checkProdPlan(p), JSON.stringify(p));
+    for (const step of [
+      'compose exec db psql -U postgres', 'compose run migrate', 'compose run --rm migrate sh', 'compose run --rm db',
+      'compose --profile tools run migrate', 'compose run --rm -e X=1 migrate', 'compose -f x.yaml up -d',
+      'compose up -d migrate', 'compose cp evil.sql db:/tmp/x', 'compose --project-directory /tmp up -d', 'compose up',
+    ]) {
+      assert.throws(() => checkProdPlan(plan('prod-tags', 'resolved', step)), /refused for prod/, step);
+    }
+    // An allowed step next to a refused one is still refused.
+    assert.throws(() => checkProdPlan(plan('prod-tags', 'resolved', 'compose run --rm migrate', 'compose exec db sh')), /refused for prod/);
+    // The migrate step needs both guards before it.
+    for (const p of [
+      plan('compose run --rm migrate'),
+      plan('prod-tags', 'compose run --rm migrate', 'compose up -d'),
+      plan('resolved', 'compose run --rm migrate'),
+      plan('compose run --rm migrate', 'prod-tags', 'resolved'),
+    ]) assert.throws(() => checkProdPlan(p), /prod-tags and resolved/, JSON.stringify(p));
+  });
+  it('the migrate step needs a clean tree on main', async () => {
+    const { checkProdTree } = await import('./compose-run.mjs');
+    const g = mkdtempSync(join(T, 'prod-tree-'));
+    const git = (...a) => {
+      const r = spawnSync('git', ['-C', g, '-c', 'user.name=t', '-c', 'user.email=t@example.invalid', '-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=/dev/null', ...a], { encoding: 'utf8', env: gitEnv() });
+      assert.equal(r.status, 0, r.stderr);
+    };
+    git('init', '-q', '-b', 'main');
+    writeFileSync(join(g, 'a.sql'), 'select 1;\n');
+    git('add', 'a.sql');
+    git('commit', '-q', '-m', 'one');
+    assert.doesNotThrow(() => checkProdTree(g));
+    writeFileSync(join(g, 'a.sql'), 'select 2;\n');
+    assert.throws(() => checkProdTree(g), /not clean/);
+    git('checkout', '-q', '--', 'a.sql');
+    writeFileSync(join(g, 'b.sql'), 'drop table x;\n');
+    assert.throws(() => checkProdTree(g), /not clean/);
+    rmSync(join(g, 'b.sql'));
+    git('checkout', '-q', '-b', 'feature');
+    assert.throws(() => checkProdTree(g), /branch 'feature'.*main/);
+    assert.throws(() => checkProdTree(join(T, 'no-such-tree')), /could not read/);
+  });
+  it('prod-up runs the migrate step after the guards and before up; no other prod target runs or execs', () => {
+    const mk = readFileSync(join(ROOT, 'Makefile'), 'utf8');
+    const recipe = (t) => mk.split(/\n(?=[a-z][a-z-]*:)/).find((b) => b.startsWith(`${t}:`)) ?? '';
+    const up = recipe('prod-up');
+    assert.match(up, /\n\t@\$\(G\) prod-git\n\t\$\(RUN\) prod prod-tags resolved 'compose run --rm migrate' 'compose up -d'\n/);
+    for (const t of ['prod-check', 'prod-pull', 'prod-down', 'prod-logs']) {
+      assert.ok(recipe(t).includes('$(RUN) prod'), t);
+      assert.doesNotMatch(recipe(t), /'compose [^']*\b(run|exec)\b/, t);
     }
   });
 });

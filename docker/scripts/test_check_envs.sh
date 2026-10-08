@@ -16,7 +16,8 @@ PASS=0; FAILED=0
 
 snapshot() { # DIR: copy the working tree into DIR
   mkdir -p "$1"
-  (cd "$ROOT" && git ls-files -co --exclude-standard -z | xargs -0 tar -cf -) | tar -xf - -C "$1"
+  # xargs may run several `tar -c` (one archive each); --ignore-zeros reads past each end marker.
+  (cd "$ROOT" && git ls-files -co --exclude-standard -z | xargs -0 tar -cf -) | tar --ignore-zeros -xf - -C "$1"
 }
 
 # expect NAME DIR WANT[ok|fail] [PATTERN]: run check-envs in DIR; assert status (and output).
