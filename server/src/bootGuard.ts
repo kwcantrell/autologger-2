@@ -1,11 +1,11 @@
 // src/bootGuard.ts — the server boots only inside a compose stack (retire-host-dev D1), with
 // sign-in configured (require-login D1) and a bootstrap owner named (owner-bootstrap D8). An
 // approved-users entry must be ASCII (run-status-and-sweeper D9).
-// The stacks set AUTOLOGGER_STACK (docker/secrets-env.yaml), an absolute DATA_DIR and the catalog's
-// PG* settings (catalog-on-postgres D2); a host run has none. Messages name variables only, never
-// their values.
+// The stacks set AUTOLOGGER_STACK (docker/secrets-env.yaml), an absolute DATA_DIR, an absolute
+// BLOB_DIR outside it (shared-blob-volume D1) and the catalog's PG* settings (catalog-on-postgres
+// D2); a host run has none. Messages name variables only, never their values.
 
-import { isAbsolute } from 'node:path';
+import { isAbsolute, resolve, sep } from 'node:path';
 
 /** The environments docker/scripts/compose-run.mjs sets as AUTOLOGGER_STACK. */
 export const STACKS: readonly string[] = ['dev', 'stage', 'prod'];
@@ -20,6 +20,28 @@ export const SIGN_IN_VARS = [
   'PUBLIC_BASE_URL',
 ] as const;
 
+/**
+ * shared-blob-volume D1: BLOB_DIR is required and absolute, and BLOB_DIR and DATA_DIR are disjoint
+ * (on `path.resolve` of both: equal, or one starts with the other plus `sep`; `/` overlaps
+ * everything). Symlinks are not followed: the paths may not exist yet, and the stacks pin
+ * literals. Assumes DATA_DIR was already checked. A refusal message naming the variables and no
+ * value, or null. `createBindings` repeats it, since tests and main.ts reach it without the guard.
+ */
+export function blobDirRefusal(env: Record<string, string | undefined>): string | null {
+  const blobDir = env.BLOB_DIR ?? '';
+  if (!blobDir || !isAbsolute(blobDir)) {
+    return 'BLOB_DIR must be set to an absolute path (the compose stacks pin /blobs); there is no default blob directory.';
+  }
+  const a = resolve(blobDir);
+  const b = resolve(env.DATA_DIR ?? '');
+  const inside = (child: string, parent: string) =>
+    child.startsWith(parent.endsWith(sep) ? parent : parent + sep);
+  if (a === b || inside(a, b) || inside(b, a)) {
+    return 'BLOB_DIR and DATA_DIR must be separate directories, neither inside the other.';
+  }
+  return null;
+}
+
 /** A refusal message, or null when the server may boot. */
 export function checkBootEnv(env: Record<string, string | undefined>): string | null {
   if (!STACKS.includes(env.AUTOLOGGER_STACK ?? '')) {
@@ -28,6 +50,8 @@ export function checkBootEnv(env: Record<string, string | undefined>): string | 
   if (!env.DATA_DIR || !isAbsolute(env.DATA_DIR)) {
     return 'DATA_DIR must be set to an absolute path (the compose stacks pin /data); there is no default data directory.';
   }
+  const blobRefusal = blobDirRefusal(env);
+  if (blobRefusal) return blobRefusal;
   const missing = CATALOG_PG_VARS.filter((k) => !env[k]);
   if (missing.length) {
     return `catalog connection settings missing: ${missing.join(', ')} (the compose stacks set them).`;

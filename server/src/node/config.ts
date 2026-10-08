@@ -1,7 +1,7 @@
 // src/node/config.ts — the composition root: constructs the Ports (services)
 // and Config (plain strings) the app runs on, from process env.
 
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { AiV2PendingQuestionRegistry } from '@autologger/ai-runtime/aiV2PendingQuestions';
@@ -24,10 +24,11 @@ import {
   PostgresLeaseDirectory,
   PostgresPresence,
   PostgresSessionDb,
+  sweepStaleBlobPutTemps,
 } from '@autologger/storage';
 import type { Bindings } from '../appEnv';
 import { GoogleIdentityVerifier } from '../auth/oauth_google';
-import { CATALOG_PG_VARS } from '../bootGuard';
+import { blobDirRefusal, CATALOG_PG_VARS } from '../bootGuard';
 import {
   aiV2UsesLoginFallback,
   newUserAllTeamsEnabled,
@@ -46,6 +47,26 @@ export interface CreateBindingsOptions {
   frameBusClock?: Clock;
 }
 
+/** shared-blob-volume D4: one warning line when DATA_DIR/blobs still holds files the server no
+ * longer reads. A count and fixed text only; it never opens or changes a file, and an error while
+ * counting is ignored, so it can't block boot. */
+function warnLegacyBlobs(dataDir: string): void {
+  let n = 0;
+  try {
+    for (const e of readdirSync(join(dataDir, 'blobs'), { withFileTypes: true, recursive: true })) {
+      if (e.isFile()) n += 1;
+    }
+  } catch {
+    return;
+  }
+  if (n > 0) {
+    console.warn(
+      `autologger: DATA_DIR/blobs holds ${n} legacy audio file(s) the server no longer reads; ` +
+        'move them into BLOB_DIR (README "Moving audio into BLOB_DIR")',
+    );
+  }
+}
+
 export function createBindings(
   procEnv: Record<string, string | undefined>,
   options: CreateBindingsOptions = {},
@@ -61,6 +82,12 @@ export function createBindings(
   // retire-host-dev D1: no default data directory (never server/data by accident).
   const dataDir = procEnv.DATA_DIR ?? '';
   if (!dataDir || !isAbsolute(dataDir)) throw new Error('DATA_DIR must be set to an absolute path');
+  // shared-blob-volume D1: BLOB_DIR required, absolute and disjoint from DATA_DIR; the boot guard's
+  // check, repeated because tests and main.ts reach here without it. Before the lock.
+  const blobRefusal = blobDirRefusal(procEnv);
+  if (blobRefusal) throw new Error(blobRefusal);
+  const blobDir = procEnv.BLOB_DIR as string;
+  const putTmpDir = join(blobDir, '.tmp');
   // Checked before the lock, so a refusal never holds it. Names only, never values.
   const missing = CATALOG_PG_VARS.filter((k) => !procEnv[k]);
   if (missing.length) throw new Error(`catalog connection settings missing: ${missing.join(', ')}`);
@@ -72,11 +99,13 @@ export function createBindings(
   // retire-host-dev D2: one server per DATA_DIR. Taken before anything is created or swept; a
   // second server refuses here (DataDirLockedError). Released by close().
   const lock = acquireDataDirLock(dataDir);
-  // r2_key values already start with "audio/", so the blob root is a sibling dir:
-  // bytes land at DATA_DIR/blobs/audio/<sid>/…  tmp stays OUTSIDE the root
-  // so listings/reconciliation never see partial writes.
-  mkdirSync(join(dataDir, 'blobs'), { recursive: true });
+  // shared-blob-volume D2, D3: DATA_DIR stays per process (the lock, the scratch root DATA_DIR/tmp,
+  // legacy files); DATA_DIR/blobs is no longer created. The audio lives under BLOB_DIR, shared by
+  // every server process (r2_key values start with "audio/": BLOB_DIR/audio/<sid>/…), and puts
+  // write their temp files in BLOB_DIR/.tmp, on the same filesystem, so the rename is atomic.
   mkdirSync(join(dataDir, 'tmp'), { recursive: true });
+  mkdirSync(putTmpDir, { recursive: true });
+  warnLegacyBlobs(dataDir);
 
   const clock = systemClock;
   // One adapter for the catalog stores and KV (catalog-on-postgres D1). It connects lazily, so
@@ -115,16 +144,15 @@ export function createBindings(
     clock,
     bus: frameBus ?? undefined,
   });
-  // shared-blob-volume D3: the options object; section 4 moves the root to BLOB_DIR.
-  const audioBlobStore = new BlobStore(join(dataDir, 'blobs'), {
-    putTmpDir: join(dataDir, 'tmp'),
-    scratchDir: join(dataDir, 'tmp'),
-  });
+  const audioBlobStore = new BlobStore(blobDir, { putTmpDir, scratchDir: join(dataDir, 'tmp') });
   // Startup hygiene (design D6, task 5.4): remove any youtube-import per-request
   // temp dir orphaned by a crash/kill that skipped the route handler's own
   // `finally` cleanup. Prefix-scoped — never touches other scratch-root users
   // (e.g. transcript generation) or the blob store's real audio prefix.
   sweepStaleYoutubeImportTempDirs(audioBlobStore.scratchRoot());
+  // shared-blob-volume D3: once at boot, drop put- temp files a crash orphaned (older than 24 h,
+  // so never another process's write in flight). The system clock: these are filesystem mtimes.
+  sweepStaleBlobPutTemps(putTmpDir, Date.now());
 
   const bindings: Bindings = {
     ports: {

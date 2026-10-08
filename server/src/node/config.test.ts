@@ -3,24 +3,40 @@
 // setup.int.ts harness needed): createBindings builds its own temp-dir
 // bindings from a procEnv object, same shape test/harness.ts uses per test.
 
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import { createServer } from 'node:net';
 import { homedir, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { acquireDataDirLock, DataDirLockedError } from '@autologger/storage';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { loopbackHostname } from '../env';
 import { createBindings } from './config';
 
 let dir: string;
+// shared-blob-volume D8 category 1: each env's BLOB_DIR is a sibling temp dir, never inside DATA_DIR.
+let blobDir: string;
+const madeDirs: string[] = [];
 afterEach(() => {
   if (dir) rmSync(dir, { recursive: true, force: true });
+  for (const d of madeDirs.splice(0)) rmSync(d, { recursive: true, force: true });
 });
 
 function freshProcEnv(overrides: Record<string, string | undefined> = {}) {
   dir = mkdtempSync(join(tmpdir(), 'autologger-config-'));
+  blobDir = mkdtempSync(join(tmpdir(), 'autologger-config-blobs-'));
+  madeDirs.push(dir, blobDir);
   return {
     DATA_DIR: dir,
+    BLOB_DIR: blobDir,
     PUBLIC_BASE_URL: 'https://example.com',
     GOOGLE_CLIENT_ID: '',
     GOOGLE_CLIENT_SECRET: '',
@@ -244,6 +260,117 @@ describe('createBindings -- AI_PROVIDER (run-status-and-sweeper D1)', () => {
       expect(b.bindings.config.AI_PROVIDER).toBe('claude_cli');
     } finally {
       await b.close();
+    }
+  });
+});
+
+describe('createBindings -- BLOB_DIR (shared-blob-volume D1-D4)', () => {
+  const LEGACY_LINE =
+    'autologger: DATA_DIR/blobs holds 3 legacy audio file(s) the server no longer reads; move ' +
+    'them into BLOB_DIR (README "Moving audio into BLOB_DIR")';
+
+  it('refuses an unset, relative or overlapping BLOB_DIR before the lock, creating nothing', async () => {
+    const env = freshProcEnv();
+    const refused: Array<[string | undefined, RegExp]> = [
+      [undefined, /BLOB_DIR must be set to an absolute path/],
+      ['', /BLOB_DIR must be set to an absolute path/],
+      ['blobs', /BLOB_DIR must be set to an absolute path/],
+      ['./blobs', /BLOB_DIR must be set to an absolute path/],
+      [dir, /BLOB_DIR and DATA_DIR must be separate/], // equal
+      [`${dir}/`, /BLOB_DIR and DATA_DIR must be separate/], // equal after path.resolve
+      [join(dir, 'blobs'), /BLOB_DIR and DATA_DIR must be separate/], // blob inside data
+      [dirname(dir), /BLOB_DIR and DATA_DIR must be separate/], // data inside blob
+      ['/', /BLOB_DIR and DATA_DIR must be separate/], // '/' overlaps everything
+    ];
+    for (const [v, re] of refused) {
+      expect(() => createBindings({ ...env, BLOB_DIR: v }), String(v)).toThrow(re);
+    }
+    expect(readdirSync(dir)).toEqual([]); // no lock file, no tmp, no blobs
+    expect(readdirSync(blobDir)).toEqual([]);
+    await createBindings(env).close(); // and the lock was never held
+  });
+
+  it('a second server with another DATA_DIR and the same BLOB_DIR boots', async () => {
+    const a = freshProcEnv();
+    const b = freshProcEnv({ BLOB_DIR: a.BLOB_DIR });
+    expect(b.DATA_DIR).not.toBe(a.DATA_DIR);
+    const first = createBindings(a);
+    try {
+      const second = createBindings(b);
+      await second.close();
+    } finally {
+      await first.close();
+    }
+  });
+
+  it('creates BLOB_DIR/.tmp and DATA_DIR/tmp, not DATA_DIR/blobs; the store writes to BLOB_DIR', async () => {
+    const b = createBindings(freshProcEnv());
+    try {
+      expect(existsSync(join(blobDir, '.tmp'))).toBe(true);
+      expect(existsSync(join(dir, 'tmp'))).toBe(true);
+      expect(existsSync(join(dir, 'blobs'))).toBe(false);
+      expect(b.bindings.ports.audio.scratchRoot()).toBe(join(dir, 'tmp'));
+      await b.bindings.ports.audio.put('audio/s1/0001_k.webm', new Uint8Array([1, 2, 3]));
+      expect(readFileSync(join(blobDir, 'audio', 's1', '0001_k.webm'))).toEqual(
+        Buffer.from([1, 2, 3]),
+      );
+      expect(readdirSync(join(blobDir, '.tmp'))).toEqual([]);
+    } finally {
+      await b.close();
+    }
+  });
+
+  it('sweeps put- temp files older than 24 h from BLOB_DIR/.tmp at boot', async () => {
+    const env = freshProcEnv();
+    const tmp = join(blobDir, '.tmp');
+    mkdirSync(tmp);
+    for (const name of ['put-old', 'put-young', 'other-old']) writeFileSync(join(tmp, name), 'x');
+    const twoDaysAgo = (Date.now() - 2 * 24 * 60 * 60 * 1000) / 1000;
+    const aMinuteAgo = (Date.now() - 60_000) / 1000;
+    utimesSync(join(tmp, 'put-old'), twoDaysAgo, twoDaysAgo);
+    utimesSync(join(tmp, 'other-old'), twoDaysAgo, twoDaysAgo);
+    utimesSync(join(tmp, 'put-young'), aMinuteAgo, aMinuteAgo);
+    const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
+    try {
+      await createBindings(env).close();
+      expect(readdirSync(tmp).sort()).toEqual(['other-old', 'put-young']);
+    } finally {
+      infoSpy.mockRestore();
+    }
+  });
+
+  it('warns once, naming the count and the README section, when DATA_DIR/blobs holds files', async () => {
+    const env = freshProcEnv();
+    const legacy = join(dir, 'blobs', 'audio', 'sid-1');
+    mkdirSync(legacy, { recursive: true });
+    mkdirSync(join(dir, 'blobs', 'audio', 'sid-2'), { recursive: true });
+    writeFileSync(join(legacy, '0001_a.webm'), 'a');
+    writeFileSync(join(legacy, '0002_b.webm'), 'b');
+    writeFileSync(join(dir, 'blobs', 'audio', 'sid-2', '0001_c.webm'), 'c');
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      await createBindings(env).close();
+      const lines = warnSpy.mock.calls.map((c) => c.join(' ')).filter((l) => /legacy/.test(l));
+      expect(lines).toEqual([LEGACY_LINE]);
+      // never read, moved or deleted
+      expect(readFileSync(join(legacy, '0001_a.webm'), 'utf8')).toBe('a');
+      expect(readdirSync(legacy).sort()).toEqual(['0001_a.webm', '0002_b.webm']);
+      expect(existsSync(join(blobDir, 'audio'))).toBe(false);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('does not warn when DATA_DIR/blobs is empty or missing', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      await createBindings(freshProcEnv()).close(); // missing
+      const env = freshProcEnv();
+      mkdirSync(join(dir, 'blobs', 'audio', 'sid-1'), { recursive: true }); // empty dirs only
+      await createBindings(env).close();
+      expect(warnSpy).not.toHaveBeenCalled();
+    } finally {
+      warnSpy.mockRestore();
     }
   });
 });
