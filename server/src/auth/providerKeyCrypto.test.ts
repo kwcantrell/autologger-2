@@ -13,7 +13,12 @@ import {
 } from './providerKeyCrypto';
 
 const secret = () => randomBytes(32).toString('base64');
-const A = { userId: 'ua', kind: 'llm' as const, origin: 'https://api.example.com' };
+const A = {
+  userId: 'ua',
+  kind: 'llm' as const,
+  provider: 'openai-compatible',
+  origin: 'https://api.example.com',
+};
 const KEY = 'sk-test-0123456789-9f2c';
 
 afterEach(() => {
@@ -99,8 +104,22 @@ describe('ProviderKeyCipher (design D2)', () => {
     expect(c.decrypt(s, { ...A, kind: 'stt' })).toBeNull();
     expect(c.decrypt(s, { ...A, origin: 'https://evil.example' })).toBeNull();
     // stt keys carry an empty origin.
-    const t = c.encrypt(KEY, { userId: 'ua', kind: 'stt', origin: null });
-    expect(c.decrypt(t, { userId: 'ua', kind: 'stt', origin: null })).toBe(KEY);
+    const t = c.encrypt(KEY, { userId: 'ua', kind: 'stt', provider: 'deepgram', origin: null });
+    expect(c.decrypt(t, { userId: 'ua', kind: 'stt', provider: 'deepgram', origin: null })).toBe(
+      KEY,
+    );
+  });
+
+  it('binds the provider: another provider with the same user, kind and origin gives null (owner decision 10)', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const c = new ProviderKeyCipher(parseProviderKeysSecret(secret()));
+    const fixed = { userId: 'ua', kind: 'llm' as const, provider: 'anthropic', origin: null };
+    const s = c.encrypt(KEY, fixed);
+    expect(c.decrypt(s, fixed)).toBe(KEY);
+    for (const provider of ['openai', 'google', 'openai-compatible']) {
+      expect(c.decrypt(s, { ...fixed, provider }), provider).toBeNull();
+    }
+    expect(c.decrypt(c.encrypt(KEY, A), { ...A, provider: 'openai' })).toBeNull();
   });
 
   it('another secret cannot decrypt', () => {

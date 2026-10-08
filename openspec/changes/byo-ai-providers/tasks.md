@@ -130,10 +130,11 @@ Anything else is a stop: update the artifacts and ask the owner.
   - Evidence: `checkProviderKeysSecret(env, secrets)` in `compose-run.mjs` refuses a missing, blank, malformed or non-32-byte value without printing it, and runs after `checkSignInClient`. `docker/secrets-env.yaml` allows `PROVIDER_KEYS_SECRET`. D7 category 9: the six full-run fixtures in `compose-run.test.mjs` gain `secret('PROVIDER_KEYS_SECRET', PKS)`, and the child-env names assertion gains `PROVIDER_KEYS_SECRET`. Docs: `server/.env.example` (the variable, and transcription now per-user with no production fallback), `docker/.env.example` (required; `DEEPGRAM_API_KEY` unused in production), `docker/.env.dev.example` (required; the dev fallback), `docker/.env.stage.example` (required; unused on stage), and `docs/openbao-secrets.md` (every stack needs it, generated per environment, the boot check, the lost-secret reset, no production DeepGram fallback).
   - Evidence: for the owner, `sh docker/scripts/test_check_envs.sh` -> `48 passed, 1 failed` ("clean tree passes", with `xargs: tar: terminated by signal 13` while copying the tree). It fails the same way with this change stashed (log `byo-3.4-checkenvs-base.log`, `48 passed, 1 failed`), so it is a local environment issue, not this change. CI runs it on the PR.
 
-- [ ] 3.5 (Owner decision 10) Test first, `providerKeyCrypto` unit tests: the binding includes the
+- [x] 3.5 (Owner decision 10) Test first, `providerKeyCrypto` unit tests: the binding includes the
   provider, so a key encrypted for `openai-compatible` does not decrypt as `anthropic` (or any
   other provider) with the same user, kind and origin. The existing fixtures gain `provider` (D7
   category 10). Red, then add `provider` to the binding and the AAD. Green and typecheck.
+  - Evidence: red, `cd server && npx vitest run --project unit src/auth/providerKeyCrypto.test.ts` -> `× binds the provider: another provider with the same user, kind and origin gives null (owner decision 10)`, `Tests  1 failed | 15 passed (16)` (log `byo-3.5-red.log`). Green, with `src/node/config.test.ts` -> `Tests  39 passed (39)` (log `byo-3.5-green.log`); `npm run typecheck` -> exit 0, 0 `error TS`. `ProviderKeyBinding` gains a required `provider`, and the AAD is `user\0kind\0provider\0origin`. D7 category 10: the `providerKeyCrypto.test.ts` bindings gain `provider` (`A` is `openai-compatible`; the `stt` case is `deepgram`). The 3.3 round-trip case in `config.test.ts`, written in this change, gains `provider: 'deepgram'`.
 
 ## 4. Routes and contract (design D4, D5)
 

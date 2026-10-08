@@ -289,7 +289,7 @@ describe('createBindings -- PROVIDER_KEYS_SECRET (byo-ai-providers D2)', () => {
     const set = createBindings(freshProcEnv({ PROVIDER_KEYS_SECRET: undefined }));
     try {
       const c = set.bindings.ports.providerKeys;
-      const b = { userId: 'u', kind: 'stt' as const, origin: null };
+      const b = { userId: 'u', kind: 'stt' as const, provider: 'deepgram', origin: null };
       expect(c.decrypt(c.encrypt('dg-key-0123', b), b)).toBe('dg-key-0123');
     } finally {
       await set.close();

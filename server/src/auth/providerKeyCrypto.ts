@@ -1,8 +1,9 @@
 // Provider key encryption at rest (byo-ai-providers design D2; provider-credentials "Provider keys
 // are encrypted at rest and write-only"). PROVIDER_KEYS_SECRET is base64 of exactly 32 bytes; two
 // keys are derived from it with HKDF-SHA256, one for AES-256-GCM and one for the check value that
-// ties stored keys to the secret. The additional data binds the owning user, the kind and, for an
-// LLM, the base URL's normalized origin, so a ciphertext never decrypts for another row or host.
+// ties stored keys to the secret. The additional data binds the owning user, the kind, the provider
+// and, for an OpenAI-compatible LLM, the base URL's normalized origin, so a ciphertext never
+// decrypts for another row, provider or host.
 // A failed decryption is `null` plus one log line with the user id and kind; nothing here ever
 // logs or throws key material.
 
@@ -37,14 +38,17 @@ export function parseProviderKeysSecret(value: string | undefined): Buffer {
   return bytes;
 }
 
-/** The additional data a key is bound to. `origin` is null for kinds without a base URL. */
+/** The additional data a key is bound to: its owner, kind, provider and (for an OpenAI-compatible
+ * provider) the base URL's normalized origin, null otherwise (owner decision 10). */
 export interface ProviderKeyBinding {
   userId: string;
   kind: ProviderKind;
+  provider: string;
   origin: string | null;
 }
 
-const aad = (b: ProviderKeyBinding) => Buffer.from(`${b.userId}\0${b.kind}\0${b.origin ?? ''}`);
+const aad = (b: ProviderKeyBinding) =>
+  Buffer.from(`${b.userId}\0${b.kind}\0${b.provider}\0${b.origin ?? ''}`);
 
 /** The last four characters of the trimmed key: all that is ever shown back. */
 export function keyLast4(key: string): string {
