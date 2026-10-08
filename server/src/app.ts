@@ -24,6 +24,7 @@ import { aiV2Router } from './routers/aiV2';
 import { audioRouter } from './routers/audio';
 import { authRouter } from './routers/auth';
 import { companionRouter } from './routers/companion';
+import { companionDevicesRouter } from './routers/companionDevices';
 import { eventsRouter } from './routers/events';
 import { exportsRouter } from './routers/exports';
 import { logImportRouter } from './routers/logImport';
@@ -246,6 +247,7 @@ export function wireApp(
   app.route('/', eventsRouter);
   app.route('/', audioRouter);
   app.route('/', companionRouter);
+  app.route('/', companionDevicesRouter);
   app.route('/', transcribeRouter);
   app.route('/', aiRouter);
   app.route('/', aiV2Router);
