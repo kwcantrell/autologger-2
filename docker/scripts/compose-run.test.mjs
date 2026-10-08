@@ -23,7 +23,6 @@ import {
   checkCredFile,
   checkNodeVersion,
   checkResolved,
-  checkSupabaseKeys,
   httpsJson,
   parseAddr,
   parseKvPath,
@@ -39,15 +38,12 @@ const REAL_DOCKER = spawnSync('sh', ['-c', 'command -v docker'], { encoding: 'ut
 const SECRET = 'csec-SHOULD-NOT-LEAK';
 const TOKEN = 'tok-SHOULD-NOT-LEAK';
 const PGPW = '0123456789abcdef0123456789abcdef'; // a valid POSTGRES_PASSWORD (supabase-db D4)
-// supabase-services: the compose files interpolate every Supabase key, so resolve needs them all.
+// supabase-services: the compose files interpolate every Supabase key, so resolve needs them all
+// (drop-unused-supabase-services D3: the four that remain).
 const SB_JS = 'j'.repeat(43);
-const sbJwt = (role) => {
-  const p = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
-  const hp = `${p({ alg: 'HS256', typ: 'JWT' })}.${p({ role, iss: 'supabase', exp: Math.floor(Date.now() / 1000) + 365 * 86400 })}`;
-  return `${hp}.${createHmac('sha256', SB_JS).update(hp).digest('base64url')}`;
-};
-const sbSecrets = () => [secret('POSTGRES_PASSWORD', PGPW), secret('SUPABASE_ROLES_PASSWORD', 'f'.repeat(32)), secret('APP_DB_PASSWORD', 'e'.repeat(32)), secret('JWT_SECRET', SB_JS),
-  secret('ANON_KEY', sbJwt('anon')), secret('SERVICE_ROLE_KEY', sbJwt('service_role')), secret('SECRET_KEY_BASE', 's'.repeat(64)),
+const sbSecrets = () => [secret('POSTGRES_PASSWORD', PGPW), secret('SUPABASE_ROLES_PASSWORD', 'f'.repeat(32)), secret('APP_DB_PASSWORD', 'e'.repeat(32)), secret('JWT_SECRET', SB_JS)];
+// drop-unused-supabase-services D3: the retired keys as the old generator wrote them.
+const retiredSecrets = () => [secret('ANON_KEY', 'aaa.bbb.ccc-anon-value'), secret('SERVICE_ROLE_KEY', 'aaa.bbb.ccc-service-value'), secret('SECRET_KEY_BASE', 's'.repeat(64)),
   secret('REALTIME_DB_ENC_KEY', 'r'.repeat(16)), secret('SUPABASE_PORT', '18790')];
 
 let T; // temp dir
@@ -491,7 +487,7 @@ describe('start-up checks (H1, H10, H11)', () => {
 describe('success path (D1 steps 5-6, H12)', () => {
   it('logs in once, reads the KV path, revokes the token, and spawns docker with only the clean env', async () => {
     writeCreds('dev');
-    handler = standIn([secret('GOOGLE_CLIENT_ID', `a'b"c$d\`e\nf`), secret('GOOGLE_CLIENT_SECRET', 'gsecret'), secret('BOOTSTRAP_OWNER_EMAIL', 'owner@example.com'), secret('DEV_PORT', '18787'), ...sbSecrets()]);
+    handler = standIn([secret('GOOGLE_CLIENT_ID', `a'b"c$d\`e\nf`), secret('GOOGLE_CLIENT_SECRET', 'gsecret'), secret('BOOTSTRAP_OWNER_EMAIL', 'owner@example.com'), secret('DEV_PORT', '18787'), ...sbSecrets(), ...retiredSecrets()]);
     const r = await run(['dev', 'compose version']);
     assert.equal(r.code, 0, r.out);
     assert.deepEqual(seen.map((q) => `${q.method} ${q.url}`), ['POST /v1/auth/approle/login', 'GET /v1/kv/data/autologger/dev', 'POST /v1/auth/token/revoke-self']);
@@ -505,7 +501,7 @@ describe('success path (D1 steps 5-6, H12)', () => {
     // drop-unused-supabase-services D3: the fixture still holds the retired keys; one warning names them.
     assert.equal(r.out.match(/warning/g)?.length, 1, r.out);
     assert.match(r.out, /^compose-run: warning: the OpenBao dev secret holds retired keys ANON_KEY, REALTIME_DB_ENC_KEY, SECRET_KEY_BASE, SERVICE_ROLE_KEY, SUPABASE_PORT; /m);
-    for (const [k, v] of sbSecrets()) if (/ANON|SERVICE_ROLE|SECRET_KEY_BASE|REALTIME/.test(k)) assert.ok(!r.out.includes(v), k);
+    for (const [k, v] of retiredSecrets()) if (v.length > 5) assert.ok(!r.out.includes(v), k);
     const argv = log('argv');
     assert.match(argv, /--env-file \/dev\/null/);
     assert.doesNotMatch(argv, new RegExp(`${SECRET}|${TOKEN}`));
@@ -588,7 +584,7 @@ describe('guard steps (resolved, urls, prod-tags, reset; H8)', () => {
     const r = await run(['dev', 'resolved', 'urls']);
     assert.equal(r.code, 0, r.out);
     assert.match(r.out, /127\.0\.0\.1:18787/);
-    assert.match(r.out, /Supabase: +http:\/\/localhost:18790/);
+    assert.doesNotMatch(r.out, /Supabase:/); // drop-unused-supabase-services D3
   });
   it('resolved refuses 8080, 80/443 in dev, and a non-numeric port', async () => {
     writeCreds('dev');
@@ -658,7 +654,7 @@ describe('Postgres password and prod run/exec (supabase-db D4, D6)', () => {
     assert.equal(r.code, 0, r.out);
   });
   it('resolved refuses a config where the password value appears outside db and migrate', () => {
-    const ok = { name: 'autologger', services: { router: { ports: [{ host_ip: '127.0.0.1', published: '8080' }] }, 'supabase-gw': { ports: [{ host_ip: '127.0.0.1', published: '8790' }] }, db: { environment: { POSTGRES_PASSWORD: PGPW } }, migrate: { environment: { PGPASSWORD: PGPW } } } };
+    const ok = { name: 'autologger', services: { router: { ports: [{ host_ip: '127.0.0.1', published: '8080' }] }, db: { environment: { POSTGRES_PASSWORD: PGPW } }, migrate: { environment: { PGPASSWORD: PGPW } } } };
     const secrets = new Map([['POSTGRES_PASSWORD', PGPW]]);
     assert.doesNotThrow(() => checkResolved('prod', ok, secrets));
     for (const leak of [{ labels: { x: `pw=${PGPW}` } }, { environment: { DATABASE_URL: `postgres://u:${PGPW}@db/x` } }, { build: { args: { P: PGPW } } }]) {
@@ -692,7 +688,7 @@ describe('APP_DB_PASSWORD (catalog-pg-schema D4, D5)', () => {
     const ports = env === 'dev'
       ? { app: { ports: [{ host_ip: '127.0.0.1', published: '8787' }] }, companion: { ports: [{ host_ip: '127.0.0.1', published: '8000' }] } }
       : { router: { ports: [{ host_ip: '127.0.0.1', published: env === 'prod' ? '8080' : '8788' }] } };
-    return { name: { dev: 'autologger-dev', stage: 'autologger-stage', prod: 'autologger' }[env], services: { ...ports, 'supabase-gw': { ports: [{ host_ip: '127.0.0.1', published: '8790' }] }, migrate: { environment: { APP_DB_PASSWORD: APW } } } };
+    return { name: { dev: 'autologger-dev', stage: 'autologger-stage', prod: 'autologger' }[env], services: { ...ports, migrate: { environment: { APP_DB_PASSWORD: APW } } } };
   };
   const secrets = new Map([['APP_DB_PASSWORD', APW]]);
   const refusal = (env, svc) => {
@@ -714,19 +710,13 @@ describe('APP_DB_PASSWORD (catalog-pg-schema D4, D5)', () => {
   });
 });
 
-// supabase-services D4: formats, JWT consistency, per-secret confinement.
-const b64u = (x) => Buffer.from(typeof x === 'string' ? x : JSON.stringify(x)).toString('base64url');
-function jwt(secret, payload, header = { alg: 'HS256', typ: 'JWT' }) {
-  const hp = `${b64u(header)}.${b64u(payload)}`;
-  return `${hp}.${createHmac('sha256', secret).update(hp).digest('base64url')}`;
-}
+// supabase-services D4: formats and per-secret confinement (drop-unused-supabase-services D3: the
+// anon/service-role JWT check is gone with the services that used the keys).
 const JS = 'j'.repeat(43);
-const now = Math.floor(Date.now() / 1000);
-const ANON = jwt(JS, { role: 'anon', iss: 'supabase', iat: now, exp: now + 5 * 365 * 86400 });
-const SVC = jwt(JS, { role: 'service_role', iss: 'supabase', iat: now, exp: now + 5 * 365 * 86400 });
+const RPW = 'f'.repeat(32);
 
 describe('Supabase keys (supabase-services D4)', () => {
-  const keys = ['POSTGRES_PASSWORD', 'SUPABASE_ROLES_PASSWORD', 'JWT_SECRET', 'SECRET_KEY_BASE', 'REALTIME_DB_ENC_KEY', 'ANON_KEY', 'SERVICE_ROLE_KEY', 'SUPABASE_PORT'];
+  const keys = ['POSTGRES_PASSWORD', 'SUPABASE_ROLES_PASSWORD', 'JWT_SECRET'];
   const allowed = new Set(keys);
   it('each format refuses a bad value without printing it', () => {
     // drop-unused-supabase-services D3: the retired keys have no format any more (see below).
@@ -743,31 +733,24 @@ describe('Supabase keys (supabase-services D4)', () => {
     const ok = validateSecrets(kv([secret('SUPABASE_ROLES_PASSWORD', PGPW), secret('JWT_SECRET', JS)]), allowed);
     assert.equal(ok.size, 2);
   });
-  it('the anon and service-role keys must verify against JWT_SECRET with the right roles', () => {
-    const m = (o) => new Map(Object.entries({ JWT_SECRET: JS, ANON_KEY: ANON, SERVICE_ROLE_KEY: SVC, ...o }));
-    assert.deepEqual(checkSupabaseKeys(m({})), []);
-    const refused = (o, re) => {
-      let msg = '';
-      try { checkSupabaseKeys(m(o)); } catch (e) { msg = e.message; }
-      assert.match(msg, re, JSON.stringify(Object.keys(o)));
-      for (const v of Object.values(o)) if (v && v.length > 8) assert.ok(!msg.includes(v));
-    };
-    refused({ ANON_KEY: SVC, SERVICE_ROLE_KEY: ANON }, /ANON_KEY/);
-    refused({ ANON_KEY: jwt('x'.repeat(43), { role: 'anon', exp: now + 999999 }) }, /ANON_KEY/);
-    refused({ SERVICE_ROLE_KEY: jwt(JS, { role: 'service_role', exp: now - 10 }) }, /SERVICE_ROLE_KEY/);
-    refused({ ANON_KEY: jwt(JS, { role: 'anon', exp: now + 999999 }, { alg: 'none' }) }, /ANON_KEY/);
-    refused({ SERVICE_ROLE_KEY: ANON }, /SERVICE_ROLE_KEY/);
-    refused({ ANON_KEY: undefined }, /ANON_KEY/);
-    const warn = checkSupabaseKeys(m({ ANON_KEY: jwt(JS, { role: 'anon', exp: now + 30 * 86400 }) }));
-    assert.equal(warn.length, 1);
-    assert.match(warn[0], /ANON_KEY.*expires/);
-    assert.deepEqual(checkSupabaseKeys(new Map([['POSTGRES_PASSWORD', PGPW]])), []);
+  it('an ANON_KEY signed with another secret is not refused (drop-unused-supabase-services D3)', async () => {
+    writeCreds('dev');
+    const p = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
+    const hp = `${p({ alg: 'HS256', typ: 'JWT' })}.${p({ role: 'anon', exp: Math.floor(Date.now() / 1000) + 86400 })}`;
+    const foreign = `${hp}.${createHmac('sha256', 'x'.repeat(43)).update(hp).digest('base64url')}`;
+    handler = standIn([secret('GOOGLE_CLIENT_ID', 'gid'), secret('GOOGLE_CLIENT_SECRET', 'gsecret'), secret('BOOTSTRAP_OWNER_EMAIL', 'owner@example.com'), secret('DEV_PORT', '18787'), ...sbSecrets(), secret('ANON_KEY', foreign)]);
+    const r = await run(['dev', 'compose version']);
+    assert.equal(r.code, 0, r.out);
+    assert.match(r.out, /retired keys ANON_KEY;/);
+    assert.ok(!r.out.includes(foreign));
   });
   it('resolved refuses a secret value outside its allowed services', () => {
-    const base = { name: 'autologger', services: { router: { ports: [{ host_ip: '127.0.0.1', published: '8080' }] }, realtime: { environment: { ANON: ANON, DB: PGPW } }, storage: { environment: { A: ANON, S: SVC } }, 'supabase-gw': { environment: { A: ANON, S: SVC }, ports: [{ host_ip: '127.0.0.1', published: '8790' }] } } };
-    const secrets = new Map([['POSTGRES_PASSWORD', PGPW], ['ANON_KEY', ANON], ['SERVICE_ROLE_KEY', SVC]]);
+    // drop-unused-supabase-services D3: db, migrate and auth hold the Supabase keys; rest, realtime
+    // and storage are fixture services that no longer exist.
+    const base = { name: 'autologger', services: { router: { ports: [{ host_ip: '127.0.0.1', published: '8080' }] }, db: { environment: { P: PGPW, R: RPW } }, migrate: { environment: { P: PGPW } }, auth: { environment: { R: RPW, J: JS } } } };
+    const secrets = new Map([['POSTGRES_PASSWORD', PGPW], ['SUPABASE_ROLES_PASSWORD', RPW], ['JWT_SECRET', JS]]);
     assert.doesNotThrow(() => checkResolved('prod', base, secrets));
-    for (const [svc, k, v] of [['api', 'ANON_KEY', ANON], ['rest', 'POSTGRES_PASSWORD', PGPW], ['realtime', 'SERVICE_ROLE_KEY', SVC]]) {
+    for (const [svc, k, v] of [['api', 'JWT_SECRET', JS], ['rest', 'JWT_SECRET', JS], ['storage', 'JWT_SECRET', JS], ['realtime', 'POSTGRES_PASSWORD', PGPW], ['rest', 'SUPABASE_ROLES_PASSWORD', RPW], ['auth', 'POSTGRES_PASSWORD', PGPW]]) {
       const cfg = structuredClone(base);
       cfg.services[svc] = { ...(cfg.services[svc] ?? {}), labels: { x: v } };
       let msg = '';
@@ -799,14 +782,17 @@ describe('retired Supabase keys (drop-unused-supabase-services D3)', () => {
   });
 });
 
-describe('published ports with the Supabase gateway (supabase-services D4)', () => {
+describe('published ports without the Supabase gateway (drop-unused-supabase-services D3)', () => {
   const port = (n) => ({ ports: [{ host_ip: '127.0.0.1', published: String(n) }] });
-  it('dev needs app, Companion and the gateway on distinct ports; stage and prod the router and the gateway', () => {
-    assert.doesNotThrow(() => checkResolved('dev', { name: 'autologger-dev', services: { app: port(8787), companion: port(8000), 'supabase-gw': port(8790) } }));
-    assert.throws(() => checkResolved('dev', { name: 'autologger-dev', services: { app: port(8787), companion: port(8000) } }), /expected set/);
-    assert.throws(() => checkResolved('dev', { name: 'autologger-dev', services: { app: port(8787), companion: port(8000), 'supabase-gw': port(8787) } }), /expected set/);
-    assert.doesNotThrow(() => checkResolved('stage', { name: 'autologger-stage', services: { router: port(8788), 'supabase-gw': port(8791) } }));
-    assert.throws(() => checkResolved('stage', { name: 'autologger-stage', services: { router: port(8788) } }), /expected set/);
+  it('dev needs exactly app and Companion on distinct ports; stage and prod exactly the router', () => {
+    assert.doesNotThrow(() => checkResolved('dev', { name: 'autologger-dev', services: { app: port(8787), companion: port(8000) } }));
+    assert.throws(() => checkResolved('dev', { name: 'autologger-dev', services: { app: port(8787), companion: port(8000), 'supabase-gw': port(8790) } }), /expected set/);
+    assert.throws(() => checkResolved('dev', { name: 'autologger-dev', services: { app: port(8787), companion: port(8787) } }), /expected set/);
+    assert.throws(() => checkResolved('dev', { name: 'autologger-dev', services: { app: port(8787) } }), /expected set/);
+    for (const [env, name, p] of [['stage', 'autologger-stage', 8788], ['prod', 'autologger', 8080]]) {
+      assert.doesNotThrow(() => checkResolved(env, { name, services: { router: port(p) } }), env);
+      assert.throws(() => checkResolved(env, { name, services: { router: port(p), 'supabase-gw': port(8791) } }), /expected set/, env);
+    }
   });
 });
 
