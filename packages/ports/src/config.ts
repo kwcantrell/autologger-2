@@ -23,6 +23,11 @@ export interface Config {
   ADMIN_TOKEN: string;
   DEEPGRAM_API_KEY: string;
   DEEPGRAM_MODEL: string;
+  /** Provider development mode (byo-ai-providers D3; provider-credentials "Development mode is
+   * explicit"), decided once at boot: true only when `NODE_ENV` is exactly `development` or
+   * `test`. Absent or false is production mode, the default, which keeps every provider protection
+   * on and never falls back to `DEEPGRAM_API_KEY`. Nothing reads `NODE_ENV` at request time. */
+  PROVIDER_DEV_MODE?: boolean;
   /** AI topics chat (ai-topics-chat). Unset/blank/whitespace CLAUDE_CLI_PATH ⇒
    * feature off (503). The rest tune spend/lifecycle bounds. */
   CLAUDE_CLI_PATH: string;

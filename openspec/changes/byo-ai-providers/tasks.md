@@ -88,9 +88,11 @@ Anything else is a stop: update the artifacts and ask the owner.
     not the value.
   Red, then implement. Green.
   - Evidence: red, `cd server && npx vitest run --project unit src/auth/providerKeyCrypto.test.ts` -> `Error: Cannot find module './providerKeyCrypto'`, `Test Files  1 failed (1)` (log `byo-3.1-red.log`). Green -> `Tests  15 passed (15)` (log `byo-3.1-green.log`). The 15 cases: a 32-byte secret is accepted; missing, empty, whitespace, 16-byte, 33-byte and non-base64 secrets are refused with a message naming `PROVIDER_KEYS_SECRET` and not the value; a round trip with version 1, `last4`, a 12-byte nonce and a 16-byte tag; a fresh nonce each time; a tampered tag, ciphertext or nonce, a short nonce, or version 2 give `null`, with one warn line each naming only the user id and kind; another user, kind or origin as AAD gives `null`; another secret can't decrypt; the check value is stable per secret, differs between secrets and is not the secret; a random cipher round-trips; `keyLast4`. The module is `server/src/auth/providerKeyCrypto.ts` (HKDF-SHA256 encryption and check keys, AES-256-GCM, AAD `user\0kind\0origin`).
-- [ ] 3.2 Test first, config unit tests: `PROVIDER_DEV_MODE` is true only for `NODE_ENV`
+- [x] 3.2 Test first, config unit tests: `PROVIDER_DEV_MODE` is true only for `NODE_ENV`
   `development` or `test`, and false for unset, `production` and `staging`. Red, then add the
   field. Green.
+  - Evidence: red, `cd server && npx vitest run --project unit src/node/config.test.ts` -> six `× NODE_ENV … gives PROVIDER_DEV_MODE …`, `Tests  6 failed | 14 passed (20)` (log `byo-3.2-red.log`). Green -> `Tests  20 passed (20)` (log `byo-3.2-green.log`); `npm run typecheck` -> exit 0, 0 `error TS`. `Config.PROVIDER_DEV_MODE?: boolean` (`packages/ports/src/config.ts`, optional, so absent is production mode and the two complete `Config` literals from 1.1 stay unchanged) is set in `createBindings` to `NODE_ENV === 'development' || NODE_ENV === 'test'`. The new cases cover `development` and `test` (true), and `production`, `staging`, `Development` and unset (false).
+
 - [ ] 3.3 Test first, boot tests:
   - `main.ts` with no secret, or a malformed one, exits 1 naming the variable before the
     `DATA_DIR` lock is taken;

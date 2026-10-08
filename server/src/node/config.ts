@@ -160,6 +160,8 @@ export function createBindings(
       ADMIN_TOKEN: procEnv.ADMIN_TOKEN || '',
       DEEPGRAM_API_KEY: procEnv.DEEPGRAM_API_KEY || '',
       DEEPGRAM_MODEL: procEnv.DEEPGRAM_MODEL || '',
+      // byo-ai-providers D3: production mode unless NODE_ENV is exactly development or test.
+      PROVIDER_DEV_MODE: procEnv.NODE_ENV === 'development' || procEnv.NODE_ENV === 'test',
       CLAUDE_CLI_PATH: procEnv.CLAUDE_CLI_PATH || '',
       AI_CHAT_TIMEOUT_SEC: procEnv.AI_CHAT_TIMEOUT_SEC || '',
       AI_PROVIDER: aiProvider,

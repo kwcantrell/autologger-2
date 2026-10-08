@@ -247,3 +247,21 @@ describe('createBindings -- AI_PROVIDER (run-status-and-sweeper D1)', () => {
     }
   });
 });
+
+describe('createBindings -- PROVIDER_DEV_MODE (byo-ai-providers D3)', () => {
+  it.each([
+    ['development', true],
+    ['test', true],
+    ['production', false],
+    ['staging', false],
+    ['Development', false],
+    [undefined, false],
+  ])('NODE_ENV %s gives PROVIDER_DEV_MODE %s, so production mode is the default', async (nodeEnv, dev) => {
+    const set = createBindings(freshProcEnv({ NODE_ENV: nodeEnv }));
+    try {
+      expect(set.bindings.config.PROVIDER_DEV_MODE).toBe(dev);
+    } finally {
+      await set.close();
+    }
+  });
+});
