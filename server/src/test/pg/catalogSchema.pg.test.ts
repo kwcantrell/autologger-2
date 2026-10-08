@@ -44,7 +44,12 @@ const TABLES = [
   'session_overwrites',
   // session-leases D1: the recording lease (ADR 0021 slice 8a).
   'session_leases',
+  // companion-devices D1: Companion devices and browser presence (ADR 0021 slice 9d).
+  'companion_devices',
+  'companion_presence',
 ];
+// companion-devices D1: the tables with no catalog_user policy and no catalog_user privilege.
+const SYSTEM_ONLY = ['kv', 'companion_devices', 'companion_presence'];
 const KEY_COLUMN: Record<string, string> = {
   users: 'id',
   user_studio_memberships: 'user_id',
@@ -59,6 +64,8 @@ const KEY_COLUMN: Record<string, string> = {
   ...Object.fromEntries(SESSION_TABLES.map((t) => [t, 'session_id'])),
   session_overwrites: 'session_id',
   session_leases: 'session_id',
+  companion_devices: 'id',
+  companion_presence: 'client_id',
 };
 const MIGRATIONS = resolve(import.meta.dirname, '../../../../supabase/migrations');
 const MIGRATION = resolve(MIGRATIONS, '20261001000000_catalog_schema.sql');
@@ -407,15 +414,48 @@ const EXPECTED_SCHEMA: SchemaRecord = {
     primaryKey: ['session_id', 'kind'],
     foreignKeys: ['FOREIGN KEY (session_id) REFERENCES catalog.sessions(id)'],
   },
-  $unique: ['catalog.users UNIQUE (google_sub)'],
+  // companion-devices D1: each user's Companion devices, by token hash.
+  companion_devices: {
+    columns: [
+      'id text collate C not null',
+      'user_id text collate C not null',
+      'name text collate C not null',
+      'token_hash text collate C not null',
+      'created_at_utc text collate C not null',
+      'last_used_at_utc text collate C',
+    ],
+    primaryKey: ['id'],
+    foreignKeys: ['FOREIGN KEY (user_id) REFERENCES catalog.users(id) ON DELETE CASCADE'],
+  },
+  // companion-devices D1: one row per browser tab.
+  companion_presence: {
+    columns: [
+      'client_id text collate C not null',
+      'user_id text collate C not null',
+      'session_id text collate C',
+      'visible boolean not null',
+      'is_playing boolean not null',
+      'updated_at_ms bigint not null',
+    ],
+    primaryKey: ['client_id'],
+    foreignKeys: [
+      'FOREIGN KEY (session_id) REFERENCES catalog.sessions(id) ON DELETE SET NULL',
+      'FOREIGN KEY (user_id) REFERENCES catalog.users(id) ON DELETE CASCADE',
+    ],
+  },
+  $unique: ['catalog.companion_devices UNIQUE (token_hash)', 'catalog.users UNIQUE (google_sub)'],
   // owner-bootstrap D1: the role check and at most one owner per team.
   $checks: [
+    'catalog.companion_devices companion_devices_name_check CHECK (((char_length(name) >= 1) AND (char_length(name) <= 80)))',
+    'catalog.companion_presence companion_presence_client_id_check CHECK (((char_length(client_id) >= 1) AND (char_length(client_id) <= 256)))',
     "catalog.session_leases session_leases_client_check CHECK (((holder_client_id <> ''::text) AND (length(holder_client_id) <= 256)))",
     "catalog.session_leases session_leases_kind_check CHECK ((kind = ANY (ARRAY['recording'::text, 'ai-turn'::text, 'transcript-generation'::text, 'youtube-import'::text])))",
     "catalog.session_overwrites session_overwrites_table_name_check CHECK ((table_name = ANY (ARRAY['session_events'::text, 'session_transcript_words'::text, 'session_topics'::text])))",
     "catalog.user_studio_memberships user_studio_memberships_role_check CHECK ((role = ANY (ARRAY['owner'::text, 'admin'::text, 'member'::text])))",
   ],
   $indexes: [
+    'CREATE INDEX idx_companion_devices_user ON catalog.companion_devices USING btree (user_id)',
+    'CREATE INDEX idx_companion_presence_user ON catalog.companion_presence USING btree (user_id, updated_at_ms)',
     'CREATE INDEX idx_session_audio_ordinal ON catalog.session_audio_segments USING btree (session_id, ordinal)',
     'CREATE INDEX idx_session_audio_r2_key ON catalog.session_audio_segments USING btree (session_id, r2_key)',
     'CREATE INDEX idx_session_dashboards_created ON catalog.session_dashboards USING btree (session_id, created_at_utc)',
@@ -569,6 +609,11 @@ describe('the app role (design D3)', () => {
                 replaced_version, before_json) values ('se', 'o', 'session_events', 'e', 'u', ${t}, 1, '{}')`;
     await sql`insert into session_leases (session_id, kind, holder_client_id, holder_user_id,
                 heartbeat_at_ms, expires_at_ms) values ('se', 'recording', 'c', 'u', 1, 2)`;
+    // companion-devices D1.
+    await sql`insert into companion_devices (id, user_id, name, token_hash, created_at_utc)
+              values ('d', 'u', 'n', 'h', ${t})`;
+    await sql`insert into companion_presence (client_id, user_id, session_id, visible, is_playing,
+                updated_at_ms) values ('c', 'u', 'se', true, false, 1)`;
     for (const table of TABLES) {
       const n = await sql.unsafe(`select count(*)::int as n from ${table}`);
       expect(n[0]?.n, table).toBeGreaterThan(0);
@@ -713,7 +758,8 @@ describe('row-level security on every catalog table (catalog-roles D1, D2; catal
       // has exactly the system policy and the one `_user_all` content policy, and catalog_user
       // holds select, insert, update and delete on it.
       const userPolicies = policies.filter((p) => (p.roles as string[]).includes('catalog_user'));
-      expect(userPolicies.length > 0, t.relname).toBe(t.relname !== 'kv');
+      // companion-devices D1: the two Companion tables are system-only, like kv.
+      expect(userPolicies.length > 0, t.relname).toBe(!SYSTEM_ONLY.includes(t.relname));
       // session-row-versions D1: the audit has the system policy and one user insert policy, and
       // catalog_user holds the insert privilege only.
       if (t.relname === 'session_overwrites') {

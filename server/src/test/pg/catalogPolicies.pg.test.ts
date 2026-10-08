@@ -572,7 +572,7 @@ describe('the catalog_user policies as installed', () => {
     const rows = await admin`select tablename, policyname, qual, with_check from pg_policies
                              where schemaname = 'catalog' and 'catalog_user' = any(roles)`;
     // session-row-versions D1: 32 plus the overwrite audit's insert policy; session-leases D1:
-    // plus the four lease policies.
+    // plus the four lease policies. companion-devices D1: the two Companion tables add none.
     expect(rows).toHaveLength(37);
     for (const p of rows) {
       expect(p.qual, `${p.policyname} using`).not.toBe('true');
@@ -580,12 +580,14 @@ describe('the catalog_user policies as installed', () => {
     }
   });
 
-  it('every table except kv has a catalog_user policy, and every table a catalog_system one', async () => {
-    for (const table of Object.keys(RULES)) {
+  it('every table except kv and the two Companion tables has a catalog_user policy, and every table a catalog_system one', async () => {
+    // companion-devices D1: companion_devices and companion_presence are system-only, like kv.
+    const systemOnly = ['kv', 'companion_devices', 'companion_presence'];
+    for (const table of [...Object.keys(RULES), 'companion_devices', 'companion_presence']) {
       const rows = await admin`select roles::text[] as roles from pg_policies
                                where schemaname = 'catalog' and tablename = ${table}`;
       const roles = rows.flatMap((r) => r.roles as string[]);
-      expect(roles.includes('catalog_user'), table).toBe(table !== 'kv');
+      expect(roles.includes('catalog_user'), table).toBe(!systemOnly.includes(table));
       expect(roles.includes('catalog_system'), table).toBe(true);
     }
   });
