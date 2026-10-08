@@ -213,8 +213,11 @@ These properties SHALL hold:
   `auth-app` or `auth-egress`.
 - **Single replica:** `api` SHALL have a fixed `container_name`, so it cannot be scaled past
   one replica.
-- **Volumes:** `api` SHALL mount persistent volumes for `DATA_DIR` and for the runtime
-  user's home directory, which holds `~/.claude/` and `~/.claude.json`. `db` SHALL keep its
+- **Volumes:** `api` SHALL mount persistent volumes for `DATA_DIR`, for `BLOB_DIR` (its own
+  named volume at `/blobs`, holding the audio blobs, separate from the `DATA_DIR` volume so
+  every server process can share it; `BLOB_DIR` is a literal in `api`'s `environment`, never an
+  OpenBao value) and for the runtime user's home directory, which holds `~/.claude/` and
+  `~/.claude.json`. `db` SHALL keep its
   data directory and its `/etc/postgresql-custom` directory on named volumes, and `storage` its
   objects on a named volume.
 - **Secrets:** secrets SHALL come from the OpenBao `kv/autologger/prod` KV secret, read with the prod
@@ -258,8 +261,8 @@ These properties SHALL hold:
 
 #### Scenario: State survives recreation
 - **WHEN** the `api` container is recreated from a new image tag
-- **THEN** the catalog, sessions, blobs, `~/.claude/` credentials, and `~/.claude.json` written before
-  recreation are still present
+- **THEN** the catalog, sessions, the audio blobs in the `BLOB_DIR` volume, `~/.claude/`
+  credentials, and `~/.claude.json` written before recreation are still present
 
 #### Scenario: A second api replica is refused
 - **WHEN** `docker compose up --scale api=2` is run
