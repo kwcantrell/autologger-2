@@ -190,29 +190,34 @@ describe('PostgresProviderCredentialStore (byo-ai-providers D1)', () => {
     expect(await store.get('ua', 'stt')).not.toBeNull();
   });
 
-  it(`takeTestSlot counts within a ${PROVIDER_TEST_WINDOW_MS} ms window and restarts after it`, async () => {
+  it(`takeTestSlot counts per user within a ${PROVIDER_TEST_WINDOW_MS} ms window and restarts after it`, async () => {
     const { store, tick } = await env();
-    expect(await store.takeTestSlot('ua', 'stt')).toBeNull();
-    await store.put('ua', 'stt', { ...STT, key: key(1) });
-    const counts: (number | null)[] = [];
+    const counts: number[] = [];
     for (let i = 0; i <= PROVIDER_TEST_LIMIT; i++) {
-      counts.push(await store.takeTestSlot('ua', 'stt'));
+      counts.push(await store.takeTestSlot('ua'));
       tick(1_000);
     }
     expect(counts).toEqual([1, 2, 3, 4, 5, 6]);
     tick(PROVIDER_TEST_WINDOW_MS);
-    expect(await store.takeTestSlot('ua', 'stt')).toBe(1);
+    expect(await store.takeTestSlot('ua')).toBe(1);
     // Another user's window is separate.
-    await store.put('ub', 'stt', { ...STT, key: key(2) });
-    expect(await store.takeTestSlot('ub', 'stt')).toBe(1);
+    expect(await store.takeTestSlot('ub')).toBe(1);
+  });
+
+  it('the window survives deleting and re-saving a credential (byo 2.4, re-panel)', async () => {
+    const { store } = await env();
+    await store.put('ua', 'llm', { ...LLM, key: key(1) });
+    for (let i = 0; i < 5; i++) await store.takeTestSlot('ua');
+    await store.delete('ua', 'llm');
+    await store.put('ua', 'llm', { ...LLM, key: key(2) });
+    expect(await store.takeTestSlot('ua')).toBe(6);
   });
 
   it('concurrent takeTestSlot calls from different connections count each one once', async () => {
     const { store, root, clock } = await env();
-    await store.put('ua', 'llm', { ...LLM, key: key(1) });
     const other = new PostgresProviderCredentialStore(root, clock);
     const counts = await Promise.all(
-      Array.from({ length: 8 }, (_, i) => (i % 2 ? store : other).takeTestSlot('ua', 'llm')),
+      Array.from({ length: 8 }, (_, i) => (i % 2 ? store : other).takeTestSlot('ua')),
     );
     expect([...counts].sort((a, b) => Number(a) - Number(b))).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
   });

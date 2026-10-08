@@ -9,7 +9,11 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { type ConnOptions, createTestDatabase } from '../../../../test/pg/testDb';
 
 const T = '2026-10-16T00:00:00.000Z';
-const TABLES = ['user_provider_credentials', 'provider_key_check'] as const;
+const TABLES = [
+  'user_provider_credentials',
+  'provider_key_check',
+  'provider_test_windows',
+] as const;
 
 const open: postgres.Sql[] = [];
 function connect(o: ConnOptions): postgres.Sql {
@@ -124,6 +128,8 @@ describe('the provider tables are system-only (catalog-database "Provider creden
       `update user_provider_credentials set model = model where user_id = 'u1'`,
       `delete from user_provider_credentials where user_id = 'u1'`,
       'select count(*) from provider_key_check',
+      `insert into provider_test_windows (user_id, window_start_ms, test_count) values ('u1', 1, 1)`,
+      'select count(*) from provider_test_windows',
       `update provider_key_check set check_value = 'x'`,
       'delete from provider_key_check',
     ]) {
@@ -142,35 +148,34 @@ describe('the provider tables are system-only (catalog-database "Provider creden
     await seedUser(sys, 'u2');
     await sys.unsafe(insertCredential('u1', 'llm'));
     await sys.unsafe(insertCredential('u2', 'stt'));
-    const rows = await sys`update user_provider_credentials set test_count = 2,
-                             test_window_start_ms = 1000 returning user_id, test_count`;
+    const rows = await sys`update user_provider_credentials set model = 'm2' returning user_id`;
     expect(rows.map((r) => r.user_id).sort()).toEqual(['u1', 'u2']);
+    await sys`insert into provider_test_windows (user_id, window_start_ms, test_count)
+              values ('u1', 1000, 1), ('u2', 1000, 2)`;
+    expect(
+      (await sys`update provider_test_windows set test_count = 3 returning user_id`).length,
+    ).toBe(2);
+    expect((await sys`delete from provider_test_windows returning user_id`).length).toBe(2);
     expect((await sys`delete from user_provider_credentials returning user_id`).length).toBe(2);
   });
 });
 
 describe('the provider tables keep their constraints (design D1)', () => {
-  it('stores the key only as bytea parts and defaults the test window to empty', async () => {
+  it('stores the key only as bytea parts, and keeps no test window on the credential (byo 2.4)', async () => {
     const db = await createTestDatabase();
     const sys = connect(db.system);
     await seedUser(sys, 'u1');
     await sys.unsafe(insertCredential('u1', 'llm'));
-    const [r] = await sys`select key_nonce, key_ciphertext, key_tag, key_version, key_last4,
-                                 test_window_start_ms, test_count from user_provider_credentials`;
+    const [r] = await sys`select key_nonce, key_ciphertext, key_tag, key_version, key_last4
+                          from user_provider_credentials`;
+    const cols = await sys`select column_name from information_schema.columns
+                           where table_schema = 'catalog' and table_name = 'user_provider_credentials'`;
+    expect(cols.map((c) => c.column_name)).not.toContain('test_window_start_ms');
+    expect(cols.map((c) => c.column_name)).not.toContain('test_count');
     expect(Buffer.isBuffer(r?.key_nonce)).toBe(true);
     expect(Buffer.isBuffer(r?.key_ciphertext)).toBe(true);
     expect(Buffer.isBuffer(r?.key_tag)).toBe(true);
-    expect({
-      v: r?.key_version,
-      last4: r?.key_last4,
-      w: r?.test_window_start_ms,
-      n: r?.test_count,
-    }).toEqual({
-      v: 1,
-      last4: 'abcd',
-      w: null,
-      n: 0,
-    });
+    expect({ v: r?.key_version, last4: r?.key_last4 }).toEqual({ v: 1, last4: 'abcd' });
   });
 
   it('a deleted user takes their credentials; other users keep theirs', async () => {
@@ -181,9 +186,14 @@ describe('the provider tables keep their constraints (design D1)', () => {
     await sys.unsafe(insertCredential('u1', 'llm'));
     await sys.unsafe(insertCredential('u1', 'stt'));
     await sys.unsafe(insertCredential('u2', 'stt'));
+    await sys`insert into provider_test_windows (user_id, window_start_ms, test_count)
+              values ('u1', 1, 1), ('u2', 1, 1)`;
     await sys`delete from users where id = 'u1'`;
     const rows = await sys`select user_id, kind from user_provider_credentials`;
     expect(rows.map((r) => `${r.user_id}:${r.kind}`)).toEqual(['u2:stt']);
+    expect((await sys`select user_id from provider_test_windows`).map((r) => r.user_id)).toEqual([
+      'u2',
+    ]);
   });
 
   it('refuses a second credential of a kind, an unknown user, and out-of-range values', async () => {

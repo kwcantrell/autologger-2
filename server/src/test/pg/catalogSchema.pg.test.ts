@@ -50,6 +50,8 @@ const TABLES = [
   // byo-ai-providers D1: per-user provider credentials and the master-key check value.
   'user_provider_credentials',
   'provider_key_check',
+  // byo-ai-providers 2.4: the per-user connection-test window.
+  'provider_test_windows',
 ];
 // companion-devices D1: the tables with no catalog_user policy and no catalog_user privilege.
 // byo-ai-providers D1: plus the two provider tables.
@@ -59,6 +61,7 @@ const SYSTEM_ONLY = [
   'companion_presence',
   'user_provider_credentials',
   'provider_key_check',
+  'provider_test_windows',
 ];
 const KEY_COLUMN: Record<string, string> = {
   users: 'id',
@@ -78,6 +81,7 @@ const KEY_COLUMN: Record<string, string> = {
   companion_presence: 'client_id',
   user_provider_credentials: 'user_id',
   provider_key_check: 'check_value',
+  provider_test_windows: 'user_id',
 };
 const MIGRATIONS = resolve(import.meta.dirname, '../../../../supabase/migrations');
 const MIGRATION = resolve(MIGRATIONS, '20261001000000_catalog_schema.sql');
@@ -469,12 +473,19 @@ const EXPECTED_SCHEMA: SchemaRecord = {
       'key_tag bytea not null',
       'key_version smallint not null',
       'key_last4 text collate C not null',
-      'test_window_start_ms bigint',
-      'test_count smallint not null default 0',
       'created_at_utc text collate C not null',
       'updated_at_utc text collate C not null',
     ],
     primaryKey: ['user_id', 'kind'],
+    foreignKeys: ['FOREIGN KEY (user_id) REFERENCES catalog.users(id) ON DELETE CASCADE'],
+  },
+  provider_test_windows: {
+    columns: [
+      'user_id text collate C not null',
+      'window_start_ms bigint not null',
+      'test_count smallint not null',
+    ],
+    primaryKey: ['user_id'],
     foreignKeys: ['FOREIGN KEY (user_id) REFERENCES catalog.users(id) ON DELETE CASCADE'],
   },
   provider_key_check: {
@@ -669,6 +680,7 @@ describe('the app role (design D3)', () => {
                 key_ciphertext, key_tag, key_version, key_last4, created_at_utc, updated_at_utc)
               values ('u', 'stt', 'deepgram', 'nova-3', '\\x00', '\\x01', '\\x02', 1, 'abcd', ${t}, ${t})`;
     await sql`insert into provider_key_check (id, check_value, created_at_utc) values (1, 'c', ${t})`;
+    await sql`insert into provider_test_windows (user_id, window_start_ms, test_count) values ('u', 1, 1)`;
     for (const table of TABLES) {
       const n = await sql.unsafe(`select count(*)::int as n from ${table}`);
       expect(n[0]?.n, table).toBeGreaterThan(0);

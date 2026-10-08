@@ -17,7 +17,8 @@ import type {
 
 /** At most this many connection tests per test window (provider-credentials). */
 export const PROVIDER_TEST_LIMIT = 5;
-/** A test window lasts this long, from the first test after the previous window ended. */
+/** A test window lasts this long, from the first test after the previous window ended. Kept per
+ * user in `catalog.provider_test_windows`, across kinds and across deleted credentials. */
 export const PROVIDER_TEST_WINDOW_MS = 60_000;
 
 const iso = (ms: number) => new Date(ms).toISOString();
@@ -141,28 +142,25 @@ export class PostgresProviderCredentialStore implements ProviderCredentialStore 
     return changes > 0;
   }
 
-  /** One UPDATE … RETURNING: the row lock serializes concurrent tests across processes. */
-  async takeTestSlot(userId: string, kind: ProviderKind): Promise<number | null> {
+  /** One upsert on the user's window row: its row lock serializes concurrent tests across
+   * processes, and the row outlives the user's credentials (re-panel). */
+  async takeTestSlot(userId: string): Promise<number> {
     const now = this.clock.now();
     const r = await this.db.first<{ n: number }>(
-      `UPDATE user_provider_credentials
-          SET test_count = CASE WHEN test_window_start_ms IS NULL
-                                  OR ?::bigint - test_window_start_ms >= ?::bigint
-                                THEN 1 ELSE test_count + 1 END,
-              test_window_start_ms = CASE WHEN test_window_start_ms IS NULL
-                                       OR ?::bigint - test_window_start_ms >= ?::bigint
-                                     THEN ?::bigint ELSE test_window_start_ms END
-        WHERE user_id = ? AND kind = ?
+      `INSERT INTO provider_test_windows (user_id, window_start_ms, test_count) VALUES (?, ?, 1)
+       ON CONFLICT (user_id) DO UPDATE SET
+         test_count = CASE WHEN excluded.window_start_ms - provider_test_windows.window_start_ms >= ?
+                           THEN 1 ELSE provider_test_windows.test_count + 1 END,
+         window_start_ms = CASE WHEN excluded.window_start_ms - provider_test_windows.window_start_ms >= ?
+                                THEN excluded.window_start_ms ELSE provider_test_windows.window_start_ms END
        RETURNING test_count::int AS n`,
-      now,
-      PROVIDER_TEST_WINDOW_MS,
-      now,
-      PROVIDER_TEST_WINDOW_MS,
-      now,
       userId,
-      kind,
+      now,
+      PROVIDER_TEST_WINDOW_MS,
+      PROVIDER_TEST_WINDOW_MS,
     );
-    return r === null ? null : Number(r.n);
+    if (r === null) throw new Error('provider test window upsert returned no row');
+    return Number(r.n);
   }
 
   async readCheck(): Promise<string | null> {

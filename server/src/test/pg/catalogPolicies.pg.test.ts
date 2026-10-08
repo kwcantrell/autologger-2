@@ -614,6 +614,7 @@ describe('the catalog_user policies as installed', () => {
       'companion_presence',
       'user_provider_credentials',
       'provider_key_check',
+      'provider_test_windows',
     ];
     const systemOnly = ['kv', ...extra];
     for (const table of [...Object.keys(RULES), ...extra]) {

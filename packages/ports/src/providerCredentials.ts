@@ -39,7 +39,7 @@ export interface ProviderCredentialStore {
   /** The user's credentials, at most one per kind. */
   list(userId: string): Promise<ProviderCredentialRow[]>;
   /** Creates or replaces the user's credential of this kind with a new key. A replace keeps the
-   * creation time and the connection-test window. */
+   * creation time. */
   put(
     userId: string,
     kind: ProviderKind,
@@ -55,10 +55,11 @@ export interface ProviderCredentialStore {
   ): Promise<ProviderCredentialRow | null>;
   /** Deletes the user's credential of this kind; false when there was none. */
   delete(userId: string, kind: ProviderKind): Promise<boolean>;
-  /** Counts one connection test in the credential's test window, atomically, and returns the
-   * count in the window including this one (the window opens on the first test after the last
-   * one ended and lasts a minute, by the Clock). Null when the user has no such credential. */
-  takeTestSlot(userId: string, kind: ProviderKind): Promise<number | null>;
+  /** Counts one connection test in the user's test window, atomically across processes, and
+   * returns the count in the window including this one. The window is per user (both kinds),
+   * opens on the first test after the last one ended, lasts a minute by the Clock, and is kept
+   * when credentials are deleted. The caller checks the credential exists first. */
+  takeTestSlot(userId: string): Promise<number>;
   /** The stored master-key check value, or null before the first production boot. */
   readCheck(): Promise<string | null>;
   /** Stores `value` when no check value exists yet, and returns the stored one (the first written
