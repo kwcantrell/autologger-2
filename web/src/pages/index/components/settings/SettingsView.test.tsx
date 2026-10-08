@@ -33,7 +33,15 @@ const probe = vi.hoisted(() => ({
 vi.mock('./SettingsSections', async () => {
   const { useSettingsSectionGuard: useGuard } =
     await vi.importActual<typeof import('./settingsGuard')>('./settingsGuard');
-  const ids = ['account', 'members', 'shows', 'team-details', 'show-details', 'event-buttons'];
+  const ids = [
+    'account',
+    'companion-devices',
+    'members',
+    'shows',
+    'team-details',
+    'show-details',
+    'event-buttons',
+  ];
   const make = (id: SettingsSectionId) =>
     function SectionStub() {
       useEffect(() => {
@@ -114,6 +122,7 @@ describe('Settings modal defers inactive tab content', () => {
     expect(mounts('show-details')).toBeGreaterThan(0);
     for (const id of [
       'account',
+      'companion-devices',
       'members',
       'shows',
       'team-details',
@@ -125,6 +134,7 @@ describe('Settings modal defers inactive tab content', () => {
     const tabs = screen.getAllByRole('tab');
     expect(tabs.map((t) => t.textContent)).toEqual([
       'Account',
+      'Companion devices',
       'Members',
       'Shows',
       'Team details',

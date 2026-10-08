@@ -53,6 +53,8 @@
 import { describe, expect, it } from 'vitest';
 import audioSegmentCreate from '../../../fixtures/api-responses/audioSegmentCreate.json';
 import audioSegmentsList from '../../../fixtures/api-responses/audioSegmentsList.json';
+import companionDeviceCreate from '../../../fixtures/api-responses/companionDeviceCreate.json';
+import companionDevicesList from '../../../fixtures/api-responses/companionDevicesList.json';
 import eventCreate from '../../../fixtures/api-responses/eventCreate.json';
 import eventDeleteConflict from '../../../fixtures/api-responses/eventDeleteConflict.json';
 import eventsList from '../../../fixtures/api-responses/eventsList.json';
@@ -106,6 +108,8 @@ import type {
   AudioSegment,
   AudioSegmentsResponse,
   Category,
+  CompanionDeviceCreatedResponse,
+  CompanionDeviceListResponse,
   EventsResponse,
   EventVersionConflict,
   LogEvent,
@@ -755,6 +759,24 @@ describe('sheets log import — the two logImportClient.ts responses', () => {
     expect(check.status).toBe('failed');
     expect(check.lines.length).toBeGreaterThan(0);
     expect(check.error).toContain('XLSX');
+  });
+});
+
+describe('Companion devices — the responses `useCompanionDevices.ts` types (companion-devices D6)', () => {
+  it('the GET capture is assignable to CompanionDeviceListResponse, with a never-used and an expired device', () => {
+    const check: CompanionDeviceListResponse = companionDevicesList;
+    const [never, idle] = check.devices;
+    expect(never.last_used_at).toBeNull();
+    expect(never.expired).toBe(false);
+    expect(idle.last_used_at).toMatch(/^####-##-##T/);
+    expect(idle.expired).toBe(true);
+    // The list never carries a token.
+    expect('token' in never).toBe(false);
+  });
+
+  it('the POST capture is assignable to CompanionDeviceCreatedResponse, the one body with the token', () => {
+    const check: CompanionDeviceCreatedResponse = companionDeviceCreate;
+    expect(check.token).toMatch(/^ald_#{43}$/);
   });
 });
 

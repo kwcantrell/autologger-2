@@ -112,13 +112,16 @@ Anything else is a stop: update the artifacts and ask the owner.
 
 ## 7. Web Settings section (design D6)
 
-- [ ] 7.1 Test first, web tests:
+- [x] 7.1 Test first, web tests:
   - the list renders, with "Never" for an unused device;
   - Add shows the token once in a dialog with Copy and the warning, and it is gone after close and absent from the query cache;
   - Revoke asks for confirmation, deletes and refreshes;
   - the error `{detail}` is shown;
   - the types conform to the response shapes.
   Red, then add the hooks, types and `CompanionDevicesSection.tsx`, and register the section. Green.
+  - Evidence: red, `cd web && npx vitest run src/pages/index/components/settings/CompanionDevicesSection.test.tsx src/pages/index/components/settings/SettingsView.test.tsx src/api/types.conformance.test.ts` -> the new section test and the conformance test fail to resolve `useCompanionDevices` / the fixtures, and SettingsView `expected [ 'Account', 'Members', 'Shows', …(3) ] to deeply equal [ Array(7) ]` (missing "Companion devices"), `Test Files  3 failed (3)`; `cd server && npx vitest run --project integration src/routers/apiResponseFixtures.int.test.ts -t "companion devices"` -> `Missing captured fixture companionDeviceCreate.json for POST /api/companion-devices`, `Tests  1 failed | 43 skipped (44)` (log `9d-7.1-red.log`).
+  - Evidence: green, fixtures captured once with `UPDATE_API_FIXTURES=1` (`companionDeviceCreate.json`, `companionDevicesList.json`), then assert mode `cd server && npx vitest run --project integration src/routers/apiResponseFixtures.int.test.ts` -> `Tests  44 passed (44)`; `cd web && npx vitest run` -> `Test Files  144 passed (144)`, `Tests  1907 passed (1907)` (7 new section cases, 2 new conformance cases); `cd web && npm run typecheck` and root `npm run typecheck` -> exit 0; Biome on the changed files -> no errors (log `9d-7.1-green.log`). DB tests ran locally, targeted file only (ADR 0026).
+  - Evidence: `web/src/api/types.ts` adds `CompanionDevice`, `CompanionDeviceListResponse`, `CompanionDeviceCreateBody`, `CompanionDeviceCreatedResponse`; `web/src/api/hooks/useCompanionDevices.ts` adds `companionDeviceKeys.list()`, `useCompanionDevices`, `useCreateCompanionDevice` (invalidates the list, `gcTime: 0`, never `setQueryData`) and `useRevokeCompanionDevice` (`DELETE`, invalidates the list). `CompanionDevicesSection.tsx` (settingsParts header and `SettingRow`, shadcn Card/Item/Badge/Alert/Empty, themed `useConfirm`, shared `Dialog`; no save bar) is registered in `sections.ts` (You: Account, Companion devices) and `SettingsSections.tsx`. The token is held only in the section's state; the component resets the create mutation once it takes the token, and the test reverting that reset goes red (token found in the mutation cache). Existing tests changed: `SettingsView.test.tsx` gains "Companion devices" in its exact tab list, its stub id list and its not-mounted list (D9 category 10); `apiResponseShapes.repo.test.ts` EXEMPTIONS gains the revoke `apiFetch<void>` 204 site (the list and create sites are fixture-covered). Added, not changed: `types.conformance.test.ts` assigns both captures; `apiResponseFixtures.int.test.ts` gains a `companion devices` capture block; `server/src/test/apiFixtures.ts` redacts `ald_` tokens by pattern (prefix kept, 43 characters masked 1:1), which matches no existing fixture.
 
 ## 8. Companion module (design D7)
 

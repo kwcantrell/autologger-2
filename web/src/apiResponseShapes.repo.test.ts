@@ -1406,6 +1406,11 @@ const EXEMPTIONS: readonly Exemption[] = [
     reason:
       'audit §5 row 37 CONFORMS — DELETE transcript word, identical 204 + empty-body shape. Re-keyed by session-edit-conflicts D6: the trailing `<var>` is `versionQuery(guard)` (empty, or `?version=N[&overwrite=1]`); the version-conflict 409 is read by the Detector 8 site in the same file.',
   },
+  {
+    key: 'api/hooks/useCompanionDevices.ts :: apiFetch<void>(`companion-devices/<var>`) [DELETE]',
+    reason:
+      "companion-devices D5/D6 — revoke a Companion device: `c.body(null, 204)` (server/src/routers/companionDevices.ts), an empty body with no content-type, so `apiFetch` returns `''` as `void`. No JSON payload exists to check; the 404 is an `ApiError` carrying `detail`. The list and create sites in the same file are fixture-checked.",
+  },
 
   // --- `apiFetch<EventsGenerateResponse>` — auto-generate-event-logs task 5.1.
   {
