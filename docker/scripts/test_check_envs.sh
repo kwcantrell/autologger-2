@@ -276,5 +276,31 @@ d=$SCRATCH/stageblobenv; snapshot "$d"
 sed -i 's#^      SESSION_COOKIE: autologger_stage_sid$#&\n      BLOB_DIR: /srv/blobs#' "$d/docker/compose.stage.yaml"
 expect "a stage overlay that moves BLOB_DIR is caught" "$d" fail "invariant 7] stage: api BLOB_DIR"
 
+# ---- drop-unused-supabase-services (invariants 3, 6, 16, design D4): the retired services,
+# their networks and their keys stay out of every stack
+d=$SCRATCH/restback; snapshot "$d"
+sed -i 's#^services:$#services:\n  rest:\n    image: postgrest/postgrest@sha256:c9dc201e555f5d8e37e7f39cdd4df0229774996e213bfd7de8d10ac609030f2c\n    networks: [db]\n#' "$d/$SBF"
+expect "a rest service added back is caught" "$d" fail "invariant 16] prod: a retired Supabase service"
+expect "a rest service added back changes the dev service set" "$d" fail "invariant 6] dev: the service set"
+
+d=$SCRATCH/gwback; snapshot "$d"
+sed -i 's#^services:$#services:\n  supabase-gw:\n    image: caddy@sha256:0c994536bddb66445885237f1a5dcc1916bccea922661c76b4e9fc24061f9b52\n    ports: ["127.0.0.1:8790:8000"]\n#' "$d/$SBF"
+expect "a supabase-gw service added back is caught" "$d" fail "invariant 16] prod: a retired Supabase service"
+expect "a supabase-gw port added back is caught in dev" "$d" fail "invariant 3] dev"
+
+d=$SCRATCH/authsupabase; snapshot "$d"
+sed -i 's/^    networks: \[db, auth-egress, auth-app\]$/    networks: [db, auth-egress, auth-app, supabase]/' "$d/$SBF"
+printf 'networks:\n  supabase:\n    internal: true\n' >>"$d/$SBF"
+expect "auth on a new supabase network is caught" "$d" fail "invariant 16] prod: a supabase or edge network"
+
+d=$SCRATCH/webedge; snapshot "$d"
+sed -i '0,/^    networks: \[front\]$/s//    networks: [front, edge]/' "$d/compose.yaml"
+printf 'networks:\n  edge: {}\n' >>"$d/$SBF"
+expect "a service on a new edge network is caught" "$d" fail "invariant 16] prod: a supabase or edge network"
+
+d=$SCRATCH/authsvckey; snapshot "$d"
+sed -i 's#^    image: supabase/gotrue@sha256:[0-9a-f]* \# v2.196.0$#&\n    labels: { k: "${SERVICE_ROLE_KEY}" }#' "$d/$SBF"
+expect "the retired service-role key in an auth label is caught" "$d" fail "invariant 16] prod: the retired SERVICE_ROLE_KEY value"
+
 echo "test_check_envs: $PASS passed, $FAILED failed"
 [ "$FAILED" -eq 0 ]
