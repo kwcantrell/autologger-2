@@ -9,7 +9,7 @@ Tier reason:
   `503` now depends on the caller's key, with a new detail (`packages/contract/**`,
   `server/src/routers/**`).
 
-Approved-by: Kalen 2026-10-08 (again)
+Approved-by: Kalen 2026-10-08 (again, again)
 
 ## Why
 
