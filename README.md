@@ -23,18 +23,21 @@ module consume (see Endpoints below; the contract is frozen).
   (the session tables) on self-hosted Supabase Postgres (ADR 0021)
 - **better-sqlite3** — the `DATA_DIR` single-server lock, and the copier for the legacy SQLite
   files (`catalog.db`, `sessions/*.db`), kept for the slice 11 import
-- **filesystem blobs** — audio bytes (replaces R2)
+- **filesystem blobs** — audio bytes under `BLOB_DIR`, a volume every server process of a stack
+  mounts (replaces R2)
 - **in-process SessionHub per session** — replaces the Durable Object; live spine for events,
   transport, audio metadata, recording lease, transcript words, topics, and WebSocket fan-out
 - **`@hono/node-ws`** — WebSocket upgrades, served by **`@hono/node-server`**
 
 > Runs anywhere Node 22 runs. No Cloudflare account, no login, no remote provisioning. A
-> single Node process serves HTTP + WebSocket; state lives under `DATA_DIR` on local disk.
+> single Node process serves HTTP + WebSocket; audio lives under `BLOB_DIR` on local disk, and
+> the per-process lock and scratch under `DATA_DIR`.
 
 ## Architecture
 
 Everything runs in **one Node process**; the browser and Companion are thin clients that
-fetch over HTTP/WS and hold no session state. All storage lives on local disk under `DATA_DIR`;
+fetch over HTTP/WS and hold no session state. Audio lives on local disk under `BLOB_DIR`, and the
+per-process lock and scratch under `DATA_DIR`;
 the config-gated integrations (DeepGram, `yt-dlp`, the `claude` CLI, the Claude Agent SDK) are
 spawned or called *by the server*, never by a client.
 
@@ -51,8 +54,8 @@ spawned or called *by the server*, never by a client.
 ├──────────────┤        │   │   └─ SessionHub per session ──────┼───┐    │   topics, audio,  │
 │ stale/ext.   │────────┘   │      (events, transport, lease,   │   │    │   transcript…)    │
 │ clients      │            │       transcript, topics, WS fan) │   │    ├───────────────────┤
-└──────────────┘            └─────────────┬────────────────────┘   └───▶│  blobs/audio/…    │
-                                          │ spawn / fetch (server-side)  │  tmp/ (staging)   │
+└──────────────┘            └─────────────┬────────────────────┘   └───▶│ BLOB_DIR/audio/…  │
+                                          │ spawn / fetch (server-side)  │ DATA_DIR/tmp/     │
                        ┌──────────────────┼───────────────────┐         └───────────────────┘
                        ▼                  ▼                   ▼
               ┌─────────────────┐ ┌───────────────┐ ┌───────────────────────┐
@@ -121,8 +124,12 @@ refactor of this one.
   the frame bus's listener and publisher. The `autologger_app` role's limit, 45, counts every
   process together, so it fits **three processes (42 of 45)**; a fourth needs the limit raised in
   its own change. Postgres's 100 connections stay shared with the Supabase services and `migrate`.
-- **Filesystem blobs** = audio bytes under `DATA_DIR/blobs/audio/<session_id>/<ordinal>_<uuid>.<ext>`;
-  the hub holds only metadata + relative keys. Download streams bytes back with HTTP range
+- **Filesystem blobs** = audio bytes under `BLOB_DIR/audio/<session_id>/<ordinal>_<uuid>.<ext>`;
+  the hub holds only metadata + relative keys. `BLOB_DIR` is its own volume, which every server
+  process of a stack mounts, so a segment recorded through one process plays through another.
+  Puts stage in `BLOB_DIR/.tmp/put-<uuid>` (same filesystem, so the rename is atomic); `put-`
+  files older than 24 h are swept at boot. Audio from before this layout sits in `DATA_DIR/blobs`
+  until it is moved (see "Moving audio into BLOB_DIR"). Download streams bytes back with HTTP range
   support (416 on unsatisfiable ranges).
 - **Transcript generation, YouTube audio import, Google Sheets log import, topic generation,
   and event auto-generation are configuration-gated; `transcribe.csv` stays unavailable.**
@@ -553,8 +560,14 @@ DATA_DIR/
   sessions/<id>.db      Legacy SQLite file per session: no longer opened or written (session
                         content is in the Postgres session tables), kept for the slice 11
                         import
-  blobs/audio/…         Audio bytes (r2_key-shaped relative paths)
-  tmp/                  Atomic-put staging (outside blobs/, so listings never see partials)
+  tmp/                  Scratch: YouTube import temp dirs and transcript spooling (swept at
+                        boot, per process)
+  blobs/                Legacy audio from before BLOB_DIR: no longer read; move it into
+                        BLOB_DIR (see "Moving audio into BLOB_DIR"). A boot warning counts it
+BLOB_DIR/               Shared by every server process of a stack (its own volume)
+  audio/…               Audio bytes (r2_key-shaped relative paths)
+  .tmp/                 Atomic-put staging, put-<uuid> (outside audio/, so listings never see
+                        partials); put- files older than 24 h are swept at boot
 ```
 
 ### Invariants (spec)
@@ -626,8 +639,8 @@ server/src/
                           root rather than under routers/ because it is composition-root/
                           app-shell plumbing, not a layer (router-directory-decomposition D3)
   node/
-    config.ts            Composition root: Ports + Config from process env (DATA_DIR layout,
-                          wiring) — the sole production module naming the concrete
+    config.ts            Composition root: Ports + Config from process env (DATA_DIR and
+                          BLOB_DIR layout, wiring) — the sole production module naming the concrete
                           SessionHubRegistry/Catalog(Db)/KvStore/BlobStore classes, all imported
                           from the packages below
     systemClock.ts        Clock port implementation — the sole sanctioned Date.now() call site
@@ -741,8 +754,9 @@ packages/                 Source-only npm workspace packages (no build step; ser
     kvStore.ts               KV replacement (login sessions, OAuth CSRF, Companion last command) on
                              the catalog adapter (atomic take for OAuth state); clock is a
                              required constructor parameter
-    blobStore.ts             Filesystem blob store: atomic put, range get, list, traversal
-                             guard; exports InvalidRangeError, mapped to 416 by instanceof at
+    blobStore.ts             Filesystem blob store on a root shared by every process: atomic
+                             put (put-<uuid> temps), range get, list, traversal guard, the
+                             stale put-temp sweep; exports InvalidRangeError, mapped to 416 by instanceof at
                              app.ts and routers/audio.ts
   transcription/src/      @autologger/transcription — DeepGram transcription (L2; deps:
                            domain, ports, session-core — never contract) moved from
@@ -1087,7 +1101,8 @@ only: nothing reads `server/.env`. The stacks take values from OpenBao
 
 | Var | Default | What it does |
 |-----|---------|--------------|
-| `DATA_DIR` | *(required, absolute; the stacks pin `/data`)* | Root for audio blobs and temp staging (the catalog and session content are Postgres; legacy `catalog.db` and `sessions/*.db` files are left untouched). |
+| `DATA_DIR` | *(required, absolute; the stacks pin `/data`)* | Per-process lock, scratch, legacy files: the single-server lock (one server per `DATA_DIR`), the scratch root `tmp/`, and the legacy `catalog.db`, `sessions/*.db` and `blobs/` (left untouched; the catalog and session content are Postgres, audio is `BLOB_DIR`). |
+| `BLOB_DIR` | *(required, absolute; the stacks pin `/blobs`)* | Root for the audio blobs, shared by every server process of a stack. It must not overlap `DATA_DIR` (equal, or either inside the other): the server refuses to boot then, or when it is unset or relative. A compose literal, never an OpenBao value. |
 | `HOST` | `127.0.0.1` outside production, `0.0.0.0` in production | Network **interface to bind**. `127.0.0.1` = loopback-only (reachable only on-box / via a local reverse proxy); `0.0.0.0` = all interfaces (LAN/internet). |
 | `PORT` | `8787` | TCP port to listen on. |
 | `PUBLIC_BASE_URL` | *(required; `.env.example` ships `http://127.0.0.1:8787`)* | Externally-visible origin the server **advertises** — used to build the Google OAuth callback (`…/auth/google/callback`). Must match the browser URL *and* the redirect URI registered in Google Cloud. Behind a proxy this differs from `HOST` (e.g. `https://autologger.example.com`). |
@@ -1134,8 +1149,8 @@ make dev-up                        # the app runs only in the dev stack (docs/op
 ```
 
 The server refuses to boot outside a compose stack (`AUTOLOGGER_STACK`), needs an absolute
-`DATA_DIR`, and never reads `server/.env`. To check the login gate and token scope against a
-running stack, use `docker/scripts/test_router.sh stage` (see "Verifying the container
+`DATA_DIR` and an absolute `BLOB_DIR` that does not overlap it, and never reads `server/.env`.
+To check the login gate and token scope against a running stack, use `docker/scripts/test_router.sh stage` (see "Verifying the container
 topology").
 
 ## Container deployment
@@ -1167,7 +1182,8 @@ behind a small internal router (OpenSpec change `containerize-split-images`; spe
           ▼ everything not below                       ▼ /api*, /auth*, non-GET/HEAD,
    web  (Next standalone, :3000)                        trailing-slash paths, traversal rejects
    no API code, no SQLite, no binaries                 api (server API-only, :8787, single replica)
-                                                        volumes: /data (DATA_DIR), /home/node
+                                                        volumes: /data (DATA_DIR), /blobs
+                                                                 (BLOB_DIR), /home/node
 ```
 
 - **`web`** runs Next's standalone server (`output: 'standalone'`); **`api`** is the unchanged
@@ -1265,7 +1281,7 @@ hand-typed `docker compose up` fails on purpose. Nothing reads `server/.env`.
 
 The compose `environment` block fixes `TRUST_PROXY=1`, `COOKIE_SECURE=1` and
 `PUBLIC_BASE_URL` — literals there take precedence over the allowlist. Login is always required;
-no setting switches it off. The image itself sets `NODE_ENV=production`, `DATA_DIR=/data`, `HOST=0.0.0.0`,
+no setting switches it off. The image itself sets `NODE_ENV=production`, `DATA_DIR=/data`, `BLOB_DIR=/blobs`, `HOST=0.0.0.0`,
 `PORT=8787`, `YTDLP_PATH=/opt/ytdlp/yt-dlp` and `CLAUDE_CLI_PATH`, so YouTube import and the
 Claude-CLI features (AI chat, topics, event generation) are *available*. `IP_ALLOWLIST` is not set by default.
 
@@ -1284,10 +1300,11 @@ The image fetches nothing else at runtime; the Claude CLI auto-updater is disabl
 
 | Volume (compose name) | Mount in `api` | Holds |
 |-----------------------|----------------|-------|
-| `autologger_autologger-data` | `/data` (`DATA_DIR`) | `blobs/`, `tmp/`, and the legacy `catalog.db` and `sessions/*.db` (no longer written; kept for the slice 11 import) |
+| `autologger_autologger-data` | `/data` (`DATA_DIR`) | `tmp/` (scratch), and the legacy `catalog.db`, `sessions/*.db` and `blobs/` (no longer written; kept for the slice 11 import; move `blobs/` with "Moving audio into BLOB_DIR") |
+| `autologger_autologger-blobs` | `/blobs` (`BLOB_DIR`) | The audio blobs, `audio/<session_id>/…`, and the put staging `.tmp/`. Every server process of the stack mounts it. |
 | `autologger_autologger-home` | `/home/node` | `~/.claude/` **and** `~/.claude.json` (subscription credentials and CLI config) |
 
-Both are owned by uid 1000 (`node`); a fresh named volume inherits that from the image. State
+All three are owned by uid 1000 (`node`); a fresh named volume inherits that from the image. State
 survives `docker compose up -d` recreation onto a new image tag.
 
 **Auto-updater on a pre-existing home volume.** The image bakes `~/.claude/settings.json`
@@ -1403,6 +1420,49 @@ rsync -a --delete ${own:+--chown="$own"} "$src"/ "$dst"/'
 # usage: sudo bash -c "$BLOBSYNC" _ <src-dir> <dst-dir> [uid:gid]
 ```
 
+### Moving audio into BLOB_DIR
+
+The server reads and writes audio only under `BLOB_DIR` (`/blobs`, its own volume). Audio
+recorded before that sits in `DATA_DIR/blobs` (`/data/blobs`), which the server no longer reads:
+those segments answer `404` until they are moved. While any file is left there, every boot logs
+`autologger: DATA_DIR/blobs holds <n> legacy audio file(s) the server no longer reads; move them
+into BLOB_DIR (README "Moving audio into BLOB_DIR")`.
+
+The move is an **additive copy, never a mirror**: no `--delete`, and no `BLOBSYNC`. The server
+writes new segments into the blob volume from its first boot, and a mirror from the old
+directory would delete them. Keys never collide (each new segment id is a fresh UUID), so the copy
+only adds files. The source is only read; remove `DATA_DIR/blobs` by hand once old and new
+segments play.
+
+**Dev (in the running app container, as `node`).** The app can keep running: until a file is
+fully copied its segment answers `404` or a short body, as it did before the move. `cp -a` as
+`node` leaves `node`-owned files.
+
+```bash
+docker exec -u node autologger-dev-app cp -a /data/blobs/audio /blobs/
+# check: the file count and the total bytes match
+docker exec -u node autologger-dev-app sh -c 'find /data/blobs/audio -type f | wc -l; find /blobs/audio -type f | wc -l'
+docker exec -u node autologger-dev-app du -sb /data/blobs/audio /blobs/audio
+```
+
+**Stage and prod (on the host, with `api` stopped).** The api image ships no `server/scripts`,
+so the copy runs on the host as root, and `--chown` gives the server's user (uid 1000) every file
+and directory (a root-owned `audio/<sid>/` would make later uploads fail with `EACCES`). `$VOL` is
+the data volume's mountpoint, `$BVOL` the blob volume's (use the `autologger-stage_…` names for
+stage). Slice 11's cutover reuses this step.
+
+```bash
+VOL=$(docker volume inspect -f '{{.Mountpoint}}' autologger_autologger-data)     # root-only path
+BVOL=$(docker volume inspect -f '{{.Mountpoint}}' autologger_autologger-blobs)   # root-only path
+docker compose stop api        # or make prod-down; nothing may write during the copy
+sudo rsync -a --chown=1000:1000 "$VOL/blobs/" "$BVOL/"        # additive: NEVER --delete
+# check: the file count and the total bytes of audio/ match
+sudo sh -c 'find "$1/blobs/audio" -type f | wc -l; find "$2/audio" -type f | wc -l' _ "$VOL" "$BVOL"
+sudo du -sb "$VOL/blobs/audio" "$BVOL/audio"
+```
+
+Then start `api` again and play an old and a new segment.
+
 ### Backup
 
 This section describes prod, which runs `main` (catalog and session content in SQLite files)
@@ -1415,11 +1475,19 @@ and a per-table row-count comparison on the copy, and swaps it in atomically.
 
 ```bash
 VOL=$(docker volume inspect -f '{{.Mountpoint}}' autologger_autologger-data)   # root-only path
+BVOL=$(docker volume inspect -f '{{.Mountpoint}}' autologger_autologger-blobs) # root-only path
 BK=/backups/autologger-$(date +%F)
 # $VOL is unreadable to your user, so the copier runs as root; root's PATH usually lacks node
 sudo env "PATH=$PATH" npx tsx server/scripts/copyDataDir.ts "$VOL" "$BK" [--overwrite] [--dry-run]
-sudo bash -c "$BLOBSYNC" _ "$VOL/blobs" "$BK/blobs"    # blobs are plain files; guarded (above)
+sudo bash -c "$BLOBSYNC" _ "$BVOL" "$BK/blobs"    # blobs are plain files; guarded (above)
 ```
+
+The audio is in the blob volume (`$BVOL`), not in `$VOL`: the copier prints that it does not copy
+it. (`$BVOL/.tmp/` holds only in-flight puts.) A deployment that still runs a build from before
+`BLOB_DIR` keeps its audio in `$VOL/blobs`; back that up instead until its audio is moved (see
+"Moving audio into BLOB_DIR"). To restore the audio, with `api` stopped:
+`sudo bash -c "$BLOBSYNC" _ "$BK/blobs" "$BVOL" 1000:1000` (a mirror: it deletes audio written
+after the backup).
 
 Run it from the repo checkout (`sudo` there needs the checkout's `node_modules` readable, which
 it is). The backup does **not** need `api` stopped: the source is opened read-only through the
@@ -1442,7 +1510,9 @@ credentials matter.
 
 The goal is to seed the volume while the old server keeps running and do only the final
 database copy and a blob delta inside the maintenance window. Below, `OLD` is the old host and
-`OLD_DATA` its `DATA_DIR`; `VOL` is the `autologger_autologger-data` mountpoint (as above).
+`OLD_DATA` its `DATA_DIR`; `VOL` is the `autologger_autologger-data` mountpoint and `BVOL` the
+`autologger_autologger-blobs` mountpoint (as above). The audio goes into `$BVOL`, never into
+`$VOL/blobs`.
 
 **Preconditions.** The OAuth client exists and is verified (see above); `.env` is filled in
 (Google credentials, `ADMIN_TOKEN`, `DEEPGRAM_API_KEY`; no `API_TOKEN`, ignored since 9d; no
@@ -1451,17 +1521,17 @@ ghcr.io` with a `read:packages` PAT; `docker compose up --no-start` has created 
 
 **1. Pre-seed (no downtime; api stopped on this host, old server still running elsewhere).**
 Take a WAL-safe copy of a point-in-time `DATA_DIR` snapshot into a staging directory and load it
-into the volume, blobs included, home directory included:
+into the volume, the blobs into the blob volume, home directory included:
 
 ```bash
-npx tsx server/scripts/copyDataDir.ts /path/to/snapshot/data /srv/stage      # DBs only; prints the blobs rsync
+npx tsx server/scripts/copyDataDir.ts /path/to/snapshot/data /srv/stage      # DBs only; never copies audio
 #   (re-running into a populated /srv/stage needs --overwrite; the api must be stopped)
 sudo rsync -a --chown=1000:1000 --exclude /blobs /srv/stage/ "$VOL/"
 # Blobs: as YOUR user (ssh agent intact) into a persistent user-owned mirror, then root copies
 # locally. Keep the mirror: the cutover delta (step 3d) reuses it, so it stays small.
 BMIRROR=$HOME/autologger-blob-mirror; mkdir -p "$BMIRROR"
 rsync -a --delete OLDHOST:/path/to/DATA_DIR/blobs/ "$BMIRROR"/     # or a local snapshot's blobs/
-sudo bash -c "$BLOBSYNC" _ "$BMIRROR" "$VOL/blobs" 1000:1000
+sudo bash -c "$BLOBSYNC" _ "$BMIRROR" "$BVOL" 1000:1000
 # ~/.claude and ~/.claude.json -> the home volume, then create/merge settings.json (see Volumes)
 HOMEVOL=$(docker volume inspect -f '{{.Mountpoint}}' autologger_autologger-home)
 sudo rsync -a --chown=1000:1000 ~/.claude ~/.claude.json "$HOMEVOL/"
@@ -1483,6 +1553,7 @@ leaves `-wal`/`-shm` files that must not sit next to a replaced `.db`.
 # a. stop the old server on OLD; api here is already stopped (docker compose stop api)
 : "${BLOBSYNC:?define BLOBSYNC first (Blob sync guard section)}" &&
 BMIRROR=${BMIRROR:-$HOME/autologger-blob-mirror} &&
+: "${BVOL:?set BVOL to the autologger_autologger-blobs mountpoint first}" &&
 # b. on OLD, from its checkout, WAL-safe copy of every DB into a FRESH staging directory
 STAGE=$(ssh OLDHOST 'mktemp -d') &&       # fresh and empty: never reuse a previous stage
 ssh OLDHOST "cd /path/to/autologger && npx tsx server/scripts/copyDataDir.ts /path/to/DATA_DIR $STAGE" &&
@@ -1513,7 +1584,7 @@ sudo find "$VOL" -path "$VOL/blobs" -prune -o -exec chown -h 1000:1000 {} + &&
 #    against an empty/missing source (see Blob sync guard).
 mkdir -p "$BMIRROR" &&
 rsync -a --delete OLDHOST:/path/to/DATA_DIR/blobs/ "$BMIRROR"/ &&
-sudo bash -c "$BLOBSYNC" _ "$BMIRROR" "$VOL/blobs" 1000:1000 &&
+sudo bash -c "$BLOBSYNC" _ "$BMIRROR" "$BVOL" 1000:1000 &&
 # e. integrity: the copier already ran integrity_check + per-table row counts (copy vs source)
 #    before exiting 0. Re-check the shipped files, entirely as root (needs the sqlite3 CLI);
 #    prints "<result>  <file>" per DB and exits non-zero if any is not "ok":
@@ -1543,7 +1614,10 @@ Notes on step 3c:
   dropped by default; either `sudo -E` (or `sudo env SSH_AUTH_SOCK="$SSH_AUTH_SOCK" …`), or, as
   above, rsync as your own user into a user-owned directory and let root copy locally. The blob
   delta in step 3d does exactly that: `rsync` from `OLDHOST` as your user into `$BMIRROR`, then
-  a local guarded `sudo` copy into `$VOL/blobs`. Never put `sudo` in front of an `OLDHOST:` rsync.
+  a local guarded `sudo` copy into the blob volume, `$BVOL`. Never put `sudo` in front of an
+  `OLDHOST:` rsync. The mirror into `$BVOL` runs before `api` first starts, so nothing new is in
+  the blob volume yet; once `api` has run, only the additive copy in "Moving audio into BLOB_DIR"
+  is safe.
 
 Downtime ends after (i). **Verify from outside:** the OAuth round trip; Companion `state`,
 `log`, `command`; traversal through a bypass path (`/api/companion/%2e%2e/sessions/x`) returns
@@ -1621,6 +1695,19 @@ setup is still the membership bootstrap script above.
   otherwise restore a backup taken before the upgrade. Repointing Pangolin at the *old host*
   drops every write made since cutover (they exist only in the volume) — take a final backup
   first if you might want them.
+- **Rolling back past `BLOB_DIR`.** Audio written since the deploy exists only in the blob
+  volume, and a build from before `BLOB_DIR` reads `DATA_DIR/blobs`. In this order:
+  1. Stop `api` (dev: the app), so nothing writes during the copy.
+  2. Copy the blob volume back, additively and owned by the server user:
+     - stage and prod: `sudo mkdir -p "$VOL/blobs" && sudo rsync -a --chown=1000:1000 --exclude /.tmp/ "$BVOL/" "$VOL/blobs/"`;
+     - dev: `mkdir -p /data/blobs && cp -a /blobs/audio /data/blobs/`, run as `node` in the app
+       container (which mounts both volumes) before the revert, e.g.
+       `docker exec -u node autologger-dev-app sh -c 'mkdir -p /data/blobs && cp -a /blobs/audio /data/blobs/'`.
+
+     Check that the file count and the total bytes match (`find … -type f | wc -l`, `du -sb`).
+  3. Revert the code, then start.
+  4. Keep the blob volume until playback of new and old segments is confirmed. Removing it is the
+     owner's step.
 
 ### Verifying the container topology
 
@@ -1658,13 +1745,13 @@ existing configuration.
 | `make dev-down` | Stop and remove dev containers (volumes kept) |
 | `make dev-restart` | Restart dev: `app` then `app-gate`, `companion` then `companion-gate` |
 | `make dev-logs` / `make dev-shell` | Follow dev logs / shell in the dev app container |
-| `make dev-reset CONFIRM=yes` | **Destroy** the dev volumes, including Postgres and Supabase storage ([docs/supabase.md](docs/supabase.md) has the Postgres-only re-init) |
+| `make dev-reset CONFIRM=yes` | **Destroy** the dev volumes, including Postgres, the audio blob volume and Supabase storage ([docs/supabase.md](docs/supabase.md) has the Postgres-only re-init) |
 | `make stage-build` | Build the stage images (native arch, tagged `:local`) |
 | `make stage-push STAGE_IMAGE_TAG=<sha>` | Clean tree whose HEAD is `<sha>` (any branch): bake `STAGE_PLATFORMS` (default `linux/amd64`) and push `ghcr.io/kwcantrell/autologger-{web,api}:<sha>` |
 | `make stage-up` | Check, then build and start the whole stage stack (incl. Supabase), apply migrations, print the URLs. With `STAGE_IMAGE_TAG=<sha> STAGE_PUBLIC_BASE_URL=https://<host>` (a tag requires the URL, and the tree must be that commit) it pulls those images instead of building and serves that public origin (see [Public stage](#public-stage-https-edge)) |
 | `make stage-down` / `make stage-logs` | Stop and remove stage containers (volumes kept) / follow logs |
 | `make stage-claude-login` | Interactive Claude login inside the stage api container |
-| `make stage-reset CONFIRM=yes` | **Destroy** the stage volumes, including Postgres and Supabase storage |
+| `make stage-reset CONFIRM=yes` | **Destroy** the stage volumes, including Postgres, the audio blob volume and Supabase storage |
 | `make prod-build` | Native-arch build of both images, tagged `:local` only (no SHA tag, no push) |
 | `make prod-push` | Clean `main` only: multi-arch bake and push, tagged with the 12-char HEAD SHA |
 | `make prod-check` | Any branch: OpenBao `prod` login, guards and compose config; starts nothing |
@@ -1740,7 +1827,9 @@ server change.
   `make dev-reset CONFIRM=yes`.
 - **`server/data` stays out of the stacks**: it is a disposable copy of a backup kept elsewhere,
   not live data. It is never mounted, and never used as `DATA_DIR`. Dev data lives in the
-  `dev-data` volume (`/data`).
+  `dev-data` volume (`/data`), and dev audio in the `dev-blobs` volume (`/blobs`, `BLOB_DIR`).
+  Audio from before `BLOB_DIR` stays in `/data/blobs` until it is moved (see "Moving audio into
+  BLOB_DIR").
 - The gate shares the app's namespace, so a bare `docker restart` of `app` kills the gate. Use
   **`make dev-restart`** (app then gate, Companion then its gate). Dev and stage `up`/`restart`
   are whole-project only; do not `up -d --build companion` alone (its gate would sit on a stale

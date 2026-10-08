@@ -94,13 +94,15 @@
 
 ## 7. Docs (design D7)
 
-- [ ] 7.1 README:
+- [x] 7.1 README:
   - the layout and storage bullets;
   - the env table: `BLOB_DIR`, and the `DATA_DIR` row;
   - the volume table;
   - backup and restore with the blob volume;
   - the new "Moving audio into BLOB_DIR" section (D5), and every `$VOL/blobs` in the backup, pre-seed, cutover and rollback runbooks retargeted to `$BVOL`;
   - the rollback note with the ordered steps from design "Rollback".
+  - Evidence: `grep -n "### Blob sync guard\|### Moving audio into BLOB_DIR" README.md` -> `1402:### Blob sync guard (used by every \`rsync --delete\` below)`, `1423:### Moving audio into BLOB_DIR`; `grep -n "See the README sections" server/scripts/copyDataDir.ts` -> `290:  log('See the README sections "Blob sync guard" and "Moving audio into BLOB_DIR".');`; `grep -c '$BVOL' README.md` -> `14`; the remaining `$VOL/blobs` lines are only the move's source, the legacy notes, the chown prune of legacy files, and the rollback's destination (log `10-7.1-green.log`).
+  - Evidence: README edits. Stack bullet, the architecture note and diagram (`BLOB_DIR/audio/…`, `DATA_DIR/tmp/`), the Filesystem blobs bullet (`BLOB_DIR/audio/…`, `.tmp/put-<uuid>`, the 24 h sweep, legacy audio), the storage map (`DATA_DIR/` lock, `tmp/`, legacy `blobs/`; `BLOB_DIR/` `audio/`, `.tmp/`), the source layout (`config.ts`, `blobStore.ts`); env table: a `BLOB_DIR` row (required, absolute, `/blobs`, no overlap, a compose literal) and `DATA_DIR` "Per-process lock, scratch, legacy files"; quick start and the image's `ENV`; topology volumes; volume table `autologger_autologger-blobs` row; new "Moving audio into BLOB_DIR" (D4's warning line; additive, never `--delete` or `BLOBSYNC`; dev `docker exec -u node autologger-dev-app cp -a /data/blobs/audio /blobs/` with `find … | wc -l` and `du -sb` checks; stage and prod `sudo rsync -a --chown=1000:1000 "$VOL/blobs/" "$BVOL/"` with `api` stopped, the same checks); backup `BVOL=…autologger_autologger-blobs`, `BLOBSYNC` from `$BVOL`, a restore line into `$BVOL`, and a note for a deployment still before `BLOB_DIR`; pre-seed and cutover `BLOBSYNC` into `$BVOL` (the cutover chain checks `BVOL` is set); "Update order and rollback" gains design "Rollback"'s four ordered steps; dev posture names `dev-blobs`; the reset rows name the audio blob volume.
 - [ ] 7.2 ADR 0021: the Blobs and backup bullets, and slice 10 with its owner decisions and what shipped, plus the follow-up change for unused Supabase services and GoTrue. Then `openspec validate --all --strict`.
 
 ## 8. Verify
