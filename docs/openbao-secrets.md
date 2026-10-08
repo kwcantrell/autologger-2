@@ -99,15 +99,18 @@ Other rules:
 - **Tags.** `WEB_TAG` and `API_TAG` are the 12-character git SHA that `make prod-push` prints.
   `latest` is refused.
 - **Required prod keys.** `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `BOOTSTRAP_OWNER_EMAIL` and
-  `ADMIN_TOKEN`, plus `API_TOKEN` if Companion is used (at least 32 random bytes).
+  `ADMIN_TOKEN`. `API_TOKEN` is no longer required: it is ignored since ADR 0021 slice 9d
+  (companion-devices), and you may leave it or delete it. A Companion uses a device token created
+  in Settings → Companion devices.
 - **`GOOGLE_CLIENT_ID` is also read by GoTrue** (gotrue-sign-in D3), as the audience of the ID
   tokens it accepts. It is public, so it has no secret scope. `GOOGLE_CLIENT_SECRET` stays with
   the app only.
 - **Every stack needs Google sign-in** (require-login). `compose-run` refuses dev, stage and prod
   unless both `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` are set, and the server refuses to boot
   without them. Dev needs its own Google OAuth client (authorized redirect
-  `http://localhost:8787/auth/google/callback`) and an `API_TOKEN` in `kv/autologger/dev`, set also
-  in the dev Companion connection; without it the dev Companion gets `401`.
+  `http://localhost:8787/auth/google/callback`). The dev Companion connection needs a device token
+  created in dev's Settings → Companion devices; without it the dev Companion gets `401`
+  (`API_TOKEN` in `kv/autologger/dev` is ignored since 9d).
 - **Every stack needs `BOOTSTRAP_OWNER_EMAIL`** (owner-bootstrap D8). It names the bootstrap
   owner: at every sign-in whose verified Google email matches it (trimmed, ASCII
   case-insensitive; an email with any non-ASCII character never matches), that user becomes the

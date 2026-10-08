@@ -6,8 +6,8 @@
 // full fakeCore/fakeClock importer inventory in hand. `fakeClock.test.ts`
 // (which tests this helper itself) and the seven `fakeCore`-importing unit
 // tests both need it inside this package now that `session/` moved here;
-// server keeps its own copy since `node/presence.test.ts` still references
-// it.
+// server keeps its own copy (its presence test that used it was retired by
+// companion-devices, ADR 0021 slice 9d).
 
 import type { Clock } from '@autologger/ports';
 import { vi } from 'vitest';

@@ -69,13 +69,12 @@ interface PendingQuestionEntry {
 }
 
 /** The kv row of one pending question (shared-request-state D2). `principalUserId` is the user id
- * of the principal that INITIATED the turn (D7). `null` for a turn initiated over a
- * principal-less auth mechanism (the API_TOKEN device-token path — `requireSession` skips the
- * studio check there because there is no individual to scope it to; see aiV2.ts). `null` can
- * never equal an answering `user.id` (always a non-empty string), so such a turn's questions are
- * structurally unanswerable by anyone and simply abandon on timeout — a safe degraded state, not
- * a bypass. (Defence in depth: API_TOKEN is now scoped to /api/companion/*, so that path is
- * unreachable over HTTP.) */
+ * of the principal that INITIATED the turn (D7). `null` would mean a turn initiated over a
+ * principal-less auth mechanism. None remains: the retired API_TOKEN path was the only one, and
+ * companion-devices (ADR 0021 slice 9d) removed it — a Companion device call has a user and never
+ * reaches AI v2. The type keeps `null` as a safe default: `null` can never equal an answering
+ * `user.id` (always a non-empty string), so such a turn's questions would be structurally
+ * unanswerable by anyone and simply abandon on timeout — a safe degraded state, not a bypass. */
 type QuestionRow =
   | { v: 1; state: 'pending'; principalUserId: string | null; questionCount: number }
   | {

@@ -344,7 +344,8 @@ Slice order:
        requires exactly one Google identity with the verified subject, and any id mismatch with
        the catalog gets `login_error=identity_unavailable` (the panel's critical finding);
      - GoTrue's tokens are discarded, not revoked; Companion keeps `API_TOKEN` (its device
-       credential is slice 9's);
+       credential is slice 9's). **Amended (9d, owner, 2026-10-08):** `API_TOKEN` is retired and
+       ignored; per-device tokens that act as their user replace it (slice 9d below);
      - GoTrue gets egress over a new `auth-egress` network that only it joins; Google is its only
        provider; `GOOGLE_CLIENT_ID` (public) is required on stage and prod;
      - existing users, memberships, prefs, invites and login sessions are deleted (migration
@@ -356,7 +357,8 @@ Slice order:
      `API_TOKEN`, then the dev and stage checks). Owner decisions:
      - **dev gets a real Google client** (redirect `http://localhost:8787/auth/google/callback`)
        and an `API_TOKEN` in Infisical `autologger-dev`; without the token the dev Companion
-       gets `401`. `compose-run` refuses every stack, dev included, without both Google values;
+       gets `401` (since 9d the dev Companion uses a device token from Settings, and `API_TOKEN`
+       is ignored). `compose-run` refuses every stack, dev included, without both Google values;
      - **boot refuses** when `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` or `PUBLIC_BASE_URL` is
        blank, and when `REQUIRE_LOGIN` is set to any value, so a stale `0` fails loudly;
      - **the open-network `503`s are deleted** (AI chat, AI v2, topic generation, event
@@ -444,7 +446,9 @@ Slice order:
         when they leave or are removed, or the show is deleted;
      6. **Companion:** posting presence requires access to that session; the other Companion
         routes keep acting as a system caller on the session its presence holder can access; a
-        real device credential comes in slice 9.
+        real device credential comes in slice 9. **Amended (9d, owner, 2026-10-08):** the
+        system caller is gone; every Companion route runs as the device's user (or the cookie
+        user) under that user's show access, and a device gets `403` on presence (slice 9d).
 
      After the adversarial panel (owner, 2026-10-02):
      - **E. open WebSockets close when access is lost:** a revoke, a removal or leave, or a
@@ -660,7 +664,7 @@ Slice order:
      | `oauth-callback` | looks up and creates users by Google subject, and consumes invites across teams, before a catalog user exists |
      | `bootstrap-claim` | claims teams the user is not a member of |
      | `support-plane` | `ADMIN_TOKEN` caller, no user, every team |
-     | `companion-token` | `API_TOKEN` caller, no user |
+     | `companion-token` | `API_TOKEN` caller, no user (retired in 9d: a device call runs as its user) |
      | `access-loss-check` | reads the access of another user (the target), after the caller may have left the team |
      | `team-invite` | looks users up by email across the catalog, and adds memberships for non-co-members |
      | `team-create` | inserts a team definition (no user insert rule), and purges other users' leftover rows under a reused id |
@@ -1122,6 +1126,36 @@ Slice order:
      recording lease through the session's hub, so `lease.changed` reaches every process over the
      9a bus. **Deferred:** the live-lease ceiling (the providers change) and Companion presence
      (9d).
+   - 9d `companion-devices` (owner decisions, 2026-10-08):
+     1. **per-device tokens:** each Companion device gets its own random token (`ald_` + 32 bytes),
+        shown once; only its sha256 is stored. The device acts as the user who created it, and
+        each device is revoked on its own;
+     2. **a device follows its owner's browsers:** its active session is the freshest visible
+        presence posted by its own user;
+     3. **presence moves to a table,** `catalog.companion_presence`, shared by every process;
+     4. **`API_TOKEN` is retired,** and a stale Bearer gets `401`. Devices are issued and revoked
+        through cookie-only `/api/companion-devices` routes and a "Companion devices" section in
+        Settings;
+     5. **each user manages only their own devices,** at most 10;
+     6. **the last command is per device,** with unchanged response shapes;
+     7. (at plan approval) **device callers get `403` on presence:** presence comes from browsers;
+     8. (after the panel) **devices expire after 90 idle days,** any use renews them; creating and
+        revoking a device write audit log lines (user and device ids, never the token);
+     9. (after the panel) **a cookie caller's `/state` uses only their own presence rows,** the
+        same rule as a device;
+     10. (after the panel) **one system store holds devices:** `companion_devices` is system-only,
+         like `kv`, and every management statement is scoped by the caller's user id in SQL.
+
+     **Shipped:** the migration adding `companion_devices` and `companion_presence` (both
+     system-only; the old global `companion:last_command` kv row is deleted); device-token
+     authentication on `/api/companion/*` only (the session WebSocket and every other route ignore
+     the Bearer), with the `companion-token` system reason and the AI v2 principal-less refusal
+     deleted; `PostgresPresence` (15 s freshness, rows owned by their first writer, rows older than
+     60 s deleted by the 9c sweeper); the three device routes and the Settings section; Companion
+     module 0.2.0, which keeps the token as a secret and moves an old one there with an upgrade
+     script. Every Companion install must be re-paired after deploy. `API_TOKEN` stays on
+     `docker/secrets-env.yaml`, ignored, until every OpenBao secret drops it. **Deferred:** Realtime
+     for Companion (ADR 0023) and refresh tokens (ADR 0023's GoTrue-per-device option).
 10. Blobs to Supabase Storage.
 11. The import script, parity check, cutover runbook and rollback plan. It must not import users,
     memberships, prefs, invites or login sessions (slice 5a above).

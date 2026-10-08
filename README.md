@@ -94,8 +94,9 @@ refactor of this one.
   the hub broadcasts instead. Its rows live in the session tables of schema `catalog`; every
   write locks the session's `catalog.sessions` row first, and a write that changes the events or
   the transport updates the index's few live fields in the same transaction. Each hub call runs as
-  its caller: the signed-in user (under the session content policies), or a reviewed system task
-  for the hub's own open and lease alarm, token-only Companion calls and a request's undo steps.
+  its caller: the signed-in user (under the session content policies; a Companion device call runs
+  as the device's user, ADR 0021 slice 9d), or a reviewed system task for the hub's own open and
+  lease alarm and a request's undo steps.
 - **Live updates go through the session frame bus** (session-frame-bus, ADR 0021 slice 9a). Every
   server process sharing the database listens on one Postgres `NOTIFY` channel
   (`autologger_session_frames`), and every WebSocket frame travels through it:
@@ -591,8 +592,8 @@ feature files and the retired `server/src/logImport/` — `@autologger/transcrip
 `@autologger/media-import`, and `@autologger/log-import` — and a fourth (`ai-runtime-package`)
 extracted from the retired `server/src/ai-runtime/` and `server/src/aiV2/` pair —
 `@autologger/ai-runtime`. A service package may import L0 and L1 but never another service
-package; `server/src/node/` itself now holds exactly `config.ts`, `systemClock.ts`,
-`presence.ts`, and `nextFrontend.ts` (the Next.js frontend bridge wrapper, added by
+package; `server/src/node/` itself now holds exactly `config.ts`, `systemClock.ts`
+and `nextFrontend.ts` (the Next.js frontend bridge wrapper, added by
 `nextjs-frontend-migration`) — matching its documented composition-root-wiring role, and
 pinned by a recursive name check rather than left to drift again. Cross-package boundaries at every
 layer are enforced by `server/src/packageBoundaries.repo.test.ts`, not the compiler.
@@ -631,13 +632,13 @@ server/src/
                           from the packages below
     systemClock.ts        Clock port implementation — the sole sanctioned Date.now() call site
                            (interface lives in packages/ports; moved from the former clock.ts)
-    presence.ts           In-memory Companion presence registry (stays in server — not persistence)
     nextFrontend.ts        Wraps next({ dev, dir: web/ }) + prepare(); exposes
                            { handle, upgradeHandler, close }; returns null (API-only
                            mode) when web/.next is missing in prod (nextjs-frontend-migration)
   auth/
     oauth_google.ts        IdentityVerifier port: authorize URL, code exchange, ID-token verify (← oauth_google.py)
     identity.ts             Login sessions + CSRF, bearer compare, gate rule (← auth_identity.py)
+    companionDeviceToken.ts  Companion device tokens: `ald_` + 32 random bytes, sha256 hex hash
   middleware/
     auth.ts                 Per-request context + login gate              (← app.py auth_identity_and_gate);
                              constructs the per-request Catalog via @autologger/catalog's createCatalog
@@ -653,7 +654,9 @@ server/src/
     sessions.ts              list/create/update/archive/restore/delete; local-audio-import; youtube-import (config-gated)
     events.ts                events CRUD, transport, status, lease, WebSocket upgrade
     audio.ts                 upload/list/range-download, waveform, sync-from-disk
-    companion.ts             Companion presence + state + log/transport/command (WS relay)
+    companion.ts             Companion presence + state + log/transport/command (WS relay),
+                              run as the caller's user (a device's user or the cookie user)
+    companionDevices.ts      GET|POST /api/companion-devices, DELETE …/:id (cookie only)
     transcribe.ts             transcript-words + topics CRUD; generate/csv (503)
     exports.ts                export.csv / export.jsonl (← export.py)
     admin.ts                  ADMIN_TOKEN-gated users + studio-definitions admin
@@ -730,7 +733,12 @@ packages/                 Source-only npm workspace packages (no build step; ser
                              never imports)
     catalogErrors.ts         The transaction contract's errors (misuse, timeout, closed)
     dataDirLock.ts           The DATA_DIR single-server lock
-    kvStore.ts               KV replacement (login sessions, OAuth CSRF, Companion presence) on
+    presence.ts              PostgresPresence: Companion presence in catalog.companion_presence,
+                             shared by every process (15 s freshness; the 60 s lease sweep deletes
+                             rows older than 60 s)
+    companionDevices.ts      Companion device store (system-only; every statement scoped by
+                             user id): token-hash lookup, list, create under the cap of 10, revoke
+    kvStore.ts               KV replacement (login sessions, OAuth CSRF, Companion last command) on
                              the catalog adapter (atomic take for OAuth state); clock is a
                              required constructor parameter
     blobStore.ts             Filesystem blob store: atomic put, range get, list, traversal
@@ -918,7 +926,8 @@ Content-coding is transport applied above the frozen representation: the decoded
 | `POST …/ai/v2/design` → **503** unconfigured/credentials · **403** not an approved user · **200** `text/event-stream` configured (SSE: `delta`\|`question`\|`dashboard`\|`done`\|`error`) · `POST …/ai/v2/answer` → answer round trip, **200** `{ok:true}` (see "AI v2 dashboards" below) | `routers/aiV2.ts` (new, ai-v2-dashboards) |
 | `GET\|PUT\|DELETE …/ai/v2/dashboard` → dashboard persistence: **200** `{config}` (GET: `{config:null}` if none) \| `{ok:true}` (DELETE), **422** invalid/bounds-exceeded, **400** malformed | `routers/aiV2.ts` (new, ai-v2-dashboards) |
 | `GET …/export.csv` · `…/export.jsonl` | `routers/exports.py` / `export.py` |
-| `/api/companion/presence\|state\|log\|transport\|command\|categories\|commands/*` | `routers/companion.py` |
+| `/api/companion/presence\|state\|log\|transport\|command\|categories\|commands/*` → auth is a session cookie or `Authorization: Bearer <Companion device token>` (the device token is honoured only under `/api/companion/*`; an unknown, revoked or expired token, a disabled user or the retired `API_TOKEN` gets **401** `{"detail":"Login required."}`); the call runs as the device's user (or the cookie user) and picks that user's own freshest presence; `POST …/presence` from a device is **403** `{"detail":"Presence is posted by the AutoLogger browser app, not by a Companion device."}` | `routers/companion.py` |
+| `GET /api/companion-devices` → **200** `{devices:[{id, name, created_at, last_used_at, expired}]}` (the caller's devices, newest first; `last_used_at` may be null; `expired` past 90 idle days) · `POST /api/companion-devices {name}` → **201** `{id, name, created_at, token}` (the `ald_…` token appears only here; only its sha256 is stored) · **422** invalid name (trimmed, 1–80 characters) · **400** NUL · **409** `{"detail":"You already have 10 Companion devices; revoke one first."}` · `DELETE /api/companion-devices/{id}` → **204** no body · **404** `{"detail":"Companion device not found."}` for an unknown id or another user's. Cookie only: **401** without a session, and a device Bearer never authenticates them | `routers/companionDevices.ts` (new, companion-devices) |
 | `/api/admin/users` · `/api/admin/studios` · `…/users/{id}/memberships\|disable\|enable` | `routers/admin.py` |
 | `POST /api/teams` · `GET\|PATCH\|DELETE /api/teams/{id}` | `routers/teams.ts` (new, teams-self-serve) |
 | `POST …/invites` · `DELETE …/invites/{email}` · `POST …/members/{userId}/role` · `DELETE …/members/{userId}` · `POST …/leave` · `POST …/owner` (transfer ownership, owner only: **200** `{ok: true}`) | `routers/teams.ts` (new, teams-self-serve; owner-bootstrap) |
@@ -934,9 +943,10 @@ reaches a show only with a grant (the routes above). Without access:
   titles and dates: `notes` `""`, `event_count` 0, `is_rolling` false, `current_take` 0,
   `rolling_timecode` null, `total_runtime_hms` `"00:00:00"`;
 - `POST /api/sessions` is **403** `No access to this show.`;
-- on `/api/companion/*` with a session cookie, presence for a session the caller can't access is
-  **404** `Session not found`, and `state`, `categories`, `log`, `transport` and `command` answer as
-  if there were no active session (token-only calls are unchanged);
+- on `/api/companion/*`, presence for a session the caller can't access is **404** `Session not
+  found` (cookie callers; a device gets 403 on presence), and `state`, `categories`, `log`,
+  `transport` and `command` answer as if there were no active session, for a cookie caller and a
+  Companion device alike (a device acts as its user);
 - a revoke, a removal, a leave or a demotion to member closes the user's open session sockets on
   sessions they no longer reach with close code **4403**, in every server process sharing the
   database (the close is published inside the revoking transaction); the reconnect gets the
@@ -944,8 +954,24 @@ reaches a show only with a grant (the routes above). Without access:
 - the database enforces the same rule on session content for signed-in callers (row-level
   policies on the nine session tables): a request that passed the route's check and races a
   revoke gets the same masked answer (404, or the Companion's no-active-session answers) and leaves
-  nothing it wrote. Token-only Companion calls are the exception until the slice 9 credential:
-  they run as a reviewed system task for any session id.
+  nothing it wrote. Companion calls are no exception since ADR 0021 slice 9d: a device call runs
+  as the device's user, under the same policies.
+
+**Companion devices (companion-devices, ADR 0021 slice 9d).** `API_TOKEN` is retired: the server
+no longer reads it, and a Bearer holding it gets `401`. Each Companion install uses its own device
+token instead:
+- a signed-in user creates a device in **Settings → Companion devices** (at most 10 each); its
+  `ald_…` token is shown once, and only the token's sha256 is stored;
+- a device call runs as the device's user, with that user's show access; a device that has not
+  been used for 90 days stops authenticating (any use renews it) and stays listed as expired until
+  revoked;
+- presence is per user and shared by every server process (`catalog.companion_presence`): a device,
+  and a cookie caller of `/state`, follows only its own user's browsers, visible first, then
+  freshest, so a heartbeat on one process and a Companion request on another agree;
+- the last command is per device (`/state`'s `last_command` and `…/ack`); a cookie caller has none
+  (`null`, and `ack` answers `{ok:false}`);
+- creating and revoking a device write one server log line each with the user and device ids,
+  never the token.
 
 **Auth callback failure redirects:** `GET /auth/google/callback` failure responses are `302` redirects to `/?login_error=<code>` where `<code>` is one of: `provider_error`, `oauth_not_configured`, `missing_params`, `state_invalid`, `exchange_failed`, `token_invalid`, `email_unverified`, `identity_unavailable`, `account_disabled`. The code set is additive-open. Success path unchanged: `302 /` with session cookie. Only Google accounts with a verified email sign in (`email_unverified` otherwise); the verified ID token is then exchanged with Supabase Auth, whose user id is the account id, and `identity_unavailable` means Supabase Auth was unreachable, refused it, or returned an identity that doesn't match the account (gotrue-sign-in).
 
@@ -1018,7 +1044,8 @@ generation and event generation), `transcript-generation` and `youtube-import`.
 - **Status:** a run-lease claim records `started_at_ms` (kept on renewal by the same holder), and
   `GET /api/transcript-generation/status` reports the earliest-started live
   `transcript-generation` run of the whole deployment, whichever process holds it.
-- **Sweeper:** every process, every 60 s, deletes the expired run-lease rows (silently) and frees
+- **Sweeper:** every process, every 60 s, first deletes Companion presence rows older than 60 s
+  (companion-devices), then deletes the expired run-lease rows (silently) and frees
   each expired recording lease through its session, which advances the revision and sends
   `lease.changed` to every process. There is no election; a second sweep finds nothing.
 - **Restart window:** a process that crashes, is killed or restarts mid-run does not release its
@@ -1032,8 +1059,8 @@ generation and event generation), `transcript-generation` and `youtube-import`.
   instead — there is no cloud edge to pre-validate those headers, so leave `TRUST_PROXY=0`
   unless this process sits behind a proxy you control.
 - **Login is always required** (require-login) — every `/api` route needs a session, except
-  `GET`/`HEAD /api/profile`, `/api/admin/*` (`ADMIN_TOKEN`) and the `API_TOKEN` bearer on
-  `/api/companion/*`. The server refuses to boot if `REQUIRE_LOGIN` is set (it was removed) or
+  `GET`/`HEAD /api/profile`, `/api/admin/*` (`ADMIN_TOKEN`) and a Companion device token
+  (Bearer) on `/api/companion/*`. The server refuses to boot if `REQUIRE_LOGIN` is set (it was removed) or
   if `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` or `PUBLIC_BASE_URL` is blank.
 - **`NEW_USER_ALL_TEAMS` is deprecated and ignored** (teams-self-serve) — a new user's Google
   sign-in receives exactly the memberships materialized from pending email invites (possibly
@@ -1067,7 +1094,7 @@ only: nothing reads `server/.env`. The stacks take values from OpenBao
 | `IP_ALLOWLIST` | *(empty = off)* | CSV of allowed IPs/CIDRs (v4 + v6), enforced **before** auth. Empty disables it; a non-matching client gets `403`. A network-origin gate, orthogonal to login. |
 | `TRUST_PROXY` | `0` | When `1`, read the client IP from the first `X-Forwarded-For` hop (and `X-Forwarded-Proto` for secure-cookie decisions) instead of the raw socket. Enable **only** behind a proxy you control that overwrites `X-Forwarded-For` — otherwise the header is spoofable and can bypass `IP_ALLOWLIST`. |
 | `COOKIE_SECURE` | *(auto)* | Force the session cookie's `Secure` flag on/off. Blank = auto: secure when the request itself arrived over HTTPS, **or** when `TRUST_PROXY=1` and the proxy set `X-Forwarded-Proto: https`. |
-| `API_TOKEN` | *(empty)* | Companion machine bearer token. A request with `Authorization: Bearer <API_TOKEN>` passes the login gate **only on `/api/companion/*`**; everywhere else (other `/api/*` routes, the session WebSocket, `/auth/*`, `/api/admin/*`) it is ignored and the request is handled as if it carried no credential (`/api/admin/*` keeps its own `ADMIN_TOKEN`). The Companion module uses it. |
+| `API_TOKEN` | — | **Ignored since ADR 0021 slice 9d** (companion-devices): the server no longer reads it, and a Bearer holding it gets `401`. A Companion uses a per-device token created in Settings → Companion devices (see "Companion devices" above). |
 | `ADMIN_TOKEN` | *(empty)* | Bearer token gating the `/api/admin/*` routes (user + studio-definition admin). |
 | `SESSION_COOKIE` / `SESSION_DAYS` | `autologger_sid` / `14` | Session cookie name and lifetime (days). |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | *(required)* | Google OAuth credentials. The server refuses to boot when either, or `PUBLIC_BASE_URL`, is blank. |
@@ -1083,8 +1110,8 @@ transcript generation, `YTDLP_PATH` (or a `yt-dlp` on `PATH`) for YouTube import
 `CLAUDE_CLI_PATH` for AI chat / topics / event generation / v2 dashboards.
 
 **Typical public HTTPS-behind-a-proxy setup:** `HOST=127.0.0.1` (Node reachable only via the
-proxy), `PUBLIC_BASE_URL=https://your.domain`, `TRUST_PROXY=1`, and an
-`API_TOKEN` for the Companion module (scoped to `/api/companion/*`) — optionally an `IP_ALLOWLIST` to further restrict access.
+proxy), `PUBLIC_BASE_URL=https://your.domain`, `TRUST_PROXY=1`, and a
+Companion device token per Companion install (created in Settings; honoured only on `/api/companion/*`) — optionally an `IP_ALLOWLIST` to further restrict access.
 
 ## Known parity windows (spec)
 
@@ -1230,7 +1257,7 @@ hand-typed `docker compose up` fails on purpose. Nothing reads `server/.env`.
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | yes | Google sign-in, the only way in for people; the server refuses to boot without them. |
 | `BOOTSTRAP_OWNER_EMAIL` | yes | The bootstrap owner; their first sign-in claims every ownerless team. Compose and the server refuse to start without it. |
 | `RUN_FEATURE_EMAILS` | optional | Users approved for the run features besides the bootstrap owner (comma-separated). Grant by adding an email and restarting. |
-| `API_TOKEN` | if Companion is used | Companion bearer token, **≥ 32 random bytes**. Authenticates **only** `/api/companion/*`. |
+| `API_TOKEN` | no | **Ignored since ADR 0021 slice 9d.** It stays on the `docker/secrets-env.yaml` allowlist only so a secret that still holds it is not refused; drop it from OpenBao. Companion installs use device tokens from Settings. |
 | `ADMIN_TOKEN` | yes for cutover | Gates `/api/admin/*` (membership bootstrap). |
 | `ROUTER_PORT` | no (`8080`) | Host loopback port the router publishes; the Newt target. |
 | `DEEPGRAM_API_KEY` | optional | Enables transcript generation (else `503`). **Sends recorded audio to DeepGram's cloud STT and spends money.** |
@@ -1297,10 +1324,12 @@ live in `settings.json`, not the container env.)
    `/api/companion/%2e%2e/sessions/x` slip through the proxy's SSO wall and be normalized to
    `/api/sessions/x` by the server's URL parser — the router rewrites dot-segment and
    encoded-slash targets to a `404`, but the proxy rule should not rely on that alone; and (b)
-   the token scope is enforced server-side (`API_TOKEN` is honoured only under
+   the token scope is enforced server-side (a Companion device token is honoured only under
    `/api/companion/*`), but the extra routes under that prefix (`commands/wait`,
    `commands/:commandId/ack`) are not used by the module and need no anonymous exposure.
-3. Reconfigure each Companion install with the server URL and the new `API_TOKEN`.
+3. Pair each Companion install: sign in, create a device in **Settings → Companion devices**, and
+   paste its `ald_…` token (shown once) into the connection with the server URL. After the deploy
+   that retired `API_TOKEN` (ADR 0021 slice 9d), every install must be re-paired.
 
 ### Google OAuth client
 
@@ -1319,11 +1348,12 @@ the post-repoint "verify from outside" list proves the callback.
 
 ### Security notes for this topology
 
-- **`API_TOKEN` is not a general credential.** It authenticates only `/api/companion/*`
-  (the session WebSocket, other `/api/*`, `/auth/*`, `/api/admin/*` ignore it). Use a token of
-  ≥ 32 random bytes and rotate it by editing `.env`, recreating `api`, and updating the
-  Companion installs. Any external script that used it against `/api/sessions` etc. must use a
-  real login session instead.
+- **A Companion device token is not a general credential.** It authenticates only
+  `/api/companion/*` (the session WebSocket, other `/api/*`, `/auth/*`, `/api/admin/*` and the
+  device-management routes ignore it), and acts as the user who created it. Tokens carry 256
+  random bits and only their sha256 is stored. To rotate one, revoke the device in Settings and
+  create a new one; revocation applies on the next request. `API_TOKEN` is ignored since slice 9d.
+  Any external script that used it must use a real login session or a device token instead.
 - **Subscription credentials (accepted risk, owner ruling G5).** AI chat, topics and event
   generation run the `claude` CLI with the *mounted* `~/.claude` subscription login, so every
   signed-in user's AI turns spend the owner's personal claude.ai subscription; the codebase
@@ -1415,7 +1445,7 @@ database copy and a blob delta inside the maintenance window. Below, `OLD` is th
 `OLD_DATA` its `DATA_DIR`; `VOL` is the `autologger_autologger-data` mountpoint (as above).
 
 **Preconditions.** The OAuth client exists and is verified (see above); `.env` is filled in
-(Google credentials, `API_TOKEN` ≥ 32 bytes, `ADMIN_TOKEN`, `DEEPGRAM_API_KEY`; no
+(Google credentials, `ADMIN_TOKEN`, `DEEPGRAM_API_KEY`; no `API_TOKEN`, ignored since 9d; no
 `AI_V2_API_KEY`); the images are pushed with pinned tags; this host has run `docker login
 ghcr.io` with a `read:packages` PAT; `docker compose up --no-start` has created the volumes.
 
@@ -1495,7 +1525,7 @@ make prod-up ||
 # f. re-run the membership bootstrap (below)
 # g. repoint the Pangolin target at Newt -> 127.0.0.1:${ROUTER_PORT}
 # h. add the 5 exact-path Companion bypass rules
-# i. reconfigure the Companion installs with API_TOKEN
+# i. pair the Companion installs with device tokens from Settings (API_TOKEN is ignored since 9d)
 ```
 
 Notes on step 3c:
@@ -1596,7 +1626,8 @@ setup is still the membership bootstrap script above.
 
 `sh docker/scripts/test_router.sh stage` checks a running stack's router without a browser:
 shell routes, a recorded disposition table, stray-upgrade closure and upgrade detection,
-traversal with `API_TOKEN`, token scope including the WebSocket, `web` unable to reach `api`, and
+traversal with a Companion device token (`COMPANION_DEVICE_TOKEN`, created in that stack's
+Settings; `API_TOKEN` is ignored since 9d), token scope including the WebSocket, `web` unable to reach `api`, and
 the port unreachable off loopback. It prints case names and statuses only. Browser e2e (the
 former Playwright suites, including the differential matrix against a single-process server)
 is retired during the Supabase migration (ADR 0021 slice 1.4a) and returns rebuilt against the
@@ -1700,8 +1731,8 @@ server change.
 - **Never publish the gate beyond loopback, and never join other networks to it.** That would
   turn it into exactly the multi-user exposure the AI v2 rule forbids. `make check` enforces
   loopback-only publishing and the literal pins.
-- Any local process or user on the host holding a dev session or the dev `API_TOKEN` can use
-  the dev app with your Claude login.
+- Any local process or user on the host holding a dev session or a dev Companion device token
+  can use the dev app with your Claude login (a device token only on `/api/companion/*`).
 - Source subtrees (`server/src`, `web/src`, each `packages/*/src`, ...) are mounted
   **read-only**, so hot reload works from host edits (Linux file watching only; Docker Desktop is
   not supported). A dependency-manifest, lockfile or config change needs `make dev-build`.
@@ -1753,8 +1784,11 @@ loopback. The connection is entered once by hand (not provisioned):
 2. **Connections -> Add connection ->** **AutoLogger** (the module loads from the local-dev
    module path; it is not in the registry).
 3. Set the server URL to **`http://app:8787`** (Companion reaches the dev app through the app's
-   gate on the dev network). Set the API token to `API_TOKEN` from
-   OpenBao `dev`; without it every Companion request gets `401`.
+   gate on the dev network). Sign in to dev at <http://127.0.0.1:8787>, create a device in
+   **Settings → Companion devices**, and paste its `ald_…` token (shown once) into the connection's
+   **Device token** field; Companion keeps it as a secret. Without a valid token every Companion
+   request gets `401`. `API_TOKEN` is ignored since ADR 0021 slice 9d, so a connection set up
+   before then must be re-paired.
 
 Notes:
 - The log-event action needs an **active session with live presence**: open a session in a
@@ -1774,7 +1808,8 @@ Dev requires sign-in. Set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` in OpenB
 never production's) and register the redirect URI
 `http://localhost:8787/auth/google/callback` (your `DEV_PORT`). Open dev at
 `http://localhost:<DEV_PORT>/` and sign in. Without both values `compose-run` refuses to start dev
-(and the server refuses to boot). Also set `API_TOKEN` for the dev Companion.
+(and the server refuses to boot). The dev Companion uses a device token from Settings (see "Dev
+Companion"); `API_TOKEN` is ignored since 9d.
 
 Other integrations are off unless set in OpenBao `dev`: `DEEPGRAM_API_KEY` (transcripts; sends audio
 to DeepGram), `SHEETS_LOG_IMPORT_ENABLED=1`, `AI_V2_ENABLED=1`. YouTube import works from the
@@ -1784,14 +1819,15 @@ to DeepGram), `SHEETS_LOG_IMPORT_ENABLED=1`, `AI_V2_ENABLED=1`. YouTube import w
 
 Stage is an overlay on `compose.yaml`, built locally for your native architecture, behaving as
 prod: login required, real Google sign-in. Fill OpenBao `stage` (`STAGE_PORT`, OAuth client,
-`API_TOKEN`, `ADMIN_TOKEN`, optional keys), then `make stage-up`, then `make stage-claude-login`
+`ADMIN_TOKEN`, optional keys), then `make stage-up`, then `make stage-claude-login`
 for AI chat.
 
 - Create a **separate Google OAuth client** with the authorized redirect URI
   `http://localhost:8788/auth/google/callback` (your `STAGE_PORT`).
 - Open stage at **`http://localhost:8788`**, not `127.0.0.1`, or the redirect will not match.
-- `API_TOKEN`/`ADMIN_TOKEN` must **differ from prod's** (`openssl rand -hex 32`). `API_TOKEN`
-  authenticates only `/api/companion/*`; there is no Companion in stage, so test it with `curl`.
+- `ADMIN_TOKEN` must **differ from prod's** (`openssl rand -hex 32`). `API_TOKEN` is ignored since
+  9d. There is no Companion in stage: create a device token in stage's Settings and test
+  `/api/companion/*` with `curl`.
 - The overlay changes only: project name, container name, subnets and gateways, image names,
   `PUBLIC_BASE_URL`, `COOKIE_SECURE` (`0` unless public), `SESSION_COOKIE`, and the loopback port. The
   router's trusted-proxy gateways are `ROUTER_FRONT_GW`/`ROUTER_BACK_GW` placeholders in
@@ -1957,7 +1993,8 @@ session on the Event Feed transfers 172 KB of API payload instead of ~5.3 MB, wi
 payload (614 KB gzip) fetched only when first needed. And the **Companion presence heartbeat runs
 off a Web Worker clock** (`web/src/shared/utils/workerInterval.ts`), because Chrome coalesces a
 long-hidden tab's main-thread timers to roughly one wakeup a minute — four times the server's 15 s
-presence freshness window — which would drop a backgrounded tab as a Companion target; where a
+presence freshness window (presence rows live in the shared `catalog.companion_presence` table, and
+the lease sweeper deletes rows older than 60 s once a minute) — which would drop a backgrounded tab as a Companion target; where a
 worker can't be created (no `Worker`, or a CSP denying `blob:` workers) it falls back to a
 main-thread timer and that guarantee does not hold.
 
@@ -2086,11 +2123,16 @@ npm run package -w companion    # produce a distributable .tgz module package
 **Loading in Companion 4.3.x:** you must load the **packaged** module, not the raw `tsc`
 output — under Companion's per-module Node permission sandbox the plain `companion/dist/`
 build cannot read the workspace-hoisted dependencies and fails to start. Run
-`npm run package -w companion` to produce `autologger-0.1.0.tgz` (a self-contained,
+`npm run package -w companion` to produce `autologger-0.2.0.tgz` (a self-contained,
 dependency-free esbuild bundle with a correct `runtime.apiVersion`), then either import it
 via Companion's **"Import module package"**, or extract it into a directory you pass to
 `--extra-module-path`. Configure the connection with the **Server URL**
-(e.g. `http://127.0.0.1:8787`) and the **API token** (the server's `API_TOKEN`; required).
+(e.g. `http://127.0.0.1:8787`) and a **Device token** (required): sign in, open **Settings →
+Companion devices**, create a device and paste its `ald_…` token, which is shown once. Companion
+keeps the token in its secrets store, not in the connection config. Module 0.2.0's upgrade script
+moves a token saved by 0.1.x into the secrets store, but a pre-9d `API_TOKEN` value is refused by
+the server: after the deploy that retired `API_TOKEN` (ADR 0021 slice 9d), re-pair every install
+with a device token. A `401` shows **Device token invalid or revoked** on the connection.
 
 > `@companion-module/base` is pinned to `~1.14.0` (stable 1.x). Companion 4.3.4 rejects the
 > newer 2.1.x line, and its 2.0.x alpha removed the `runEntrypoint` API this module uses. A
@@ -2111,24 +2153,29 @@ WebSocket, so HTTPS works with no extra setup).
    **AutoLogger**, then fill the three config fields (`companion/src/config.ts`):
    - **AutoLogger server URL** — the server's base URL, e.g.
      `https://autologger.example.com` (a trailing slash is stripped automatically).
-   - **API token** — see step 3.
+   - **Device token (required)** — see step 3.
    - **Poll interval (ms)** — default `1000` (clamped to 250–10000).
-3. **Authenticate (every server)** — the module authenticates by
-   sending `Authorization: Bearer <token>`, which the server accepts only when it equals its
-   **`API_TOKEN`** env var. So set `API_TOKEN=<a-long-random-secret>` in the stack's OpenBao KV
-   environment, run `make <env>-up`, and paste the **same** secret into the connection's **API token**
-   field; without it every request gets `401`. If the server is behind a proxy and uses `IP_ALLOWLIST`, set `TRUST_PROXY=1`
-   so the client IP is read from the forwarded header.
-4. **Open a browser on a session** — the module acts on **whichever session an open browser
-   reports as active** (via presence); it does not pick a session itself. Load the server in a
+3. **Authenticate (every server)** — the module sends `Authorization: Bearer <token>` with a
+   **Companion device token**. Sign in to the server in a browser, open **Settings → Companion
+   devices**, add a device (one per Companion install, at most 10 per user), and paste the `ald_…`
+   token into the connection's **Device token** field; it is shown once, and Companion keeps it as
+   a secret. The module then acts as you: it sees only sessions you can access and follows only
+   your own browsers. Without a valid token every request gets `401`; a device unused for 90 days
+   expires. To rotate, revoke the device in Settings and create a new one. `API_TOKEN` is ignored
+   since ADR 0021 slice 9d. If the server is behind a proxy and uses `IP_ALLOWLIST`, set
+   `TRUST_PROXY=1` so the client IP is read from the forwarded header.
+4. **Open a browser on a session** — the module acts on **whichever session your own open
+   browser reports as active** (via presence, signed in as the user who created the device); it
+   does not pick a session itself. Load the server in a
    browser and enter/start a session, then check the session/show name shown on the Companion
    buttons before pressing — with multiple tabs open the active session can change.
 
 **Sanity check** the URL + token before wiring buttons — a `200` with JSON means you're set;
-`401` is a token mismatch, and a `409`/empty session means no browser is on a session yet:
+`401` is an unknown, revoked or expired device token, and a `409`/empty session means none of your
+browsers is on a session yet:
 
 ```bash
-curl -H "Authorization: Bearer <your-API_TOKEN>" \
+curl -H "Authorization: Bearer <your-device-token>" \
   https://autologger.example.com/api/companion/state
 ```
 
@@ -2157,7 +2204,7 @@ curl -sSi https://autologger.example.com/api/companion/state | grep -i '^locatio
 **Fix it at the proxy, not in AutoLogger:** add proxy rules that let **exactly the five paths
 the module calls** bypass the proxy's SSO — `/api/companion/state`, `/api/companion/categories`,
 `/api/companion/log`, `/api/companion/transport`, `/api/companion/command` — then rely on
-AutoLogger's own `API_TOKEN` (+ optionally `IP_ALLOWLIST`) to secure them, which is exactly the
+AutoLogger's own Companion device tokens (+ optionally `IP_ALLOWLIST`) to secure them, which is exactly the
 auth model the module is built for. Keep the rest of the app behind SSO. (In Pangolin: the
 resource's **Rules** tab → one **Accept** rule per path above.) **Do not use a wildcard such as
 `/api/companion/*`**: a proxy that matches the raw path lets a crafted target like
@@ -2165,9 +2212,9 @@ resource's **Rules** tab → one **Accept** rule per path above.) **Do not use a
 normalizes it to `/api/sessions/x`; exact paths cannot be traversed into, and the token is
 in any case honoured only under `/api/companion/*`. See **Container deployment** for the router
 that also rejects such targets. Making the whole resource public also works for Companion, but drops
-SSO from the browser flow too — and `API_TOKEN` no longer authenticates anything outside
+SSO from the browser flow too — and a device token authenticates nothing outside
 `/api/companion/*`, so the rest of the app still needs a real login. Header/resource-token auth on
-the proxy generally won't work: the module sends only `Authorization: Bearer <API_TOKEN>` and
+the proxy generally won't work: the module sends only `Authorization: Bearer <device token>` and
 can't add a second custom header, so a proxy that also wants `Authorization` collides with
 AutoLogger's token.
 

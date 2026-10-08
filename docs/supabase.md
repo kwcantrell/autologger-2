@@ -95,7 +95,8 @@ ID token, exchanges it with GoTrue (`POST http://auth:9999/token?grant_type=id_t
 `auth-app`. The GoTrue user id is the catalog user's id. Every stack, dev included, needs
 `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` (require-login): `compose-run` refuses a stack
 without both. Dev uses its own Google client (redirect `http://localhost:8787/auth/google/callback`)
-and needs `API_TOKEN` too; without it the dev Companion gets `401`. There is no CORS and no public GoTrue route.
+and the dev Companion needs a device token from dev's Settings → Companion devices (`API_TOKEN` is
+ignored since ADR 0021 slice 9d); without it the dev Companion gets `401`. There is no CORS and no public GoTrue route.
 
 To check a running stack: `sh docker/supabase/test_gateway.sh dev` (or `stage`). It prints
 statuses only.
