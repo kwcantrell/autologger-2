@@ -27,6 +27,7 @@ import {
   httpsJson,
   parseAddr,
   parseKvPath,
+  retiredKeyWarning,
   sanitizeMessage,
   splitStep,
   validateSecrets,
@@ -501,7 +502,10 @@ describe('success path (D1 steps 5-6, H12)', () => {
     assert.equal(fetch.headers.authorization, undefined);
     assert.equal(fetch.body, '');
     assert.equal(revoke.headers['x-vault-token'], TOKEN);
-    assert.doesNotMatch(r.out, /warning/);
+    // drop-unused-supabase-services D3: the fixture still holds the retired keys; one warning names them.
+    assert.equal(r.out.match(/warning/g)?.length, 1, r.out);
+    assert.match(r.out, /^compose-run: warning: the OpenBao dev secret holds retired keys ANON_KEY, REALTIME_DB_ENC_KEY, SECRET_KEY_BASE, SERVICE_ROLE_KEY, SUPABASE_PORT; /m);
+    for (const [k, v] of sbSecrets()) if (/ANON|SERVICE_ROLE|SECRET_KEY_BASE|REALTIME/.test(k)) assert.ok(!r.out.includes(v), k);
     const argv = log('argv');
     assert.match(argv, /--env-file \/dev\/null/);
     assert.doesNotMatch(argv, new RegExp(`${SECRET}|${TOKEN}`));
@@ -512,7 +516,7 @@ describe('success path (D1 steps 5-6, H12)', () => {
     assert.match(env, /^TERM=xterm$/m);
     assert.ok(env.includes(`GOOGLE_CLIENT_ID=a'b"c$d\`e\nf`));
     const names = env.split('\n').filter((l) => /^[A-Za-z_][A-Za-z0-9_]*=/.test(l)).map((l) => l.split('=')[0]).sort();
-    assert.deepEqual(names, ['ANON_KEY', 'APP_DB_PASSWORD', 'AUTOLOGGER_STACK', 'BOOTSTRAP_OWNER_EMAIL', 'DEV_PORT', 'GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'HOME', 'JWT_SECRET', 'PATH', 'POSTGRES_PASSWORD', 'PWD', 'REALTIME_DB_ENC_KEY', 'SECRET_KEY_BASE', 'SERVICE_ROLE_KEY', 'SUPABASE_PORT', 'SUPABASE_ROLES_PASSWORD', 'TERM']);
+    assert.deepEqual(names, ['APP_DB_PASSWORD', 'AUTOLOGGER_STACK', 'BOOTSTRAP_OWNER_EMAIL', 'DEV_PORT', 'GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'HOME', 'JWT_SECRET', 'PATH', 'POSTGRES_PASSWORD', 'PWD', 'SUPABASE_ROLES_PASSWORD', 'TERM']);
     assert.match(env, new RegExp(`^POSTGRES_PASSWORD=${PGPW}$`, 'm'));
   });
   it('a failed revoke only warns; the token expires with its TTL', async () => {
@@ -725,14 +729,10 @@ describe('Supabase keys (supabase-services D4)', () => {
   const keys = ['POSTGRES_PASSWORD', 'SUPABASE_ROLES_PASSWORD', 'JWT_SECRET', 'SECRET_KEY_BASE', 'REALTIME_DB_ENC_KEY', 'ANON_KEY', 'SERVICE_ROLE_KEY', 'SUPABASE_PORT'];
   const allowed = new Set(keys);
   it('each format refuses a bad value without printing it', () => {
+    // drop-unused-supabase-services D3: the retired keys have no format any more (see below).
     const bad = {
       SUPABASE_ROLES_PASSWORD: 'A'.repeat(32), // uppercase is refused
       JWT_SECRET: 'short-secret-value',
-      SECRET_KEY_BASE: 'k'.repeat(63),
-      REALTIME_DB_ENC_KEY: 'k'.repeat(15),
-      ANON_KEY: 'not-a-jwt-value',
-      SERVICE_ROLE_KEY: 'a.b.c.d',
-      SUPABASE_PORT: '80',
     };
     for (const [k, v] of Object.entries(bad)) {
       let msg = '';
@@ -740,9 +740,8 @@ describe('Supabase keys (supabase-services D4)', () => {
       assert.match(msg, new RegExp(`${k}.*bad-format`), k);
       assert.ok(!msg.includes(v), k);
     }
-    for (const v of ['99999', '1023', '8790x']) assert.throws(() => validateSecrets(kv([secret('SUPABASE_PORT', v)]), allowed), /bad-format/, v);
-    const ok = validateSecrets(kv([secret('SUPABASE_ROLES_PASSWORD', PGPW), secret('JWT_SECRET', JS), secret('SECRET_KEY_BASE', 'k'.repeat(64)), secret('REALTIME_DB_ENC_KEY', 'k'.repeat(16)), secret('ANON_KEY', ANON), secret('SERVICE_ROLE_KEY', SVC), secret('SUPABASE_PORT', '8790')]), allowed);
-    assert.equal(ok.size, 7);
+    const ok = validateSecrets(kv([secret('SUPABASE_ROLES_PASSWORD', PGPW), secret('JWT_SECRET', JS)]), allowed);
+    assert.equal(ok.size, 2);
   });
   it('the anon and service-role keys must verify against JWT_SECRET with the right roles', () => {
     const m = (o) => new Map(Object.entries({ JWT_SECRET: JS, ANON_KEY: ANON, SERVICE_ROLE_KEY: SVC, ...o }));
@@ -776,6 +775,27 @@ describe('Supabase keys (supabase-services D4)', () => {
       assert.match(msg, new RegExp(`${k}.*${svc}`), `${k} in ${svc}`);
       assert.ok(!msg.includes(v));
     }
+  });
+});
+
+// drop-unused-supabase-services D3: the five retired keys are accepted, never format-checked, never
+// passed to compose, and named (never their values) in one warning.
+describe('retired Supabase keys (drop-unused-supabase-services D3)', () => {
+  const RETIRED = { ANON_KEY: 'not-a-jwt', SECRET_KEY_BASE: 'k'.repeat(10), REALTIME_DB_ENC_KEY: 'k'.repeat(40), SERVICE_ROLE_KEY: 'a.b.c.d', SUPABASE_PORT: '80' };
+  it('are accepted in every environment, whatever their format', () => {
+    for (const env of ['dev', 'stage', 'prod']) {
+      const got = validateSecrets(kv(Object.entries(RETIRED)), allowedNames(env));
+      assert.equal(got.size, 5, env);
+    }
+  });
+  it('the warning names exactly the retired keys present, sorted, and no value', () => {
+    assert.equal(retiredKeyWarning(new Map([['POSTGRES_PASSWORD', PGPW], ['JWT_SECRET', JS]]), 'dev'), undefined);
+    const all = retiredKeyWarning(new Map([['POSTGRES_PASSWORD', PGPW], ...Object.entries(RETIRED)]), 'stage');
+    assert.equal(all, 'compose-run: warning: the OpenBao stage secret holds retired keys ANON_KEY, REALTIME_DB_ENC_KEY, SECRET_KEY_BASE, SERVICE_ROLE_KEY, SUPABASE_PORT; nothing reads them, and they can be removed once no checkout runs the old Supabase services (docs/openbao-secrets.md)');
+    const two = retiredKeyWarning(new Map([['SUPABASE_PORT', '8790'], ['ANON_KEY', 'not-a-jwt']]), 'dev');
+    assert.match(two, /OpenBao dev secret holds retired keys ANON_KEY, SUPABASE_PORT; /);
+    assert.doesNotMatch(two, /SERVICE_ROLE_KEY|SECRET_KEY_BASE|REALTIME_DB_ENC_KEY|not-a-jwt|8790/);
+    for (const v of Object.values(RETIRED)) if (v.length > 3) assert.ok(!all.includes(v), v);
   });
 });
 

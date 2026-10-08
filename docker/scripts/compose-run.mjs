@@ -40,23 +40,21 @@ const ENVS = ['dev', 'stage', 'prod'];
 // Compose-interpolation keys an environment may hold besides the allowlist (design D3).
 // The Supabase keys reach only the services SECRET_SCOPE allows (supabase-db D4, supabase-services D4).
 const SUPABASE_KEYS = ['POSTGRES_PASSWORD', 'SUPABASE_ROLES_PASSWORD', 'APP_DB_PASSWORD', 'JWT_SECRET', 'ANON_KEY', 'SERVICE_ROLE_KEY', 'SECRET_KEY_BASE', 'REALTIME_DB_ENC_KEY', 'SUPABASE_PORT'];
+// drop-unused-supabase-services D3: keys of the removed Supabase services. A secret may still hold
+// them (another checkout runs the old stack): accepted, never format-checked, never passed to
+// compose, and named once in a warning.
+const RETIRED_KEYS = ['ANON_KEY', 'SERVICE_ROLE_KEY', 'SECRET_KEY_BASE', 'REALTIME_DB_ENC_KEY', 'SUPABASE_PORT'];
 const COMPOSE_KEYS = {
-  dev: ['DEV_PORT', 'DEV_COMPANION_PORT', ...SUPABASE_KEYS],
-  stage: ['STAGE_PORT', ...SUPABASE_KEYS],
-  prod: ['ROUTER_PORT', 'WEB_TAG', 'API_TAG', 'PUBLIC_BASE_URL', ...SUPABASE_KEYS],
+  dev: ['DEV_PORT', 'DEV_COMPANION_PORT', ...SUPABASE_KEYS, ...RETIRED_KEYS],
+  stage: ['STAGE_PORT', ...SUPABASE_KEYS, ...RETIRED_KEYS],
+  prod: ['ROUTER_PORT', 'WEB_TAG', 'API_TAG', 'PUBLIC_BASE_URL', ...SUPABASE_KEYS, ...RETIRED_KEYS],
 };
 // Per-key value formats: strong, URL-safe, and safe for busybox echo and psql backticks.
-const JWT_RE = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
 const KEY_FORMAT = {
   POSTGRES_PASSWORD: /^[0-9a-f]{32,}$/,
   SUPABASE_ROLES_PASSWORD: /^[0-9a-f]{32,}$/,
   APP_DB_PASSWORD: /^[0-9a-f]{32,}$/,
   JWT_SECRET: /^[A-Za-z0-9_-]{40,}$/,
-  SECRET_KEY_BASE: /^[A-Za-z0-9_-]{64,}$/,
-  REALTIME_DB_ENC_KEY: /^[A-Za-z0-9_-]{16}$/,
-  ANON_KEY: JWT_RE,
-  SERVICE_ROLE_KEY: JWT_RE,
-  SUPABASE_PORT: { test: (v) => /^[1-9][0-9]{3,4}$/.test(v) && Number(v) >= 1024 && Number(v) <= 65535 },
 };
 // The services each secret value may appear in (spec invariant 16); per stack where it differs.
 const SECRET_SCOPE = {
@@ -216,6 +214,14 @@ export function validateSecrets(json, allowed) {
     );
   }
   return out;
+}
+
+/** drop-unused-supabase-services D3: the warning line naming the retired keys a secret holds
+ * (names only, sorted), or undefined when it holds none. */
+export function retiredKeyWarning(secrets, env) {
+  const held = RETIRED_KEYS.filter((k) => secrets.has(k)).sort();
+  if (!held.length) return undefined;
+  return `compose-run: warning: the OpenBao ${env} secret holds retired keys ${held.join(', ')}; nothing reads them, and they can be removed once no checkout runs the old Supabase services (docs/openbao-secrets.md)`;
 }
 
 /** supabase-services D4: the anon and service-role keys are unexpired HS256 JWTs signed with
@@ -791,6 +797,8 @@ async function main(argv, ownEnv) {
   const fetched = await fetchSecrets(creds, (w) => process.stderr.write(`compose-run: warning: ${w}\n`));
   const secrets = validateSecrets(fetched, allowedNames(env));
   for (const w of checkSupabaseKeys(secrets)) process.stderr.write(`compose-run: warning: ${w}\n`);
+  const retired = retiredKeyWarning(secrets, env);
+  if (retired) process.stderr.write(`${retired}\n`);
   checkSignInClient(env, secrets);
 
   // H6, H12: the child environment, built from nothing.
@@ -798,7 +806,8 @@ async function main(argv, ownEnv) {
   childEnv.PATH = path;
   if (ownEnv.HOME) childEnv.HOME = ownEnv.HOME;
   if (ownEnv.TERM) childEnv.TERM = ownEnv.TERM;
-  for (const [k, v] of secrets) childEnv[k] = v;
+  // drop-unused-supabase-services D3: the retired keys never reach compose or a container.
+  for (const [k, v] of secrets) if (!RETIRED_KEYS.includes(k)) childEnv[k] = v;
   childEnv.AUTOLOGGER_STACK = env;
   const dockerDir = stage?.dockerAuths ? makeDockerConfig(stage.dockerAuths) : '';
   if (dockerDir) TEMP_DIRS.add(dockerDir);
