@@ -196,6 +196,7 @@ as literal values, never `${…}` references, in the app's `environment:`:
 - `TRUST_PROXY=0`
 - `IP_ALLOWLIST=` (empty)
 - `DATA_DIR`
+- `BLOB_DIR=/blobs`
 - `PORT`
 
 `PUBLIC_BASE_URL` SHALL be pinned to `http://localhost:${DEV_PORT:-8787}`. Besides it, the only
@@ -259,7 +260,9 @@ the gate for exactly the reach the loopback rule assumes.
 - **THEN** the gate refuses it, and the app never sees it
 
 ### Requirement: Dev isolates data and secrets, sharing only the operator's Claude login
-The dev environment SHALL set `DATA_DIR` to a path inside a named volume of the dev project.
+The dev environment SHALL set `DATA_DIR` to a path inside a named volume of the dev project,
+and `BLOB_DIR` to `/blobs`, the mount of a second named volume of the dev project
+(`dev-blobs`). `make dev-reset` SHALL delete `dev-blobs` with the project's other volumes.
 
 Bind mounts:
 - Source bind mounts SHALL be read-only.
@@ -300,7 +303,8 @@ documentation SHALL state the accepted residuals of the credentials mount:
     of the named exceptions;
   - the only read-write bind is `~/.claude/.credentials.json`;
   - the runtime home is the `dev-home` named volume;
-  - `DATA_DIR` resolves to a named-volume mount.
+  - `DATA_DIR` resolves to a named-volume mount;
+  - `BLOB_DIR` resolves to `/blobs`, the `dev-blobs` named-volume mount.
 
 #### Scenario: Host server/.env is invisible
 - **WHEN** a shell runs in the dev container
