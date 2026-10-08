@@ -72,10 +72,13 @@
 
 ## 5. Two processes share audio (spec "Audio blobs are shared by every server process")
 
-- [ ] 5.1 Test first: `server/src/test/session/sharedBlobs.int.test.ts` on two `busProcess`es with one `blobDir` and their own `DATA_DIR`s. A segment uploaded on A:
+- [x] 5.1 Test first: `server/src/test/session/sharedBlobs.int.test.ts` on two `busProcess`es with one `blobDir` and their own `DATA_DIR`s. A segment uploaded on A:
   - returns `206` on B with the same bytes and headers for `bytes=2-5`, and a `200` full body;
   - is found by sync-from-disk on B without duplicating the row.
   Red on the base wiring (B answers `404`), green after section 4.
+  - Evidence: red on the base topology (each process its own blob root, as each had its own `DATA_DIR/blobs`: `busProcess` temporarily ignoring `blobDir`), `cd server && npx vitest run --project integration src/test/session/sharedBlobs.int.test.ts` -> `× a segment uploaded through A plays through B, with the same Range answer and bytes` (`AssertionError: expected 404 to be 206`), `× sync-from-disk on B finds A’s segment without duplicating its row, and adds a row-less blob` (`- "scanned": 1,` expected, `0` received), `Tests  2 failed (2)` (log `10-5.1-red.log`); `busProcesses.ts` was restored from a copy afterwards (`git status` shows only the new test file).
+  - Evidence: green, the same command three runs -> `Tests  2 passed (2)` each; the other `busProcess` users, `src/routers/sessionWs.access.int.test.ts src/routers/companionAsUser.int.test.ts src/test/session/leaseSweeper.int.test.ts` -> `Test Files  3 passed (3)`, `Tests  25 passed (25)`, and `src/routers/ai.int.test.ts src/routers/aiV2.int.test.ts src/routers/logImport.int.test.ts` -> `Test Files  3 passed (3)`, `Tests  137 passed (137)`; `npm run typecheck` -> exit 0, 0 `error TS` (log `10-5.1-green.log`). DB tests ran locally, targeted files only (ADR 0026).
+  - Evidence: new `server/src/test/session/sharedBlobs.int.test.ts`, two `busProcess({ blobDir })` with one temp `BLOB_DIR` and their own `DATA_DIR`s, over real HTTP with the default user's cookie. Case 1: upload 10 bytes on A; on B `Range: bytes=2-5` -> `206` with `content-type: audio/webm`, `accept-ranges: bytes`, `content-length: 4`, `content-range: bytes 2-5/10` and bytes 2-5, the same headers as A's answer; a full GET on B -> `200`, `content-length: 10`, the same bytes. Case 2: sync-from-disk on B -> `{inserted: 0, updated: 0, scanned: 1, has_audio: true}`, one row; a row-less blob written by A's store at `audio/<sid>/0002_<uuid>.webm` -> sync on B `inserted: 1, scanned: 2`, its id listed; a repeat sync -> `inserted: 0`, two rows.
 
 ## 6. Compose, image and invariants (design D6)
 
