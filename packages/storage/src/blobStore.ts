@@ -1,9 +1,15 @@
 // Filesystem blob store for audio bytes. Keys (the `r2_key` column — a
-// grandfathered legacy schema name) are relative paths under root. put() is atomic: write to tmpDir (outside root, so list()
-// and reconciliation never see partials), fsync, rename. Range gets normalize
-// to {offset,length}; unsatisfiable ranges throw InvalidRangeError (→ 416).
+// grandfathered legacy schema name) are relative paths under root. put() is atomic: write to
+// putTmpDir, fsync, rename. Range gets normalize to {offset,length}; unsatisfiable ranges throw
+// InvalidRangeError (→ 416).
+//
+// shared-blob-volume D3: every server process of a stack writes one root (BLOB_DIR). putTmpDir
+// is BLOB_DIR/.tmp, on the root's filesystem so the rename stays atomic; list() and the
+// sync-from-disk reconciliation start from `audio/<sid>/`, so they never walk it. scratchDir is
+// the calling process's own DATA_DIR/tmp.
 
-import { createReadStream, type Dirent } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { createReadStream, type Dirent, lstatSync, readdirSync, unlinkSync } from 'node:fs';
 import { mkdir, open, readdir, rename, rm, stat } from 'node:fs/promises';
 import { dirname, join, resolve, sep } from 'node:path';
 import { Readable } from 'node:stream';
@@ -11,16 +17,66 @@ import type { BlobObject, BlobRange, BlobStore as BlobStorePort } from '@autolog
 
 export class InvalidRangeError extends Error {}
 
-let tmpCounter = 0;
+/** A day: a put older than this was orphaned by a crash, never still in flight. */
+export const BLOB_PUT_TEMP_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+function isEnoent(err: unknown): boolean {
+  return (err as NodeJS.ErrnoException | null)?.code === 'ENOENT';
+}
+
+/**
+ * shared-blob-volume D3: deletes the `put-*` regular files in `putTmpDir` (BLOB_DIR/.tmp) whose
+ * mtime is older than `nowMs - maxAgeMs`, and nothing else, so a booting process never removes a
+ * write another process has in flight. A file that vanishes mid-sweep (another process finished
+ * its rename, or swept it) is skipped. `nowMs` is the system clock: these are filesystem mtimes,
+ * not app time. Returns the count, which is all it logs.
+ */
+export function sweepStaleBlobPutTemps(
+  putTmpDir: string,
+  nowMs: number,
+  maxAgeMs: number = BLOB_PUT_TEMP_MAX_AGE_MS,
+): number {
+  let names: string[];
+  try {
+    names = readdirSync(putTmpDir);
+  } catch (err) {
+    if (isEnoent(err)) return 0; // nothing written yet
+    throw err;
+  }
+  const cutoff = nowMs - maxAgeMs;
+  let removed = 0;
+  for (const name of names) {
+    if (!name.startsWith('put-')) continue;
+    const p = join(putTmpDir, name);
+    try {
+      const st = lstatSync(p);
+      if (!st.isFile() || st.mtimeMs >= cutoff) continue;
+      unlinkSync(p);
+      removed += 1;
+    } catch (err) {
+      if (!isEnoent(err)) throw err;
+    }
+  }
+  if (removed > 0) console.info(`autologger: removed ${removed} stale blob temp file(s)`);
+  return removed;
+}
+
+export interface BlobStoreDirs {
+  /** Where put() writes its temp files: inside the root's filesystem (BLOB_DIR/.tmp). */
+  putTmpDir: string;
+  /** This process's scratch directory (DATA_DIR/tmp), returned by scratchRoot(). */
+  scratchDir: string;
+}
 
 export class BlobStore implements BlobStorePort {
   private rootAbs: string;
+  private putTmpDir: string;
+  private scratchDir: string;
 
-  constructor(
-    root: string,
-    private tmpDir: string,
-  ) {
+  constructor(root: string, dirs: BlobStoreDirs) {
     this.rootAbs = resolve(root);
+    this.putTmpDir = dirs.putTmpDir;
+    this.scratchDir = dirs.scratchDir;
   }
 
   private pathFor(key: string): string {
@@ -44,7 +100,7 @@ export class BlobStore implements BlobStorePort {
    * at startup) for spooling temporary work files a caller must clean up
    * itself — e.g. transcript generation's per-run concat output. */
   scratchRoot(): string {
-    return this.tmpDir;
+    return this.scratchDir;
   }
 
   async put(
@@ -53,10 +109,11 @@ export class BlobStore implements BlobStorePort {
     _opts: { contentType?: string } = {},
   ): Promise<void> {
     const dest = this.pathFor(key);
-    await mkdir(this.tmpDir, { recursive: true });
+    await mkdir(this.putTmpDir, { recursive: true });
     await mkdir(dirname(dest), { recursive: true });
-    tmpCounter += 1;
-    const tmp = join(this.tmpDir, `put-${process.pid}-${tmpCounter}`);
+    // shared-blob-volume D3: a random name, since every container usually runs the server under
+    // the same pid, so a pid and counter could collide across processes.
+    const tmp = join(this.putTmpDir, `put-${randomUUID()}`);
     try {
       const fh = await open(tmp, 'w');
       try {
@@ -67,8 +124,8 @@ export class BlobStore implements BlobStorePort {
       }
       await rename(tmp, dest);
     } catch (err) {
-      // Best-effort: don't orphan the temp file on a failed write/rename —
-      // nothing sweeps the `put-*` prefix.
+      // Best-effort: don't orphan the temp file on a failed write/rename. What a crash leaves,
+      // sweepStaleBlobPutTemps removes at a later boot (shared-blob-volume D3).
       await rm(tmp, { force: true }).catch(() => {});
       throw err;
     }

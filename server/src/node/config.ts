@@ -115,7 +115,11 @@ export function createBindings(
     clock,
     bus: frameBus ?? undefined,
   });
-  const audioBlobStore = new BlobStore(join(dataDir, 'blobs'), join(dataDir, 'tmp'));
+  // shared-blob-volume D3: the options object; section 4 moves the root to BLOB_DIR.
+  const audioBlobStore = new BlobStore(join(dataDir, 'blobs'), {
+    putTmpDir: join(dataDir, 'tmp'),
+    scratchDir: join(dataDir, 'tmp'),
+  });
   // Startup hygiene (design D6, task 5.4): remove any youtube-import per-request
   // temp dir orphaned by a crash/kill that skipped the route handler's own
   // `finally` cleanup. Prefix-scoped — never touches other scratch-root users

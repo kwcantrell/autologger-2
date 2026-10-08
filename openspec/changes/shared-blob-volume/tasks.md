@@ -27,13 +27,17 @@
 
 ## 2. Blob store on a shared root (design D3)
 
-- [ ] 2.1 Test first in `packages/storage/src/blobStore.test.ts`:
+- [x] 2.1 Test first in `packages/storage/src/blobStore.test.ts`:
   - two stores on one root, same pid, 50 concurrent puts: every key whole, `.tmp` empty;
   - a temp name matches `put-<uuid>`;
   - `scratchRoot()` is the scratch dir, outside the root;
   - `list('audio/x/')` never returns `.tmp` entries.
   Existing call sites move to the options object (D8 category 2). Red, then change the `BlobStore` constructor and `put`. Green.
-- [ ] 2.2 Test first: `sweepStaleBlobPutTemps` deletes only `put-*` regular files older than the cutoff. Young files, other names and directories are kept, a file vanishing mid-sweep is tolerated, and the count is returned. Red, then implement and export it. Green.
+  - Evidence: red, `cd packages/storage && npx vitest run --project unit src/blobStore.test.ts` -> `TypeError: The "path" argument must be of type string or an instance of Buffer or URL. Received an instance of Object`, `AssertionError: expected { …(2) } to be '/tmp/autologger-blob-…/dataA/tmp'`, `Tests  11 failed | 2 passed (13)` (log `10-2.1-red.log`). Then the options constructor with the old `put-<pid>-<counter>` name kept, the same command -> `× two stores on one root, same pid, 50 concurrent puts: every key whole, .tmp empty`, `Error: ENOENT: no such file or directory, rename '…/blobs/.tmp/put-324854-1' -> '…/blobs/audio/s3/0003_k.webm'`, `AssertionError: expected 'put-324854-11' to match /^put-[0-9a-f]{8}-…/`, `Tests  2 failed | 11 passed (13)` (log `10-2.1-red-naming.log`): the collision reproduces with two module instances under one pid.
+  - Evidence: green, `cd packages/storage && npx vitest run --project unit` -> `Test Files  4 passed (4)`, `Tests  64 passed (64)` (1.1's 60 plus 4); `src/blobStore.test.ts` three more runs -> `Tests  13 passed (13)` each; `npm run typecheck` -> exit 0, 0 `error TS` (log `10-2.1-green.log`). `BlobStore(root, { putTmpDir, scratchDir })`; `put` writes `putTmpDir/put-${randomUUID()}` (the module counter is gone); `scratchRoot()` returns `scratchDir`. `node/config.ts` passes the options object with today's paths (`DATA_DIR/blobs`, `DATA_DIR/tmp` for both) until section 4. Existing tests: D8 category 2 only, the `store()` helper passes `{ putTmpDir: base/tmp, scratchDir: base/scratch }`, so the existing cases' `base/tmp` assertions are unchanged.
+- [x] 2.2 Test first: `sweepStaleBlobPutTemps` deletes only `put-*` regular files older than the cutoff. Young files, other names and directories are kept, a file vanishing mid-sweep is tolerated, and the count is returned. Red, then implement and export it. Green.
+  - Evidence: red, `cd packages/storage && npx vitest run --project unit src/blobStore.test.ts` -> `× deletes only put-* regular files older than 24 h, and returns the count`, `× tolerates a file that vanishes mid-sweep`, `TypeError: sweepStaleBlobPutTemps is not a function`, `Tests  4 failed | 13 passed (17)` (log `10-2.2-red.log`).
+  - Evidence: green, `cd packages/storage && npx vitest run --project unit` -> `Test Files  4 passed (4)`, `Tests  68 passed (68)`; `npm run typecheck` -> exit 0, 0 `error TS` (log `10-2.2-green.log`). `sweepStaleBlobPutTemps(putTmpDir, nowMs, maxAgeMs = BLOB_PUT_TEMP_MAX_AGE_MS /* 24 h */)` in `packages/storage/src/blobStore.ts` (exported through the barrel's `export *`): `readdirSync`, then per `put-*` name `lstatSync` and `unlinkSync` when it is a regular file with `mtimeMs < now - maxAge`; ENOENT (a missing dir, or a file gone mid-sweep) is skipped; returns the count and logs only `autologger: removed <n> stale blob temp file(s)` when n > 0. Cases: 2-day and 24 h + 1 ms `put-` files removed, a 1-minute `put-` file, an old `other-old` file and an old `put-` directory kept; a given `maxAgeMs`; a file removed between `readdir` and `lstat` (a mocked `lstatSync` hook); a missing dir -> 0.
 
 ## 3. Scripts (design D5)
 
