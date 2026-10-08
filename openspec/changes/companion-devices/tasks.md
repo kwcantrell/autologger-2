@@ -51,9 +51,7 @@ Anything else is a stop: update the artifacts and ask the owner.
   - `list(userId)` is inclusive at the 15 s edge and returns only that user's rows;
   - a null `session_id` is stored as NULL;
   - `deleteOlderThan`.
-
   Plus `startupPurge.test.ts` sweeper cases: the presence step runs first, warns on failure, and still runs when the recording listing fails.
-
   Plus the port change (`user_id`, `list` rows with `client_id`). Red, then add the port change, the storage implementation on `bindSystem('companion-presence')`, the wiring in `node/config.ts`, the deletion of `server/src/node/presence.ts`, and the sweeper step in `sweepLeasesOnce`. Green. Existing presence tests change only under D9 categories 2 and 4.
 
 ## 4. Device store and authentication (design D2)
@@ -66,7 +64,6 @@ Anything else is a stop: update the artifacts and ask the owner.
   - a Bearer present ignores a cookie;
   - a device idle past 90 days gets 401;
   - the audit log lines carry the user and device ids and never the token.
-
   Red, then change `authContext`, remove `API_TOKEN` (`Config`, `env.ts`, `identity.ts`, `.env.example`, `docker/.env*.example`), keep `API_TOKEN` in `docker/secrets-env.yaml` marked ignored, rename `apiTokenAuth` to `companionDevice`, and delete the AI v2 principal-less refusal. Add the `seedCompanionDevice` helper and move the existing Bearer tests to it (D9 categories 1, 3 and 6). Add the ALLOWLIST entry (D9 category 4). Green.
 
 ## 5. Companion routes as the device's user (design D3)
@@ -75,13 +72,13 @@ Anything else is a stop: update the artifacts and ask the owner.
   - a device follows only its user's presence;
   - a cookie caller sees only their own presence rows;
   - a session the device's user lost access to gives the masked 409;
+  - a cookie caller with a fresh own row on a session they can't access gets the masked no-active-session answer on all five routes (state, categories, log, transport, command);
   - `connected_clients` and `is_playing` are scoped;
   - `last_command` and `ack` are per device, and a cookie caller reads `null` and acks `{ok:false}`;
   - a device caller gets 403 on presence POST;
   - presence ownership: another user's post or `closing` for a live client id changes nothing and answers `200`;
   - a blank or NUL `client_id` gives 400, and a null `session_id` stores no session;
   - two processes: presence posted on app A, `/state` with the device on app B names the session.
-
   Red, then rewrite `companion.ts` (delete the `companion-token` callers, scope `primarySession`, per-device key, presence 403) and remove `companion-token` from the ALLOWLIST. Green. Existing companion tests change only under D9 categories 1-4.
 
 ## 6. Device management routes (design D5)
@@ -93,7 +90,6 @@ Anything else is a stop: update the artifacts and ask the owner.
   - another user's id gives 404;
   - a device token on these routes gives 401;
   - only the sha256 is stored.
-
   Red, then add `packages/contract` schemas and `server/src/routers/companionDevices.ts`, and mount it. Green.
 
 ## 7. Web Settings section (design D6)
@@ -104,7 +100,6 @@ Anything else is a stop: update the artifacts and ask the owner.
   - Revoke asks for confirmation, deletes and refreshes;
   - the error `{detail}` is shown;
   - the types conform to the response shapes.
-
   Red, then add the hooks, types and `CompanionDevicesSection.tsx`, and register the section. Green.
 
 ## 8. Companion module (design D7)
@@ -113,7 +108,6 @@ Anything else is a stop: update the artifacts and ask the owner.
   - the upgrade script moves `config.token` into secrets, is a no-op when there is nothing to move or it already moved;
   - `init` and `configUpdated` read `secrets.token`;
   - the 401 status text.
-
   Red, then change `companion/src/{config,main,upgrades,api}.ts` and `HELP.md`, and bump the module version. Green, plus the module build and package (`npm run build && npm run package` in `companion`).
 
 ## 9. Docs and verify

@@ -274,6 +274,18 @@ A new `server/src/routers/companionDevices.ts`:
    - token-only "any session" cases (the show-grants D10 block and `catalogBinding`'s
      `system:companion-token`) become device-as-user access cases;
    - the AI v2 principal-less refusal test is deleted with the code.
+   - tests that read the global `companion:last_command` kv key (`companion.int` around `:251` and
+     `:346`) read the device's own key `companion:last_command:<device id>` (decision 6);
+   - tests that seed another user's presence and read `/state` or drive a route with a cookie
+     (`access.int` around `:302`, `catalogPolicies.int` around `:588`) seed presence owned by the
+     calling user instead (decision 9). The denied case must seed a fresh, visible row owned by the
+     denied user on the inaccessible session, through the port, so the masked answer still proves
+     the access check; the allowed case seeds a row owned by the allowed user. Their access
+     assertions stay. (Re-panel: an own-rows-only answer would pass even with the check deleted.)
+   - the `companion.int` show-grants D10 loop (around `:402-452`) seeds presence owned by the cookie
+     user it reads `/state` with, and its cookie assertion of a non-null `last_command` becomes
+     `null`, because a cookie caller has no device key (decision 6, D3).
+     (Amended in task 1.1, 2026-10-08.)
 4. **The `catalogSystem.repo.test.ts` ALLOWLIST:** `companion-token` goes; `companion-device` and
    `companion-presence` come in.
 5. **Snapshots:** the `catalogSchema.pg` table and column snapshots gain the two tables.

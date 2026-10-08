@@ -12,7 +12,7 @@ Tier reason:
 
 ADR 0021 slice 9d.
 
-Approved-by: Kalen 2026-10-08
+Approved-by: Kalen 2026-10-08 (reapproved)
 
 ## Why
 
