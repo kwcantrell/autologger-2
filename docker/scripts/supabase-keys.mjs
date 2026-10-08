@@ -11,7 +11,7 @@
 // is check-and-set on the version read, so a concurrent write makes it fail whole. Prints key
 // names and outcomes only.
 
-import { createHmac, randomBytes } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import { lstatSync, readFileSync } from 'node:fs';
 import { isAbsolute, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -21,6 +21,9 @@ import { Refusal, checkCredFile, checkNodeVersion, deletedMessage, deletedState,
 const ROOT = resolve(import.meta.dirname, '../..');
 const ENVS = ['dev', 'stage', 'prod'];
 // The secrets this generator owns, with how each value is made (formats: compose-run.mjs KEY_FORMAT).
+// drop-unused-supabase-services D3: four keys. The retired ones (ANON_KEY, SERVICE_ROLE_KEY,
+// SECRET_KEY_BASE, REALTIME_DB_ENC_KEY, SUPABASE_PORT) are never read, reported, written or deleted;
+// the merge-patch write leaves them in place.
 const hex = (n) => () => randomBytes(n).toString('hex');
 const b64u = (n) => () => randomBytes(n).toString('base64url');
 const KEYS = {
@@ -28,16 +31,7 @@ const KEYS = {
   SUPABASE_ROLES_PASSWORD: hex(16),
   APP_DB_PASSWORD: hex(16),
   JWT_SECRET: b64u(32),
-  SECRET_KEY_BASE: b64u(64),
-  REALTIME_DB_ENC_KEY: b64u(12),
 };
-// ANON_KEY and SERVICE_ROLE_KEY are HS256 JWTs signed with JWT_SECRET; the three are created together.
-const TRIO = ['JWT_SECRET', 'ANON_KEY', 'SERVICE_ROLE_KEY'];
-function apiKey(secret, role, iat) {
-  const part = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
-  const hp = `${part({ alg: 'HS256', typ: 'JWT' })}.${part({ role, iss: 'supabase', iat, exp: iat + 5 * 365 * 86400 })}`;
-  return `${hp}.${createHmac('sha256', secret).update(hp).digest('base64url')}`;
-}
 
 const refuse = (msg) => {
   throw new Refusal(msg);
@@ -110,18 +104,9 @@ async function main(argv, ownEnv) {
   read.json = undefined;
   if (!Number.isInteger(version) || version < 0) refuse('OpenBao returned no usable secret version');
 
-  const trioHave = TRIO.filter((k) => have.has(k));
-  if (trioHave.length && trioHave.length < TRIO.length) {
-    refuse(`JWT_SECRET, ANON_KEY and SERVICE_ROLE_KEY are created together; ${TRIO.filter((k) => !have.has(k)).join(', ')} missing. Delete the others in OpenBao first (see docs/supabase.md)`);
-  }
   const create = {};
   for (const [key, make] of Object.entries(KEYS)) if (!have.has(key)) create[key] = make();
-  if (!trioHave.length) {
-    const iat = Math.floor(Date.now() / 1000);
-    create.ANON_KEY = apiKey(create.JWT_SECRET, 'anon', iat);
-    create.SERVICE_ROLE_KEY = apiKey(create.JWT_SECRET, 'service_role', iat);
-  }
-  for (const k of [...Object.keys(KEYS), 'ANON_KEY', 'SERVICE_ROLE_KEY']) if (have.has(k)) process.stdout.write(`kept ${k}\n`);
+  for (const k of Object.keys(KEYS)) if (have.has(k)) process.stdout.write(`kept ${k}\n`);
   const names = Object.keys(create);
   if (names.length) {
     // One check-and-set write: PATCH merges into the current version; a path with no live data
