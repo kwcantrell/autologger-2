@@ -257,6 +257,14 @@ export function checkSignInClient(env, secrets) {
   }
 }
 
+// byo-ai-providers D2: the server refuses to boot without PROVIDER_KEYS_SECRET (base64 of exactly
+// 32 bytes, which encrypts users' provider keys). Refuse before compose starts; never print it.
+export function checkProviderKeysSecret(env, secrets) {
+  const v = (secrets.get('PROVIDER_KEYS_SECRET') ?? '').trim();
+  const ok = /^[A-Za-z0-9+/]+={0,2}$/.test(v) && Buffer.from(v, 'base64').length === 32 && Buffer.from(v, 'base64').toString('base64') === v;
+  if (!ok) refuse(`PROVIDER_KEYS_SECRET is unset or not base64 of exactly 32 bytes in the OpenBao ${env} secret (generate one with: openssl rand -base64 32; see docs/openbao-secrets.md)`);
+}
+
 export function checkProdTags(secrets) {
   for (const k of ['WEB_TAG', 'API_TAG']) {
     const v = secrets.get(k);
@@ -792,6 +800,7 @@ async function main(argv, ownEnv) {
   const secrets = validateSecrets(fetched, allowedNames(env));
   for (const w of checkSupabaseKeys(secrets)) process.stderr.write(`compose-run: warning: ${w}\n`);
   checkSignInClient(env, secrets);
+  checkProviderKeysSecret(env, secrets);
 
   // H6, H12: the child environment, built from nothing.
   const childEnv = Object.create(null);
