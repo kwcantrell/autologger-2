@@ -1615,10 +1615,17 @@ setup is still the membership bootstrap script above.
 - **Update order: `api` first, then `web`.** Set the new `API_TAG` in OpenBao `prod`, then
   `make prod-pull prod-up`, wait for `healthy`; then the same for `WEB_TAG`/`web`. The HTTP/WS contract is frozen, so a new `api` under an old `web` is
   safe. Volumes carry state across recreation.
+- **`make prod-up` migrates first.** It applies every migration in the `main` checkout that the
+  prod database hasn't recorded (`supabase/migrations/`, through `docker/supabase/migrate.sh`),
+  then starts the project; a failed migration stops it before `up`. The migrations come from the
+  checkout, not from the image tag, so check out the commit you pinned (the deploy host's Ansible
+  checks that the checkout is the pinned commit). Migrations must leave the previous `api`
+  working.
 - **Rollback is forward-only for data.** Re-pinning an older tag is safe only if no database
-  migration ran in between (migrations are forward-only: `supabase/migrations/`, applied by
-  `docker/supabase/migrate.sh`);
-  otherwise restore a backup taken before the upgrade. Repointing Pangolin at the *old host*
+  migration ran in between (migrations are forward-only);
+  otherwise restore a backup. `prod-up` takes no backup before it migrates: the newest one is the
+  deploy host's nightly Postgres dump, so restoring it loses the writes made since. Take a dump
+  by hand before a deploy whose migrations you may need to undo. Repointing Pangolin at the *old host*
   drops every write made since cutover (they exist only in the volume) — take a final backup
   first if you might want them.
 
@@ -1668,7 +1675,7 @@ existing configuration.
 | `make prod-build` | Native-arch build of both images, tagged `:local` only (no SHA tag, no push) |
 | `make prod-push` | Clean `main` only: multi-arch bake and push, tagged with the 12-char HEAD SHA |
 | `make prod-check` | Any branch: OpenBao `prod` login, guards and compose config; starts nothing |
-| `make prod-pull` / `make prod-up` | Clean `main` only: pull / start prod with the tags pinned in OpenBao `prod` |
+| `make prod-pull` / `make prod-up` | Clean `main` only: pull / apply the checkout's migrations (`compose run --rm migrate`), then start prod with the tags pinned in OpenBao `prod` |
 | `make prod-down` / `make prod-logs` | Stop and remove prod containers (volumes kept) / follow logs |
 
 ### Dev, stage and prod compared
