@@ -6,6 +6,9 @@
   WebSocket protocol and carries frames between server processes over a Postgres `NOTIFY` bridge
   (the session frame bus), so neither direct nor relay mode is built now. The finding stands for
   a later decision to adopt Realtime.
+- Status note (owner, 2026-10-08, ADR 0021 slice 10, `drop-unused-supabase-services`): the
+  Realtime service was removed from every stack, with PostgREST, Storage and the gateway.
+  Adopting Realtime later means adding the service back.
 - Rule: none. This records a spike finding. No code was committed; the spike ran from the
   session scratchpad and was removed.
 
