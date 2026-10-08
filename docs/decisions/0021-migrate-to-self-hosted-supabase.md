@@ -66,10 +66,18 @@ Postgres as the source of truth. Build it in slices on an integration branch, th
   Realtime is deferred, not planned.
 - **Blobs:** audio moves to Supabase Storage. Consumers that need a real file path spool the
   audio to scratch first.
+  **Amended by slice 10 (owner, 2026-10-08):** audio stays on the filesystem, on its own volume
+  (`BLOB_DIR`, `/blobs`) that every server process of a stack mounts. Object storage (Supabase
+  Storage, S3 or MinIO) waits until the server runs on more than one host, as a new
+  implementation behind the unchanged `BlobStore` port. The app uses no Supabase Storage: it holds
+  no Storage key, has no network path to it, and Storage caps a file at 50 MB while imports reach
+  2 GB.
 - **Operations:**
   - Dev, stage and prod run only through the compose stacks; native `npm run dev` is retired.
   - Backups: a nightly `pg_dump -Fc` plus the Storage volume, shipped offsite with restic and
-    restore-tested monthly. Up to 24 hours of data loss is accepted.
+    restore-tested monthly. Up to 24 hours of data loss is accepted. **Amended by slice 10
+    (owner, 2026-10-08):** the blob volume (`autologger-blobs`) instead of the Storage volume,
+    which holds no app data.
   - Secrets live in a shared Infisical instance, with a separate machine identity per environment.
 - **Tests:** tests run against the `supabase/postgres` image (it provides `auth.uid()` and the
   `anon` and `authenticated` roles), with rollback per test. `e2e:container` is set aside during
@@ -1156,7 +1164,33 @@ Slice order:
      script. Every Companion install must be re-paired after deploy. `API_TOKEN` stays on
      `docker/secrets-env.yaml`, ignored, until every OpenBao secret drops it. **Deferred:** Realtime
      for Companion (ADR 0023) and refresh tokens (ADR 0023's GoTrue-per-device option).
-10. Blobs to Supabase Storage.
+10. `shared-blob-volume` (renamed from "Blobs to Supabase Storage"; owner decisions,
+    2026-10-08):
+    1. **audio stays on the filesystem, on a shared volume:** a new required `BLOB_DIR` (the
+       stacks pin `/blobs`, its own named volume) that every server process of a stack mounts.
+       `DATA_DIR` stays per process (the lock, the scratch root, the legacy files);
+    2. **object storage when multi-host:** Supabase Storage, S3 or MinIO waits until the server
+       runs on more than one machine, as a new implementation behind the unchanged `BlobStore`
+       port;
+    3. **dropping the unused Supabase services** (PostgREST, Realtime, Storage, the gateway) is a
+       separate follow-up change, which also decides on GoTrue. Slice 10 doesn't touch them;
+    4. (after the panel) **no copy tool:** existing audio is moved additively (`cp -a` as `node` in
+       the dev app; `rsync -a --chown=1000:1000` on the host for stage and prod), never with
+       `--delete`, by the README section "Moving audio into BLOB_DIR", which slice 11's cutover
+       reuses.
+
+    **Shipped:** `BLOB_DIR`, required and absolute, refused when it overlaps `DATA_DIR`, by the
+    boot guard and `createBindings`; the blob store on a shared root, with put temps in
+    `BLOB_DIR/.tmp` named `put-<uuid>` (same filesystem, so the rename stays atomic; no pid
+    collisions across containers) and a boot sweep of `put-` files older than 24 h; scratch stays
+    in `DATA_DIR/tmp`; a boot warning while `DATA_DIR/blobs` still holds files; the `dev-blobs`
+    and `autologger-blobs` volumes, `BLOB_DIR: /blobs` as a compose literal, the image's `/blobs`
+    owned by `node`, and the `check-envs` invariants pinning them; `copyDataDir.ts` no longer
+    prints a blob command, and `merge-session-audio.ts` reads `BLOB_DIR`; a two-process test in
+    which a segment uploaded through one process plays, with Range, through the other. The
+    topology stays one `api` replica. **Deferred:** object storage (decision 2); the unused
+    Supabase services and GoTrue (decision 3); deleting dev's `/data/blobs`, the owner's step once
+    playback is confirmed.
 11. The import script, parity check, cutover runbook and rollback plan. It must not import users,
     memberships, prefs, invites or login sessions (slice 5a above).
 
