@@ -54,6 +54,7 @@ import {
   loginCookie,
   NOT_APPROVED_EMAIL,
   parseSse,
+  seedCompanionDevice,
   seededSession,
   seedSession,
   seedShow,
@@ -324,7 +325,6 @@ describe('ai/v2/design — agent credentials refusal (503)', () => {
       COOKIE_SECURE: '',
       IP_ALLOWLIST: '10.0.0.0/8',
       TRUST_PROXY: '',
-      API_TOKEN: '',
       ADMIN_TOKEN: '',
       DEEPGRAM_API_KEY: '',
       DEEPGRAM_MODEL: '',
@@ -521,21 +521,20 @@ describe('ai/v2/design — turn slot (409), shared with the AI chat registry by 
   });
 });
 
-// ── Phase-3 fix wave — Fix 1: principal-less (device-token) refusal (design D7) ──
+// ── A Companion device token is inert on AI v2 (companion-devices D2, D9 category 9) ──
 
-// API_TOKEN authenticates only /api/companion/* (containerize-split-images task 2.2, design D10):
-// on every AI v2 route the bearer is inert, so a token-only request is handled exactly as an
-// anonymous one. The principal-less refusal in `requireIndividualPrincipal` therefore cannot fire
-// over HTTP any more (no AI v2 route lives under /api/companion/); it stays as defence in depth.
-describe('ai/v2/design — API_TOKEN is inert (handled exactly as anonymous, design D10)', () => {
-  it('a token-only request behaves as an anonymous one: both 401 "Login required.", nothing spawned', async () => {
+// Device tokens authenticate only /api/companion/* (api-contract-freeze "Companion device tokens
+// authenticate only the Companion surface"): on every AI v2 route the bearer is inert, so a
+// device-token-only request is handled exactly as an anonymous one. (The former principal-less
+// refusal for the retired API_TOKEN is deleted with it.)
+describe('ai/v2/design — a device token is inert (handled exactly as anonymous)', () => {
+  it('a device-token-only request behaves as an anonymous one: both 401 "Login required.", nothing spawned', async () => {
     const s = (await seededSession()).sessionId;
     const tokenEnv = () =>
       envWith({
         AI_V2_ENABLED: '1',
         HOST: '127.0.0.1',
         AI_V2_API_KEY: '',
-        API_TOKEN: 'device-secret',
       });
     const req = (headers: Record<string, string>) =>
       anonApp.request(
@@ -544,18 +543,18 @@ describe('ai/v2/design — API_TOKEN is inert (handled exactly as anonymous, des
         tokenEnv(),
       );
     const anon = await req(J);
-    const res = await req({ ...J, Authorization: 'Bearer device-secret' });
+    const res = await req({ ...J, ...(await seedCompanionDevice()).bearer });
     expect(res.status).toBe(anon.status);
     expect(res.status).toBe(401);
     expect(await res.json()).toEqual(await anon.json());
     expect(spawnSpy).not.toHaveBeenCalled();
   });
 
-  it('a token-only request is 401 "Login required." and spawns nothing', async () => {
+  it('a device-token-only request is 401 "Login required." and spawns nothing', async () => {
     const s = (await seededSession()).sessionId;
-    const res = await post(s, { message: 'hi' }, loopbackEnv({ API_TOKEN: 'device-secret' }), {
+    const res = await post(s, { message: 'hi' }, loopbackEnv(), {
       ...J,
-      Authorization: 'Bearer device-secret',
+      ...(await seedCompanionDevice()).bearer,
     });
     expect(res.status).toBe(401);
     expect(await res.json()).toEqual({ detail: 'Login required.' });
@@ -886,7 +885,7 @@ describe('ai/v2/answer — guard chain mirrors the design route through body val
 // ── task 3.1/3.2/3.3 — gate-intent verification (design D7's hard constraints) ──
 
 describe('ai/v2/answer — principal binding: access to the session is not enough (design D7)', () => {
-  it('(c) a token-only request is inert: it cannot answer a pending question (401), which stays pending', async () => {
+  it('(c) a device-token-only request is inert: it cannot answer a pending question (401), which stays pending', async () => {
     const { sessionId: s } = await seededSession();
     const initiator = await seedUser({}); // the real principal that "started" the turn
     await questionRegistry().register(
@@ -903,9 +902,8 @@ describe('ai/v2/answer — principal binding: access to the session is not enoug
         AI_V2_ENABLED: '1',
         HOST: '127.0.0.1',
         AI_V2_API_KEY: '',
-        API_TOKEN: 'device-secret',
       }),
-      { ...J, Authorization: 'Bearer device-secret' },
+      { ...J, ...(await seedCompanionDevice()).bearer },
     );
 
     expect(res.status).toBe(401);
@@ -1328,14 +1326,14 @@ describe('ai/v2/dashboard — read scoped exactly as the session (spec "Dashboar
     expect(res.status).toBe(503);
   });
 
-  it('a token-only GET is inert: identical to the same request with no Authorization (design D10)', async () => {
+  it('a device-token-only GET is inert: identical to the same request with no Authorization', async () => {
     const s = (await seededSession()).sessionId;
-    const e = () => envWith({ AI_V2_ENABLED: '1', HOST: '127.0.0.1', API_TOKEN: 'device-secret' });
+    const e = () => envWith({ AI_V2_ENABLED: '1', HOST: '127.0.0.1' });
     const path = `/api/sessions/${s}/ai/v2/dashboard`;
     const anon = await anonApp.request(path, { headers: J }, e());
     const tok = await anonApp.request(
       path,
-      { headers: { ...J, Authorization: 'Bearer device-secret' } },
+      { headers: { ...J, ...(await seedCompanionDevice()).bearer } },
       e(),
     );
     expect(tok.status).toBe(anon.status);
@@ -1372,14 +1370,13 @@ describe('ai/v2/dashboard — write scoped at least as tightly, whole-config val
     expect(res.status).toBe(404);
   });
 
-  it('a token-only PUT/DELETE is 401 and nothing is stored', async () => {
+  it('a device-token-only PUT/DELETE is 401 and nothing is stored', async () => {
     const s = (await seededSession()).sessionId;
     const deviceEnv = envWith({
       AI_V2_ENABLED: '1',
       HOST: '127.0.0.1',
-      API_TOKEN: 'device-secret',
     });
-    const headers = { ...J, Authorization: 'Bearer device-secret' };
+    const headers = { ...J, ...(await seedCompanionDevice()).bearer };
     const putRes = await putDashboard(s, VALID_DASHBOARD, deviceEnv, headers);
     expect(putRes.status).toBe(401);
     const delRes = await deleteDashboard(s, deviceEnv, headers);

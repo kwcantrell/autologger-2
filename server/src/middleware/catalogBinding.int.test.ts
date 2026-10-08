@@ -11,7 +11,7 @@ import { wireApp } from '../app';
 import type { AppEnv } from '../appEnv';
 import { GatedCatalog } from '../test/gatedCatalog';
 import { anonApp, defaultUser, env, envWith, resetTestEnv } from '../test/harness';
-import { seededSession, seedMemberStudio } from '../test/helpers';
+import { seedCompanionDevice, seededSession, seedMemberStudio } from '../test/helpers';
 
 const REGISTRY = /FROM studio_definitions ORDER BY/;
 const USER_READ = /^SELECT \* FROM users WHERE id = \? AND disabled_at_utc IS NULL$/;
@@ -96,9 +96,11 @@ describe('system call sites name their reason (catalog-roles D10)', () => {
     for (const s of route) expect(s.binding, s.sql).toBe('system:support-plane');
   });
 
-  it('a token-only GET /api/companion/state runs as system:companion-token', async () => {
+  // companion-devices D9 category 3: a device call runs as its user, not as a system task.
+  it("a device-token GET /api/companion/state runs every route statement as the device's user", async () => {
     const { sessionId } = await seededSession();
     await env.ports.presence.upsert('c-bind', {
+      user_id: (await defaultUser()).id,
       session_id: sessionId,
       visible: true,
       is_playing: false,
@@ -107,14 +109,15 @@ describe('system call sites name their reason (catalog-roles D10)', () => {
     const { gated, e } = recording();
     const res = await anonApp.request(
       '/api/companion/state',
-      { headers: { authorization: 'Bearer test-api-token' } },
+      { headers: (await seedCompanionDevice()).bearer },
       e,
     );
     expect(res.status).toBe(200);
     expect(((await res.json()) as { active_session_id: string }).active_session_id).toBe(sessionId);
     const route = routeStatements(gated);
     expect(route.length).toBeGreaterThan(0);
-    for (const s of route) expect(s.binding, s.sql).toBe('system:companion-token');
+    const id = (await defaultUser()).id;
+    for (const s of route) expect(s.binding, s.sql).toBe(`user:${id}`);
   });
 
   it('the team-create and invite transactions run as system:team-create / system:team-invite', async () => {

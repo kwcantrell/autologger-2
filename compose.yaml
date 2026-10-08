@@ -84,9 +84,10 @@ services:
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
     networks: [back, catalog, auth-app]
-    # Secrets and tunables (GOOGLE_*, API_TOKEN, ADMIN_TOKEN, DEEPGRAM_API_KEY, ...) come from the
-    # shared allowlist, passed through from the OpenBao `prod` secret. The literals in `environment` below
-    # win over it, so no OpenBao value can flip the posture or relocate the image's paths.
+    # Secrets and tunables (GOOGLE_*, ADMIN_TOKEN, DEEPGRAM_API_KEY, ...; API_TOKEN is ignored
+    # since 9d) come from the shared allowlist, passed through from the OpenBao `prod` secret. The
+    # literals in `environment` below win over it, so no OpenBao value can flip the posture or
+    # relocate the image's paths.
     extends: { file: docker/secrets-env.yaml, service: secrets }
     environment:
       NODE_ENV: production

@@ -1,6 +1,7 @@
 // Authorization invariants locked by the gate (de-cloudflare-strong-core D6,
-// tasks 7.1/7.3): API_TOKEN machine clients bypass studio membership
-// (the Companion path), cross-studio access masks as 404 (not 403), the admin
+// tasks 7.1/7.3): a Companion device is authorized as its user (companion-devices D9 category 3;
+// it replaced the API_TOKEN machine client that bypassed studio membership), cross-studio access
+// masks as 404 (not 403), the admin
 // token distinguishes unset (503) from wrong (401), and a session cookie alone
 // grants no admin access.
 
@@ -9,6 +10,8 @@ import { anonApp, envWith } from '../test/harness';
 import {
   catalogFor,
   loginCookie,
+  seedAccessMatrix,
+  seedCompanionDevice,
   seededSession,
   seedStudio,
   seedUser,
@@ -18,22 +21,32 @@ import {
 const withLogin = envWith({});
 const bearer = (token: string): Record<string, string> => ({ Authorization: `Bearer ${token}` });
 
-describe('API_TOKEN machine clients (task 7.1 — the Companion path)', () => {
-  it('reaches a session in a studio it is not a member of', async () => {
-    const { sessionId: session } = await seededSession();
-    setCompanionPresence('authz-c1', session);
-    // Machine client: bearer API_TOKEN, no cookie, no user, no membership anywhere.
-    const res = await anonApp.request(
-      '/api/companion/state',
-      { method: 'GET', headers: bearer('test-api-token') },
-      withLogin,
-    );
-    expect(res.status).toBe(200); // no membership scoping applied on the Companion path
-    const body = (await res.json()) as { session: { id: string } | null };
-    expect(body.session?.id).toBe(session);
+describe('Companion device clients (task 7.1 — the Companion path)', () => {
+  // core-ports-architecture "Companion device callers are authorized as their user".
+  it("is scoped as its user: a studio the user is not in reads as no session; a granted show's session is seen", async () => {
+    const m = await seedAccessMatrix();
+    for (const [who, sees] of [
+      [m.nonMember, false],
+      [m.ungranted, false],
+      [m.granted, true],
+    ] as const) {
+      await setCompanionPresence(`authz-${who.id}`, m.sessionId, { user_id: who.id });
+      const res = await anonApp.request(
+        '/api/companion/state',
+        { method: 'GET', headers: (await seedCompanionDevice(who.id)).bearer },
+        withLogin,
+      );
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        active_session_id: string | null;
+        session: { id: string } | null;
+      };
+      expect(body.session?.id ?? null).toBe(sees ? m.sessionId : null);
+      expect(body.active_session_id).toBe(sees ? m.sessionId : null);
+    }
   });
 
-  it('a wrong API token is NOT authenticated: 401', async () => {
+  it('a wrong device token is NOT authenticated: 401', async () => {
     const res = await anonApp.request(
       '/api/companion/state',
       { method: 'GET', headers: bearer('wrong-token') },
@@ -47,7 +60,7 @@ describe('API_TOKEN machine clients (task 7.1 — the Companion path)', () => {
     for (const id of [session, 'no-such-session']) {
       const res = await anonApp.request(
         `/api/sessions/${id}/status`,
-        { method: 'GET', headers: bearer('test-api-token') },
+        { method: 'GET', headers: (await seedCompanionDevice()).bearer },
         withLogin,
       );
       // Rejected by the single middleware login decision — requireSession is never reached,
@@ -58,12 +71,12 @@ describe('API_TOKEN machine clients (task 7.1 — the Companion path)', () => {
   });
 });
 
-describe('API_TOKEN on an encoded /api spelling (gate-decoded-path D2)', () => {
-  it('a token-only request to /%61pi/sessions/<id>/status is 401, not the session’s status', async () => {
+describe('a device token on an encoded /api spelling (gate-decoded-path D2)', () => {
+  it('a device-token-only request to /%61pi/sessions/<id>/status is 401, not the session’s status', async () => {
     const { sessionId: session } = await seededSession();
     const res = await anonApp.request(
       `/%61pi/sessions/${session}/status`,
-      { method: 'GET', headers: bearer('test-api-token') },
+      { method: 'GET', headers: (await seedCompanionDevice()).bearer },
       withLogin,
     );
     expect(res.status).toBe(401);

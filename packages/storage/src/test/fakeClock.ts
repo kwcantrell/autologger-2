@@ -5,8 +5,8 @@
 // fakeClock helper's eventual shared-vs-duplicated home is an open question
 // left to design.md's "Open Questions" / task 2.4 (kvStore) and 4.3
 // (session-core) with the full importer inventory in hand; server keeps its
-// own copy since session/fakeClock.test.ts and node/presence.test.ts still
-// reference it.
+// own copy (the server presence test that used it was retired by
+// companion-devices, ADR 0021 slice 9d).
 
 import type { Clock } from '@autologger/ports';
 import { vi } from 'vitest';

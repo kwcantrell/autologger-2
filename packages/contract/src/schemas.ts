@@ -285,6 +285,42 @@ export const companionCommandAckBodySchema = z.object({
 });
 export type CompanionCommandAckBody = z.infer<typeof companionCommandAckBodySchema>;
 
+// -- companion-devices (design D5): the /api/companion-devices family ---------
+// The request body, plus the three response shapes (api-contract-freeze "Companion device
+// management routes"), which tests and clients check the wire against. A name containing NUL
+// passes this schema; the route refuses it with the existing NUL `400`.
+
+export const COMPANION_DEVICE_NAME_MAX = 80;
+
+export const companionDeviceCreateBodySchema = z.object({
+  name: z.string().trim().min(1).max(COMPANION_DEVICE_NAME_MAX),
+});
+export type CompanionDeviceCreateBody = z.infer<typeof companionDeviceCreateBodySchema>;
+
+/** One listed device (`GET`). Never the token or its hash. */
+export const companionDeviceSchema = z.strictObject({
+  id: z.string().min(1),
+  name: z.string(),
+  created_at: z.iso.datetime(),
+  last_used_at: z.iso.datetime().nullable(),
+  expired: z.boolean(),
+});
+export type CompanionDeviceWire = z.infer<typeof companionDeviceSchema>;
+
+export const companionDeviceListResponseSchema = z.strictObject({
+  devices: z.array(companionDeviceSchema),
+});
+export type CompanionDeviceListResponse = z.infer<typeof companionDeviceListResponseSchema>;
+
+/** The `201` of `POST`: the only response that carries the token (`ald_` + 32 base64url bytes). */
+export const companionDeviceCreatedResponseSchema = z.strictObject({
+  id: z.string().min(1),
+  name: z.string(),
+  created_at: z.iso.datetime(),
+  token: z.string().regex(/^ald_[A-Za-z0-9_-]{43}$/),
+});
+export type CompanionDeviceCreatedResponse = z.infer<typeof companionDeviceCreatedResponseSchema>;
+
 // -- teams-self-serve (design D4): the /api/teams family bodies ---------------
 
 export const teamCreateBodySchema = z.object({

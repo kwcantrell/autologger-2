@@ -3,6 +3,7 @@ import { anonApp, app, env, envWith } from '../test/harness';
 import {
   adminHeader,
   loginCookie,
+  seedCompanionDevice,
   seededSession,
   seedSession,
   seedShow,
@@ -87,10 +88,10 @@ describe('login is always required (require-login)', () => {
     expect(ok.status).toBe(200);
   });
 
-  it('API_TOKEN on /api/companion/state is 200', async () => {
+  it('a Companion device token on /api/companion/state is 200', async () => {
     const res = await anonApp.request(
       '/api/companion/state',
-      { method: 'GET', headers: { Authorization: 'Bearer test-api-token' } },
+      { method: 'GET', headers: (await seedCompanionDevice()).bearer },
       { ...env },
     );
     expect(res.status).toBe(200);
@@ -100,8 +101,6 @@ describe('login is always required (require-login)', () => {
 // gate-decoded-path D2: Hono routes on the percent-decoded path, so the gate must judge that same
 // path. `/%61pi/x` IS `/api/x` to the router (and the Caddy router forwards it as such).
 describe('encoded spellings of /api paths get the literal path’s answer', () => {
-  const bearer = { Authorization: 'Bearer test-api-token' };
-
   it.each([
     '/%61pi/sessions',
     '/a%70i/sessions',
@@ -118,7 +117,7 @@ describe('encoded spellings of /api paths get the literal path’s answer', () =
     expect(anon.status).toBe(401);
     const tok = await anonApp.request(
       '/%61pi/companion/state',
-      { method: 'GET', headers: bearer },
+      { method: 'GET', headers: (await seedCompanionDevice()).bearer },
       withLogin,
     );
     expect(tok.status).toBe(200);
@@ -127,7 +126,7 @@ describe('encoded spellings of /api paths get the literal path’s answer', () =
   it('a valid token on /api/%63ompanion/state is honoured like /api/companion/state', async () => {
     const res = await anonApp.request(
       '/api/%63ompanion/state',
-      { method: 'GET', headers: bearer },
+      { method: 'GET', headers: (await seedCompanionDevice()).bearer },
       withLogin,
     );
     expect(res.status).toBe(200);

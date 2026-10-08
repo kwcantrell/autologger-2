@@ -20,7 +20,6 @@ export interface Config {
   COOKIE_SECURE: string;
   IP_ALLOWLIST: string;
   TRUST_PROXY: string;
-  API_TOKEN: string;
   ADMIN_TOKEN: string;
   DEEPGRAM_API_KEY: string;
   DEEPGRAM_MODEL: string;

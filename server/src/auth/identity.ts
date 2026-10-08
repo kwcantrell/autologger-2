@@ -1,4 +1,4 @@
-// Identity — KV-backed login sessions + OAuth CSRF state, bearer-token compare,
+// Identity — KV-backed login sessions + OAuth CSRF state, the admin bearer-token compare,
 // and the /api login gate. Ported from src/autologger/web/auth_identity.py; the
 // login_sessions + oauth_csrf_tokens SQLite tables become KV keys with TTL.
 
@@ -94,19 +94,13 @@ export async function resolveSessionUser(
 
 // -- Bearer token + gate ------------------------------------------------------
 
-function bearerToken(req: Request): string | null {
+/** The `Authorization: Bearer` credential: null when there is no Bearer header, `''` for a Bearer
+ * with no token (a header value is trimmed, so `Bearer ` arrives as `Bearer`). */
+export function bearerToken(req: Request): string | null {
   const auth = (req.headers.get('Authorization') ?? '').trim();
+  if (auth === 'Bearer') return '';
   if (!auth.startsWith('Bearer ')) return null;
   return auth.slice('Bearer '.length).trim();
-}
-
-/** True when the request bears the API_TOKEN (device-level credential). */
-export function requestHasValidApiToken(req: Request, apiToken: string): boolean {
-  const expected = (apiToken ?? '').trim();
-  if (!expected) return false;
-  const got = bearerToken(req);
-  if (got === null) return false;
-  return timingSafeEqual(got, expected);
 }
 
 /** True when the request bears the ADMIN_TOKEN. */

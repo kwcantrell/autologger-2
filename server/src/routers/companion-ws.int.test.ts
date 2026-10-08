@@ -14,7 +14,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { wireApp } from '../app';
 import type { AppEnv } from '../appEnv';
 import { defaultUser, env } from '../test/harness';
-import { COMPANION_BEARER, seededSession, setCompanionPresence } from '../test/helpers';
+import { seedCompanionDevice, seededSession, setCompanionPresence } from '../test/helpers';
 
 let server: ServerType;
 let port: number;
@@ -64,10 +64,10 @@ describe('companion WebSocket relay (Node)', () => {
     const s = (await seededSession()).sessionId;
     const ws = await connect(s);
     const got = nextMessage(ws);
-    setCompanionPresence('c1', s);
+    await setCompanionPresence('c1', s);
     const cmd = await fetch(`http://127.0.0.1:${port}/api/companion/command`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', ...COMPANION_BEARER },
+      headers: { 'content-type': 'application/json', ...(await seedCompanionDevice()).bearer },
       body: JSON.stringify({ type: 'record-start' }),
     });
     expect(cmd.status).toBe(200);

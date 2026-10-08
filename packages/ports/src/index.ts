@@ -8,9 +8,12 @@
 export * from './blobStore';
 export * from './catalogDb';
 export * from './clock';
+export * from './companionDevices';
 export * from './config';
 export * from './identityVerifier';
 export * from './kvStore';
 export * from './leaseDirectory';
 export * from './ports';
-export * from './presenceRegistry';
+// Types only: the module's runtime constant (PRESENCE_FRESH_MS) is imported from
+// `@autologger/ports/presenceRegistry`, so this barrel stays free of runtime values.
+export type * from './presenceRegistry';

@@ -7,8 +7,8 @@
 // exactly that reason, naming this exact path). This is the fourth copy,
 // after storage's, session-core's, and server's own — duplicate-per-package
 // is final policy, not a gap to close. `jobStore.test.ts` is this package's
-// only consumer; server keeps its own copy since `node/presence.test.ts`
-// still references it.
+// only consumer; server keeps its own copy (its presence test that used it
+// was retired by companion-devices, ADR 0021 slice 9d).
 
 import type { Clock } from '@autologger/ports';
 import { vi } from 'vitest';

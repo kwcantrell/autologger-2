@@ -707,3 +707,33 @@ export interface CompanionRemoteCommand {
 export interface CompanionCommandsWaitResponse {
   commands: CompanionRemoteCommand[];
 }
+
+// Companion device management (companion-devices D5/D6; api-contract-freeze "Companion device
+// management routes"). Checked against captured fixtures in types.conformance.test.ts.
+
+/** One listed device (`GET /api/companion-devices`). Never the token. */
+export interface CompanionDevice {
+  id: string;
+  name: string;
+  created_at: string;
+  /** `null` when the device has never been used. */
+  last_used_at: string | null;
+  /** Unused for 90 days; still listed and revocable. */
+  expired: boolean;
+}
+
+export interface CompanionDeviceListResponse {
+  devices: CompanionDevice[];
+}
+
+export interface CompanionDeviceCreateBody {
+  name: string;
+}
+
+/** The `201` of `POST /api/companion-devices`: the only response that carries the token. */
+export interface CompanionDeviceCreatedResponse {
+  id: string;
+  name: string;
+  created_at: string;
+  token: string;
+}

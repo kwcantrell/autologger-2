@@ -5,7 +5,12 @@
 
 import { describe, expect, it } from 'vitest';
 import { app, env } from '../test/harness';
-import { COMPANION_BEARER, SEED_CATEGORY_ID, seededSession, setCompanionPresence } from '../test/helpers';
+import {
+  SEED_CATEGORY_ID,
+  seedCompanionDevice,
+  seededSession,
+  setCompanionPresence,
+} from '../test/helpers';
 
 const J = { 'content-type': 'application/json' };
 async function call(
@@ -72,7 +77,7 @@ describe('row responses carry version (design D3)', () => {
       'POST',
       '/api/companion/log',
       { category_id: SEED_CATEGORY_ID, message: 'Cut' },
-      { ...J, ...COMPANION_BEARER },
+      { ...J, ...(await seedCompanionDevice()).bearer },
     );
     expect(res.status).toBe(200);
     expect(res.json.version).toBe(1);

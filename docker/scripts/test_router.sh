@@ -4,25 +4,32 @@
 # Ported from the retired e2e/container-routing.spec.ts. Needs a running stack (make ENV-up);
 # run by hand, CI has no docker:
 #
-#   sh docker/scripts/test_router.sh stage
+#   COMPANION_DEVICE_TOKEN=… sh docker/scripts/test_router.sh stage
 #   sh docker/scripts/test_router.sh stage --record   # print the current disposition table
 #
-# API_TOKEN is read from the api container into this process's environment only; it is never
-# printed or put on a command line. Output: case names and statuses.
+# COMPANION_DEVICE_TOKEN is a Companion device token the operator created in that stack's
+# Settings -> Companion devices (companion-devices D9 category 12; API_TOKEN is ignored since 9d).
+# It is kept only in this process's environment; it is never printed or put on a command line.
+# Output: case names and statuses.
 set -eu
 ENV=${1:?usage: test_router.sh stage|prod [--record]}
-case $ENV in stage) P=autologger-stage; API=autologger-stage-api ;; prod) P=autologger; API=autologger-api ;; *) echo "stage or prod" >&2; exit 2 ;; esac
+case $ENV in stage) P=autologger-stage ;; prod) P=autologger ;; *) echo "stage or prod" >&2; exit 2 ;; esac
 PORT=${ROUTER_TEST_PORT:-$(docker port "$P-router-1" 8080/tcp | sed -n 's/^127\.0\.0\.1://p' | head -1)}
 [ -n "$PORT" ] || { echo "no router port for $P" >&2; exit 2; }
 LAN=$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -vE '^(127\.|172\.|$)' | head -1 || true)
 WEB=$P-web-1
-API_TOKEN=$(docker exec "$API" printenv API_TOKEN) PORT="$PORT" LAN="$LAN" WEB="$WEB" RECORD="${2:-}" \
+[ -n "${2:-}" ] || [ -n "${COMPANION_DEVICE_TOKEN:-}" ] || {
+  echo "set COMPANION_DEVICE_TOKEN to a device token from the $ENV stack's Settings -> Companion devices" >&2
+  exit 2
+}
+export COMPANION_DEVICE_TOKEN="${COMPANION_DEVICE_TOKEN:-}"
+PORT="$PORT" LAN="$LAN" WEB="$WEB" RECORD="${2:-}" \
   exec node --input-type=module - <<'EOF'
 import net from 'node:net';
 import { randomBytes } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 
-const { PORT, LAN, WEB, RECORD, API_TOKEN } = process.env;
+const { PORT, LAN, WEB, RECORD, COMPANION_DEVICE_TOKEN } = process.env;
 const port = Number(PORT);
 let pass = 0;
 let fail = 0;
@@ -65,7 +72,7 @@ function parse(r) {
   return { status, h, cookies, body: rest.join('\r\n\r\n'), head };
 }
 const http = async (method, path, headers, body) => parse(await raw(req(method, path, headers, body)));
-const bearer = { Authorization: `Bearer ${API_TOKEN}` };
+const bearer = { Authorization: `Bearer ${COMPANION_DEVICE_TOKEN}` };
 
 // ---- Shell served by web
 for (const p of ['/', '/teams', '/sessions/abc', '/sessions/a%2Fb']) {
@@ -159,21 +166,21 @@ for (const [name, hs, isUp] of variants) {
   check(`upgrade detection: ${name} -> ${isUp ? 'aborted' : 'answered 200'}`, ok, isUp ? `${r.bytes} bytes` : r.raw.slice(0, 12));
 }
 
-// ---- Traversal cannot reach a non-Companion route (with a valid API_TOKEN)
+// ---- Traversal cannot reach a non-Companion route (with a valid device token)
 const own = await http('GET', '/teams/');
 check("the server's own 404 (GET /teams/)", own.status === 404, own.status);
 for (const p of ['/api/companion/%2e%2e/sessions/x', '/api/companion/.%2E/admin/users', '/api/companion/state/..%2Fsessions', '/api/companion/%2e%2e/sessions',
   '/api/companion/%2E%2e/sessions', '/api/companion/../sessions', '/api/companion/./state', '/api//companion/state', '/api/sessions%2Fx',
   '/api/companion/state%5Cx', '/auth/google%2fstart']) {
   const r = await http('GET', p, bearer);
-  check(`traversal GET ${p} with API_TOKEN -> the server's own 404`, r.status === 404 && r.body === own.body && r.h['content-type'] === own.h['content-type'], r.status);
+  check(`traversal GET ${p} with a device token -> the server's own 404`, r.status === 404 && r.body === own.body && r.h['content-type'] === own.h['content-type'], r.status);
 }
 const post = await http('POST', '/api/companion/%2e%2e/sessions', { ...bearer, 'Content-Type': 'application/json' }, '{}');
 check('traversal POST /api/companion/%2e%2e/sessions -> 404', post.status === 404, post.status);
 const [q, plain] = [await http('GET', '/api/profile?x=/../y'), await http('GET', '/api/profile')];
 check('a query string cannot smuggle a dot-segment (?x=/../) -> same as /api/profile', q.status === plain.status && q.status !== 404, `${q.status}/${plain.status}`);
 
-// ---- API_TOKEN scope
+// ---- Device-token scope
 const st = await http('GET', '/api/companion/state', bearer);
 let shape = false;
 try { shape = typeof JSON.parse(st.body) === 'object'; } catch {}

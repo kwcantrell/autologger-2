@@ -299,7 +299,10 @@ describe('the Companion table: a cookie caller without access sees no active ses
   it.each(routes)('$method $path', async (r) => {
     const m = await seedAccessMatrix();
     const idle = await send(r, m.ungranted);
+    // Presence is per user (companion-devices D3/D4, D9 category 3): the denied caller's own
+    // fresh, visible row names the session, so the masked answer still proves the access check.
     await env.ports.presence.upsert('teammate-tab', {
+      user_id: m.ungranted.id,
       session_id: m.sessionId,
       visible: true,
       is_playing: false,
@@ -314,6 +317,13 @@ describe('the Companion table: a cookie caller without access sees no active ses
       expect(denied).toEqual(idle);
       expect(denied.status).toBe(409);
     }
+    await env.ports.presence.upsert('granted-tab', {
+      user_id: m.granted.id,
+      session_id: m.sessionId,
+      visible: true,
+      is_playing: false,
+      updated: env.ports.clock.now(),
+    });
     const allowed = await send(r, m.granted);
     expect(allowed.status).toBe(200);
     if (r.path === '/api/companion/state') {

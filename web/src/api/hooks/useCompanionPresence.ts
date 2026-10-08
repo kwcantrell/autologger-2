@@ -5,8 +5,10 @@ import { apiFetch, apiUrl } from '../client';
 
 const PRESENCE_INTERVAL_VISIBLE_MS = 5_000;
 // A hidden tab keeps heartbeating, just half as often. It MUST stay under the server's
-// PRESENCE_FRESH_MS = 15_000 (server/src/node/presence.ts): entries older than that are
-// pruned, and Companion's primarySession()/requireActiveSession only see fresh entries —
+// PRESENCE_FRESH_MS = 15_000 (packages/ports/src/presenceRegistry.ts; rows live in the shared
+// catalog.companion_presence table, and the lease sweeper deletes rows older than 60 s): only
+// rows inside that window are listed, and Companion's primarySession()/requireActiveSession only
+// see fresh rows —
 // so a hidden tab that stopped posting would 409 ("No active session") every Companion
 // command ~15s after backgrounding, even with the WS up and a recording rolling. 10s
 // leaves 5s of margin for late/slipping ticks.

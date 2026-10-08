@@ -98,6 +98,10 @@ export type Json = null | boolean | number | string | Json[] | { [key: string]: 
  * `show_id` equals its show's `id`) and same-format clock churn. Neither is a
  * property of the response *shape*, which is what these fixtures certify.
  */
+/** A Companion device token (`ald_` + 43 base64url characters, companion-devices D2): random by
+ * construction and returned once by `POST /api/companion-devices`. The prefix stays; the 43
+ * characters are masked 1:1, so a length or alphabet change still fails. */
+const COMPANION_DEVICE_TOKEN_RE = /\bald_[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])/g;
 const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 const ISO_INSTANT_RE = /\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?/g;
 /** `HH:MM:SS`, `HH:MM:SS:FF`, `HH:MM:SS.mmm` — timecode and runtime readouts. */
@@ -105,6 +109,7 @@ const CLOCK_RE = /\b\d{2,}:\d{2}:\d{2}(?:[:.;]\d{1,3})?\b/g;
 
 function redactString(value: string): string {
   return value
+    .replace(COMPANION_DEVICE_TOKEN_RE, (m) => `ald_${'#'.repeat(m.length - 4)}`)
     .replace(UUID_RE, (m) => m.replace(/[0-9a-fA-F]/g, '#'))
     .replace(ISO_INSTANT_RE, (m) => m.replace(/\d/g, '#'))
     .replace(CLOCK_RE, (m) => m.replace(/\d/g, '#'));

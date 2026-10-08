@@ -1349,3 +1349,69 @@ describe('log-import', () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// Companion devices (companion-devices task 7.1, design D6): the list (a never-used device and
+// an expired one with a last use) and the one-time create body, whose token is redacted by
+// pattern (`ald_` + 43 masked characters).
+// ---------------------------------------------------------------------------
+
+describe('companion devices', () => {
+  it('POST and GET /api/companion-devices match the captured fixtures', async () => {
+    const cookie = await loginCookie(await seedUser({ email: 'ann@example.com', sub: 'sub-ann' }));
+    const post = (name: string) =>
+      app.request(
+        '/api/companion-devices',
+        {
+          method: 'POST',
+          headers: { ...JSON_HEADERS, Cookie: cookie },
+          body: JSON.stringify({ name }),
+        },
+        { ...env },
+      );
+    const createRes = await post('Booth A');
+    const createClone = createRes.clone();
+    await expectCapturedResponse(
+      {
+        name: 'companionDeviceCreate',
+        endpoint: 'POST /api/companion-devices',
+        format: 'json',
+        status: 201,
+      },
+      createRes,
+    );
+    const boothA = ((await createClone.json()) as { id: string }).id;
+    const boothB = ((await (await post('Booth B')).json()) as { id: string }).id;
+
+    // Booth A: idle past the 90-day window with a last use, so `expired: true` and a non-null
+    // `last_used_at`; Booth B: never used. Distinct created times fix the list order.
+    const DAY = 86_400_000;
+    await testDb().run(
+      'UPDATE companion_devices SET created_at_utc = ?, last_used_at_utc = ? WHERE id = ?',
+      new Date(Date.now() - 200 * DAY).toISOString(),
+      new Date(Date.now() - 120 * DAY).toISOString(),
+      boothA,
+    );
+    await testDb().run(
+      'UPDATE companion_devices SET created_at_utc = ? WHERE id = ?',
+      new Date(Date.now() - DAY).toISOString(),
+      boothB,
+    );
+
+    const list = await app.request(
+      '/api/companion-devices',
+      { method: 'GET', headers: { Cookie: cookie } },
+      { ...env },
+    );
+    const body = await expectCapturedResponse(
+      { name: 'companionDevicesList', endpoint: 'GET /api/companion-devices', format: 'json' },
+      list,
+    );
+    expect(body).toMatchObject({
+      devices: [
+        { name: 'Booth B', last_used_at: null, expired: false },
+        { name: 'Booth A', expired: true },
+      ],
+    });
+  });
+});

@@ -4,6 +4,7 @@
 
 export type SettingsSectionId =
   | 'account'
+  | 'companion-devices'
   | 'members'
   | 'shows'
   | 'team-details'
@@ -21,7 +22,13 @@ export interface SettingsSectionGroup {
 
 /** Nav order. There is no Auto Sync and no Debug section. */
 export const SETTINGS_SECTION_GROUPS: readonly SettingsSectionGroup[] = [
-  { label: 'You', sections: [{ id: 'account', label: 'Account' }] },
+  {
+    label: 'You',
+    sections: [
+      { id: 'account', label: 'Account' },
+      { id: 'companion-devices', label: 'Companion devices' },
+    ],
+  },
   {
     label: 'Team',
     sections: [

@@ -76,7 +76,6 @@ export async function resetTestEnv(): Promise<void> {
       COOKIE_SECURE: '',
       IP_ALLOWLIST: '',
       TRUST_PROXY: '',
-      API_TOKEN: 'test-api-token',
       ADMIN_TOKEN: 'test-admin-token',
       PGHOST: db.host,
       PGPORT: String(db.port),

@@ -2,8 +2,12 @@ import { Regex, type SomeCompanionConfigField } from '@companion-module/base';
 
 export interface ModuleConfig {
   url: string;
-  token: string;
   pollMs: number;
+}
+
+/** Kept in Companion's secrets store, not the config store (design D7). */
+export interface ModuleSecrets {
+  token?: string;
 }
 
 export function normalizeBaseUrl(raw: string): string {
@@ -26,9 +30,10 @@ export function getConfigFields(): SomeCompanionConfigField[] {
       regex: Regex.SOMETHING,
     },
     {
-      type: 'textinput',
+      type: 'secret-text',
       id: 'token',
-      label: 'API token (required)',
+      label: 'Device token (required)',
+      tooltip: 'Create one in AutoLogger Settings → Companion devices',
       width: 8,
       default: '',
     },

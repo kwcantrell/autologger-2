@@ -9,10 +9,10 @@ import type { Bindings } from '../appEnv';
 import { GatedCatalog } from '../test/gatedCatalog';
 import { anonApp, env, envWith } from '../test/harness';
 import {
-  COMPANION_BEARER,
   loginCookie,
   SEED_CATEGORY_ID,
   seedAccessMatrix,
+  seedCompanionDevice,
   seedShow,
   seedStudio,
   seedUser,
@@ -585,7 +585,7 @@ describe('session hub calls refused in a race keep each route’s status (sessio
 
   it('Companion with a cookie: log answers 409 and stores nothing; state answers 200 with the active session masked', async () => {
     const m = await seedAccessMatrix();
-    await setCompanionPresence('tab-race', m.sessionId, { visible: true });
+    await setCompanionPresence('tab-race', m.sessionId, { visible: true, user_id: m.granted.id });
     const cmd = await send('POST', '/api/companion/command', m.granted.cookie, { type: 'record-start' });
     expect(cmd.status).toBe(200);
     const companion = (cookie: string, path: string, body: unknown, e: Bindings) =>
@@ -612,8 +612,14 @@ describe('session hub calls refused in a race keep each route’s status (sessio
     await createCatalog(env.ports.catalog)
       .system('test-seed')
       .auth.authGrantShow(m.granted.id, m.showId, m.owner.id, new Date().toISOString());
+    // D9 categories 1 and 3: the Bearer reader is a device of the granted member, whose own rows
+    // it counts.
     const tokenState = (await (
-      await anonApp.request('/api/companion/state', { headers: COMPANION_BEARER }, { ...env })
+      await anonApp.request(
+        '/api/companion/state',
+        { headers: (await seedCompanionDevice(m.granted.id)).bearer },
+        { ...env },
+      )
     ).json()) as { connected_clients: number };
     const state = await raced(m, nthUserCall(1, 'snapshot'), (e) =>
       companion(m.granted.cookie, '/api/companion/state', undefined, e),

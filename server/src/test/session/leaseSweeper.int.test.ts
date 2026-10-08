@@ -77,6 +77,7 @@ async function tick(p: BusProcess) {
   const warn = vi.fn();
   await sweepLeasesOnce({
     leases,
+    presence: p.bindings.ports.presence,
     sessions: p.bindings.ports.sessions,
     clock: p.bindings.ports.clock,
     warn,

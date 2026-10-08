@@ -2707,8 +2707,8 @@ describe('server/src layering enumeration is complete and non-vacuous — real r
 // composition-root directory holds only the composition root"): the fourth
 // rule that requirement names, alongside the routers-HTTP-only,
 // ai-runtime-Hono-free, and ApiError-home checks above. `server/src/node/`'s
-// documented role — composition-root wiring, the system clock, and presence —
-// went false once already (design.md Context: 11 production files, 2011 LOC,
+// documented role — composition-root wiring and the system clock (presence
+// left it in companion-devices) — went false once already (design.md Context: 11 production files, 2011 LOC,
 // most of it a transcription feature and a media-import feature) because
 // nothing checked it. This check pins the role by name, and RECURSIVELY: the
 // post-gate delta-spec review found "directly under" escapable, because a
@@ -2729,7 +2729,9 @@ const NODE_DIR_REL = 'node';
  * else, at any depth. `nextjs-frontend-migration` task 3.1 adds a fourth:
  * `nextFrontend.ts` joins in the same composition-root wiring role (design
  * D1 — it wraps the `next` package the way config.ts wraps SQLite/blob
- * construction). Named for what it actually holds — `node/`-RELATIVE PATHS,
+ * construction). `companion-devices` (ADR 0021 slice 9d, D4) deleted
+ * presence.ts: Companion presence moved to @autologger/storage's
+ * PostgresPresence. Named for what it actually holds — `node/`-RELATIVE PATHS,
  * compared via `relOf`, never a bare basename — because a name like "allowed
  * basenames" would invite a future editor to add a bare basename for a
  * nested file and silently widen the rule this constant exists to keep
@@ -2737,7 +2739,6 @@ const NODE_DIR_REL = 'node';
 const NODE_DIR_ALLOWED_RELATIVE_PATHS = new Set<string>([
   'config.ts',
   'systemClock.ts',
-  'presence.ts',
   'nextFrontend.ts',
 ]);
 
@@ -2796,7 +2797,8 @@ describe('server/src/node/ holds only the composition root — real repo (task 2
   // task-4d-report.md) confirmed both that the canary had fired and that the
   // check above is non-vacuous — flat and nested violations are each
   // independently flagged — before deleting the now-purposeless canary.
-  it('every production file anywhere under server/src/node/ is config.ts, systemClock.ts, presence.ts, or nextFrontend.ts', () => {
+  // (History: presence.ts left this directory in companion-devices D4.)
+  it('every production file anywhere under server/src/node/ is config.ts, systemClock.ts or nextFrontend.ts', () => {
     expect(checkNodeDirMembership(REPO_ROOT)).toEqual([]);
   });
 });
@@ -2819,7 +2821,7 @@ describe('checkNodeDirMembership (mutation check on a synthetic server/src/node 
   const THREE_ALLOWED_FILES: Record<string, string> = {
     'server/src/node/config.ts': `export const marker = true;\n`,
     'server/src/node/systemClock.ts': `export const marker = true;\n`,
-    'server/src/node/presence.ts': `export const marker = true;\n`,
+    'server/src/node/nextFrontend.ts': `export const marker = true;\n`,
   };
 
   afterEach(() => {
@@ -2837,7 +2839,7 @@ describe('checkNodeDirMembership (mutation check on a synthetic server/src/node 
     writeTree(tmpRoot, {
       ...THREE_ALLOWED_FILES,
       'server/src/node/config.test.ts': `export const marker = true;\n`,
-      'server/src/node/presence.test.ts': `export const marker = true;\n`,
+      'server/src/node/nextFrontend.test.ts': `export const marker = true;\n`,
     });
     expect(checkNodeDirMembership(tmpRoot)).toEqual([]);
   });
@@ -2891,7 +2893,7 @@ describe('checkNodeDirMembership (mutation check on a synthetic server/src/node 
     const violations = checkNodeDirMembership(tmpRoot, new Set<string>());
     expect(violations.sort()).toEqual([
       'server/src/node/config.ts',
-      'server/src/node/presence.ts',
+      'server/src/node/nextFrontend.ts',
       'server/src/node/systemClock.ts',
     ]);
   });

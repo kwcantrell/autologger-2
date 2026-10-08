@@ -19,8 +19,10 @@ import {
   checkFrameBusSecret,
   KvStore,
   PostgresCatalogDb,
+  PostgresCompanionDeviceStore,
   PostgresFrameBus,
   PostgresLeaseDirectory,
+  PostgresPresence,
   PostgresSessionDb,
 } from '@autologger/storage';
 import type { Bindings } from '../appEnv';
@@ -32,7 +34,6 @@ import {
   parseAiProvider,
   resolveYtDlpPath,
 } from '../env';
-import { PresenceRegistry } from './presence';
 import { systemClock } from './systemClock';
 
 /** session-frame-bus D1: `'local'` (the default, and every test harness) delivers frames in this
@@ -130,11 +131,14 @@ export function createBindings(
       sessions: registry,
       frameBus: registry.bus,
       audio: audioBlobStore,
-      presence: new PresenceRegistry(clock),
+      // companion-devices D4: binds its own reviewed reason, system:companion-presence.
+      presence: new PostgresPresence(catalogDb, clock),
       logImportJobs: createLogImportJobStore(kv, clock),
       aiV2Questions: new AiV2PendingQuestionRegistry(kv, clock),
       // run-status-and-sweeper D5: binds its own reviewed reason, system:lease-directory.
       leases: new PostgresLeaseDirectory(catalogDb),
+      // companion-devices D2: binds its own reviewed reason, system:companion-device.
+      companionDevices: new PostgresCompanionDeviceStore(catalogDb, clock),
     },
     config: {
       PUBLIC_BASE_URL: procEnv.PUBLIC_BASE_URL || '',
@@ -150,7 +154,6 @@ export function createBindings(
       COOKIE_SECURE: procEnv.COOKIE_SECURE || '',
       IP_ALLOWLIST: procEnv.IP_ALLOWLIST || '',
       TRUST_PROXY: procEnv.TRUST_PROXY || '',
-      API_TOKEN: procEnv.API_TOKEN || '',
       ADMIN_TOKEN: procEnv.ADMIN_TOKEN || '',
       DEEPGRAM_API_KEY: procEnv.DEEPGRAM_API_KEY || '',
       DEEPGRAM_MODEL: procEnv.DEEPGRAM_MODEL || '',
