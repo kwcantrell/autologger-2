@@ -109,6 +109,11 @@ const ALLOWLIST: readonly { file: string; reason: string; why: string }[] = [
     why: '/api/admin/*, after the ADMIN_TOKEN check',
   },
   {
+    file: 'packages/storage/src/presence.ts',
+    reason: 'companion-presence',
+    why: "Companion presence rows, every user's, shared by every process; each statement is scoped by client id and user id in SQL (companion-devices D4)",
+  },
+  {
     file: 'server/src/routers/companion.ts',
     reason: 'companion-token',
     why: 'token-only Companion calls (no user), catalog and session hub, until the slice 9 credential',

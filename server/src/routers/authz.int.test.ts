@@ -21,7 +21,7 @@ const bearer = (token: string): Record<string, string> => ({ Authorization: `Bea
 describe('API_TOKEN machine clients (task 7.1 — the Companion path)', () => {
   it('reaches a session in a studio it is not a member of', async () => {
     const { sessionId: session } = await seededSession();
-    setCompanionPresence('authz-c1', session);
+    await setCompanionPresence('authz-c1', session);
     // Machine client: bearer API_TOKEN, no cookie, no user, no membership anywhere.
     const res = await anonApp.request(
       '/api/companion/state',

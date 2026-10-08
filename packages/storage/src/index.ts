@@ -9,7 +9,8 @@
 // (`PostgresSessionDb`, the session storage over it; session-tables, ADR 0021 slice 7b-1).
 // `frameBusEnvelope` is the session frame bus's signed message and `postgresFrameBus` the bus on
 // Postgres `NOTIFY` (session-frame-bus, slice 9a). `leaseDirectory` is the LeaseDirectory port on
-// `catalog.session_leases` (run-status-and-sweeper D5).
+// `catalog.session_leases` (run-status-and-sweeper D5). `presence` is the PresenceRegistry port on
+// `catalog.companion_presence` (companion-devices D4).
 
 export * from './blobStore';
 export * from './catalogErrors';
@@ -20,3 +21,4 @@ export * from './leaseDirectory';
 export * from './postgresCatalogStore';
 export * from './postgresFrameBus';
 export * from './postgresSessionSql';
+export * from './presence';

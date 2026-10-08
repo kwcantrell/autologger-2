@@ -19,7 +19,7 @@ import {
   mergeCategoryUiSnapshotsIntoMetadata,
   sessionDeckDisplayTitle,
 } from '@autologger/domain';
-import type { PresenceMeta } from '@autologger/ports';
+import type { PresenceRow } from '@autologger/ports';
 import { type SessionHubFacade, systemCaller } from '@autologger/session-core';
 import { SessionAccessDeniedError } from '@autologger/storage';
 import { type Context, Hono } from 'hono';
@@ -76,7 +76,7 @@ const LAST_COMMAND_KEY = 'companion:last_command';
 
 /** Freshest live presence with a session open, preferring visible tabs (hub.primary). Takes
  *  one presence snapshot so callers derive every value from the same list. */
-function primarySession(presences: PresenceMeta[]): string | null {
+function primarySession(presences: PresenceRow[]): string | null {
   const live = presences.filter((p) => p.session_id);
   if (!live.length) return null;
   live.sort((a, b) => {
@@ -117,6 +117,19 @@ async function activeSessionCall<T>(call: () => Promise<T>): Promise<T> {
   }
 }
 
+/** The presence rows the caller's Companion pick reads (companion-devices D4: the port lists one
+ * user's rows). A signed-in caller reads their own rows. A token-only caller (no user) keeps
+ * today's view across every user, read user by user through the port, until section 5 of
+ * companion-devices gives the device a user and deletes this branch with `companion-token`. */
+async function companionPresences(c: Context<AppEnv>): Promise<PresenceRow[]> {
+  const user = c.get('user');
+  const presence = c.env.ports.presence;
+  if (user !== null) return presence.list(user.id);
+  const users = await companionCatalog(c).auth.authListUsersAdmin();
+  const lists = await Promise.all(users.map((u) => presence.list(String(u.id))));
+  return lists.flat();
+}
+
 async function callerMaySee(c: Context<AppEnv>, sessionId: string): Promise<boolean> {
   if (c.get('user') === null) return true;
   return canAccessSession(c, sessionId);
@@ -127,7 +140,7 @@ async function callerMaySee(c: Context<AppEnv>, sessionId: string): Promise<bool
  *  access the active session gets exactly the no-active-session answer (show-grants D10), so its
  *  existence doesn't leak. */
 async function requireActiveSession(c: Context<AppEnv>): Promise<{ sid: string; row: Row }> {
-  const sid = primarySession(await c.env.ports.presence.list());
+  const sid = primarySession(await companionPresences(c));
   const row = sid
     ? await companionCatalog(c).sessions.getSessionIndexRow(sid, { includeHidden: true })
     : null;
@@ -140,8 +153,11 @@ async function requireActiveSession(c: Context<AppEnv>): Promise<{ sid: string; 
 companionRouter.post('/api/companion/presence', async (c) => {
   const body = companionPresenceBodySchema.parse(await c.req.json());
   const cid = body.client_id.trim();
+  // Presence belongs to a user (companion-devices D4). A token-only caller has none, so its post
+  // stores and removes nothing, until section 5 answers it 403.
+  const user = c.get('user');
   if (body.closing) {
-    await c.env.ports.presence.remove(cid);
+    if (user !== null) await c.env.ports.presence.remove(cid, user.id);
     return c.json({ ok: true });
   }
   // A stored NUL id would make every later Companion request's catalog lookup a 400
@@ -153,11 +169,13 @@ companionRouter.post('/api/companion/presence', async (c) => {
   // A signed-in caller may only point presence at a session they can access (show-grants D10);
   // a session they can't access and one that doesn't exist get the same masked 404, and nothing
   // is stored. Token-only calls are unchanged.
-  if (c.get('user') !== null && sessionId) {
+  if (user !== null && sessionId) {
     await requireSession(c, sessionId, { includeHidden: true });
   }
+  if (user === null) return c.json({ ok: true });
   const meta = {
-    session_id: sessionId,
+    user_id: user.id,
+    session_id: sessionId || null,
     visible: body.visible,
     is_playing: body.is_playing,
     updated: c.env.ports.clock.now(),
@@ -168,7 +186,7 @@ companionRouter.post('/api/companion/presence', async (c) => {
 
 companionRouter.get('/api/companion/state', async (c) => {
   const catalog = companionCatalog(c);
-  const presences = await c.env.ports.presence.list();
+  const presences = await companionPresences(c);
   const activeSid = primarySession(presences);
   let sessionOut: CompanionSessionState | null = null;
   let resolvedSid: string | null = activeSid;

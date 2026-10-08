@@ -1,7 +1,7 @@
 import { KvStore } from '@autologger/storage';
 import { describe, expect, it, vi } from 'vitest';
 import { GatedCatalog } from '../test/gatedCatalog';
-import { anonApp, app, env, envWith } from '../test/harness';
+import { anonApp, app, defaultUser, env, envWith } from '../test/harness';
 import {
   COMPANION_BEARER,
   SEED_CATEGORY_ID,
@@ -61,9 +61,15 @@ describe('presence + state', () => {
   it('POST presence with closing:true removes it', async () => {
     const s = (await seededSession()).sessionId;
     await setCompanionPresence('c1', s);
-    await app.request(
+    // D9 category 7: the closing post comes from the row's owner (the default user's cookie);
+    // a token-only post now stores and removes nothing.
+    await anonApp.request(
       '/api/companion/presence',
-      { method: 'POST', headers: J, body: JSON.stringify({ client_id: 'c1', closing: true }) },
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', cookie: (await defaultUser()).cookie },
+        body: JSON.stringify({ client_id: 'c1', closing: true }),
+      },
       { ...env },
     );
     expect((await state()).active_session_id).toBeNull();
@@ -389,7 +395,9 @@ describe('Companion routes check a signed-in caller’s session access (show-gra
       body: { client_id: 'tab-u', session_id: `a\u0000b` },
     });
     expect(nul.status).toBe(400);
-    const token = await asToken('/api/companion/presence', {
+    // D9 category 7: the presence post that names the session moves from the bearer to a cookie
+    // caller with access (a token-only post now stores nothing).
+    const token = await asCookie(m.granted.cookie, '/api/companion/presence', {
       method: 'POST',
       body: { client_id: 'device', session_id: m.sessionId },
     });
@@ -404,7 +412,9 @@ describe('Companion routes check a signed-in caller’s session access (show-gra
       const idle = await (await asCookie(m.ungranted.cookie, '/api/companion/state')).json();
       let held = m.sessionId;
       if (scenario === 'another team') held = (await seededSession()).sessionId;
-      await setCompanionPresence('tab-holder', held, { visible: true });
+      // D9 category 3: presence is per user, so the denied caller's own fresh, visible row names
+      // the held session (the masked answer still proves the access check).
+      await setCompanionPresence('tab-holder', held, { visible: true, user_id: m.ungranted.id });
       const cmd = await asToken('/api/companion/command', {
         method: 'POST',
         body: { type: 'record-start' },
@@ -441,6 +451,8 @@ describe('Companion routes check a signed-in caller’s session access (show-gra
       expect(tok.active_session_id).toBe(held);
       expect(tok.last_command).not.toBeNull();
       if (scenario === 'a granted teammate') {
+        // D9 category 3: the allowed case reads a row owned by the allowed user.
+        await setCompanionPresence('tab-granted', held, { visible: true, user_id: m.granted.id });
         const g = (await (
           await asCookie(m.granted.cookie, '/api/companion/state')
         ).json()) as Record<string, unknown>;

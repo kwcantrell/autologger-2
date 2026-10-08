@@ -585,7 +585,7 @@ describe('session hub calls refused in a race keep each route’s status (sessio
 
   it('Companion with a cookie: log answers 409 and stores nothing; state answers 200 with the active session masked', async () => {
     const m = await seedAccessMatrix();
-    await setCompanionPresence('tab-race', m.sessionId, { visible: true });
+    await setCompanionPresence('tab-race', m.sessionId, { visible: true, user_id: m.granted.id });
     const cmd = await send('POST', '/api/companion/command', m.granted.cookie, { type: 'record-start' });
     expect(cmd.status).toBe(200);
     const companion = (cookie: string, path: string, body: unknown, e: Bindings) =>

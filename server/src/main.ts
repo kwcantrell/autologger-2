@@ -66,6 +66,7 @@ const purgeTimer = startPeriodicPurge(bindings.ports.kv);
 // run-status-and-sweeper D6: every process sweeps expired session leases; first tick in 60 s.
 const leaseSweepTimer = startLeaseSweeper({
   leases: bindings.ports.leases,
+  presence: bindings.ports.presence,
   sessions: bindings.ports.sessions,
   clock: bindings.ports.clock,
 });

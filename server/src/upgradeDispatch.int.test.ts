@@ -154,7 +154,7 @@ describe('real upgrade dispatcher (server/src/upgradeDispatch.ts, wired the way 
     const s = (await seededSession()).sessionId;
     const ws = await connectSessionWs(port, s);
     const got = nextMessage(ws);
-    setCompanionPresence('c1', s);
+    await setCompanionPresence('c1', s);
     const cmd = await fetch(`http://127.0.0.1:${port}/api/companion/command`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', ...COMPANION_BEARER },

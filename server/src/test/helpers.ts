@@ -222,13 +222,16 @@ export function adminHeader(token: string): Record<string, string> {
  * wrapped harness `app` never signs those paths in (require-login D7). */
 export const COMPANION_BEARER: Record<string, string> = { Authorization: 'Bearer test-api-token' };
 
-/** Register companion presence so primarySession() resolves to sessionId. */
-export function setCompanionPresence(
+/** Register companion presence so primarySession() resolves to sessionId. The row belongs to
+ * `user_id`, or to the harness's default signed-in user (companion-devices D4, D9 category 2). */
+export async function setCompanionPresence(
   clientId: string,
   sessionId: string,
-  opts: { visible?: boolean; is_playing?: boolean } = {},
+  opts: { visible?: boolean; is_playing?: boolean; user_id?: string } = {},
 ): Promise<void> {
+  const userId = opts.user_id ?? (await defaultUser()).id;
   return env.ports.presence.upsert(clientId, {
+    user_id: userId,
     session_id: sessionId,
     visible: opts.visible ?? true,
     is_playing: opts.is_playing ?? false,

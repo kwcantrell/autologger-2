@@ -2737,7 +2737,6 @@ const NODE_DIR_REL = 'node';
 const NODE_DIR_ALLOWED_RELATIVE_PATHS = new Set<string>([
   'config.ts',
   'systemClock.ts',
-  'presence.ts',
   'nextFrontend.ts',
 ]);
 
@@ -2796,7 +2795,7 @@ describe('server/src/node/ holds only the composition root — real repo (task 2
   // task-4d-report.md) confirmed both that the canary had fired and that the
   // check above is non-vacuous — flat and nested violations are each
   // independently flagged — before deleting the now-purposeless canary.
-  it('every production file anywhere under server/src/node/ is config.ts, systemClock.ts, presence.ts, or nextFrontend.ts', () => {
+  it('every production file anywhere under server/src/node/ is config.ts, systemClock.ts or nextFrontend.ts', () => {
     expect(checkNodeDirMembership(REPO_ROOT)).toEqual([]);
   });
 });
@@ -2819,7 +2818,7 @@ describe('checkNodeDirMembership (mutation check on a synthetic server/src/node 
   const THREE_ALLOWED_FILES: Record<string, string> = {
     'server/src/node/config.ts': `export const marker = true;\n`,
     'server/src/node/systemClock.ts': `export const marker = true;\n`,
-    'server/src/node/presence.ts': `export const marker = true;\n`,
+    'server/src/node/nextFrontend.ts': `export const marker = true;\n`,
   };
 
   afterEach(() => {
@@ -2837,7 +2836,7 @@ describe('checkNodeDirMembership (mutation check on a synthetic server/src/node 
     writeTree(tmpRoot, {
       ...THREE_ALLOWED_FILES,
       'server/src/node/config.test.ts': `export const marker = true;\n`,
-      'server/src/node/presence.test.ts': `export const marker = true;\n`,
+      'server/src/node/nextFrontend.test.ts': `export const marker = true;\n`,
     });
     expect(checkNodeDirMembership(tmpRoot)).toEqual([]);
   });
@@ -2891,7 +2890,7 @@ describe('checkNodeDirMembership (mutation check on a synthetic server/src/node 
     const violations = checkNodeDirMembership(tmpRoot, new Set<string>());
     expect(violations.sort()).toEqual([
       'server/src/node/config.ts',
-      'server/src/node/presence.ts',
+      'server/src/node/nextFrontend.ts',
       'server/src/node/systemClock.ts',
     ]);
   });

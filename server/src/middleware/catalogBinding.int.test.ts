@@ -99,6 +99,7 @@ describe('system call sites name their reason (catalog-roles D10)', () => {
   it('a token-only GET /api/companion/state runs as system:companion-token', async () => {
     const { sessionId } = await seededSession();
     await env.ports.presence.upsert('c-bind', {
+      user_id: (await defaultUser()).id,
       session_id: sessionId,
       visible: true,
       is_playing: false,
