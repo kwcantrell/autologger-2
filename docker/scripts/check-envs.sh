@@ -28,7 +28,7 @@ cd "$ROOT"
 unset DEV_PORT DEV_COMPANION_PORT STAGE_PORT ROUTER_PORT ROUTER_FRONT_GW ROUTER_BACK_GW \
   STAGE_WEB_IMAGE STAGE_API_IMAGE STAGE_PUBLIC_BASE_URL STAGE_COOKIE_SECURE STAGE_IMAGE_TAG \
   WEB_TAG API_TAG PUBLIC_BASE_URL HOST TRUST_PROXY \
-  IP_ALLOWLIST DATA_DIR PORT 2>/dev/null || true
+  IP_ALLOWLIST DATA_DIR BLOB_DIR PORT 2>/dev/null || true
 # supabase-db D4, supabase-services D4: one sentinel per Supabase secret, so invariant 16 can find
 # each value anywhere; SB_SCOPE is the services each may appear in (same table as compose-run.mjs).
 SB_SECRETS="POSTGRES_PASSWORD SUPABASE_ROLES_PASSWORD APP_DB_PASSWORD JWT_SECRET ANON_KEY SERVICE_ROLE_KEY SECRET_KEY_BASE REALTIME_DB_ENC_KEY"
@@ -110,6 +110,7 @@ HOST=0.0.0.0
 TRUST_PROXY=1
 IP_ALLOWLIST=0.0.0.0/0
 DATA_DIR=/x
+BLOB_DIR=/x
 PORT=1
 EOF
 printf 'STAGE_PORT=18788\n' >"$TMP/stage-custom.env"
@@ -142,6 +143,14 @@ check_no_8080_numeric() { # json label
 # Invariant 7 (stage, prod): the api posture pins survive.
 check_posture_prodlike() { # json label
   jq_ok 7 "$2: api TRUST_PROXY is not \"1\"" "$1" '.services.api.environment.TRUST_PROXY=="1"'
+}
+
+# Invariant 7 (stage, prod; shared-blob-volume D6): the audio root is the literal /blobs, on a
+# single named volume of its own (every server process of the stack mounts it).
+check_blob_volume() { # json label
+  jq_ok 7 "$2: api BLOB_DIR is not \"/blobs\"" "$1" '.services.api.environment.BLOB_DIR=="/blobs"'
+  jq_ok 7 "$2: api /blobs is not a single named-volume mount (autologger-blobs)" "$1" \
+    '(.services.api.volumes//[])|map(select(.target=="/blobs"))|length==1 and .[0].type=="volume" and .[0].source=="autologger-blobs"'
 }
 
 # Invariant 6 (dev, stage): no service uses the host network namespace or runs privileged.
@@ -317,24 +326,24 @@ check_dev() {
   # 6: dev posture pins are literals in the raw file (only PUBLIC_BASE_URL and the D4
   # AUTOLOGGER_STACK sentinel and the catalog's PGPASSWORD, catalog-pg-schema D5, may hold a variable),
   # and the resolved values match (the custom env file tries to flip every one of them).
-  jq_ok 6 "dev: a posture pin (HOST/TRUST_PROXY/IP_ALLOWLIST/DATA_DIR/PORT) is not a literal in the raw file, or another app env value contains a variable" "$R" \
+  jq_ok 6 "dev: a posture pin (HOST/TRUST_PROXY/IP_ALLOWLIST/DATA_DIR/BLOB_DIR/PORT) is not a literal in the raw file, or another app env value contains a variable" "$R" \
     '.services.app.environment|envmap
-     | .HOST=="127.0.0.1" and .TRUST_PROXY=="0" and .IP_ALLOWLIST=="" and .DATA_DIR=="/data" and .PORT=="8786"
+     | .HOST=="127.0.0.1" and .TRUST_PROXY=="0" and .IP_ALLOWLIST=="" and .DATA_DIR=="/data" and .BLOB_DIR=="/blobs" and .PORT=="8786"
        and .PUBLIC_BASE_URL=="http://localhost:${DEV_PORT:-8787}"
        and (.AUTOLOGGER_STACK//""|startswith("${AUTOLOGGER_STACK:?"))
        and (.PGPASSWORD|startswith("${APP_DB_PASSWORD:?")) and .PGUSER=="autologger_app" and .PGHOST=="db"
        and ([to_entries[]|select(.key!="PUBLIC_BASE_URL" and .key!="AUTOLOGGER_STACK" and .key!="PGPASSWORD")|.value|tostring|contains("$")]|any|not)'
   for f in "$D" "$C"; do
-    jq_ok 6 "dev: a resolved posture pin differs from HOST=127.0.0.1 TRUST_PROXY=0 IP_ALLOWLIST= DATA_DIR=/data PORT=8786" "$f" \
+    jq_ok 6 "dev: a resolved posture pin differs from HOST=127.0.0.1 TRUST_PROXY=0 IP_ALLOWLIST= DATA_DIR=/data BLOB_DIR=/blobs PORT=8786" "$f" \
       '.services.app.environment
-       | .HOST=="127.0.0.1" and .TRUST_PROXY=="0" and .IP_ALLOWLIST=="" and .DATA_DIR=="/data" and .PORT=="8786"'
+       | .HOST=="127.0.0.1" and .TRUST_PROXY=="0" and .IP_ALLOWLIST=="" and .DATA_DIR=="/data" and .BLOB_DIR=="/blobs" and .PORT=="8786"'
   done
   jq_ok 6 "dev: resolved PUBLIC_BASE_URL is not http://localhost:<published DEV_PORT>" "$C" \
     '.services.app.environment.PUBLIC_BASE_URL==("http://localhost:"+.services.app.ports[0].published)'
 
   # 4: bind mounts. Read-only sources must sit under an allowed source subtree (or be the gate
   # Caddyfile), never repo root / a data segment / a .env file; the ONLY rw bind is the Claude
-  # credentials file. DATA_DIR and the runtime home are named volumes.
+  # credentials file. DATA_DIR, BLOB_DIR and the runtime home are named volumes.
   BINDS='[.services|to_entries[]|.key as $s|(.value.volumes//[])[]|select(.type=="bind")|{s:$s,src:(.source|norm),tgt:.target,ro:(.read_only//false),cp:(.bind.create_host_path)}]'
   jq_ok 4 "dev: the read-write bind mounts are not exactly app's \${HOME}/.claude/.credentials.json -> /home/node/.claude/.credentials.json with create_host_path false" "$D" \
     "$BINDS | map(select(.ro|not)) == [{s:\"app\",src:(\$home+\"/.claude/.credentials.json\"),tgt:\"/home/node/.claude/.credentials.json\",ro:false,cp:false}]"
@@ -355,6 +364,8 @@ check_dev() {
     '.services.app.volumes as $v
      | ($v|map(select(.target=="/data"))|length==1 and .[0].type=="volume" and .[0].source=="dev-data")
        and ($v|map(select(.target=="/home/node"))|length==1 and .[0].type=="volume" and .[0].source=="dev-home")'
+  jq_ok 4 "dev: BLOB_DIR (/blobs) is not the dev-blobs named volume" "$D" \
+    '.services.app.volumes|map(select(.target=="/blobs"))|length==1 and .[0].type=="volume" and .[0].source=="dev-blobs"'
 
   # 5: every packages/* directory has its src mounted.
   for d in packages/*/; do
@@ -405,6 +416,7 @@ check_stage() {
     check_loopback_ports "$f" stage                                    # 1
     check_no_8080_numeric "$f" stage                                   # 2
     check_posture_prodlike "$f" stage                                  # 7
+    check_blob_volume "$f" stage                                       # 7
     check_gw_values "$f" stage                                         # 10
     jq_ok 3 "stage: published ports are not exactly the router's and supabase-gw's (web/api must publish none)" "$f" \
       '([.services|to_entries[]|select((.value.ports//[])|length>0)|.key]|sort)==["router","supabase-gw"] and (.services.router.ports|length==1 and .[0].target==8080)'
@@ -465,6 +477,7 @@ check_prod() {
   check_name "$f" prod autologger                                      # 9
   check_loopback_ports "$f" prod                                       # 1
   check_posture_prodlike "$f" prod                                     # 7
+  check_blob_volume "$f" prod                                          # 7
   check_gw_values "$f" prod                                            # 10
   check_no_env_file "$f" prod                                          # 14
   jq_ok 10 "prod: compose.yaml must never set ROUTER_FRONT_GW/ROUTER_BACK_GW: the resolved router environment is not empty" "$f" \
