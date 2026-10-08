@@ -467,7 +467,9 @@ response) SHALL live at app level (`server/src/httpError.ts`), not inside
 the router layer.
 
 `server/src/node/` SHALL hold **only** the composition root and the Node-specific adapters
-it constructs — configuration wiring, the system clock, and presence. Feature
+it constructs — configuration wiring and the system clock. Companion presence moved to the
+storage package's Postgres implementation (core-ports-architecture "Companion presence is shared
+by every process", ADR 0021 slice 9d), so no presence module SHALL remain there. Feature
 implementations SHALL NOT live there. This directory's role was documented and then went
 false, accreting a transcription feature and an audio-import feature that together
 outweighed the composition root by an order of magnitude, because nothing checked it;
@@ -517,7 +519,7 @@ to their former home, and SHALL NOT change any observable HTTP/WS behavior.
 #### Scenario: The composition-root directory holds only the composition root
 
 - **WHEN** the boundary repo test inspects the production modules **anywhere under** `server/src/node/`, recursively
-- **THEN** it fails if any file other than the composition-root wiring, the system clock, and presence is present — a subdirectory is itself a violation, not an exemption, because the layering enumeration compares only top-level directories and would not see a feature accumulating at `server/src/node/<feature>/`
+- **THEN** it fails if any file other than the composition-root wiring and the system clock is present — a subdirectory is itself a violation, not an exemption, because the layering enumeration compares only top-level directories and would not see a feature accumulating at `server/src/node/<feature>/`
 
 #### Scenario: The layering enumeration matches the filesystem and is non-vacuous
 

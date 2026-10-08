@@ -463,10 +463,16 @@ load. The Barlow switch's transfer is re-measured as evidence for that change.
 ### Requirement: The Companion presence heartbeat outlives tab backgrounding
 
 While a page holds a session, the client SHALL keep its Companion presence entry fresh for as
-long as the page is alive, **regardless of tab visibility**. The server prunes a presence entry
-after a fixed freshness window (`PRESENCE_FRESH_MS`, 15 s) and Companion's active-session
-resolution requires a fresh entry, so a client that stops reporting is dropped as a Companion
-target while its tab, its WebSocket, and possibly an in-progress recording are all still alive.
+long as the page is alive, **regardless of tab visibility**. The server ignores a presence entry
+older than a fixed freshness window (`PRESENCE_FRESH_MS`, 15 s, defined in the presence port) and
+deletes it after 60 s; Companion's active-session resolution requires a fresh entry, so a client
+that stops reporting is dropped as a Companion target while its tab, its WebSocket, and possibly
+an in-progress recording are all still alive. Presence is stored in the catalog and shared by
+every server process (core-ports-architecture "Companion presence is shared by every process"),
+and each entry records the signed-in user who posted it, so a Companion device follows only its
+own user's pages (api-contract-freeze "Companion routes run as the caller's user"). The page
+posts presence with its session cookie; the reporting cadence and the request body are unchanged
+by that.
 
 The reporting interval SHALL stay strictly under that window in every visibility state. It is
 currently 5 s while visible and 10 s while hidden — the hidden cadence is a traffic reduction,

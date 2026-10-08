@@ -223,61 +223,6 @@ reads TTL from the injected `Clock`. No module-level mutable singleton SHALL bac
 - **WHEN** the identity verifier is inspected
 - **THEN** the JWKS cache lives on an instance (no module-level `let`), and a test can supply a fake verifier without network access
 
-### Requirement: Authentication and authorization are distinct, single seams
-
-Request **authentication** (resolving identity from session cookie or `API_TOKEN`) SHALL be
-performed once in middleware; `API_TOKEN` SHALL be honoured only on paths under
-`/api/companion/` (see `api-contract-freeze` "API_TOKEN authenticates only the Companion
-surface"). The middleware's path decisions (login required, `API_TOKEN` scope) SHALL use the same
-percent-decoded path the router matches, so a request that reaches an `/api/*` handler is always
-judged as an `/api/*` request. Resource **authorization** (existence + show access + admin-token checks; show access is the
-team-management "Member content access" rule: the owner or an admin of the show's team, or a
-member holding a grant for the show) SHALL be consolidated behind `requireSession` and its
-show-level sibling rather than re-deriving the login decision; no session-scoped route SHALL
-check access any other way. The login-required check SHALL NOT be duplicated between
-middleware and per-route helpers. Route helpers MAY assert that a principal is present; a
-missing principal behind the middleware is an internal error (500), not a second login
-decision. The consolidation SHALL preserve these exact behaviors,
-each locked by a scenario below. (Replacing the `apiRequestRequiresLogin` URL-prefix matcher
-with an explicit per-route policy is **deferred** — see the archived change's design D6 —
-so its default-deny requirements are out of scope for this capability.)
-
-#### Scenario: Login check is not duplicated
-- **WHEN** a session-scoped route is exercised
-- **THEN** the unauthenticated-401 decision is made exactly once, in the middleware, and `requireSession` performs only resolve + authorize (at most asserting that a principal is present, which is never a `401`)
-
-#### Scenario: API_TOKEN machine clients bypass studio membership
-- **WHEN** a request authenticated by `API_TOKEN` (no user) on a path under `/api/companion/` resolves a session in any studio
-- **THEN** it is allowed after an existence check, with no membership scoping applied — the Companion machine path is unchanged
-
-#### Scenario: API_TOKEN is not an identity outside the Companion surface
-- **WHEN** a request bearing only a valid `API_TOKEN` accesses a session-scoped route outside `/api/companion/`
-- **THEN** it is rejected by the single middleware login decision with `401`, and `requireSession` is never reached
-
-#### Scenario: Percent-encoded API prefix is gated like the literal one
-- **WHEN** `GET /%61pi/sessions` or `GET /%61pi/companion/state` is sent with no session cookie and no `API_TOKEN`
-- **THEN** the response is `401` `{"detail": "Login required."}`, exactly as for `/api/sessions` and `/api/companion/state`, and no handler runs
-
-#### Scenario: Cross-studio access is masked as 404, not 403
-- **WHEN** an authenticated user who is not a member of a session's studio requests that session
-- **THEN** the response is `404` "Session not found" (not `403`), identical before and after
-
-#### Scenario: Admin token distinguishes unset from wrong
-- **WHEN** an `/api/admin/*` route is called with `ADMIN_TOKEN` unset versus with an invalid token
-- **THEN** it returns `503` (unset) versus `401` (invalid) respectively, and a session cookie alone grants no admin access
-
-#### Scenario: A member without a grant is masked as 404, not 403
-- **WHEN** an authenticated member of a session's studio who holds no grant for the session's show
-  requests that session through any session-scoped route
-- **THEN** the response is `404` "Session not found" (not `403`), identical to the cross-studio
-  response
-
-#### Scenario: Every session-scoped route goes through the one gate
-- **WHEN** the registered route table is enumerated
-- **THEN** every route whose path names a session id, and the show-scoped log import, denies a
-  member without a grant with the masked `404` before reading its body, and a route added later
-  without the gate fails that check
-
 ### Requirement: Untested seams gain characterization tests before reshaping
 
 The **`api-contract-freeze`** capability is the single normative definition of the frozen
@@ -1326,8 +1271,7 @@ either:
 - a user: the signed-in user of the request that makes the call, or, for work a request started
   and that outlives it (an AI turn's tool calls, a log-import job), the user who started it; or
 - a named system task, for calls no user makes: opening a hub (its seed rows and stale-lease
-  cleanup), the recording lease alarm, token-only Companion calls (for any session id, until the
-  Companion has its own credential), operator scripts, and a request's undo steps, which remove
+  cleanup), the recording lease alarm, operator scripts, and a request's undo steps, which remove
   only what that same request wrote or the snapshot it is replacing, after one of its later steps
   failed or was refused.
 
@@ -1355,9 +1299,14 @@ its seed rows and stale-lease cleanup, after a gate or in work a gated request s
 `merge-audio-script` (the operator's audio merge script),
 `log-import-job` (the job's catalog reads and its per-sheet re-check; its hub calls run as its
 creator), `oauth-callback`, `bootstrap-claim`, `support-plane` (`/api/admin/*`),
-`companion-token` (token-only Companion calls, catalog and hub), `access-loss-check`,
+`companion-device` (the `CompanionDeviceStore` of `packages/storage`, on
+`bindSystem('companion-device')` and wired as `Bindings.ports.companionDevices`, not a catalog
+facade store: the device-token lookup, its last-used update, and the management routes' list,
+create and revoke, each scoped by user id in SQL),
+`companion-presence` (the shared Companion presence table), `access-loss-check`,
 `team-invite` and `team-create`. The `session-mirror` reason was retired with the mirror (ADR 0021
-slice 7b-1) and the `session-hub` reason with the per-call caller (slice 7b-2).
+slice 7b-1), the `session-hub` reason with the per-call caller (slice 7b-2), and the
+`companion-token` reason with `API_TOKEN` (slice 9d): a Companion call runs as the device's user.
 
 #### Scenario: A signed-in request runs as its user
 - **WHEN** a signed-in user loads `GET /api/profile`
@@ -1400,11 +1349,17 @@ slice 7b-1) and the `session-hub` reason with the per-call caller (slice 7b-2).
   are serialized in one order
 
 #### Scenario: Calls no user makes run as their reviewed system task
-- **WHEN** a hub is opened for a session, its lease alarm fires, a token-only Companion call logs
-  an event, and an audio upload whose blob write failed removes its segment row
+- **WHEN** a hub is opened for a session, its lease alarm fires, and an audio upload whose blob
+  write failed removes its segment row
 - **THEN** the open runs as `catalog_system` under `session-open`, the alarm under
-  `session-lease-alarm`, the Companion write under `companion-token`, and the removal under
-  `session-undo`
+  `session-lease-alarm`, and the removal under `session-undo`
+
+#### Scenario: A Companion device call runs as its user
+- **WHEN** a Companion device logs an event in its user's active session
+- **THEN** the device lookup runs under the system binding `companion-device` through
+  `Bindings.ports.companionDevices`, and the route's
+  catalog reads and every statement of the hub's write run as `catalog_user` with the device's
+  user's id
 
 #### Scenario: Background work runs as the user who started it
 - **WHEN** an AI turn started by user A calls a tool that creates an event, and a log-import job
@@ -1700,3 +1655,124 @@ key-value purge.
 #### Scenario: Ticks never overlap
 - **WHEN** a tick is still running when the next interval elapses
 - **THEN** no second tick starts until the first finishes
+
+### Requirement: Authentication and authorization are distinct seams for every caller
+
+Request **authentication** (resolving identity from the session cookie, or from a Companion
+device token) SHALL be performed once in middleware; a device token SHALL be honoured only on
+paths under `/api/companion/`, where it resolves to the device's user (see `api-contract-freeze`
+"Companion device tokens authenticate only the Companion surface"). `API_TOKEN` SHALL NOT be read.
+The middleware's path decisions (login required, device-token scope) SHALL use the same
+percent-decoded path the router matches, so a request that reaches an `/api/*` handler is always
+judged as an `/api/*` request. Resource **authorization** (existence + show access + admin-token checks; show access is the
+team-management "Member content access" rule: the owner or an admin of the show's team, or a
+member holding a grant for the show) SHALL be consolidated behind `requireSession` and its
+show-level sibling rather than re-deriving the login decision; no session-scoped route SHALL
+check access any other way. The login-required check SHALL NOT be duplicated between
+middleware and per-route helpers. Route helpers MAY assert that a principal is present; a
+missing principal behind the middleware is an internal error (500), not a second login
+decision. The consolidation SHALL preserve these exact behaviors,
+each locked by a scenario below. (Replacing the `apiRequestRequiresLogin` URL-prefix matcher
+with an explicit per-route policy is **deferred** — see the archived change's design D6 —
+so its default-deny requirements are out of scope for this capability.)
+
+#### Scenario: Login check is not duplicated
+- **WHEN** a session-scoped route is exercised
+- **THEN** the unauthenticated-401 decision is made exactly once, in the middleware, and `requireSession` performs only resolve + authorize (at most asserting that a principal is present, which is never a `401`)
+
+#### Scenario: Companion device callers are authorized as their user
+- **WHEN** a request authenticated by a Companion device token on a path under `/api/companion/` resolves a session in a studio where the device's user has no membership, and then one of a show the user holds a grant for
+- **THEN** the first is answered as when there is no active session and the second is allowed: the device's user is scoped exactly like a signed-in user, with no system bypass
+
+#### Scenario: A device token is not an identity outside the Companion surface
+- **WHEN** a request bearing only a live Companion device token accesses a session-scoped route outside `/api/companion/`
+- **THEN** it is rejected by the single middleware login decision with `401`, and `requireSession` is never reached
+
+#### Scenario: Percent-encoded API prefix is gated like the literal one
+- **WHEN** `GET /%61pi/sessions` or `GET /%61pi/companion/state` is sent with no session cookie and no `Authorization` header
+- **THEN** the response is `401` `{"detail": "Login required."}`, exactly as for `/api/sessions` and `/api/companion/state`, and no handler runs
+
+#### Scenario: Cross-studio access is masked as 404, not 403
+- **WHEN** an authenticated user who is not a member of a session's studio requests that session
+- **THEN** the response is `404` "Session not found" (not `403`), identical before and after
+
+#### Scenario: Admin token distinguishes unset from wrong
+- **WHEN** an `/api/admin/*` route is called with `ADMIN_TOKEN` unset versus with an invalid token
+- **THEN** it returns `503` (unset) versus `401` (invalid) respectively, and a session cookie alone grants no admin access
+
+#### Scenario: A member without a grant is masked as 404, not 403
+- **WHEN** an authenticated member of a session's studio who holds no grant for the session's show
+  requests that session through any session-scoped route
+- **THEN** the response is `404` "Session not found" (not `403`), identical to the cross-studio
+  response
+
+#### Scenario: Every session-scoped route goes through the one gate
+- **WHEN** the registered route table is enumerated
+- **THEN** every route whose path names a session id, and the show-scoped log import, denies a
+  member without a grant with the masked `404` before reading its body, and a route added later
+  without the gate fails that check
+
+### Requirement: Companion presence is shared by every process
+Companion presence SHALL be stored in the catalog table `catalog.companion_presence`
+(catalog-database "Companion devices and presence are stored in the catalog"), so every server
+process sharing the database sees the same presence (ADR 0021 slice 9d, owner decision 3). No
+process SHALL keep presence in memory.
+
+- **Port.** The `PresenceRegistry` port SHALL be asynchronous and SHALL be exactly:
+  - `upsert(clientId, meta)`, where `PresenceMeta` carries the posting user's id (`user_id`)
+    beside its session id (nullable), visibility and playing state;
+  - `remove(clientId, userId)`;
+  - `list(userId)`, returning that user's fresh rows, each with its `client_id` and metadata;
+  - `deleteOlderThan(cutoffMs)`.
+
+  The freshness window `PRESENCE_FRESH_MS` (15 s) SHALL be a constant of the port module.
+- **Postgres implementation.** The storage package SHALL implement the port on
+  `bindSystem('companion-presence')`:
+  - `upsert` SHALL insert the row, or update the existing row for that client id only when it
+    belongs to the same user or was last updated more than `PRESENCE_FRESH_MS` ago; a fresh row
+    of another user SHALL be left unchanged (ownership, api-contract-freeze "Companion routes run
+    as the caller's user"), so a tab reused after another user signs in posts as that user once
+    the old row is stale;
+  - `remove` SHALL delete the row for that client id only when it belongs to that user;
+  - `list` SHALL return only that user's rows updated at or after `now - PRESENCE_FRESH_MS`
+    (inclusive at the edge);
+  - `deleteOlderThan` SHALL delete rows last updated before the cutoff.
+
+  Every time it reads or writes SHALL come from the `Clock` port. The composition root SHALL wire
+  this implementation, and the in-memory registry SHALL be deleted.
+- **Sweeping.** Each lease sweeper tick ("Expired leases are swept by every process") SHALL run
+  `deleteOlderThan(now - 60 s)` as its first step, before the expired-recording listing whose
+  failure ends the tick early. A failure SHALL only log a warning, like the sweeper's other steps,
+  and the tick SHALL go on.
+- **Session deletion.** A row whose session is deleted SHALL keep no session id, and SHALL then
+  make no session active.
+
+#### Scenario: Presence written by one process is listed by another
+- **WHEN** process A upserts a presence row for user U and process B, sharing the database, lists
+  U's presence
+- **THEN** B's list contains that row with its client id, user id and session id
+
+#### Scenario: Freshness follows the clock
+- **WHEN** a test upserts a presence row and advances the fake clock past `PRESENCE_FRESH_MS`
+- **THEN** the row is no longer listed, without any real time passing; at exactly
+  `PRESENCE_FRESH_MS` it is still listed
+
+#### Scenario: List is scoped to the user
+- **WHEN** users A and B each upsert a fresh row and A's presence is listed
+- **THEN** the list holds only A's row
+
+#### Scenario: A fresh row of another user is not taken over
+- **WHEN** a client id is upserted for user A, and within `PRESENCE_FRESH_MS` upserted for user B,
+  and B removes that client id
+- **THEN** one row exists for that client id, it still names A with A's session and update time,
+  and B's remove deletes nothing
+
+#### Scenario: A stale row of another user moves to the new user
+- **WHEN** a client id is upserted for user A, the clock advances past `PRESENCE_FRESH_MS`, and it
+  is upserted for user B
+- **THEN** one row exists for that client id, and it names B
+
+#### Scenario: The sweeper removes old presence rows first
+- **WHEN** a sweeper tick runs while one presence row was last updated 61 s ago and another 5 s
+  ago, and the expired-recording listing fails
+- **THEN** the first row is deleted and the second is unchanged, and the listing failure is logged

@@ -602,7 +602,8 @@ This one rule SHALL decide:
 - every session-scoped API route;
 - the session WebSocket upgrade;
 - the show-scoped log import, checked when it is requested and again before each sheet it imports;
-- every Companion route called by a signed-in user;
+- every Companion route, called by a signed-in user or by a Companion device acting as the user
+  who created it (api-contract-freeze "Companion routes run as the caller's user");
 - which sessions the transcript-generation lock names to a requester.
 
 A denial SHALL be the same masked `404` a non-member gets today, so a member without a grant cannot tell whether the session exists.
