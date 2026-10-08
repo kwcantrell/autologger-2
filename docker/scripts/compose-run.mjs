@@ -18,6 +18,9 @@
 // Without a tag DOCKER_CONFIG is ignored (as for dev and prod). A pinned tree (REVISION, no .git)
 // refuses untagged up/build/run.
 //
+// Prod (prod-migrate): only the Makefile's prod compose steps run; `run --rm migrate` needs
+// prod-tags and resolved before it, and a clean `main` tree right before it.
+//
 // The Makefile starts this under `env -i` (H1). One process: read the per-host credentials file
 // (.env.openbao.<env>), log in to OpenBao with AppRole, read the stack's KV v2 secret, revoke the
 // token, validate every secret, then run each step with a child environment built from scratch
@@ -362,6 +365,46 @@ export function makeDockerConfig(auths, base = tmpdir()) {
   const d = mkdtempSync(join(base, 'compose-run-docker-'));
   writeFileSync(join(d, 'config.json'), JSON.stringify({ auths }), { mode: 0o600, flag: 'wx' });
   return d;
+}
+
+// prod-migrate D2: the only prod compose steps (exactly the Makefile's). No global flag (-f,
+// --project-directory, --profile), no named service on up, no exec; one run: the migrations runner.
+const PROD_MIGRATE = 'run --rm migrate';
+const PROD_STEPS = new Set(['config --quiet', 'pull', PROD_MIGRATE, 'up -d', 'down', 'logs -f --tail=200']);
+
+/** prod-migrate D2: refuse any prod compose step not in PROD_STEPS, and the migrate step unless
+ * prod-tags and resolved come before it. Runs before any request. */
+export function checkProdPlan(plan) {
+  const seen = new Set();
+  for (const p of plan) {
+    if (p.kind !== 'compose') {
+      seen.add(p.kind);
+      continue;
+    }
+    const words = p.args.join(' ');
+    if (!PROD_STEPS.has(words)) {
+      refuse(`'compose ${words}' is refused for prod (only ${[...PROD_STEPS].map((w) => `'compose ${w}'`).join(', ')}; no shell against the prod database)`);
+    }
+    if (words === PROD_MIGRATE && !(seen.has('prod-tags') && seen.has('resolved'))) {
+      refuse(`'compose ${PROD_MIGRATE}' is refused for prod unless prod-tags and resolved come before it`);
+    }
+  }
+}
+
+/** prod-migrate D5: right before the prod migrate step, the tree whose migrations and migrate.sh
+ * compose bind-mounts must be clean (untracked files count) and on main, as make-guards prod-git. */
+export function checkProdTree(root, home = '') {
+  const git = (...a) => spawnSync('git', ['-C', root, ...a], {
+    env: { PATH: FIXED_PATH, ...(home ? { HOME: home } : {}) },
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'ignore'],
+  });
+  const st = git('status', '--porcelain');
+  const br = git('rev-parse', '--abbrev-ref', 'HEAD');
+  if (st.status !== 0 || br.status !== 0) refuse('could not read the git status of the tree the prod migrations come from');
+  if (st.stdout !== '') refuse('refusing to migrate prod: the working tree is not clean (commit or stash; untracked files count)');
+  const b = br.stdout.trim();
+  if (b !== 'main') refuse(`refusing to migrate prod: on branch '${b.replace(/[^\x20-\x7e]/g, '?').slice(0, 80)}', prod migrations come only from main`);
 }
 
 /** A pinned deploy (REVISION, no .git) is the public stage: an untagged up/build/run there would
@@ -755,10 +798,8 @@ async function main(argv, ownEnv) {
     if (s.startsWith('compose ')) return { kind: 'compose', args: splitStep(s) };
     return refuse(`unknown step "${s.replace(/[^\x20-\x7e]/g, '?').slice(0, 80)}"`);
   });
-  // supabase-db D6: nothing may migrate prod or open a shell in it.
-  if (env === 'prod' && plan.some((p) => p.kind === 'compose' && p.args.some((w) => w === 'run' || w === 'exec'))) {
-    refuse('compose run and exec are refused for prod (no migration or shell against the prod database)');
-  }
+  // prod-migrate D2 (was supabase-db D6): only the Makefile's prod steps; no shell in prod's db.
+  if (env === 'prod') checkProdPlan(plan);
   // stage-public-https: the operator values exist for stage only; validated before any request.
   if (env !== 'stage' && ['STAGE_IMAGE_TAG', 'STAGE_PUBLIC_BASE_URL'].some((k) => ownEnv[k])) {
     refuse('STAGE_IMAGE_TAG and STAGE_PUBLIC_BASE_URL apply to stage only');
@@ -841,6 +882,8 @@ async function runSteps(env, plan, childEnv, secrets, stage) {
     else if (step.kind === 'reset') {
       if (config().name !== PROJECT[env]) refuse(`refusing: compose resolved project name is not '${PROJECT[env]}'`);
     } else {
+      // prod-migrate D5: checked as late as possible, right before the runner mounts the tree.
+      if (env === 'prod' && step.args.join(' ') === PROD_MIGRATE) checkProdTree(ROOT, childEnv.HOME);
       const code = await runChild(composeArgv(env, step.args, true), childEnv);
       if (code !== 0) return code; // H8: stop at the first failure
     }

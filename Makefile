@@ -126,9 +126,9 @@ prod-pull: ## Clean main only: pull the tags pinned in the OpenBao prod secret
 	@$(G) prod-git
 	$(RUN) prod prod-tags 'compose pull'
 
-prod-up: ## Clean main only: start prod with the tags pinned in the OpenBao prod secret
+prod-up: ## Clean main only: migrate the prod Postgres, then start prod with the tags pinned in the OpenBao prod secret
 	@$(G) prod-git
-	$(RUN) prod prod-tags resolved 'compose up -d'
+	$(RUN) prod prod-tags resolved 'compose run --rm migrate' 'compose up -d'
 
 prod-down: ## Stop and remove prod containers (volumes kept)
 	$(RUN) prod prod-tags 'compose down'
