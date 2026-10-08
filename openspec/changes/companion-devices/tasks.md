@@ -1,0 +1,127 @@
+# Tasks
+
+**Branch and commits**
+- The first commit on `companion-devices` holds only `openspec/changes/companion-devices/`.
+- The PR targets `supabase-migration`.
+- The gates run with `GITHUB_BASE_REF=supabase-migration`.
+
+**Logs and test-first**
+- Logs live under the session scratchpad as `9d-<task>-<red|green>.log`, and each `Evidence:` line
+  names its log.
+- Each "test first" item is red before its change, or records why it already passes.
+- Each task's text and its `Evidence:` stay in one block with no blank line.
+
+**Commands**
+- Targeted tests while working (ADR 0026): `cd server && npx vitest run --project <unit|integration|pg> <files>`.
+- Packages: `npx vitest run` in `packages/ports` and `packages/contract`; `cd packages/storage && npx vitest run --project <unit|pg> <files>`; `cd companion && npx vitest run` (or the module's test command).
+- `cd web && npx vitest run`.
+- `npm run typecheck`.
+- Migrations: `sh docker/supabase/test_migrate.sh`.
+- The full pg/integration suites run in CI on the PR (ADR 0026; owner preference: no local full DB runs). Locally, only the targeted tests being written, plus the unit suites and typecheck.
+
+**Changing tests.** Changing an existing test is allowed only for the categories in design D9.
+Anything else is a stop: update the artifacts and ask the owner.
+
+## 1. Baselines
+
+- [ ] 1.1 Run the unit suites (server, packages, web, companion) and typecheck on the base, and record the counts. The DB-suite baseline is the last full CI run (PR #92, run 37658455529: server pg+integration 1394, storage pg 92). List every existing test that D9 categories 1-6 may touch, using `grep -rln "COMPANION_BEARER\|API_TOKEN\|apiTokenAuth\|requestHasValidApiToken\|companion-token\|setCompanionPresence\|presence.upsert\|PresenceRegistry\|companion:last_command\|sweepLeasesOnce\|relname !== 'kv'\|table !== 'kv'\|toHaveLength(37)\|Event buttons'" --include=*.test.ts --include=*.test.tsx --include=*.sh server/src packages web/src companion docker/scripts`. Classify each hit by category, or as unchanged.
+
+## 2. Tables (design D1)
+
+- [ ] 2.1 Test first, in `catalogSchema.pg.test.ts` (D9 category 5) and new pg tests:
+  - both tables and their columns, checks and indexes exist;
+  - both tables are invisible to `catalog_user` (select, insert, delete give `42501`);
+  - deleting a user cascades;
+  - deleting a session nulls `session_id`;
+  - the migration deletes the old global `companion:last_command` key.
+
+  Red, then add `supabase/migrations/20261015000000_companion_devices.sql`. Green, plus `sh docker/supabase/test_migrate.sh`.
+
+## 3. Presence on Postgres (design D4)
+
+- [ ] 3.1 Test first, storage pg tests for `PostgresPresence`:
+  - upsert, then list within 15 s;
+  - stale rows excluded;
+  - upsert changes the user;
+  - an upsert for another user's live client id changes nothing, a stale one is taken over;
+  - `remove` deletes only the caller's own row;
+  - `list(userId)` is inclusive at the 15 s edge and returns only that user's rows;
+  - a null `session_id` is stored as NULL;
+  - `deleteOlderThan`.
+
+  Plus `startupPurge.test.ts` sweeper cases: the presence step runs first, warns on failure, and still runs when the recording listing fails.
+
+  Plus the port change (`user_id`, `list` rows with `client_id`). Red, then add the port change, the storage implementation on `bindSystem('companion-presence')`, the wiring in `node/config.ts`, the deletion of `server/src/node/presence.ts`, and the sweeper step in `sweepLeasesOnce`. Green. Existing presence tests change only under D9 categories 2 and 4.
+
+## 4. Device store and authentication (design D2)
+
+- [ ] 4.1 Test first: unit tests for token generation and hashing. Storage pg tests for `CompanionDeviceStore`: lookup by hash joins an enabled user; a disabled user misses; a device idle past 90 days misses and a use renews it; the throttled `last_used_at_utc` update; list, create and delete scoped by `user_id`. Red, then add them on `bindSystem('companion-device')`. Green.
+- [ ] 4.2 Test first, integration:
+  - device auth on the five Companion routes;
+  - 401 for an unknown token, a revoked device, a disabled user and the old `API_TOKEN` value;
+  - the scope matrix: other routes 401, the WS upgrade refused, encoded spellings refused;
+  - a Bearer present ignores a cookie;
+  - a device idle past 90 days gets 401;
+  - the audit log lines carry the user and device ids and never the token.
+
+  Red, then change `authContext`, remove `API_TOKEN` (`Config`, `env.ts`, `identity.ts`, `.env.example`, `docker/.env*.example`), keep `API_TOKEN` in `docker/secrets-env.yaml` marked ignored, rename `apiTokenAuth` to `companionDevice`, and delete the AI v2 principal-less refusal. Add the `seedCompanionDevice` helper and move the existing Bearer tests to it (D9 categories 1, 3 and 6). Add the ALLOWLIST entry (D9 category 4). Green.
+
+## 5. Companion routes as the device's user (design D3)
+
+- [ ] 5.1 Test first, integration:
+  - a device follows only its user's presence;
+  - a cookie caller sees only their own presence rows;
+  - a session the device's user lost access to gives the masked 409;
+  - `connected_clients` and `is_playing` are scoped;
+  - `last_command` and `ack` are per device, and a cookie caller reads `null` and acks `{ok:false}`;
+  - a device caller gets 403 on presence POST;
+  - presence ownership: another user's post or `closing` for a live client id changes nothing and answers `200`;
+  - a blank or NUL `client_id` gives 400, and a null `session_id` stores no session;
+  - two processes: presence posted on app A, `/state` with the device on app B names the session.
+
+  Red, then rewrite `companion.ts` (delete the `companion-token` callers, scope `primarySession`, per-device key, presence 403) and remove `companion-token` from the ALLOWLIST. Green. Existing companion tests change only under D9 categories 1-4.
+
+## 6. Device management routes (design D5)
+
+- [ ] 6.1 Test first: contract schema tests for the three routes' request and response shapes. Integration tests:
+  - create returns 201 with a token, list omits it and shows `expired`, delete returns 204;
+  - a name over 80 characters gives 422, and a NUL gives 400;
+  - the 11th device gives 409, including under two concurrent creates;
+  - another user's id gives 404;
+  - a device token on these routes gives 401;
+  - only the sha256 is stored.
+
+  Red, then add `packages/contract` schemas and `server/src/routers/companionDevices.ts`, and mount it. Green.
+
+## 7. Web Settings section (design D6)
+
+- [ ] 7.1 Test first, web tests:
+  - the list renders, with "Never" for an unused device;
+  - Add shows the token once in a dialog with Copy and the warning, and it is gone after close and absent from the query cache;
+  - Revoke asks for confirmation, deletes and refreshes;
+  - the error `{detail}` is shown;
+  - the types conform to the response shapes.
+
+  Red, then add the hooks, types and `CompanionDevicesSection.tsx`, and register the section. Green.
+
+## 8. Companion module (design D7)
+
+- [ ] 8.1 Test first, module unit tests:
+  - the upgrade script moves `config.token` into secrets, is a no-op when there is nothing to move or it already moved;
+  - `init` and `configUpdated` read `secrets.token`;
+  - the 401 status text.
+
+  Red, then change `companion/src/{config,main,upgrades,api}.ts` and `HELP.md`, and bump the module version. Green, plus the module build and package (`npm run build && npm run package` in `companion`).
+
+## 9. Docs and verify
+
+- [ ] 9.1 README (endpoint table, Companion setup, dev Companion, module section, `API_TOKEN` rows, the token-only bullets), `docs/openbao-secrets.md`, and ADR 0021 (§5a, §6 decision 6, §9 9d). Also `docs/supabase.md`, the `compose.yaml` comment, and stale code comments (`useCompanionPresence.ts`, `aiV2PendingQuestions.ts`, the `fakeClock.ts` copies). Done when `grep -rn "API_TOKEN\|companion-token\|token-only\|node/presence" README.md docs compose.yaml web/src packages/*/src` prints only lines that say it is ignored or retired.
+- [ ] 9.2 Unit suites, typecheck and `openspec validate --all --strict` locally. The pg/integration suites come from the PR's CI run. Compare the counts with 1.1 and explain every difference.
+- [ ] 9.3 Latency (D10): device-auth lookup and presence upsert/list medians. Recorded only.
+- [ ] 9.4 Live check on the dev stack, with the owner's temporary login row:
+  - create a device in Settings and paste its token into the dev Companion connection (the owner does this in the Companion UI, or the module is checked with the token over HTTP);
+  - with a second app process, a presence posted through A is followed by `/state` through B;
+  - a Companion command reaches the browser;
+  - after revoke, the next Companion request gets 401;
+  - the old `API_TOKEN` gets 401.
+- [ ] 9.5 `scripts/check-change.sh` (all gates) and the tier 2 `consistency-read`.
