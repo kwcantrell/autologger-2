@@ -1,8 +1,8 @@
 # provider-credentials
 
 ## Purpose
-Each user can store their own AI provider credentials: an OpenAI-compatible language model and a
-speech-to-text service. The server keeps each key encrypted, write-only and bound to its
+Each user can store their own AI provider credentials: a language model (OpenAI-compatible,
+Anthropic, OpenAI or Google) and a speech-to-text service. The server keeps each key encrypted, write-only and bound to its
 destination, tests a connection without leaking anything, and runs that user's requests and jobs
 on that user's credentials.
 
@@ -27,8 +27,19 @@ A credential SHALL belong to exactly one user, and a user SHALL hold at most one
 each kind.
 
 The kinds are `llm` and `stt`:
-- **`llm`** has provider `openai-compatible`, a base URL, a model and an API key.
+- **`llm`** has one of these providers, a model and an API key:
+  - `openai-compatible`, which also has a base URL the user chooses;
+  - `anthropic`, `openai` or `google`, each with its fixed API host and no base URL.
 - **`stt`** has provider `deepgram`, a model and an API key. It has no base URL.
+
+A provider with a fixed API host SHALL send its key only to that host. In production mode the fixed
+hosts SHALL be constants that no environment variable, configuration value or request can change.
+
+#### Scenario: Fixed hosts can't be overridden in production
+- **WHEN** the production entry point boots with any environment
+- **THEN** the connection tests for `openai`, `anthropic`, `google` and `deepgram` go only to
+  `api.openai.com`, `api.anthropic.com`, `generativelanguage.googleapis.com` and
+  `api.deepgram.com`
 
 The `kind` and `provider` values are an open set that later changes may extend. This change
 accepts only the pairs above.
@@ -51,8 +62,9 @@ The server SHALL store each API key only encrypted, with AES-256-GCM:
 - the additional authenticated data is:
   - the owning user id;
   - the kind;
-  - for `llm`, the base URL's normalized origin (lowercase scheme and host, the default port
-    omitted), which the row also stores;
+  - the provider;
+  - for `openai-compatible`, the base URL's normalized origin (lowercase scheme and host, the
+    default port omitted), which the row also stores; empty for every other provider;
 - the encryption key is derived from `PROVIDER_KEYS_SECRET`, and each row records a key version.
 
 The stored base URL SHALL be normalized the same way before it is saved.
@@ -112,9 +124,10 @@ stored or forwarded with its message or properties; only a fixed classification 
 - **THEN** no log line, response or stored record contains the key or that message
 
 ### Requirement: A stored key is bound to its destination
-A stored `llm` key SHALL be sent only to the base URL origin it was saved with. Changing an `llm`
-credential's base URL origin SHALL require a new API key in the same save. A save that changes the
-origin without a key SHALL be refused and SHALL leave the stored credential unchanged.
+A stored key SHALL be sent only to the provider and, for `openai-compatible`, the base URL origin
+it was saved with. Changing a credential's provider, or an `openai-compatible` credential's base URL
+origin, SHALL require a new API key in the same save. A save that changes either without a key SHALL
+be refused and SHALL leave the stored credential unchanged.
 
 A save that keeps the stored key SHALL change only the other fields of the row it read, and SHALL
 NOT restore a key that was deleted or replaced after that read.
@@ -126,6 +139,12 @@ The `stt` key for DeepGram SHALL be sent only to DeepGram's fixed API host.
   sending a key, and then runs the connection test
 - **THEN** the save is refused with `422`, the stored credential is unchanged, and no request
   carrying the key reaches the other host
+
+#### Scenario: Switching provider needs the key again
+- **WHEN** a user with an `openai-compatible` credential saves provider `anthropic` without
+  sending a key
+- **THEN** the save is refused with `422`, the stored credential is unchanged, and the stored key
+  is never sent to Anthropic
 
 #### Scenario: A model-only save does not resurrect a removed key
 - **WHEN** a save that keeps the stored key and a delete of that credential run concurrently, and
@@ -150,17 +169,30 @@ does not answer, so the test cannot tell internal names apart.
 - The test SHALL NOT return, log or store the upstream response body or headers.
 - It SHALL NOT follow redirects.
 - The whole test, name resolution included, SHALL time out after 10 seconds.
-- Each user SHALL be able to run at most 5 tests in a test window, counted across every server
-  process:
+- Each user SHALL be able to run at most 5 tests in a test window, across every kind and every
+  server process, whether or not the credentials were deleted and saved again in between:
   - a window opens with the first test after the previous window ended, and lasts one minute;
   - further tests in that window SHALL be refused without any outbound request;
   - the count and the window SHALL be updated atomically, so concurrent tests in different
     processes can't exceed the limit.
 
-**For `llm`**, the request SHALL be `GET {base_url}/models` with `Authorization: Bearer <key>`:
-- "connected" when the model is listed;
-- "model not found" when the response lists models but not this one;
-- "connected" when the response lists no models in the OpenAI-compatible shape.
+**For `llm`**, the request SHALL read model information, which costs no usage:
+- `openai-compatible`: `GET {base_url}/models` with `Authorization: Bearer <key>`. The result is
+  "connected" when the model is listed, "model not found" when the response lists models but not
+  this one, and "connected" when it lists no models in the OpenAI-compatible shape.
+- `openai`: `GET https://api.openai.com/v1/models/{model}` with `Authorization: Bearer <key>`;
+- `anthropic`: `GET https://api.anthropic.com/v1/models/{model}` with `x-api-key: <key>` and the
+  `anthropic-version` header (the model may be an alias);
+- `google`: `GET https://generativelanguage.googleapis.com/v1beta/models/{model}` with
+  `x-goog-api-key: <key>`.
+
+For the three fixed-host providers, a 2xx answer is "connected" and `404` is "model not found".
+For every provider, `401` or `403` is "the key was rejected". Google answers a bad key with `400`
+and the error reason `API_KEY_INVALID`: the server SHALL read that reason from the capped error
+body to classify it as "the key was rejected", and SHALL NOT return, log or store the body. The
+model is percent-encoded as one path segment.
+
+Providers with a fixed host are not subject to the base URL rules below.
 
 **For `stt` with provider `deepgram`**, the request SHALL send a fixed silent audio clip of at most
 0.25 seconds to DeepGram's transcription endpoint with the credential's model. The key is sent
@@ -180,13 +212,23 @@ only in the `Authorization` header:
 - **THEN** no request is made to the other host and the result reports an unexpected answer with
   status `302`
 
+#### Scenario: Deleting and re-saving does not reset the limit
+- **WHEN** a user runs five tests, deletes the credential, saves it again and runs a sixth test in
+  the same window
+- **THEN** the sixth is refused without any outbound request
+
+#### Scenario: A bad Google key reads as rejected
+- **WHEN** a user tests a `google` credential and Google answers `400` with reason
+  `API_KEY_INVALID`
+- **THEN** the result says the key was rejected, and the error body is in no response or log
+
 #### Scenario: The sixth test in a minute is refused
 - **WHEN** a user runs five connection tests, through any server processes, and a sixth in the same
   test window
 - **THEN** the sixth is refused without any outbound request
 
 ### Requirement: LLM base URLs are restricted in production mode
-The `llm` base URL SHALL be an absolute `http` or `https` URL at most 2048 characters long, with:
+The `openai-compatible` base URL SHALL be an absolute `http` or `https` URL at most 2048 characters long, with:
 - no user name or password;
 - no query string;
 - no fragment.

@@ -24,8 +24,8 @@ Users should bring their own provider accounts.
 This change is the first of two:
 1. **This one** stores per-user provider credentials safely and moves transcription onto the
    caller's own DeepGram key.
-2. **`openai-compatible-agent`** (follow-up) replaces the Claude CLI with a tool-calling loop on
-   the caller's OpenAI-compatible LLM.
+2. **`opencode-agent-harness`** (follow-up) replaces the Claude CLI with a locked-down OpenCode
+   run per AI turn, on the caller's own LLM credential.
 
 The MCP server for Claude users is a third, separate change (`mcp-server`).
 
@@ -40,7 +40,7 @@ The MCP server for Claude users is a third, separate change (`mcp-server`).
    - In production mode, a user without a DeepGram key gets the "unconfigured" answer.
    - In development mode, `DEEPGRAM_API_KEY` stays a fallback so local work and tests run.
 5. **The LLM credential is stored and testable in this change**, but nothing calls the LLM with it
-   until `openai-compatible-agent`.
+   until `opencode-agent-harness`.
 6. **AI v2 dashboards are out of scope.** They keep their own `AI_V2_*` configuration.
 7. (After the panel) **Users who aren't approved are told in Advanced** that transcription and AI
    are limited to approved users. The frozen order of the config `503` and then the approval `403`
@@ -49,7 +49,12 @@ The MCP server for Claude users is a third, separate change (`mcp-server`).
    URLs are `https` on port 443 with no query, and a refused host reads as unreachable.
 9. (After the panel) **The DeepGram test sends a tiny silent clip** rather than listing projects,
    so a key scoped only to transcription tests as valid.
-10. **The Settings design comes from the live-mode prototype** (scratch branch commit `c831e510`):
+10. (2026-10-08, after the OpenCode probe) **The language model has a provider picker**:
+    OpenAI-compatible (with a base URL), Anthropic, OpenAI or Google (fixed hosts). These are the
+    providers OpenCode runs with just an API key, which the `opencode-agent-harness` follow-up uses
+    in place of the Claude CLI. A key is bound to its provider as well as its host, so switching
+    provider needs the key again.
+11. **The Settings design comes from the live-mode prototype** (scratch branch commit `c831e510`):
    - a new "Advanced" section in the You group;
    - Language model and Speech to text tabs;
    - shadcn primitives only.
@@ -62,6 +67,8 @@ The MCP server for Claude users is a third, separate change (`mcp-server`).
     - the encrypted key (IV, ciphertext, tag, key version);
     - the key's last four characters.
   - System-only like `companion_devices`: every statement is scoped by the caller's user id in SQL.
+  - A second migration, `20261017000000_provider_test_windows.sql`, moves the connection-test
+    window to a per-user table (re-panel).
 - **Key encryption.**
   - AES-256-GCM, with a fresh 12-byte IV per write.
   - The user id, the kind and, for the LLM, the base URL's origin are bound as additional
@@ -77,8 +84,10 @@ The MCP server for Claude users is a third, separate change (`mcp-server`).
   - `PUT /api/me/providers/:kind`
   - `DELETE /api/me/providers/:kind`
   - `POST /api/me/providers/:kind/test`
-- **Connection test** (5 a minute per user):
-  - LLM: `GET {base_url}/models`. In production mode the base URL must be `https` on port 443,
+- **Connection test** (5 a minute per user, across kinds, kept when a credential is deleted and
+  saved again):
+  - LLM: a free model lookup at the chosen provider (Anthropic, OpenAI and Google: the one
+    model; OpenAI-compatible: `GET {base_url}/models`). For OpenAI-compatible, and in production mode the base URL must be `https` on port 443,
     with no query, and must not resolve to a loopback, private, link-local or otherwise reserved
     address.
   - DeepGram: a 0.25 s silent clip sent to `/v1/listen` with the chosen model.
@@ -151,7 +160,7 @@ The MCP server for Claude users is a third, separate change (`mcp-server`).
 ## Non-goals
 
 - Calling the LLM with the stored credential, removing the Claude CLI, or changing AI chat, topic
-  or event generation (`openai-compatible-agent`).
+  or event generation (`opencode-agent-harness`).
 - The MCP server and MCP keys (`mcp-server`). The prototype's MCP tab is not built here.
 - AI v2 dashboards.
 - Team-level or admin-managed keys, and sharing a key between users.

@@ -22,7 +22,8 @@ approved users on this server." The user can still save and test keys.
   - one-line help naming what the provider powers.
 
 **Fields.**
-- **Language model:** Base URL, Model, API key.
+- **Language model:** Provider (OpenAI-compatible, Anthropic, OpenAI or Google), Base URL (shown
+  only for OpenAI-compatible), Model, API key.
 - **Speech to text:** Provider (DeepGram, the only choice), Model, API key.
 
 **The API key is write-only.**
@@ -37,10 +38,11 @@ approved users on this server." The user can still save and test keys.
 - Each panel SHALL have its own save bar, following "Honest save model in Settings".
 - Save SHALL be disabled until the panel's fields are valid:
   - a model is required;
-  - a base URL is required for the language model;
+  - a base URL is required for an OpenAI-compatible language model;
   - a key is required when none is saved;
-  - a key is required when the language model's base URL host changes. The key row then shows
-    the password input with the help "A new host needs its key entered again."
+  - a key is required when the language model's provider, or its OpenAI-compatible base URL
+    host, changes. The key row then shows the password input with the help "A new provider or
+    host needs its key entered again."
 
 **Testing.**
 - Each panel with a saved credential SHALL offer **Test connection**. It shows a busy state while
@@ -73,9 +75,13 @@ change nothing else.
 - **WHEN** a user whose providers response has `run_features_allowed: false` opens Advanced
 - **THEN** the approval note shows above the tabs, and the fields still work
 
+#### Scenario: Choosing a fixed-host provider hides the base URL
+- **WHEN** the user picks Anthropic as the language model provider
+- **THEN** the Base URL row is hidden and is not sent on save
+
 #### Scenario: Changing the host asks for the key again
 - **WHEN** a user with a saved language model changes its base URL to another host
-- **THEN** the key row shows an empty password input with the new-host help, and Save stays
+- **THEN** the key row shows an empty password input with the new provider or host help, and Save stays
   disabled until a key is entered
 
 #### Scenario: A member manages their own providers

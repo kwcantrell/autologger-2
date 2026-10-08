@@ -18,13 +18,21 @@ with `COLLATE "C"`.
 - `key_nonce`, `key_ciphertext` and `key_tag`, non-null `bytea`;
 - `key_version`, a non-null `smallint`;
 - `key_last4`, non-null, checked to 1 to 4 characters;
-- `test_window_start_ms`, a nullable `bigint` of epoch milliseconds from the Clock port, and
-  `test_count`, a non-null `smallint` defaulting to 0, the connection-test window;
 - `created_at_utc` and `updated_at_utc`, non-null ISO-8601 text.
 
 The API key in plaintext SHALL NOT be stored in any column.
 
-The same migration SHALL create `catalog.provider_key_check`, which holds the master-key check
+The migration `20261017000000_provider_test_windows.sql` SHALL drop the two connection-test
+window columns the first migration added to `user_provider_credentials`, and SHALL create
+`catalog.provider_test_windows`, one row per user, so deleting a credential does not reset the
+window:
+- `user_id`, the primary key, referencing `catalog.users (id)` `on delete cascade`;
+- `window_start_ms`, a non-null `bigint` of epoch milliseconds from the Clock port;
+- `test_count`, a non-null `smallint`.
+
+It gets the same access rules as the credentials table.
+
+The first migration SHALL also create `catalog.provider_key_check`, which holds the master-key check
 value (provider-credentials "Provider keys are encrypted at rest and write-only"):
 - a single row, with `id` a `smallint` primary key checked to equal 1;
 - `check_value`, non-null text;
@@ -32,19 +40,19 @@ value (provider-credentials "Provider keys are encrypted at rest and write-only"
 
 It is never the secret itself. It gets the same access rules as the credentials table.
 
-**Access.** Row-level security SHALL be enabled on both tables, and both SHALL be system-only, like
+**Access.** Row-level security SHALL be enabled on all three tables, and all three SHALL be system-only, like
 `companion_devices`:
 - `catalog_system` SHALL have a permissive policy allowing every command;
-- neither table SHALL have a `catalog_user` policy, and `catalog_user`'s privileges on both SHALL
-  be revoked;
-- `anon`, `authenticated` and `public` SHALL have no privileges on either.
+- no table SHALL have a `catalog_user` policy, and `catalog_user`'s privileges on each SHALL be
+  revoked;
+- `anon`, `authenticated` and `public` SHALL have no privileges on any of them.
 
-**Rollback** drops both tables after the code is reverted. Stored keys are then lost and users
+**Rollback** drops the three tables after the code is reverted. Stored keys are then lost and users
 re-enter them.
 
 #### Scenario: Credentials are invisible to users
 - **WHEN** a `catalog_user` binding selects from, inserts into or deletes from
-  `user_provider_credentials` or `provider_key_check`
+  `user_provider_credentials`, `provider_key_check` or `provider_test_windows`
 - **THEN** each is refused with `42501`
 
 #### Scenario: One credential per user and kind

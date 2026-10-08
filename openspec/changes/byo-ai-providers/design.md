@@ -83,7 +83,7 @@ Line numbers are at base `3cbea66b`.
 
 **Non-Goals:**
 - Using the `llm` credential. Nothing reads it except the test route, until
-  `openai-compatible-agent`.
+  `opencode-agent-harness`.
 - Rotating the master key. `key_version` is stored for it, but there is only version 1.
 
 ## Decisions
@@ -105,19 +105,23 @@ gains it. Its operations:
 - `put(userId, kind, row)` writes a new key: `insert … on conflict (user_id, kind) do update`
   setting every column.
 - `updateKeepingKey(userId, kind, {provider, base_url, base_origin, model})` is one statement:
-  `update … set provider, base_url, model, updated_at_utc where user_id=$1 and kind=$2 and
-  base_origin is not distinct from $origin`. The `base_origin` column holds the normalized origin
+  `update … set base_url, model, updated_at_utc where user_id=$1 and kind=$2 and provider = $3
+  and base_origin is not distinct from $origin` (owner decision 10: the provider is part of the
+  key's destination, so a keep-key save never changes it). The `base_origin` column holds the normalized origin
   (`normalizeOrigin` in `server/src/providers/outbound.ts`: WHATWG `URL` origin, which lowercases
   the scheme and host and drops the default port), and the AAD uses that same column value. It reads nothing first and never
-  writes the key columns. It reports zero rows when the row is gone or its origin changed, and the
+  writes the key columns. It reports zero rows when the row is gone, or its provider or origin changed, and the
   route then answers `422`. This closes the panel's resurrection race.
 - `delete(userId, kind)`
-- `takeTestSlot(userId, kind, nowMs)` is one atomic statement on the credential row:
-  `update … set test_window_start_ms = case when test_window_start_ms is null or $now -
-  test_window_start_ms >= 60000 then $now else test_window_start_ms end, test_count = case when …
-  then 1 else test_count + 1 end where user_id=$1 and kind=$2 returning test_count`. More than 5
-  means refused. Row locking makes it safe across processes. The time comes from the Clock port,
-  so tests inject it. It returns `null` when there is no row (the route's `404`).
+- `takeTestSlot(userId)` is one atomic upsert on the per-user window table
+  `catalog.provider_test_windows` (re-panel: a window on the credential row was reset by deleting
+  and re-saving the credential): `insert … values ($user, $now, 1) on conflict (user_id) do update
+  set window_start_ms = case when $now - window_start_ms >= 60000 then $now else window_start_ms
+  end, test_count = case when … then 1 else test_count + 1 end returning test_count`. More than 5
+  means refused. The row lock serializes it across processes, and the time comes from the Clock
+  port, so tests inject it. The route checks that the credential exists (`404`) before taking a
+  slot. The migration `20261017000000_provider_test_windows.sql` creates the table and drops the
+  two window columns from the credentials table.
 - `readCheck()` and `writeCheckIfAbsent(value)` for the master-key check value, in the single-row
   table `catalog.provider_key_check`: `insert … on conflict (id) do nothing`, then read back. `kv`
   has no insert-if-absent and no atomic increment, so it isn't used here.
@@ -136,9 +140,10 @@ The module is `server/src/auth/providerKeyCrypto.ts`:
   key and `autologger provider keys check v1` for the check key. The raw secret is never used
   directly.
 - **Encrypt:** `aes-256-gcm` with a 12-byte `randomBytes` nonce and a 16-byte tag. The AAD is
-  `` `${userId}\0${kind}\0${origin}` ``, where `origin` is the row's `base_origin` for `llm` and
-  the empty string for `stt`. A ciphertext therefore fails to decrypt once the row's origin
-  differs, a second guard behind the `422` of D4.
+  `` `${userId}\0${kind}\0${provider}\0${origin}` ``, where `origin` is the row's `base_origin`
+  for `openai-compatible` and the empty string for every other provider. A ciphertext therefore
+  fails to decrypt once the row's provider or origin differs, a second guard behind the `422` of
+  D4.
 - **Decrypt:** checks `key_version === 1`. Any failure, whether the tag, the version or the
   length, becomes `null` plus one log line with the user id and kind.
 - **Check value:** HMAC-SHA256 under the check key of the label `provider-keys-check`, hex.
@@ -223,10 +228,11 @@ The profile is not changed (the panel cut the `providers` field).
   - `providersResponseSchema`
   - `providerTestResponseSchema`
 - **`PUT` with `api_key`:** encrypt, then `put`.
-- **`PUT` without `api_key`:** `updateKeepingKey` with `expectOrigin` set to the body's base URL
-  origin, for `llm`. Zero rows answers `422` with `api_key` named in the issues. That covers no
-  stored row, a changed origin, and a concurrent delete or rotation.
-- **Test rate limit:** `takeTestSlot` (D1) runs before any decryption or outbound work. A count
+- **`PUT` without `api_key`:** `updateKeepingKey` with the body's provider and, for
+  `openai-compatible`, its normalized base URL origin. Zero rows answers `422` with `api_key` named
+  in the issues. That covers no stored row, a changed provider or origin, and a concurrent delete
+  or rotation.
+- **Test rate limit:** `takeTestSlot(userId)` (D1) runs after the credential lookup and before any decryption or outbound work. A count
   above 5 answers `429`.
 - The audit line is `console.info('provider credential <saved|deleted> user=<id> kind=<kind>')`.
 
@@ -261,6 +267,29 @@ The profile is not changed (the panel cut the `providers` field).
 | other status | false | "The provider answered unexpectedly (HTTP <status>)." |
 | decrypt failed | false | "The saved key can't be read. Enter it again." |
 
+**LLM tests per provider (owner decision 10).** Each reads model information, which costs no
+usage. The fixed hosts are constants, so the IP policy applies only to `openai-compatible`.
+Re-panel: the fixed-host providers fetch the one model rather than a paged list, which also
+resolves Anthropic aliases (`model_id` is "Model identifier or alias").
+
+| Provider | Request | Auth header | Result |
+| --- | --- | --- | --- |
+| `openai-compatible` | `GET {base_url}/models` | `Authorization: Bearer` | `data[].id` holds the model, or no list: connected; a list without it: model not found |
+| `openai` | `GET https://api.openai.com/v1/models/{model}` | `Authorization: Bearer` | 2xx connected; 404 model not found |
+| `anthropic` | `GET https://api.anthropic.com/v1/models/{model}` | `x-api-key`, `anthropic-version: 2023-06-01` | 2xx connected; 404 model not found |
+| `google` | `GET https://generativelanguage.googleapis.com/v1beta/models/{model}` | `x-goog-api-key` | 2xx connected; 404 model not found; 400 with `error.details[].reason` `API_KEY_INVALID` key rejected |
+
+The model is one percent-encoded path segment. For every provider, `401`/`403` is "key rejected".
+The error body is read (capped at 1 MB) only for the Google reason, and is never returned or
+logged.
+
+**`ProviderTester` port.** The hosts come from a `ProviderTester` (`server/src/providers/tester.ts`)
+wired at boot as `Bindings.ports.providerTester`. `createBindings` always builds it with the frozen
+constant table (`Object.freeze`d `PROVIDER_HOSTS`) and reads no environment or config for it.
+Integration tests replace the port with `envWith({}, {providerTester: new ProviderTester(fakeHosts)})`;
+a unit test asserts `createBindings(...).bindings.ports.providerTester.hosts` equals the
+constants under a hostile environment Proxy, like the existing credential-path test.
+
 **DeepGram test (owner choice):** `POST https://api.deepgram.com/v1/listen?model=<model>` with
 `Content-Type: audio/wav` and a committed 0.25 s, 16 kHz mono silent WAV (about 8 KB) as a
 constant. The key goes only in the `Authorization: Token` header. It goes to the fixed host, so the
@@ -284,8 +313,10 @@ cache, and the key is never in a query.
 - `sections.ts` gains the `advanced` id after `companion-devices`.
 - `SettingsSections.tsx` maps it.
 - The approval note shows when `run_features_allowed` is false.
-- Each `ProviderPanel` uses `useInlineDraft` per kind. Changing the `llm` base URL's origin
-  switches the key row to the input with the new-host help.
+- Each `ProviderPanel` uses `useInlineDraft` per kind. The Language model panel has a provider
+  `Select` (OpenAI-compatible, Anthropic, OpenAI, Google); the Base URL row shows only for
+  OpenAI-compatible. Changing the provider, or the OpenAI-compatible base URL's origin, switches
+  the key row to the input with the new provider or host help.
 - Remove uses `useConfirm`.
 
 **Generation gating (web-session-console delta):**
@@ -316,6 +347,11 @@ cache, and the key is never in a query.
    `PROVIDER_KEYS_SECRET` to their env so they still reach the failure they assert.
 9. **`compose-run` and invariant tests** (`docker/scripts/*`) gain the `PROVIDER_KEYS_SECRET`
    requirement.
+10. (Owner decision 10) **`providerKeyCrypto.test.ts` bindings gain `provider`**, now a required
+    part of the binding.
+11. (Re-panel) **The 2.2 store tests of `takeTestSlot`** call `takeTestSlot(userId)` on the
+    per-user window, and the schema snapshots lose the two window columns and gain
+    `provider_test_windows`.
 
 Any other existing test change is a stop: update the artifacts and ask the owner.
 

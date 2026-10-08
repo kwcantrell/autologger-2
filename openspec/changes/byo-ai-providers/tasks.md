@@ -74,6 +74,19 @@ Anything else is a stop: update the artifacts and ask the owner.
   - Evidence: red, `cd packages/storage && npx vitest run --project pg src/providerCredentials.pg.test.ts` -> `Error: Cannot find module './providerCredentials'`, `Test Files  1 failed (1)` (log `byo-2.2-red.log`). Red, with the store added: `cd server && npx vitest run --project unit src/catalogSystem.repo.test.ts` -> `+ "packages/storage/src/providerCredentials.ts provider-credentials"`, `Tests  1 failed | 17 passed (18)` (log `byo-2.2-repo-red.log`). Green, the store tests -> `Tests  9 passed (9)` (log `byo-2.2-green.log`); the repository test -> `Tests  18 passed (18)`; `cd server && npx vitest run --project unit` -> `Tests  350 passed | 3 skipped (353)`; storage unit -> `Tests  60 passed (60)`; `npm run typecheck` -> exit 0, 0 `error TS`.
   - Evidence: the `ProviderCredentialStore` port is in `packages/ports/src/providerCredentials.ts`, and `PostgresProviderCredentialStore` in `packages/storage/src/providerCredentials.ts` on `bindSystem('provider-credentials')`. `put` is an upsert that keeps `created_at_utc` and the test window. `updateKeepingKey` is one `UPDATE … WHERE … base_origin IS NOT DISTINCT FROM ? RETURNING`. `takeTestSlot` is one `UPDATE … RETURNING`, with the window from the Clock (`PROVIDER_TEST_LIMIT` 5, `PROVIDER_TEST_WINDOW_MS` 60 000). `writeCheckIfAbsent` is `ON CONFLICT (id) DO NOTHING`, then a read. It is wired as `Bindings.ports.providerCredentials` (`server/src/node/config.ts`, `server/src/appEnv.ts`). The 9 store tests: put then replace; own rows only; keep-key update; null on another origin or a missing row; ten keep-key-update and delete races leaving no row; delete; window count and restart on the injected clock; 8 concurrent slots from two store instances counting 1-8; first check value wins. D7 category 5: `catalogSystem.repo.test.ts` gains the one allowlist entry.
 
+- [ ] 2.3 (Owner decision 10, provider picker) Test first, storage pg tests: `updateKeepingKey`
+  matches only a row with the same provider, so a keep-key save that names another provider
+  reports zero rows and changes nothing; `put` can switch the provider. Red, then add `provider =`
+  to the predicate and stop setting `provider` on a keep-key update. Green and typecheck.
+- [ ] 2.4 (Re-panel) Test first, in pg tests: `provider_test_windows` exists, is system-only and
+  cascades on user delete; the two window columns are gone from `user_provider_credentials`; and
+  `takeTestSlot(userId)` counts 1 to 6 in a window across both kinds, restarts after 60 s
+  (injected clock), keeps counting after the credential is deleted and saved again, and counts 8
+  concurrent calls from two store instances as 1 to 8. The 2.2 window tests and the schema
+  snapshots move to the new shape (D7 category 11). Red, then add
+  `supabase/migrations/20261017000000_provider_test_windows.sql` and change the store. Green,
+  `sh docker/supabase/test_migrate.sh` and typecheck.
+
 ## 3. Key crypto, mode and the boot secret (design D2, D3)
 
 - [x] 3.1 Test first, unit tests for `providerKeyCrypto`:
@@ -114,6 +127,11 @@ Anything else is a stop: update the artifacts and ask the owner.
   - Evidence: `checkProviderKeysSecret(env, secrets)` in `compose-run.mjs` refuses a missing, blank, malformed or non-32-byte value without printing it, and runs after `checkSignInClient`. `docker/secrets-env.yaml` allows `PROVIDER_KEYS_SECRET`. D7 category 9: the six full-run fixtures in `compose-run.test.mjs` gain `secret('PROVIDER_KEYS_SECRET', PKS)`, and the child-env names assertion gains `PROVIDER_KEYS_SECRET`. Docs: `server/.env.example` (the variable, and transcription now per-user with no production fallback), `docker/.env.example` (required; `DEEPGRAM_API_KEY` unused in production), `docker/.env.dev.example` (required; the dev fallback), `docker/.env.stage.example` (required; unused on stage), and `docs/openbao-secrets.md` (every stack needs it, generated per environment, the boot check, the lost-secret reset, no production DeepGram fallback).
   - Evidence: for the owner, `sh docker/scripts/test_check_envs.sh` -> `48 passed, 1 failed` ("clean tree passes", with `xargs: tar: terminated by signal 13` while copying the tree). It fails the same way with this change stashed (log `byo-3.4-checkenvs-base.log`, `48 passed, 1 failed`), so it is a local environment issue, not this change. CI runs it on the PR.
 
+- [ ] 3.5 (Owner decision 10) Test first, `providerKeyCrypto` unit tests: the binding includes the
+  provider, so a key encrypted for `openai-compatible` does not decrypt as `anthropic` (or any
+  other provider) with the same user, kind and origin. The existing fixtures gain `provider` (D7
+  category 10). Red, then add `provider` to the binding and the AAD. Green and typecheck.
+
 ## 4. Routes and contract (design D4, D5)
 
 - [x] 4.1 Test first, contract schema tests:
@@ -137,11 +155,24 @@ Anything else is a stop: update the artifacts and ask the owner.
   - Evidence: red, `cd server && npx vitest run --project unit src/providers/outbound.test.ts` -> `Error: Cannot find module './outbound'` (log `byo-4.2-red.log`). Green -> `Test Files  1 passed (1)`, `Tests  39 passed (39)` (log `byo-4.2-green.log`); `npm run typecheck` -> exit 0, 0 `error TS`.
   - Evidence: `server/src/providers/outbound.ts` uses Node's own `http`/`https` with a pinned `lookup`, so no new dependency. The blocked ranges are a `net.BlockList` of the D5 IPv4 and IPv6 ranges plus the documentation and discard ranges, with the IPv4 embedded in `::ffff:0:0/96` and `64:ff9b::/96` checked as IPv4. `providerRequest` resolves within the caller's `AbortSignal`, refuses in production mode when any resolved address is blocked, connects to the vetted address with the original `Host`/SNI, never follows a redirect, caps the body at 1 MB, and turns every failure into `OutboundFailure('unreachable'|'timeout')` with a fixed message and no cause. `normalizeOrigin` and `normalizeBaseUrl` are added too. The tests cover 24 blocked and 6 allowed addresses (v4, v6, mapped, NAT64), normalization, no connection to a blocked address in production mode (including one blocked among public ones), the pinned connection keeping `Host`, a 302 not followed, a never-resolving lookup and a silent server each timing out, a refused connection being unreachable, a header holding the key and a newline classified with no key in the error, its JSON, its cause or any captured console line, and the 1 MB cap.
 
-- [ ] 4.3 Test first, integration tests for `/api/me/providers` covering every scenario of
+- [ ] 4.3 (Owner decision 10) Test first, contract schema tests: an `llm` body takes provider
+  `openai-compatible` (base URL required, the URL rules apply), or `anthropic`, `openai` or
+  `google` (base URL absent or null, refused otherwise); `stt` stays `deepgram`; the response
+  schemas accept every provider. Red, then change `providerPutBodySchema`. Green and typecheck.
+- [ ] 4.4 (Re-panel) Test first, unit tests for `ProviderTester` and its wiring:
+  - each provider's request (path, percent-encoded model, auth headers) against local fakes;
+  - the result mapping, including Google's `400` `API_KEY_INVALID` as rejected and its error body
+    in no result or log;
+  - `createBindings` always wires the frozen constant hosts, even under a hostile environment
+    Proxy, and the table can't be mutated.
+  Red, then add `server/src/providers/tester.ts` and wire `Bindings.ports.providerTester`. Green
+  and typecheck.
+- [ ] 4.5 Test first, integration tests for `/api/me/providers` covering every scenario of
   api-contract-freeze "Provider credential routes":
   - save, read (with `run_features_allowed`), replace and delete;
   - the first save needs a key;
-  - a new `llm` host without a key gets `422` and leaves the row unchanged;
+  - a new `llm` host, or a new provider, without a key gets `422` and leaves the row unchanged;
+  - a fixed-host provider with a `base_url` gets `422`;
   - a control-character key gets `422`;
   - cross-user isolation;
   - signed-out and device-token callers get `401`;
@@ -149,11 +180,15 @@ Anything else is a stop: update the artifacts and ask the owner.
   - NUL gets `400`;
   - `base_url` with an uppercase host or an explicit `:443` is stored normalized, and a keep-key
     save with the same origin written differently is accepted;
-  - the test's `200 {ok, detail}` for each mapped outcome, against local fake LLM and DeepGram
-    servers (the DeepGram fake checks the silent clip and the model);
+  - the test's `200 {ok, detail}` for each mapped outcome, against local fake servers for every
+    provider through a `ProviderTester` built with their hosts (each fake checks its auth header
+    and path: Bearer for OpenAI-compatible and OpenAI, `x-api-key` and `anthropic-version` for
+    Anthropic, `x-goog-api-key` for Google; the DeepGram fake checks the silent clip and the
+    model);
   - no credential gets `404`;
   - an undecryptable row gives the enter-it-again result;
-  - the sixth test in a window, through two processes, gets `429` with no outbound request;
+  - the sixth test in a window, through two processes, gets `429` with no outbound request, and
+    so does a sixth after deleting and re-saving the credential;
   - no response or captured log contains the key.
   Red, then add `server/src/routers/providers.ts` and mount it. Add the README endpoint table rows.
   Green and typecheck.
@@ -193,7 +228,8 @@ Anything else is a stop: update the artifacts and ask the owner.
   - the tabs and a draft surviving a switch;
   - a save showing only the last four characters, with the key in no query or mutation cache;
   - Replace and Remove with confirm;
-  - a new host asking for the key;
+  - the provider picker, with Base URL shown only for OpenAI-compatible;
+  - a new provider or host asking for the key;
   - the approval note;
   - the test result alerts;
   - server error details;

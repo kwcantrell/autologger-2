@@ -12,7 +12,7 @@ They SHALL be listed in the README endpoint table and in `packages/contract`.
 - `:kind` SHALL be `llm` or `stt`. Any other value SHALL get `404 {"detail": "Not found."}`.
 
 **A credential's wire shape** is `{kind, provider, base_url, model, key_last4, updated_at}`:
-- `base_url` is `null` for `stt`;
+- `base_url` is `null` for every provider but `openai-compatible`;
 - `key_last4` is the key's last four characters;
 - `updated_at` is ISO-8601 UTC.
 
@@ -24,13 +24,16 @@ No route SHALL return a key or its ciphertext.
     features are limited to approved users").
 - **`PUT /api/me/providers/:kind`** with body `{provider, base_url?, model, api_key?}` SHALL
   create or replace the caller's credential of that kind:
-  - `provider` SHALL be `openai-compatible` for `llm` and `deepgram` for `stt`;
-  - `base_url` is required for `llm` and SHALL be absent or `null` for `stt`, and SHALL follow
-    provider-credentials "LLM base URLs are restricted in production mode";
+  - `provider` SHALL be `openai-compatible`, `anthropic`, `openai` or `google` for `llm`, and
+    `deepgram` for `stt`;
+  - `base_url` is required for `openai-compatible` and SHALL be absent or `null` for every other
+    provider, and SHALL follow provider-credentials "LLM base URLs are restricted in production
+    mode";
   - `model` SHALL be 1 to 200 printable ASCII characters other than space, after trimming;
   - `api_key` SHALL be 8 to 4096 printable ASCII characters other than space, after trimming:
     - it is required when the caller has no credential of this kind, and when the save changes
-      the `llm` base URL origin (provider-credentials "A stored key is bound to its destination");
+      the provider or the `openai-compatible` base URL origin (provider-credentials "A stored key
+      is bound to its destination");
     - otherwise, when absent, the stored key is kept;
   - a value containing NUL SHALL get the existing NUL `400`; any other invalid body SHALL get `422`
     with the existing validation-error body; in both cases nothing is stored;
@@ -69,6 +72,15 @@ never the key.
 - **WHEN** a user with an `llm` credential for `https://api.openai.com/v1` saves base URL
   `https://other.example/v1` without `api_key`
 - **THEN** the response is `422` naming `api_key`, and the stored credential is unchanged
+
+#### Scenario: A new provider needs a new key
+- **WHEN** a user with an `openai-compatible` credential saves `{provider: "openai", model:
+  "gpt-5.5"}` without `api_key`
+- **THEN** the response is `422` naming `api_key`, and the stored credential is unchanged
+
+#### Scenario: A fixed-host provider takes no base URL
+- **WHEN** a user saves an `llm` credential with provider `anthropic` and a `base_url`
+- **THEN** the response is `422` and nothing is stored
 
 #### Scenario: A key with a control character is refused
 - **WHEN** a user saves an `stt` credential whose `api_key` contains a line feed or a space

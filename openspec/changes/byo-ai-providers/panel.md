@@ -36,3 +36,28 @@ Delta: the revisions above. Reviewer: a fresh failure-and-abuse and scope review
 - [x] [major] `kv` has no atomic increment or insert-if-absent, so neither the rate limit nor the check value had a safe implementation. Evidence: `packages/ports/src/kvStore.ts` (get, put, delete, take, replaceIf, purgeExpired). Resolved: an atomic `takeTestSlot` `UPDATE … RETURNING` on the credential row, and a single-row `provider_key_check` table with `on conflict do nothing`; catalog-database delta, design D1, task 2.2.
 - [x] [major] The spec's rolling minute and the design's fixed `<minute>` key disagreed, and the test would be flaky. Resolved: one window definition (it opens at the first test after the last one ended and lasts 60 s), on the injected Clock; provider-credentials, D1, task 2.2.
 - [x] [major] The keep-key `UPDATE` compared an origin that wasn't stored, and its normalization was unspecified. Resolved: a stored normalized `base_origin` column, also used as the AAD, and `base_url` normalized before saving; catalog-database delta, D1, task 4.3.
+
+## Re-panel (2026-10-08, owner decision 10: the language model provider picker)
+Delta: the `llm` credential's provider picker (OpenAI-compatible, Anthropic, OpenAI, Google), the provider in the key's binding, per-provider connection tests and the `ProviderTester` port. Reviewers: a fresh assumption tester, and a fresh failure-and-abuse plus scope reviewer.
+
+- [x] [major] The web-ui-system rule "a base URL is required for the language model" contradicted the hidden Base URL for fixed-host providers, which would keep Save disabled. Evidence: specs/web-ui-system/spec.md (Save rules) against the new scenario "Choosing a fixed-host provider hides the base URL". Resolved: the rule now reads "for an OpenAI-compatible language model".
+- [x] [major] Deleting and re-saving a credential reset its test window, so the limit could be bypassed, giving a free key-validity check against OpenAI, Anthropic and Google. Evidence: design D1 `takeTestSlot` on the credential row; `put` kept the window only on conflict. Resolved: a per-user `provider_test_windows` table (new migration `20261017000000`), an atomic upsert across kinds, and a delete-and-re-save scenario; catalog-database and provider-credentials deltas, design D1, tasks 2.4 and 4.5.
+- [x] [major] Nothing pinned the injectable `ProviderTester` host table to the constants in production, and no task built the port; fixed hosts skip the IP policy. Evidence: `grep -n providerTester tasks.md` -> one line only. Resolved: `createBindings` always wires a frozen constant table that no environment or config reads; a spec scenario covers it, and task 4.4 tests it under a hostile environment Proxy.
+- [x] [major] Anthropic (20 per page) and Google (50 per page) page their model lists, and Anthropic aliases (e.g. `claude-sonnet-4-5`) aren't listed, so valid models gave false "model not found". Evidence: Anthropic List Models "`limit` … Defaults to `20`"; Google "If unspecified, 50 models will be returned per page"; models.dev lists `claude-sonnet-4-5` next to `claude-sonnet-4-5-20250929`. Resolved: the fixed-host providers fetch the single model (`GET …/models/{model}`; Anthropic documents `model_id` as "Model identifier or alias"), with 404 meaning not found; design D5, provider-credentials.
+- [x] [major] Google rejects a bad key with `400 INVALID_ARGUMENT` (reason `API_KEY_INVALID`), not 401/403, so it read as "unexpected (HTTP 400)". Evidence: `curl -i -H 'x-goog-api-key: AIzaFAKE…' https://generativelanguage.googleapis.com/v1beta/models` -> `HTTP/2 400 … "reason": "API_KEY_INVALID"`. Resolved: the reason is read from the capped error body only to classify it as rejected, and is never returned or logged; a new scenario, design D5, task 4.4.
+- [x] [major] Task 3.5 would change existing `providerKeyCrypto.test.ts` fixtures, which no D7 category covered. Evidence: `grep -n "origin:" server/src/auth/providerKeyCrypto.test.ts` -> `16:const A = { userId: 'ua', kind: 'llm' as const, origin: … }`. Resolved: D7 category 10 (the bindings gain the now-required `provider`), with category 11 for the 2.2 window tests and snapshots.
+- [x] [major] The design and tasks cited the picker as owner decision 11, but it is decision 10, and the provider-credentials Purpose still said "an OpenAI-compatible language model". Resolved: references corrected and the Purpose updated.
+
+## Consistency read 2026-10-08
+Edits since approval (`8b241154`): proposal (owner decision 10 and its effects), design (D1 per-user test window, D2 provider in the AAD, D4 keep-key on the same provider, D5 per-provider tests and the `ProviderTester` port, D6 picker, D7 categories 10 and 11), the provider-credentials, api-contract-freeze, catalog-database and web-ui-system deltas, and tasks (+2.3, +2.4, +3.5, +4.3, +4.4; routes renumbered to 4.5).
+Scope change: yes (owner decision 10), so it was re-panelled above and needs the owner's re-approval.
+- [x] [major] The proposal still described the LLM test as a "model listing" and didn't mention the second migration. Resolved: it now names the single-model lookup for fixed-host providers, the per-user test window, and `20261017000000_provider_test_windows.sql`.
+- [x] [major] Every new requirement and scenario needs a task and test. Resolved by check:
+  - switching provider needs the key again: 2.3, 3.5, 4.5;
+  - a fixed-host provider takes no base URL: 4.3, 4.5;
+  - fixed hosts can't be overridden in production: 4.4;
+  - a bad Google key reads as rejected: 4.4, 4.5;
+  - deleting and re-saving doesn't reset the limit: 2.4, 4.5;
+  - choosing a fixed-host provider hides the base URL: 6.1.
+
+  No task falls under a non-goal, and design D1, D2, D4 and D5 agree with the deltas.
