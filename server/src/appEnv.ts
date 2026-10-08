@@ -65,7 +65,9 @@ export interface Bindings {
 export interface Variables {
   catalog: CatalogFacade;
   user: AuthUser | null;
-  apiTokenAuth: boolean;
+  /** The Companion device a request authenticated with (companion-devices D2), or null for a
+   * cookie or anonymous request. Set only on `/api/companion/*`. */
+  companionDevice: { id: string } | null;
 }
 
 export type AppEnv = { Bindings: Bindings; Variables: Variables };

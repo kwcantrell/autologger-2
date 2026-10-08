@@ -29,7 +29,7 @@ import { wireApp } from '../app';
 import type { AppEnv } from '../appEnv';
 import { app, defaultUser, env, envWith } from '../test/harness';
 import {
-  COMPANION_BEARER,
+  seedCompanionDevice,
   seededSession,
   seedMemberStudio,
   seedSession,
@@ -332,12 +332,13 @@ describe('conflicting pairs fired together equal a serial order (design D10)', (
   it('two Companion toggles from a stopped transport: one start and one stop, the transport ends stopped', async () => {
     const s = (await seededSession()).sessionId;
     await setCompanionPresence('c1', s);
+    const { bearer } = await seedCompanionDevice();
     const toggle = () =>
       app.request(
         '/api/companion/transport',
         {
           method: 'POST',
-          headers: { ...J, ...COMPANION_BEARER },
+          headers: { ...J, ...bearer },
           body: JSON.stringify({ action: 'toggle' }),
         },
         { ...env },

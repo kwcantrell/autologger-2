@@ -112,10 +112,6 @@ export function cookieSecureForRequest(env: Config, req: Request): boolean {
   }
 }
 
-export function apiTokenConfigured(env: Config): boolean {
-  return Boolean((env.API_TOKEN || '').trim());
-}
-
 export function adminTokenConfigured(env: Config): boolean {
   return Boolean((env.ADMIN_TOKEN || '').trim());
 }

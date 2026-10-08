@@ -27,12 +27,7 @@
 // (authContext middleware, 401) → session resolution/scoping (requireSession,
 // 404 — masks an unauthorized session before configuration or in-flight
 // state can leak, spec scenario "Unauthorized session is masked as 404") →
-// principal-less (device-token / API_TOKEN) refusal (404, design D7,
-// Phase-3 fix wave: "Authentication mechanisms that do not identify an
-// individual principal SHALL NOT be accepted on these routes" — stated
-// normatively rather than left emergent; masked as 404, NOT 401/403, same
-// pattern as requireSession, so a device token learns nothing from the
-// response) → configuration gate + agent-credentials refusal (503, spec
+// configuration gate + agent-credentials refusal (503, spec
 // "Configuration-gated AI v2 endpoints" / "Agent credentials") → body validation (422 schema / 400
 // malformed JSON, spec scenario "Invalid body rejected without side
 // effects") → turn slot (409, spec "Spend and concurrency bounds" — shared
@@ -114,11 +109,6 @@ const ANSWER_NOT_FOUND_DETAIL =
   'No question is pending for this session, turn, and request. It may already have been answered or ' +
   'abandoned, the identifiers may be wrong, or only the principal who started the turn may answer its ' +
   'questions.';
-// Same literal `requireSession` (_helpers.ts) throws for a nonexistent/
-// out-of-studio session — reused here so a device token's principal-less
-// refusal on /design is indistinguishable from an ordinary "no such
-// session" 404 (design D7, Phase-3 fix wave).
-const SESSION_NOT_FOUND_DETAIL = 'Session not found';
 
 // Task 5.2 (spec "Dashboard persistence", design D5 ruled session DB). v1's
 // UI (AiV2Panel) and its `DashboardPersistencePort` operate on exactly ONE
@@ -129,36 +119,9 @@ const SESSION_NOT_FOUND_DETAIL = 'Session not found';
 // future multi-dashboard feature can reuse it without a storage migration.
 const PRIMARY_DASHBOARD_ID = 'primary';
 
-/**
- * Design D7 / Phase-3 fix wave: "Authentication mechanisms that do not
- * identify an individual principal SHALL NOT be accepted on these routes."
- * A shared `API_TOKEN` device token leaves `c.get('user') === null`. Since
- * require-login D3 `requireSession` itself asserts a signed-in user (a null
- * user there is an internal error), so this refusal is reached only if that
- * ever changes. Refused here, masked as 404
- * (never 401/403, which would leak that the session exists/is accessible)
- * — call this IMMEDIATELY after `requireSession` and BEFORE the
- * config/credentials 503 gate, so a device token learns
- * nothing about configuration or in-flight state either. Shared by BOTH
- * `/design` and `/answer` so the two routes cannot drift on this check.
- *
- * Gated on `apiTokenAuth` (set by the `authContext` middleware from
- * `requestHasValidApiToken`): the hole it closes is an authenticated but
- * principal-less DEVICE token bypassing per-user studio scoping. There is no
- * anonymous access any more (require-login: the login gate 401s first).
- *
- * NOTE (containerize-split-images): `API_TOKEN` is now scoped to `/api/companion/*` in
- * `authContext`, so `apiTokenAuth` is never true on the AI v2 routes and the refusal below is
- * unreachable over HTTP. It is kept as defence in depth in case the scope ever widens.
- *
- * Returns the `AuthUser` (typed nullable for this defence-in-depth path;
- * the answer route asserts it with `requireUser`).
- */
-function requireIndividualPrincipal(c: Context<AppEnv>, notFoundDetail: string): AuthUser | null {
-  const user = c.get('user');
-  if (user === null && c.get('apiTokenAuth')) throw new ApiError(404, notFoundDetail);
-  return user;
-}
+// The principal-less refusal (design D7, Phase-3 fix wave) is gone (companion-devices D2): the
+// only principal-less credential was the shared `API_TOKEN`, which is retired; a Companion device
+// call runs as its user, and device tokens authenticate only `/api/companion/*`, never these routes.
 
 /**
  * code-health-tail 2.3 (finding 2.11): the shared route prologue every AI v2
@@ -171,12 +134,7 @@ function requireIndividualPrincipal(c: Context<AppEnv>, notFoundDetail: string):
  *      in-flight state can leak (spec scenario "Unauthorized session is
  *      masked as 404": "whether or not the feature is configured or a turn
  *      is in flight").
- *   2. Principal-less (device-token) refusal — `requireIndividualPrincipal`,
- *      404 with the caller's `notFoundDetail`, BEFORE any 503 gate so a
- *      device token learns nothing about configuration or in-flight state
- *      either (design D7, Phase-3 fix wave; see that helper's doc comment
- *      for why ONLY the device-token case is refused here).
- *   3. The 503 gate SET named by `gates` — a PARAMETER, deliberately NOT
+ *   2. The 503 gate SET named by `gates` — a PARAMETER, deliberately NOT
  *      uniform across routes (fact-check S10):
  *      - 'design-turn' (/design, /answer): `aiV2Configured` +
  *        `aiV2CredentialsRefused`, in that order — these routes lead to a
@@ -194,11 +152,10 @@ function requireIndividualPrincipal(c: Context<AppEnv>, notFoundDetail: string):
 async function guardAiV2Route(
   c: Context<AppEnv>,
   sessionId: string,
-  notFoundDetail: string,
   gates: 'design-turn' | 'configured-only',
 ): Promise<AuthUser | null> {
   await requireSession(c, sessionId);
-  const principal = requireIndividualPrincipal(c, notFoundDetail);
+  const principal = c.get('user');
   if (!aiV2Configured(c.env.config)) {
     throw new ApiError(503, NOT_CONFIGURED_DETAIL);
   }
@@ -215,14 +172,11 @@ aiV2Router.post('/api/sessions/:sessionId/ai/v2/design', async (c) => {
 
   // Steps 2-4 — the shared prologue (guardAiV2Route, full 'design-turn'
   // gate set): session scoping (404, masked before config/credentials/
-  // single-flight state can leak) -> device-token refusal (404, masked
-  // identically to requireSession's own "Session not found") -> config +
-  // agent-credentials gates (all 503, before body parse and before any
-  // spawn — design D7/D9, spec "Unauthorized session is masked as 404" /
-  // "Configuration-gated AI v2 endpoints" / "Agent credentials"). No guard
-  // below this line can ever run
-  // for a device token.
-  await guardAiV2Route(c, sessionId, SESSION_NOT_FOUND_DETAIL, 'design-turn');
+  // single-flight state can leak) -> config + agent-credentials gates (all
+  // 503, before body parse and before any spawn — design D7/D9, spec
+  // "Unauthorized session is masked as 404" / "Configuration-gated AI v2
+  // endpoints" / "Agent credentials").
+  await guardAiV2Route(c, sessionId, 'design-turn');
   // 4b. Approved users only (run-status-and-sweeper D9) — 403, after both 503s. Called here and
   // never inside guardAiV2Route, whose prologue the ungated answer route shares.
   requireRunFeature(c);
@@ -381,8 +335,7 @@ aiV2Router.post('/api/sessions/:sessionId/ai/v2/design', async (c) => {
 // "Answers SHALL be submitted to a dedicated endpoint which SHALL evaluate
 // the same guard chain as the design endpoint, masking an inaccessible
 // session as 404"). Guard order matches the design route EXACTLY through
-// body validation — auth (401) → session resolution/scoping (404) →
-// principal-less (device-token) refusal (404, design D7, Phase-3 fix wave)
+// body validation — auth (401) → session resolution/scoping (404)
 // → configuration/agent-credentials gate (503) → body
 // validation (422/400) — then adds an ANSWER-SPECIFIC authz layer on top:
 // the answering principal must be the SAME principal that initiated the
@@ -394,20 +347,9 @@ aiV2Router.post('/api/sessions/:sessionId/ai/v2/answer', async (c) => {
   const sessionId = c.req.param('sessionId');
 
   // Steps 2-4 — the SAME shared prologue the design route runs (so the two
-  // routes cannot drift), full 'design-turn' gate set, with the
-  // ANSWER-specific masked detail: the device-token refusal (design D7:
-  // "Authentication mechanisms that do not identify an individual principal
-  // SHALL NOT be accepted on these routes" — a device token has no user id
-  // and so can never equal the principal recorded when a turn's question
-  // was posed, refused up front rather than left to fall out of the
-  // `resolveAnswer` comparison below) uses the SAME ANSWER_NOT_FOUND_DETAIL
-  // as "no matching pending question" so the response never reveals which
-  // reason applied, and runs BEFORE the config/credentials gate so a
-  // device token learns nothing about configuration either (Phase-3 fix
-  // wave). That refusal covers only the device-token case (see
-  // requireIndividualPrincipal's doc comment); there is no anonymous caller
-  // (require-login), and step 6 asserts the signed-in user.
-  await guardAiV2Route(c, sessionId, ANSWER_NOT_FOUND_DETAIL, 'design-turn');
+  // routes cannot drift), full 'design-turn' gate set. There is no
+  // anonymous caller (require-login), and step 6 asserts the signed-in user.
+  await guardAiV2Route(c, sessionId, 'design-turn');
 
   // 5. Body validation — ZodError → 422 (also rejects an 'option' answer
   // naming a widget type outside the closed catalog, since `widgetType` is
@@ -459,8 +401,6 @@ aiV2Router.post('/api/sessions/:sessionId/ai/v2/answer', async (c) => {
 //      they are scoped AT LEAST as tightly, spec "Dashboard persistence":
 //      "Reading SHALL be scoped exactly as the session... Writing SHALL be
 //      scoped at least as tightly")
-//   -> principal-less (device-token) refusal (404, requireIndividualPrincipal
-//      — the SAME helper the design/answer routes use, masked identically)
 //   -> AI v2 configuration gate (503, spec "Configuration-gated AI v2
 //      endpoints": "every AI v2 route SHALL respond 503" when unconfigured —
 //      stated with no carve-out for persistence, so this new surface is
@@ -480,7 +420,7 @@ aiV2Router.post('/api/sessions/:sessionId/ai/v2/answer', async (c) => {
 // explicitly in this task's report for gate review.
 aiV2Router.get('/api/sessions/:sessionId/ai/v2/dashboard', async (c) => {
   const sessionId = c.req.param('sessionId');
-  await guardAiV2Route(c, sessionId, SESSION_NOT_FOUND_DETAIL, 'configured-only');
+  await guardAiV2Route(c, sessionId, 'configured-only');
   const hub = await getSessionHub(c, sessionId);
   const stored = await hub.getDashboard(PRIMARY_DASHBOARD_ID);
   // `config: null` means "no dashboard saved yet" (never a fabricated empty
@@ -492,7 +432,7 @@ aiV2Router.put('/api/sessions/:sessionId/ai/v2/dashboard', async (c) => {
   const sessionId = c.req.param('sessionId');
   // The one route that BINDS the prologue's returned principal — recorded
   // as `createdBy` on the write below.
-  const principal = await guardAiV2Route(c, sessionId, SESSION_NOT_FOUND_DETAIL, 'configured-only');
+  const principal = await guardAiV2Route(c, sessionId, 'configured-only');
   // Malformed JSON -> 400 via the global onError handler (c.req.json() throws
   // SyntaxError), same as the design/answer routes.
   const body = await c.req.json();
@@ -528,7 +468,7 @@ aiV2Router.put('/api/sessions/:sessionId/ai/v2/dashboard', async (c) => {
 
 aiV2Router.delete('/api/sessions/:sessionId/ai/v2/dashboard', async (c) => {
   const sessionId = c.req.param('sessionId');
-  await guardAiV2Route(c, sessionId, SESSION_NOT_FOUND_DETAIL, 'configured-only');
+  await guardAiV2Route(c, sessionId, 'configured-only');
   const hub = await getSessionHub(c, sessionId);
   await hub.deleteDashboard(PRIMARY_DASHBOARD_ID);
   return c.json({ ok: true });

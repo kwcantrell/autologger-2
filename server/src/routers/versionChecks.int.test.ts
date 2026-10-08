@@ -8,8 +8,8 @@
 import { describe, expect, it } from 'vitest';
 import { app, env } from '../test/harness';
 import {
-  COMPANION_BEARER,
   SEED_CATEGORY_ID,
+  seedCompanionDevice,
   seededSession,
   seedSession,
   seedShow,
@@ -161,7 +161,7 @@ describe('routes outside the check accept no version', () => {
   it('Companion log and transport ignore a version and never answer the version 409', async () => {
     const { sessionId } = await seededSession();
     await setCompanionPresence('c-vc', sessionId);
-    const H = { ...J, ...COMPANION_BEARER };
+    const H = { ...J, ...(await seedCompanionDevice()).bearer };
     const log = await call('POST', '/api/companion/log', { category_id: SEED_CATEGORY_ID, message: 'x', version: 99, overwrite: true }, H);
     expect(log.status).toBe(200);
     const transport = await call('POST', '/api/companion/transport', { action: 'toggle', version: 99 }, H);

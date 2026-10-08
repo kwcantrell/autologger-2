@@ -4,7 +4,6 @@ import {
   newOauthState,
   normalizeOauthStateParam,
   requestHasValidAdminToken,
-  requestHasValidApiToken,
   timingSafeEqual,
 } from './identity';
 
@@ -18,12 +17,11 @@ describe('identity pure helpers', () => {
     expect(timingSafeEqual('abc', 'ab')).toBe(false);
   });
 
-  it('admin/api token checks require a matching Bearer and a configured token', () => {
+  it('admin token checks require a matching Bearer and a configured token', () => {
     expect(requestHasValidAdminToken(req('Bearer secret'), 'secret')).toBe(true);
     expect(requestHasValidAdminToken(req('Bearer nope'), 'secret')).toBe(false);
     expect(requestHasValidAdminToken(req(), 'secret')).toBe(false);
     expect(requestHasValidAdminToken(req('Bearer secret'), '')).toBe(false);
-    expect(requestHasValidApiToken(req('Bearer k'), 'k')).toBe(true);
   });
 
   it('apiRequestRequiresLogin gates /api/* except GET /api/profile and /api/admin/*', () => {

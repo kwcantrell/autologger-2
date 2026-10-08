@@ -1,5 +1,6 @@
 import { Catalog } from '@autologger/catalog';
 import type { CatalogDb } from '@autologger/ports';
+import { hashCompanionDeviceToken, newCompanionDeviceToken } from '../auth/companionDeviceToken';
 import { createLoginSession } from '../auth/identity';
 import { sessionCookieName } from '../env';
 import { defaultUser, env } from './harness';
@@ -218,9 +219,42 @@ export function adminHeader(token: string): Record<string, string> {
   return { Authorization: `Bearer ${token}` };
 }
 
-/** The harness `API_TOKEN` as a bearer: what the Companion sends on `/api/companion/*`. The
- * wrapped harness `app` never signs those paths in (require-login D7). */
-export const COMPANION_BEARER: Record<string, string> = { Authorization: 'Bearer test-api-token' };
+/** A Companion device for `userId`, or for the harness's default signed-in user (companion-
+ * devices D9 category 1: what the Companion sends on `/api/companion/*` is a device token as a
+ * `Bearer`). Without `userId` it is one device per test, made on first use; with one, a new device
+ * each call. The wrapped harness `app` never signs `/api/companion/*` in (require-login D7). */
+export async function seedCompanionDevice(
+  userId?: string,
+): Promise<{ id: string; token: string; bearer: Record<string, string> }> {
+  const store = env.ports.companionDevices;
+  if (userId === undefined) {
+    let made = defaultDevices.get(store);
+    if (!made) {
+      made = (async () => makeCompanionDevice((await defaultUser()).id))();
+      defaultDevices.set(store, made);
+    }
+    return made;
+  }
+  return makeCompanionDevice(userId);
+}
+
+const defaultDevices = new WeakMap<
+  object,
+  Promise<{ id: string; token: string; bearer: Record<string, string> }>
+>();
+
+async function makeCompanionDevice(
+  userId: string,
+): Promise<{ id: string; token: string; bearer: Record<string, string> }> {
+  const token = newCompanionDeviceToken();
+  const r = await env.ports.companionDevices.create(
+    userId,
+    `Device ${uid('d')}`,
+    hashCompanionDeviceToken(token),
+  );
+  if (r.kind !== 'created') throw new Error(`seedCompanionDevice: ${r.kind}`);
+  return { id: r.device.id, token, bearer: { Authorization: `Bearer ${token}` } };
+}
 
 /** Register companion presence so primarySession() resolves to sessionId. The row belongs to
  * `user_id`, or to the harness's default signed-in user (companion-devices D4, D9 category 2). */

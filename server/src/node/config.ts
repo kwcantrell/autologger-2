@@ -154,7 +154,6 @@ export function createBindings(
       COOKIE_SECURE: procEnv.COOKIE_SECURE || '',
       IP_ALLOWLIST: procEnv.IP_ALLOWLIST || '',
       TRUST_PROXY: procEnv.TRUST_PROXY || '',
-      API_TOKEN: procEnv.API_TOKEN || '',
       ADMIN_TOKEN: procEnv.ADMIN_TOKEN || '',
       DEEPGRAM_API_KEY: procEnv.DEEPGRAM_API_KEY || '',
       DEEPGRAM_MODEL: procEnv.DEEPGRAM_MODEL || '',

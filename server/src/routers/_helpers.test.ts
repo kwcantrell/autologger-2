@@ -25,7 +25,7 @@ function anonymousContext(): Context<AppEnv> {
     },
     auth: { authUserHasStudio: async () => true },
   };
-  const vars: Record<string, unknown> = { user: null, catalog, apiTokenAuth: false };
+  const vars: Record<string, unknown> = { user: null, catalog, companionDevice: null };
   return { get: (k: string) => vars[k] } as unknown as Context<AppEnv>;
 }
 

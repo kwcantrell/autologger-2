@@ -33,7 +33,6 @@ const baseConfig: Config = {
   COOKIE_SECURE: '',
   IP_ALLOWLIST: '',
   TRUST_PROXY: '',
-  API_TOKEN: '',
   ADMIN_TOKEN: '',
   DEEPGRAM_API_KEY: '',
   DEEPGRAM_MODEL: '',

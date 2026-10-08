@@ -6,10 +6,10 @@ import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { putOauthState } from '../auth/identity';
 import { app, env, envWith } from '../test/harness';
 import {
-  COMPANION_BEARER,
   catalogFor,
   loginCookie,
   SEED_CATEGORY_ID,
+  seedCompanionDevice,
   seededSession,
   seedStudio,
   seedUser,
@@ -115,7 +115,7 @@ describe('NUL in request values reaching the catalog is a 400', () => {
       '/api/companion/presence',
       {
         method: 'POST',
-        headers: { ...J, ...COMPANION_BEARER },
+        headers: { ...J, ...(await seedCompanionDevice()).bearer },
         body: JSON.stringify({ client_id: 'c-nul', session_id: `s${NUL}1`, visible: true }),
       },
       { ...env },
@@ -124,7 +124,7 @@ describe('NUL in request values reaching the catalog is a 400', () => {
     expect(await res.json()).toEqual({ detail: expect.any(String) });
     const state = await app.request(
       '/api/companion/state',
-      { method: 'GET', headers: COMPANION_BEARER },
+      { method: 'GET', headers: (await seedCompanionDevice()).bearer },
       { ...env },
     );
     expect(state.status).toBe(200);

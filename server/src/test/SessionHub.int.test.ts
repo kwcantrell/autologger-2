@@ -12,9 +12,9 @@
 import { describe, expect, it } from 'vitest';
 import { app, env } from './harness';
 import {
-  COMPANION_BEARER,
   loginCookie,
   SEED_CATEGORY_ID,
+  seedCompanionDevice,
   seededSession,
   seedUser,
   setCompanionPresence,
@@ -261,7 +261,7 @@ describe('hub ↔ catalog projection', () => {
       const state = async () => {
         const res = await app.request(
           '/api/companion/state',
-          { method: 'GET', headers: COMPANION_BEARER },
+          { method: 'GET', headers: (await seedCompanionDevice()).bearer },
           env,
         );
         expect(res.status).toBe(200);

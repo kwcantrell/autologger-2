@@ -22,7 +22,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { type FrontendBridge, wireApp } from './app';
 import type { AppEnv, Bindings } from './appEnv';
 import { defaultUser, env, envWith } from './test/harness';
-import { COMPANION_BEARER, seededSession, setCompanionPresence } from './test/helpers';
+import { seedCompanionDevice, seededSession, setCompanionPresence } from './test/helpers';
 import { captureHonoUpgradeHandler, installUpgradeDispatcher } from './upgradeDispatch';
 
 interface StubFrontend {
@@ -157,7 +157,7 @@ describe('real upgrade dispatcher (server/src/upgradeDispatch.ts, wired the way 
     await setCompanionPresence('c1', s);
     const cmd = await fetch(`http://127.0.0.1:${port}/api/companion/command`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', ...COMPANION_BEARER },
+      headers: { 'content-type': 'application/json', ...(await seedCompanionDevice()).bearer },
       body: JSON.stringify({ type: 'record-start' }),
     });
     expect(cmd.status).toBe(200);
