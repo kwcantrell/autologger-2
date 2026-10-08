@@ -573,6 +573,7 @@ describe('the catalog_user policies as installed', () => {
                              where schemaname = 'catalog' and 'catalog_user' = any(roles)`;
     // session-row-versions D1: 32 plus the overwrite audit's insert policy; session-leases D1:
     // plus the four lease policies. companion-devices D1: the two Companion tables add none.
+    // byo-ai-providers D1: nor do the two provider tables.
     expect(rows).toHaveLength(37);
     for (const p of rows) {
       expect(p.qual, `${p.policyname} using`).not.toBe('true');
@@ -580,10 +581,17 @@ describe('the catalog_user policies as installed', () => {
     }
   });
 
-  it('every table except kv and the two Companion tables has a catalog_user policy, and every table a catalog_system one', async () => {
+  it('every table except kv, the two Companion tables and the two provider tables has a catalog_user policy, and every table a catalog_system one', async () => {
     // companion-devices D1: companion_devices and companion_presence are system-only, like kv.
-    const systemOnly = ['kv', 'companion_devices', 'companion_presence'];
-    for (const table of [...Object.keys(RULES), 'companion_devices', 'companion_presence']) {
+    // byo-ai-providers D1: so are user_provider_credentials and provider_key_check.
+    const extra = [
+      'companion_devices',
+      'companion_presence',
+      'user_provider_credentials',
+      'provider_key_check',
+    ];
+    const systemOnly = ['kv', ...extra];
+    for (const table of [...Object.keys(RULES), ...extra]) {
       const rows = await admin`select roles::text[] as roles from pg_policies
                                where schemaname = 'catalog' and tablename = ${table}`;
       const roles = rows.flatMap((r) => r.roles as string[]);

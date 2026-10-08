@@ -46,7 +46,7 @@ Anything else is a stop: update the artifacts and ask the owner.
 
 ## 2. Table and store (design D1)
 
-- [ ] 2.1 Test first, in new pg tests and in `catalogSchema.pg.test.ts` / `catalogPolicies.pg.test.ts`
+- [x] 2.1 Test first, in new pg tests and in `catalogSchema.pg.test.ts` / `catalogPolicies.pg.test.ts`
   (D7 category 4):
   - both tables, their columns, checks and primary keys exist (`base_origin` null exactly when
     `base_url` is; `provider_key_check.id` only 1);
@@ -56,6 +56,8 @@ Anything else is a stop: update the artifacts and ask the owner.
 
   Red, then add `supabase/migrations/20261016000000_user_provider_credentials.sql`, with the
   rollback in its header. Green, plus `sh docker/supabase/test_migrate.sh`.
+  - Evidence: red, with the migration moved aside: `cd server && npx vitest run --project pg src/test/pg/providerTables.pg.test.ts src/test/pg/catalogSchema.pg.test.ts src/test/pg/catalogPolicies.pg.test.ts` -> `PostgresError: relation "catalog.user_provider_credentials" does not exist`, `× matches the recorded catalog schema`, `× has exactly the catalog tables, in schema catalog`, `Test Files  3 failed (3)`, `Tests  16 failed | 52 passed (68)` (log `byo-2.1-red.log`). Green, the same three files -> `Test Files  3 passed (3)`, `Tests  68 passed (68)` (log `byo-2.1-green.log`); `sh docker/supabase/test_migrate.sh` -> `test_migrate: 35 passed, 0 failed` (log `byo-2.1-migrate.log`); `npm run typecheck` -> exit 0, 0 `error TS`.
+  - Evidence: the migration creates both tables as the catalog-database delta specifies, with named checks for kind, provider (1-64), base URL (≤ 2048), model (1-200), `key_last4` (1-4), `base_origin` null exactly when `base_url` is null, and `provider_key_check.id = 1`. It sets RLS with one `<table>_system_all` policy for `catalog_system`, revokes `catalog_user` on both, and gives the rollback in its header. The new `providerTables.pg.test.ts` has 7 cases: privileges and policies, including none for `anon` or `authenticated`; `42501` for a user binding even on its own rows; system read and write; bytea key parts and an empty test window by default; cascade on user delete; `23505`, `23503` and `23514` on every check; one key-check row only. D7 category 4: `catalogSchema.pg` `TABLES`, `SYSTEM_ONLY`, `KEY_COLUMN` (`provider_key_check` keys on its text `check_value`, so the bare-role insert fails on privilege, not on the smallint `id`), the recorded schema and its `$checks`, and one insert into each table in the system read-write case. `catalogPolicies.pg` lists the two tables as system-only; its `toHaveLength(37)` is unchanged (comment only).
 - [ ] 2.2 Test first, storage pg tests for `PostgresProviderCredentialStore`:
   - `put` inserts, then replaces;
   - `get` and `list` return only the user's own rows;
