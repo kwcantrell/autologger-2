@@ -109,6 +109,11 @@ const ALLOWLIST: readonly { file: string; reason: string; why: string }[] = [
     why: '/api/admin/*, after the ADMIN_TOKEN check',
   },
   {
+    file: 'packages/storage/src/companionDevices.ts',
+    reason: 'companion-device',
+    why: 'the device-token lookup and its last-used update, and the management routes; every statement is scoped by token hash or user id in SQL (companion-devices D2, D5)',
+  },
+  {
     file: 'packages/storage/src/presence.ts',
     reason: 'companion-presence',
     why: "Companion presence rows, every user's, shared by every process; each statement is scoped by client id and user id in SQL (companion-devices D4)",

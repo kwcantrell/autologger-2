@@ -8,6 +8,7 @@
 export * from './blobStore';
 export * from './catalogDb';
 export * from './clock';
+export * from './companionDevices';
 export * from './config';
 export * from './identityVerifier';
 export * from './kvStore';

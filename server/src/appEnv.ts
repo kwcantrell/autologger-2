@@ -16,7 +16,12 @@
 import type { AiV2PendingQuestionRegistry } from '@autologger/ai-runtime/aiV2PendingQuestions';
 import type { AuthUser, CatalogFacade } from '@autologger/catalog';
 import type { LogImportJobStore } from '@autologger/log-import';
-import type { Ports as BasePorts, Config, LeaseDirectory } from '@autologger/ports';
+import type {
+  Ports as BasePorts,
+  CompanionDeviceStore,
+  Config,
+  LeaseDirectory,
+} from '@autologger/ports';
 import type { SessionFrameBus, SessionHubRegistryFacade } from '@autologger/session-core';
 
 export type { Config };
@@ -36,6 +41,9 @@ export interface Ports extends BasePorts {
   aiV2Questions: AiV2PendingQuestionRegistry;
   /** Cross-session lease reads and the silent run-row expiry (run-status-and-sweeper D5). */
   leases: LeaseDirectory;
+  /** Companion device tokens: the device-token lookup and the management routes, each scoped by
+   * user id in SQL (companion-devices D2, D5). */
+  companionDevices: CompanionDeviceStore;
 }
 
 /** The per-request env object. Callers MUST pass a fresh env per request and

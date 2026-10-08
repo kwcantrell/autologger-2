@@ -19,6 +19,7 @@ import {
   checkFrameBusSecret,
   KvStore,
   PostgresCatalogDb,
+  PostgresCompanionDeviceStore,
   PostgresFrameBus,
   PostgresLeaseDirectory,
   PostgresPresence,
@@ -136,6 +137,8 @@ export function createBindings(
       aiV2Questions: new AiV2PendingQuestionRegistry(kv, clock),
       // run-status-and-sweeper D5: binds its own reviewed reason, system:lease-directory.
       leases: new PostgresLeaseDirectory(catalogDb),
+      // companion-devices D2: binds its own reviewed reason, system:companion-device.
+      companionDevices: new PostgresCompanionDeviceStore(catalogDb, clock),
     },
     config: {
       PUBLIC_BASE_URL: procEnv.PUBLIC_BASE_URL || '',

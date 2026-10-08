@@ -10,10 +10,12 @@
 // `frameBusEnvelope` is the session frame bus's signed message and `postgresFrameBus` the bus on
 // Postgres `NOTIFY` (session-frame-bus, slice 9a). `leaseDirectory` is the LeaseDirectory port on
 // `catalog.session_leases` (run-status-and-sweeper D5). `presence` is the PresenceRegistry port on
-// `catalog.companion_presence` (companion-devices D4).
+// `catalog.companion_presence` (companion-devices D4), and `companionDevices` the
+// CompanionDeviceStore port on `catalog.companion_devices` (companion-devices D2, D5).
 
 export * from './blobStore';
 export * from './catalogErrors';
+export * from './companionDevices';
 export * from './dataDirLock';
 export * from './frameBusEnvelope';
 export * from './kvStore';
