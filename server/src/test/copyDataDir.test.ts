@@ -245,7 +245,7 @@ describe('copyDataDir', () => {
     expect(res.exitCode).toBe(EXIT_VERIFY);
   });
 
-  it('CLI: usage exit 2, success exit 0, prints the blob rsync command', () => {
+  it('CLI: usage exit 2, success exit 0, points blobs at the README (shared-blob-volume D5)', () => {
     const { src, dst } = fixture();
     const tsx = resolve(__dirname, '../../../node_modules/.bin/tsx');
     const script = resolve(__dirname, '../../scripts/copyDataDir.ts');
@@ -253,7 +253,13 @@ describe('copyDataDir', () => {
     expect(noArgs.status).toBe(2);
     expect(noArgs.stderr).toMatch(/usage:/i);
     const ok = execFileSync(tsx, [script, src, dst], { encoding: 'utf8' });
-    expect(ok).toContain(`rsync -a --delete ${src}/blobs/ ${dst}/blobs/`);
+    // shared-blob-volume D5: audio lives in BLOB_DIR, not DATA_DIR, so no blob command targets
+    // the destination's DATA_DIR/blobs; the README sections hold the steps.
+    expect(ok).toMatch(/audio is not in DATA_DIR/);
+    expect(ok).toContain('"Blob sync guard"');
+    expect(ok).toContain('"Moving audio into BLOB_DIR"');
+    expect(ok).not.toContain(`${dst}/blobs/`);
+    expect(ok).not.toMatch(/rsync/);
     const again = spawnSync(tsx, [script, src, dst], { encoding: 'utf8' });
     expect(again.status).toBe(2);
     chmodSync(dst, 0o755);
