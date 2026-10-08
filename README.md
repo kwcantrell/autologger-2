@@ -1700,11 +1700,13 @@ setup is still the membership bootstrap script above.
   1. Stop `api` (dev: the app), so nothing writes during the copy.
   2. Copy the blob volume back, additively and owned by the server user:
      - stage and prod: `sudo mkdir -p "$VOL/blobs" && sudo rsync -a --chown=1000:1000 --exclude /.tmp/ "$BVOL/" "$VOL/blobs/"`;
-     - dev: `mkdir -p /data/blobs && cp -a /blobs/audio /data/blobs/`, run as `node` in the app
-       container (which mounts both volumes) before the revert, e.g.
-       `docker exec -u node autologger-dev-app sh -c 'mkdir -p /data/blobs && cp -a /blobs/audio /data/blobs/'`.
+     - dev: the app is stopped, so run the copy in a one-off container of the dev image that
+       mounts both volumes:
+       `docker run --rm -u node -v autologger-dev_dev-data:/data -v autologger-dev_dev-blobs:/blobs --entrypoint sh autologger-dev:local -c 'mkdir -p /data/blobs && cp -a /blobs/audio /data/blobs/'`.
 
-     Check that the file count and the total bytes match (`find … -type f | wc -l`, `du -sb`).
+     Check that the file count and the total bytes match (`find … -type f | wc -l`, `du -sb`); on
+     dev, run both in the same kind of one-off container, e.g.
+     `docker run --rm -u node -v autologger-dev_dev-data:/data -v autologger-dev_dev-blobs:/blobs --entrypoint sh autologger-dev:local -c 'for d in /blobs/audio /data/blobs/audio; do find "$d" -type f | wc -l; du -sb "$d"; done'`.
   3. Revert the code, then start.
   4. Keep the blob volume until playback of new and old segments is confirmed. Removing it is the
      owner's step.
