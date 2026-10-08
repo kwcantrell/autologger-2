@@ -108,7 +108,7 @@ gains it. Its operations:
   `update … set base_url, model, updated_at_utc where user_id=$1 and kind=$2 and provider = $3
   and base_origin is not distinct from $origin` (owner decision 10: the provider is part of the
   key's destination, so a keep-key save never changes it). The `base_origin` column holds the normalized origin
-  (`normalizeOrigin` in `server/src/providers/outbound.ts`: WHATWG `URL` origin, which lowercases
+  (`normalizeOrigin` in `server/src/auth/providerOutbound.ts`: WHATWG `URL` origin, which lowercases
   the scheme and host and drops the default port), and the AAD uses that same column value. It reads nothing first and never
   writes the key columns. It reports zero rows when the row is gone, or its provider or origin changed, and the
   route then answers `422`. This closes the panel's resurrection race.
@@ -192,7 +192,7 @@ Alternatives:
 exactly `development` or `test`, so production mode is the default. Tests force production mode
 with `envWith({PROVIDER_DEV_MODE: false})`. Nothing reads `NODE_ENV` at request time.
 
-`resolveSttCredential(env, userId)` in `server/src/providers/resolve.ts` returns `{apiKey, model}`
+`resolveSttCredential(env, userId)` in `server/src/auth/providerResolve.ts` returns `{apiKey, model}`
 or `null`:
 1. Use the user's decrypted `stt` row.
 2. Otherwise, when `PROVIDER_DEV_MODE` is true and `DEEPGRAM_API_KEY` is set, use the env key and
@@ -238,7 +238,7 @@ The profile is not changed (the panel cut the `providers` field).
 
 ### D5. Outbound policy and the test (provider-credentials)
 
-`server/src/providers/outbound.ts`:
+`server/src/auth/providerOutbound.ts`:
 - **Save time** (`PUT`): validate the URL shape as in D4.
 - **Request time:** `resolveAllowedAddress(url, signal)` runs `dns.lookup(host, {all: true})`,
   raced against the test's single 10 s `AbortSignal`:
@@ -283,7 +283,7 @@ The model is one percent-encoded path segment. For every provider, `401`/`403` i
 The error body is read (capped at 1 MB) only for the Google reason, and is never returned or
 logged.
 
-**`ProviderTester` port.** The hosts come from a `ProviderTester` (`server/src/providers/tester.ts`)
+**`ProviderTester` port.** The hosts come from a `ProviderTester` (`server/src/auth/providerTester.ts`)
 wired at boot as `Bindings.ports.providerTester`. `createBindings` always builds it with the frozen
 constant table (`Object.freeze`d `PROVIDER_HOSTS`) and reads no environment or config for it.
 Integration tests replace the port with `envWith({}, {providerTester: new ProviderTester(fakeHosts)})`;

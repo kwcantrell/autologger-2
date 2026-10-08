@@ -26,6 +26,7 @@ import type {
 import type { SessionFrameBus, SessionHubRegistryFacade } from '@autologger/session-core';
 
 import type { ProviderKeyCipher } from './auth/providerKeyCrypto';
+import type { ProviderTester } from './auth/providerTester';
 
 export type { Config };
 
@@ -53,6 +54,8 @@ export interface Ports extends BasePorts {
   /** The provider-key cipher on PROVIDER_KEYS_SECRET, or a per-process random one where the secret
    * isn't required (byo-ai-providers D2). */
   providerKeys: ProviderKeyCipher;
+  /** The provider connection test on the frozen constant hosts (byo-ai-providers D5). */
+  providerTester: ProviderTester;
 }
 
 /** The per-request env object. Callers MUST pass a fresh env per request and

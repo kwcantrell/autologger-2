@@ -13,7 +13,7 @@ import {
   normalizeOrigin,
   OutboundFailure,
   providerRequest,
-} from './outbound';
+} from './providerOutbound';
 
 const servers: Server[] = [];
 afterEach(async () => {

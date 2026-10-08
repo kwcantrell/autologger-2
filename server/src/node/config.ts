@@ -29,6 +29,7 @@ import {
 import type { Bindings } from '../appEnv';
 import { GoogleIdentityVerifier } from '../auth/oauth_google';
 import { ProviderKeyCipher, parseProviderKeysSecret } from '../auth/providerKeyCrypto';
+import { ProviderTester } from '../auth/providerTester';
 import { CATALOG_PG_VARS } from '../bootGuard';
 import {
   aiV2UsesLoginFallback,
@@ -161,6 +162,8 @@ export function createBindings(
       // byo-ai-providers D1: binds its own reviewed reason, system:provider-credentials.
       providerCredentials: new PostgresProviderCredentialStore(catalogDb, clock),
       providerKeys,
+      // byo-ai-providers D5: always the frozen constant hosts; no environment or config is read.
+      providerTester: new ProviderTester(),
     },
     config: {
       PUBLIC_BASE_URL: procEnv.PUBLIC_BASE_URL || '',
