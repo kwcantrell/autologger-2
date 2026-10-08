@@ -405,6 +405,8 @@ describe('Companion routes check a signed-in caller’s session access (show-gra
       expect(await res.json()).toEqual({ detail: 'Session not found' });
     }
     expect(await (await asToken(m.granted.id, '/api/companion/state')).json()).toEqual(idle);
+    // The refused posts stored nothing for the poster either (presence is per user, D3).
+    expect(await env.ports.presence.list(m.ungranted.id)).toEqual([]);
   });
 
   it('presence: a granted member is 200 and the state reports the session', async () => {
