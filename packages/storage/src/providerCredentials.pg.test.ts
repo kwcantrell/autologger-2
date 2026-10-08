@@ -141,6 +141,33 @@ describe('PostgresProviderCredentialStore (byo-ai-providers D1)', () => {
     );
   });
 
+  it('updateKeepingKey matches only the same provider; put can switch it (owner decision 10)', async () => {
+    const { store } = await env();
+    await store.put('ua', 'llm', { ...LLM, key: key(1, '1111') });
+    const fixed = { provider: 'anthropic', base_url: null, base_origin: null, model: 'claude-x' };
+    expect(await store.updateKeepingKey('ua', 'llm', fixed)).toBeNull();
+    const kept = await store.get('ua', 'llm');
+    expect(kept && { p: kept.provider, url: kept.base_url, last4: kept.key.last4 }).toEqual({
+      p: 'openai-compatible',
+      url: LLM.base_url,
+      last4: '1111',
+    });
+    const switched = await store.put('ua', 'llm', { ...fixed, key: key(2, '2222') });
+    expect({ p: switched.provider, url: switched.base_url, o: switched.base_origin }).toEqual({
+      p: 'anthropic',
+      url: null,
+      o: null,
+    });
+    expect(
+      (await store.updateKeepingKey('ua', 'llm', { ...fixed, model: 'claude-y' }))?.model,
+    ).toBe('claude-y');
+    // Two fixed-host providers share a null origin: only the provider tells them apart.
+    expect(
+      await store.updateKeepingKey('ua', 'llm', { ...fixed, provider: 'openai', model: 'gpt-x' }),
+    ).toBeNull();
+    expect((await store.get('ua', 'llm'))?.provider).toBe('anthropic');
+  });
+
   it('a keep-key update racing a delete never brings the key back', async () => {
     const { store } = await env();
     for (let i = 0; i < 10; i++) {

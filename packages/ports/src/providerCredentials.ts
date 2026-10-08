@@ -45,8 +45,8 @@ export interface ProviderCredentialStore {
     kind: ProviderKind,
     fields: ProviderCredentialFields & { key: StoredProviderKey },
   ): Promise<ProviderCredentialRow>;
-  /** One statement that changes provider, base URL and model and keeps the stored key, only when
-   * the row exists and its `base_origin` equals `fields.base_origin`. Reads nothing first, so it
+  /** One statement that changes base URL and model and keeps the stored key, only when the row
+   * exists with the same provider and `base_origin` (a key is bound to both; owner decision 10). Reads nothing first, so it
    * can never bring back a key deleted or replaced concurrently. Null when no row matched. */
   updateKeepingKey(
     userId: string,

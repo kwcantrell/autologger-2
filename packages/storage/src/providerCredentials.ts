@@ -118,15 +118,15 @@ export class PostgresProviderCredentialStore implements ProviderCredentialStore 
   ): Promise<ProviderCredentialRow | null> {
     const r = await this.db.first<Record<string, unknown>>(
       `UPDATE user_provider_credentials
-          SET provider = ?, base_url = ?, model = ?, updated_at_utc = ?
-        WHERE user_id = ? AND kind = ? AND base_origin IS NOT DISTINCT FROM ?
+          SET base_url = ?, model = ?, updated_at_utc = ?
+        WHERE user_id = ? AND kind = ? AND provider = ? AND base_origin IS NOT DISTINCT FROM ?
        RETURNING ${COLUMNS}`,
-      fields.provider,
       fields.base_url,
       fields.model,
       iso(this.clock.now()),
       userId,
       kind,
+      fields.provider,
       fields.base_origin,
     );
     return r === null ? null : toRow(r);
