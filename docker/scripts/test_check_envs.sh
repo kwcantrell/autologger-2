@@ -3,7 +3,8 @@
 # (infisical-secrets tasks 2.1, 2.2), 16 and the invariant 4 exceptions (supabase-db task 2.1), and
 # invariant 4's packages/*/src rule (retire-sqlite-catalog task 4.1), and the auth networks
 # (gotrue-sign-in task 2.1), and the stage public mode (stage-public-https, invariant 7), and the
-# blob volume (shared-blob-volume task 6.1, invariants 4, 6 and 7).
+# blob volume (shared-blob-volume task 6.1, invariants 4, 6 and 7), and the retired Supabase
+# services, networks and keys (drop-unused-supabase-services D4, invariants 3, 4, 6 and 16).
 # Each case copies the working tree (tracked + untracked, git-ignored files excluded, so no env file or data directory is copied) to a scratch dir,
 # applies one mutation, runs the check there and asserts the outcome.
 #
@@ -107,51 +108,38 @@ sed -i 's#^      - ./docker/dev-gate.Caddyfile:/etc/caddy/Caddyfile:ro$#&\n     
 expect "the migrations directory mounted outside migrate is caught" "$d" fail "invariant 4] dev"
 
 # ---- supabase-services (invariant 16 rewritten, invariants 3 and 4)
+# drop-unused-supabase-services D4: the cases that targeted rest, storage or the gateway now target
+# auth or db (pwrest, storageport, apprest, restcat, restegress, restauthapp, gwbind); the gateway
+# and supabase/edge network cases (gwdb, restedge, sbinternal, edgesubnet) went with their target.
 SBF=docker/supabase-services.yaml
-d=$SCRATCH/pwrest; snapshot "$d"
-sed -i 's#^      PGRST_DB_SCHEMAS: public$#&\n      X_PW: ${POSTGRES_PASSWORD}#' "$d/$SBF"
-expect "the superuser password in rest is caught" "$d" fail "invariant 16]"
-
-d=$SCRATCH/gwdb; snapshot "$d"
-sed -i 's/^    networks: \[supabase, edge\]$/    networks: [supabase, edge, db]/' "$d/$SBF"
-expect "the gateway on the db network is caught" "$d" fail "invariant 16]"
-
-d=$SCRATCH/restedge; snapshot "$d"
-sed -i 's/^    command: \["postgrest"\]$/&\n    networks: [db, supabase, edge]/' "$d/$SBF"
-expect "rest on the edge network is caught" "$d" fail "invariant 16]"
-
-d=$SCRATCH/sbinternal; snapshot "$d"
-sed -i '/^  supabase:$/,/internal: true/{/^    internal: true$/d}' "$d/docker/compose.dev.yaml"
-expect "a non-internal supabase network is caught" "$d" fail "invariant 16] dev"
+d=$SCRATCH/pwauth; snapshot "$d"
+sed -i 's#^      GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED: "false"$#&\n      X_PW: ${POSTGRES_PASSWORD}#' "$d/$SBF"
+expect "the superuser password in auth is caught" "$d" fail "invariant 16]"
 
 d=$SCRATCH/authimg; snapshot "$d"
 sed -i 's#^    image: supabase/gotrue@sha256:[0-9a-f]* \# v2.196.0$#    image: supabase/gotrue:v2.196.0#' "$d/$SBF"
 expect "an unpinned auth image is caught" "$d" fail "invariant 16]"
 
-d=$SCRATCH/storageport; snapshot "$d"
-sed -i 's/^      S3_PROTOCOL_ENABLED: "false"$/&\n    ports: ["127.0.0.1:5000:5000"]/' "$d/$SBF"
-expect "storage publishing a port is caught" "$d" fail "invariant 16]"
-
-d=$SCRATCH/edgesubnet; snapshot "$d"
-sed -i 's/172\.28\.24\.0/172.28.25.0/' "$d/docker/compose.stage.yaml"
-expect "an edge network off its pinned subnet is caught" "$d" fail "invariant 16] stage"
+d=$SCRATCH/authport; snapshot "$d"
+sed -i 's/^      GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED: "false"$/&\n    ports: ["127.0.0.1:9999:9999"]/' "$d/$SBF"
+expect "auth publishing a port is caught" "$d" fail "invariant 16]"
 
 d=$SCRATCH/anonapi; snapshot "$d"
 sed -i 's/^    container_name: autologger-api$/    container_name: autologger-api\n    labels: { k: "${ANON_KEY}" }/' "$d/compose.yaml"
 expect "the anon key in prod api is caught" "$d" fail "invariant 16] prod"
 
-d=$SCRATCH/gwbind; snapshot "$d"
-sed -i '0,/dev-gate.Caddyfile:\/etc\/caddy\/Caddyfile:ro$/s#^      - ./docker/dev-gate.Caddyfile:/etc/caddy/Caddyfile:ro$#&\n      - ./docker/supabase-gw.Caddyfile:/x:ro#' "$d/docker/compose.dev.yaml"
-expect "the gateway Caddyfile mounted outside the gateway is caught" "$d" fail "invariant 4] dev"
+d=$SCRATCH/caddybind; snapshot "$d"
+sed -i '0,/dev-gate.Caddyfile:\/etc\/caddy\/Caddyfile:ro$/s#^      - ./docker/dev-gate.Caddyfile:/etc/caddy/Caddyfile:ro$#&\n      - ./docker/Caddyfile:/x:ro#' "$d/docker/compose.dev.yaml"
+expect "the router Caddyfile bound into the dev app gate is caught" "$d" fail "invariant 4] dev: a read-only bind source"
 
 d=$SCRATCH/initbind; snapshot "$d"
 sed -i '0,/dev-gate.Caddyfile:\/etc\/caddy\/Caddyfile:ro$/s#^      - ./docker/dev-gate.Caddyfile:/etc/caddy/Caddyfile:ro$#&\n      - ./docker/supabase/init/roles.sql:/x.sql:ro#' "$d/docker/compose.dev.yaml"
 expect "init SQL mounted outside db is caught" "$d" fail "invariant 4] dev"
 
 # ---- catalog-pg-schema (invariants 3 and 16: the two-member catalog network, APP_DB_PASSWORD)
-d=$SCRATCH/apprest; snapshot "$d"
-sed -i 's#^      PGRST_DB_SCHEMAS: public$#&\n      X_PW: ${APP_DB_PASSWORD}#' "$d/$SBF"
-expect "the app password in rest is caught" "$d" fail "invariant 16]"
+d=$SCRATCH/appauth; snapshot "$d"
+sed -i 's#^      GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED: "false"$#&\n      X_PW: ${APP_DB_PASSWORD}#' "$d/$SBF"
+expect "the app password in auth is caught" "$d" fail "invariant 16]"
 
 d=$SCRATCH/appweb; snapshot "$d"
 sed -i '0,/^    networks: \[front\]$/s//    networks: [front]\n    labels: { pw: "${APP_DB_PASSWORD}" }/' "$d/compose.yaml"
@@ -161,9 +149,9 @@ d=$SCRATCH/compcat; snapshot "$d"
 sed -i '/^  companion:$/,/networks:/s/networks: \[dev\]/networks: [dev, catalog]/' "$d/docker/compose.dev.yaml"
 expect "companion joined to the catalog network is caught" "$d" fail "invariant 16] dev"
 
-d=$SCRATCH/restcat; snapshot "$d"
-sed -i 's/^    command: \["postgrest"\]$/&\n    networks: [db, supabase, catalog]/' "$d/$SBF"
-expect "rest on the catalog network is caught" "$d" fail "invariant 16]"
+d=$SCRATCH/authcat; snapshot "$d"
+sed -i 's/^    networks: \[db, auth-egress, auth-app\]$/    networks: [db, auth-egress, auth-app, catalog]/' "$d/$SBF"
+expect "auth on the catalog network is caught" "$d" fail "invariant 16]"
 
 d=$SCRATCH/appdb; snapshot "$d"
 sed -i 's/^    networks: \[dev, catalog, auth-app\]$/    networks: [dev, catalog, auth-app, db]/' "$d/docker/compose.dev.yaml"
@@ -190,17 +178,17 @@ sed -i '/^      GATE_DENY_SUBNET: /d' "$d/docker/compose.dev.yaml"
 expect "an app gate that admits the catalog subnet is caught" "$d" fail "invariant 16] dev"
 
 # ---- gotrue-sign-in (invariants 3, 16): auth-egress has only auth; auth-app is auth plus the app
-d=$SCRATCH/restegress; snapshot "$d"
-sed -i 's/^    command: \["postgrest"\]$/&\n    networks: [db, supabase, auth-egress]/' "$d/$SBF"
-expect "rest on the auth egress network is caught" "$d" fail "invariant 16]"
+d=$SCRATCH/dbegress; snapshot "$d"
+sed -i 's/^    networks: \[db, catalog\]$/    networks: [db, catalog, auth-egress]/' "$d/$DBF"
+expect "db on the auth egress network is caught" "$d" fail "invariant 16]"
 
 d=$SCRATCH/appegress; snapshot "$d"
 sed -i 's/^    networks: \[dev, catalog, auth-app\]$/    networks: [dev, catalog, auth-app, auth-egress]/' "$d/docker/compose.dev.yaml"
 expect "the dev app on the auth egress network is caught" "$d" fail "] dev"
 
-d=$SCRATCH/restauthapp; snapshot "$d"
-sed -i 's/^    command: \["postgrest"\]$/&\n    networks: [db, supabase, auth-app]/' "$d/$SBF"
-expect "rest on the auth-app network is caught" "$d" fail "invariant 16]"
+d=$SCRATCH/dbauthapp; snapshot "$d"
+sed -i 's/^    networks: \[db, catalog\]$/    networks: [db, catalog, auth-app]/' "$d/$DBF"
+expect "db on the auth-app network is caught" "$d" fail "invariant 16]"
 
 d=$SCRATCH/compauthapp; snapshot "$d"
 sed -i 's/^    networks: \[dev\]$/    networks: [dev, auth-app]/' "$d/docker/compose.dev.yaml"
@@ -215,7 +203,7 @@ sed -i 's/172\.28\.27\.0/172.28.29.0/' "$d/docker/compose.stage.yaml"
 expect "an auth egress network off its pinned subnet is caught" "$d" fail "invariant 16] stage"
 
 d=$SCRATCH/authnoapp; snapshot "$d"
-sed -i 's/^    networks: \[db, supabase, auth-egress, auth-app\]$/    networks: [db, supabase, auth-egress]/' "$d/$SBF"
+sed -i 's/^    networks: \[db, auth-egress, auth-app\]$/    networks: [db, auth-egress]/' "$d/$SBF"
 expect "auth off the auth-app network is caught" "$d" fail "invariant 16]"
 
 d=$SCRATCH/apiextra; snapshot "$d"

@@ -43,7 +43,7 @@
 
 - [x] 3.1 Test first in `docker/scripts/test_check_envs.sh`, the new cases of design D4: a `rest` service added back (digest-pinned, no port, on `db`) fails invariant 16, and in dev also invariant 6; a `supabase-gw` service added back fails invariant 16; `auth` joined to a new `supabase` network fails invariant 16; a service joined to a new `edge` network fails invariant 16; `${SERVICE_ROLE_KEY}` in an `auth` label fails invariant 16. Record each as red on the base (the base tree still defines `rest` and `supabase-gw`, so the re-add cases that expect a fail may already fail for another reason: record which).
   - Evidence (red, base tree): `sh docker/scripts/test_check_envs.sh` -> `test_check_envs: 59 passed, 7 failed`; all 7 new cases FAIL (dus-3.1-red.log). Why each fails on the base: `rest` and `supabase-gw` re-added (4 expects) -> `FAIL [invariant 0] could not resolve … mapping key "rest" already defined` (the base still defines them, so another reason); `auth` on a new `supabase` network -> `got ok` (the base allows `supabase`); a service on a new `edge` network -> caught by the base's `one other than supabase-gw joins edge`, not by the new rule; `${SERVICE_ROLE_KEY}` in an `auth` label -> caught by the base's `the SERVICE_ROLE_KEY value appears in a service outside its allowed set`, not as a retired key.
-- [ ] 3.2 Make the change in one step, so `check-envs.sh` passes on the clean tree:
+- [x] 3.2 Make the change in one step, so `check-envs.sh` passes on the clean tree:
   - `docker/supabase-services.yaml` keeps only `auth`, with `networks: [db, auth-egress, auth-app]` and the three literal URLs of D2; the `supabase-storage` volume goes;
   - `docker/supabase-db.yaml` drops the `jwt.sql` and `realtime.sql` mounts and `JWT_EXP`; `roles.sql` keeps only the `supabase_auth_admin` line;
   - delete `docker/supabase-gw.Caddyfile`, `docker/supabase/test_gateway.sh`, `docker/supabase/init/jwt.sql` and `docker/supabase/init/realtime.sql`;
@@ -51,6 +51,10 @@
   - `docker/scripts/check-envs.sh` as design D4 (sentinels, `check_supabase`, invariants 2, 3, 4 and 6, comments);
   - `docker/scripts/test_check_envs.sh`: the dropped and retargeted cases of D4 (D8 category 2).
   Green: `sh docker/scripts/check-envs.sh` -> `check-envs: ok (all)`, `sh docker/scripts/test_check_envs.sh` with no failures and the 3.1 cases passing, and the 2.x tooling tests still green. Also `grep -rn "supabase-gw\|SUPABASE_PORT\|realtime\|rest:3000\|storage:5000" compose.yaml docker/*.yaml docker/supabase docker/scripts/compose-env.sh` finds nothing.
+  - Evidence: `sh docker/scripts/check-envs.sh` -> `check-envs: ok (all)` (dus-3.2-checkenvs-green.log).
+  - Evidence: `sh docker/scripts/test_check_envs.sh` -> `test_check_envs: 62 passed, 0 failed` (59 - 4 dropped + 7 new from 3.1, all passing; the 7 retargeted cases renamed `pwauth`, `authport`, `appauth`, `authcat`, `dbegress`, `dbauthapp`, `caddybind`) (dus-3.2-testcheckenvs-green.log).
+  - Evidence: `node --test docker/scripts/compose-run.test.mjs docker/scripts/supabase-keys.test.mjs` -> `ℹ tests 90` `ℹ pass 90` `ℹ fail 0` (the 4 resolve runs left red by 2.1 and 2.2 pass) (dus-3.2-tooling-green.log).
+  - Evidence: `grep -rn "supabase-gw\|SUPABASE_PORT\|realtime\|rest:3000\|storage:5000" compose.yaml docker/*.yaml docker/supabase docker/scripts/compose-env.sh` -> no output, `grep-exit=1` (dus-3.2-grep-green.log).
 
 ## 4. Orphan containers (design D5)
 
