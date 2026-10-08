@@ -200,6 +200,29 @@ New tests:
 - **Config:** a second `createBindings` with another `DATA_DIR` and the same `BLOB_DIR` succeeds.
   The same `DATA_DIR` is still refused, which the existing test covers.
 
+### D9. The shared dev secret's provider key (amended after approval, owner 2026-10-08)
+
+Both checkouts share one dev OpenBao secret, `kv/autologger/dev`. The owner added
+`PROVIDER_KEYS_SECRET` to it for the in-flight `byo-ai-providers` change. `compose-run.mjs`
+refuses a whole secret that holds a key outside `docker/secrets-env.yaml`, so every `make dev-*`
+on this branch is refused, and 6.2 and 8.1 can't run. Removing the key from OpenBao would break
+the other branch's dev server, which refuses to boot without it.
+
+- **The fix:** `docker/secrets-env.yaml` lists the key, directly after `FRAME_BUS_SECRET:`, with
+  the two lines the `byo-ai-providers` branch adds at the same spot, byte for byte, so the two
+  branches merge cleanly:
+
+  ```yaml
+        # Provider keys: encrypts users' provider API keys at rest (byo-ai-providers D2; base64 of 32 bytes)
+        PROVIDER_KEYS_SECRET:
+  ```
+- **What it does here:** this server never reads the variable. The app container receives it, as
+  it receives the retired `API_TOKEN`. That's a residual: a secret this branch doesn't use sits in
+  the app's environment on dev, and on stage and prod once their secrets hold it, until the
+  providers change lands.
+- **Checks:** `sh docker/scripts/check-envs.sh` (invariant 15: compose and the allowlist agree)
+  and `node --test docker/scripts/compose-run.test.mjs` if it pins the allowlist.
+
 ## Risks
 
 - **Total size.** The blob volume has no cap of its own, as before. Disk use is the host's
@@ -218,8 +241,9 @@ follow these steps in order. The README's rollback note holds them.
 1. Stop `api` (dev: the app), so nothing writes during the copy.
 2. Copy the blob volume back, additively and owned by the server user:
    - stage and prod: `sudo mkdir -p "$VOL/blobs" && sudo rsync -a --chown=1000:1000 --exclude /.tmp/ "$BVOL/" "$VOL/blobs/"`;
-   - dev: `mkdir -p /data/blobs && cp -a /blobs/audio /data/blobs/`, run as `node` in the app
-     container (which mounts both volumes) before the revert.
+   - dev: the app is stopped, so a one-off container of the dev image mounts both volumes:
+     `docker run --rm -u node -v autologger-dev_dev-data:/data -v autologger-dev_dev-blobs:/blobs --entrypoint sh autologger-dev:local -c 'mkdir -p /data/blobs && cp -a /blobs/audio /data/blobs/'`
+     (amended after approval: the first wording ran the copy inside the stopped app container).
 
    Check the file count and bytes.
 3. Revert the code, then start.

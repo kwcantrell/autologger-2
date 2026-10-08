@@ -10,7 +10,7 @@ Tier reason:
 
 ADR 0021 slice 10.
 
-Approved-by: Kalen 2026-10-08
+Approved-by: Kalen 2026-10-08 (re-approved)
 
 ## Why
 
@@ -72,6 +72,10 @@ and has no network path to it. Storage also caps a file at 50 MB, while imports 
   - `server/scripts/merge-session-audio.ts` reads `BLOB_DIR`.
 
 The HTTP/WS contract doesn't change: same routes, status codes, Range semantics and bytes.
+
+- **The shared dev secret (amended after approval, design D9):** `docker/secrets-env.yaml` lists
+  `PROVIDER_KEYS_SECRET`, which the owner added to the shared dev OpenBao secret for
+  `byo-ai-providers`, so `make dev-*` runs on this branch. The server doesn't read it.
 
 ## Out of scope
 
