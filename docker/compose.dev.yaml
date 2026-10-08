@@ -48,6 +48,8 @@ services:
     environment:
       NODE_ENV: development
       DATA_DIR: /data
+      # The audio root (shared-blob-volume D6): its own volume, a literal, never an OpenBao value.
+      BLOB_DIR: /blobs
       HOST: 127.0.0.1
       PORT: "8786"
       TRUST_PROXY: "0"
@@ -69,6 +71,7 @@ services:
     networks: [dev, catalog, auth-app]
     volumes:
       - dev-data:/data
+      - dev-blobs:/blobs
       - dev-next:/app/web/.next
       - dev-home:/home/node
       - { type: bind, source: ./server/src, target: /app/server/src, read_only: true }
@@ -239,6 +242,7 @@ networks:
 
 volumes:
   dev-data:
+  dev-blobs:
   dev-next:
   dev-home:
   dev-companion:

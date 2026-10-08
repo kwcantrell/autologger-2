@@ -1,5 +1,5 @@
 // Boot guard (retire-host-dev D1): the server boots only in a compose stack, with an absolute
-// DATA_DIR. Pure function; main.ts calls it first and bootGuardCli.ts runs it before tsx watch.
+// DATA_DIR and an absolute BLOB_DIR outside it (shared-blob-volume D1). Pure function; main.ts calls it first and bootGuardCli.ts runs it before tsx watch.
 
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -9,6 +9,7 @@ import { checkBootEnv, STACKS } from './bootGuard';
 const ok = {
   AUTOLOGGER_STACK: 'dev',
   DATA_DIR: '/data',
+  BLOB_DIR: '/blobs',
   PGHOST: 'db',
   PGPORT: '5432',
   PGUSER: 'autologger_app',
@@ -37,6 +38,43 @@ describe('checkBootEnv', () => {
       expect(checkBootEnv({ ...ok, DATA_DIR: v }), String(v)).toMatch(/DATA_DIR/);
     }
   });
+  // shared-blob-volume D1: BLOB_DIR is required, absolute, and disjoint from DATA_DIR; checked
+  // after DATA_DIR and before the PG settings.
+  it('refuses a missing, empty or relative BLOB_DIR, naming BLOB_DIR and no value', () => {
+    for (const v of [undefined, '', './blob-value', 'blob-value', '../blob-value']) {
+      const msg = checkBootEnv({ ...ok, BLOB_DIR: v });
+      expect(msg, String(v)).toMatch(/BLOB_DIR/);
+      expect(msg).toMatch(/absolute/);
+      if (v) expect(msg).not.toContain(v);
+    }
+  });
+  it('refuses a BLOB_DIR that overlaps DATA_DIR, naming both and no value', () => {
+    const cases: Array<[string, string]> = [
+      ['/data', '/data'], // equal
+      ['/data', '/data/'], // equal after path.resolve
+      ['/data', '/data/x/..'], // equal after path.resolve
+      ['/data', '/data/blobs'], // blob inside data
+      ['/srv/data', '/srv'], // data inside blob
+      ['/data', '/'], // '/' overlaps everything
+    ];
+    for (const [dataDir, blobDir] of cases) {
+      const msg = checkBootEnv({ ...ok, DATA_DIR: dataDir, BLOB_DIR: blobDir });
+      expect(msg, `${dataDir} ${blobDir}`).toMatch(/BLOB_DIR and DATA_DIR must be separate/);
+      expect(msg).not.toContain('/data');
+      expect(msg).not.toContain('/srv');
+    }
+  });
+  it('accepts a BLOB_DIR that only shares a name prefix with DATA_DIR', () => {
+    for (const blobDir of ['/data2', '/datablobs', '/srv/blobs']) {
+      expect(checkBootEnv({ ...ok, DATA_DIR: '/data', BLOB_DIR: blobDir }), blobDir).toBeNull();
+    }
+  });
+  it('checks BLOB_DIR after DATA_DIR and before the catalog settings', () => {
+    expect(checkBootEnv({ ...ok, DATA_DIR: 'data', BLOB_DIR: undefined })).toMatch(/^DATA_DIR/);
+    expect(checkBootEnv({ ...ok, BLOB_DIR: undefined, PGPASSWORD: undefined })).toMatch(
+      /^BLOB_DIR/,
+    );
+  });
   it('refuses each missing or empty catalog connection setting, naming it (catalog-on-postgres D2)', () => {
     for (const k of ['PGHOST', 'PGPORT', 'PGUSER', 'PGPASSWORD', 'PGDATABASE']) {
       for (const v of [undefined, '']) {
@@ -50,6 +88,7 @@ describe('checkBootEnv', () => {
     const sentinel = 'sentinel-value-should-not-appear';
     expect(checkBootEnv({ ...ok, AUTOLOGGER_STACK: sentinel })).not.toContain(sentinel);
     expect(checkBootEnv({ ...ok, DATA_DIR: sentinel })).not.toContain(sentinel);
+    expect(checkBootEnv({ ...ok, BLOB_DIR: sentinel })).not.toContain(sentinel);
   });
   // require-login D1: login is always required, so a server no one can sign in to never boots.
   it('accepts a full env (null)', () => {

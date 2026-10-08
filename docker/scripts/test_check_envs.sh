@@ -2,7 +2,8 @@
 # docker/scripts/test_check_envs.sh -- regression cases for check-envs.sh invariants 14 and 15
 # (infisical-secrets tasks 2.1, 2.2), 16 and the invariant 4 exceptions (supabase-db task 2.1), and
 # invariant 4's packages/*/src rule (retire-sqlite-catalog task 4.1), and the auth networks
-# (gotrue-sign-in task 2.1), and the stage public mode (stage-public-https, invariant 7).
+# (gotrue-sign-in task 2.1), and the stage public mode (stage-public-https, invariant 7), and the
+# blob volume (shared-blob-volume task 6.1, invariants 4, 6 and 7).
 # Each case copies the working tree (tracked + untracked, git-ignored files excluded, so no env file or data directory is copied) to a scratch dir,
 # applies one mutation, runs the check there and asserts the outcome.
 #
@@ -16,7 +17,9 @@ PASS=0; FAILED=0
 
 snapshot() { # DIR: copy the working tree into DIR
   mkdir -p "$1"
-  (cd "$ROOT" && git ls-files -co --exclude-standard -z | xargs -0 tar -cf -) | tar -xf - -C "$1"
+  # One tar reads the whole list: `xargs tar` splits a long list into several archives, and the
+  # extracting tar stops at the first one's end (every later file was silently dropped).
+  (cd "$ROOT" && git ls-files -co --exclude-standard -z | tar --null -T - -cf -) | tar -xf - -C "$1"
 }
 
 # expect NAME DIR WANT[ok|fail] [PATTERN]: run check-envs in DIR; assert status (and output).
@@ -237,6 +240,41 @@ expect "a stage COOKIE_SECURE default other than 0 is caught" "$d" fail "invaria
 d=$SCRATCH/stageimage; snapshot "$d"
 sed -i 's/^    image: ${STAGE_API_IMAGE:-autologger-stage-api:local}$/    image: autologger-stage-api:local/' "$d/docker/compose.stage.yaml"
 expect "a stage api image that ignores STAGE_API_IMAGE is caught" "$d" fail "invariant 7] stage"
+
+# ---- shared-blob-volume (invariants 4, 6, 7): BLOB_DIR is the literal /blobs on its own named volume
+d=$SCRATCH/devblobvar; snapshot "$d"
+sed -i 's#^      BLOB_DIR: /blobs$#      BLOB_DIR: ${BLOB_DIR:-/blobs}#' "$d/docker/compose.dev.yaml"
+expect "a dev BLOB_DIR that is not a literal is caught" "$d" fail "invariant 6] dev: a posture pin"
+
+d=$SCRATCH/devblobval; snapshot "$d"
+sed -i 's#^      BLOB_DIR: /blobs$#      BLOB_DIR: /data/blobs#' "$d/docker/compose.dev.yaml"
+expect "a dev BLOB_DIR other than /blobs is caught" "$d" fail "invariant 6] dev: a resolved posture pin"
+
+d=$SCRATCH/devblobvol; snapshot "$d"
+sed -i 's#^      - dev-blobs:/blobs$#      - dev-home:/blobs#' "$d/docker/compose.dev.yaml"
+expect "a dev /blobs that is not the dev-blobs volume is caught" "$d" fail "invariant 4] dev: BLOB_DIR"
+
+d=$SCRATCH/devblobnovol; snapshot "$d"
+sed -i '/^      - dev-blobs:\/blobs$/d' "$d/docker/compose.dev.yaml"
+expect "a dev app without a /blobs volume is caught" "$d" fail "invariant 4] dev: BLOB_DIR"
+
+d=$SCRATCH/apiblobenv; snapshot "$d"
+sed -i '/^      BLOB_DIR: \/blobs$/d' "$d/compose.yaml"
+expect "a prod api without BLOB_DIR is caught" "$d" fail "invariant 7] prod: api BLOB_DIR"
+expect "a stage api without BLOB_DIR is caught" "$d" fail "invariant 7] stage: api BLOB_DIR"
+
+d=$SCRATCH/apiblobvol; snapshot "$d"
+sed -i '/^      - autologger-blobs:\/blobs$/d' "$d/compose.yaml"
+expect "a prod api without the /blobs named volume is caught" "$d" fail "invariant 7] prod: api /blobs"
+expect "a stage api without the /blobs named volume is caught" "$d" fail "invariant 7] stage: api /blobs"
+
+d=$SCRATCH/apiblobbind; snapshot "$d"
+sed -i 's#^      - autologger-blobs:/blobs$#      - ./blobs:/blobs#' "$d/compose.yaml"
+expect "a prod api /blobs bind mount is caught" "$d" fail "invariant 7] prod: api /blobs"
+
+d=$SCRATCH/stageblobenv; snapshot "$d"
+sed -i 's#^      SESSION_COOKIE: autologger_stage_sid$#&\n      BLOB_DIR: /srv/blobs#' "$d/docker/compose.stage.yaml"
+expect "a stage overlay that moves BLOB_DIR is caught" "$d" fail "invariant 7] stage: api BLOB_DIR"
 
 echo "test_check_envs: $PASS passed, $FAILED failed"
 [ "$FAILED" -eq 0 ]

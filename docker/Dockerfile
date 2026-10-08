@@ -147,18 +147,21 @@ COPY server/package.json server/package.json
 # these dirs) is writable on first start. settings.json carries DISABLE_AUTOUPDATER because
 # the server strips unlisted env vars from the CLI child; the ENV below covers direct
 # invocations. A pre-existing /home/node volume shadows this file (see README task 7.1).
-RUN mkdir -p /data /home/node/.claude \
+# /blobs is the audio root (BLOB_DIR, shared-blob-volume D6), its own volume.
+RUN mkdir -p /data /blobs /home/node/.claude \
  && printf '{\n  "env": { "DISABLE_AUTOUPDATER": "1" }\n}\n' > /home/node/.claude/settings.json \
- && chown -R node:node /data /home/node
+ && chown -R node:node /data /home/node \
+ && chown node:node /blobs
 ENV NODE_ENV=production \
     DATA_DIR=/data \
+    BLOB_DIR=/blobs \
     HOST=0.0.0.0 \
     PORT=8787 \
     YTDLP_PATH=/opt/ytdlp/yt-dlp \
     CLAUDE_CLI_PATH=/usr/local/bin/claude \
     DISABLE_AUTOUPDATER=1 \
     NEXT_TELEMETRY_DISABLED=1
-VOLUME ["/data", "/home/node"]
+VOLUME ["/data", "/blobs", "/home/node"]
 USER node
 WORKDIR /app/server
 EXPOSE 8787
@@ -211,12 +214,14 @@ RUN mkdir -p server/src server/scripts web/src web/public web/.next \
       packages/contract/src packages/domain/src packages/log-import/src \
       packages/media-import/src packages/ports/src packages/session-core/src \
       packages/storage/src packages/transcription/src \
-      /data /home/node/.claude \
+      /data /blobs /home/node/.claude \
  && printf '{\n  "env": { "DISABLE_AUTOUPDATER": "1" }\n}\n' > /home/node/.claude/settings.json \
  && find /app -path /app/node_modules -prune -o -exec chown node:node {} + \
- && chown -R node:node /data /home/node
+ && chown -R node:node /data /home/node \
+ && chown node:node /blobs
 ENV NODE_ENV=development \
     DATA_DIR=/data \
+    BLOB_DIR=/blobs \
     YTDLP_PATH=/opt/ytdlp/yt-dlp \
     CLAUDE_CLI_PATH=/usr/local/bin/claude \
     DISABLE_AUTOUPDATER=1 \

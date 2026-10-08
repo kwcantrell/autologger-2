@@ -18,15 +18,19 @@ export const BUS_TEST_SECRET = 'x'.repeat(40);
 
 export type BusProcess = ReturnType<typeof createBindings> & { port: number };
 
-const made: Array<{ p: BusProcess; dir: string; srv: ServerType }> = [];
+const made: Array<{ p: BusProcess; dirs: string[]; srv: ServerType }> = [];
 
-/** One server process on the test database: the Postgres bus started, then served. */
-export async function busProcess(): Promise<BusProcess> {
+/** One server process on the test database: the Postgres bus started, then served. Each has its
+ * own DATA_DIR; `blobDir` makes several share one BLOB_DIR, as a stack's processes do
+ * (shared-blob-volume D8 category 1), and by default each gets its own sibling temp dir. */
+export async function busProcess(opts: { blobDir?: string } = {}): Promise<BusProcess> {
   const db = testDatabase();
   const dir = mkdtempSync(join(tmpdir(), 'autologger-bus-'));
+  const ownBlobDir = opts.blobDir ? null : mkdtempSync(join(tmpdir(), 'autologger-bus-blobs-'));
   const m = createBindings(
     {
       DATA_DIR: dir,
+      BLOB_DIR: opts.blobDir ?? (ownBlobDir as string),
       // As the harness's env (test/harness.ts), so its signed-in users and admin token work here.
       PUBLIC_BASE_URL: 'https://example.com',
       GOOGLE_CLIENT_ID: 'test-client-id',
@@ -57,15 +61,15 @@ export async function busProcess(): Promise<BusProcess> {
     injectWebSocket(srv);
   });
   const p = Object.assign(m, { port });
-  made.push({ p, dir, srv: srv as ServerType });
+  made.push({ p, dirs: ownBlobDir ? [dir, ownBlobDir] : [dir], srv: srv as ServerType });
   return p;
 }
 
 /** Ends every process `busProcess` made: its server (waited for at most 2 s), then its bindings. */
 export async function closeBusProcesses(): Promise<void> {
-  for (const { p, dir, srv } of made.splice(0)) {
+  for (const { p, dirs, srv } of made.splice(0)) {
     await Promise.race([new Promise((r) => srv.close(r)), new Promise((r) => setTimeout(r, 2000))]);
     await p.close();
-    rmSync(dir, { recursive: true, force: true });
+    for (const d of dirs) rmSync(d, { recursive: true, force: true });
   }
 }

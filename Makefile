@@ -83,7 +83,7 @@ dev-migrate: ## Apply supabase/migrations to the dev Postgres (starts db if need
 dev-psql: ## psql in the dev Postgres (no history file)
 	$(RUN) dev 'compose exec -e PSQL_HISTORY=/dev/null db psql -U postgres'
 
-dev-reset: ## DESTROY dev volumes, incl. Postgres and Supabase storage (needs CONFIRM=yes)
+dev-reset: ## DESTROY dev volumes, incl. Postgres, the audio blob volume and Supabase storage (needs CONFIRM=yes)
 	$(RUN) dev reset 'compose down -v'
 
 stage-build: ## Build the stage images (native arch, docker compose build, tagged :local; refused with STAGE_IMAGE_TAG)
@@ -108,7 +108,7 @@ stage-logs: ## Follow stage logs
 stage-claude-login: ## Interactive Claude login inside the stage api container (stage keeps its own login)
 	@docker exec -it autologger-stage-api claude auth login
 
-stage-reset: ## DESTROY stage volumes, incl. Postgres and Supabase storage (needs CONFIRM=yes)
+stage-reset: ## DESTROY stage volumes, incl. Postgres, the audio blob volume and Supabase storage (needs CONFIRM=yes)
 	$(RUN) stage reset 'compose down -v'
 
 prod-build: ## Native-arch build of both images, tagged :local only (no SHA tag, no push)
