@@ -118,6 +118,45 @@ describe('providerPutBodySchema (byo-ai-providers D4)', () => {
   });
 });
 
+describe('providerPutBodySchema llm providers (owner decision 10)', () => {
+  it('takes openai-compatible, anthropic, openai or google', () => {
+    for (const provider of ['anthropic', 'openai', 'google']) {
+      expect(ok('llm', { provider, model: 'm-1', api_key: KEY }), provider).toBe(true);
+      expect(ok('llm', { provider, base_url: null, model: 'm-1' }), provider).toBe(true);
+    }
+    expect(ok('llm', llm())).toBe(true);
+    expect(ok('llm', llm({ provider: 'mistral' }))).toBe(false);
+  });
+
+  it('refuses a base URL for a fixed-host provider and requires one for openai-compatible', () => {
+    for (const provider of ['anthropic', 'openai', 'google']) {
+      expect(
+        ok('llm', { provider, base_url: 'https://api.example.com/v1', model: 'm-1' }),
+        provider,
+      ).toBe(false);
+    }
+    expect(ok('llm', { provider: 'openai-compatible', model: 'm-1' })).toBe(false);
+  });
+
+  it('applies the key and model rules to every provider', () => {
+    expect(ok('llm', { provider: 'anthropic', model: 'claude x', api_key: KEY })).toBe(false);
+    expect(ok('llm', { provider: 'google', model: 'gemini', api_key: 'AIza\nX12345' })).toBe(false);
+  });
+
+  it('a credential of a fixed-host provider has a null base URL', () => {
+    expect(
+      providerCredentialSchema.safeParse({ ...CRED_BASE, provider: 'anthropic', base_url: null })
+        .success,
+    ).toBe(true);
+  });
+});
+
+const CRED_BASE = {
+  kind: 'llm',
+  model: 'claude-sonnet-4-5',
+  key_last4: 'abcd',
+  updated_at: '2026-10-16T12:00:00.000Z',
+};
 const CRED = {
   kind: 'llm',
   provider: 'openai-compatible',

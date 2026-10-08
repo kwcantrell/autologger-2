@@ -329,6 +329,10 @@ export type CompanionDeviceCreatedResponse = z.infer<typeof companionDeviceCreat
 // answered by the route with the existing NUL `400` before this schema runs.
 
 export const providerKindSchema = z.enum(['llm', 'stt']);
+/** The language model providers with a fixed API host (owner decision 10). */
+export const LLM_FIXED_HOST_PROVIDERS = ['anthropic', 'openai', 'google'] as const;
+export const LLM_PROVIDERS = ['openai-compatible', ...LLM_FIXED_HOST_PROVIDERS] as const;
+export type LlmProvider = (typeof LLM_PROVIDERS)[number];
 export type ProviderKindWire = z.infer<typeof providerKindSchema>;
 
 export const PROVIDER_BASE_URL_MAX = 2048;
@@ -372,7 +376,7 @@ export function providerBaseUrlProblem(raw: string, production: boolean): string
 }
 
 /** The `PUT` body for `kind`, under the server's provider mode. `api_key` is optional here; the
- * route decides when it is required (no stored key, or a new base URL origin). */
+ * route decides when it is required (no stored key, a new provider, or a new base URL origin). */
 export function providerPutBodySchema(kind: ProviderKindWire, mode: { production: boolean }) {
   if (kind === 'stt') {
     return z.object({
@@ -382,18 +386,27 @@ export function providerPutBodySchema(kind: ProviderKindWire, mode: { production
       api_key: providerApiKeySchema.optional(),
     });
   }
-  return z.object({
-    provider: z.literal('openai-compatible'),
-    base_url: z
-      .string()
-      .trim()
-      .superRefine((v, ctx) => {
-        const problem = providerBaseUrlProblem(v, mode.production);
-        if (problem) ctx.addIssue({ code: 'custom', message: `base_url ${problem}` });
-      }),
-    model: providerModelSchema,
-    api_key: providerApiKeySchema.optional(),
-  });
+  return z.discriminatedUnion('provider', [
+    z.object({
+      provider: z.literal('openai-compatible'),
+      base_url: z
+        .string()
+        .trim()
+        .superRefine((v, ctx) => {
+          const problem = providerBaseUrlProblem(v, mode.production);
+          if (problem) ctx.addIssue({ code: 'custom', message: `base_url ${problem}` });
+        }),
+      model: providerModelSchema,
+      api_key: providerApiKeySchema.optional(),
+    }),
+    // Fixed-host providers (owner decision 10): the key goes only to the provider's own API host.
+    z.object({
+      provider: z.enum(LLM_FIXED_HOST_PROVIDERS),
+      base_url: z.null().optional(),
+      model: providerModelSchema,
+      api_key: providerApiKeySchema.optional(),
+    }),
+  ]);
 }
 export type ProviderPutBody = {
   provider: string;
