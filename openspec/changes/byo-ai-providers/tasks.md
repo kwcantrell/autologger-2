@@ -116,12 +116,14 @@ Anything else is a stop: update the artifacts and ask the owner.
 
 ## 4. Routes and contract (design D4, D5)
 
-- [ ] 4.1 Test first, contract schema tests:
+- [x] 4.1 Test first, contract schema tests:
   - `PUT` bodies per kind: `base_url` required or forbidden, `provider` pinned per kind, model and
     key lengths, the printable-ASCII rule (a key with a line feed or a space is refused);
   - production-mode URL rules: `https`, port 443, no userinfo, query or fragment;
   - every response schema is a `strictObject` with no key field.
   Red, then add the schemas. Green.
+  - Evidence: red, `cd packages/contract && npx vitest run src/schemas.providers.test.ts` -> `TypeError: providerPutBodySchema is not a function` (log `byo-4.1-red.log`). Green, `cd packages/contract && npx vitest run` -> `Test Files  5 passed (5)`, `Tests  121 passed (121)` (was 109; log `byo-4.1-green.log`); `npm run typecheck` -> exit 0, 0 `error TS`. In `packages/contract/src/schemas.ts`: `providerKindSchema`; `providerPutBodySchema(kind, {production})` (provider pinned per kind; `base_url` required for `llm` and null or absent for `stt`; model 1-200 and key 8-4096 printable ASCII without spaces after trimming; key optional); `providerBaseUrlProblem` (no userinfo, query or fragment, at most 2048 characters, http or https; production mode needs https on the default port); strict `providerCredentialSchema`, `providersResponseSchema` and `providerTestResponseSchema`; the fixed `PROVIDER_TEST_DETAIL` strings. The tests cover each rule, including spaces, CR, LF, tab, DEL and non-ASCII refused in a key or model, and no key field accepted in any response.
+
 - [ ] 4.2 Test first, unit tests for `outbound.ts`:
   - every blocked range in D5, in IPv4, IPv6, v4-mapped and NAT64 forms, is refused in production
     mode and allowed in development mode;

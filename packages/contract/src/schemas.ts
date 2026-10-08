@@ -321,6 +321,123 @@ export const companionDeviceCreatedResponseSchema = z.strictObject({
 });
 export type CompanionDeviceCreatedResponse = z.infer<typeof companionDeviceCreatedResponseSchema>;
 
+// -- byo-ai-providers (design D4; api-contract-freeze "Provider credential routes") -------------
+// `PUT /api/me/providers/:kind` bodies and the response shapes. The base URL rules depend on the
+// server's provider mode (provider-credentials "LLM base URLs are restricted in production mode"),
+// so the body schema is built per kind and mode. A key or model is printable ASCII without spaces
+// (provider-credentials), so it can never form an invalid header. A NUL anywhere in the body is
+// answered by the route with the existing NUL `400` before this schema runs.
+
+export const providerKindSchema = z.enum(['llm', 'stt']);
+export type ProviderKindWire = z.infer<typeof providerKindSchema>;
+
+export const PROVIDER_BASE_URL_MAX = 2048;
+export const PROVIDER_MODEL_MAX = 200;
+export const PROVIDER_KEY_MIN = 8;
+export const PROVIDER_KEY_MAX = 4096;
+const PRINTABLE_NO_SPACE = /^[\x21-\x7E]+$/;
+const printable = 'must be printable ASCII without spaces';
+
+const providerModelSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(PROVIDER_MODEL_MAX)
+  .regex(PRINTABLE_NO_SPACE, printable);
+const providerApiKeySchema = z
+  .string()
+  .trim()
+  .min(PROVIDER_KEY_MIN)
+  .max(PROVIDER_KEY_MAX)
+  .regex(PRINTABLE_NO_SPACE, printable);
+
+/** Why a base URL is refused, or null when it is acceptable in this mode. */
+export function providerBaseUrlProblem(raw: string, production: boolean): string | null {
+  if (raw.length > PROVIDER_BASE_URL_MAX)
+    return `must be at most ${PROVIDER_BASE_URL_MAX} characters`;
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    return 'must be an absolute http or https URL';
+  }
+  if (u.protocol !== 'https:' && u.protocol !== 'http:')
+    return 'must be an absolute http or https URL';
+  if (u.username || u.password) return 'must not contain a user name or password';
+  if (u.search || raw.includes('?')) return 'must not contain a query string';
+  if (u.hash || raw.includes('#')) return 'must not contain a fragment';
+  if (production && u.protocol !== 'https:') return 'must use https';
+  if (production && u.port !== '') return 'must use the default https port (443)';
+  return null;
+}
+
+/** The `PUT` body for `kind`, under the server's provider mode. `api_key` is optional here; the
+ * route decides when it is required (no stored key, or a new base URL origin). */
+export function providerPutBodySchema(kind: ProviderKindWire, mode: { production: boolean }) {
+  if (kind === 'stt') {
+    return z.object({
+      provider: z.literal('deepgram'),
+      base_url: z.null().optional(),
+      model: providerModelSchema,
+      api_key: providerApiKeySchema.optional(),
+    });
+  }
+  return z.object({
+    provider: z.literal('openai-compatible'),
+    base_url: z
+      .string()
+      .trim()
+      .superRefine((v, ctx) => {
+        const problem = providerBaseUrlProblem(v, mode.production);
+        if (problem) ctx.addIssue({ code: 'custom', message: `base_url ${problem}` });
+      }),
+    model: providerModelSchema,
+    api_key: providerApiKeySchema.optional(),
+  });
+}
+export type ProviderPutBody = {
+  provider: string;
+  base_url?: string | null;
+  model: string;
+  api_key?: string;
+};
+
+/** A stored credential on the wire. Never the key or its ciphertext; only its last four. */
+export const providerCredentialSchema = z.strictObject({
+  kind: providerKindSchema,
+  provider: z.string().min(1),
+  base_url: z.string().nullable(),
+  model: z.string().min(1),
+  key_last4: z.string().min(1).max(4),
+  updated_at: z.iso.datetime(),
+});
+export type ProviderCredentialWire = z.infer<typeof providerCredentialSchema>;
+
+export const providersResponseSchema = z.strictObject({
+  llm: providerCredentialSchema.nullable(),
+  stt: providerCredentialSchema.nullable(),
+  run_features_allowed: z.boolean(),
+});
+export type ProvidersResponse = z.infer<typeof providersResponseSchema>;
+
+export const providerTestResponseSchema = z.strictObject({
+  ok: z.boolean(),
+  detail: z.string().min(1),
+});
+export type ProviderTestResponse = z.infer<typeof providerTestResponseSchema>;
+
+/** The fixed connection-test results (provider-credentials "The connection test reports without
+ * leaking"; design D5). `unexpected` takes the HTTP status. */
+export const PROVIDER_TEST_DETAIL = {
+  connected: 'Connected.',
+  rejected: 'The provider rejected the API key.',
+  modelNotFound: "Connected, but the model wasn't found.",
+  unreachable: "Couldn't reach the provider.",
+  timeout: "The provider didn't answer in time.",
+  unexpected: (status: number) => `The provider answered unexpectedly (HTTP ${status}).`,
+  unreadable: "The saved key can't be read. Enter it again.",
+} as const;
+
 // -- teams-self-serve (design D4): the /api/teams family bodies ---------------
 
 export const teamCreateBodySchema = z.object({
