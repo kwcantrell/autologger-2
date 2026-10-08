@@ -1130,3 +1130,24 @@ describe('stage public mode (stage-public-https)', () => {
     }
   });
 });
+
+// drop-unused-supabase-services D5: every compose up and down the Makefile runs removes orphans, so
+// the retired Supabase containers another checkout started are gone after the next up, down or reset.
+describe('Makefile compose steps remove orphans (drop-unused-supabase-services D5)', () => {
+  const make = readFileSync(join(ROOT, 'Makefile'), 'utf8');
+  const steps = (verb) => [...make.matchAll(new RegExp(`'compose ${verb}\\b[^']*'`, 'g'))].map((m) => m[0]);
+  it('holds four compose up and five compose down steps, each with --remove-orphans', () => {
+    const ups = steps('up');
+    const downs = steps('down');
+    assert.equal(ups.length, 4, ups.join(' '));
+    assert.equal(downs.length, 5, downs.join(' '));
+    for (const s of [...ups, ...downs]) assert.match(s, / --remove-orphans\b/, s);
+  });
+  it('the tagged stage up still passes --no-build', async () => {
+    const { checkStagePlan, parseStageOptions } = await import('./compose-run.mjs');
+    const plan = (...s) => s.map((x) => ({ kind: 'compose', args: splitStep(x) }));
+    const tagged = parseStageOptions({ STAGE_IMAGE_TAG: 'a'.repeat(40), STAGE_PUBLIC_BASE_URL: 'https://stage.example.com' });
+    assert.ok(steps('up').includes("'compose up -d --no-build --remove-orphans'"));
+    assert.doesNotThrow(() => checkStagePlan(tagged, plan('compose pull web api', 'compose run --rm migrate', 'compose up -d --no-build --remove-orphans')));
+  });
+});

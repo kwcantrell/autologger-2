@@ -58,7 +58,9 @@
 
 ## 4. Orphan containers (design D5)
 
-- [ ] 4.1 Test first in `docker/scripts/compose-run.test.mjs`: read the `Makefile` and assert that it holds exactly four quoted `'compose up …'` steps (`dev-up`, both `STAGE_UP_STEPS`, `prod-up`) and five `'compose down …'` steps (`dev-down`, `dev-reset`, `stage-down`, `stage-reset`, `prod-down`), and that each holds `--remove-orphans`; `checkStagePlan` still accepts the tagged `'compose up -d --no-build --remove-orphans'`. Red, then add `--remove-orphans` to the nine steps and update the `dev-up`, `dev-reset` and `stage-reset` help text (no "Supabase", no "Supabase storage"). Green, plus `make help` shows the new text.
+- [x] 4.1 Test first in `docker/scripts/compose-run.test.mjs`: read the `Makefile` and assert that it holds exactly four quoted `'compose up …'` steps (`dev-up`, both `STAGE_UP_STEPS`, `prod-up`) and five `'compose down …'` steps (`dev-down`, `dev-reset`, `stage-down`, `stage-reset`, `prod-down`), and that each holds `--remove-orphans`; `checkStagePlan` still accepts the tagged `'compose up -d --no-build --remove-orphans'`. Red, then add `--remove-orphans` to the nine steps and update the `dev-up`, `dev-reset` and `stage-reset` help text (no "Supabase", no "Supabase storage"). Green, plus `make help` shows the new text.
+  - Evidence (red): `node --test --test-name-pattern="remove orphans|--no-build" docker/scripts/compose-run.test.mjs` -> `ℹ fail 2`, `AssertionError [ERR_ASSERTION]: 'compose up -d --build'` (no `--remove-orphans`) and the tagged `'compose up -d --no-build --remove-orphans'` step not found (dus-4.1-red.log).
+  - Evidence (green): `node --test docker/scripts/compose-run.test.mjs docker/scripts/supabase-keys.test.mjs` -> `ℹ tests 92` `ℹ pass 92` `ℹ fail 0` (dus-4.1-green.log); `make help` -> `dev-up … (app, gates, Companion, Postgres, GoTrue)`, `dev-reset  DESTROY dev volumes, incl. Postgres and the audio blob volume (needs CONFIRM=yes)`, `stage-reset  DESTROY stage volumes, incl. Postgres and the audio blob volume (needs CONFIRM=yes)` (dus-4.1-makehelp-green.log).
 
 ## 5. Docs (design D6)
 
