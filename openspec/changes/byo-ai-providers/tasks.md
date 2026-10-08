@@ -53,7 +53,6 @@ Anything else is a stop: update the artifacts and ask the owner.
   - `catalog_user` gets `42501` on select, insert and delete of both;
   - deleting a user cascades;
   - a duplicate `(user_id, kind)` gets `23505`.
-
   Red, then add `supabase/migrations/20261016000000_user_provider_credentials.sql`, with the
   rollback in its header. Green, plus `sh docker/supabase/test_migrate.sh`.
   - Evidence: red, with the migration moved aside: `cd server && npx vitest run --project pg src/test/pg/providerTables.pg.test.ts src/test/pg/catalogSchema.pg.test.ts src/test/pg/catalogPolicies.pg.test.ts` -> `PostgresError: relation "catalog.user_provider_credentials" does not exist`, `× matches the recorded catalog schema`, `× has exactly the catalog tables, in schema catalog`, `Test Files  3 failed (3)`, `Tests  16 failed | 52 passed (68)` (log `byo-2.1-red.log`). Green, the same three files -> `Test Files  3 passed (3)`, `Tests  68 passed (68)` (log `byo-2.1-green.log`); `sh docker/supabase/test_migrate.sh` -> `test_migrate: 35 passed, 0 failed` (log `byo-2.1-migrate.log`); `npm run typecheck` -> exit 0, 0 `error TS`.
@@ -69,7 +68,6 @@ Anything else is a stop: update the artifacts and ask the owner.
   - `delete` removes only the user's row;
   - `writeCheckIfAbsent` and `readCheck` keep the first value written;
   - another user's id never matches.
-
   Red, then add the port and the store on `bindSystem('provider-credentials')`, add the
   allowlist entries (D7 category 5), and wire them in `server/src/node/config.ts`. Green and
   typecheck.
@@ -88,7 +86,6 @@ Anything else is a stop: update the artifacts and ask the owner.
   - the check value is stable for a secret and differs between secrets;
   - a secret decoding to 16 or 33 bytes throws `ProviderKeysSecretError` naming the variable and
     not the value.
-
   Red, then implement. Green.
 - [ ] 3.2 Test first, config unit tests: `PROVIDER_DEV_MODE` is true only for `NODE_ENV`
   `development` or `test`, and false for unset, `production` and `staging`. Red, then add the
@@ -99,7 +96,6 @@ Anything else is a stop: update the artifacts and ask the owner.
   - a second boot with a different valid secret exits 1 with the mismatch error before listening,
     and releases the lock;
   - `createBindings` without the `providerKeys` option and without the secret still works.
-
   Red, then wire it. Add the secret to the env of `bootOrder.int.test.ts` and
   `bootFrameBus.int.test.ts` (D7 category 8). Green.
 - [ ] 3.4 Test first, `compose-run` tests: a stack whose OpenBao secret lacks
@@ -116,7 +112,6 @@ Anything else is a stop: update the artifacts and ask the owner.
     key lengths, the printable-ASCII rule (a key with a line feed or a space is refused);
   - production-mode URL rules: `https`, port 443, no userinfo, query or fragment;
   - every response schema is a `strictObject` with no key field.
-
   Red, then add the schemas. Green.
 - [ ] 4.2 Test first, unit tests for `outbound.ts`:
   - every blocked range in D5, in IPv4, IPv6, v4-mapped and NAT64 forms, is refused in production
@@ -127,7 +122,6 @@ Anything else is a stop: update the artifacts and ask the owner.
   - a 302 is not followed;
   - an error whose message holds the key is classified, and the capturing logger and the result
     hold neither.
-
   Red, then implement. Green.
 - [ ] 4.3 Test first, integration tests for `/api/me/providers` covering every scenario of
   api-contract-freeze "Provider credential routes":
@@ -147,7 +141,6 @@ Anything else is a stop: update the artifacts and ask the owner.
   - an undecryptable row gives the enter-it-again result;
   - the sixth test in a window, through two processes, gets `429` with no outbound request;
   - no response or captured log contains the key.
-
   Red, then add `server/src/routers/providers.ts` and mount it. Add the README endpoint table rows.
   Green and typecheck.
 
@@ -157,7 +150,6 @@ Anything else is a stop: update the artifacts and ask the owner.
   - `generateTranscriptWords` takes `stt: {apiKey, model}`;
   - `null` throws `unavailable` with the new detail;
   - the key goes only in the `Authorization` header.
-
   Red, then change the package (D7 category 2). Green.
 - [ ] 5.2 Test first, integration tests for `transcript-words/generate`:
   - in production mode, a caller without a key gets the new `503` detail and no provider call is
@@ -167,14 +159,12 @@ Anything else is a stop: update the artifacts and ask the owner.
   - another user's key is never used;
   - a tampered row answers as unconfigured;
   - the approval `403` still comes after the config `503`.
-
   Red, then add `resolveSttCredential` and wire `transcribe.ts` (D7 category 1). Green.
 - [ ] 5.3 Test first, log-import integration tests:
   - generation uses the creator's key;
   - an approved creator without a key in production mode gets the add-a-key line, no lease and no
     provider call, and the job continues;
   - a creator who isn't approved gets only the approval skip line.
-
   Red, then wire `logImport.ts` (D7 category 3). Green.
   - Docs: update every README statement of the global DeepGram gate (lines 61, 73, 130, 229, 245,
     1107, 1263, 1448 and 1814 at base) and the production runbook (per-user keys, no production
@@ -194,7 +184,6 @@ Anything else is a stop: update the artifacts and ask the owner.
   - the test result alerts;
   - server error details;
   - a member's own credentials.
-
   The `SettingsView.test.tsx` order gains Advanced (D7 category 6). Red, then build the hook,
   types, fixtures and section from the prototype at `c831e510` (shadcn primitives only, no MCP
   tab). Green.
@@ -202,7 +191,6 @@ Anything else is a stop: update the artifacts and ask the owner.
   - the transcription latch copy names Settings → Advanced and no server setting;
   - saving a speech-to-text credential clears the latch without a reload;
   - event-generation latching is unchanged.
-
   `generateLatch.test.tsx` moves to the new copy (D7 category 7). Red, then change
   `TranscribeFeed.tsx` and `useGatedGenerate.ts`. Green, `cd web && npx vitest run`, typecheck.
 - [ ] 6.3 Look at the built section and the transcript panel in the dev stack at 1440 and 390
