@@ -47,8 +47,7 @@ const memberShows = (a: Actor) =>
 const accessibleShows = (a: Actor) =>
   memberShows(a).filter(
     (s) =>
-      managedTeams(a).includes(SHOWS[s] as string) ||
-      GRANTS.some(([u, g]) => u === a && g === s),
+      managedTeams(a).includes(SHOWS[s] as string) || GRANTS.some(([u, g]) => u === a && g === s),
   );
 const coMembers = (a: Actor) =>
   USER_IDS.filter(
@@ -160,7 +159,8 @@ const RULES: Record<string, TableRules> = {
     update: (a, ss) => accessibleShows(a).includes(SESSIONS[ss] as string),
     delete: NONE,
     targets: () => ['ss1', 'ss2', 'ssu'],
-    insertSql: (k) => `insert into sessions (id, show_id) values ('new-session', '${k.split(':')[1]}')`,
+    insertSql: (k) =>
+      `insert into sessions (id, show_id) values ('new-session', '${k.split(':')[1]}')`,
     insertTargets: () => ['session:s1', 'session:s2', 'session:su'],
   },
   app_settings: {
@@ -301,8 +301,7 @@ async function as(actor: Actor, stmts: string[], role = 'catalog_user'): Promise
   return out;
 }
 
-const keysOf = (o: Outcome) =>
-  'code' in o ? o : { keys: o.rows.map((r) => String(r.k)).sort() };
+const keysOf = (o: Outcome) => ('code' in o ? o : { keys: o.rows.map((r) => String(r.k)).sort() });
 const countOf = (o: Outcome) => ('code' in o ? o : { count: o.rows.length });
 const inList = (keys: string[]) => keys.map((k) => `'${k.replaceAll("'", "''")}'`).join(', ');
 
@@ -331,8 +330,16 @@ describe('the allow/deny matrix (catalog-database "User policies enforce the tea
         // UPDATE and DELETE: a row of T, a row of U and one of the actor's own.
         const targets = r.targets(actor);
         for (const [cmd, rule, stmt] of [
-          ['update', r.update, `update ${table} set ${r.set} where ${r.key} in (${inList(targets)}) returning 1`],
-          ['delete', r.delete, `delete from ${table} where ${r.key} in (${inList(targets)}) returning 1`],
+          [
+            'update',
+            r.update,
+            `update ${table} set ${r.set} where ${r.key} in (${inList(targets)}) returning 1`,
+          ],
+          [
+            'delete',
+            r.delete,
+            `delete from ${table} where ${r.key} in (${inList(targets)}) returning 1`,
+          ],
         ] as const) {
           const res = await as(actor, [stmt]);
           expect(countOf(res), `${cmd} ${who} on ${targets.join(',')}`).toEqual(
@@ -353,16 +360,22 @@ describe('the allow/deny matrix (catalog-database "User policies enforce the tea
       code: '42501',
     });
     expect(
-      await as('ungranted', [`update user_studio_memberships set studio_id = '${U}' where user_id = 'ungranted'`]),
+      await as('ungranted', [
+        `update user_studio_memberships set studio_id = '${U}' where user_id = 'ungranted'`,
+      ]),
     ).toEqual({ code: '42501' });
   });
 
   it('a member reads the sessions of an ungranted show but cannot change them', async () => {
-    expect(keysOf(await as('ungranted', [`select id as k from sessions where show_id = 's1'`]))).toEqual({
+    expect(
+      keysOf(await as('ungranted', [`select id as k from sessions where show_id = 's1'`])),
+    ).toEqual({
       keys: ['ss1'],
     });
     expect(
-      countOf(await as('ungranted', [`update sessions set title = 'x' where id = 'ss1' returning 1`])),
+      countOf(
+        await as('ungranted', [`update sessions set title = 'x' where id = 'ss1' returning 1`]),
+      ),
     ).toEqual({ count: 0 });
   });
 });
@@ -390,10 +403,20 @@ describe('session content and the session row lock (session-content-policies D1,
   const insertEvent = `${(CONTENT_INSERT.session_events as (s: string, id: string) => string)('ss1', 'new')} returning 1`;
 
   it('a member without a grant sees no session content; after a grant on S1 both succeed (catalog-database "A member without a grant sees no session content")', async () => {
-    for (const table of ['session_events', 'session_transport', 'session_transcript_words', 'session_meta']) {
+    for (const table of [
+      'session_events',
+      'session_transport',
+      'session_transcript_words',
+      'session_meta',
+    ]) {
       const read = `select 1 as k from ${table} where session_id = 'ss1'`;
-      expect(countOf(await as('ungranted', [read])), `${table} before the grant`).toEqual({ count: 0 });
-      expect(countOf(await as('ungranted', [...grantS1(1), read])), `${table} after the grant`).toEqual({
+      expect(countOf(await as('ungranted', [read])), `${table} before the grant`).toEqual({
+        count: 0,
+      });
+      expect(
+        countOf(await as('ungranted', [...grantS1(1), read])),
+        `${table} after the grant`,
+      ).toEqual({
         count: 1,
       });
     }
@@ -416,7 +439,7 @@ describe('session content and the session row lock (session-content-policies D1,
 // -- privileges (design D2) -----------------------------------------------------------------------
 
 describe("catalog_user's narrowed privileges (design D2)", () => {
-  it("own users row: the name columns update; other columns, insert and delete are refused", async () => {
+  it('own users row: the name columns update; other columns, insert and delete are refused', async () => {
     expect(
       countOf(
         await as('granted', [
@@ -550,7 +573,9 @@ describe('locked reads and multi-step writes (design D3, D5)', () => {
       counted(
         `delete from show_grants g using shows s where g.show_id = s.id and s.studio_id = '${T}' and g.user_id = 'granted'`,
       ),
-      counted(`delete from user_studio_memberships where user_id = 'granted' and studio_id = '${T}'`),
+      counted(
+        `delete from user_studio_memberships where user_id = 'granted' and studio_id = '${T}'`,
+      ),
     ]);
     expect(keysOf(res)).toEqual({ keys: ['1'] });
     expect(

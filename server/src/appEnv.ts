@@ -21,6 +21,7 @@ import type {
   CompanionDeviceStore,
   Config,
   LeaseDirectory,
+  ProviderCredentialStore,
 } from '@autologger/ports';
 import type { SessionFrameBus, SessionHubRegistryFacade } from '@autologger/session-core';
 
@@ -44,6 +45,9 @@ export interface Ports extends BasePorts {
   /** Companion device tokens: the device-token lookup and the management routes, each scoped by
    * user id in SQL (companion-devices D2, D5). */
   companionDevices: CompanionDeviceStore;
+  /** Users' provider credentials (ciphertext only) and the master-key check value, each credential
+   * statement scoped by user id in SQL (byo-ai-providers D1). */
+  providerCredentials: ProviderCredentialStore;
 }
 
 /** The per-request env object. Callers MUST pass a fresh env per request and

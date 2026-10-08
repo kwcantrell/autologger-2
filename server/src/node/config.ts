@@ -23,6 +23,7 @@ import {
   PostgresFrameBus,
   PostgresLeaseDirectory,
   PostgresPresence,
+  PostgresProviderCredentialStore,
   PostgresSessionDb,
 } from '@autologger/storage';
 import type { Bindings } from '../appEnv';
@@ -139,6 +140,8 @@ export function createBindings(
       leases: new PostgresLeaseDirectory(catalogDb),
       // companion-devices D2: binds its own reviewed reason, system:companion-device.
       companionDevices: new PostgresCompanionDeviceStore(catalogDb, clock),
+      // byo-ai-providers D1: binds its own reviewed reason, system:provider-credentials.
+      providerCredentials: new PostgresProviderCredentialStore(catalogDb, clock),
     },
     config: {
       PUBLIC_BASE_URL: procEnv.PUBLIC_BASE_URL || '',

@@ -28,7 +28,13 @@ async function seedUser(sys: postgres.Sql, id: string): Promise<void> {
 const insertCredential = (
   user: string,
   kind: string,
-  over: { provider?: string; base_url?: string | null; base_origin?: string | null; model?: string; last4?: string } = {},
+  over: {
+    provider?: string;
+    base_url?: string | null;
+    base_origin?: string | null;
+    model?: string;
+    last4?: string;
+  } = {},
 ) => {
   const q = (v: string | null | undefined) => (v === null || v === undefined ? 'null' : `'${v}'`);
   const llm = kind === 'llm';
@@ -70,12 +76,21 @@ describe('the provider tables are system-only (catalog-database "Provider creden
     const db = await createTestDatabase();
     const admin = connect(db.admin);
     for (const table of TABLES) {
-      for (const priv of ['select', 'insert', 'update', 'delete', 'truncate', 'references', 'trigger']) {
+      for (const priv of [
+        'select',
+        'insert',
+        'update',
+        'delete',
+        'truncate',
+        'references',
+        'trigger',
+      ]) {
         const [r] =
           await admin`select has_table_privilege('catalog_user', ${`catalog.${table}`}, ${priv}) as p`;
         expect(r?.p, `${table} ${priv}`).toBe(false);
         for (const role of ['anon', 'authenticated']) {
-          const [x] = await admin`select has_table_privilege(${role}, ${`catalog.${table}`}, ${priv}) as p`;
+          const [x] =
+            await admin`select has_table_privilege(${role}, ${`catalog.${table}`}, ${priv}) as p`;
           expect(x?.p, `${role} ${table} ${priv}`).toBe(false);
         }
       }
@@ -145,7 +160,12 @@ describe('the provider tables keep their constraints (design D1)', () => {
     expect(Buffer.isBuffer(r?.key_nonce)).toBe(true);
     expect(Buffer.isBuffer(r?.key_ciphertext)).toBe(true);
     expect(Buffer.isBuffer(r?.key_tag)).toBe(true);
-    expect({ v: r?.key_version, last4: r?.key_last4, w: r?.test_window_start_ms, n: r?.test_count }).toEqual({
+    expect({
+      v: r?.key_version,
+      last4: r?.key_last4,
+      w: r?.test_window_start_ms,
+      n: r?.test_count,
+    }).toEqual({
       v: 1,
       last4: 'abcd',
       w: null,
@@ -186,12 +206,16 @@ describe('the provider tables keep their constraints (design D1)', () => {
     expect(await code(insertCredential('u1', 'llm', { last4: '' }))).toBe('23514');
     expect(await code(insertCredential('u1', 'llm', { last4: 'abcde' }))).toBe('23514');
     expect(
-      await code(insertCredential('u1', 'llm', { base_url: `https://a.example/${'x'.repeat(2048)}` })),
+      await code(
+        insertCredential('u1', 'llm', { base_url: `https://a.example/${'x'.repeat(2048)}` }),
+      ),
     ).toBe('23514');
     // base_origin is null exactly when base_url is.
     expect(await code(insertCredential('u1', 'llm', { base_origin: null }))).toBe('23514');
     expect(
-      await code(insertCredential('u1', 'llm', { base_url: null, base_origin: 'https://a.example' })),
+      await code(
+        insertCredential('u1', 'llm', { base_url: null, base_origin: 'https://a.example' }),
+      ),
     ).toBe('23514');
     expect(await code(insertCredential('u1', 'llm'))).toBe('ok');
   });

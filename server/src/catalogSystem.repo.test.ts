@@ -114,6 +114,11 @@ const ALLOWLIST: readonly { file: string; reason: string; why: string }[] = [
     why: 'the device-token lookup and its last-used update, and the management routes; every statement is scoped by token hash or user id in SQL (companion-devices D2, D5)',
   },
   {
+    file: 'packages/storage/src/providerCredentials.ts',
+    reason: 'provider-credentials',
+    why: "users' provider credentials and the master-key check value; every credential statement is scoped by user id in SQL (byo-ai-providers D1)",
+  },
+  {
     file: 'packages/storage/src/presence.ts',
     reason: 'companion-presence',
     why: "Companion presence rows, every user's, shared by every process; each statement is scoped by client id and user id in SQL (companion-devices D4)",
