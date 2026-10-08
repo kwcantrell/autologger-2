@@ -76,7 +76,7 @@ Anything else is a stop: update the artifacts and ask the owner.
 
 ## 3. Key crypto, mode and the boot secret (design D2, D3)
 
-- [ ] 3.1 Test first, unit tests for `providerKeyCrypto`:
+- [x] 3.1 Test first, unit tests for `providerKeyCrypto`:
   - a round trip;
   - a fresh nonce each time;
   - a tampered tag, ciphertext or nonce gives `null`;
@@ -87,6 +87,7 @@ Anything else is a stop: update the artifacts and ask the owner.
   - a secret decoding to 16 or 33 bytes throws `ProviderKeysSecretError` naming the variable and
     not the value.
   Red, then implement. Green.
+  - Evidence: red, `cd server && npx vitest run --project unit src/auth/providerKeyCrypto.test.ts` -> `Error: Cannot find module './providerKeyCrypto'`, `Test Files  1 failed (1)` (log `byo-3.1-red.log`). Green -> `Tests  15 passed (15)` (log `byo-3.1-green.log`). The 15 cases: a 32-byte secret is accepted; missing, empty, whitespace, 16-byte, 33-byte and non-base64 secrets are refused with a message naming `PROVIDER_KEYS_SECRET` and not the value; a round trip with version 1, `last4`, a 12-byte nonce and a 16-byte tag; a fresh nonce each time; a tampered tag, ciphertext or nonce, a short nonce, or version 2 give `null`, with one warn line each naming only the user id and kind; another user, kind or origin as AAD gives `null`; another secret can't decrypt; the check value is stable per secret, differs between secrets and is not the secret; a random cipher round-trips; `keyLast4`. The module is `server/src/auth/providerKeyCrypto.ts` (HKDF-SHA256 encryption and check keys, AES-256-GCM, AAD `user\0kind\0origin`).
 - [ ] 3.2 Test first, config unit tests: `PROVIDER_DEV_MODE` is true only for `NODE_ENV`
   `development` or `test`, and false for unset, `production` and `staging`. Red, then add the
   field. Green.
