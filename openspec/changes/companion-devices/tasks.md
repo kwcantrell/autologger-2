@@ -125,11 +125,13 @@ Anything else is a stop: update the artifacts and ask the owner.
 
 ## 8. Companion module (design D7)
 
-- [ ] 8.1 Test first, module unit tests:
+- [x] 8.1 Test first, module unit tests:
   - the upgrade script moves `config.token` into secrets, is a no-op when there is nothing to move or it already moved;
   - `init` and `configUpdated` read `secrets.token`;
   - the 401 status text.
   Red, then change `companion/src/{config,main,upgrades,api}.ts` and `HELP.md`, and bump the module version. Green, plus the module build and package (`npm run build && npm run package` in `companion`).
+  - Evidence: red `npm run test -w companion` (log `9d-8.1-red.log`) -> `Tests 10 failed | 21 passed (31)`: the new `upgrades.test.ts` (6 cases, `expected [] to have a length of 1`), the `config.test.ts` secret-text field, and `main.test.ts` init/configUpdated Bearer from secrets (`expected 0 to be greater than 0`, `expected [] to include 'Bearer ald_old'`) and 401 (`Expected: "bad_config" Received: "connection_failure"`). Green (log `9d-8.1-green.log`) -> `Test Files 9 passed (9)`, `Tests 31 passed (31)`; root `npm run typecheck` exit 0; `cd companion && npm run build && npm run package` -> "@companion-module/base 1.14.1 OK for Companion 4.3.4.", "Writing compressed package output to autologger-0.2.0.tgz" (packaged manifest `"version":"0.2.0"`, `"apiVersion":"1.14.1"`).
+  - Evidence: `config.ts`: the token is `{type:'secret-text', id:'token', label:'Device token (required)'}`, `ModuleSecrets = {token?: string}`; `main.ts`: `InstanceBase<ModuleConfig, ModuleSecrets>`, `init`/`configUpdated` read `secrets.token` (a plain `config.token` is ignored, tested), 401 -> `BadConfig` "Device token invalid or revoked: create one in AutoLogger Settings → Companion devices"; `upgrades.ts`: one script moving a non-empty `config.token` into `updatedSecrets.token` and dropping it from `updatedConfig`, a no-op when empty, absent, or `secrets.token` is already set; `api.ts` accepts an absent token. `HELP.md`: device token from Settings → Companion devices, `API_TOKEN` no longer works, re-pair after the deploy, 90-day idle expiry and revoke. Version 0.1.0 -> 0.2.0 in `companion/package.json`, `companion/companion/manifest.json` and the lockfile workspace entry. Existing tests changed: none; `main.test.ts` mocks `@companion-module/base`'s `InstanceBase`/`runEntrypoint` (the real one needs Companion's IPC).
 
 ## 9. Docs and verify
 

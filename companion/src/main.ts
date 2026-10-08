@@ -6,7 +6,7 @@ import {
 } from '@companion-module/base';
 import { actionDefinitions } from './actions.js';
 import { ApiError, AutologgerApi, type CategoriesResponse } from './api.js';
-import { clampPollMs, getConfigFields, type ModuleConfig } from './config.js';
+import { clampPollMs, getConfigFields, type ModuleConfig, type ModuleSecrets } from './config.js';
 import { feedbackDefinitions } from './feedbacks.js';
 import { Poller } from './poller.js';
 import { presetDefinitions } from './presets.js';
@@ -19,17 +19,22 @@ import {
 import { UpgradeScripts } from './upgrades.js';
 import { variableDefinitions } from './variables.js';
 
-class AutologgerInstance extends InstanceBase<ModuleConfig> {
+const AUTH_FAILED =
+  'Device token invalid or revoked: create one in AutoLogger Settings → Companion devices';
+
+class AutologgerInstance extends InstanceBase<ModuleConfig, ModuleSecrets> {
   private config!: ModuleConfig;
+  private token: string | undefined;
   private controller: AbortController | null = null;
   private poller: Poller<ServerStatePayload> | null = null;
   private lastState: ServerStatePayload | null = null;
   private categories: CategoriesResponse | null = null;
   private destroyed = false;
 
-  async init(config: ModuleConfig): Promise<void> {
+  async init(config: ModuleConfig, _isFirstInit: boolean, secrets: ModuleSecrets): Promise<void> {
     this.destroyed = false;
     this.config = config;
+    this.token = secrets?.token;
     this.setVariableDefinitions(variableDefinitions());
     this.setFeedbackDefinitions(
       feedbackDefinitions(() => toFeedbackFlags(this.lastState ?? EMPTY)),
@@ -40,8 +45,9 @@ class AutologgerInstance extends InstanceBase<ModuleConfig> {
     this.startPolling();
   }
 
-  async configUpdated(config: ModuleConfig): Promise<void> {
+  async configUpdated(config: ModuleConfig, secrets: ModuleSecrets): Promise<void> {
     this.config = config;
+    this.token = secrets?.token;
     this.teardown();
     this.updateStatus(InstanceStatus.Connecting);
     this.startPolling();
@@ -60,7 +66,7 @@ class AutologgerInstance extends InstanceBase<ModuleConfig> {
     if (!this.controller) this.controller = new AbortController();
     return new AutologgerApi({
       url: this.config.url,
-      token: this.config.token,
+      token: this.token,
       signal: this.controller.signal,
     });
   }
@@ -77,7 +83,7 @@ class AutologgerInstance extends InstanceBase<ModuleConfig> {
     this.poller = new Poller<ServerStatePayload>({
       intervalMs: clampPollMs(this.config.pollMs),
       fetchState: (signal) =>
-        new AutologgerApi({ url: this.config.url, token: this.config.token, signal }).getState(),
+        new AutologgerApi({ url: this.config.url, token: this.token, signal }).getState(),
       onState: (s) => this.applyState(s),
       onError: (err) => this.applyError(err),
     });
@@ -98,7 +104,7 @@ class AutologgerInstance extends InstanceBase<ModuleConfig> {
   private applyError(err: unknown): void {
     if (this.destroyed) return;
     if (err instanceof ApiError && err.kind === 'auth') {
-      this.updateStatus(InstanceStatus.BadConfig, 'Check API token / login');
+      this.updateStatus(InstanceStatus.BadConfig, AUTH_FAILED);
     } else {
       this.updateStatus(InstanceStatus.ConnectionFailure, 'Cannot reach AutoLogger server');
     }

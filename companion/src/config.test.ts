@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { clampPollMs, normalizeBaseUrl } from './config.js';
+import { clampPollMs, getConfigFields, normalizeBaseUrl } from './config.js';
 
 describe('normalizeBaseUrl', () => {
   it('strips trailing slashes and trims', () => {
@@ -15,5 +15,16 @@ describe('clampPollMs', () => {
     expect(clampPollMs(10)).toBe(250);
     expect(clampPollMs(99999)).toBe(10000);
     expect(clampPollMs(Number.NaN)).toBe(1000);
+  });
+});
+
+describe('getConfigFields', () => {
+  it('declares the device token as a secret-text field', () => {
+    const token = getConfigFields().find((f) => f.id === 'token');
+    expect(token).toMatchObject({
+      type: 'secret-text',
+      id: 'token',
+      label: 'Device token (required)',
+    });
   });
 });

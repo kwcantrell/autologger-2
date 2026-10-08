@@ -4,7 +4,7 @@
   "name": "autologger",
   "shortname": "autologger",
   "description": "Control AutoLogger production logging from Bitfocus Companion: log events, roll/stop takes, record and play the active session.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "license": "MIT",
   "repository": "https://github.com/local/autologger",
   "bugs": "https://github.com/local/autologger/issues",

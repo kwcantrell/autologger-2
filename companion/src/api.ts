@@ -35,9 +35,14 @@ export class AutologgerApi {
   private readonly signal: AbortSignal;
   private readonly timeoutMs: number;
 
-  constructor(opts: { url: string; token: string; signal: AbortSignal; timeoutMs?: number }) {
+  constructor(opts: {
+    url: string;
+    token: string | undefined;
+    signal: AbortSignal;
+    timeoutMs?: number;
+  }) {
     this.base = normalizeBaseUrl(opts.url);
-    this.token = opts.token.trim();
+    this.token = (opts.token ?? '').trim();
     this.signal = opts.signal;
     this.timeoutMs = opts.timeoutMs ?? 8000;
   }
