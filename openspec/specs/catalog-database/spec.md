@@ -138,13 +138,13 @@ the cluster.
 
 ### Requirement: The catalog is not exposed through the Supabase API roles
 The roles `anon`, `authenticated` and `service_role`, and the `public` pseudo-role, SHALL have
-no privilege on schema `catalog` or on any table in it, so neither PostgREST nor pg_graphql can
-serve catalog rows. No role other than `autologger_app` and `postgres` (which created them)
+no privilege on schema `catalog` or on any table in it. The Postgres image still creates these
+roles, although no stack runs PostgREST any more, so neither PostgREST, if it is added back, nor
+pg_graphql can serve catalog rows. No role other than `autologger_app` and `postgres` (which created them)
 SHALL be a member of `catalog_user` or `catalog_system`, so `authenticator` and the API roles
 cannot switch to them. `public` SHALL NOT be able to execute any function in schema `catalog`.
 (The `postgres` role reads every table through its `pg_read_all_data` membership and owns the
-tables with `BYPASSRLS`; that reach, held by `db`, `migrate` and `realtime`, is out of slice 6's
-scope.)
+tables with `BYPASSRLS`; that reach, held by `db` and `migrate`, is out of slice 6's scope.)
 
 #### Scenario: The anon role cannot read users
 - **WHEN** a session in the `postgres` database runs `set role anon` and selects from
