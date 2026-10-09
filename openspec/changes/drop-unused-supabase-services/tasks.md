@@ -77,7 +77,7 @@
 
 ## 6. Verify
 
-- [ ] 6.1 Live dev check (heads-up: the shared dev stack then runs without the four services; the paused `~/autologger-ui` checkout brings them back on its next `make dev-up` until it rebases):
+- [x] 6.1 Live dev check (heads-up: the shared dev stack then runs without the four services; the paused `~/autologger-ui` checkout brings them back on its next `make dev-up` until it rebases):
   - `make dev-up` prints the retired-keys warning, naming the five keys and no value;
   - `docker ps -a --filter label=com.docker.compose.project=autologger-dev --format '{{.Names}}'` shows no `rest`, `realtime`, `storage` or `supabase-gw` container, and `auth` and `db` are healthy;
   - `docker ps --format '{{.Names}} {{.Ports}}'` shows `127.0.0.1` ports only on `autologger-dev-app` and `autologger-dev-companion`;
@@ -85,5 +85,7 @@
   - `docker exec autologger-dev-auth-1 env` shows `API_EXTERNAL_URL`, `GOTRUE_SITE_URL` and `GOTRUE_JWT_ISSUER` as `http://auth:9999`;
   - from the app container, `fetch('http://auth:9999/settings')` reports sign-up on, `google` the only enabled provider, email, phone and anonymous off, auto-confirm off;
   - the owner signs in with Google through the browser at `http://localhost:8787/`, and `/api/profile` reports the owner (the real GoTrue path; design assumption 8).
+  - Evidence: `make dev-up` -> rc=0; `compose-run: warning: the OpenBao dev secret holds retired keys ANON_KEY, REALTIME_DB_ENC_KEY, SECRET_KEY_BASE, SERVICE_ROLE_KEY, SUPABASE_PORT; nothing reads them, …`; `Container autologger-dev-supabase-gw-1 Removing`, `…-rest-1 Removing`, `…-storage-1 Removing`, `…-realtime-1 Removing`, `Container autologger-dev-auth-1 Started`; no `Supabase:` URL line (log `dus-6.1-devup.log`). `docker ps --filter name=autologger-dev` -> only `auth`, `db`, `app-gate`, `companion-gate`, `app` (`127.0.0.1:8787->8787/tcp`) and `companion` (`127.0.0.1:8000->8001/tcp`); `auth` networks `autologger-dev_auth-app autologger-dev_auth-egress autologger-dev_db`; `/settings` from the app container -> `"google":true`, every other provider, `email`, `phone`, `anonymous_users` false; `GET / 200` (log `dus-6.1-live.log`).
+  - Evidence: the owner signed out and back in with Google in the browser (2026-10-09): `docker logs autologger-dev-auth-1` -> `"grant_type":"id_token"` … `"msg":"request completed" "status":200` (GoTrue also logs its existing notice "ID token has a at_hash claim, but no access_token parameter was provided"); `catalog.kv` -> a new 14-day session row for the owner `b184c3cc` expiring `2026-10-23 18:31:49+00` (log `dus-6.1-live.log`). Leftovers kept as designed: the `supabase-storage` volume and the `supabase`/`edge` networks.
 - [ ] 6.2 CI on the PR: the integration and pg suites are green, with counts against the slice 10 baseline (PR #101 run 37829084541: server pg and integration 1445 passed, 1 skipped; storage pg 109). No server code changed, so the counts must match.
 - [ ] 6.3 `scripts/check-change.sh` with all gates, then a consistency read by a fresh subagent across the artifacts, the code and the docs. Each finding is fixed or reported to the owner.
