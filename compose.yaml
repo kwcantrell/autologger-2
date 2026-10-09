@@ -153,20 +153,6 @@ networks:
     ipam:
       config:
         - subnet: 172.28.15.0/24
-  # Supabase services (docker/supabase-services.yaml): internal and host-isolated; only the gateway
-  # also joins `edge`, which exists to publish its port.
-  supabase:
-    internal: true
-    driver_opts:
-      com.docker.network.bridge.gateway_mode_ipv4: isolated
-      com.docker.network.bridge.gateway_mode_ipv6: isolated
-    ipam:
-      config:
-        - subnet: 172.28.13.0/24
-  edge:
-    ipam:
-      config:
-        - subnet: 172.28.14.0/24
   # Sign-in (gotrue-sign-in D6): `auth-egress` is GoTrue's only way out (to Google), and only
   # `auth` joins it; `auth-app` is internal and host-isolated, with exactly two members, `auth` and
   # the app, so the app reaches GoTrue for the sign-in exchange and nothing else of Supabase.

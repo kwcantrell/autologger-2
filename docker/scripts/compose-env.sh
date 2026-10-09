@@ -33,7 +33,8 @@
 #     ambient overrides such as `DEV_PORT=9000 make dev-up` no longer apply: set the value in
 #     OpenBao. check-envs.sh strips the caller's variables itself.
 #   * All three also add -f docker/supabase-db.yaml (supabase-db D1: db and migrate) and
-#     -f docker/supabase-services.yaml (supabase-services D1: auth, rest, realtime, storage, gateway).
+#     -f docker/supabase-services.yaml (supabase-services D1; drop-unused-supabase-services D1:
+#     auth only).
 #   * Variables (for callers that need the raw pieces): AL_DEV_FILE, AL_DB_FILE, AL_STAGE_FILES,
 #     AL_PROD_FILE, AL_STAGE_WEB_TAG, AL_STAGE_API_TAG, AL_STAGE_PUBLIC_BASE_URL.
 

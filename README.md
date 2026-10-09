@@ -123,7 +123,7 @@ refactor of this one.
 - **Connections per process: 14** — the catalog pool's 12 (3 root, 5 transaction, 4 session) plus
   the frame bus's listener and publisher. The `autologger_app` role's limit, 45, counts every
   process together, so it fits **three processes (42 of 45)**; a fourth needs the limit raised in
-  its own change. Postgres's 100 connections stay shared with the Supabase services and `migrate`.
+  its own change. Postgres's 100 connections stay shared with GoTrue and `migrate`.
 - **Filesystem blobs** = audio bytes under `BLOB_DIR/audio/<session_id>/<ordinal>_<uuid>.<ext>`;
   the hub holds only metadata + relative keys. `BLOB_DIR` is its own volume, which every server
   process of a stack mounts, so a segment recorded through one process plays through another.
@@ -1742,18 +1742,18 @@ existing configuration.
 | `make check` | Static invariant check of dev, stage and prod compose (reads no real env files) |
 | `make dev-check` | Dev invariants plus the credentials-inode drift warning |
 | `make dev-build` | Rebuild the dev image (needed after dependency, lockfile or config changes) |
-| `make dev-up` | Check, then build and start the whole dev project (app, gate, Companion, Supabase), apply migrations, print the URLs |
+| `make dev-up` | Check, then build and start the whole dev project (app, gates, Companion, Postgres, GoTrue), apply migrations, print the URLs; removes containers of services the files no longer define |
 | `make dev-migrate` / `make dev-psql` | Apply `supabase/migrations` to dev Postgres / psql in it ([docs/supabase.md](docs/supabase.md)) |
 | `make dev-down` | Stop and remove dev containers (volumes kept) |
 | `make dev-restart` | Restart dev: `app` then `app-gate`, `companion` then `companion-gate` |
 | `make dev-logs` / `make dev-shell` | Follow dev logs / shell in the dev app container |
-| `make dev-reset CONFIRM=yes` | **Destroy** the dev volumes, including Postgres, the audio blob volume and Supabase storage ([docs/supabase.md](docs/supabase.md) has the Postgres-only re-init) |
+| `make dev-reset CONFIRM=yes` | **Destroy** the dev volumes, including Postgres and the audio blob volume ([docs/supabase.md](docs/supabase.md) has the Postgres-only re-init; a leftover `supabase-storage` volume stays, see [the leftovers note](#removing-the-old-supabase-services-leftovers)) |
 | `make stage-build` | Build the stage images (native arch, tagged `:local`) |
 | `make stage-push STAGE_IMAGE_TAG=<sha>` | Clean tree whose HEAD is `<sha>` (any branch): bake `STAGE_PLATFORMS` (default `linux/amd64`) and push `ghcr.io/kwcantrell/autologger-{web,api}:<sha>` |
-| `make stage-up` | Check, then build and start the whole stage stack (incl. Supabase), apply migrations, print the URLs. With `STAGE_IMAGE_TAG=<sha> STAGE_PUBLIC_BASE_URL=https://<host>` (a tag requires the URL, and the tree must be that commit) it pulls those images instead of building and serves that public origin (see [Public stage](#public-stage-https-edge)) |
+| `make stage-up` | Check, then build and start the whole stage stack (incl. Postgres and GoTrue), apply migrations, print the URLs, and remove containers of services the files no longer define. With `STAGE_IMAGE_TAG=<sha> STAGE_PUBLIC_BASE_URL=https://<host>` (a tag requires the URL, and the tree must be that commit) it pulls those images instead of building and serves that public origin (see [Public stage](#public-stage-https-edge)) |
 | `make stage-down` / `make stage-logs` | Stop and remove stage containers (volumes kept) / follow logs |
 | `make stage-claude-login` | Interactive Claude login inside the stage api container |
-| `make stage-reset CONFIRM=yes` | **Destroy** the stage volumes, including Postgres, the audio blob volume and Supabase storage |
+| `make stage-reset CONFIRM=yes` | **Destroy** the stage volumes, including Postgres and the audio blob volume (a leftover `supabase-storage` volume stays, see [the leftovers note](#removing-the-old-supabase-services-leftovers)) |
 | `make prod-build` | Native-arch build of both images, tagged `:local` only (no SHA tag, no push) |
 | `make prod-push` | Clean `main` only: multi-arch bake and push, tagged with the 12-char HEAD SHA |
 | `make prod-check` | Any branch: OpenBao `prod` login, guards and compose config; starts nothing |
@@ -2006,10 +2006,46 @@ The variables are passed to `compose-run.mjs` by name; every `$(RUN)` target (`s
   `COOKIE_SECURE=0` through the edge (the `~/spark-infra` pinned deploy refuses such a tree and checks
   the running containers afterwards). Migrations are forward-only: the previous app then runs on the
   newer schema. If that is not safe, stop the tunnel first.
-- The Supabase gateway, GoTrue (`API_EXTERNAL_URL`, `GOTRUE_SITE_URL`, `GOTRUE_JWT_ISSUER`) and
-  storage (`STORAGE_PUBLIC_URL`) URLs stay `http://localhost:${SUPABASE_PORT}`: no browser code
-  calls them (the web bundle reads no Supabase URL, and the server exchanges the Google ID token
-  with GoTrue over the internal network at `http://auth:9999`), so no public Supabase hostname is needed.
+- GoTrue's URLs (`API_EXTERNAL_URL`, `GOTRUE_SITE_URL`, `GOTRUE_JWT_ISSUER`) are its internal
+  address, `http://auth:9999`, on every stack: no browser code calls GoTrue (the web bundle reads
+  no Supabase URL, and the server exchanges the Google ID token with GoTrue over the internal
+  network), so no public Supabase hostname is needed. No Supabase service publishes a port.
+
+### Removing the old Supabase services' leftovers
+
+PostgREST, Realtime, Storage and their gateway were removed (`drop-unused-supabase-services`).
+Every `make <env>-up`, `-down` and `-reset` passes `--remove-orphans`, so their containers go on
+the next run; removing a container deletes no volume. A dev or stage stack that ran them keeps
+three leftovers, which nothing uses (prod never ran these services):
+- the `<project>_supabase-storage` volume, which `make <env>-reset` no longer deletes;
+- the `<project>_supabase` and `<project>_edge` networks;
+- in Postgres, the `_realtime` schema and storage-api's tables in the `storage` schema (the image
+  creates the `storage` and `realtime` schemas themselves; keep those).
+
+**Don't remove them while any checkout still runs the old stack.** `~/autologger-ui` shares
+`kv/autologger/dev` and its branch still starts the old services, which reuse the volume, the
+schema and the tables, and its next `make dev-up` brings the four containers back. Once no
+checkout runs them, for `<project>` `autologger-dev` or `autologger-stage`:
+
+```sh
+docker volume rm <project>_supabase-storage
+docker network rm <project>_supabase <project>_edge
+```
+
+Optionally, in Postgres (`make dev-psql`, then `\c postgres supabase_admin`; stage:
+`docker exec -it autologger-stage-db-1 psql -U supabase_admin`):
+
+```sql
+DROP SCHEMA _realtime CASCADE;
+-- storage-api's tables: list them with \dt storage.* and drop each, e.g.
+-- DROP TABLE storage.<table> CASCADE;
+ALTER ROLE authenticator PASSWORD NULL;
+ALTER ROLE supabase_storage_admin PASSWORD NULL;
+```
+
+The last two clear the password the removed services used; on a database created after the
+removal those roles already have none. Then remove the retired keys from OpenBao
+([docs/openbao-secrets.md](docs/openbao-secrets.md), "Retired keys").
 
 ### Resets, checks and prod guards
 
@@ -2196,8 +2232,7 @@ the upstream proxy (a follow-up).
 The Playwright suites (smoke, visual regression, login gate, Companion headless, container
 routing) were retired during the Supabase migration (ADR 0021 slice 1.4a); they remain in git
 history and return rebuilt against the Supabase stack. Until then, `npm test` (unit and
-integration), `docker/scripts/test_router.sh stage` and `docker/supabase/test_gateway.sh` are the
-regression checks.
+integration) and `docker/scripts/test_router.sh stage` are the regression checks.
 
 ## Companion module (`companion/`)
 

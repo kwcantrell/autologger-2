@@ -2,10 +2,11 @@
 
 ADR 0021 slices 1.2a (`supabase-db`) and 1.2b (`supabase-services`). Each stack (dev, stage,
 prod) has its own self-hosted Supabase:
-- Postgres;
-- the API services auth (GoTrue), rest (PostgREST), realtime and storage;
-- a gateway, `supabase-gw`.
+- Postgres (`db`) and its migrations runner (`migrate`);
+- GoTrue (`auth`), for sign-in.
 
+PostgREST, Realtime, Storage and their gateway were removed (`drop-unused-supabase-services`, ADR
+0021 slice 10): nothing used them. GoTrue stays for the planned username-and-password sign-in.
 Studio and postgres-meta are deferred to a later slice. Use `make dev-psql` for admin work.
 The app uses only Supabase's Postgres so far: the catalog moved in slice 4, and sign-in moves in
 slice 5. Slice 4a created the catalog's schema and the app's database role and network path; since
@@ -15,27 +16,23 @@ gets the definitions only. Its keys and first start wait for the cutover.
 ## Layout
 
 - **Compose files.** `docker/supabase-db.yaml` (`db`, `migrate`) and
-  `docker/supabase-services.yaml` (`auth`, `rest`, `realtime`, `storage`, `supabase-gw`). Both
-  are added to every stack by `docker/scripts/compose-env.sh`.
-- **The gateway** is the only way in. It's published on `127.0.0.1:${SUPABASE_PORT}` (dev 8790,
-  stage 8791), and `make dev-up` prints the URL. It's configured in
-  `docker/supabase-gw.Caddyfile`.
+  `docker/supabase-services.yaml` (`auth`). Both are added to every stack by
+  `docker/scripts/compose-env.sh`. No Supabase service publishes a port.
 - **Networks.** Each base compose file declares them on pinned subnets, and `make check`
   invariant 16 enforces membership:
 
   | Network | Internal, host-isolated | Members | prod | stage | dev |
   | --- | --- | --- | --- | --- | --- |
-  | `db` | yes | `db`, `migrate`, `auth`, `rest`, `realtime`, `storage` | 172.28.12.0/24 | .22 | .31 |
+  | `db` | yes | `db`, `migrate`, `auth` | 172.28.12.0/24 | .22 | .31 |
   | `catalog` | yes | `db` and the app only (dev `app`, stage/prod `api`) | 172.28.15.0/24 | .25 | .34 |
-  | `supabase` | yes | `supabase-gw`, `auth`, `rest`, `realtime`, `storage` | 172.28.13.0/24 | .23 | .32 |
-  | `edge` | no (it publishes the port) | `supabase-gw` only | 172.28.14.0/24 | .24 | .33 |
   | `auth-egress` | no (GoTrue's way out, to Google) | `auth` only | 172.28.16.0/24 | .27 | .35 |
   | `auth-app` | yes | `auth` and the app only (dev `app`, stage/prod `api`) | 172.28.17.0/24 | .28 | .36 |
 
-  Nothing on the host can connect to Postgres or to a service directly. `docker/supabase/test_gateway.sh` checks this.
-  The app reaches Postgres only over `catalog`, and GoTrue only over `auth-app`, for sign-in; it
-  can't reach the other Supabase services. In dev, `app-gate` also refuses any connection from the
-  `catalog` and `auth-app` subnets (`GATE_DENY_SUBNET`). In stage and prod, `db` and `auth` can
+  Invariant 16 also fails a stack that defines one of the removed services (PostgREST, Realtime,
+  Storage, the gateway) or has a `supabase` or `edge` network. Nothing on the host can connect to Postgres. The host can
+  reach GoTrue at its `auth-egress` address (see Residual risks). The app reaches Postgres only
+  over `catalog`, and GoTrue only over `auth-app`, for sign-in. In dev, `app-gate` also refuses
+  any connection from the `catalog` and `auth-app` subnets (`GATE_DENY_SUBNET`). In stage and prod, `db` and `auth` can
   reach the `api` port over their two-member networks; the API still needs a login.
   `auth-egress` reaches the internet, the LAN and the host's bridge address, not only Google
   (accepted for now; ADR 0021 revisit list).
@@ -43,49 +40,30 @@ gets the definitions only. Its keys and first start wait for the cutover.
   - `<project>_supabase-db` (data) and `<project>_supabase-db-config` (the pgsodium root key)
     are **one unit**. Back them up, restore them and delete them together. A data volume without
     its config volume silently gets a new root key.
-  - `<project>_supabase-storage` holds storage objects. Each file is capped at 50 MB, but the
-    volume has no quota: watch `docker system df`.
+  - A stack that ran the old services still has a `<project>_supabase-storage` volume. Nothing
+    declares it any more, so `make <env>-reset` no longer deletes it. The README's "Removing the
+    old Supabase services' leftovers" note gives the commands.
 - **Database roles.**
 
   | Role | Used by | Password |
   | --- | --- | --- |
-  | `supabase_admin` (superuser), `postgres` | `db`, `migrate`, realtime | `POSTGRES_PASSWORD` |
-  | `authenticator` (rest), `supabase_auth_admin` (auth), `supabase_storage_admin` (storage) | those services | `SUPABASE_ROLES_PASSWORD` |
+  | `supabase_admin` (superuser), `postgres` | `db`, `migrate` | `POSTGRES_PASSWORD` |
+  | `supabase_auth_admin` | `auth` | `SUPABASE_ROLES_PASSWORD` |
   | `autologger_app`: no table privileges (`USAGE` on schema `catalog` only); member (set only) of `catalog_user` and `catalog_system`; at most 45 connections (all processes together; 14 per process, session-frame-bus D7), 30 s statement and 15 s idle-in-transaction timeouts, `search_path` `catalog` | the app (`PGUSER`) | `APP_DB_PASSWORD`, set by the migrations runner |
   | `catalog_user` (NOLOGIN): DML under the 6b-2 policies on every catalog table except `kv` (none); `users`: `SELECT` and `UPDATE (given_name, family_name)`; no `INSERT` on memberships and invites; executes the policy helpers; statements made for a signed-in user, whose id the transaction sets in `app.user_id` | the app, per transaction (`set_config('role', …, true)`) | none |
   | `catalog_system` (NOLOGIN): DML on every catalog table, under row-level security; statements made for a named system task | the app, per transaction (`set_config('role', …, true)`) | none |
 
-  The public-facing API services never hold the superuser password. Realtime does, because
-  upstream requires it. The keys and their allowed services are listed in
-  [openbao-secrets.md](openbao-secrets.md).
+  Only `db` and `migrate` hold the superuser password; GoTrue holds `SUPABASE_ROLES_PASSWORD`.
+  On a database created before `drop-unused-supabase-services`, `authenticator` and
+  `supabase_storage_admin` still have that password; on a new one they have none and can't log
+  in. The keys and their allowed services are listed in [openbao-secrets.md](openbao-secrets.md).
 
-## The gateway
+## GoTrue
 
-The gateway reproduces upstream's legacy-key gateway. Supabase clients use
-`http://localhost:<SUPABASE_PORT>` with the anon key (`ANON_KEY`) or the service-role key
-(`SERVICE_ROLE_KEY`).
-
-| Path | Goes to | `apikey` |
-| --- | --- | --- |
-| `/auth/v1/verify`, `/callback`, `/authorize` | auth | not required |
-| other `/auth/v1/` | auth | anon or service-role |
-| `/rest/v1/` (the root) | rest | service-role |
-| other `/rest/v1/` | rest | anon or service-role |
-| `/realtime/v1/api/tenants`, `/realtime/v1/api/openapi` | refused, 403 | |
-| `/realtime/v1/api/` | realtime `/api/` | anon or service-role |
-| other `/realtime/v1/` (websocket) | realtime `/socket/` | anon or service-role (header or `?apikey=`) |
-| `/storage/v1/` | storage | not required; storage checks the token |
-| anything else | 404 | |
-
-Before routing, the gateway refuses (403):
-- a `Host` other than `localhost:<port>` or `127.0.0.1:<port>`;
-- an `Origin` other than those two.
-
-A missing or wrong key gets 401, and the anon key on the REST root gets 403. With no
-`Authorization` header (or an empty one), the gateway sends `Bearer <apikey>`. A client token is
-never replaced. Realtime gets the `Host` it uses to find its tenant (`realtime-dev`). The
-gateway's upstream-error log is turned off, because it would print the `apikey` header. Debug
-with each service's own logs.
+GoTrue (`auth`) listens on `http://auth:9999` inside the stack and publishes no port.
+`API_EXTERNAL_URL`, `GOTRUE_SITE_URL` and `GOTRUE_JWT_ISSUER` are that internal address: no browser
+reaches GoTrue, and the server discards the tokens GoTrue issues (`drop-unused-supabase-services`
+D2).
 
 GoTrue's only sign-in provider is Google, and it accepts ID tokens whose audience is the
 environment's `GOOGLE_CLIENT_ID` (gotrue-sign-in, ADR 0021 slice 5a). Email, phone and anonymous
@@ -98,29 +76,32 @@ without both. Dev uses its own Google client (redirect `http://localhost:8787/au
 and the dev Companion needs a device token from dev's Settings → Companion devices (`API_TOKEN` is
 ignored since ADR 0021 slice 9d); without it the dev Companion gets `401`. There is no CORS and no public GoTrue route.
 
-To check a running stack: `sh docker/supabase/test_gateway.sh dev` (or `stage`). It prints
-statuses only.
+To check GoTrue's settings on a running stack, read them from the app container, the only other
+member of `auth-app`:
+
+```sh
+docker exec autologger-dev-app node -e "fetch('http://auth:9999/settings').then(r=>r.json()).then(j=>console.log(JSON.stringify({disable_signup:j.disable_signup,autoconfirm:j.mailer_autoconfirm,anon:j.external.anonymous_users,email:j.external.email,phone:j.external.phone,enabled:Object.keys(j.external).filter(k=>j.external[k]===true)})))"
+```
+
+Expect sign-up on, `google` the only enabled provider, and email, phone, anonymous sign-in and
+auto-confirm off. On stage, use `autologger-stage-api`.
 
 ## Commands
 
 | Command | What it does |
 | --- | --- |
-| `make dev-up`, `make stage-up` | Start the stack (Supabase included), apply migrations, print the URLs |
+| `make dev-up`, `make stage-up` | Start the stack (Postgres and GoTrue included), apply migrations, print the URLs, and remove containers of services the files no longer define |
 | `make dev-migrate` | Apply migrations to dev. It starts `db` and waits for it to be healthy. |
 | `make dev-psql` | psql in the dev `db` as `postgres`, with no history file |
-| `make dev-reset CONFIRM=yes`, `make stage-reset CONFIRM=yes` | **Delete** every volume of that stack, Postgres and Supabase storage included |
+| `make dev-reset CONFIRM=yes`, `make stage-reset CONFIRM=yes` | **Delete** every volume the stack's files declare, Postgres included (not a leftover `supabase-storage` volume) |
 
 Nothing migrates prod or opens a shell in it. The compose wrapper refuses `compose run` and
 `compose exec` for prod.
 
 ## Re-initialising Postgres (when the init SQL changes)
 
-`docker/supabase/init/` holds three files:
-- `roles.sql`, which sets the service-role passwords;
-- `jwt.sql`;
-- `realtime.sql`.
-
-They run only when the Postgres data volume is empty. To apply changed init SQL to dev or stage
+`docker/supabase/init/` holds one file, `roles.sql`, which sets GoTrue's role password
+(`supabase_auth_admin`). It runs only when the Postgres data volume is empty. To apply changed init SQL to dev or stage
 without touching app data, logins or Companion config:
 
 ```sh
@@ -130,7 +111,7 @@ make dev-up
 ```
 
 For stage, use `make stage-down`, the `autologger-stage_…` volumes, and `make stage-up`. This
-deletes that environment's Postgres data. Run `docker/supabase/test_gateway.sh` afterwards.
+deletes that environment's Postgres data. Check GoTrue's settings afterwards (see GoTrue).
 
 ## The catalog schema
 
@@ -139,7 +120,7 @@ not `public`, because the image grants every new `public` table to `anon`, `auth
 `service_role`, and PostgREST serves `public`. It is a faithful port of the SQLite catalog (text
 timestamps, 0/1 flags, JSON text, `bigint` integers, `COLLATE "C"`); a typed schema follows the
 migration. `postgres` is a member of `pg_read_all_data`, so anything holding `POSTGRES_PASSWORD`
-(`db`, `migrate`, `realtime`) can read it; slice 6 revisits that.
+(`db`, `migrate`) can read it; slice 6 revisits that.
 
 **The app's password.** After the migrations, `migrate.sh` gives `autologger_app` `LOGIN` and
 sets its password from `APP_DB_PASSWORD`, with statement logging and `pg_stat_statements` off for
@@ -214,20 +195,19 @@ in OpenBao alone breaks the services that use it.
      `docker exec -it autologger-stage-db-1 psql -U supabase_admin`. Prod, at the owner's hand,
      uses `docker exec -it autologger-db-1 …`.
   3. `make dev-up` (or `make stage-up`) recreates the services with the new value.
-- **`SUPABASE_ROLES_PASSWORD`:** the same steps, with `\password authenticator`,
-  `\password supabase_auth_admin` and `\password supabase_storage_admin` as `supabase_admin`.
-- **`JWT_SECRET`, `ANON_KEY`, `SERVICE_ROLE_KEY`** change together. Remove all three
-  from `kv/autologger/<env>` (a KV v2 merge patch with `null` values removes keys, for example
-  `PATCH /v1/kv/data/autologger/<env>` with body
-  `{"data":{"JWT_SECRET":null,"ANON_KEY":null,"SERVICE_ROLE_KEY":null}}`, or the OpenBao UI), run
-  `node docker/scripts/supabase-keys.mjs <env> --writer ~/.vault-token` (it creates the three), then `make <env>-up`. Old user sessions become invalid. The wrapper warns 90 days
-  before the API keys' 5-year expiry.
-- **`SECRET_KEY_BASE`:** change it in OpenBao, then `make <env>-up`.
-- **`REALTIME_DB_ENC_KEY`** encrypts realtime's stored tenant settings. After changing it,
-  re-initialise Postgres (above) on dev or stage.
+- **`SUPABASE_ROLES_PASSWORD`:** the same steps, with only `\password supabase_auth_admin` as
+  `supabase_admin`.
+- **`JWT_SECRET`** signs only GoTrue's tokens, which the server discards. Rotate it alone, and only
+  once no checkout runs the old Supabase services and the retired keys are removed from the
+  secret ([openbao-secrets.md](openbao-secrets.md), "Retired keys"): until then an older
+  `compose-run.mjs` refuses a `JWT_SECRET` that its stored `ANON_KEY` and `SERVICE_ROLE_KEY` don't
+  verify against. Remove it from `kv/autologger/<env>` (a KV v2 merge patch with `null` values
+  removes keys, for example `PATCH /v1/kv/data/autologger/<env>` with body
+  `{"data":{"JWT_SECRET":null}}`, or the OpenBao UI), run
+  `node docker/scripts/supabase-keys.mjs <env> --writer ~/.vault-token` (it creates it), then
+  `make <env>-up`. Rotating it is also what retires the old `SERVICE_ROLE_KEY` as a GoTrue admin
+  credential (see Residual risks).
 - **A failed generator run** creates nothing, because each run is one all-or-nothing request.
-  If the JWT trio is incomplete for some other reason, the generator refuses. Delete whichever
-  of the three exist in OpenBao and run it again.
 - **A deleted current version:** if `kv/autologger/<env>` was deleted with `bao kv delete` (or
   destroyed), the generator refuses and writes nothing, because a fresh set would replace every
   database and JWT secret. Restore a deleted version with
@@ -241,9 +221,16 @@ in OpenBao alone breaks the services that use it.
 
 ## Residual risks
 
-- **Realtime holds the superuser password,** as upstream requires. It is reachable only through
-  the gateway's key check, on internal networks.
-- **The four services can reach each other's ports** on the shared `db` and `supabase`
-  networks. Revisit before cutover.
+- **The host reaches GoTrue** at its `auth-egress` address (for example
+  `http://172.28.35.2:9999` on dev). `auth-egress` must route to the internet, so it can't be
+  host-isolated. That allows reading `/settings` and `/health`, and the id_token grant with a
+  valid Google ID token for this client, the same exchange the app makes. Sign-up by email, phone
+  or anonymously is off. GoTrue's admin API needs a `service_role` JWT signed with `JWT_SECRET`.
+  **The retired `SERVICE_ROLE_KEY` is such a JWT** (5-year expiry): it stays in OpenBao and in a
+  checkout that still runs the old stack, so until `JWT_SECRET` is rotated it remains a GoTrue
+  admin credential, usable directly against that address. This reach is not new (the gateway gave
+  the same reach with the same key). The follow-up is ordered: once no checkout runs the old stack,
+  remove the retired keys ([openbao-secrets.md](openbao-secrets.md)), then rotate `JWT_SECRET`
+  (Rotation, above). The ADR 0021 revisit list carries an egress allowlist for GoTrue.
 - **Container logs carry text from outside the stack,** such as request paths and failed-login
   names. Treat them as untrusted data (see [security.md](security.md)).

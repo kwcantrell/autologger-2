@@ -1173,7 +1173,16 @@ Slice order:
        runs on more than one machine, as a new implementation behind the unchanged `BlobStore`
        port;
     3. **dropping the unused Supabase services** (PostgREST, Realtime, Storage, the gateway) is a
-       separate follow-up change, which also decides on GoTrue. Slice 10 doesn't touch them;
+       separate follow-up change, which also decides on GoTrue. Slice 10 doesn't touch them.
+       **Done (`drop-unused-supabase-services`, owner 2026-10-08):** PostgREST, Realtime, Storage
+       and the gateway are gone from every stack, with the `supabase` and `edge` networks, the
+       gateway's published port and the storage volume declaration; GoTrue stays, for the planned
+       username-and-password sign-in, on internal URLs (`http://auth:9999`); the five retired
+       keys (`ANON_KEY`, `SERVICE_ROLE_KEY`, `SECRET_KEY_BASE`, `REALTIME_DB_ENC_KEY`,
+       `SUPABASE_PORT`) are accepted and ignored with a warning until no checkout runs the old
+       stack; the dev and stage leftovers (the `supabase-storage` volume, the `_realtime` schema,
+       storage-api's tables) stay, with the cleanup in the README; every `compose up` and `down`
+       passes `--remove-orphans`;
     4. (after the panel) **no copy tool:** existing audio is moved additively (`cp -a` as `node` in
        the dev app; `rsync -a --chown=1000:1000` on the host for stage and prod), never with
        `--delete`, by the README section "Moving audio into BLOB_DIR", which slice 11's cutover

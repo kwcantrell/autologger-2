@@ -31,7 +31,6 @@ services:
       POSTGRES_PORT: "5432"
       PGPORT: "5432"
       PGDATABASE: postgres
-      JWT_EXP: "3600"
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?add POSTGRES_PASSWORD to this environment's OpenBao secret with docker/scripts/supabase-keys.mjs (see docs/supabase.md)}
       PGPASSWORD: ${POSTGRES_PASSWORD:?add POSTGRES_PASSWORD to this environment's OpenBao secret with docker/scripts/supabase-keys.mjs (see docs/supabase.md)}
       # Used only by init SQL (roles.sql) on an empty volume (supabase-services D6).
@@ -39,10 +38,9 @@ services:
     volumes:
       - supabase-db:/var/lib/postgresql/data
       - supabase-db-config:/etc/postgresql-custom
-      # Supabase init SQL: runs only on an empty data volume (see docs/supabase.md).
-      - ./docker/supabase/init/jwt.sql:/docker-entrypoint-initdb.d/init-scripts/99-jwt.sql:ro
+      # Supabase init SQL: runs only on an empty data volume (see docs/supabase.md). The JWT and
+      # Realtime init files went with PostgREST and Realtime (drop-unused-supabase-services D1).
       - ./docker/supabase/init/roles.sql:/docker-entrypoint-initdb.d/init-scripts/99-roles.sql:ro
-      - ./docker/supabase/init/realtime.sql:/docker-entrypoint-initdb.d/migrations/99-realtime.sql:ro
     # `catalog` is the app's only path to Postgres (catalog-pg-schema D5).
     networks: [db, catalog]
     healthcheck:

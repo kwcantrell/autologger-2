@@ -7,7 +7,6 @@
 
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { createHmac } from 'node:crypto';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import https from 'node:https';
 import { tmpdir } from 'node:os';
@@ -19,16 +18,15 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const GEN = join(ROOT, 'docker/scripts/supabase-keys.mjs');
 const TOKEN = 'tok-SHOULD-NOT-LEAK';
 const KVURL = '/v1/kv/data/autologger/dev';
-const ALL = ['POSTGRES_PASSWORD', 'SUPABASE_ROLES_PASSWORD', 'APP_DB_PASSWORD', 'JWT_SECRET', 'ANON_KEY', 'SERVICE_ROLE_KEY', 'SECRET_KEY_BASE', 'REALTIME_DB_ENC_KEY'];
+// drop-unused-supabase-services D3: the generator owns four keys; the five retired ones are never
+// created, reported or written.
+const ALL = ['POSTGRES_PASSWORD', 'SUPABASE_ROLES_PASSWORD', 'APP_DB_PASSWORD', 'JWT_SECRET'];
+const RETIRED = ['ANON_KEY', 'SERVICE_ROLE_KEY', 'SECRET_KEY_BASE', 'REALTIME_DB_ENC_KEY', 'SUPABASE_PORT'];
 const FORMAT = {
   POSTGRES_PASSWORD: /^[0-9a-f]{32}$/,
   SUPABASE_ROLES_PASSWORD: /^[0-9a-f]{32}$/,
   APP_DB_PASSWORD: /^[0-9a-f]{32}$/,
   JWT_SECRET: /^[A-Za-z0-9_-]{43}$/,
-  SECRET_KEY_BASE: /^[A-Za-z0-9_-]{86}$/,
-  REALTIME_DB_ENC_KEY: /^[A-Za-z0-9_-]{16}$/,
-  ANON_KEY: /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/,
-  SERVICE_ROLE_KEY: /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/,
 };
 
 let T;
@@ -202,18 +200,6 @@ describe('supabase-keys.mjs (supabase-db D5, openbao-secrets D4)', () => {
       assert.match(r.out, new RegExp(`^created ${k}$`, 'm'));
     }
     assert.ok(!r.out.includes(TOKEN));
-    // The two API keys are HS256 JWTs signed with the JWT_SECRET of the same write.
-    const now = Math.floor(Date.now() / 1000);
-    for (const [k, role] of [['ANON_KEY', 'anon'], ['SERVICE_ROLE_KEY', 'service_role']]) {
-      const [h, pl64, sig] = got[k].split('.');
-      assert.equal(createHmac('sha256', got.JWT_SECRET).update(`${h}.${pl64}`).digest('base64url'), sig, k);
-      assert.deepEqual(JSON.parse(Buffer.from(h, 'base64url')), { alg: 'HS256', typ: 'JWT' });
-      const pl = JSON.parse(Buffer.from(pl64, 'base64url'));
-      assert.equal(pl.role, role);
-      assert.equal(pl.iss, 'supabase');
-      assert.ok(Math.abs(pl.iat - now) < 60);
-      assert.equal(pl.exp - pl.iat, 5 * 365 * 86400);
-    }
   });
 
   it('a path that does not exist yet gets a create-only POST (cas 0)', async () => {
@@ -227,7 +213,10 @@ describe('supabase-keys.mjs (supabase-db D5, openbao-secrets D4)', () => {
     assert.match(p.headers['content-type'], /^application\/json/);
     const b = JSON.parse(p.body);
     assert.deepEqual(b.options, { cas: 0 });
+    // drop-unused-supabase-services D3: exactly the four keys, each in its format.
     assert.deepEqual(Object.keys(b.data).sort(), [...ALL].sort());
+    for (const [k, v] of Object.entries(b.data)) assert.match(v, FORMAT[k], k);
+    assert.doesNotMatch(r.out, new RegExp(RETIRED.join('|')));
   });
 
   it('an existing stack gets only the app password created (catalog-pg-schema D4)', async () => {
@@ -244,16 +233,37 @@ describe('supabase-keys.mjs (supabase-db D5, openbao-secrets D4)', () => {
     for (const k of ALL.filter((x) => x !== 'APP_DB_PASSWORD')) assert.match(r.out, new RegExp(`^kept ${k}$`, 'm'));
   });
 
-  it('a partial JWT trio is refused before any write, naming the missing keys', async () => {
+  // drop-unused-supabase-services D3: no trio any more; JWT_SECRET stands alone.
+  it('a path with JWT_SECRET and no ANON_KEY is not refused and writes nothing new', async () => {
     const w = writeFiles();
-    for (const have of [['JWT_SECRET'], ['ANON_KEY', 'SERVICE_ROLE_KEY']]) {
-      seen = [];
-      handler = standIn({ keys: have });
-      const r = await run(['dev', '--writer', w]);
-      assert.notEqual(r.code, 0, have.join());
-      assert.match(r.out, /JWT_SECRET, ANON_KEY and SERVICE_ROLE_KEY/);
-      assert.equal(writes().length, 0);
-    }
+    handler = standIn({ keys: ALL });
+    const r = await run(['dev', '--writer', w]);
+    assert.equal(r.code, 0, r.out);
+    assert.deepEqual(writes(), []);
+    assert.doesNotMatch(r.out, /ANON_KEY|SERVICE_ROLE_KEY/);
+  });
+
+  it('the retired keys are never reported and cause no write', async () => {
+    const w = writeFiles();
+    handler = standIn({ keys: [...ALL, ...RETIRED] });
+    const r = await run(['dev', '--writer', w]);
+    assert.equal(r.code, 0, r.out);
+    for (const k of ALL) assert.match(r.out, new RegExp(`^kept ${k}$`, 'm'));
+    assert.doesNotMatch(r.out, new RegExp(RETIRED.join('|')));
+    assert.deepEqual(writes(), []);
+  });
+
+  it('a path missing only JWT_SECRET gets only it created', async () => {
+    const w = writeFiles();
+    handler = standIn({ keys: [...ALL.filter((k) => k !== 'JWT_SECRET'), ...RETIRED] });
+    const r = await run(['dev', '--writer', w]);
+    assert.equal(r.code, 0, r.out);
+    assert.equal(writes().length, 1);
+    const b = JSON.parse(writes()[0].body);
+    assert.deepEqual(Object.keys(b.data), ['JWT_SECRET']);
+    assert.match(b.data.JWT_SECRET, FORMAT.JWT_SECRET);
+    assert.match(r.out, /^created JWT_SECRET$/m);
+    assert.doesNotMatch(r.out, new RegExp(RETIRED.join('|')));
   });
 
   it('a rejected write exits non-zero with no retry', async () => {

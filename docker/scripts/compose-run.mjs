@@ -25,7 +25,6 @@
 // to disk, or printed.
 
 import { spawn, spawnSync } from 'node:child_process';
-import { createHmac, timingSafeEqual } from 'node:crypto';
 import { lstatSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import https from 'node:https';
 import { tmpdir } from 'node:os';
@@ -38,37 +37,33 @@ const ALLOWLIST = 'docker/secrets-env.yaml';
 const TEMPLATE = 'docker/openbao-credentials.example';
 const ENVS = ['dev', 'stage', 'prod'];
 // Compose-interpolation keys an environment may hold besides the allowlist (design D3).
-// The Supabase keys reach only the services SECRET_SCOPE allows (supabase-db D4, supabase-services D4).
-const SUPABASE_KEYS = ['POSTGRES_PASSWORD', 'SUPABASE_ROLES_PASSWORD', 'APP_DB_PASSWORD', 'JWT_SECRET', 'ANON_KEY', 'SERVICE_ROLE_KEY', 'SECRET_KEY_BASE', 'REALTIME_DB_ENC_KEY', 'SUPABASE_PORT'];
+// The Supabase keys reach only the services SECRET_SCOPE allows (supabase-db D4, supabase-services D4;
+// drop-unused-supabase-services D3: the four that db, migrate, auth and the app still use).
+const SUPABASE_KEYS = ['POSTGRES_PASSWORD', 'SUPABASE_ROLES_PASSWORD', 'APP_DB_PASSWORD', 'JWT_SECRET'];
+// drop-unused-supabase-services D3: keys of the removed Supabase services. A secret may still hold
+// them (another checkout runs the old stack): accepted, never format-checked, never passed to
+// compose, and named once in a warning.
+const RETIRED_KEYS = ['ANON_KEY', 'SERVICE_ROLE_KEY', 'SECRET_KEY_BASE', 'REALTIME_DB_ENC_KEY', 'SUPABASE_PORT'];
 const COMPOSE_KEYS = {
-  dev: ['DEV_PORT', 'DEV_COMPANION_PORT', ...SUPABASE_KEYS],
-  stage: ['STAGE_PORT', ...SUPABASE_KEYS],
-  prod: ['ROUTER_PORT', 'WEB_TAG', 'API_TAG', 'PUBLIC_BASE_URL', ...SUPABASE_KEYS],
+  dev: ['DEV_PORT', 'DEV_COMPANION_PORT', ...SUPABASE_KEYS, ...RETIRED_KEYS],
+  stage: ['STAGE_PORT', ...SUPABASE_KEYS, ...RETIRED_KEYS],
+  prod: ['ROUTER_PORT', 'WEB_TAG', 'API_TAG', 'PUBLIC_BASE_URL', ...SUPABASE_KEYS, ...RETIRED_KEYS],
 };
 // Per-key value formats: strong, URL-safe, and safe for busybox echo and psql backticks.
-const JWT_RE = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
 const KEY_FORMAT = {
   POSTGRES_PASSWORD: /^[0-9a-f]{32,}$/,
   SUPABASE_ROLES_PASSWORD: /^[0-9a-f]{32,}$/,
   APP_DB_PASSWORD: /^[0-9a-f]{32,}$/,
   JWT_SECRET: /^[A-Za-z0-9_-]{40,}$/,
-  SECRET_KEY_BASE: /^[A-Za-z0-9_-]{64,}$/,
-  REALTIME_DB_ENC_KEY: /^[A-Za-z0-9_-]{16}$/,
-  ANON_KEY: JWT_RE,
-  SERVICE_ROLE_KEY: JWT_RE,
-  SUPABASE_PORT: { test: (v) => /^[1-9][0-9]{3,4}$/.test(v) && Number(v) >= 1024 && Number(v) <= 65535 },
 };
 // The services each secret value may appear in (spec invariant 16); per stack where it differs.
+// drop-unused-supabase-services D3: rest, realtime, storage and supabase-gw are gone.
 const SECRET_SCOPE = {
-  POSTGRES_PASSWORD: ['db', 'migrate', 'realtime'],
+  POSTGRES_PASSWORD: ['db', 'migrate'],
   // The catalog's app role (catalog-pg-schema D4): the stack's app service and the runner.
   APP_DB_PASSWORD: { dev: ['app', 'migrate'], stage: ['api', 'migrate'], prod: ['api', 'migrate'] },
-  SUPABASE_ROLES_PASSWORD: ['db', 'auth', 'rest', 'storage'],
-  JWT_SECRET: ['auth', 'rest', 'realtime', 'storage'],
-  ANON_KEY: ['supabase-gw', 'realtime', 'storage'],
-  SERVICE_ROLE_KEY: ['supabase-gw', 'storage'],
-  SECRET_KEY_BASE: ['realtime'],
-  REALTIME_DB_ENC_KEY: ['realtime'],
+  SUPABASE_ROLES_PASSWORD: ['db', 'auth'],
+  JWT_SECRET: ['auth'],
 };
 const PROJECT = { dev: 'autologger-dev', stage: 'autologger-stage', prod: 'autologger' };
 const KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/; // no `m` flag: `$` is end of input only
@@ -218,33 +213,12 @@ export function validateSecrets(json, allowed) {
   return out;
 }
 
-/** supabase-services D4: the anon and service-role keys are unexpired HS256 JWTs signed with
- * JWT_SECRET, with their own roles. Returns warnings (names only); refuses on any mismatch. */
-export function checkSupabaseKeys(secrets, nowSec = Math.floor(Date.now() / 1000)) {
-  const trio = ['JWT_SECRET', 'ANON_KEY', 'SERVICE_ROLE_KEY'];
-  const have = trio.filter((k) => secrets.get(k));
-  if (have.length === 0) return [];
-  if (have.length !== 3) refuse(`${trio.filter((k) => !secrets.get(k)).join(', ')} missing: JWT_SECRET, ANON_KEY and SERVICE_ROLE_KEY are set together (docker/scripts/supabase-keys.mjs)`);
-  if (secrets.get('ANON_KEY') === secrets.get('SERVICE_ROLE_KEY')) refuse('ANON_KEY and SERVICE_ROLE_KEY are the same value');
-  const warnings = [];
-  for (const [k, role] of [['ANON_KEY', 'anon'], ['SERVICE_ROLE_KEY', 'service_role']]) {
-    const [h, p, sig] = secrets.get(k).split('.');
-    const want = createHmac('sha256', secrets.get('JWT_SECRET')).update(`${h}.${p}`).digest();
-    const got = Buffer.from(sig, 'base64url');
-    let header;
-    let payload;
-    try {
-      header = JSON.parse(Buffer.from(h, 'base64url').toString('utf8'));
-      payload = JSON.parse(Buffer.from(p, 'base64url').toString('utf8'));
-    } catch {
-      refuse(`${k} is not a readable JWT`);
-    }
-    if (header?.alg !== 'HS256' || got.length !== want.length || !timingSafeEqual(got, want)) refuse(`${k} is not an HS256 JWT signed with this environment's JWT_SECRET`);
-    if (payload?.role !== role) refuse(`${k} does not carry role ${role}`);
-    if (typeof payload.exp !== 'number' || payload.exp <= nowSec) refuse(`${k} has expired; create new keys (see docs/supabase.md)`);
-    if (payload.exp - nowSec < 90 * 86400) warnings.push(`${k} expires in under 90 days; rotate it (see docs/supabase.md)`);
-  }
-  return warnings;
+/** drop-unused-supabase-services D3: the warning line naming the retired keys a secret holds
+ * (names only, sorted), or undefined when it holds none. */
+export function retiredKeyWarning(secrets, env) {
+  const held = RETIRED_KEYS.filter((k) => secrets.has(k)).sort();
+  if (!held.length) return undefined;
+  return `compose-run: warning: the OpenBao ${env} secret holds retired keys ${held.join(', ')}; nothing reads them, and they can be removed once no checkout runs the old Supabase services (docs/openbao-secrets.md)`;
 }
 
 // gotrue-sign-in D3, require-login D1: every stack signs in through Google (GoTrue accepts only
@@ -715,7 +689,8 @@ export function checkResolved(env, cfg, secrets = new Map()) {
   if (env === 'dev' && pub.some((p) => p === '80' || p === '443')) {
     refuse('refusing: a published dev port is 80 or 443; browsers omit the default port from Host/Origin so the dev gate would reject every request');
   }
-  const want = env === 'dev' ? ['app', 'companion', 'supabase-gw'] : ['router', 'supabase-gw'];
+  // drop-unused-supabase-services D3: the gateway's port is gone.
+  const want = env === 'dev' ? ['app', 'companion'] : ['router'];
   const owners = Object.entries(cfg.services ?? {}).filter(([, s]) => (s.ports ?? []).length).map(([n]) => n).sort();
   if (ports.length !== want.length || owners.join() !== want.join() || new Set(pub).size !== pub.length) {
     refuse(`refusing: the resolved ${env} ports are not the expected set (${want.join(', ')}, one each, on distinct ports)`);
@@ -723,7 +698,6 @@ export function checkResolved(env, cfg, secrets = new Map()) {
 }
 
 function urls(env, cfg) {
-  const sb = cfg.services['supabase-gw']?.ports?.[0]?.published;
   if (env === 'dev') {
     process.stdout.write(`dev app:        http://127.0.0.1:${cfg.services.app.ports[0].published}\n`);
     process.stdout.write(`dev Companion:  http://127.0.0.1:${cfg.services.companion.ports[0].published}\n`);
@@ -738,7 +712,6 @@ function urls(env, cfg) {
   } else {
     process.stdout.write(`prod router:    http://127.0.0.1:${cfg.services.router.ports[0].published}\n`);
   }
-  if (sb) process.stdout.write(`Supabase:       http://localhost:${sb}   (API gateway: /auth/v1, /rest/v1, /realtime/v1, /storage/v1)\n`);
 }
 
 // ------------------------------------------------------------------------ main ------------
@@ -790,7 +763,8 @@ async function main(argv, ownEnv) {
   const creds = readCreds(env, credDir);
   const fetched = await fetchSecrets(creds, (w) => process.stderr.write(`compose-run: warning: ${w}\n`));
   const secrets = validateSecrets(fetched, allowedNames(env));
-  for (const w of checkSupabaseKeys(secrets)) process.stderr.write(`compose-run: warning: ${w}\n`);
+  const retired = retiredKeyWarning(secrets, env);
+  if (retired) process.stderr.write(`${retired}\n`);
   checkSignInClient(env, secrets);
 
   // H6, H12: the child environment, built from nothing.
@@ -798,7 +772,8 @@ async function main(argv, ownEnv) {
   childEnv.PATH = path;
   if (ownEnv.HOME) childEnv.HOME = ownEnv.HOME;
   if (ownEnv.TERM) childEnv.TERM = ownEnv.TERM;
-  for (const [k, v] of secrets) childEnv[k] = v;
+  // drop-unused-supabase-services D3: the retired keys never reach compose or a container.
+  for (const [k, v] of secrets) if (!RETIRED_KEYS.includes(k)) childEnv[k] = v;
   childEnv.AUTOLOGGER_STACK = env;
   const dockerDir = stage?.dockerAuths ? makeDockerConfig(stage.dockerAuths) : '';
   if (dockerDir) TEMP_DIRS.add(dockerDir);

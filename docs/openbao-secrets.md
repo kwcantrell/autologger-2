@@ -91,6 +91,9 @@ A secret may hold only these keys:
   | `stage` | `STAGE_PORT`, plus the Supabase keys |
   | `prod` | `ROUTER_PORT`, `WEB_TAG`, `API_TAG`, `PUBLIC_BASE_URL`, plus the Supabase keys |
 
+  Every environment also accepts the retired Supabase keys (see "Retired keys" below), and
+  ignores them.
+
 Any other name is refused before anything runs, and the error names the key without printing its
 value. That includes `LD_PRELOAD`, `DOCKER_HOST`, any `COMPOSE_*` name, any `BAO_*` name, and a key
 meant for another service.
@@ -139,19 +142,12 @@ where a value appears in any other service.
 
 | Key | Format | Services |
 | --- | --- | --- |
-| `POSTGRES_PASSWORD` (superuser) | at least 32 lowercase hex characters | `db`, `migrate`, `realtime` |
-| `SUPABASE_ROLES_PASSWORD` (`authenticator`, `supabase_auth_admin`, `supabase_storage_admin`) | at least 32 lowercase hex characters | `db`, `auth`, `rest`, `storage` |
+| `POSTGRES_PASSWORD` (superuser) | at least 32 lowercase hex characters | `db`, `migrate` |
+| `SUPABASE_ROLES_PASSWORD` (`supabase_auth_admin`) | at least 32 lowercase hex characters | `db`, `auth` |
 | `APP_DB_PASSWORD` (`autologger_app`, the catalog's app role) | at least 32 lowercase hex characters | dev: `app`, `migrate`; stage and prod: `api`, `migrate` |
-| `JWT_SECRET` | at least 40 characters of `A-Za-z0-9_-` | `auth`, `rest`, `realtime`, `storage` |
-| `ANON_KEY` | HS256 JWT signed with `JWT_SECRET`, `role` `anon` | `supabase-gw`, `realtime`, `storage` |
-| `SERVICE_ROLE_KEY` | HS256 JWT signed with `JWT_SECRET`, `role` `service_role` | `supabase-gw`, `storage` |
-| `SECRET_KEY_BASE` | at least 64 characters of `A-Za-z0-9_-` | `realtime` |
-| `REALTIME_DB_ENC_KEY` | exactly 16 characters of `A-Za-z0-9_-` | `realtime` |
-| `SUPABASE_PORT` | port 1024-65535, distinct from every other published port (dev 8790, stage 8791) | compose (the gateway's published port) |
+| `JWT_SECRET` (signs GoTrue's tokens) | at least 40 characters of `A-Za-z0-9_-` | `auth` |
 
-Any value outside its format is refused, and so is a pair of API keys that isn't consistent:
-swapped, signed with another secret, the same value twice, or expired. The wrapper warns when an
-API key expires within 90 days.
+Any value outside its format is refused.
 
 - **Create the keys with the generator,** never by hand. It needs an admin token (the AppRole
   can only read), from a file or from `BAO_TOKEN`:
@@ -166,18 +162,42 @@ API key expires within 90 days.
   line. `BAO_ADDR`, `BAO_CACERT` and `BAO_KV_PATH` come from `.env.openbao.<env>`.
 
   The generator reads the secret's key names (values are discarded), then writes every missing
-  key except `SUPABASE_PORT` in one request: a KV v2 `PATCH` (`application/merge-patch+json`)
+  one of the four keys in one request: a KV v2 `PATCH` (`application/merge-patch+json`)
   with `options.cas` set to the version it read, or a `POST` with `cas: 0` if the path doesn't
   exist yet. A concurrent write makes the whole request fail, and nothing is retried. An existing
-  key is never overwritten. It prints `created` or `kept` for each key and never shows a value.
-  `JWT_SECRET`, `ANON_KEY` and `SERVICE_ROLE_KEY` are created together. If only some of the three
-  exist, it refuses. If the path's current version is deleted (`bao kv delete`) or destroyed, it
+  key is never overwritten. It prints `created` or `kept` for each of the four keys and never
+  shows a value. It never reads, reports, writes or deletes a retired key. If the path's current
+  version is deleted (`bao kv delete`) or destroyed, it
   refuses and writes nothing: restore a deleted version with `bao kv undelete` or
   `bao kv rollback`, a destroyed one with `bao kv rollback` only. A future `deletion_time` (set on
   live versions when `delete_version_after` is configured) is not a deletion.
-- **Set `SUPABASE_PORT` yourself:** `bao kv patch kv/autologger/dev SUPABASE_PORT=8790`.
 - **Changing a password or `JWT_SECRET` after the database exists** needs more than a KV write.
   See "Rotation" in [supabase.md](supabase.md).
+
+### Retired keys
+
+`drop-unused-supabase-services` (ADR 0021 slice 10) removed PostgREST, Realtime, Storage and the
+gateway. Their five keys are retired: `ANON_KEY`, `SERVICE_ROLE_KEY`, `SECRET_KEY_BASE`,
+`REALTIME_DB_ENC_KEY` and `SUPABASE_PORT`.
+- **The tooling accepts and ignores them.** A secret that still holds any of them isn't refused,
+  their values aren't format-checked, and `compose-run` passes them to no container. It prints one
+  warning naming the ones present (names only):
+  `compose-run: warning: the OpenBao <env> secret holds retired keys <names>; …`.
+- **Keep them while any checkout runs the old stack.** `kv/autologger/dev` is shared with
+  `~/autologger-ui`, whose branch still starts the old services and needs these keys.
+- **Then remove them,** with a KV v2 merge patch whose values are `null` (it removes those keys
+  and keeps the rest), or in the OpenBao UI:
+
+  ```sh
+  echo '{"ANON_KEY":null,"SERVICE_ROLE_KEY":null,"SECRET_KEY_BASE":null,"REALTIME_DB_ENC_KEY":null,"SUPABASE_PORT":null}' \
+    | bao kv patch kv/autologger/<env> -
+  ```
+
+- **Then rotate `JWT_SECRET`.** The retired `SERVICE_ROLE_KEY` is a `service_role` JWT signed
+  with the `JWT_SECRET` the stack still uses (5-year expiry), so it stays a GoTrue admin
+  credential until `JWT_SECRET` changes. Rotate it only after the retired keys are gone: an older
+  `compose-run.mjs` refuses a `JWT_SECRET` its stored `ANON_KEY` and `SERVICE_ROLE_KEY` don't
+  verify against. See "Rotation" in [supabase.md](supabase.md).
 
 To add a container key:
 1. Add a line `KEY:` to `docker/secrets-env.yaml`. `make check` invariant 15 keeps compose in

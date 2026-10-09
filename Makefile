@@ -35,10 +35,12 @@ RUN     = @[ -n "$(NODE)" ] || { echo "make: node (22.12 or newer) is not on PAT
           STAGE_IMAGE_TAG="$${STAGE_IMAGE_TAG-}" STAGE_PUBLIC_BASE_URL="$${STAGE_PUBLIC_BASE_URL-}" DOCKER_CONFIG="$${DOCKER_CONFIG-}" \
           $(NODE) docker/scripts/compose-run.mjs
 # With a tag, stage-up pulls web/api and never builds; without one it builds :local as before.
+# drop-unused-supabase-services D5: every compose up and down passes --remove-orphans, so containers
+# of services the files no longer define (the retired Supabase services) are removed; volumes stay.
 ifeq ($(strip $(STAGE_IMAGE_TAG)),)
-STAGE_UP_STEPS = 'compose run --rm migrate' 'compose up -d --build'
+STAGE_UP_STEPS = 'compose run --rm migrate' 'compose up -d --build --remove-orphans'
 else
-STAGE_UP_STEPS = 'compose pull web api' 'compose run --rm migrate' 'compose up -d --no-build'
+STAGE_UP_STEPS = 'compose pull web api' 'compose run --rm migrate' 'compose up -d --no-build --remove-orphans'
 endif
 
 .PHONY: help check dev-check dev-build dev-up dev-down dev-restart dev-logs dev-shell dev-reset dev-migrate dev-psql \
@@ -59,14 +61,14 @@ dev-check: ## Dev invariants + credentials-inode drift warning
 dev-build: ## Rebuild the dev image (needed after dependency/lockfile/config changes)
 	$(RUN) dev resolved 'compose build'
 
-dev-up: ## Check, migrate the dev Postgres, then build and start the whole dev project (app, gate, Companion, Supabase)
+dev-up: ## Check, migrate the dev Postgres, then build and start the whole dev project (app, gates, Companion, Postgres, GoTrue)
 	@$(G) creds-exists
 	@sh docker/scripts/check-envs.sh dev
 	@$(G) creds-inode
-	$(RUN) dev resolved 'compose run --rm migrate' 'compose up -d --build' urls
+	$(RUN) dev resolved 'compose run --rm migrate' 'compose up -d --build --remove-orphans' urls
 
 dev-down: ## Stop and remove dev containers (volumes kept)
-	$(RUN) dev 'compose down'
+	$(RUN) dev 'compose down --remove-orphans'
 
 dev-restart: ## Restart dev: app then app-gate, companion then companion-gate
 	$(RUN) dev 'compose restart app' 'compose restart app-gate' 'compose restart companion' 'compose restart companion-gate'
@@ -83,8 +85,8 @@ dev-migrate: ## Apply supabase/migrations to the dev Postgres (starts db if need
 dev-psql: ## psql in the dev Postgres (no history file)
 	$(RUN) dev 'compose exec -e PSQL_HISTORY=/dev/null db psql -U postgres'
 
-dev-reset: ## DESTROY dev volumes, incl. Postgres, the audio blob volume and Supabase storage (needs CONFIRM=yes)
-	$(RUN) dev reset 'compose down -v'
+dev-reset: ## DESTROY dev volumes, incl. Postgres and the audio blob volume (needs CONFIRM=yes)
+	$(RUN) dev reset 'compose down -v --remove-orphans'
 
 stage-build: ## Build the stage images (native arch, docker compose build, tagged :local; refused with STAGE_IMAGE_TAG)
 	$(RUN) stage resolved 'compose build'
@@ -100,7 +102,7 @@ stage-up: ## Check, migrate, start stage (STAGE_IMAGE_TAG=<sha>: pull ghcr image
 	$(RUN) stage resolved $(STAGE_UP_STEPS) urls
 
 stage-down: ## Stop and remove stage containers (volumes kept)
-	$(RUN) stage 'compose down'
+	$(RUN) stage 'compose down --remove-orphans'
 
 stage-logs: ## Follow stage logs
 	$(RUN) stage 'compose logs -f --tail=200'
@@ -108,8 +110,8 @@ stage-logs: ## Follow stage logs
 stage-claude-login: ## Interactive Claude login inside the stage api container (stage keeps its own login)
 	@docker exec -it autologger-stage-api claude auth login
 
-stage-reset: ## DESTROY stage volumes, incl. Postgres, the audio blob volume and Supabase storage (needs CONFIRM=yes)
-	$(RUN) stage reset 'compose down -v'
+stage-reset: ## DESTROY stage volumes, incl. Postgres and the audio blob volume (needs CONFIRM=yes)
+	$(RUN) stage reset 'compose down -v --remove-orphans'
 
 prod-build: ## Native-arch build of both images, tagged :local only (no SHA tag, no push)
 	@p=$$($(G) native-platform) && GIT_SHA=local docker buildx bake -f docker-bake.hcl --set "*.platform=$$p" --load
@@ -128,10 +130,10 @@ prod-pull: ## Clean main only: pull the tags pinned in the OpenBao prod secret
 
 prod-up: ## Clean main only: start prod with the tags pinned in the OpenBao prod secret
 	@$(G) prod-git
-	$(RUN) prod prod-tags resolved 'compose up -d'
+	$(RUN) prod prod-tags resolved 'compose up -d --remove-orphans'
 
 prod-down: ## Stop and remove prod containers (volumes kept)
-	$(RUN) prod prod-tags 'compose down'
+	$(RUN) prod prod-tags 'compose down --remove-orphans'
 
 prod-logs: ## Follow prod logs
 	$(RUN) prod prod-tags 'compose logs -f --tail=200'
