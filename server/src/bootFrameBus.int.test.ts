@@ -48,6 +48,7 @@ function stackEnv(extra: Record<string, string>): Record<string, string> {
     HOST: '127.0.0.1',
     PORT: '0',
     DATA_DIR: join(dir, 'data'),
+    BLOB_DIR: join(dir, 'blobs'), // shared-blob-volume D8 category 1: a sibling of DATA_DIR
     PGHOST: db.host,
     PGPORT: String(db.port),
     PGUSER: db.user,

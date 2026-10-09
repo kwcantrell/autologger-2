@@ -284,9 +284,10 @@ export async function copyDataDir(
     log(`all ${dbs.length} database(s) copied and verified`);
   }
   log('');
-  log('blobs are not copied by this script; mirror them (including deletions) with:');
-  log(`  rsync -a --delete ${src}/blobs/ ${dst}/blobs/`);
-  log('(swap in user@host:path for either side when the copy crosses machines)');
+  // shared-blob-volume D5: audio lives in BLOB_DIR (its own volume), so no blob command targets
+  // the destination's DATA_DIR/blobs; the README holds the additive copy steps.
+  log('audio is not in DATA_DIR: it lives in BLOB_DIR, and this script does not copy it.');
+  log('See the README sections "Blob sync guard" and "Moving audio into BLOB_DIR".');
   return { exitCode: failed.length > 0 ? EXIT_VERIFY : EXIT_OK, dbs: results };
 }
 

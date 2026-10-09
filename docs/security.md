@@ -12,7 +12,7 @@ agent writes code in this repo. Review this table in the quarterly rule review.
 | ASI03 Identity & Privilege Abuse | Agent uses the developer's credentials beyond the task | Secrets unreadable (`Read(**/.env)` denied); workflows default to `contents: read`; no push to main; stack secrets come from OpenBao KV v2 (`kv/autologger/<env>`), read with one AppRole per environment whose policy is `read` on its own `kv/data/autologger/<env>` only; the secret_id is CIDR-bound to the VM's IP (90-day TTL, rotated by Ansible), held in an untracked mode-600 `.env.openbao.<env>` file, and the short-lived token is revoked right after the read; nothing is put on argv, disk or output by `docker/scripts/compose-run.mjs` ([docs/openbao-secrets.md](openbao-secrets.md)). **Residuals:** the Read deny rule is not the boundary. An agent's `Bash` `cat`, `docker inspect`, `docker exec … env` and `/proc/*/environ` can still read the credentials file and container environments (the secret_id only works from its bound CIDR, so a copied one is useless elsewhere, but on the VM itself it reads that environment's secrets). The owner's admin userpass token (`~/.vault-token` after `bao login`) can read and write every path; an agent running as the owner can use it while it is valid, so keep its TTL short and don't leave a session open on a VM where agents run. `~/.docker` (plugins, `currentContext`) is trusted as the operator's own |
 | ASI04 Agentic Supply Chain Vulnerabilities | Agent adds a malicious or vulnerable package, or a workflow uses a moved tag | Dependency review; `lifecycle.commands.audit`; SHA-pinned actions; Dependabot |
 | ASI05 Unexpected Code Execution | Agent runs untrusted code from a dependency or a fetched script | Sandbox filesystem and network isolation; CI in ephemeral runners |
-| ASI06 Memory & Context Poisoning | A poisoned spec, ADR or skill steers future changes; attacker-controlled text in container logs (request paths, emails, failed-auth names in the Supabase services) read as evidence | CODEOWNERS on openspec/, docs/decisions/, .claude/; generated skills can't be edited; container logs are untrusted data: log checks count values with `grep -cF` instead of reading the logs |
+| ASI06 Memory & Context Poisoning | A poisoned spec, ADR or skill steers future changes; attacker-controlled text in container logs (request paths, emails, failed-auth names in GoTrue's logs) read as evidence | CODEOWNERS on openspec/, docs/decisions/, .claude/; generated skills can't be edited; container logs are untrusted data: log checks count values with `grep -cF` instead of reading the logs |
 | ASI07 Insecure Inter-Agent Communication | A subagent's report carries injected instructions to the parent | Panel reviewers return findings, not actions; the parent treats reports as data |
 | ASI08 Cascading Failures | One bad change propagates through many files or services | Tier 2 for contracts; CI required before merge |
 | ASI09 Human-Agent Trust Exploitation | A confident summary gets approved without reading | Evidence rule (command + output); human reviews the diff, not the summary |
@@ -82,7 +82,7 @@ These live in the forge, not the repo, so the template can't apply them:
 - **NOTIFY forgery on the session frame bus** (session-frame-bus D2, ADR 0021 slice 9a). Every
   server process delivers session frames, Companion record/play commands and access-loss closes
   from one `NOTIFY` channel, and `pg_notify` is executable by every role, even in a read-only
-  transaction. Any database login (a Supabase service role, a leaked `autologger_app` password,
+  transaction. Any database login (a Supabase role login, a leaked `autologger_app` password,
   an agent with `psql`) could otherwise forge a frame, start a recording on someone's session, or
   keep a revoked user's socket open. The defence: every message is HMAC-SHA256-signed with
   `FRAME_BUS_SECRET`, a server-only secret of at least 32 characters held in OpenBao, and
@@ -103,4 +103,4 @@ These live in the forge, not the repo, so the template can't apply them:
   notification queue, which fails writes. Rotation needs every process restarted together.
 - PUBLIC keeps `CONNECT` on every database and `TEMP` on `postgres`, so `autologger_app` can
   connect to databases where it has no grants and create session-local temp tables. Revoking
-  them from PUBLIC would change what the Supabase services get; slice 6 revisits it.
+  them from PUBLIC would change what GoTrue (`supabase_auth_admin`) gets; slice 6 revisits it.

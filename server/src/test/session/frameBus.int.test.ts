@@ -48,7 +48,9 @@ async function process_(frameBusClock?: Clock): Promise<Made> {
   const dir = mkdtempSync(join(tmpdir(), 'autologger-bus-'));
   const m = createBindings(
     {
-      DATA_DIR: dir,
+      // shared-blob-volume D8 category 1: sibling DATA_DIR and BLOB_DIR under one temp dir.
+      DATA_DIR: join(dir, 'data'),
+      BLOB_DIR: join(dir, 'blobs'),
       // As the harness's env (test/harness.ts), so a route served on these bindings admits the
       // harness's signed-in users.
       PUBLIC_BASE_URL: 'https://example.com',

@@ -20,6 +20,7 @@ let current: {
   bindings: Bindings;
   close(): Promise<void>;
   dir: string;
+  blobDir: string;
   db: ConnOptions;
   defaultUser: Promise<{ id: string; cookie: string }> | null;
 } | null = null;
@@ -28,6 +29,8 @@ export async function resetTestEnv(): Promise<void> {
   await teardownTestEnv();
   const db = (await createTestDatabase()).app;
   const dir = mkdtempSync(join(tmpdir(), 'autologger-int-'));
+  // shared-blob-volume D8 category 1: the blob root is a sibling temp dir, never inside DATA_DIR.
+  const blobDir = mkdtempSync(join(tmpdir(), 'autologger-int-blobs-'));
   // Hermetic stand-in for the operator's home directory (ai-runtime-package
   // task 2.5, closing the leak task 2.1 found): `createBindings` resolves
   // `Config.AI_V2_CREDENTIAL_SOURCE_PATH` from `homedir()` exactly once, at
@@ -60,6 +63,7 @@ export async function resetTestEnv(): Promise<void> {
   try {
     made = createBindings({
       DATA_DIR: dir,
+      BLOB_DIR: blobDir,
       PUBLIC_BASE_URL: 'https://example.com',
       // Sign-in is configured, as the boot guard requires of every running server (require-login
       // D1/D7), so oauthConfigured() is true in the base test env.
@@ -95,7 +99,7 @@ export async function resetTestEnv(): Promise<void> {
   if (retryLog) {
     made.bindings.ports.catalog = new RetryCountingRoot(made.bindings.ports.catalog, retryLog);
   }
-  current = { ...made, dir, db, defaultUser: null };
+  current = { ...made, dir, blobDir, db, defaultUser: null };
 }
 
 /** The current test's database as the app role, for a second adapter over it (a second server
@@ -142,6 +146,7 @@ export async function teardownTestEnv(): Promise<void> {
   current = null;
   await done.close();
   rmSync(done.dir, { recursive: true, force: true });
+  rmSync(done.blobDir, { recursive: true, force: true });
 }
 
 function must(): Bindings {

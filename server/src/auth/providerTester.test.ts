@@ -232,8 +232,10 @@ describe('ProviderTester wiring (provider-credentials "Fixed hosts can\'t be ove
 
   it('createBindings wires the constant hosts whatever the environment holds', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'autologger-tester-'));
+    const blobs = mkdtempSync(join(tmpdir(), 'autologger-tester-blobs-'));
     const base: Record<string, string> = {
       DATA_DIR: dir,
+      BLOB_DIR: blobs,
       PUBLIC_BASE_URL: 'https://example.com',
       BOOTSTRAP_OWNER_EMAIL: 'bootstrap-owner@example.com',
       PGHOST: '127.0.0.1',
@@ -253,6 +255,7 @@ describe('ProviderTester wiring (provider-credentials "Fixed hosts can\'t be ove
     } finally {
       await close();
       rmSync(dir, { recursive: true, force: true });
+      rmSync(blobs, { recursive: true, force: true });
     }
   });
 });

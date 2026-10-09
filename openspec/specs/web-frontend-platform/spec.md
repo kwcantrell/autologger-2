@@ -234,7 +234,12 @@ Supabase migration, until the stage stack is made reachable through the upstream
 The server SHALL refuse to boot, exiting non-zero with a message that names `make dev-up` and no
 environment values, unless `AUTOLOGGER_STACK` is one of `dev`, `stage` or `prod` (the compose
 stack sentinel). It SHALL refuse to boot when `DATA_DIR` is unset or not an absolute path, and
-SHALL NOT fall back to a default data directory. It SHALL refuse to boot when any of `PGHOST`,
+SHALL NOT fall back to a default data directory. It SHALL refuse to boot when `BLOB_DIR` (the
+audio blob root, shared by every server process: core-ports-architecture "Audio blobs are shared
+by every server process") is unset or not an absolute path, and when `BLOB_DIR` and `DATA_DIR`
+resolve to the same directory or either lies inside the other; each message names the variable
+and prints no value, and SHALL NOT fall back to a default blob directory. These checks SHALL run
+before the data-directory lock. It SHALL refuse to boot when any of `PGHOST`,
 `PGPORT`, `PGUSER`, `PGPASSWORD` or `PGDATABASE` is unset, naming the missing variables and no
 values, before taking the data-directory lock. It SHALL refuse to boot when another server
 process already holds that `DATA_DIR`, before connecting to the catalog, sweeping or creating
@@ -261,9 +266,26 @@ file.
 - **WHEN** the server boots with a valid `AUTOLOGGER_STACK` and `DATA_DIR` unset or relative
 - **THEN** it exits non-zero naming `DATA_DIR`, and opens no data directory
 
+#### Scenario: No implicit blob directory
+- **WHEN** the server boots with a valid `AUTOLOGGER_STACK` and `DATA_DIR`, and `BLOB_DIR` unset
+  or relative
+- **THEN** it exits non-zero naming `BLOB_DIR`, prints no environment value, and creates nothing
+  in either directory
+
+#### Scenario: The blob directory may not overlap the data directory
+- **WHEN** the server boots with `DATA_DIR=/data` and `BLOB_DIR` set to `/data`, `/data/blobs`
+  or `/`
+- **THEN** it exits non-zero naming `BLOB_DIR` and `DATA_DIR`, prints no environment value, and
+  takes no data-directory lock
+
+#### Scenario: Two servers share one blob directory
+- **WHEN** a server holds `DATA_DIR=/a` with `BLOB_DIR=/blobs` and a second server starts with
+  `DATA_DIR=/b` and the same `BLOB_DIR`
+- **THEN** the second server boots, and each serves the audio the other stored
+
 #### Scenario: Missing catalog connection settings refuse boot
-- **WHEN** the server or `npm run dev` starts with a valid `AUTOLOGGER_STACK` and `DATA_DIR` and
-  `PGPASSWORD` unset
+- **WHEN** the server or `npm run dev` starts with a valid `AUTOLOGGER_STACK`, `DATA_DIR` and
+  `BLOB_DIR`, and `PGPASSWORD` unset
 - **THEN** it exits non-zero naming `PGPASSWORD`, prints no environment value, and creates
   nothing in the data directory
 

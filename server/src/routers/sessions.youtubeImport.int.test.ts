@@ -574,12 +574,15 @@ describe('sibling stubs stay frozen even with yt-dlp configured', () => {
 describe('crash-orphan scratch-dir sweep (design D6, re-run of the startup wiring; Phase 5 review must-cover)', () => {
   it('createBindings removes a stray youtube-import-* scratch dir and leaves a differently-prefixed dir alone', async () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'autologger-sweep-'));
+    // shared-blob-volume D8 category 1: a sibling BLOB_DIR, never inside DATA_DIR.
+    const blobDir = mkdtempSync(join(tmpdir(), 'autologger-sweep-blobs-'));
     // The catalog is never queried here (the adapter connects lazily); any reachable settings do.
     const pg = { PGHOST: '127.0.0.1', PGPORT: '1', PGUSER: 'u', PGPASSWORD: 'p', PGDATABASE: 'd' };
     try {
       const boot = createBindings({
         ...pg,
         DATA_DIR: dataDir,
+        BLOB_DIR: blobDir,
         PUBLIC_BASE_URL: 'https://example.com',
         GOOGLE_CLIENT_SECRET: 'test-secret',
       });
@@ -601,6 +604,7 @@ describe('crash-orphan scratch-dir sweep (design D6, re-run of the startup wirin
       const reboot = createBindings({
         ...pg,
         DATA_DIR: dataDir,
+        BLOB_DIR: blobDir,
         PUBLIC_BASE_URL: 'https://example.com',
         GOOGLE_CLIENT_SECRET: 'test-secret',
       });
@@ -613,6 +617,7 @@ describe('crash-orphan scratch-dir sweep (design D6, re-run of the startup wirin
       }
     } finally {
       rmSync(dataDir, { recursive: true, force: true });
+      rmSync(blobDir, { recursive: true, force: true });
     }
   });
 });
