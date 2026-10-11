@@ -52,7 +52,6 @@ Anything else is a stop: update the artifacts and ask the owner.
     the five key columns null (the partial-null case);
   - a `claude-cli` row with a key, a `base_url` or kind `stt` gets `23514`;
   - existing keyed rows are unaffected.
-
   Red, then add `supabase/migrations/20261018000000_claude_cli_provider.sql`, with the rollback
   in its header. Green, plus `sh docker/supabase/test_migrate.sh`.
   - Evidence: red, before the migration: `cd server && npx vitest run --project pg src/test/pg/providerTables.pg.test.ts src/test/pg/catalogSchema.pg.test.ts` -> `× accepts a keyless claude-cli llm row and refuses keyless, partly keyed or keyed-cli rows (ai-sdk 2.1)` (`expected '23502' to be 'ok'`), `× matches the recorded catalog schema`, `× relaxes the key columns, adds the claude_cli check, and changes no existing keyed row` (`ENOENT … 20261018000000_claude_cli_provider.sql`), `Tests  3 failed | 32 passed (35)` (log `sdk-2.1-red.log`). Green, the same two files -> `Test Files  2 passed (2)`, `Tests  35 passed (35)` (log `sdk-2.1-green.log`); `sh docker/supabase/test_migrate.sh` -> `test_migrate: 35 passed, 0 failed` (log `sdk-2.1-migrate.log`); `catalogPolicies.pg.test.ts` unchanged -> `Tests  35 passed (35)`; `npm run typecheck` -> exit 0, 0 `error TS`.
