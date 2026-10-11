@@ -280,5 +280,6 @@ Anything else is a stop: update the artifacts and ask the owner.
 
 ## 7. Verify
 
-- [ ] 7.1 `scripts/check-change.sh` passes (all gates). Run `consistency-read` over the
+- [x] 7.1 `scripts/check-change.sh` passes (all gates). Run `consistency-read` over the
   artifacts. CI on the PR runs the full pg and integration suites green.
+  - Evidence: local, `GITHUB_BASE_REF=supabase-migration scripts/check-change.sh` -> every gate `PASS` except `tasks` (this task) once `panel`'s `Resolved:` wording was fixed (log `byo-7.1-gates.log`); `consistency-read` appended to panel.md ("Consistency read 2026-10-11 (final, before the PR)", scope change: no). CI on PR #105, run 38172490364 -> `db-shard (1)` pass 4m26s, `db-shard (2)` pass 1m52s, `db-shard (3)` pass 3m56s, `db-tests` pass (the full pg and integration suites), `secrets` pass (after `.gitleaksignore` recorded 8 fake-key fingerprints per ADR 0018), `dependency-review` pass; `gates` -> every gate `PASS` except `tasks` (this unticked task), with `commands` `ran ['typecheck', 'test'] (pg/integration: db-tests job)` and `audit` `ran ['audit']`.
