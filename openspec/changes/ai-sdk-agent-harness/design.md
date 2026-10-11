@@ -436,7 +436,10 @@ artifacts and ask the owner. New tests are always allowed.
    checks).
 7. **The Advanced section's provider list** gains the CLI option when allowed
    (`AdvancedSection.test.tsx` where it asserts exactly four options).
-8. **In-memory fakes** of `ProviderCredentialStore` gain `putKeyless` and a nullable key.
+8. **Tests of `ProviderCredentialStore`** (in-memory fakes, if any, and the storage pg test
+   `packages/storage/src/providerCredentials.pg.test.ts`) gain `putKeyless` where needed and
+   narrow the now-nullable `key` on rows they saved with a key (a typing change only, such as
+   `key!` or a guard). Their assertions stay unchanged (owner, 2026-10-11, during task 2.2).
 9. **The error redaction:** a test of `redactDatabaseError` that asserts an unknown error is
    returned unchanged keeps passing for non-SDK errors; only SDK errors gain the new rule. The
    `ToolSink` seam (D3) is a typing change only, and the MCP tool tests stay unchanged.
