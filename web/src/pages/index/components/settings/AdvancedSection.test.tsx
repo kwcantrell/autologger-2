@@ -304,6 +304,10 @@ describe('Settings › Advanced (web-ui-system "Settings manages the user\'s AI 
     expect(calls('POST', 'me/providers/stt/test')).toHaveLength(1);
     typeInto(within(stt).getByLabelText('Model'), 'nova-2');
     expect(within(stt).queryByText('The provider rejected the API key.')).toBeNull();
+    // 6.3: the test checks the saved credential, so it waits while the panel has unsaved edits.
+    expect(
+      (within(stt).getByRole('button', { name: /Test connection/ }) as HTMLButtonElement).disabled,
+    ).toBe(true);
   });
 
   it('a failed save shows the server’s detail and changes nothing else', async () => {

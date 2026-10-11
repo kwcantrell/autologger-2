@@ -405,15 +405,17 @@ function ProviderPanel({
           <SettingRow
             label="Connection"
             description={
-              kind === 'stt'
-                ? 'Checks the saved key and model with a quarter second of silence.'
-                : 'Checks the saved key and model without using any credit.'
+              dirty
+                ? 'Save your changes first: the test checks the saved key and model.'
+                : kind === 'stt'
+                  ? 'Checks the saved key and model with a quarter second of silence.'
+                  : 'Checks the saved key and model without using any credit.'
             }
           >
             <Button
               variant="outline"
               size="sm"
-              disabled={!configured || test.isPending}
+              disabled={!configured || dirty || test.isPending}
               onClick={() => void handleTest()}
             >
               {test.isPending ? (
