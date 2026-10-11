@@ -45,7 +45,7 @@ Anything else is a stop: update the artifacts and ask the owner.
 
 ## 2. Keyless `claude-cli` row (design D2)
 
-- [ ] 2.1 Test first, in `providerTables.pg.test.ts` and `catalogSchema.pg.test.ts` (D9
+- [x] 2.1 Test first, in `providerTables.pg.test.ts` and `catalogSchema.pg.test.ts` (D9
   category 6):
   - a `claude-cli` `llm` row with all five key columns null is accepted;
   - a keyless row for any other provider gets `23514`, and so does a keyed row with any one of
@@ -55,6 +55,8 @@ Anything else is a stop: update the artifacts and ask the owner.
 
   Red, then add `supabase/migrations/20261018000000_claude_cli_provider.sql`, with the rollback
   in its header. Green, plus `sh docker/supabase/test_migrate.sh`.
+  - Evidence: red, before the migration: `cd server && npx vitest run --project pg src/test/pg/providerTables.pg.test.ts src/test/pg/catalogSchema.pg.test.ts` -> `× accepts a keyless claude-cli llm row and refuses keyless, partly keyed or keyed-cli rows (ai-sdk 2.1)` (`expected '23502' to be 'ok'`), `× matches the recorded catalog schema`, `× relaxes the key columns, adds the claude_cli check, and changes no existing keyed row` (`ENOENT … 20261018000000_claude_cli_provider.sql`), `Tests  3 failed | 32 passed (35)` (log `sdk-2.1-red.log`). Green, the same two files -> `Test Files  2 passed (2)`, `Tests  35 passed (35)` (log `sdk-2.1-green.log`); `sh docker/supabase/test_migrate.sh` -> `test_migrate: 35 passed, 0 failed` (log `sdk-2.1-migrate.log`); `catalogPolicies.pg.test.ts` unchanged -> `Tests  35 passed (35)`; `npm run typecheck` -> exit 0, 0 `error TS`.
+  - Evidence: the new `providerTables.pg` case covers a keyless `claude-cli` `llm` row accepted (all five key columns read back null); `23514` for a keyless `anthropic`, `openai`, `google`, `openai-compatible` and `deepgram` row, for an `anthropic` row with each one of the five key columns null in turn (the partial-null case), and for a `claude-cli` row with a full key, with only `key_last4`, with a base URL, or of kind `stt`; keyed `llm` and `stt` rows still insert. The new `catalogSchema.pg` case replays the migrations up to `20261017000000`, inserts keyed `llm` and `stt` rows, runs the new migration, and finds both rows unchanged (`row_to_json`), the five columns nullable and the check present. D9 category 6: the recorded schema's five key columns lose `not null` and `$checks` gains `user_provider_credentials_claude_cli_check`. The migration header carries the rollback (delete the `claude-cli` rows, drop the check, restore `not null`).
 - [ ] 2.2 Test first, in the storage pg tests for `ProviderCredentialStore`:
   - `putKeyless` stores and replaces the `llm` row;
   - `get`/`list` return `key: null` for it;

@@ -230,6 +230,107 @@ describe('the provider tables keep their constraints (design D1)', () => {
     expect(await code(insertCredential('u1', 'llm'))).toBe('ok');
   });
 
+  // ai-sdk-agent-harness design D2: `20261018000000_claude_cli_provider.sql` drops `not null` from
+  // the five key columns and adds `user_provider_credentials_claude_cli_check`: a `claude-cli` row
+  // is an `llm` row with no key and no base URL; every other row has all five key columns.
+  it('accepts a keyless claude-cli llm row and refuses keyless, partly keyed or keyed-cli rows (ai-sdk 2.1)', async () => {
+    const db = await createTestDatabase();
+    const sys = connect(db.system);
+    await seedUser(sys, 'u1');
+    await seedUser(sys, 'u2');
+    const code = (stmt: string) =>
+      sys.unsafe(stmt).then(
+        () => 'ok',
+        (e: { code?: unknown }) => String(e.code),
+      );
+    const KEY = {
+      key_nonce: `'\\x00'`,
+      key_ciphertext: `'\\x01'`,
+      key_tag: `'\\x02'`,
+      key_version: '1',
+      key_last4: `'abcd'`,
+    };
+    const NO_KEY = {
+      key_nonce: 'null',
+      key_ciphertext: 'null',
+      key_tag: 'null',
+      key_version: 'null',
+      key_last4: 'null',
+    };
+    const row = (
+      user: string,
+      o: {
+        kind?: string;
+        provider: string;
+        base_url?: string | null;
+        model?: string;
+        key: Record<keyof typeof KEY, string>;
+      },
+    ) => {
+      const url = o.base_url ?? null;
+      const origin = url === null ? 'null' : `'${new URL(url).origin}'`;
+      return `insert into user_provider_credentials
+         (user_id, kind, provider, base_url, base_origin, model, key_nonce, key_ciphertext, key_tag,
+          key_version, key_last4, created_at_utc, updated_at_utc)
+       values ('${user}', '${o.kind ?? 'llm'}', '${o.provider}', ${url === null ? 'null' : `'${url}'`},
+         ${origin}, '${o.model ?? 'claude-cli'}', ${o.key.key_nonce}, ${o.key.key_ciphertext},
+         ${o.key.key_tag}, ${o.key.key_version}, ${o.key.key_last4}, '${T}', '${T}')`;
+    };
+
+    // A keyless claude-cli llm row with no base URL is accepted.
+    expect(await code(row('u1', { provider: 'claude-cli', key: NO_KEY }))).toBe('ok');
+    const [cli] = await sys`select provider, model, base_url, key_nonce, key_ciphertext, key_tag,
+                              key_version, key_last4 from user_provider_credentials
+                             where user_id = 'u1' and kind = 'llm'`;
+    expect(cli).toEqual({
+      provider: 'claude-cli',
+      model: 'claude-cli',
+      base_url: null,
+      key_nonce: null,
+      key_ciphertext: null,
+      key_tag: null,
+      key_version: null,
+      key_last4: null,
+    });
+
+    // A keyless row for any other provider is refused.
+    for (const provider of ['anthropic', 'openai', 'google', 'openai-compatible', 'deepgram']) {
+      const kind = provider === 'deepgram' ? 'stt' : 'llm';
+      const base_url = provider === 'openai-compatible' ? 'https://api.example.com/v1' : null;
+      expect(await code(row('u2', { kind, provider, base_url, model: 'm', key: NO_KEY }))).toBe(
+        '23514',
+      );
+    }
+    // A keyed row with any one of the five key columns null is refused (the partial-null case).
+    for (const col of Object.keys(KEY) as (keyof typeof KEY)[]) {
+      expect(
+        await code(row('u2', { provider: 'anthropic', model: 'm', key: { ...KEY, [col]: 'null' } })),
+      ).toBe('23514');
+    }
+    // A claude-cli row with a key (whole or partial), a base URL, or kind stt is refused.
+    expect(await code(row('u2', { provider: 'claude-cli', key: KEY }))).toBe('23514');
+    expect(
+      await code(row('u2', { provider: 'claude-cli', key: { ...NO_KEY, key_last4: `'abcd'` } })),
+    ).toBe('23514');
+    expect(
+      await code(
+        row('u2', { provider: 'claude-cli', base_url: 'https://api.example.com/v1', key: NO_KEY }),
+      ),
+    ).toBe('23514');
+    expect(await code(row('u2', { kind: 'stt', provider: 'claude-cli', key: NO_KEY }))).toBe(
+      '23514',
+    );
+
+    // Keyed rows are unaffected.
+    expect(await code(row('u2', { provider: 'anthropic', model: 'm', key: KEY }))).toBe('ok');
+    expect(await code(insertCredential('u2', 'stt'))).toBe('ok');
+    expect(
+      (await sys`select kind, provider from user_provider_credentials where user_id = 'u2' order by kind`).map(
+        (r) => `${r.kind}:${r.provider}`,
+      ),
+    ).toEqual(['llm:anthropic', 'stt:deepgram']);
+  });
+
   it('the key check table holds at most one row, with id 1', async () => {
     const db = await createTestDatabase();
     const sys = connect(db.system);
