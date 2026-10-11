@@ -56,6 +56,7 @@ import audioSegmentsList from '../../../fixtures/api-responses/audioSegmentsList
 import companionDeviceCreate from '../../../fixtures/api-responses/companionDeviceCreate.json';
 import companionDevicesList from '../../../fixtures/api-responses/companionDevicesList.json';
 import providerSave from '../../../fixtures/api-responses/providerSave.json';
+import providerSaveClaudeCli from '../../../fixtures/api-responses/providerSaveClaudeCli.json';
 import providersList from '../../../fixtures/api-responses/providersList.json';
 import providerTest from '../../../fixtures/api-responses/providerTest.json';
 import eventCreate from '../../../fixtures/api-responses/eventCreate.json';
@@ -801,6 +802,18 @@ describe('provider credentials — the responses `useProviders.ts` types (byo-ai
     expect(saved.key_last4).toHaveLength(4);
     const test: ProviderTestResponse = providerTest;
     expect(test).toEqual({ ok: true, detail: 'Connected.' });
+  });
+
+  // ai-sdk-agent-harness D2: `key_last4` may be null, and the list carries `claude_cli_allowed`.
+  it('the claude-cli PUT capture is assignable to ProviderCredential, with key_last4 null', () => {
+    const cli: ProviderCredential = providerSaveClaudeCli;
+    expect(cli).toMatchObject({ provider: 'claude-cli', model: 'claude-cli', key_last4: null });
+  });
+
+  it('the GET capture carries claude_cli_allowed', () => {
+    const check: ProvidersResponse = providersList;
+    const allowed: boolean = check.claude_cli_allowed;
+    expect(allowed).toBe(false);
   });
 });
 

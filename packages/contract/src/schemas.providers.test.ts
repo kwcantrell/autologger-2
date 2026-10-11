@@ -151,6 +151,48 @@ describe('providerPutBodySchema llm providers (owner decision 10)', () => {
   });
 });
 
+describe('providerPutBodySchema claude-cli (ai-sdk-agent-harness D2)', () => {
+  it('llm accepts exactly {provider: "claude-cli"}', () => {
+    for (const mode of [PROD, DEV]) {
+      const r = providerPutBodySchema('llm', mode).safeParse({ provider: 'claude-cli' });
+      expect(r.success).toBe(true);
+      if (r.success) expect(r.data).toEqual({ provider: 'claude-cli' });
+    }
+  });
+
+  it('refuses claude-cli with an api_key, a base_url or a model, null included', () => {
+    for (const extra of [
+      { api_key: KEY },
+      { base_url: 'https://api.example.com/v1' },
+      { base_url: null },
+      { model: 'opus' },
+      { model: 'claude-cli' },
+      { model: null },
+      { api_key: null },
+    ]) {
+      expect(ok('llm', { provider: 'claude-cli', ...extra }), JSON.stringify(extra)).toBe(false);
+    }
+  });
+
+  it('is not an stt provider', () => {
+    expect(ok('stt', { provider: 'claude-cli' })).toBe(false);
+  });
+
+  it('a credential may have key_last4 null (the keyless claude-cli row)', () => {
+    expect(
+      providerCredentialSchema.safeParse({
+        kind: 'llm',
+        provider: 'claude-cli',
+        base_url: null,
+        model: 'claude-cli',
+        key_last4: null,
+        updated_at: '2026-10-18T12:00:00.000Z',
+      }).success,
+    ).toBe(true);
+    expect(providerCredentialSchema.safeParse({ ...CRED, key_last4: '' }).success).toBe(false);
+  });
+});
+
 const CRED_BASE = {
   kind: 'llm',
   model: 'claude-sonnet-4-5',
@@ -180,17 +222,27 @@ describe('provider response schemas', () => {
     expect(providerCredentialSchema.safeParse({ ...CRED, key_last4: '12345' }).success).toBe(false);
   });
 
-  it('the list is llm, stt and run_features_allowed, each credential nullable', () => {
+  // ai-sdk-agent-harness D9 category 5: the list gains `claude_cli_allowed`.
+  it('the list is llm, stt, run_features_allowed and claude_cli_allowed, each credential nullable', () => {
+    expect(
+      providersResponseSchema.safeParse({
+        llm: CRED,
+        stt: null,
+        run_features_allowed: true,
+        claude_cli_allowed: false,
+      }).success,
+    ).toBe(true);
+    expect(providersResponseSchema.safeParse({ llm: null, stt: null }).success).toBe(false);
     expect(
       providersResponseSchema.safeParse({ llm: CRED, stt: null, run_features_allowed: true })
         .success,
-    ).toBe(true);
-    expect(providersResponseSchema.safeParse({ llm: null, stt: null }).success).toBe(false);
+    ).toBe(false);
     expect(
       providersResponseSchema.safeParse({
         llm: null,
         stt: null,
         run_features_allowed: false,
+        claude_cli_allowed: false,
         extra: 1,
       }).success,
     ).toBe(false);

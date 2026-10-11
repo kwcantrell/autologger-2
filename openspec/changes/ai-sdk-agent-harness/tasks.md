@@ -68,7 +68,7 @@ Anything else is a stop: update the artifacts and ask the owner.
 
 ## 3. Contract, config and provider routes (design D2, D6)
 
-- [ ] 3.1 Test first, in `packages/contract` schema tests (D9 categories 4 and 5):
+- [x] 3.1 Test first, in `packages/contract` schema tests (D9 categories 4 and 5):
   - `providerPutBodySchema('llm')` accepts `{provider:"claude-cli"}`, and refuses it with
     `api_key`, `base_url` or `model`;
   - the credential wire shape allows `key_last4: null`;
@@ -77,9 +77,10 @@ Anything else is a stop: update the artifacts and ask the owner.
     64 000 in total;
   - the `done` payload allows `claude_session_id: null`, and the request accepts
     `claude_session_id: null` as absent.
-
   Then the schemas change. Green.
-- [ ] 3.2 Test first, in `providers.int.test.ts` and `server/src/env.test.ts`:
+  - Evidence: red, a new `packages/contract/src/schemas.chat.test.ts` and new cases in `schemas.providers.test.ts`: `cd packages/contract && npx vitest run` -> `× bounds are 40 entries and 64 000 characters`, `× accepts 40 entries totalling 64 000 characters, and refuses a 41st entry`, `× refuses more than 64 000 characters in total, counted after trimming`, `× allows only the user and assistant roles`, `× accepts null as absent`, `× carries a non-empty CLI session id, or null on an AI SDK turn`, `× llm accepts exactly {provider: "claude-cli"}`, `× a credential may have key_last4 null (the keyless claude-cli row)`, `× the list is llm, stt, run_features_allowed and claude_cli_allowed, each credential nullable`, `Tests  12 failed | 127 passed (139)` (log `sdk-3.1-red.log`). Already passing, as expected: the claude-cli refusals with `api_key`, `base_url` or `model` and as `stt` (an unknown provider was already refused), and a non-empty `claude_session_id` still accepted. Green -> `Test Files  6 passed (6)`, `Tests  139 passed (139)` (log `sdk-3.1-green.log`).
+  - Evidence: `schemas.ts` adds `CHAT_HISTORY_MAX_ENTRIES` (40), `CHAT_HISTORY_MAX_CHARS` (64 000), `chatHistoryEntrySchema` (`user`/`assistant`, text trimmed 1-8000), `history` on `chatRequestSchema` with the total refined after trimming, `claude_session_id` nullish and mapped to `undefined`, `chatDoneEventSchema` (`claude_session_id: string(min 1) | null`, strict), `CLAUDE_CLI_PROVIDER`, the `claude-cli` variant of the `llm` PUT body (a strict object whose `base_url`, `model` and `api_key` are typed as always absent, so any of them, `null` included, is refused), `key_last4` nullable, `claude_cli_allowed` on the list, and `PROVIDER_TEST_DETAIL.claudeCliUnavailable`. D9 category 5: the existing list case in `schemas.providers.test.ts` now includes `claude_cli_allowed`, and a list without it is refused. The `zod4` stripping and transform cases for `chatRequestSchema` are unchanged and green.
+- [x] 3.2 Test first, in `providers.int.test.ts` and `server/src/env.test.ts`:
   - an allowlisted caller saves `claude-cli`: `200`, `key_last4: null`, `model: "claude-cli"`;
   - a caller who isn't allowlisted gets `403` with the fixed detail and nothing stored, and so
     does anyone when `CLAUDE_CLI_PATH` is blank;
@@ -89,12 +90,15 @@ Anything else is a stop: update the artifacts and ask the owner.
     account.`, with no outbound request, and counts toward the rate window;
   - `claudeCliAllowed` matching: trimming, ASCII case, a non-ASCII email, and the bootstrap
     owner not implicitly listed.
-
   Then the router, `claudeCliAllowed`, and the optional `Config` fields (`CLAUDE_CLI_EMAILS`, the
   step and token caps). Green.
-- [ ] 3.3 Recapture the provider fixtures with `UPDATE_API_FIXTURES=1`, and update
+  - Evidence: red: `cd server && npx vitest run --project unit src/env.test.ts` -> `TypeError: claudeCliAllowed is not a function`, `Tests  4 failed | 32 passed (36)`; `npx vitest run --project integration src/routers/providers.int.test.ts` -> `× an allowlisted caller saves it keyless, and GET reports claude_cli_allowed`, `× a caller who is not listed, the bootstrap owner, and anyone while CLAUDE_CLI_PATH is blank get 403 and nothing is stored`, `× switching from claude-cli to a key provider without a key gets 422 and changes nothing; with a key it saves`, `× the test answers Connected or unavailable with no outbound request, and counts toward the window`, plus three existing cases that parse `GET` with the 3.1 schema, `Tests  7 failed | 13 passed (20)` (log `sdk-3.2-red.log`). The 422 case for `claude-cli` with a key, base URL or model already passed through the 3.1 schema. Green -> `Tests  36 passed (36)` and `Tests  20 passed (20)` (log `sdk-3.2-green.log`); `npm run typecheck` -> exit 0.
+  - Evidence: `env.ts` adds `claudeCliAllowed(env, user)`: false unless `CLAUDE_CLI_PATH` is set, then each comma-separated `CLAUDE_CLI_EMAILS` entry through `bootstrapEmailMatch(...) === true`, with no implicit bootstrap owner. `Config` gains the optional `CLAUDE_CLI_EMAILS`, `AI_CHAT_MAX_STEPS`, `AI_CHAT_MAX_TOKENS`, `GENERATE_MAX_STEPS` and `GENERATE_MAX_TOKENS`, read in `node/config.ts`; the two complete `Config` literals are unchanged. The router: `GET` adds `claude_cli_allowed`; a `claude-cli` `PUT` that passes the schema answers `403 {"detail": "The Claude CLI is limited to approved operator accounts."}` unless allowed, else `putKeyless`, with the audit line; the test takes its slot first, then for the keyless row answers `Connected.` or `The Claude CLI isn't available to this account.` with no outbound request. Switching to a key provider without a key keeps the existing `422` (the keep-key update never matches a keyless row). D9 category 5: the existing `GET` assertion in `providers.int.test.ts` gains `claude_cli_allowed: false`.
+- [x] 3.3 Recapture the provider fixtures with `UPDATE_API_FIXTURES=1`, and update
   `web/src/api/types.ts` (D9 category 5). Verified by `apiResponseShapes.repo.test.ts` and
   `types.conformance.test.ts` green.
+  - Evidence: red: `cd server && npx vitest run --project integration src/routers/apiResponseFixtures.int.test.ts -t "provider credentials"` -> `× GET, PUT and POST test on /api/me/providers match the captured fixtures`, diff `+   "claude_cli_allowed": false,` (log `sdk-3.3-red.log`); with the new conformance cases, `cd web && npx tsc --noEmit -p .` -> `types.conformance.test.ts(809,11): error TS2322 … not assignable to type 'ProviderCredential'` and `(815,36): error TS2339: Property 'claude_cli_allowed' does not exist on type 'ProvidersResponse'` (log `sdk-3.3-red-tc.log`). Recaptured: `cd server && UPDATE_API_FIXTURES=1 npx vitest run --project integration src/routers/apiResponseFixtures.int.test.ts -t "provider"` -> `Tests  2 passed | 44 skipped (46)` (log `sdk-3.3-capture.log`); `providersList.json` gains `"claude_cli_allowed": false`, and a new capture `providerSaveClaudeCli.json` holds `"provider": "claude-cli"`, `"model": "claude-cli"`, `"key_last4": null`. Green: the fixture file without the flag -> `Tests  46 passed (46)` (log `sdk-3.3-fixtures-green.log`); `cd web && npx vitest run src/api/types.conformance.test.ts src/apiResponseShapes.repo.test.ts` -> `Tests  109 passed (109)` (log `sdk-3.3-green.log`); `npm run typecheck` -> exit 0, 0 `error TS` (log `sdk-3.3-tc.log`).
+  - Evidence: `web/src/api/types.ts`: `ProviderId` gains `claude-cli`, `ProviderCredential.key_last4` is `string | null`, and `ProvidersResponse` gains `claude_cli_allowed`. New cases: the claude-cli save capture and its conformance check, and the list's `claude_cli_allowed`. D9 category 5: `AdvancedSection.test.tsx:178`, the `ProvidersResponse` state literal, gains `claude_cli_allowed: false` (typing only; it is also a category 7 file). Units after group 3 (log `sdk-3-units.log`): server unit `Tests  446 passed | 3 skipped (449)`, contract `139 passed`, ai-runtime `199 passed`, storage unit `68 passed`, web `Tests  1922 passed (1922)`, ports `1 passed` (after the 2.2 correction).
 
 ## 4. Route resolution (design D1)
 

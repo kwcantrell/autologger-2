@@ -1,0 +1,8 @@
+{
+  "kind": "llm",
+  "provider": "claude-cli",
+  "base_url": null,
+  "model": "claude-cli",
+  "key_last4": null,
+  "updated_at": "####-##-##T##:##:##.###Z"
+}

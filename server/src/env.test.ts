@@ -8,6 +8,7 @@ import {
   adminTokenConfigured,
   bootstrapEmailMatch,
   bootstrapOwnerEmail,
+  claudeCliAllowed,
   cookieSecureForRequest,
   eventGenerateMaxBudgetUsd,
   eventGenerateMaxCreatedEvents,
@@ -337,5 +338,51 @@ describe('approved users for run features (run-status-and-sweeper D9)', () => {
   });
   it('runFeatureAllowed is false for everyone when no owner and no list are set', () => {
     expect(runFeatureAllowed(E({}), { email: 'a@example.com' })).toBe(false);
+  });
+});
+
+describe('Claude CLI allowlist (ai-sdk-agent-harness D1, D2)', () => {
+  const CLI = '/usr/local/bin/claude';
+  it('matches a listed email after trimming and folding ASCII case only', () => {
+    const env = E({
+      CLAUDE_CLI_PATH: CLI,
+      CLAUDE_CLI_EMAILS: '  Dev@Example.com , other@example.com,,',
+    });
+    expect(claudeCliAllowed(env, { email: 'dev@example.com' })).toBe(true);
+    expect(claudeCliAllowed(env, { email: ' DEV@EXAMPLE.COM ' })).toBe(true);
+    expect(claudeCliAllowed(env, { email: 'other@example.com' })).toBe(true);
+    expect(claudeCliAllowed(env, { email: 'third@example.com' })).toBe(false);
+    expect(claudeCliAllowed(env, { email: '' })).toBe(false);
+  });
+  it('never matches a non-ASCII email (U+212A KELVIN SIGN does not fold to k)', () => {
+    const env = E({ CLAUDE_CLI_PATH: CLI, CLAUDE_CLI_EMAILS: 'kalen@gmail.com' });
+    expect(claudeCliAllowed(env, { email: '\u212Aalen@gmail.com' })).toBe(false);
+    expect(claudeCliAllowed(env, { email: 'kalen@gmail.com' })).toBe(true);
+  });
+  it('does not implicitly list the bootstrap owner', () => {
+    const env = E({
+      CLAUDE_CLI_PATH: CLI,
+      BOOTSTRAP_OWNER_EMAIL: 'owner@example.com',
+      CLAUDE_CLI_EMAILS: 'dev@example.com',
+    });
+    expect(claudeCliAllowed(env, { email: 'owner@example.com' })).toBe(false);
+    expect(
+      claudeCliAllowed(E({ CLAUDE_CLI_PATH: CLI, BOOTSTRAP_OWNER_EMAIL: 'owner@example.com' }), {
+        email: 'owner@example.com',
+      }),
+    ).toBe(false);
+  });
+  it('is false for everyone when the list is unset or blank, or CLAUDE_CLI_PATH is blank', () => {
+    expect(claudeCliAllowed(E({ CLAUDE_CLI_PATH: CLI }), { email: 'a@example.com' })).toBe(false);
+    expect(
+      claudeCliAllowed(E({ CLAUDE_CLI_PATH: CLI, CLAUDE_CLI_EMAILS: ' , ' }), { email: '' }),
+    ).toBe(false);
+    for (const path of ['', '   ', undefined]) {
+      expect(
+        claudeCliAllowed(E({ CLAUDE_CLI_PATH: path, CLAUDE_CLI_EMAILS: 'a@example.com' }), {
+          email: 'a@example.com',
+        }),
+      ).toBe(false);
+    }
   });
 });

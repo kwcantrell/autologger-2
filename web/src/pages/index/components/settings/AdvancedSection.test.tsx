@@ -174,7 +174,8 @@ function cacheText(client: QueryClient): string {
 
 beforeEach(() => {
   mockedApiFetch.mockReset();
-  state = { llm: null, stt: SAVED_STT, run_features_allowed: true };
+  // ai-sdk-agent-harness D9 category 5: the GET shape gains claude_cli_allowed (typing only).
+  state = { llm: null, stt: SAVED_STT, run_features_allowed: true, claude_cli_allowed: false };
   testResult = { ok: true, detail: 'Connected.' };
   saveError = null;
   route();

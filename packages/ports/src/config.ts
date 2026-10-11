@@ -31,6 +31,16 @@ export interface Config {
   /** AI topics chat (ai-topics-chat). Unset/blank/whitespace CLAUDE_CLI_PATH ⇒
    * feature off (503). The rest tune spend/lifecycle bounds. */
   CLAUDE_CLI_PATH: string;
+  /** The Claude CLI allowlist (ai-sdk-agent-harness D1): comma-separated emails who may save the
+   * keyless `claude-cli` provider and run turns on the operator's CLI. Absent or blank: nobody.
+   * The bootstrap owner is not implicitly listed. */
+  CLAUDE_CLI_EMAILS?: string;
+  /** AI SDK turn bounds (ai-sdk-agent-harness D3): steps and the per-turn token budget for chat,
+   * and for topic and event generation. Absent or invalid gives the defaults. */
+  AI_CHAT_MAX_STEPS?: string;
+  AI_CHAT_MAX_TOKENS?: string;
+  GENERATE_MAX_STEPS?: string;
+  GENERATE_MAX_TOKENS?: string;
   AI_CHAT_TIMEOUT_SEC: string;
   /** The AI provider (run-status-and-sweeper D1): `'claude_cli'` is the only one; `createBindings`
    * refuses any other `AI_PROVIDER` at boot. */

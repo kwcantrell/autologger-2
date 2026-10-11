@@ -91,6 +91,19 @@ export function runFeatureAllowed(env: Config, user: { email: string }): boolean
   return runFeatureEmails(env).some((e) => bootstrapEmailMatch(user.email, e) === true);
 }
 
+// ── Claude CLI allowlist (ai-sdk-agent-harness D1, D2) ─────────────────────
+
+/** Whether `user` may use the operator's Claude CLI now: `CLAUDE_CLI_PATH` is set and their email
+ * matches a `CLAUDE_CLI_EMAILS` entry (comma-separated, each trimmed, blanks dropped) under the
+ * bootstrap owner's exact-ASCII rule. Unlike `RUN_FEATURE_EMAILS`, the bootstrap owner is NOT
+ * implicitly listed: the list names exactly who may use the operator's subscription. */
+export function claudeCliAllowed(env: Config, user: { email: string }): boolean {
+  if (!aiChatConfigured(env)) return false;
+  return (env.CLAUDE_CLI_EMAILS || '')
+    .split(',')
+    .some((e) => bootstrapEmailMatch(user.email, e) === true);
+}
+
 export function sessionTtlDays(env: Config): number {
   const n = Number(env.SESSION_DAYS ?? '14');
   return Number.isFinite(n) && n > 0 ? n : 14.0;
