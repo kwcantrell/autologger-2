@@ -5,3 +5,14 @@
 4ba309c2c24327843d05771fad2cdd4425aee0c8:server/src/upgradeDispatch.int.test.ts:generic-api-key:94
 # Placeholder image tag (WEB_TAG=abcdef123456) in the env-check fixture:
 78231a41443ffa56ff6c97bf307515c95f3c8ae3:docker/scripts/check-envs.sh:generic-api-key:91
+# byo-ai-providers: fixed fake keys in tests and fixtures (sk-test-…, test-key-…, dg_secret_abcd, a
+# 16-byte base64 test secret), and a curl with the placeholder key invalid_key_123 quoted in panel.md.
+# None is a real credential.
+8b241154bc1b4fe710e7eaff7eb2776406c4ccac:openspec/changes/byo-ai-providers/panel.md:curl-auth-header:19
+9b98c1c387fc6208d58bbefeec80fe889dcf59ff:openspec/changes/byo-ai-providers/panel.md:curl-auth-header:19
+6ea749f03421f559f111379590c58de1af51f657:packages/contract/src/schemas.providers.test.ts:generic-api-key:17
+d3845c95b4061ed9e4ea72ff37aad1429f5c8a83:server/src/auth/providerKeyCrypto.test.ts:generic-api-key:17
+d85e050ab6a6ddf1a70d73436e94c1f57c966976:server/src/auth/providerTester.test.ts:generic-api-key:52
+c6b3c06ea407bc653cd7d46fbb14c3c795d51cff:server/src/bootProviderKeys.int.test.ts:generic-api-key:95
+c98d3a67a31d7f4a2f662824b761dd06fb898137:server/src/routers/apiResponseFixtures.int.test.ts:generic-api-key:1449
+c5e468d5be9e6f859edd07e4e745f275cdb38b90:server/src/routers/providers.int.test.ts:generic-api-key:348
