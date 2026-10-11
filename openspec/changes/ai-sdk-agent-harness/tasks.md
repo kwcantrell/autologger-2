@@ -26,11 +26,22 @@ Anything else is a stop: update the artifacts and ask the owner.
 
 ## 1. Baselines
 
-- [ ] 1.1 On the base, run the unit suites (server, packages, web) and typecheck, and record the
+- [x] 1.1 On the base, run the unit suites (server, packages, web) and typecheck, and record the
   counts. Then list every existing test design D9 may touch, using
   `grep -rln "CLAUDE_CLI_PATH\|aiChatConfigured\|not configured on this deployment\|claude_session_id\|no integration configured\|key_last4\|run_features_allowed\|LLM_PROVIDERS\|TOOL_BUILDERS" --include=*.test.ts --include=*.test.tsx --include=*.mjs server/src packages web/src docker/scripts`,
   and classify each hit by D9 category or as unchanged. Verified by the recorded counts and the
   classified list.
+  - Evidence: base `66f2aba0`. `cd server && npx vitest run --project unit` -> `Tests  442 passed | 3 skipped (445)`; `npx vitest run` in ports -> `Tests  1 passed (1)`, contract -> `Tests  125 passed (125)`, transcription -> `Tests  71 passed (71)`, catalog -> `Tests  51 passed (51)`, ai-runtime -> `Tests  199 passed (199)`, session-core -> `Tests  55 passed (55)`, media-import -> `Tests  31 passed | 2 skipped (33)`, log-import -> `Tests  41 passed (41)`, domain -> `Tests  50 passed (50)`; `cd packages/storage && npx vitest run --project unit` -> `Tests  68 passed (68)`; `cd web && npx vitest run` -> `Tests  1920 passed (1920)`; `npm run typecheck` -> exit 0, 0 `error TS` (log `sdk-1.1-baseline.log`). DB baseline: the last full CI run on `supabase-migration` (PR #106).
+  - Evidence: the grep matches 27 files (log `sdk-1.1-grep.log`).
+    - Category 1: `routers/ai.int.test.ts`, `routers/transcribe.int.test.ts`, `routers/events.generate.int.test.ts`, `routers/access.int.test.ts:150`, `routers/compression.int.test.ts:371`, `routers/sessionHub.interleave.int.test.ts:84`, `routers/aiV2.int.test.ts:458,493` (shared slot only), `test/topicGenerate.real.test.ts`, `test/eventGenerate.real.test.ts` (each sets `CLAUDE_CLI_PATH`).
+    - Category 2: the route 503 cases in `ai.int`, `transcribe.int` and `events.generate.int`; `aiV2.int.test.ts:267-274` (asserts `/AI chat is not configured/` with `CLAUDE_CLI_PATH: ''`); `AiChat.test.tsx`, `generateLatch.test.tsx`, `eventGenerateLatch.test.tsx`.
+    - Category 3: `generateLatch.test.tsx`, `eventGenerateLatch.test.tsx`.
+    - Category 4: `packages/contract/src/schemas.zod4.test.ts`; `packages/ai-runtime/src/aiChatRelay.test.ts` only where it asserts the `done` payload type (its CLI ids such as `'s1'` stay).
+    - Category 5: `packages/contract/src/schemas.providers.test.ts`, `routers/providers.int.test.ts`, `web/src/api/types.conformance.test.ts`, `web/src/apiResponseShapes.repo.test.ts`.
+    - Category 6: `test/pg/catalogSchema.pg.test.ts`, `test/pg/providerTables.pg.test.ts`.
+    - Category 7: `settings/AdvancedSection.test.tsx` (`key_last4`, `run_features_allowed` fixtures and the four-option list).
+    - Category 8: none in the grep; `grep -rln "ProviderCredentialStore\|updateKeepingKey" --include=*.ts server/src packages` finds no in-memory fake (tests use `PostgresProviderCredentialStore`), so only the port's consumers change.
+    - Unchanged: `routers/logImport.int.test.ts:24` (the Sheets "not configured on this deployment" string); `upgradeDispatch.test.ts:39` (a complete `Config` literal; the new fields are optional); `test/session/aiMcpServer.int.test.ts:1311` (a source slice keyed on `create_event: (server, {...}) => {` and the `TOOL_BUILDERS` close; 6.2 must keep both texts, typing via the builders' type, not the arrow's parameters); `packages/ai-runtime/src/aiChatRunner.test.ts` and `fixtures/fake-claude.mjs` (the CLI runner and its fixture stay); `AiV2Design.test.tsx:692` (the AI v2 copy, not chat, topics or events).
 
 ## 2. Keyless `claude-cli` row (design D2)
 
