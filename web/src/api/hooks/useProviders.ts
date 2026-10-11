@@ -20,10 +20,12 @@ export const providerKeys = {
   list: () => ['providers'] as const,
 };
 
-export function useProviders() {
+/** `enabled: false` subscribes without fetching (the Transcribe feed watches only while latched). */
+export function useProviders(options: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: providerKeys.list(),
     queryFn: () => apiFetch<ProvidersResponse>('me/providers'),
+    enabled: options.enabled ?? true,
   });
 }
 
