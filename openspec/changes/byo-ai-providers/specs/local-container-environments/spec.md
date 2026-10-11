@@ -1,6 +1,6 @@
 ## MODIFIED Requirements
 
-### Requirement: Secrets come from OpenBao, one KV path per stack
+### Requirement: Secrets come from one OpenBao KV path per stack, retired keys ignored
 Each stack SHALL read its secrets and its compose interpolation values from one OpenBao KV v2
 secret: `kv/autologger/dev`, `kv/autologger/stage` or `kv/autologger/prod`. Each environment SHALL
 log in with its own AppRole, whose policy SHALL allow reading only its own KV path (`read` on
@@ -36,23 +36,26 @@ ignored by git, and the tracked templates SHALL NOT be.
 - one of that environment's fixed compose-interpolation keys: `DEV_PORT` and
   `DEV_COMPANION_PORT` for dev, `STAGE_PORT` for stage, and `ROUTER_PORT`, `WEB_TAG`, `API_TAG`,
   and `PUBLIC_BASE_URL` for prod; or
-- one of the Supabase keys, in every environment. These are interpolation keys that only the
-  services allowed for them in invariant 16 receive, and they SHALL NOT be listed in the shared
-  allowlist file. Each value SHALL match its format, and a compose target SHALL refuse the
-  environment, naming the key and printing no value, when one does not:
+- one of the Supabase keys `POSTGRES_PASSWORD`, `SUPABASE_ROLES_PASSWORD`, `APP_DB_PASSWORD`
+  and `JWT_SECRET`, in every environment. These are interpolation keys that only the services
+  allowed for them in invariant 16 receive, and they SHALL NOT be listed in the shared allowlist
+  file. Each value SHALL match its format, and a compose target SHALL refuse the environment,
+  naming the key and printing no value, when one does not:
 
   | Key | Format |
   | --- | --- |
   | `POSTGRES_PASSWORD`, `SUPABASE_ROLES_PASSWORD`, `APP_DB_PASSWORD` | at least 32 lowercase hexadecimal characters |
   | `JWT_SECRET` | at least 40 characters of `[A-Za-z0-9_-]` |
-  | `SECRET_KEY_BASE` | at least 64 characters of `[A-Za-z0-9_-]` |
-  | `REALTIME_DB_ENC_KEY` | exactly 16 characters of `[A-Za-z0-9_-]` |
-  | `ANON_KEY`, `SERVICE_ROLE_KEY` | HS256 JWTs that verify against `JWT_SECRET`, with `role` `anon` and `service_role` respectively, distinct, and not expired |
-  | `SUPABASE_PORT` | a port number 1024-65535 |
 
-  The wrapper SHALL warn, naming the key, when `ANON_KEY` or `SERVICE_ROLE_KEY` expires within
-  90 days. At run time, it SHALL refuse to start compose if any Supabase secret's value appears in
-  the resolved configuration of a service outside that secret's allowed set.
+  At run time, the wrapper SHALL refuse to start compose if any of these values appears in the
+  resolved configuration of a service outside that key's allowed set.
+- one of the retired Supabase keys `ANON_KEY`, `SERVICE_ROLE_KEY`, `SECRET_KEY_BASE`,
+  `REALTIME_DB_ENC_KEY` and `SUPABASE_PORT`, in every environment. No service uses them. The
+  wrapper SHALL accept them without checking their format, SHALL NOT pass them to compose or to
+  any other child process, and, when any is present, SHALL print one warning that names the
+  retired keys present, prints no value, and says they can be removed from OpenBao. They stay
+  allowed until every OpenBao secret has dropped them, because a checkout of an older branch may
+  still run the services that used them.
 
 **Documentation.** The documentation SHALL:
 - list those keys and the KV layout;
@@ -101,10 +104,11 @@ live version and SHALL NOT be refused.
 - **THEN** it exits non-zero naming `POSTGRES_PASSWORD`, prints no value, and runs no docker
   command
 
-#### Scenario: Swapped Supabase API keys are refused
-- **WHEN** the OpenBao `dev` KV secret's `ANON_KEY` and `SERVICE_ROLE_KEY` are swapped, or
-  either is signed with a different secret, and `make dev-up` runs
-- **THEN** it exits non-zero naming the key, prints no value, and runs no docker command
+#### Scenario: Retired Supabase keys are accepted and not passed on
+- **WHEN** the OpenBao `dev` KV secret holds `ANON_KEY` with a value that is not a JWT, and
+  `SUPABASE_PORT`, and `make dev-up` runs
+- **THEN** it is not refused for them, it prints one warning naming both keys and no value, and
+  neither key is in the environment of any compose process or container
 
 #### Scenario: Credentials and old env files are ignored, templates are not
 - **WHEN** `git check-ignore .env .env.dev .env.stage .env.openbao.dev .env.openbao.prod` is run

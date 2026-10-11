@@ -61,3 +61,9 @@ Scope change: yes (owner decision 10), so it was re-panelled above and needs the
   - choosing a fixed-host provider hides the base URL: 6.1.
 
   No task falls under a non-goal, and design D1, D2, D4 and D5 agree with the deltas.
+
+## Consistency read 2026-10-11
+Edits since the last approval: design.md D7 (+ category 12, the harness defaults to development mode), tasks.md (1.1 correction note).
+Scope change: no. A test-infrastructure choice the owner made under the D7 stop rule; no requirement, contract or risk changes.
+- [x] [major] The 1.1 classification wrongly called `sessionHub.interleave.int.test.ts` unchanged: the harness ran in production mode, so the env-key fallback it relies on would stop working. Resolved: owner decision, D7 category 12 (the harness passes `NODE_ENV: 'test'`), and the 1.1 evidence carries the correction. The specs and other tasks are unaffected; production-mode cases stay explicit.
+- [x] [major] After the merge of `origin/supabase-migration`, the local-container-environments delta modified a requirement that `drop-unused-supabase-services` had renamed ("Secrets come from one OpenBao KV path per stack, retired keys ignored"), so archiving would have refused it. Evidence: `openspec validate byo-ai-providers --strict` -> `Archive would refuse this delta … not found`. Resolved: the delta is rebuilt on the current requirement text, with only the `PROVIDER_KEYS_SECRET` failure bullet and its scenario added, as before.

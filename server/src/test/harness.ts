@@ -63,6 +63,9 @@ export async function resetTestEnv(): Promise<void> {
   try {
     made = createBindings({
       DATA_DIR: dir,
+      // byo-ai-providers D7 category 12: integration tests run in development mode, like the dev
+      // stack; production-mode cases set PROVIDER_DEV_MODE: false through envWith.
+      NODE_ENV: 'test',
       BLOB_DIR: blobDir,
       PUBLIC_BASE_URL: 'https://example.com',
       // Sign-in is configured, as the boot guard requires of every running server (require-login

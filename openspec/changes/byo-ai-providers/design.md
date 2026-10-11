@@ -352,6 +352,10 @@ cache, and the key is never in a query.
 11. (Re-panel) **The 2.2 store tests of `takeTestSlot`** call `takeTestSlot(userId)` on the
     per-user window, and the schema snapshots lose the two window columns and gain
     `provider_test_windows`.
+12. (Owner, 2026-10-11) **The integration harness passes `NODE_ENV: 'test'`** to `createBindings`,
+    so integration tests run in development mode like the dev stack, and existing tests that set
+    `DEEPGRAM_API_KEY` keep its fallback unchanged. Every production-mode case sets
+    `PROVIDER_DEV_MODE: false` explicitly through `envWith`.
 
 Any other existing test change is a stop: update the artifacts and ask the owner.
 
