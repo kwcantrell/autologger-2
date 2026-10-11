@@ -8,7 +8,6 @@
 // stand in for the real 2000ms retry pause so this file adds no real
 // elapsed time to the unit tier.
 
-import type { Config } from '@autologger/ports';
 import type { SessionHubFacade, TimecodeCtx, TranscriptWord } from '@autologger/session-core';
 import { generateTranscriptWords, TranscriptGenerateError } from '@autologger/transcription';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -49,14 +48,15 @@ function makeHub(sequence: TranscriptWord[][]): SessionHubFacade {
 }
 
 const ctx: TimecodeCtx = { frameRate: 30, startOffsetFrames: 0 };
-const config = {} as Config;
+const stt = { apiKey: 'k', model: 'nova-3' };
 const audio = {} as Parameters<typeof ensureTimedTranscript>[0]['audio'];
 
 function baseInput(hub: SessionHubFacade, onProgress: (line: string) => void) {
   return {
     sessionId: 'sess-1',
     getHub: async () => hub,
-    config,
+    // byo-ai-providers D7 category 3: the creator's credential, read when generation starts.
+    resolveStt: async () => stt,
     audio,
     ctx,
     onProgress,
@@ -72,6 +72,22 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers();
+});
+
+describe('ensureTimedTranscript without a speech-to-text credential (byo-ai-providers 5.3)', () => {
+  it('records the add-a-key line, never calls the generator, and fails the session', async () => {
+    const lines: string[] = [];
+    const hub = makeHub([[]]);
+    const err = await ensureTimedTranscript({
+      ...baseInput(hub, (l) => lines.push(l)),
+      resolveStt: async () => null,
+    }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect(lines).toContain(
+      'Skipped transcript generation: add a speech-to-text key in Settings → Advanced.',
+    );
+    expect(generateTranscriptWordsMock).not.toHaveBeenCalled();
+  });
 });
 
 describe('ensureTimedTranscript retry path', () => {

@@ -29,6 +29,7 @@ import { eventsRouter } from './routers/events';
 import { exportsRouter } from './routers/exports';
 import { logImportRouter } from './routers/logImport';
 import { profileRouter } from './routers/profile';
+import { providersRouter } from './routers/providers';
 import { sessionsRouter } from './routers/sessions';
 import { mountSessionWs } from './routers/sessionWs';
 import { showsRouter } from './routers/shows';
@@ -248,6 +249,8 @@ export function wireApp(
   app.route('/', audioRouter);
   app.route('/', companionRouter);
   app.route('/', companionDevicesRouter);
+  // byo-ai-providers D4: the signed-in user's own provider credentials.
+  app.route('/', providersRouter);
   app.route('/', transcribeRouter);
   app.route('/', aiRouter);
   app.route('/', aiV2Router);

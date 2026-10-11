@@ -41,6 +41,8 @@ const PGPW = '0123456789abcdef0123456789abcdef'; // a valid POSTGRES_PASSWORD (s
 // supabase-services: the compose files interpolate every Supabase key, so resolve needs them all
 // (drop-unused-supabase-services D3: the four that remain).
 const SB_JS = 'j'.repeat(43);
+// byo-ai-providers D2: a valid 32-byte provider-keys secret.
+const PKS = Buffer.alloc(32, 5).toString('base64');
 const sbSecrets = () => [secret('POSTGRES_PASSWORD', PGPW), secret('SUPABASE_ROLES_PASSWORD', 'f'.repeat(32)), secret('APP_DB_PASSWORD', 'e'.repeat(32)), secret('JWT_SECRET', SB_JS)];
 // drop-unused-supabase-services D3: the retired keys as the old generator wrote them.
 const retiredSecrets = () => [secret('ANON_KEY', 'aaa.bbb.ccc-anon-value'), secret('SERVICE_ROLE_KEY', 'aaa.bbb.ccc-service-value'), secret('SECRET_KEY_BASE', 's'.repeat(64)),
@@ -196,7 +198,7 @@ after(() => {
 });
 beforeEach(() => {
   seen = [];
-  handler = standIn([secret('GOOGLE_CLIENT_ID', 'gid'), secret('GOOGLE_CLIENT_SECRET', 'gsecret'), secret('BOOTSTRAP_OWNER_EMAIL', 'owner@example.com'), secret('DEV_PORT', '18787'), ...sbSecrets()]);
+  handler = standIn([secret('GOOGLE_CLIENT_ID', 'gid'), secret('GOOGLE_CLIENT_SECRET', 'gsecret'), secret('BOOTSTRAP_OWNER_EMAIL', 'owner@example.com'), secret('PROVIDER_KEYS_SECRET', PKS), secret('DEV_PORT', '18787'), ...sbSecrets()]);
   rmSync(join(T, 'log'), { recursive: true, force: true });
   rmSync(join(T, 'cred'), { recursive: true, force: true });
 });
@@ -487,7 +489,7 @@ describe('start-up checks (H1, H10, H11)', () => {
 describe('success path (D1 steps 5-6, H12)', () => {
   it('logs in once, reads the KV path, revokes the token, and spawns docker with only the clean env', async () => {
     writeCreds('dev');
-    handler = standIn([secret('GOOGLE_CLIENT_ID', `a'b"c$d\`e\nf`), secret('GOOGLE_CLIENT_SECRET', 'gsecret'), secret('BOOTSTRAP_OWNER_EMAIL', 'owner@example.com'), secret('DEV_PORT', '18787'), ...sbSecrets(), ...retiredSecrets()]);
+    handler = standIn([secret('GOOGLE_CLIENT_ID', `a'b"c$d\`e\nf`), secret('GOOGLE_CLIENT_SECRET', 'gsecret'), secret('BOOTSTRAP_OWNER_EMAIL', 'owner@example.com'), secret('PROVIDER_KEYS_SECRET', PKS), secret('DEV_PORT', '18787'), ...sbSecrets(), ...retiredSecrets()]);
     const r = await run(['dev', 'compose version']);
     assert.equal(r.code, 0, r.out);
     assert.deepEqual(seen.map((q) => `${q.method} ${q.url}`), ['POST /v1/auth/approle/login', 'GET /v1/kv/data/autologger/dev', 'POST /v1/auth/token/revoke-self']);
@@ -512,12 +514,12 @@ describe('success path (D1 steps 5-6, H12)', () => {
     assert.match(env, /^TERM=xterm$/m);
     assert.ok(env.includes(`GOOGLE_CLIENT_ID=a'b"c$d\`e\nf`));
     const names = env.split('\n').filter((l) => /^[A-Za-z_][A-Za-z0-9_]*=/.test(l)).map((l) => l.split('=')[0]).sort();
-    assert.deepEqual(names, ['APP_DB_PASSWORD', 'AUTOLOGGER_STACK', 'BOOTSTRAP_OWNER_EMAIL', 'DEV_PORT', 'GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'HOME', 'JWT_SECRET', 'PATH', 'POSTGRES_PASSWORD', 'PWD', 'SUPABASE_ROLES_PASSWORD', 'TERM']);
+    assert.deepEqual(names, ['APP_DB_PASSWORD', 'AUTOLOGGER_STACK', 'BOOTSTRAP_OWNER_EMAIL', 'DEV_PORT', 'GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'HOME', 'JWT_SECRET', 'PATH', 'POSTGRES_PASSWORD', 'PROVIDER_KEYS_SECRET', 'PWD', 'SUPABASE_ROLES_PASSWORD', 'TERM']);
     assert.match(env, new RegExp(`^POSTGRES_PASSWORD=${PGPW}$`, 'm'));
   });
   it('a failed revoke only warns; the token expires with its TTL', async () => {
     writeCreds('dev');
-    handler = standIn([secret('GOOGLE_CLIENT_ID', 'gid'), secret('GOOGLE_CLIENT_SECRET', 'gsecret'), secret('BOOTSTRAP_OWNER_EMAIL', 'owner@example.com'), secret('DEV_PORT', '18787'), ...sbSecrets()], { revoke: 403 });
+    handler = standIn([secret('GOOGLE_CLIENT_ID', 'gid'), secret('GOOGLE_CLIENT_SECRET', 'gsecret'), secret('BOOTSTRAP_OWNER_EMAIL', 'owner@example.com'), secret('PROVIDER_KEYS_SECRET', PKS), secret('DEV_PORT', '18787'), ...sbSecrets()], { revoke: 403 });
     const r = await run(['dev', 'compose version']);
     assert.equal(r.code, 0, r.out);
     assert.match(r.out, /warning: could not revoke the OpenBao token \(OpenBao answered HTTP 403\)/);
@@ -589,7 +591,7 @@ describe('guard steps (resolved, urls, prod-tags, reset; H8)', () => {
   it('resolved refuses 8080, 80/443 in dev, and a non-numeric port', async () => {
     writeCreds('dev');
     for (const p of ['8080', '443', 'abc']) {
-      handler = standIn([secret('GOOGLE_CLIENT_ID', 'gid'), secret('GOOGLE_CLIENT_SECRET', 'gsecret'), secret('BOOTSTRAP_OWNER_EMAIL', 'owner@example.com'), secret('DEV_PORT', p), ...sbSecrets()]);
+      handler = standIn([secret('GOOGLE_CLIENT_ID', 'gid'), secret('GOOGLE_CLIENT_SECRET', 'gsecret'), secret('BOOTSTRAP_OWNER_EMAIL', 'owner@example.com'), secret('PROVIDER_KEYS_SECRET', PKS), secret('DEV_PORT', p), ...sbSecrets()]);
       const r = await run(['dev', 'resolved', 'compose up -d']);
       assert.notEqual(r.code, 0, p);
       assert.doesNotMatch(log('argv'), / up /, p);
@@ -616,7 +618,7 @@ describe('guard steps (resolved, urls, prod-tags, reset; H8)', () => {
   });
   it('a failing guard stops before the destructive step', async () => {
     writeCreds('dev');
-    handler = standIn([secret('GOOGLE_CLIENT_ID', 'gid'), secret('GOOGLE_CLIENT_SECRET', 'gsecret'), secret('BOOTSTRAP_OWNER_EMAIL', 'owner@example.com'), secret('DEV_PORT', '8080'), ...sbSecrets()]);
+    handler = standIn([secret('GOOGLE_CLIENT_ID', 'gid'), secret('GOOGLE_CLIENT_SECRET', 'gsecret'), secret('BOOTSTRAP_OWNER_EMAIL', 'owner@example.com'), secret('PROVIDER_KEYS_SECRET', PKS), secret('DEV_PORT', '8080'), ...sbSecrets()]);
     const r = await run(['dev', 'reset', 'resolved', 'compose down -v'], { env: { CONFIRM: 'yes' } });
     assert.notEqual(r.code, 0);
     assert.doesNotMatch(log('argv'), /down/);
@@ -738,7 +740,7 @@ describe('Supabase keys (supabase-services D4)', () => {
     const p = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
     const hp = `${p({ alg: 'HS256', typ: 'JWT' })}.${p({ role: 'anon', exp: Math.floor(Date.now() / 1000) + 86400 })}`;
     const foreign = `${hp}.${createHmac('sha256', 'x'.repeat(43)).update(hp).digest('base64url')}`;
-    handler = standIn([secret('GOOGLE_CLIENT_ID', 'gid'), secret('GOOGLE_CLIENT_SECRET', 'gsecret'), secret('BOOTSTRAP_OWNER_EMAIL', 'owner@example.com'), secret('DEV_PORT', '18787'), ...sbSecrets(), secret('ANON_KEY', foreign)]);
+    handler = standIn([secret('GOOGLE_CLIENT_ID', 'gid'), secret('GOOGLE_CLIENT_SECRET', 'gsecret'), secret('BOOTSTRAP_OWNER_EMAIL', 'owner@example.com'), secret('PROVIDER_KEYS_SECRET', PKS), secret('DEV_PORT', '18787'), ...sbSecrets(), secret('ANON_KEY', foreign)]);
     const r = await run(['dev', 'compose version']);
     assert.equal(r.code, 0, r.out);
     assert.match(r.out, /retired keys ANON_KEY;/);
@@ -841,13 +843,40 @@ describe('sign-in client and bootstrap owner (gotrue-sign-in D3, require-login D
   });
 });
 
+// byo-ai-providers D2: the server refuses to boot without a 32-byte PROVIDER_KEYS_SECRET, so every
+// stack refuses before compose starts.
+describe('provider keys secret (byo-ai-providers D2)', () => {
+  it('every stack refuses a missing, blank or non-32-byte PROVIDER_KEYS_SECRET, without printing it', async () => {
+    const { checkProviderKeysSecret } = await import('./compose-run.mjs');
+    const short = Buffer.alloc(16, 9).toString('base64');
+    for (const env of ['dev', 'stage', 'prod']) {
+      for (const v of [undefined, '', '  ', short, Buffer.alloc(33, 9).toString('base64'), 'not base64!!']) {
+        const m = v === undefined ? new Map() : new Map([['PROVIDER_KEYS_SECRET', v]]);
+        let msg = '';
+        try { checkProviderKeysSecret(env, m); } catch (err) { msg = err.message; }
+        assert.match(msg, /PROVIDER_KEYS_SECRET/, `${env} ${v}`);
+        if (v && v.trim()) assert.ok(!msg.includes(v.trim()), `${env} ${v} printed`);
+      }
+      assert.doesNotThrow(() => checkProviderKeysSecret(env, new Map([['PROVIDER_KEYS_SECRET', PKS]])), env);
+    }
+  });
+  it('a dev run without PROVIDER_KEYS_SECRET in OpenBao refuses before docker runs', async () => {
+    writeCreds('dev');
+    handler = standIn([secret('GOOGLE_CLIENT_ID', 'gid'), secret('GOOGLE_CLIENT_SECRET', 'gsecret'), secret('BOOTSTRAP_OWNER_EMAIL', 'owner@example.com'), secret('DEV_PORT', '18787'), ...sbSecrets()]);
+    const r = await run(['dev', 'compose up -d']);
+    assert.notEqual(r.code, 0);
+    assert.match(r.out, /PROVIDER_KEYS_SECRET/);
+    assert.equal(log('argv'), '');
+  });
+});
+
 // stage-public-https: the stage operator values (STAGE_IMAGE_TAG, STAGE_PUBLIC_BASE_URL, DOCKER_CONFIG).
 describe('stage public mode (stage-public-https)', () => {
   const SHA = 'a'.repeat(40);
   const URL1 = 'https://stage.example.com';
   // The tagged end-to-end runs need the tree to be the tagged commit (checkStageTree): use HEAD.
   const HEAD = spawnSync('git', ['-C', ROOT, 'rev-parse', 'HEAD'], { encoding: 'utf8', env: gitEnv() }).stdout.trim();
-  const stageSecrets = () => [secret('GOOGLE_CLIENT_ID', 'gid'), secret('GOOGLE_CLIENT_SECRET', 'gsecret'), secret('BOOTSTRAP_OWNER_EMAIL', 'owner@example.com'), secret('STAGE_PORT', '18788'), ...sbSecrets()];
+  const stageSecrets = () => [secret('GOOGLE_CLIENT_ID', 'gid'), secret('GOOGLE_CLIENT_SECRET', 'gsecret'), secret('BOOTSTRAP_OWNER_EMAIL', 'owner@example.com'), secret('PROVIDER_KEYS_SECRET', PKS), secret('STAGE_PORT', '18788'), ...sbSecrets()];
   it('STAGE_PUBLIC_BASE_URL accepts only a bare https DNS origin', async () => {
     const { parseStagePublicUrl } = await import('./compose-run.mjs');
     assert.equal(parseStagePublicUrl(undefined), '');

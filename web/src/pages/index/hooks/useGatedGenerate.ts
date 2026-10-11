@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { ApiError } from '../../../api/client';
 
 /** The slice of a React Query mutation the latch drives — structurally
@@ -19,9 +19,9 @@ type GenerateMutate<TVariables> = (
  *
  * - a 503 from generate sets `genUnavailable` — latched for the component's
  *   lifetime. The feed panels are mounted-hidden and unkeyed, so the latch
- *   persists across session switches and is cleared only by a full page
- *   reload, which is deliberate — the latched copy tells the operator to
- *   reload after configuring.
+ *   persists across session switches and is cleared by a full page reload,
+ *   or by `resetUnavailable` (the Transcribe feed calls it when the user saves
+ *   a speech-to-text key, byo-ai-providers 6.2).
  * - any other error sets `genError` (single error channel: inline in the
  *   panel only, no duplicate toast) and does NOT latch — a retry re-calls
  *   the endpoint.
@@ -43,5 +43,9 @@ export function useGatedGenerate<TVariables = undefined>(mutate: GenerateMutate<
     });
   }
 
-  return { genError, genUnavailable, handleGenerate };
+  /** Clears the latch (byo-ai-providers 6.2: the Transcribe feed clears it once the user saves a
+   * speech-to-text key, without a reload). */
+  const resetUnavailable = useCallback(() => setGenUnavailable(false), []);
+
+  return { genError, genUnavailable, handleGenerate, resetUnavailable };
 }

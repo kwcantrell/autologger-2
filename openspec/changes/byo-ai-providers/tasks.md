@@ -1,0 +1,285 @@
+# Tasks
+
+**Branch and commits**
+- The first commit on `byo-ai-providers` holds only `openspec/changes/byo-ai-providers/`.
+- The PR targets `supabase-migration`.
+- The gates run with `GITHUB_BASE_REF=supabase-migration`.
+
+**Logs and test-first**
+- Logs live under the session scratchpad as `byo-<task>-<red|green>.log`, and each `Evidence:` line
+  names its log.
+- Each "test first" item is red before its change, or records why it already passes.
+- Each task's text and its `Evidence:` stay in one block with no blank line.
+
+**Commands**
+- Targeted server tests: `cd server && npx vitest run --project <unit|integration|pg> <files>`.
+- Packages: `npx vitest run` in `packages/{ports,contract,transcription,catalog}`;
+  `cd packages/storage && npx vitest run --project <unit|pg> <files>`.
+- Web: `cd web && npx vitest run`.
+- `npm run typecheck`.
+- Migrations: `sh docker/supabase/test_migrate.sh`.
+- The full pg and integration suites run in CI on the PR (ADR 0026). Locally, run only the
+  targeted tests, the unit suites and typecheck.
+
+**Changing tests.** Changing an existing test is allowed only for the categories in design D7.
+Anything else is a stop: update the artifacts and ask the owner.
+
+## 1. Baselines
+
+- [x] 1.1 On the base, run the unit suites (server, packages, web) and typecheck, and record the
+  counts.
+  - Then list every existing test that design D7 categories 1-9 may touch, using
+    `grep -rln "DEEPGRAM_API_KEY\|TRANSCRIPT_UNAVAILABLE\|deepgramConfigured\|ensureTimedTranscript\|companion-devices'\|isn.t configured on this server\|companion-device'\|FRAME_BUS_SECRET\|BOOTSTRAP_OWNER_EMAIL" --include=*.test.ts --include=*.test.tsx --include=*.sh --include=*.mjs server/src packages web/src docker/scripts`.
+  - Classify each hit by category, or as unchanged.
+  - Evidence: base `8b241154`. `cd server && npx vitest run --project unit` -> `Tests  350 passed | 3 skipped (353)`; `npx vitest run` in ports -> `Tests  1 passed (1)`, contract -> `Tests  109 passed (109)`, transcription -> `Tests  70 passed (70)`, catalog -> `Tests  51 passed (51)`, ai-runtime -> `Tests  199 passed (199)`, session-core -> `Tests  55 passed (55)`, media-import -> `Tests  31 passed | 2 skipped (33)`, log-import -> `Tests  41 passed (41)`, domain -> `Tests  50 passed (50)`; `cd packages/storage && npx vitest run --project unit` -> `Tests  60 passed (60)`; `cd web && npx vitest run` -> `Tests  1907 passed (1907)`; `npm run typecheck` -> exit 0, 0 `error TS` (log `byo-1.1-baseline.log`). DB baseline: the last full CI run on `supabase-migration` (PR #97/#98).
+  - Evidence: the grep matches 28 files (log `byo-1.1-grep.log`).
+    - Category 1: `routers/transcribe.int.test.ts` (the unconfigured case at :65 and the `deepgramConfiguredEnv` helper at :801).
+    - Category 2: `test/session/generateTranscript.remap.int.test.ts:79` and `packages/transcription/src/generateTranscript.inflight.test.ts:11` (`config: {DEEPGRAM_API_KEY}` -> `stt`).
+    - Category 3: `routers/logImport.int.test.ts` and `routers/logImport.test.ts` (`ensureTimedTranscript`).
+    - Category 5: `catalogSystem.repo.test.ts:113`.
+    - Category 6: `settings/SettingsView.test.tsx:38,125`.
+    - Category 7: `generateLatch.test.tsx:21,112,173`.
+    - Category 8: `bootOrder.int.test.ts:73` and `bootFrameBus.int.test.ts:59`.
+    - Category 9: `docker/scripts/compose-run.test.mjs` (and the code `compose-run.mjs:253-255`).
+    - Unchanged: `bootGuard.test.ts`, `env.test.ts`, `ai.int.test.ts`, `auth.int.test.ts`, `test/session/frameBus.int.test.ts` and `node/config.test.ts` (bootstrap or frame-bus env only; `createBindings` without the new option is unchanged); `companionDevices.int.test.ts`, `companionDeviceAuth.int.test.ts` and `CompanionDevicesSection.test.tsx` (path strings); `supabase-keys.test.mjs` and `frameBusEnvelope.test.ts`; `packages/transcription/src/deepgramConfig.test.ts` (the functions stay); `routers/sessionHub.interleave.int.test.ts:459` (configures generation with `DEEPGRAM_API_KEY`, which still works because vitest runs with `NODE_ENV=test`, development mode); `apiResponseFixtures.int.test.ts` (gains new cases only, nothing changes).
+  - Evidence: correction (2026-10-11, owner decision): the "Unchanged" note for `sessionHub.interleave.int.test.ts:459` was wrong. The integration harness calls `createBindings` without `NODE_ENV`, so it ran in production mode; vitest's `NODE_ENV=test` never reaches it. The owner chose D7 category 12: the harness passes `NODE_ENV: 'test'`, so that test and `logImport.int`'s env-key setup stay unchanged.
+  - Evidence: for the owner, one spot near the edge of the categories. `upgradeDispatch.test.ts:23` and `aiV2.int.test.ts:320` build complete `Config` literals ("no optional/default fields"), so a required `PROVIDER_DEV_MODE` field would break their typecheck, and no D7 category covers that. To stay inside D7, the field will be optional, `PROVIDER_DEV_MODE?: boolean`, where absent means production mode. This is the safe default the spec requires, and it leaves both literals unchanged. `grep -rln "satisfies Config\|: Config = {" --include=*.ts server/src packages` -> only those two files.
+
+## 2. Table and store (design D1)
+
+- [x] 2.1 Test first, in new pg tests and in `catalogSchema.pg.test.ts` / `catalogPolicies.pg.test.ts`
+  (D7 category 4):
+  - both tables, their columns, checks and primary keys exist (`base_origin` null exactly when
+    `base_url` is; `provider_key_check.id` only 1);
+  - `catalog_user` gets `42501` on select, insert and delete of both;
+  - deleting a user cascades;
+  - a duplicate `(user_id, kind)` gets `23505`.
+  Red, then add `supabase/migrations/20261016000000_user_provider_credentials.sql`, with the
+  rollback in its header. Green, plus `sh docker/supabase/test_migrate.sh`.
+  - Evidence: red, with the migration moved aside: `cd server && npx vitest run --project pg src/test/pg/providerTables.pg.test.ts src/test/pg/catalogSchema.pg.test.ts src/test/pg/catalogPolicies.pg.test.ts` -> `PostgresError: relation "catalog.user_provider_credentials" does not exist`, `× matches the recorded catalog schema`, `× has exactly the catalog tables, in schema catalog`, `Test Files  3 failed (3)`, `Tests  16 failed | 52 passed (68)` (log `byo-2.1-red.log`). Green, the same three files -> `Test Files  3 passed (3)`, `Tests  68 passed (68)` (log `byo-2.1-green.log`); `sh docker/supabase/test_migrate.sh` -> `test_migrate: 35 passed, 0 failed` (log `byo-2.1-migrate.log`); `npm run typecheck` -> exit 0, 0 `error TS`.
+  - Evidence: the migration creates both tables as the catalog-database delta specifies, with named checks for kind, provider (1-64), base URL (≤ 2048), model (1-200), `key_last4` (1-4), `base_origin` null exactly when `base_url` is null, and `provider_key_check.id = 1`. It sets RLS with one `<table>_system_all` policy for `catalog_system`, revokes `catalog_user` on both, and gives the rollback in its header. The new `providerTables.pg.test.ts` has 7 cases: privileges and policies, including none for `anon` or `authenticated`; `42501` for a user binding even on its own rows; system read and write; bytea key parts and an empty test window by default; cascade on user delete; `23505`, `23503` and `23514` on every check; one key-check row only. D7 category 4: `catalogSchema.pg` `TABLES`, `SYSTEM_ONLY`, `KEY_COLUMN` (`provider_key_check` keys on its text `check_value`, so the bare-role insert fails on privilege, not on the smallint `id`), the recorded schema and its `$checks`, and one insert into each table in the system read-write case. `catalogPolicies.pg` lists the two tables as system-only; its `toHaveLength(37)` is unchanged (comment only).
+- [x] 2.2 Test first, storage pg tests for `PostgresProviderCredentialStore`:
+  - `put` inserts, then replaces;
+  - `get` and `list` return only the user's own rows;
+  - `updateKeepingKey` changes only provider, base URL, model and time, and reports zero rows when
+    the row is gone or its `base_origin` differs;
+  - `takeTestSlot` counts 1 to 6 within a window, restarts at 1 once 60 s have passed (injected
+    clock), and never lets two concurrent calls from different connections both read 5;
+  - a concurrent `delete` that commits first stays deleted;
+  - `delete` removes only the user's row;
+  - `writeCheckIfAbsent` and `readCheck` keep the first value written;
+  - another user's id never matches.
+  Red, then add the port and the store on `bindSystem('provider-credentials')`, add the
+  allowlist entries (D7 category 5), and wire them in `server/src/node/config.ts`. Green and
+  typecheck.
+  - Evidence: red, `cd packages/storage && npx vitest run --project pg src/providerCredentials.pg.test.ts` -> `Error: Cannot find module './providerCredentials'`, `Test Files  1 failed (1)` (log `byo-2.2-red.log`). Red, with the store added: `cd server && npx vitest run --project unit src/catalogSystem.repo.test.ts` -> `+ "packages/storage/src/providerCredentials.ts provider-credentials"`, `Tests  1 failed | 17 passed (18)` (log `byo-2.2-repo-red.log`). Green, the store tests -> `Tests  9 passed (9)` (log `byo-2.2-green.log`); the repository test -> `Tests  18 passed (18)`; `cd server && npx vitest run --project unit` -> `Tests  350 passed | 3 skipped (353)`; storage unit -> `Tests  60 passed (60)`; `npm run typecheck` -> exit 0, 0 `error TS`.
+  - Evidence: the `ProviderCredentialStore` port is in `packages/ports/src/providerCredentials.ts`, and `PostgresProviderCredentialStore` in `packages/storage/src/providerCredentials.ts` on `bindSystem('provider-credentials')`. `put` is an upsert that keeps `created_at_utc` and the test window. `updateKeepingKey` is one `UPDATE … WHERE … base_origin IS NOT DISTINCT FROM ? RETURNING`. `takeTestSlot` is one `UPDATE … RETURNING`, with the window from the Clock (`PROVIDER_TEST_LIMIT` 5, `PROVIDER_TEST_WINDOW_MS` 60 000). `writeCheckIfAbsent` is `ON CONFLICT (id) DO NOTHING`, then a read. It is wired as `Bindings.ports.providerCredentials` (`server/src/node/config.ts`, `server/src/appEnv.ts`). The 9 store tests: put then replace; own rows only; keep-key update; null on another origin or a missing row; ten keep-key-update and delete races leaving no row; delete; window count and restart on the injected clock; 8 concurrent slots from two store instances counting 1-8; first check value wins. D7 category 5: `catalogSystem.repo.test.ts` gains the one allowlist entry.
+
+- [x] 2.3 (Owner decision 10, provider picker) Test first, storage pg tests: `updateKeepingKey`
+  matches only a row with the same provider, so a keep-key save that names another provider
+  reports zero rows and changes nothing; `put` can switch the provider. Red, then add `provider =`
+  to the predicate and stop setting `provider` on a keep-key update. Green and typecheck.
+  - Evidence: a first version of the new case already passed, because switching from `openai-compatible` to `anthropic` also changes the origin. So the test now also covers two fixed-host providers that share a null origin. Red, `cd packages/storage && npx vitest run --project pg src/providerCredentials.pg.test.ts` -> `× updateKeepingKey matches only the same provider; put can switch it (owner decision 10)`, `AssertionError: expected { kind: 'llm', …(7) } to be null`, `Tests  1 failed | 9 passed (10)` (log `byo-2.3-red.log`). Green -> `Tests  10 passed (10)` (log `byo-2.3-green.log`); `npm run typecheck` -> exit 0, 0 `error TS`. `updateKeepingKey` is now `UPDATE … SET base_url, model, updated_at_utc WHERE user_id AND kind AND provider = ? AND base_origin IS NOT DISTINCT FROM ?`, so it never changes the provider; `put` switches it. Existing tests are unchanged (the old title "changes only provider, base URL…" still passes, as the 1.x re-panel noted).
+- [x] 2.4 (Re-panel) Test first, in pg tests: `provider_test_windows` exists, is system-only and
+  cascades on user delete; the two window columns are gone from `user_provider_credentials`; and
+  `takeTestSlot(userId)` counts 1 to 6 in a window across both kinds, restarts after 60 s
+  (injected clock), keeps counting after the credential is deleted and saved again, and counts 8
+  concurrent calls from two store instances as 1 to 8. The 2.2 window tests and the schema
+  snapshots move to the new shape (D7 category 11). Red, then add
+  `supabase/migrations/20261017000000_provider_test_windows.sql` and change the store. Green,
+  `sh docker/supabase/test_migrate.sh` and typecheck.
+  - Evidence: red, `cd server && npx vitest run --project pg src/test/pg/providerTables.pg.test.ts src/test/pg/catalogSchema.pg.test.ts src/test/pg/catalogPolicies.pg.test.ts` -> `Tests  14 failed | 54 passed (68)`; `cd packages/storage && npx vitest run --project pg src/providerCredentials.pg.test.ts` -> `Tests  3 failed | 8 passed (11)` (logs `byo-2.4-red-server.log`, `byo-2.4-red-storage.log`). Green: the same server files -> `Tests  68 passed (68)`, the storage file -> `Tests  11 passed (11)` (logs `byo-2.4-green-*.log`); `sh docker/supabase/test_migrate.sh` -> `test_migrate: 35 passed, 0 failed`; `npm run typecheck` -> exit 0, 0 `error TS`.
+  - Evidence: `supabase/migrations/20261017000000_provider_test_windows.sql` creates the system-only `catalog.provider_test_windows` (`user_id` primary key with cascade, `window_start_ms`, `test_count`; RLS, an allow-all `catalog_system` policy, `catalog_user` revoked, the rollback in the header) and drops the two window columns. `takeTestSlot(userId)` is one `INSERT … ON CONFLICT (user_id) DO UPDATE … RETURNING`, with time from the Clock. New store cases: the window survives delete and re-save (the sixth test reads 6). `providerTables.pg` checks the third table: no privileges, `42501` for a user binding, system read and write, cascade, and the dropped columns. D7 category 11: the 2.2 window tests call `takeTestSlot(userId)` (8 concurrent calls from two stores still count 1-8), and `catalogSchema.pg` and `catalogPolicies.pg` gain the table and lose the two columns.
+
+## 3. Key crypto, mode and the boot secret (design D2, D3)
+
+- [x] 3.1 Test first, unit tests for `providerKeyCrypto`:
+  - a round trip;
+  - a fresh nonce each time;
+  - a tampered tag, ciphertext or nonce gives `null`;
+  - another user's id, another kind or another `llm` origin as AAD gives `null`;
+  - `key_version` 2 gives `null`;
+  - `key_last4` is right;
+  - the check value is stable for a secret and differs between secrets;
+  - a secret decoding to 16 or 33 bytes throws `ProviderKeysSecretError` naming the variable and
+    not the value.
+  Red, then implement. Green.
+  - Evidence: red, `cd server && npx vitest run --project unit src/auth/providerKeyCrypto.test.ts` -> `Error: Cannot find module './providerKeyCrypto'`, `Test Files  1 failed (1)` (log `byo-3.1-red.log`). Green -> `Tests  15 passed (15)` (log `byo-3.1-green.log`). The 15 cases: a 32-byte secret is accepted; missing, empty, whitespace, 16-byte, 33-byte and non-base64 secrets are refused with a message naming `PROVIDER_KEYS_SECRET` and not the value; a round trip with version 1, `last4`, a 12-byte nonce and a 16-byte tag; a fresh nonce each time; a tampered tag, ciphertext or nonce, a short nonce, or version 2 give `null`, with one warn line each naming only the user id and kind; another user, kind or origin as AAD gives `null`; another secret can't decrypt; the check value is stable per secret, differs between secrets and is not the secret; a random cipher round-trips; `keyLast4`. The module is `server/src/auth/providerKeyCrypto.ts` (HKDF-SHA256 encryption and check keys, AES-256-GCM, AAD `user\0kind\0origin`).
+- [x] 3.2 Test first, config unit tests: `PROVIDER_DEV_MODE` is true only for `NODE_ENV`
+  `development` or `test`, and false for unset, `production` and `staging`. Red, then add the
+  field. Green.
+  - Evidence: red, `cd server && npx vitest run --project unit src/node/config.test.ts` -> six `× NODE_ENV … gives PROVIDER_DEV_MODE …`, `Tests  6 failed | 14 passed (20)` (log `byo-3.2-red.log`). Green -> `Tests  20 passed (20)` (log `byo-3.2-green.log`); `npm run typecheck` -> exit 0, 0 `error TS`. `Config.PROVIDER_DEV_MODE?: boolean` (`packages/ports/src/config.ts`, optional, so absent is production mode and the two complete `Config` literals from 1.1 stay unchanged) is set in `createBindings` to `NODE_ENV === 'development' || NODE_ENV === 'test'`. The new cases cover `development` and `test` (true), and `production`, `staging`, `Development` and unset (false).
+
+- [x] 3.3 Test first, boot tests:
+  - `main.ts` with no secret, or a malformed one, exits 1 naming the variable before the
+    `DATA_DIR` lock is taken;
+  - a second boot with a different valid secret exits 1 with the mismatch error before listening,
+    and releases the lock;
+  - `createBindings` without the `providerKeys` option and without the secret still works.
+  Red, then wire it. Add the secret to the env of `bootOrder.int.test.ts` and
+  `bootFrameBus.int.test.ts` (D7 category 8). Green.
+  - Evidence: red, `cd server && npx vitest run --project unit src/node/config.test.ts` -> `Tests  3 failed | 20 passed (23)`; `npx vitest run --project integration src/bootProviderKeys.int.test.ts` -> all three cases `×` (main.ts booted instead of refusing), `Tests  3 failed (3)` (logs `byo-3.3-red-unit.log`, `byo-3.3-red-int.log`). Green: `cd server && npx vitest run --project unit` -> `Tests  374 passed | 3 skipped (377)` (log `byo-3.3-green-unit.log`); `npx vitest run --project integration src/bootProviderKeys.int.test.ts src/bootOrder.int.test.ts src/bootFrameBus.int.test.ts` -> `Test Files  3 passed (3)`, `Tests  10 passed (10)` (log `byo-3.3-green-int.log`); `npm run typecheck` -> exit 0, 0 `error TS`.
+  - Evidence: `createBindings` option `providerKeys: 'required'`, passed only by `main.ts`, parses `PROVIDER_KEYS_SECRET` after the frame-bus check and before the lock. Without the option, a valid secret is used and anything else becomes `ProviderKeyCipher.random()`. That keeps the existing Proxy test in `config.test.ts`, which answers every unset key with `/etc/attacker`, unchanged, so no test outside D7 moves. The cipher is wired as `Bindings.ports.providerKeys`. `main.ts` catches `ProviderKeysSecretError` before the lock, and after `waitForCatalog` runs `verifyProviderKeysCheck` (`writeCheckIfAbsent` then compare). A mismatch goes through the existing catch, so it logs `autologger: PROVIDER_KEYS_SECRET does not match the stored provider keys …`, calls `close()` and exits 1. The new `bootProviderKeys.int.test.ts` covers: no secret, and a 16-byte secret, each exit 1 naming the variable with an empty data directory; a first boot with S1 listens, a boot with S2 exits 1 with the mismatch error and never listens, and S1 then boots again (the lock was released and the value kept). D7 category 8: `bootOrder.int.test.ts` (the unreachable-catalog case) and `bootFrameBus.int.test.ts` (`stackEnv`) gain `PROVIDER_KEYS_SECRET`.
+
+- [x] 3.4 Test first, `compose-run` tests: a stack whose OpenBao secret lacks
+  `PROVIDER_KEYS_SECRET`, or holds 16 bytes, is refused naming it, printing no value and running
+  no docker command (D7 category 9). Red, then add the check and the allowlist entry. Green.
+  - Docs: `docker/secrets-env.yaml`, `server/.env.example`, `docker/.env.example`,
+    `docker/.env.dev.example`, `docker/.env.stage.example` and `docs/openbao-secrets.md`
+    (generation, one per environment, the lost-secret reset).
+  - Evidence: red, `node --test --test-name-pattern="provider keys" docker/scripts/compose-run.test.mjs` -> `✖ every stack refuses a missing, blank or non-32-byte PROVIDER_KEYS_SECRET` (`checkProviderKeysSecret is not a function`), `✖ a dev run without PROVIDER_KEYS_SECRET in OpenBao refuses before docker runs` (`Expected "actual" to be strictly unequal to: 0`) (log `byo-3.4-red.log`). Green, `node --test docker/scripts/compose-run.test.mjs` -> `ℹ tests 74`, `ℹ pass 74`, `ℹ fail 0` (log `byo-3.4-green.log`). `sh docker/scripts/check-envs.sh dev|stage|prod` -> `check-envs: ok` for each.
+  - Evidence: `checkProviderKeysSecret(env, secrets)` in `compose-run.mjs` refuses a missing, blank, malformed or non-32-byte value without printing it, and runs after `checkSignInClient`. `docker/secrets-env.yaml` allows `PROVIDER_KEYS_SECRET`. D7 category 9: the six full-run fixtures in `compose-run.test.mjs` gain `secret('PROVIDER_KEYS_SECRET', PKS)`, and the child-env names assertion gains `PROVIDER_KEYS_SECRET`. Docs: `server/.env.example` (the variable, and transcription now per-user with no production fallback), `docker/.env.example` (required; `DEEPGRAM_API_KEY` unused in production), `docker/.env.dev.example` (required; the dev fallback), `docker/.env.stage.example` (required; unused on stage), and `docs/openbao-secrets.md` (every stack needs it, generated per environment, the boot check, the lost-secret reset, no production DeepGram fallback).
+  - Evidence: for the owner, `sh docker/scripts/test_check_envs.sh` -> `48 passed, 1 failed` ("clean tree passes", with `xargs: tar: terminated by signal 13` while copying the tree). It fails the same way with this change stashed (log `byo-3.4-checkenvs-base.log`, `48 passed, 1 failed`), so it is a local environment issue, not this change. CI runs it on the PR.
+
+- [x] 3.5 (Owner decision 10) Test first, `providerKeyCrypto` unit tests: the binding includes the
+  provider, so a key encrypted for `openai-compatible` does not decrypt as `anthropic` (or any
+  other provider) with the same user, kind and origin. The existing fixtures gain `provider` (D7
+  category 10). Red, then add `provider` to the binding and the AAD. Green and typecheck.
+  - Evidence: red, `cd server && npx vitest run --project unit src/auth/providerKeyCrypto.test.ts` -> `× binds the provider: another provider with the same user, kind and origin gives null (owner decision 10)`, `Tests  1 failed | 15 passed (16)` (log `byo-3.5-red.log`). Green, with `src/node/config.test.ts` -> `Tests  39 passed (39)` (log `byo-3.5-green.log`); `npm run typecheck` -> exit 0, 0 `error TS`. `ProviderKeyBinding` gains a required `provider`, and the AAD is `user\0kind\0provider\0origin`. D7 category 10: the `providerKeyCrypto.test.ts` bindings gain `provider` (`A` is `openai-compatible`; the `stt` case is `deepgram`). The 3.3 round-trip case in `config.test.ts`, written in this change, gains `provider: 'deepgram'`.
+
+## 4. Routes and contract (design D4, D5)
+
+- [x] 4.1 Test first, contract schema tests:
+  - `PUT` bodies per kind: `base_url` required or forbidden, `provider` pinned per kind, model and
+    key lengths, the printable-ASCII rule (a key with a line feed or a space is refused);
+  - production-mode URL rules: `https`, port 443, no userinfo, query or fragment;
+  - every response schema is a `strictObject` with no key field.
+  Red, then add the schemas. Green.
+  - Evidence: red, `cd packages/contract && npx vitest run src/schemas.providers.test.ts` -> `TypeError: providerPutBodySchema is not a function` (log `byo-4.1-red.log`). Green, `cd packages/contract && npx vitest run` -> `Test Files  5 passed (5)`, `Tests  121 passed (121)` (was 109; log `byo-4.1-green.log`); `npm run typecheck` -> exit 0, 0 `error TS`. In `packages/contract/src/schemas.ts`: `providerKindSchema`; `providerPutBodySchema(kind, {production})` (provider pinned per kind; `base_url` required for `llm` and null or absent for `stt`; model 1-200 and key 8-4096 printable ASCII without spaces after trimming; key optional); `providerBaseUrlProblem` (no userinfo, query or fragment, at most 2048 characters, http or https; production mode needs https on the default port); strict `providerCredentialSchema`, `providersResponseSchema` and `providerTestResponseSchema`; the fixed `PROVIDER_TEST_DETAIL` strings. The tests cover each rule, including spaces, CR, LF, tab, DEL and non-ASCII refused in a key or model, and no key field accepted in any response.
+
+- [x] 4.2 Test first, unit tests for `outbound.ts`:
+  - every blocked range in D5, in IPv4, IPv6, v4-mapped and NAT64 forms, is refused in production
+    mode and allowed in development mode;
+  - a refused host and an unreachable host give the same result;
+  - the pinned lookup returns the vetted address;
+  - a slow lookup counts toward the 10 s timeout;
+  - a 302 is not followed;
+  - an error whose message holds the key is classified, and the capturing logger and the result
+    hold neither.
+  Red, then implement. Green.
+  - Evidence: red, `cd server && npx vitest run --project unit src/providers/outbound.test.ts` -> `Error: Cannot find module './outbound'` (log `byo-4.2-red.log`). Green -> `Test Files  1 passed (1)`, `Tests  39 passed (39)` (log `byo-4.2-green.log`); `npm run typecheck` -> exit 0, 0 `error TS`.
+  - Evidence: `server/src/providers/outbound.ts` (moved in 4.4 to `server/src/auth/providerOutbound.ts`) uses Node's own `http`/`https` with a pinned `lookup`, so no new dependency. The blocked ranges are a `net.BlockList` of the D5 IPv4 and IPv6 ranges plus the documentation and discard ranges, with the IPv4 embedded in `::ffff:0:0/96` and `64:ff9b::/96` checked as IPv4. `providerRequest` resolves within the caller's `AbortSignal`, refuses in production mode when any resolved address is blocked, connects to the vetted address with the original `Host`/SNI, never follows a redirect, caps the body at 1 MB, and turns every failure into `OutboundFailure('unreachable'|'timeout')` with a fixed message and no cause. `normalizeOrigin` and `normalizeBaseUrl` are added too. The tests cover 24 blocked and 6 allowed addresses (v4, v6, mapped, NAT64), normalization, no connection to a blocked address in production mode (including one blocked among public ones), the pinned connection keeping `Host`, a 302 not followed, a never-resolving lookup and a silent server each timing out, a refused connection being unreachable, a header holding the key and a newline classified with no key in the error, its JSON, its cause or any captured console line, and the 1 MB cap.
+
+- [x] 4.3 (Owner decision 10) Test first, contract schema tests: an `llm` body takes provider
+  `openai-compatible` (base URL required, the URL rules apply), or `anthropic`, `openai` or
+  `google` (base URL absent or null, refused otherwise); `stt` stays `deepgram`; the response
+  schemas accept every provider. Red, then change `providerPutBodySchema`. Green and typecheck.
+  - Evidence: red, `cd packages/contract && npx vitest run src/schemas.providers.test.ts` -> `× takes openai-compatible, anthropic, openai or google`, `Tests  1 failed | 15 passed (16)` (log `byo-4.3-red.log`). Green, `cd packages/contract && npx vitest run` -> `Tests  125 passed (125)` (log `byo-4.3-green.log`); `npm run typecheck` -> exit 0, 0 `error TS`. The `llm` body is a `z.discriminatedUnion('provider', …)`: `openai-compatible` with the base URL rules, or `LLM_FIXED_HOST_PROVIDERS` (`anthropic`, `openai`, `google`) with `base_url` null or absent; an unknown provider is refused. New cases: each provider accepted; a base URL refused for fixed hosts and required for `openai-compatible`; the key and model rules for every provider; a null-`base_url` fixed-host credential on the wire.
+- [x] 4.4 (Re-panel) Test first, unit tests for `ProviderTester` and its wiring:
+  - each provider's request (path, percent-encoded model, auth headers) against local fakes;
+  - the result mapping, including Google's `400` `API_KEY_INVALID` as rejected and its error body
+    in no result or log;
+  - `createBindings` always wires the frozen constant hosts, even under a hostile environment
+    Proxy, and the table can't be mutated.
+  Red, then add `server/src/auth/providerTester.ts` and wire `Bindings.ports.providerTester`. Green
+  and typecheck.
+  - Evidence: red, `cd server && npx vitest run --project unit src/providers/tester.test.ts` -> `Error: Cannot find module './tester'` (log `byo-4.4-red.log`). Green -> `Tests  17 passed (17)` (log `byo-4.4-green.log`). After the move below, `cd server && npx vitest run --project unit` -> `Tests  431 passed | 3 skipped (434)` (log `byo-4.4-unit.log`); `npm run typecheck` -> exit 0, 0 `error TS`.
+  - Evidence: `ProviderTester` sends the D5 request for each provider: OpenAI, Anthropic and Google fetch `/…/models/{percent-encoded model}` with their auth headers, OpenAI-compatible lists `{base_url}/models`, and DeepGram posts `/v1/listen?model=` a generated 0.25 s 16 kHz mono silent WAV (44 + 8000 bytes). Results map to `PROVIDER_TEST_DETAIL`: 401 or 403 is rejected; Google 400 with `error.details[].reason` `API_KEY_INVALID` is rejected; 404 for the fixed-host LLMs is model not found; other statuses are unexpected; `OutboundFailure` is unreachable or timeout. The body is parsed only for the OpenAI-compatible list and the Google reason. The hosts are an `Object.freeze`d `PROVIDER_HOSTS`, and `createBindings` wires `new ProviderTester()` with no environment or config read; a test under a hostile environment Proxy gets the constants. The 17 cases cover each provider's request, the result mapping including Google's two 400s, no upstream body in any result or console line, unreachable and timeout, and an OpenAI-compatible private address refused in production mode with no request.
+  - Evidence: on placement, the layering check in `packageBoundaries.repo.test.ts` enumerates the `server/src` directories (`node`, `auth`, `middleware`, `routers`) and pins `node/` to three files, so a new `server/src/providers/` directory (and then `node/`) failed it. `outbound.ts` (from 4.2) and the tester moved to `server/src/auth/providerOutbound.ts` and `server/src/auth/providerTester.ts`, beside `providerKeyCrypto.ts`. `auth` has no pin and imports no other server directory, so no existing test changed; the design's paths follow.
+
+- [x] 4.5 Test first, integration tests for `/api/me/providers` covering every scenario of
+  api-contract-freeze "Provider credential routes":
+  - save, read (with `run_features_allowed`), replace and delete;
+  - the first save needs a key;
+  - a new `llm` host, or a new provider, without a key gets `422` and leaves the row unchanged;
+  - a fixed-host provider with a `base_url` gets `422`;
+  - a control-character key gets `422`;
+  - cross-user isolation;
+  - signed-out and device-token callers get `401`;
+  - an unknown kind gets `404`;
+  - NUL gets `400`;
+  - `base_url` with an uppercase host or an explicit `:443` is stored normalized, and a keep-key
+    save with the same origin written differently is accepted;
+  - the test's `200 {ok, detail}` for each mapped outcome, against local fake servers for every
+    provider through a `ProviderTester` built with their hosts (each fake checks its auth header
+    and path: Bearer for OpenAI-compatible and OpenAI, `x-api-key` and `anthropic-version` for
+    Anthropic, `x-goog-api-key` for Google; the DeepGram fake checks the silent clip and the
+    model);
+  - no credential gets `404`;
+  - an undecryptable row gives the enter-it-again result;
+  - the sixth test in a window, through two processes, gets `429` with no outbound request, and
+    so does a sixth after deleting and re-saving the credential;
+  - no response or captured log contains the key.
+  Red, then add `server/src/routers/providers.ts` and mount it. Add the README endpoint table rows.
+  Green and typecheck.
+  - Evidence: red, `cd server && npx vitest run --project integration src/routers/providers.int.test.ts` -> `Tests  14 failed | 1 passed (15)` (only the signed-out `401`, which the existing login gate already answers; log `byo-4.5-red.log`). Green, after the merge of `origin/supabase-migration` -> `Tests  15 passed (15)` (log `byo-4.5-green.log`); `npm run typecheck` -> exit 0, 0 `error TS`.
+  - Evidence: `server/src/routers/providers.ts` is mounted in `app.ts`. GET returns `{llm, stt, run_features_allowed}`. PUT scans the body for NUL first (`400`), then validates with `providerPutBodySchema(kind, {production: !PROVIDER_DEV_MODE})`; it stores the normalized base URL and origin, encrypts with the binding user, kind, provider and origin, and then `put`s, or without a key calls `updateKeepingKey`, where zero rows answers `422` naming `api_key`. A hand-built `ZodError` is not an `Error` in zod 4, so Hono would rethrow it; the `422` is therefore raised from a `safeParse` of a one-field schema, the same mapping as every other `422`. DELETE answers `204`, or `404` "Provider not set up.". POST test checks the row (`404`), takes the slot (`429` above 5), then decrypts (failure answers the enter-it-again result) and runs `ports.providerTester`. An unknown kind answers `404` "Not found.". The audit lines name the user id and kind only. The README endpoint table and router list gain the routes.
+  - Evidence: the 15 cases cover save, read and keep-key replace (same ciphertext) and delete with audit lines and no key in any log; the stored row holding no key; `run_features_allowed` false for a user who isn't approved; the first save needing a key; a new host or provider without a key giving `422` and leaving the row unchanged, while the same origin written differently is accepted and normalized; a fixed-host provider with a base URL, a control-character or space key, `http`, `:8443` and a query all giving `422`; NUL giving `400` and malformed JSON the existing `400`; isolation between users; signed-out and device-token callers getting `401`; unknown kind `404`; each provider's mapped result and auth header against local fakes, with no upstream body or key in logs; a private host in production mode unreachable with no request; an undecryptable row asking for the key again with no request; the sixth test giving `429` across two store instances and after delete and re-save, with only 5 requests reaching the fake; and a test with no credential giving `404`.
+
+## 5. Transcription on the caller's key (design D3)
+
+- [x] 5.1 Test first, transcription unit tests:
+  - `generateTranscriptWords` takes `stt: {apiKey, model}`;
+  - `null` throws `unavailable` with the new detail;
+  - the key goes only in the `Authorization` header.
+  Red, then change the package (D7 category 2). Green.
+  - Evidence: red, `cd packages/transcription && npx vitest run src/generateTranscript.stt.test.ts` -> `× throws unavailable with the Settings → Advanced detail, taking no lock and calling nothing` (log `byo-5.1-red.log`). Green, `cd packages/transcription && npx vitest run` -> `Tests  71 passed (71)` (log `byo-5.1-green.log`). `GenerateTranscriptDeps` takes `stt: SttCredential | null` instead of `config`; `null` throws `unavailable` with `TRANSCRIPT_NEEDS_KEY` before the lock or any hub or provider call; the key and model come from `stt`. DeepGram's existing client sends the key only in `Authorization: Token` (the 5.2 tests assert it). D7 category 2: `generateTranscript.inflight.test.ts` and `generateTranscript.remap.int.test.ts` pass `stt` (and drop the unused `Config` import).
+
+- [x] 5.2 Test first, integration tests for `transcript-words/generate`:
+  - in production mode, a caller without a key gets the new `503` detail and no provider call is
+    made, even with `DEEPGRAM_API_KEY` set;
+  - with a key, the fake DeepGram sees that user's key and model;
+  - in development mode, the env key is used when the caller has none;
+  - another user's key is never used;
+  - a tampered row answers as unconfigured;
+  - the approval `403` still comes after the config `503`.
+  Red, then add `resolveSttCredential` and wire `transcribe.ts` (D7 category 1). Green.
+  - Evidence: red, `cd server && npx vitest run --project integration src/routers/transcribe.int.test.ts -t "own speech-to-text key|unconfigured generate is byte"` -> `× production mode: a caller without a key gets the Settings 503…`, `× production mode: the caller's own key and model go to DeepGram`, `× development mode: the operator key is the fallback…` (callers not yet wired; log `byo-5.2-red.log`). Green, with 5.3: `npx vitest run --project integration src/routers/transcribe.int.test.ts src/routers/logImport.int.test.ts src/routers/sessionHub.interleave.int.test.ts src/test/session/generateTranscript.remap.int.test.ts src/routers/providers.int.test.ts` -> `Test Files  5 passed (5)`, `Tests  118 passed (118)` (log `byo-5-green-int.log`); `cd server && npx vitest run --project unit` -> `Tests  442 passed | 3 skipped (445)`; `npm run typecheck` -> exit 0, 0 `error TS`.
+  - Evidence: `resolveSttCredential(env, userId)` (`server/src/auth/providerResolve.ts`) returns the user's decrypted `stt` row, else in development mode only `DEEPGRAM_API_KEY` and `DEEPGRAM_MODEL`, else null. `transcribe.ts` resolves for the caller in place of `deepgramConfigured` (null answers `503` `TRANSCRIPT_NEEDS_KEY`), then `requireRunFeature`. The six new cases: no key in production mode gives the Settings `503` and no fetch, even with `DEEPGRAM_API_KEY` set; the caller's key and model reach DeepGram (`Token dg-user-key-0001`, `model=nova-2`); the development-mode fallback (`Token operator-key`); another member never uses the owner's key; a row that no longer decrypts answers `503`; and for a user who isn't approved, `503` without a key and `403` with one, with no fetch. D7 category 1: the two existing unconfigured cases (production mode with no key, and the not-approved member) expect the new detail. D7 category 12 keeps `sessionHub.interleave` and `logImport`'s env-key setups unchanged.
+
+- [x] 5.3 Test first, log-import integration tests:
+  - generation uses the creator's key;
+  - an approved creator without a key in production mode gets the add-a-key line, no lease and no
+    provider call, and the job continues;
+  - a creator who isn't approved gets only the approval skip line.
+  Red, then wire `logImport.ts` (D7 category 3). Green.
+  - Docs: update every README statement of the global DeepGram gate (lines 61, 73, 130, 229, 245,
+    1107, 1263, 1448 and 1814 at base) and the production runbook (per-user keys, no production
+    fallback, the lost-secret reset). Add a `docs/security.md` section: the at-rest cipher, the
+    in-memory master key, the origin binding, and user-directed egress with its limits. Add ADR
+    0027 "Provider keys at rest".
+  - Evidence: red, `cd server && npx vitest run --project unit src/routers/logImport.test.ts` -> `× records the add-a-key line, never calls the generator, and fails the session`, `Tests  1 failed | 5 passed (6)`; `npx vitest run --project integration src/routers/logImport.int.test.ts -t "production mode"` -> `Tests  2 failed | 20 skipped (22)` (logs `byo-5.3-red-unit.log`, `byo-5.3-red-int.log`). Green: as in 5.2 (`Tests  118 passed (118)` across the five integration files, unit `442 passed`).
+  - Evidence: `ensureTimedTranscript` takes `resolveStt` instead of `config`, read after the approval check when the session's generation starts. Null records "Skipped transcript generation: add a speech-to-text key in Settings → Advanced." and fails the session with no lease and no provider call. The router passes `() => resolveSttCredential(env, job.createdByUserId)`. New cases: the creator's key reaches DeepGram in production mode (`Token dg-creator-key-01`); a creator without a key gets the line, no `transcript-generation` claim and no DeepGram call; the not-approved skip is unchanged. D7 category 3: the `logImport.test.ts` fixture passes `resolveStt`.
+  - Evidence: docs. In the README, the configuration-gated summary, "Transcript generation (DeepGram)" (per-user key, no production fallback, egress billed to the key's owner, keys encrypted), the log-import section and its egress note, the feature-keys paragraph, the prod secrets table (`PROVIDER_KEYS_SECRET` required; `DEEPGRAM_API_KEY` not used in production), runtime egress, cutover preconditions, dev integrations, and secret custody. `docs/security.md` gains "Users' provider keys at rest and in use" with its residuals. New `docs/decisions/0027-provider-keys-at-rest.md` (Context, Decision, Consequences, Evidence). The lost-secret reset is in `docs/openbao-secrets.md` (3.4).
+
+## 6. Web (design D6)
+
+- [x] 6.1 Test first, `AdvancedSection.test.tsx` in the `CompanionDevicesSection.test.tsx` style,
+  covering every scenario of web-ui-system "Settings manages the user's AI providers":
+  - the tabs and a draft surviving a switch;
+  - a save showing only the last four characters, with the key in no query or mutation cache;
+  - Replace and Remove with confirm;
+  - the provider picker, with Base URL shown only for OpenAI-compatible;
+  - a new provider or host asking for the key;
+  - the approval note;
+  - the test result alerts;
+  - server error details;
+  - a member's own credentials.
+  The `SettingsView.test.tsx` order gains Advanced (D7 category 6). Red, then build the hook,
+  types, fixtures and section from the prototype at `c831e510` (shadcn primitives only, no MCP
+  tab). Green.
+  - Evidence: red, `cd web && npx vitest run src/pages/index/components/settings/AdvancedSection.test.tsx` against the mocked prototype -> `Tests  9 failed | 1 passed (10)` (only the tab-switch draft passed, which the prototype already did; log `byo-6.1-red.log`); `SettingsView.test.tsx` with the registration at `HEAD` -> `× Opening the modal mounts only the active tab’s content`, `Tests  1 failed | 16 passed (17)` (log `byo-6.1-nav-red.log`); the server fixture test before capture -> `Missing captured fixture providerSave.json` (log `byo-6.1-fix-red.log`). Green: `AdvancedSection.test.tsx` -> `Tests  10 passed (10)` (log `byo-6.1-green.log`); the settings folder -> `Tests  154 passed (154)`; `cd web && npx vitest run` -> `Test Files  145 passed (145)`, `Tests  1919 passed (1919)` (log `byo-6.1-web.log`); `cd server && npx vitest run --project integration src/routers/apiResponseFixtures.int.test.ts` -> `Tests  45 passed (45)` (log `byo-6.1-fixtures.log`); `npm run typecheck` -> exit 0, 0 `error TS`.
+  - Evidence: three new captured fixtures (`providersList.json`, `providerSave.json`, `providerTest.json`, written with `UPDATE_API_FIXTURES=1`), with no key and only `key_last4`. The web types (`ProviderCredential` with `kind` and `provider` as wire strings, `ProvidersResponse`, `ProviderSaveBody`, `ProviderTestResponse`) are conformance-checked against those fixtures, plus one `apiResponseShapes` exemption for the empty `204` delete. `useProviders.ts` has the list query and save, delete and test mutations (save and test with `gcTime: 0`). `AdvancedSection.tsx` replaces the prototype: shadcn only, no MCP tab, one `useInlineDraft` holding both kinds (the guard registry is per section), a provider `Select` with Base URL only for OpenAI-compatible, the write-only key row (Replace, Remove with confirm), the new provider or host prompt with Save disabled until a key is typed, Test connection with the server's result cleared on edit, server error details, and the approval note. The 10 cases: tabs and badges; a save showing only the last four with the key in no query or mutation cache; a draft surviving a tab switch; a fixed-host provider hiding and not sending the base URL; a provider or host change asking for the key (the same origin written differently keeps it); a model-only save keeping the key; Remove asking first; the test result shown and cleared; a failed save's detail; and the approval note with fields still enabled. D7 category 6: `SettingsView.test.tsx` gains `advanced` in the stub list, the unmounted list and the You-group order.
+
+- [x] 6.2 Test first, the web-session-console scenarios:
+  - the transcription latch copy names Settings → Advanced and no server setting;
+  - saving a speech-to-text credential clears the latch without a reload;
+  - event-generation latching is unchanged.
+  `generateLatch.test.tsx` moves to the new copy (D7 category 7). Red, then change
+  `TranscribeFeed.tsx` and `useGatedGenerate.ts`. Green, `cd web && npx vitest run`, typecheck.
+  - Evidence: red, `cd web && npx vitest run src/pages/index/components/generateLatch.test.tsx` -> `× latches on the first 503…` (transcribe, the new reason copy), `× the reason and the empty state name Settings → Advanced and Insert, and never DEEPGRAM_API_KEY`, `× saving a speech-to-text key clears the latch without a reload`, `Tests  3 failed | 5 passed (8)` (log `byo-6.2-red.log`). Green -> `Tests  8 passed (8)` (log `byo-6.2-green.log`); `cd web && npx vitest run` -> `Test Files  145 passed (145)`, `Tests  1920 passed (1920)` (log `byo-6.2-web.log`); `npm run typecheck` -> exit 0, 0 `error TS`.
+  - Evidence: `useGatedGenerate` returns a stable `resetUnavailable`. `TranscribeFeed` watches `useProviders({enabled: genUnavailable})` (fetching only while latched; `useSaveProvider` invalidates `['providers']`) and clears the latch once `stt` is saved. The reason reads "Add a speech-to-text key in Settings → Advanced to generate transcripts.", and the empty state reads "Transcription needs your own speech-to-text key. Add a DeepGram key in Settings → Advanced; session audio is then sent to DeepGram's cloud to transcribe it, billed to that key. You can still add rows by hand with Insert." Neither names `DEEPGRAM_API_KEY` or a server setting. Topic and event latching is unchanged (the topics cases pass untouched). D7 category 7: `generateLatch.test.tsx` moves the transcribe reason to the new copy, routes `me/providers`, and replaces the `<code>DEEPGRAM_API_KEY</code>` case with the two new cases.
+
+- [x] 6.3 Look at the built section and the transcript panel in the dev stack at 1440 and 390
+  wide: both tabs, saved and unsaved states, the new-host prompt, the approval note, the test
+  alerts, Remove's confirm, and the latched transcript copy. Fix what the look shows in one batch,
+  and record the captures.
+  - Evidence: captures (gitignored, local) in `.impeccable/review/byo-6.3/`: `desktop-llm-empty.png`, `desktop-llm-saved-tested.png`, `desktop-llm-new-host.png`, `desktop-llm-new-host-after-fix.png` and `desktop-stt.png` at 1440×900; `mobile-llm-top.png` and `mobile-llm-bottom.png` at 390×844. They were taken through the `shadcn-qa` agent-browser session on `http://localhost:8787`, signed in with the owner's dev session cookie (Google refuses sign-in from an automated browser). Live end to end in development mode: saving OpenAI-compatible `http://192.168.0.100:8888/v1` with model `qwen3.8-27b-sglang` showed "Connected" and "Key set, ending in ••eded."; Test connection against the owner's SGLang server -> `Connected.`.
+  - Evidence: the one batch of fixes. The look found Test connection still enabled while the panel had unsaved edits (it tests the saved credential, so in the new-host state it would have tested the old host). Fixed: it is disabled while dirty, with "Save your changes first: the test checks the saved key and model."; red, `AdvancedSection.test.tsx` -> `× Test connection shows the server’s result, and editing clears it`, `Tests  1 failed | 9 passed (10)` (log `byo-6.3-red.log`); green, the settings folder -> `Tests  154 passed (154)` (log `byo-6.3-green.log`); `cd web && npx vitest run` -> `Tests  1920 passed (1920)`; `npm run typecheck` -> exit 0, 0 `error TS`; re-capture `desktop-llm-new-host-after-fix.png` shows it disabled. Otherwise the look matched DESIGN.md: a 260px control column, sentence-case rows, the sticky save bar at the card foot, chip nav and stacked rows at 390 with no overflow. The transcript panel's latched copy was not captured live: the dev stack sets `DEEPGRAM_API_KEY`, so development mode falls back to it and Auto generate would have made a billed DeepGram call. That state is pinned by the 6.2 component tests.
+
+
+## 7. Verify
+
+- [x] 7.1 `scripts/check-change.sh` passes (all gates). Run `consistency-read` over the
+  artifacts. CI on the PR runs the full pg and integration suites green.
+  - Evidence: local, `GITHUB_BASE_REF=supabase-migration scripts/check-change.sh` -> every gate `PASS` except `tasks` (this task) once `panel`'s `Resolved:` wording was fixed (log `byo-7.1-gates.log`); `consistency-read` appended to panel.md ("Consistency read 2026-10-11 (final, before the PR)", scope change: no). CI on PR #105, run 38172490364 -> `db-shard (1)` pass 4m26s, `db-shard (2)` pass 1m52s, `db-shard (3)` pass 3m56s, `db-tests` pass (the full pg and integration suites), `secrets` pass (after `.gitleaksignore` recorded 8 fake-key fingerprints per ADR 0018), `dependency-review` pass; `gates` -> every gate `PASS` except `tasks` (this unticked task), with `commands` `ran ['typecheck', 'test'] (pg/integration: db-tests job)` and `audit` `ran ['audit']`.

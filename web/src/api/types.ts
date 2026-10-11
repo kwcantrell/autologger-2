@@ -737,3 +737,44 @@ export interface CompanionDeviceCreatedResponse {
   created_at: string;
   token: string;
 }
+
+// --- Provider credentials (byo-ai-providers D4, D6; api-contract-freeze "Provider credential
+// routes") ---
+
+export type ProviderKind = 'llm' | 'stt';
+/** `openai-compatible` (with a base URL) or a fixed-host provider for `llm`; `deepgram` for `stt`. */
+export type ProviderId = 'openai-compatible' | 'anthropic' | 'openai' | 'google' | 'deepgram';
+
+/** A saved credential: never the key, only its last four characters. */
+export interface ProviderCredential {
+  /** A `ProviderKind` on the wire. */
+  kind: string;
+  /** A `ProviderId` on the wire. */
+  provider: string;
+  /** Only `openai-compatible` has one. */
+  base_url: string | null;
+  model: string;
+  key_last4: string;
+  updated_at: string;
+}
+
+export interface ProvidersResponse {
+  llm: ProviderCredential | null;
+  stt: ProviderCredential | null;
+  /** Whether the caller may run transcription and AI features ("Run features are limited to approved users"). */
+  run_features_allowed: boolean;
+}
+
+/** The `PUT /api/me/providers/:kind` body. `api_key` is omitted to keep the saved key. */
+export interface ProviderSaveBody {
+  provider: ProviderId;
+  base_url?: string | null;
+  model: string;
+  api_key?: string;
+}
+
+/** A connection test result: one of the server's fixed strings. */
+export interface ProviderTestResponse {
+  ok: boolean;
+  detail: string;
+}

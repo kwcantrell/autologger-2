@@ -74,6 +74,8 @@ function mockRoutes(generateError: () => Error, generateCalls: { count: number }
       throw generateError();
     }
     if (path === 'transcript-generation/status') return { in_flight: false };
+    // byo-ai-providers 6.2: a latched transcript feed watches the caller's providers.
+    if (path === 'me/providers') return providersState;
     if (path.includes('/status')) return statusFixture();
     if (path.includes('/transcript-words')) return { words: [] };
     if (path.includes('/topics')) return { topics: [] };
@@ -81,8 +83,11 @@ function mockRoutes(generateError: () => Error, generateCalls: { count: number }
   });
 }
 
+let providersState: { llm: null; stt: unknown; run_features_allowed: boolean };
+
 function renderFeed(feed: 'transcribe' | 'topics') {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  lastClient = client;
   return renderStrict(
     <QueryClientProvider client={client}>
       {feed === 'transcribe' ? (
@@ -98,8 +103,11 @@ function generateButton(): HTMLElement {
   return screen.getByRole('button', { name: 'Auto generate' });
 }
 
+let lastClient: QueryClient;
+
 beforeEach(() => {
   mockedApiFetch.mockReset();
+  providersState = { llm: null, stt: null, run_features_allowed: true };
 });
 
 interface FeedCase {
@@ -109,7 +117,8 @@ interface FeedCase {
 }
 
 const CASES: FeedCase[] = [
-  { feed: 'transcribe', reasonText: /Transcription isn.t configured on this server/ },
+  // byo-ai-providers D7 category 7: the reason names Settings → Advanced, not a server setting.
+  { feed: 'transcribe', reasonText: /Add a speech-to-text key in Settings → Advanced/ },
   { feed: 'topics', reasonText: /Topic generation isn.t available on this server/ },
 ];
 
@@ -169,16 +178,54 @@ describe.each(CASES)('$feed feed — generate 503 latch (ui-refresh D9)', ({ fee
   });
 });
 
-describe('transcribe feed — latched reason carries the inline <code> element', () => {
-  it('renders DEEPGRAM_API_KEY inside a <code> element in the reason span', async () => {
-    const calls = { count: 0 };
-    mockRoutes(() => new ApiError(503, 'Service Unavailable'), calls);
+// byo-ai-providers task 6.2 (web-session-console "Honest capability gating on generation features"):
+// the transcript latch points at Settings → Advanced, names no server setting, and clears without a
+// reload once the user saves a speech-to-text key.
+describe('transcribe feed — the latch points at Settings → Advanced (byo-ai-providers 6.2)', () => {
+  it('the reason and the empty state name Settings → Advanced and Insert, and never DEEPGRAM_API_KEY', async () => {
+    mockRoutes(
+      () =>
+        new ApiError(
+          503,
+          'Add a speech-to-text key in Settings → Advanced to generate transcripts.',
+        ),
+      {
+        count: 0,
+      },
+    );
     renderFeed('transcribe');
-
     fireEvent.click(await screen.findByRole('button', { name: 'Auto generate' }));
     await waitFor(() => expect(generateButton().getAttribute('aria-disabled')).toBe('true'));
     const reasonId = generateButton().getAttribute('aria-describedby') as string;
-    const code = document.getElementById(reasonId)?.querySelector('code');
-    expect(code?.textContent).toBe('DEEPGRAM_API_KEY');
+    expect(document.getElementById(reasonId)?.textContent).toMatch(/Settings → Advanced/);
+    const empty = await screen.findByText(/Add a DeepGram key in Settings → Advanced/);
+    expect(empty.textContent).toMatch(/Insert/);
+    expect(document.body.textContent).not.toMatch(/DEEPGRAM_API_KEY|server setting/);
+  });
+
+  it('saving a speech-to-text key clears the latch without a reload', async () => {
+    const calls = { count: 0 };
+    mockRoutes(() => new ApiError(503, 'needs a key'), calls);
+    renderFeed('transcribe');
+    fireEvent.click(await screen.findByRole('button', { name: 'Auto generate' }));
+    await waitFor(() => expect(generateButton().getAttribute('aria-disabled')).toBe('true'));
+
+    // The user saves a key in Settings → Advanced, whose save invalidates the providers query.
+    providersState = {
+      llm: null,
+      stt: {
+        kind: 'stt',
+        provider: 'deepgram',
+        base_url: null,
+        model: 'nova-3',
+        key_last4: 'abcd',
+        updated_at: 'x',
+      },
+      run_features_allowed: true,
+    };
+    await lastClient.invalidateQueries({ queryKey: ['providers'] });
+    await waitFor(() => expect(generateButton().getAttribute('aria-disabled')).toBeNull());
+    fireEvent.click(generateButton());
+    await waitFor(() => expect(calls.count).toBe(2));
   });
 });

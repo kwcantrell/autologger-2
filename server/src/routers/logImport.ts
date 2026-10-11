@@ -7,12 +7,16 @@ import {
   type TranscriptToken,
   timedTranscriptTokens,
 } from '@autologger/log-import';
-import type { Config } from '@autologger/ports';
 import { type SessionHubFacade, type TimecodeCtx, userCaller } from '@autologger/session-core';
-import { generateTranscriptWords, TranscriptGenerateError } from '@autologger/transcription';
+import {
+  generateTranscriptWords,
+  type SttCredential,
+  TranscriptGenerateError,
+} from '@autologger/transcription';
 import { Hono } from 'hono';
 import { z } from 'zod';
 import type { AppEnv, Bindings } from '../appEnv';
+import { resolveSttCredential } from '../auth/providerResolve';
 import { runFeatureAllowed, sheetsLogImportConfigured } from '../env';
 import { ApiError } from '../httpError';
 import { requireShowAccess, requireUser, timecodeCtx } from './_helpers';
@@ -49,7 +53,9 @@ export async function ensureTimedTranscript(input: {
   sessionId: string;
   /** Resolves the hub at the point of use; it is re-resolved after the generation's await. */
   getHub: () => Promise<SessionHubFacade>;
-  config: Config;
+  /** The job creator's speech-to-text credential, read when this session's generation starts
+   * (byo-ai-providers D3). Null: generation is skipped and the session fails. */
+  resolveStt: () => Promise<SttCredential | null>;
   audio: Bindings['ports']['audio'];
   ctx: TimecodeCtx;
   onProgress: (line: string) => void;
@@ -67,10 +73,18 @@ export async function ensureTimedTranscript(input: {
     throw new Error('No timed transcript is available for sync.');
   }
 
+  const stt = await input.resolveStt();
+  if (stt === null) {
+    input.onProgress(
+      'Skipped transcript generation: add a speech-to-text key in Settings → Advanced.',
+    );
+    throw new Error('No timed transcript is available for sync.');
+  }
+
   input.onProgress('Generating transcript (DeepGram)…');
   const attempt = async (): Promise<TranscriptToken[]> => {
     const words = await generateTranscriptWords({
-      config: input.config,
+      stt,
       audio: input.audio,
       getHub: input.getHub,
       ctx: input.ctx,
@@ -224,7 +238,7 @@ logImportRouter.post('/api/shows/:showId/log-import', async (c) => {
           const transcript = await ensureTimedTranscript({
             sessionId,
             getHub,
-            config: env.config,
+            resolveStt: () => resolveSttCredential(env, job.createdByUserId),
             audio: env.ports.audio,
             ctx,
             onProgress: (line) => log(`  ${title}: ${line}`),

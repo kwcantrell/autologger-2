@@ -18,6 +18,7 @@ import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { acquireDataDirLock, DataDirLockedError } from '@autologger/storage';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { ProviderKeysSecretError } from '../auth/providerKeyCrypto';
 import { loopbackHostname } from '../env';
 import { createBindings } from './config';
 
@@ -371,6 +372,69 @@ describe('createBindings -- BLOB_DIR (shared-blob-volume D1-D4)', () => {
       expect(warnSpy).not.toHaveBeenCalled();
     } finally {
       warnSpy.mockRestore();
+    }
+  });
+});
+
+describe('createBindings -- PROVIDER_DEV_MODE (byo-ai-providers D3)', () => {
+  it.each([
+    ['development', true],
+    ['test', true],
+    ['production', false],
+    ['staging', false],
+    ['Development', false],
+    [undefined, false],
+  ])('NODE_ENV %s gives PROVIDER_DEV_MODE %s, so production mode is the default', async (nodeEnv, dev) => {
+    const set = createBindings(freshProcEnv({ NODE_ENV: nodeEnv }));
+    try {
+      expect(set.bindings.config.PROVIDER_DEV_MODE).toBe(dev);
+    } finally {
+      await set.close();
+    }
+  });
+});
+
+describe('createBindings -- PROVIDER_KEYS_SECRET (byo-ai-providers D2)', () => {
+  it("with providerKeys: 'required', refuses a missing or malformed secret before taking the DATA_DIR lock", async () => {
+    for (const value of [undefined, 'c2hvcnQ=']) {
+      const env = freshProcEnv({ PROVIDER_KEYS_SECRET: value });
+      let err: unknown;
+      try {
+        createBindings(env, { providerKeys: 'required' });
+      } catch (e) {
+        err = e;
+      }
+      expect(err).toBeInstanceOf(ProviderKeysSecretError);
+      expect((err as Error).message).toMatch(/PROVIDER_KEYS_SECRET/);
+      expect((err as Error).message).not.toContain('c2hvcnQ=');
+      expect(existsSync(join(dir, 'sessions'))).toBe(false);
+      await createBindings(env).close(); // and the lock was never held
+    }
+  });
+
+  it('without the option, a missing secret becomes a per-process random cipher that round-trips', async () => {
+    const set = createBindings(freshProcEnv({ PROVIDER_KEYS_SECRET: undefined }));
+    try {
+      const c = set.bindings.ports.providerKeys;
+      const b = { userId: 'u', kind: 'stt' as const, provider: 'deepgram', origin: null };
+      expect(c.decrypt(c.encrypt('dg-key-0123', b), b)).toBe('dg-key-0123');
+    } finally {
+      await set.close();
+    }
+  });
+
+  it('a set secret is used, so two bindings on it share the check value', async () => {
+    const secret = Buffer.alloc(32, 7).toString('base64');
+    const a = createBindings(freshProcEnv({ PROVIDER_KEYS_SECRET: secret }));
+    const checkA = a.bindings.ports.providerKeys.checkValue();
+    await a.close();
+    const b = createBindings(freshProcEnv({ PROVIDER_KEYS_SECRET: secret }), {
+      providerKeys: 'required',
+    });
+    try {
+      expect(b.bindings.ports.providerKeys.checkValue()).toBe(checkA);
+    } finally {
+      await b.close();
     }
   });
 });

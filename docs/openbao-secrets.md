@@ -121,6 +121,17 @@ Other rules:
   value refuses `make <env>-up` (`compose-run`) and refuses the server's boot; a non-ASCII value
   also refuses boot. At boot the server logs a masked form, `bootstrap owner: <domain> #<8 hex>`,
   never the local part, so you can check the value for a typo.
+- **Every stack needs `PROVIDER_KEYS_SECRET`** (byo-ai-providers D2). It is base64 of exactly
+  32 bytes and encrypts users' provider API keys (Settings → Advanced) at rest. Generate one per
+  environment with `openssl rand -base64 32`; never reuse prod's in dev or stage. A missing or
+  malformed value refuses `make <env>-up` (`compose-run`) and the server's boot. The first boot
+  records a check value derived from it, and a later boot with a different secret refuses, so a
+  typo can't silently make every stored key unreadable.
+  - **If the secret is lost**, the stored keys can't be recovered. To reset: delete every row of
+    `catalog.user_provider_credentials` and the row of `catalog.provider_key_check`, boot with the
+    new secret, and ask users to re-enter their keys in Settings → Advanced.
+  - **`DEEPGRAM_API_KEY` is not used in production mode** (stage and prod): each user's own key is.
+    In dev it remains the fallback for a user without a key.
 - **`RUN_FEATURE_EMAILS` is optional** (run-status-and-sweeper D9). It lists, comma-separated, the
   users approved for the run features: the AI chat, AI v2 design, topic and event generation,
   YouTube import and transcript generation (including the log import's). The bootstrap owner is

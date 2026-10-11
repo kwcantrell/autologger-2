@@ -24,3 +24,5 @@ export * from './postgresCatalogStore';
 export * from './postgresFrameBus';
 export * from './postgresSessionSql';
 export * from './presence';
+// byo-ai-providers D1: the ProviderCredentialStore port on `catalog.user_provider_credentials`.
+export * from './providerCredentials';

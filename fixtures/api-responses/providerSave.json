@@ -1,0 +1,8 @@
+{
+  "kind": "stt",
+  "provider": "deepgram",
+  "base_url": null,
+  "model": "nova-3",
+  "key_last4": "abcd",
+  "updated_at": "####-##-##T##:##:##.###Z"
+}

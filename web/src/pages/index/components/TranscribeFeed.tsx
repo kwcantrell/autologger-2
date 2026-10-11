@@ -1,5 +1,6 @@
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { memo, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import { useProviders } from '../../../api/hooks/useProviders';
 import { useSessionStatus } from '../../../api/hooks/useSessionStatus';
 import { useTranscriptGenerationStatus } from '../../../api/hooks/useTranscriptGenerationStatus';
 import {
@@ -111,9 +112,17 @@ export const TranscribeFeed = memo(function TranscribeFeed({ sessionId }: Props)
   const jumpReasonId = 'v5-transcribe-feed-jump-reason';
   const fps = status?.frame_rate ?? null;
   // Latched on the first 503 (ui-refresh D9: honest capability gate) — see
-  // `useGatedGenerate` for the full rationale; the copy below tells the
-  // operator to reload after configuring.
-  const { genError, genUnavailable, handleGenerate } = useGatedGenerate(generate.mutate);
+  // `useGatedGenerate` for the full rationale. byo-ai-providers 6.2: the 503 means the user has no
+  // speech-to-text key, so while latched the feed watches the user's providers, and saving a key
+  // in Settings → Advanced (which refreshes that query) clears the latch without a reload.
+  const { genError, genUnavailable, handleGenerate, resetUnavailable } = useGatedGenerate(
+    generate.mutate,
+  );
+  const providers = useProviders({ enabled: genUnavailable });
+  const sttSaved = providers.data?.stt != null;
+  useEffect(() => {
+    if (genUnavailable && sttSaved) resetUnavailable();
+  }, [genUnavailable, sttSaved, resetUnavailable]);
   // Default direction is oldest-first across all three feeds (owner decision
   // 2026-08-06, PR#4 review) — the log reads top-down like a sheet.
   const [sort, dispatchSort] = useReducer(sortReducer, { key: 'session_time', dir: 'asc' });
@@ -301,12 +310,7 @@ export const TranscribeFeed = memo(function TranscribeFeed({ sessionId }: Props)
         onGenerate={handleGenerate}
         generatePending={generate.isPending || sameSessionGenerationBusy}
         reasonId={genReasonId}
-        reason={
-          <>
-            Transcription isn&apos;t configured on this server (needs <code>DEEPGRAM_API_KEY</code>
-            ). Reload after configuring.
-          </>
-        }
+        reason={<>Add a speech-to-text key in Settings → Advanced to generate transcripts.</>}
         onInsert={handleInsert}
         insertPending={insert.isPending}
       />
@@ -348,10 +352,9 @@ export const TranscribeFeed = memo(function TranscribeFeed({ sessionId }: Props)
             <>Generating transcript&hellip; this may take a couple minutes.</>
           ) : genUnavailable ? (
             <>
-              Transcription isn&apos;t configured on this server. It needs a DeepGram API key
-              (server setting <code>DEEPGRAM_API_KEY</code>); when enabled, session audio is sent to
-              DeepGram&apos;s cloud to transcribe it. Reload this page after configuring it. You can
-              still add rows by hand with <strong>Insert</strong>.
+              Transcription needs your own speech-to-text key. Add a DeepGram key in Settings →
+              Advanced; session audio is then sent to DeepGram&apos;s cloud to transcribe it, billed
+              to that key. You can still add rows by hand with <strong>Insert</strong>.
             </>
           ) : (
             <>

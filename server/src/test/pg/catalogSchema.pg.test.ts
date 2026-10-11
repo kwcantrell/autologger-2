@@ -47,9 +47,22 @@ const TABLES = [
   // companion-devices D1: Companion devices and browser presence (ADR 0021 slice 9d).
   'companion_devices',
   'companion_presence',
+  // byo-ai-providers D1: per-user provider credentials and the master-key check value.
+  'user_provider_credentials',
+  'provider_key_check',
+  // byo-ai-providers 2.4: the per-user connection-test window.
+  'provider_test_windows',
 ];
 // companion-devices D1: the tables with no catalog_user policy and no catalog_user privilege.
-const SYSTEM_ONLY = ['kv', 'companion_devices', 'companion_presence'];
+// byo-ai-providers D1: plus the two provider tables.
+const SYSTEM_ONLY = [
+  'kv',
+  'companion_devices',
+  'companion_presence',
+  'user_provider_credentials',
+  'provider_key_check',
+  'provider_test_windows',
+];
 const KEY_COLUMN: Record<string, string> = {
   users: 'id',
   user_studio_memberships: 'user_id',
@@ -66,6 +79,9 @@ const KEY_COLUMN: Record<string, string> = {
   session_leases: 'session_id',
   companion_devices: 'id',
   companion_presence: 'client_id',
+  user_provider_credentials: 'user_id',
+  provider_key_check: 'check_value',
+  provider_test_windows: 'user_id',
 };
 const MIGRATIONS = resolve(import.meta.dirname, '../../../../supabase/migrations');
 const MIGRATION = resolve(MIGRATIONS, '20261001000000_catalog_schema.sql');
@@ -443,14 +459,59 @@ const EXPECTED_SCHEMA: SchemaRecord = {
       'FOREIGN KEY (user_id) REFERENCES catalog.users(id) ON DELETE CASCADE',
     ],
   },
+  // byo-ai-providers D1: one credential per user and kind; the provider-key check value.
+  user_provider_credentials: {
+    columns: [
+      'user_id text collate C not null',
+      'kind text collate C not null',
+      'provider text collate C not null',
+      'base_url text collate C',
+      'base_origin text collate C',
+      'model text collate C not null',
+      'key_nonce bytea not null',
+      'key_ciphertext bytea not null',
+      'key_tag bytea not null',
+      'key_version smallint not null',
+      'key_last4 text collate C not null',
+      'created_at_utc text collate C not null',
+      'updated_at_utc text collate C not null',
+    ],
+    primaryKey: ['user_id', 'kind'],
+    foreignKeys: ['FOREIGN KEY (user_id) REFERENCES catalog.users(id) ON DELETE CASCADE'],
+  },
+  provider_test_windows: {
+    columns: [
+      'user_id text collate C not null',
+      'window_start_ms bigint not null',
+      'test_count smallint not null',
+    ],
+    primaryKey: ['user_id'],
+    foreignKeys: ['FOREIGN KEY (user_id) REFERENCES catalog.users(id) ON DELETE CASCADE'],
+  },
+  provider_key_check: {
+    columns: [
+      'id smallint not null',
+      'check_value text collate C not null',
+      'created_at_utc text collate C not null',
+    ],
+    primaryKey: ['id'],
+    foreignKeys: [],
+  },
   $unique: ['catalog.companion_devices UNIQUE (token_hash)', 'catalog.users UNIQUE (google_sub)'],
   // owner-bootstrap D1: the role check and at most one owner per team.
   $checks: [
     'catalog.companion_devices companion_devices_name_check CHECK (((char_length(name) >= 1) AND (char_length(name) <= 80)))',
     'catalog.companion_presence companion_presence_client_id_check CHECK (((char_length(client_id) >= 1) AND (char_length(client_id) <= 256)))',
+    'catalog.provider_key_check provider_key_check_id_check CHECK ((id = 1))',
     "catalog.session_leases session_leases_client_check CHECK (((holder_client_id <> ''::text) AND (length(holder_client_id) <= 256)))",
     "catalog.session_leases session_leases_kind_check CHECK ((kind = ANY (ARRAY['recording'::text, 'ai-turn'::text, 'transcript-generation'::text, 'youtube-import'::text])))",
     "catalog.session_overwrites session_overwrites_table_name_check CHECK ((table_name = ANY (ARRAY['session_events'::text, 'session_transcript_words'::text, 'session_topics'::text])))",
+    'catalog.user_provider_credentials user_provider_credentials_base_url_check CHECK ((char_length(base_url) <= 2048))',
+    'catalog.user_provider_credentials user_provider_credentials_key_last4_check CHECK (((char_length(key_last4) >= 1) AND (char_length(key_last4) <= 4)))',
+    "catalog.user_provider_credentials user_provider_credentials_kind_check CHECK ((kind = ANY (ARRAY['llm'::text, 'stt'::text])))",
+    'catalog.user_provider_credentials user_provider_credentials_model_check CHECK (((char_length(model) >= 1) AND (char_length(model) <= 200)))',
+    'catalog.user_provider_credentials user_provider_credentials_origin_check CHECK (((base_url IS NULL) = (base_origin IS NULL)))',
+    'catalog.user_provider_credentials user_provider_credentials_provider_check CHECK (((char_length(provider) >= 1) AND (char_length(provider) <= 64)))',
     "catalog.user_studio_memberships user_studio_memberships_role_check CHECK ((role = ANY (ARRAY['owner'::text, 'admin'::text, 'member'::text])))",
   ],
   $indexes: [
@@ -614,6 +675,12 @@ describe('the app role (design D3)', () => {
               values ('d', 'u', 'n', 'h', ${t})`;
     await sql`insert into companion_presence (client_id, user_id, session_id, visible, is_playing,
                 updated_at_ms) values ('c', 'u', 'se', true, false, 1)`;
+    // byo-ai-providers D1.
+    await sql`insert into user_provider_credentials (user_id, kind, provider, model, key_nonce,
+                key_ciphertext, key_tag, key_version, key_last4, created_at_utc, updated_at_utc)
+              values ('u', 'stt', 'deepgram', 'nova-3', '\\x00', '\\x01', '\\x02', 1, 'abcd', ${t}, ${t})`;
+    await sql`insert into provider_key_check (id, check_value, created_at_utc) values (1, 'c', ${t})`;
+    await sql`insert into provider_test_windows (user_id, window_start_ms, test_count) values ('u', 1, 1)`;
     for (const table of TABLES) {
       const n = await sql.unsafe(`select count(*)::int as n from ${table}`);
       expect(n[0]?.n, table).toBeGreaterThan(0);

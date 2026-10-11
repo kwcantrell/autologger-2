@@ -8,6 +8,7 @@ import { createNodeWebSocket } from '@hono/node-ws';
 import { Hono } from 'hono';
 import { wireApp } from './app';
 import type { AppEnv } from './appEnv';
+import { ProviderKeysSecretError, verifyProviderKeysCheck } from './auth/providerKeyCrypto';
 import { checkBootEnv } from './bootGuard';
 import { maskBootstrapOwnerEmail, runFeatureEmails } from './env';
 import { createBindings } from './node/config';
@@ -28,10 +29,14 @@ try {
   // session-frame-bus D1: the production entry point is the only one on the Postgres frame bus, so
   // session frames reach every process sharing the database. It refuses without a valid
   // FRAME_BUS_SECRET (D2), before the data directory is touched.
-  created = createBindings(process.env, { frameBus: 'postgres' });
+  created = createBindings(process.env, { frameBus: 'postgres', providerKeys: 'required' });
 } catch (e) {
   // retire-host-dev D2: another server holds DATA_DIR — refuse cleanly (nothing was touched).
-  if (e instanceof DataDirLockedError || e instanceof FrameBusSecretError) {
+  if (
+    e instanceof DataDirLockedError ||
+    e instanceof FrameBusSecretError ||
+    e instanceof ProviderKeysSecretError
+  ) {
     console.error(`autologger: ${e.message}`);
     process.exit(1);
   }
@@ -51,6 +56,8 @@ console.info(
 // supervisor retries (the stack's migrations service may still be creating the schema).
 try {
   await waitForCatalog(bindings.ports.catalog.bindSystem('boot-wait'));
+  // byo-ai-providers D2: refuse a PROVIDER_KEYS_SECRET that doesn't match the stored keys.
+  await verifyProviderKeysCheck(bindings.ports.providerCredentials, bindings.ports.providerKeys);
   // session-frame-bus D1: the bus's listener is up (its first LISTEN done) before listen(), so no
   // socket attaches before this process receives frames.
   await startFrameBus();

@@ -3,7 +3,7 @@
 
 import { mkdtemp, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { BlobStore, Config } from '@autologger/ports';
+import type { BlobStore } from '@autologger/ports';
 import {
   holdRunLease,
   type RunLeaseHold,
@@ -14,7 +14,6 @@ import {
 import { mergeAudioSegments } from './audioMerge';
 import type { TranscribeGroupResult } from './deepgram';
 import { DeepgramUpstreamError, transcribeGroup } from './deepgram';
-import { deepgramConfigured, deepgramModel } from './deepgramConfig';
 import { generationInFlightDetail, transcriptGenerationLock } from './transcriptGenerationLock';
 import type { EnrichmentGroup, SegmentAnchorInfo } from './transcriptRemap';
 import {
@@ -26,6 +25,10 @@ import {
 export const DEEPGRAM_MAX_GROUP_BYTES = 2_000_000_000;
 
 export const TRANSCRIPT_UNAVAILABLE = 'Transcription is unavailable on this deployment.';
+/** The unconfigured detail when the caller has no speech-to-text credential (byo-ai-providers D3;
+ * api-contract-freeze "Transcript generation endpoint behavior"). */
+export const TRANSCRIPT_NEEDS_KEY =
+  'Add a speech-to-text key in Settings → Advanced to generate transcripts.';
 /** Fallback detail when the holder title cannot be resolved (rare). */
 export const GENERATION_IN_FLIGHT_DETAIL =
   'A transcript generation run is already in progress on this deployment; try again once it completes.';
@@ -63,8 +66,15 @@ export function exceedsGroupSizeLimit(bytes: number): boolean {
   return bytes > DEEPGRAM_MAX_GROUP_BYTES;
 }
 
+/** The speech-to-text credential a run uses (byo-ai-providers D3): the caller's own, or the
+ * development-mode fallback. Resolved by the caller; null means none. */
+export interface SttCredential {
+  apiKey: string;
+  model: string;
+}
+
 export interface GenerateTranscriptDeps {
-  config: Config;
+  stt: SttCredential | null;
   audio: BlobStore;
   /** Resolves the session hub at the point of use, so a reference is never held idle across
    * the provider call (async-session-hub design D6). */
@@ -99,9 +109,10 @@ async function inFlightError(
 export async function generateTranscriptWords(
   deps: GenerateTranscriptDeps,
 ): Promise<TranscriptWord[]> {
-  if (!deepgramConfigured(deps.config)) {
-    throw new TranscriptGenerateError('unavailable', TRANSCRIPT_UNAVAILABLE);
+  if (deps.stt === null) {
+    throw new TranscriptGenerateError('unavailable', TRANSCRIPT_NEEDS_KEY);
   }
+  const { apiKey, model } = deps.stt;
   // The session's run in this process (run-status-and-sweeper D3): only the same session is
   // refused, with the holder-named detail at this process's start of the run. The holder is always
   // the requested session; it rides on the error so the route redacts by the session the detail
@@ -150,8 +161,6 @@ export async function generateTranscriptWords(
       );
     }
 
-    const apiKey = deps.config.DEEPGRAM_API_KEY;
-    const model = deepgramModel(deps.config);
     const enrichmentGroups: EnrichmentGroup[] = [];
     for (const group of groups) {
       const { size } = await stat(group.outPath);

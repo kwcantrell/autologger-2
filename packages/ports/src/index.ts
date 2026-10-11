@@ -17,3 +17,4 @@ export * from './ports';
 // Types only: the module's runtime constant (PRESENCE_FRESH_MS) is imported from
 // `@autologger/ports/presenceRegistry`, so this barrel stays free of runtime values.
 export type * from './presenceRegistry';
+export * from './providerCredentials';
