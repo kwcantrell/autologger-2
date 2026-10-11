@@ -43,7 +43,8 @@ function toWire(r: ProviderCredentialRow) {
     provider: r.provider,
     base_url: r.base_url,
     model: r.model,
-    key_last4: r.key.last4,
+    // Null only on the keyless `claude-cli` row (ai-sdk-agent-harness D2).
+    key_last4: r.key?.last4 ?? null,
     updated_at: r.updated_at_utc,
   };
 }
@@ -139,6 +140,8 @@ providersRouter.post('/api/me/providers/:kind/test', async (c) => {
   const row = await store.get(user.id, kind);
   if (row === null) throw new ApiError(404, NOT_SET_UP);
   if ((await store.takeTestSlot(user.id)) > PROVIDER_TEST_LIMIT) throw new ApiError(429, TOO_MANY);
+  // A keyless row has no key to test. Minimal guard for task 2.2; the `claude-cli` answer is 3.2.
+  if (row.key === null) return c.json({ ok: false, detail: PROVIDER_TEST_DETAIL.unreadable });
   const key = c.env.ports.providerKeys.decrypt(row.key, {
     userId: user.id,
     kind,

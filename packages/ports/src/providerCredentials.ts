@@ -5,8 +5,15 @@
 // `Bindings.ports.providerCredentials`. The tables have no user RLS, so every credential statement
 // is scoped by user id in SQL. The store holds only ciphertext parts; the server encrypts and
 // decrypts (design D2), and no plaintext key ever passes through this port.
+//
+// ai-sdk-agent-harness design D2: the `llm` provider `claude-cli` (the operator's Claude CLI) is
+// stored as a keyless row, so `key` is null on that row and every reader handles null as "no
+// usable key". The catalog check keeps every other row fully keyed.
 
 export type ProviderKind = 'llm' | 'stt';
+
+/** The keyless `llm` provider: the operator's Claude CLI, with the fixed model of the same name. */
+export const CLAUDE_CLI_PROVIDER = 'claude-cli';
 
 /** An API key as stored: AES-256-GCM parts, the key version, and the last four characters. */
 export interface StoredProviderKey {
@@ -28,9 +35,15 @@ export interface ProviderCredentialFields {
 
 export interface ProviderCredentialRow extends ProviderCredentialFields {
   kind: ProviderKind;
-  key: StoredProviderKey;
+  /** Null only on the keyless `claude-cli` row. */
+  key: StoredProviderKey | null;
   created_at_utc: string;
   updated_at_utc: string;
+}
+
+/** A row that carries a key: what `put` and `updateKeepingKey` return. */
+export interface KeyedProviderCredentialRow extends ProviderCredentialRow {
+  key: StoredProviderKey;
 }
 
 export interface ProviderCredentialStore {
@@ -44,15 +57,25 @@ export interface ProviderCredentialStore {
     userId: string,
     kind: ProviderKind,
     fields: ProviderCredentialFields & { key: StoredProviderKey },
+  ): Promise<KeyedProviderCredentialRow>;
+  /** Creates or replaces the user's `llm` credential with the keyless `claude-cli` row (no key, no
+   * base URL, model `claude-cli`). A replace keeps the creation time. The caller checks the
+   * allowlist first. */
+  putKeyless(
+    userId: string,
+    kind: 'llm',
+    provider: typeof CLAUDE_CLI_PROVIDER,
   ): Promise<ProviderCredentialRow>;
   /** One statement that changes base URL and model and keeps the stored key, only when the row
    * exists with the same provider and `base_origin` (a key is bound to both; owner decision 10). Reads nothing first, so it
-   * can never bring back a key deleted or replaced concurrently. Null when no row matched. */
+   * can never bring back a key deleted or replaced concurrently. Null when no row matched. A
+   * keyless row never matches: there is no key to keep, so a switch from `claude-cli` needs a new
+   * key through `put`. */
   updateKeepingKey(
     userId: string,
     kind: ProviderKind,
     fields: ProviderCredentialFields,
-  ): Promise<ProviderCredentialRow | null>;
+  ): Promise<KeyedProviderCredentialRow | null>;
   /** Deletes the user's credential of this kind; false when there was none. */
   delete(userId: string, kind: ProviderKind): Promise<boolean>;
   /** Counts one connection test in the user's test window, atomically across processes, and

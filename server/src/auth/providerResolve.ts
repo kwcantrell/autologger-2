@@ -18,7 +18,8 @@ export async function resolveSttCredential(
   userId: string,
 ): Promise<SttCredential | null> {
   const row = await env.ports.providerCredentials.get(userId, 'stt');
-  if (row !== null) {
+  // A keyless row (only `claude-cli`, an `llm` provider) has no usable key.
+  if (row !== null && row.key !== null) {
     const apiKey = env.ports.providerKeys.decrypt(row.key, {
       userId,
       kind: 'stt',
