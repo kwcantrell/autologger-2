@@ -208,12 +208,14 @@ Anything else is a stop: update the artifacts and ask the owner.
 
 ## 5. Transcription on the caller's key (design D3)
 
-- [ ] 5.1 Test first, transcription unit tests:
+- [x] 5.1 Test first, transcription unit tests:
   - `generateTranscriptWords` takes `stt: {apiKey, model}`;
   - `null` throws `unavailable` with the new detail;
   - the key goes only in the `Authorization` header.
   Red, then change the package (D7 category 2). Green.
-- [ ] 5.2 Test first, integration tests for `transcript-words/generate`:
+  - Evidence: red, `cd packages/transcription && npx vitest run src/generateTranscript.stt.test.ts` -> `× throws unavailable with the Settings → Advanced detail, taking no lock and calling nothing` (log `byo-5.1-red.log`). Green, `cd packages/transcription && npx vitest run` -> `Tests  71 passed (71)` (log `byo-5.1-green.log`). `GenerateTranscriptDeps` takes `stt: SttCredential | null` instead of `config`; `null` throws `unavailable` with `TRANSCRIPT_NEEDS_KEY` before the lock or any hub or provider call; the key and model come from `stt`. DeepGram's existing client sends the key only in `Authorization: Token` (the 5.2 tests assert it). D7 category 2: `generateTranscript.inflight.test.ts` and `generateTranscript.remap.int.test.ts` pass `stt` (and drop the unused `Config` import).
+
+- [x] 5.2 Test first, integration tests for `transcript-words/generate`:
   - in production mode, a caller without a key gets the new `503` detail and no provider call is
     made, even with `DEEPGRAM_API_KEY` set;
   - with a key, the fake DeepGram sees that user's key and model;
@@ -222,7 +224,10 @@ Anything else is a stop: update the artifacts and ask the owner.
   - a tampered row answers as unconfigured;
   - the approval `403` still comes after the config `503`.
   Red, then add `resolveSttCredential` and wire `transcribe.ts` (D7 category 1). Green.
-- [ ] 5.3 Test first, log-import integration tests:
+  - Evidence: red, `cd server && npx vitest run --project integration src/routers/transcribe.int.test.ts -t "own speech-to-text key|unconfigured generate is byte"` -> `× production mode: a caller without a key gets the Settings 503…`, `× production mode: the caller's own key and model go to DeepGram`, `× development mode: the operator key is the fallback…` (callers not yet wired; log `byo-5.2-red.log`). Green, with 5.3: `npx vitest run --project integration src/routers/transcribe.int.test.ts src/routers/logImport.int.test.ts src/routers/sessionHub.interleave.int.test.ts src/test/session/generateTranscript.remap.int.test.ts src/routers/providers.int.test.ts` -> `Test Files  5 passed (5)`, `Tests  118 passed (118)` (log `byo-5-green-int.log`); `cd server && npx vitest run --project unit` -> `Tests  442 passed | 3 skipped (445)`; `npm run typecheck` -> exit 0, 0 `error TS`.
+  - Evidence: `resolveSttCredential(env, userId)` (`server/src/auth/providerResolve.ts`) returns the user's decrypted `stt` row, else in development mode only `DEEPGRAM_API_KEY` and `DEEPGRAM_MODEL`, else null. `transcribe.ts` resolves for the caller in place of `deepgramConfigured` (null answers `503` `TRANSCRIPT_NEEDS_KEY`), then `requireRunFeature`. The six new cases: no key in production mode gives the Settings `503` and no fetch, even with `DEEPGRAM_API_KEY` set; the caller's key and model reach DeepGram (`Token dg-user-key-0001`, `model=nova-2`); the development-mode fallback (`Token operator-key`); another member never uses the owner's key; a row that no longer decrypts answers `503`; and for a user who isn't approved, `503` without a key and `403` with one, with no fetch. D7 category 1: the two existing unconfigured cases (production mode with no key, and the not-approved member) expect the new detail. D7 category 12 keeps `sessionHub.interleave` and `logImport`'s env-key setups unchanged.
+
+- [x] 5.3 Test first, log-import integration tests:
   - generation uses the creator's key;
   - an approved creator without a key in production mode gets the add-a-key line, no lease and no
     provider call, and the job continues;
@@ -233,6 +238,9 @@ Anything else is a stop: update the artifacts and ask the owner.
     fallback, the lost-secret reset). Add a `docs/security.md` section: the at-rest cipher, the
     in-memory master key, the origin binding, and user-directed egress with its limits. Add ADR
     0027 "Provider keys at rest".
+  - Evidence: red, `cd server && npx vitest run --project unit src/routers/logImport.test.ts` -> `× records the add-a-key line, never calls the generator, and fails the session`, `Tests  1 failed | 5 passed (6)`; `npx vitest run --project integration src/routers/logImport.int.test.ts -t "production mode"` -> `Tests  2 failed | 20 skipped (22)` (logs `byo-5.3-red-unit.log`, `byo-5.3-red-int.log`). Green: as in 5.2 (`Tests  118 passed (118)` across the five integration files, unit `442 passed`).
+  - Evidence: `ensureTimedTranscript` takes `resolveStt` instead of `config`, read after the approval check when the session's generation starts. Null records "Skipped transcript generation: add a speech-to-text key in Settings → Advanced." and fails the session with no lease and no provider call. The router passes `() => resolveSttCredential(env, job.createdByUserId)`. New cases: the creator's key reaches DeepGram in production mode (`Token dg-creator-key-01`); a creator without a key gets the line, no `transcript-generation` claim and no DeepGram call; the not-approved skip is unchanged. D7 category 3: the `logImport.test.ts` fixture passes `resolveStt`.
+  - Evidence: docs. In the README, the configuration-gated summary, "Transcript generation (DeepGram)" (per-user key, no production fallback, egress billed to the key's owner, keys encrypted), the log-import section and its egress note, the feature-keys paragraph, the prod secrets table (`PROVIDER_KEYS_SECRET` required; `DEEPGRAM_API_KEY` not used in production), runtime egress, cutover preconditions, dev integrations, and secret custody. `docs/security.md` gains "Users' provider keys at rest and in use" with its residuals. New `docs/decisions/0027-provider-keys-at-rest.md` (Context, Decision, Consequences, Evidence). The lost-secret reset is in `docs/openbao-secrets.md` (3.4).
 
 ## 6. Web (design D6)
 

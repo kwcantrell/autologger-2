@@ -58,15 +58,17 @@ describe('unavailable endpoints (503)', () => {
   });
 
   it('unconfigured generate is byte-identical to the pre-change frozen response', async () => {
+    // byo-ai-providers D7 category 1: "unconfigured" is now a caller without a speech-to-text
+    // key in production mode, where DEEPGRAM_API_KEY is never used; the detail names Settings.
     const s = (await seededSession()).sessionId;
     const res = await app.request(
       `/api/sessions/${s}/transcript-words/generate`,
       { method: 'POST' },
-      { ...env }, // DEEPGRAM_API_KEY unset in the base test env
+      envWith({ PROVIDER_DEV_MODE: false, DEEPGRAM_API_KEY: 'operator-key' }),
     );
     expect(res.status).toBe(503);
     expect(await res.json()).toEqual({
-      detail: 'Transcription is unavailable on this deployment.',
+      detail: 'Add a speech-to-text key in Settings → Advanced to generate transcripts.',
     });
   });
 
@@ -1817,8 +1819,9 @@ describe('topics/generate and transcript-words/generate — approved users only 
     const { s, cookie } = await sessionWithMember(NOT_APPROVED_EMAIL);
     const res = await generate(s, { headers: { cookie } }, envWith({}));
     expect(res.status).toBe(503);
+    // byo-ai-providers D7 category 1: the unconfigured detail now names Settings → Advanced.
     expect(await res.json()).toEqual({
-      detail: 'Transcription is unavailable on this deployment.',
+      detail: 'Add a speech-to-text key in Settings → Advanced to generate transcripts.',
     });
   });
 
@@ -1834,5 +1837,147 @@ describe('topics/generate and transcript-words/generate — approved users only 
     );
     expect(res.status).toBe(200);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+// byo-ai-providers task 5.2 (design D3; provider-credentials "Work runs on its user's credentials",
+// api-contract-freeze "Transcript generation endpoint behavior"): the caller's own DeepGram key and
+// model, no operator key in production mode, the operator key as the fallback in development mode.
+describe("transcript generation on the caller's own speech-to-text key (byo-ai-providers D3)", () => {
+  const NEEDS_KEY = {
+    detail: 'Add a speech-to-text key in Settings → Advanced to generate transcripts.',
+  };
+  const FORBIDDEN = { detail: 'This feature is limited to approved users on this server.' };
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    transcriptGenerationLock.reset();
+  });
+
+  async function memberSession(email?: string) {
+    const { sessionId, studioId } = await seededSession();
+    const id = await seedUser({ ...(email ? { email } : {}), studios: [studioId], role: 'admin' });
+    await logRecordingStarted(sessionId, 1);
+    await uploadSegment(sessionId, SEG1, { recordingOrdinal: 1 });
+    return { s: sessionId, studioId, id, cookie: await loginCookie(id) };
+  }
+
+  async function saveStt(userId: string, key: string, model = 'nova-2') {
+    await env.ports.providerCredentials.put(userId, 'stt', {
+      provider: 'deepgram',
+      base_url: null,
+      base_origin: null,
+      model,
+      key: env.ports.providerKeys.encrypt(key, {
+        userId,
+        kind: 'stt',
+        provider: 'deepgram',
+        origin: null,
+      }),
+    });
+  }
+
+  function stubDeepgram() {
+    const fetchMock = vi.fn(
+      async (_url: unknown, _init?: unknown) =>
+        new Response(
+          JSON.stringify(deepgramResponse([{ word: 'hi', start: 0.5, end: 0.9, speaker: 0 }])),
+          {
+            status: 200,
+          },
+        ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    return fetchMock;
+  }
+  const authOf = (call: unknown[] | undefined) =>
+    new Headers((call?.[1] as RequestInit | undefined)?.headers).get('authorization');
+
+  function gen(s: string, cookie: string, e: Bindings) {
+    return app.request(
+      `/api/sessions/${s}/transcript-words/generate`,
+      { method: 'POST', headers: { cookie } },
+      e,
+    );
+  }
+  const prod = () =>
+    envWith({
+      PROVIDER_DEV_MODE: false,
+      DEEPGRAM_API_KEY: 'operator-key',
+      DEEPGRAM_MODEL: 'nova-3',
+    });
+  const dev = () =>
+    envWith({
+      PROVIDER_DEV_MODE: true,
+      DEEPGRAM_API_KEY: 'operator-key',
+      DEEPGRAM_MODEL: 'nova-3',
+    });
+
+  it('production mode: a caller without a key gets the Settings 503, and no DeepGram request is made', async () => {
+    const { s, cookie } = await memberSession();
+    const fetchMock = stubDeepgram();
+    const res = await gen(s, cookie, prod());
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual(NEEDS_KEY);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("production mode: the caller's own key and model go to DeepGram", async () => {
+    const { s, id, cookie } = await memberSession();
+    await saveStt(id, 'dg-user-key-0001', 'nova-2');
+    const fetchMock = stubDeepgram();
+    const res = await gen(s, cookie, prod());
+    expect(res.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalled();
+    expect(authOf(fetchMock.mock.calls[0])).toBe('Token dg-user-key-0001');
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain('model=nova-2');
+  });
+
+  it('development mode: the operator key is the fallback for a caller without one', async () => {
+    const { s, cookie } = await memberSession();
+    const fetchMock = stubDeepgram();
+    const res = await gen(s, cookie, dev());
+    expect(res.status).toBe(200);
+    expect(authOf(fetchMock.mock.calls[0])).toBe('Token operator-key');
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain('model=nova-3');
+  });
+
+  it("another user's key is never used", async () => {
+    const owner = await memberSession();
+    await saveStt(owner.id, 'dg-owner-key-0001');
+    // A second admin of the same team, with no key of their own, generates on the same session.
+    const memberId = await seedUser({ studios: [owner.studioId], role: 'admin' });
+    const fetchMock = stubDeepgram();
+    const res = await gen(owner.s, await loginCookie(memberId), prod());
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual(NEEDS_KEY);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('a row that no longer decrypts answers as unconfigured', async () => {
+    const { s, id, cookie } = await memberSession();
+    await saveStt(id, 'dg-user-key-0001');
+    await testDb().run(
+      "UPDATE user_provider_credentials SET key_tag = '\\x00000000000000000000000000000000' WHERE user_id = ?",
+      id,
+    );
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const fetchMock = stubDeepgram();
+    const res = await gen(s, cookie, prod());
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual(NEEDS_KEY);
+    expect(fetchMock).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it('the approval 403 still comes after the configuration 503', async () => {
+    const { s, id, cookie } = await memberSession(NOT_APPROVED_EMAIL);
+    const fetchMock = stubDeepgram();
+    const unconfigured = await gen(s, cookie, prod());
+    expect(unconfigured.status).toBe(503);
+    await saveStt(id, 'dg-user-key-0001');
+    const configured = await gen(s, cookie, prod());
+    expect(configured.status).toBe(403);
+    expect(await configured.json()).toEqual(FORBIDDEN);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

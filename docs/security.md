@@ -101,6 +101,29 @@ These live in the forge, not the repo, so the template can't apply them:
   **Residuals:** the secret sits in the app process's environment, readable like `PGPASSWORD`
   above, and anything holding it can forge messages; a flood of forged notifications costs each process a signature check per message and can fill the
   notification queue, which fails writes. Rotation needs every process restarted together.
+- **Users' provider keys at rest and in use** (byo-ai-providers, ADR 0027). Each user's own
+  language-model and speech-to-text API keys (Settings → Advanced) are stored only as AES-256-GCM
+  ciphertext in the system-only `catalog.user_provider_credentials`, under a key derived (HKDF) from
+  `PROVIDER_KEYS_SECRET`, a 32-byte server-only secret held in OpenBao. The additional data binds
+  each ciphertext to its user, kind, provider and (OpenAI-compatible) base URL origin, so a row
+  copied to another user, or a key pointed at another provider or host, does not decrypt; changing
+  the provider or host needs the key entered again, so a stolen session can't redirect a stored
+  key. No response, log line or error carries a key: only its last four characters are shown, and
+  provider errors are classified, never logged or forwarded (Node's `fetch` puts a whole invalid
+  header value in its error message). A boot with a different secret is refused against a stored
+  check value, so a wrong secret never silently strands every key.
+  **User-directed egress:** the connection test sends one request to a user-chosen OpenAI-compatible
+  host. In production mode it must be `https` on port 443 with no query, and any host resolving to a
+  loopback, private, link-local, CGNAT, multicast or reserved address (IPv4, IPv6, mapped and
+  NAT64 forms) is refused, with the vetted address pinned on the connection (no DNS rebinding), no
+  redirects followed, and a refused host answering like an unreachable one. Tests are limited to 5 a
+  minute per user, across processes and deleted credentials. The fixed hosts (OpenAI, Anthropic,
+  Google, DeepGram) are frozen constants no environment or request can change.
+  **Residuals:** the server must decrypt keys to use them, so a compromised app process (or anyone
+  holding `PROVIDER_KEYS_SECRET` and a database dump) can read every key; a stolen session can still
+  use the victim's key against its saved host, bounded by the test limit and the run features'
+  approval; development mode (`NODE_ENV` exactly `development` or `test`) lifts the address rules
+  for local model servers and must never be set on a shared host.
 - PUBLIC keeps `CONNECT` on every database and `TEMP` on `postgres`, so `autologger_app` can
   connect to databases where it has no grants and create session-local temp tables. Revoking
   them from PUBLIC would change what GoTrue (`supabase_auth_admin`) gets; slice 6 revisits it.

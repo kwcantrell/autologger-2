@@ -20,15 +20,16 @@ import {
 import type { TranscriptWord } from '@autologger/session-core';
 import {
   DEEPGRAM_MAX_GROUP_BYTES,
-  deepgramConfigured,
   exceedsGroupSizeLimit,
   GENERATION_IN_FLIGHT_DETAIL,
   generateTranscriptWords,
+  TRANSCRIPT_NEEDS_KEY,
   TRANSCRIPT_UNAVAILABLE,
   TranscriptGenerateError,
 } from '@autologger/transcription';
 import { Hono } from 'hono';
 import type { AppEnv } from '../appEnv';
+import { resolveSttCredential } from '../auth/providerResolve';
 import { aiChatConfigured, topicGenerateMaxBudgetUsd, topicGenerateTimeoutSec } from '../env';
 import { ApiError } from '../httpError';
 import { claimAiLease } from './_aiSlot';
@@ -38,6 +39,7 @@ import {
   getSessionHub,
   requireRunFeature,
   requireSession,
+  requireUser,
   sessionCaller,
   timecodeCtx,
   versionConflict,
@@ -154,15 +156,18 @@ transcribeRouter.post('/api/sessions/:sessionId/transcript-words/generate', asyn
   const sessionId = c.req.param('sessionId');
   const row = await requireSession(c, sessionId);
 
-  if (!deepgramConfigured(c.env.config)) {
-    throw new ApiError(503, UNAVAILABLE);
+  // byo-ai-providers D3: the caller's own speech-to-text key (the operator's only in development
+  // mode); none answers the unconfigured 503 before the approval 403 (frozen order).
+  const stt = await resolveSttCredential(c.env, requireUser(c).id);
+  if (stt === null) {
+    throw new ApiError(503, TRANSCRIPT_NEEDS_KEY);
   }
   // Approved users only (run-status-and-sweeper D9) — 403, before the lock, the lease and DeepGram.
   requireRunFeature(c);
 
   try {
     const words = await generateTranscriptWords({
-      config: c.env.config,
+      stt,
       audio: c.env.ports.audio,
       getHub: () => getSessionHub(c, sessionId),
       ctx: timecodeCtx(row),

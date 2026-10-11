@@ -73,7 +73,7 @@ spawned or called *by the server*, never by a client.
   native binaries a browser can't run: no process model, no `PATH`, no spawn. (The one integration that is *just* a `fetch`, DeepGram, could run in a
   browser, but see the next point.) The pure-TS `mediabunny` audio merge is the exception that
   proves the rule: it needs no binary, so it is the only piece that *could* run either side.
-- **Secret custody.** `DEEPGRAM_API_KEY` and Anthropic credentials must never ship to a client
+- **Secret custody.** `DEEPGRAM_API_KEY`, users' provider keys and Anthropic credentials must never ship to a client
   — a browser bundle is world-readable, so client-side calls would leak billable keys to every
   user. The server holds them and is the only caller.
 - **Shared live state.** One `SessionHub` per session with WebSocket fan-out is what lets the
@@ -134,9 +134,10 @@ refactor of this one.
 - **Transcript generation, YouTube audio import, Google Sheets log import, topic generation,
   and event auto-generation are configuration-gated; `transcribe.csv` stays unavailable.**
   `POST …/transcript-words/generate`
-  returns a clean `503 {detail}` (the frontend toasts it) unless `DEEPGRAM_API_KEY` is set, in
-  which case it combines the session's recorded audio and returns `200 {words}` from
-  DeepGram's speech-to-text API — see "Transcript generation (DeepGram)" below.
+  returns a clean `503 {detail}` naming Settings → Advanced unless the caller has saved a
+  speech-to-text key there (in development mode, `DEEPGRAM_API_KEY` is the fallback), in which
+  case it combines the session's recorded audio and returns `200 {words}` from DeepGram's
+  speech-to-text API — see "Transcript generation (DeepGram)" below.
   `POST …/youtube-import` returns the same frozen `503 {detail}` unless an operator-provided
   `yt-dlp` binary is configured (or resolvable on `PATH`), in which case it downloads a
   video's audio and attaches it to the session — see "YouTube audio import" below.
@@ -175,8 +176,12 @@ Only approved users may start them (run-status-and-sweeper, ADR 0021 slice 9c):
 
 ### Transcript generation (DeepGram)
 
-`POST …/transcript-words/generate` is gated by `DEEPGRAM_API_KEY` (see
-`server/.env.example`): unset/blank keeps the endpoint's frozen `503`. When set, the server
+`POST …/transcript-words/generate` runs on **the caller's own DeepGram key**, saved in
+Settings → Advanced (byo-ai-providers; `GET|PUT|DELETE /api/me/providers/stt`). Without one it
+answers `503` with "Add a speech-to-text key in Settings → Advanced to generate transcripts."
+In production mode (any `NODE_ENV` other than exactly `development` or `test`, so stage and prod)
+`DEEPGRAM_API_KEY` is never used; in development mode it is the fallback for a caller without a
+key (see `server/.env.example`). With a key, the server
 groups the session's recorded audio segments by probed codec (Opus/AAC/PCM), concatenates
 each group without re-encoding, sends each group to DeepGram's pre-recorded speech-to-text
 API (`DEEPGRAM_MODEL`, default `nova-3`), and — only once every group succeeds — replaces the
@@ -189,10 +194,11 @@ number of sessions can generate at once, but only one run per session, in this o
 process. The `409` names the session and its run's start time, or gives a generic detail when the
 run's lease row is gone (see "Run leases" below).
 
-**Setting `DEEPGRAM_API_KEY` sends recorded session audio to DeepGram's cloud API and enables
-billed, metered calls — every generate request is a paid request.** Only approved users can
-trigger those calls (see "Run features: approved users only" above). Only
-set the key on a box you operate and are prepared to pay for.
+**Generating a transcript sends recorded session audio to DeepGram's cloud API, billed to the
+key's owner — every generate request is a paid request.** Only approved users can trigger those
+calls (see "Run features: approved users only" above), and the approval check still comes after
+the unconfigured `503`. Users' keys are stored encrypted (AES-256-GCM under
+`PROVIDER_KEYS_SECRET`; see `docs/security.md` and ADR 0027) and are never shown again.
 
 ### YouTube audio import
 
@@ -233,8 +239,9 @@ key, so the gate is an explicit boolean opt-in (the `AI_V2_ENABLED` style) rathe
 key's presence. When enabled, the endpoint starts a detached job that downloads the public
 Google Sheets workbook named in the request, matches each sheet's name against the show's
 session titles, aligns each sheet's log rows to the matched session's transcript (generating
-a transcript first when the session has none — billed DeepGram spend when `DEEPGRAM_API_KEY`
-is set), and writes the resulting events into those sessions. The POST is scoped to members
+a transcript first when the session has none — billed DeepGram spend on the **job creator's**
+own speech-to-text key; a creator without one gets the progress line "Skipped transcript
+generation: add a speech-to-text key in Settings → Advanced." and that session fails), and writes the resulting events into those sessions. The POST is scoped to members
 of the show's studio (a non-member gets the same `404` as a nonexistent show). `GET
 /api/log-import/:jobId` polls the job (`{status, lines, error}`); it is **not** egress-gated
 (it only reads the job record) and answers only the job's creator — any other authenticated
@@ -249,8 +256,8 @@ elsewhere. A finished job's record expires about an hour after it finishes.
 only (the workbook-export endpoint); the downloaded workbook is processed locally. When: only
 when an operator has set `SHEETS_LOG_IMPORT_ENABLED` **and** a user starts an import — an
 unconfigured deployment never contacts Google. Note the DeepGram interaction above: on a
-deployment with `DEEPGRAM_API_KEY` set, an import over sessions without transcripts triggers
-billed transcript generation. Only enable this on a box you operate and are prepared to have
+import by a creator with a speech-to-text key, over sessions without transcripts, triggers
+transcript generation billed to that key. Only enable this on a box you operate and are prepared to have
 make Google requests on your behalf.
 
 ### AI chat (Claude CLI)
@@ -1121,8 +1128,9 @@ only: nothing reads `server/.env`. The stacks take values from OpenBao
 | `AI_PROVIDER` | `claude_cli` | The AI provider; `claude_cli` is the only accepted value, and any other refuses boot. It runs with no limit on runs across sessions. `AI_CHAT_MAX_CONCURRENT` is ignored (the process-wide limit is gone). |
 
 **Config-gated feature keys** (each endpoint returns a frozen `503` until its key/binary is
-present — see the linked sections above): `DEEPGRAM_API_KEY` (+ `DEEPGRAM_MODEL`) for
-transcript generation, `YTDLP_PATH` (or a `yt-dlp` on `PATH`) for YouTube import,
+present — see the linked sections above): transcript generation runs on each user's own key
+from Settings → Advanced (`DEEPGRAM_API_KEY` + `DEEPGRAM_MODEL` are only the development-mode
+fallback), and `PROVIDER_KEYS_SECRET` (required) encrypts those keys; `YTDLP_PATH` (or a `yt-dlp` on `PATH`) for YouTube import,
 `SHEETS_LOG_IMPORT_ENABLED` for the Google Sheets log import, and
 `CLAUDE_CLI_PATH` for AI chat / topics / event generation / v2 dashboards.
 
@@ -1278,7 +1286,8 @@ hand-typed `docker compose up` fails on purpose. Nothing reads `server/.env`.
 | `API_TOKEN` | no | **Ignored since ADR 0021 slice 9d.** It stays on the `docker/secrets-env.yaml` allowlist only so a secret that still holds it is not refused; drop it from OpenBao. Companion installs use device tokens from Settings. |
 | `ADMIN_TOKEN` | yes for cutover | Gates `/api/admin/*` (membership bootstrap). |
 | `ROUTER_PORT` | no (`8080`) | Host loopback port the router publishes; the Newt target. |
-| `DEEPGRAM_API_KEY` | optional | Enables transcript generation (else `503`). **Sends recorded audio to DeepGram's cloud STT and spends money.** |
+| `PROVIDER_KEYS_SECRET` | **yes** | Base64 of 32 bytes (`openssl rand -base64 32`, prod's own). Encrypts users' provider keys; `compose-run` and the server refuse to start without it, and the server refuses a different secret once keys are stored. Losing it means users re-enter their keys (see `docs/openbao-secrets.md`). |
+| `DEEPGRAM_API_KEY` | no | **Not used in production** (byo-ai-providers): each user's own key from Settings → Advanced is. |
 | `AI_V2_API_KEY` | leave unset | AI v2 stays **off**; see security notes. |
 
 The compose `environment` block fixes `TRUST_PROXY=1`, `COOKIE_SECURE=1` and
@@ -1294,7 +1303,8 @@ the loopback Caddy admin endpoint). Both bridge subnets are pinned in `compose.y
 `172.28.11.1`) appear in `docker/Caddyfile` `trusted_proxies`: **if you must change a subnet,
 change it in both files together.**
 
-**Runtime egress** from `api`: DeepGram (audio, if configured), YouTube and the media hosts
+**Runtime egress** from `api`: DeepGram (audio, on the user's key), the user-chosen LLM hosts of
+the Settings → Advanced connection test (public `https` only in production), YouTube and the media hosts
 `yt-dlp` fetches (import), Anthropic (the `claude` CLI), Google (JWKS, OAuth, Sheets import).
 The image fetches nothing else at runtime; the Claude CLI auto-updater is disabled.
 
@@ -1517,7 +1527,7 @@ database copy and a blob delta inside the maintenance window. Below, `OLD` is th
 `$VOL/blobs`.
 
 **Preconditions.** The OAuth client exists and is verified (see above); `.env` is filled in
-(Google credentials, `ADMIN_TOKEN`, `DEEPGRAM_API_KEY`; no `API_TOKEN`, ignored since 9d; no
+(Google credentials, `ADMIN_TOKEN`, `PROVIDER_KEYS_SECRET`; no `API_TOKEN`, ignored since 9d; no
 `AI_V2_API_KEY`); the images are pushed with pinned tags; this host has run `docker login
 ghcr.io` with a `read:packages` PAT; `docker compose up --no-start` has created the volumes.
 
@@ -1904,7 +1914,8 @@ never production's) and register the redirect URI
 (and the server refuses to boot). The dev Companion uses a device token from Settings (see "Dev
 Companion"); `API_TOKEN` is ignored since 9d.
 
-Other integrations are off unless set in OpenBao `dev`: `DEEPGRAM_API_KEY` (transcripts; sends audio
+Other integrations are off unless set in OpenBao `dev`: `DEEPGRAM_API_KEY` (the development-mode
+fallback for transcripts when a user has no key of their own in Settings → Advanced; sends audio
 to DeepGram), `SHEETS_LOG_IMPORT_ENABLED=1`, `AI_V2_ENABLED=1`. YouTube import works from the
 `yt-dlp` baked into the dev image.
 

@@ -622,6 +622,97 @@ describe('cross-package instanceof pin: TranscriptGenerateError in ensureTimedTr
     expect(deepgramCalls).toBe(0);
     expect(await runLeaseHolders(session)).toEqual([]);
   });
+
+  // byo-ai-providers task 5.3 (sheets-log-import "Transcript required before sync"): generation runs
+  // on the job creator's own speech-to-text key, and in production mode never on the operator's.
+  async function importSetup(title: string, email?: string) {
+    const studio = await seedStudio();
+    const show = await seedShow({ studioId: studio });
+    const member = await seedUser({ ...(email ? { email } : {}), studios: [studio] });
+    await grant(member, show);
+    const cookie = await loginCookie(member);
+    const session = await seedSession({ showId: show, title });
+    const seg1 = readFileSync(join(TRANSCRIPTION_FIXTURES_DIR, 'audio', 'seg1.webm'));
+    const up = await app.request(
+      `/api/sessions/${session}/audio/segments`,
+      { method: 'POST', headers: { 'content-type': 'audio/webm', cookie }, body: seg1 },
+      env,
+    );
+    expect(up.status).toBe(200);
+    const xlsx = await xlsxBytes(title, { timecode: '0:01', message: 'hello', type: '' });
+    const deepgramAuth: Array<string | null> = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+        if (String(input).includes('deepgram.com')) {
+          deepgramAuth.push(new Headers(init?.headers).get('authorization'));
+          return new Response(
+            JSON.stringify({
+              results: {
+                channels: [
+                  { alternatives: [{ words: [{ word: 'hi', start: 0.5, end: 0.9, speaker: 0 }] }] },
+                ],
+              },
+            }),
+            { status: 200 },
+          );
+        }
+        return new Response(xlsx, { status: 200 });
+      }),
+    );
+    return { show, member, cookie, session, deepgramAuth };
+  }
+
+  it("production mode: the job generates with its creator's own key and model", async () => {
+    const t = await importSetup('Own Key Session');
+    await env.ports.providerCredentials.put(t.member, 'stt', {
+      provider: 'deepgram',
+      base_url: null,
+      base_origin: null,
+      model: 'nova-2',
+      key: env.ports.providerKeys.encrypt('dg-creator-key-01', {
+        userId: t.member,
+        kind: 'stt',
+        provider: 'deepgram',
+        origin: null,
+      }),
+    });
+    const post = await postImport(t.show, deepgramConfiguredEnv({ PROVIDER_DEV_MODE: false }), {
+      cookie: t.cookie,
+    });
+    expect(post.status).toBe(200);
+    const { job_id } = (await post.json()) as { job_id: string };
+    await settleJob(job_id, { cookie: t.cookie });
+    expect(t.deepgramAuth).toEqual(['Token dg-creator-key-01']);
+  });
+
+  it('production mode: a creator without a key gets the add-a-key line, no lease and no provider call', async () => {
+    const title = 'No Key Session';
+    const t = await importSetup(title);
+    const obs = observeRunLeases();
+    try {
+      const post = await postImport(t.show, deepgramConfiguredEnv({ PROVIDER_DEV_MODE: false }), {
+        cookie: t.cookie,
+      });
+      expect(post.status).toBe(200);
+      const { job_id } = (await post.json()) as { job_id: string };
+      await settleJob(job_id, { cookie: t.cookie });
+      const res = await app.request(
+        `/api/log-import/${job_id}`,
+        { headers: { cookie: t.cookie } },
+        env,
+      );
+      const body = (await res.json()) as { status: string; lines: string[]; error: string | null };
+      expect(body.lines).toContain(
+        `  ${title}: Skipped transcript generation: add a speech-to-text key in Settings → Advanced.`,
+      );
+      expect(body.status).toBe('failed');
+      expect(obs.claims('transcript-generation')).toEqual([]);
+    } finally {
+      obs.restore();
+    }
+    expect(t.deepgramAuth).toEqual([]);
+  });
 });
 
 // ── Imports re-check access (show-grants D19, owner decision F) ─────────────

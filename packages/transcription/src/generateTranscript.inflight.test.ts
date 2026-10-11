@@ -1,14 +1,13 @@
 // The in-flight refusal names the requested session (the only possible holder now that runs are per
 // session, run-status-and-sweeper D3) and carries its id, so the route redacts by the session the
 // detail actually names (async-session-callers D5).
-import type { Config } from '@autologger/ports';
 import { afterEach, describe, expect, it } from 'vitest';
 import { generateTranscriptWords, TranscriptGenerateError } from './generateTranscript';
 import { transcriptGenerationLock } from './transcriptGenerationLock';
 
 const deps = (resolveSessionTitle: (id: string) => Promise<string | null>) =>
   ({
-    config: { DEEPGRAM_API_KEY: 'k' } as unknown as Config,
+    stt: { apiKey: 'k', model: 'nova-3' },
     audio: {} as never,
     getHub: async () => ({}) as never,
     ctx: { frameRate: 24, startOffsetFrames: 0 },

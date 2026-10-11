@@ -7,7 +7,7 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { BlobStore, Config } from '@autologger/ports';
+import type { BlobStore } from '@autologger/ports';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createSessionRow, openTestHub, testStorage } from './sessionRows';
 
@@ -76,7 +76,7 @@ describe('generateTranscriptWords remaps inside the replace transaction', () => 
     } as unknown as BlobStore;
 
     const err = await generateTranscriptWords({
-      config: { DEEPGRAM_API_KEY: 'k' } as unknown as Config,
+      stt: { apiKey: 'k', model: 'nova-x' },
       audio,
       getHub: async () => hub,
       ctx: { frameRate: 24, startOffsetFrames: 0 },
