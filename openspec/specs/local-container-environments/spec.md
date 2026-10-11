@@ -1031,6 +1031,12 @@ the fix and prints no secret value, when:
 - `BOOTSTRAP_OWNER_EMAIL` is unset, empty or only whitespace in the KV secret. This applies
   to every stack, dev included, because the server refuses to boot without it. The shared
   allowlist file SHALL list it, so the app container receives it.
+- `PROVIDER_KEYS_SECRET` is unset, or does not base64-decode to exactly 32 bytes, in the KV
+  secret. This applies to every stack, dev included, because the server refuses to boot without
+  it (provider-credentials "Provider keys are encrypted at rest and write-only"). The shared
+  allowlist file SHALL list it, so the app container receives it. The documentation SHALL say to
+  generate it with `openssl rand -base64 32`, separately per environment, and that losing it makes
+  every stored provider key unreadable.
 
 **Secret handling.** The secret id and the token SHALL NOT appear on any command line, SHALL NOT
 reach any child process, and SHALL NOT be written to disk by the Makefile or its scripts. Every
@@ -1111,6 +1117,12 @@ live version and SHALL NOT be refused.
 #### Scenario: Secrets stay off the process list
 - **WHEN** `make dev-up` is running and `ps -eo args` is captured
 - **THEN** no captured argument contains the secret id or the token
+
+#### Scenario: A stack without a provider-keys secret is refused
+- **WHEN** the OpenBao `dev` KV secret has no `PROVIDER_KEYS_SECRET`, or holds a value that
+  decodes to 16 bytes, and `make dev-up` runs
+- **THEN** it exits non-zero naming `PROVIDER_KEYS_SECRET`, prints no value, and runs no docker
+  command
 
 ### Requirement: GoTrue accepts only Google sign-in
 Each project SHALL have an `auth` service running GoTrue, the only Supabase API service. It SHALL
