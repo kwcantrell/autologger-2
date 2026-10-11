@@ -153,10 +153,11 @@ Anything else is a stop: update the artifacts and ask the owner.
 
 ## 6. AI SDK turn (design D3, D5, D6)
 
-- [ ] 6.1 Add the pinned dependencies to `packages/ai-runtime/package.json` (design D7). Verified
+- [x] 6.1 Add the pinned dependencies to `packages/ai-runtime/package.json` (design D7). Verified
   by `npm ls ai @ai-sdk/anthropic @ai-sdk/openai @ai-sdk/google @ai-sdk/openai-compatible zod`
   showing the exact versions and one `zod`, and by the package-architecture boundary and
   duplicate tests green.
+  - Evidence: `packages/ai-runtime/package.json` pins `ai: "7.0.137"`, `@ai-sdk/anthropic: "4.0.78"`, `@ai-sdk/openai: "4.0.91"`, `@ai-sdk/google: "4.0.93"`, `@ai-sdk/openai-compatible: "3.0.67"`; `npm install` at the root. `npm ls ai @ai-sdk/anthropic @ai-sdk/openai @ai-sdk/google @ai-sdk/openai-compatible zod` -> `ai@7.0.137`, `@ai-sdk/anthropic@4.0.78`, `@ai-sdk/openai@4.0.91`, `@ai-sdk/google@4.0.93`, `@ai-sdk/openai-compatible@3.0.67`, every `zod@4.6.5 deduped` (including under `@ai-sdk/provider-utils@5.0.58` and `@ai-sdk/gateway@4.0.110`); `npm ls zod --all --parseable` -> the one path `node_modules/zod` (log `sdk-6.1-ls.log`). Not test-first: a dependency change, verified by these checks. `cd server && npx vitest run --project unit src/zodSingleCopy.repo.test.ts src/packageBoundaries.repo.test.ts` -> `Test Files  2 passed (2)`, `Tests  87 passed (87)` (log `sdk-6.1-green.log`); ai-runtime `Tests  205 passed (205)`. `npm audit` reports only the existing `next` advisory.
 - [ ] 6.2 Type the builders' `server.tool(...)` parameter as the `ToolSink` interface, and add
   `registerSdkTurn` (D3). Verified by typecheck, and by the existing `aiMcpServer.int.test.ts`,
   `mcpTools.int.test.ts` and `aiMcpGenerationRendering.test.ts` green and unchanged.
