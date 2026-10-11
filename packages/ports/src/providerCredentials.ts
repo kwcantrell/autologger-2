@@ -12,8 +12,9 @@
 
 export type ProviderKind = 'llm' | 'stt';
 
-/** The keyless `llm` provider: the operator's Claude CLI, with the fixed model of the same name. */
-export const CLAUDE_CLI_PROVIDER = 'claude-cli';
+/** The keyless `llm` provider: the operator's Claude CLI, with the fixed model of the same name.
+ * A type only: the barrel exports no runtime values. */
+export type ClaudeCliProvider = 'claude-cli';
 
 /** An API key as stored: AES-256-GCM parts, the key version, and the last four characters. */
 export interface StoredProviderKey {
@@ -64,7 +65,7 @@ export interface ProviderCredentialStore {
   putKeyless(
     userId: string,
     kind: 'llm',
-    provider: typeof CLAUDE_CLI_PROVIDER,
+    provider: ClaudeCliProvider,
   ): Promise<ProviderCredentialRow>;
   /** One statement that changes base URL and model and keeps the stored key, only when the row
    * exists with the same provider and `base_origin` (a key is bound to both; owner decision 10). Reads nothing first, so it

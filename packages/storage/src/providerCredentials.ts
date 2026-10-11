@@ -4,17 +4,17 @@
 // either table). There is no user RLS, so the `user_id` predicates here are the only isolation
 // between users. It stores only ciphertext parts. Every time it writes comes from the Clock port.
 
-import {
-  CLAUDE_CLI_PROVIDER,
-  type CatalogDb,
-  type CatalogRoot,
-  type Clock,
-  type KeyedProviderCredentialRow,
-  type ProviderCredentialFields,
-  type ProviderCredentialRow,
-  type ProviderCredentialStore,
-  type ProviderKind,
-  type StoredProviderKey,
+import type {
+  CatalogDb,
+  CatalogRoot,
+  ClaudeCliProvider,
+  Clock,
+  KeyedProviderCredentialRow,
+  ProviderCredentialFields,
+  ProviderCredentialRow,
+  ProviderCredentialStore,
+  ProviderKind,
+  StoredProviderKey,
 } from '@autologger/ports';
 
 /** At most this many connection tests per test window (provider-credentials). */
@@ -22,6 +22,9 @@ export const PROVIDER_TEST_LIMIT = 5;
 /** A test window lasts this long, from the first test after the previous window ended. Kept per
  * user in `catalog.provider_test_windows`, across kinds and across deleted credentials. */
 export const PROVIDER_TEST_WINDOW_MS = 60_000;
+
+/** The keyless `claude-cli` row's fixed model (ai-sdk-agent-harness D2). */
+const CLAUDE_CLI_MODEL: ClaudeCliProvider = 'claude-cli';
 
 const iso = (ms: number) => new Date(ms).toISOString();
 
@@ -128,7 +131,7 @@ export class PostgresProviderCredentialStore implements ProviderCredentialStore 
   async putKeyless(
     userId: string,
     kind: 'llm',
-    provider: typeof CLAUDE_CLI_PROVIDER,
+    provider: ClaudeCliProvider,
   ): Promise<ProviderCredentialRow> {
     const now = iso(this.clock.now());
     const r = await this.db.first<Record<string, unknown>>(
@@ -144,7 +147,7 @@ export class PostgresProviderCredentialStore implements ProviderCredentialStore 
       userId,
       kind,
       provider,
-      CLAUDE_CLI_PROVIDER,
+      CLAUDE_CLI_MODEL,
       now,
       now,
     );
