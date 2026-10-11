@@ -12,21 +12,16 @@
 
 import { PROVIDER_TEST_DETAIL } from '@autologger/contract';
 import type { ProviderKind } from '@autologger/ports';
-import { type LookupFn, OutboundFailure, providerRequest } from './providerOutbound';
+import {
+  type LookupFn,
+  OutboundFailure,
+  PROVIDER_HOSTS,
+  type ProviderHosts,
+  providerRequest,
+} from './providerOutbound';
 
-export interface ProviderHosts {
-  readonly openai: string;
-  readonly anthropic: string;
-  readonly google: string;
-  readonly deepgram: string;
-}
-
-export const PROVIDER_HOSTS: ProviderHosts = Object.freeze({
-  openai: 'https://api.openai.com',
-  anthropic: 'https://api.anthropic.com',
-  google: 'https://generativelanguage.googleapis.com',
-  deepgram: 'https://api.deepgram.com',
-});
+// The frozen host table lives beside the guarded model fetch, which also uses it (ai-sdk-agent-harness D4).
+export { PROVIDER_HOSTS, type ProviderHosts } from './providerOutbound';
 
 const TEST_TIMEOUT_MS = 10_000;
 

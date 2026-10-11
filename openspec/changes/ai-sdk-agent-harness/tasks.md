@@ -115,7 +115,7 @@ Anything else is a stop: update the artifacts and ask the owner.
 
 ## 5. Guarded model requests (design D4, D5)
 
-- [ ] 5.1 Test first, in a new `server/src/auth/guardedFetch.test.ts`, against a local fake
+- [x] 5.1 Test first, in a new `server/src/auth/guardedFetch.test.ts`, against a local fake
   upstream and a stub resolver:
   - fixed-host providers reach only `PROVIDER_HOSTS[provider]` on their path pattern with the
     credential's model as one segment, and `openai-compatible` only `<saved origin><base
@@ -132,19 +132,24 @@ Anything else is a stop: update the artifacts and ask the owner.
   - the body streams through unbuffered past 1 MB;
   - an abort closes the upstream socket;
   - captured stdout and stderr hold no key, header or body.
-
   Then the guarded `fetch` in `providerOutbound.ts`. Green.
-- [ ] 5.2 Add a repo test, `packages/ai-runtime/src/sdkSafety.repo.test.ts`, red against a
+  - Evidence: red, the new `server/src/auth/guardedFetch.test.ts`: `cd server && npx vitest run --project unit src/auth/guardedFetch.test.ts` -> `guardedFetch is not a function` in every case, `Tests  18 failed (18)` (log `sdk-5.1-red.log`). Green -> `Tests  18 passed (18)` (log `sdk-5.1-green.log`); with `providerOutbound.test.ts` and `providerTester.test.ts`, three runs -> `Tests  74 passed (74)` each; `npm run typecheck` -> exit 0 (log `sdk-5-tc.log`).
+  - Evidence: `guardedFetch(opts)` in `providerOutbound.ts` returns `{fetch, byteLog, breach}`; `providerRequest` is unchanged, and `PROVIDER_HOSTS` moves beside it (re-exported from `providerTester.ts`). The cases: fixed hosts reach only `/v1/messages`, `/v1/responses` and `/v1beta/models/<model>:streamGenerateContent` (query empty or `alt=sse`), and 14 other paths are refused, including `%2e%2e`, `..`, `.`, `//` and `%2F`; a model id with `/` or `..` is refused for every provider without a request; `openai-compatible` reaches only `<origin><base path>/chat/completions`; a non-POST method, a `Request` object and a userinfo URL are refused; in production a host resolving to `169.254.169.254` is refused, and so is the second connection when the answer flips there after a first answer that passed (the per-connection check takes a test-only `isBlocked` so the fake's loopback reads as public), and blocked IP literals and `::ffff:` forms open no connection; the connection goes to the checked address with the original `Host`; a `302` comes back unfollowed and its target is never contacted; a header timeout of 150 ms (default 120 s) fires before headers, while a stream of 600 ms after them completes; the 61st request, a body over 4 MB and bodies past 48 MB are refused with kind `cap` and no connection; past 64 MB of response the stream errors with `cap` and the turn's next request is refused; `byteLog()` gives the request and response bytes per request; 2 MB is read while the upstream still holds the response open; an abort before or after headers closes the upstream socket (an already-aborted signal opens none); console, stdout and stderr hold no key, header or body.
+- [x] 5.2 Add a repo test, `packages/ai-runtime/src/sdkSafety.repo.test.ts`, red against a
   planted violation and then green. It fails when production sources in `ai-runtime` or the AI
   routers:
   - pass a string as a model to `streamText` or `generateText`;
   - import `@ai-sdk/gateway`;
   - pass an AI SDK error or a caught error from a turn to `console.*` or the server logger;
   - call `streamText` without `onError`.
-- [ ] 5.3 Test first, in the `redactDatabaseError` / `app.ts` error-handler test (D5, D9
+  - Evidence: the scanner's own cases and the repo scan pass on the tree: `cd packages/ai-runtime && npx vitest run src/sdkSafety.repo.test.ts` -> `Tests  6 passed (6)`. Red against a planted `src/zzPlantedSdkViolation.ts` (a `@ai-sdk/gateway` import, `streamText({ model: 'openai/gpt-5.5' })` with no `onError`, and `console.error('turn failed', err)` from a `catch` in a file importing `ai`) -> `× no file breaks a rule`, `+ "packages/ai-runtime/src/zzPlantedSdkViolation.ts gateway-import: 3"`, `string-model: 6`, `streamText-without-onError: 6`, `error-logged: 8`, `Tests  1 failed | 5 passed (6)` (log `sdk-5.2-red.log`). The plant deleted -> `Tests  6 passed (6)` (log `sdk-5.2-green.log`).
+  - Evidence: it is a TypeScript syntax scan of `packages/ai-runtime/src` (no test files) and `server/src/routers/{ai,transcribe,events}.ts`. Rule 3's log sinks are `console.*` and `process.stdout/stderr.write`; the server has no other logger. It flags any AI SDK export, and in files importing `ai` or `@ai-sdk/*` any `catch`, `.catch()` or `onError` binding, passed to a sink. The existing `console.warn` diagnostics in `aiV2PendingQuestions.ts` and the routers are in files that don't import the SDK, so they stay. Rule 1 sees only literal model values, and rule 4 needs the options inline; the file header says so, and `sdkTurn.ts` (6.3) must follow that shape.
+- [x] 5.3 Test first, in the `redactDatabaseError` / `app.ts` error-handler test (D5, D9
   category 9): an `APICallError`, or any error carrying `requestBodyValues` or `responseBody`,
   thrown from a route is logged as its class name only, and the captured stderr holds none of a
   planted prompt marker. Other errors log as before. Then the redaction rule. Green.
+  - Evidence: red, new cases in `server/src/unhandledErrorLog.test.ts` (through the real `wireApp` `onError`): `cd server && npx vitest run --project unit src/unhandledErrorLog.test.ts` -> `× logs an APICallError as its class name only`, `× logs a RetryError (the marker alone) as its class name only`, `× logs any error carrying requestBodyValues as its class name only`, `× logs any error carrying responseBody as its class name only`, `Tests  4 failed | 3 passed (7)` (log `sdk-5.3-red.log`). Green -> `Tests  7 passed (7)` (log `sdk-5.3-green.log`). Units after group 5 (log `sdk-5-units.log`): server unit `Tests  475 passed | 3 skipped (478)`, ai-runtime `Tests  205 passed (205)`; `npm run typecheck` -> exit 0.
+  - Evidence: `ai` is not a server dependency (`server/node_modules/ai` and `node_modules/ai` absent), so `app.ts` doesn't import `AISDKError`. It reads the marker `AISDKError.isInstance` checks, `Symbol.for('vercel.ai.error') === true`, or the presence of `requestBodyValues` or `responseBody`, and logs `{name: <constructor name>}` only. Each case also checks that console and stderr hold none of the planted prompt marker. D9 category 9: the existing two cases (a database error, and "logs any other error as before") are unchanged and green, and a new case keeps a non-SDK error with other properties logged whole.
 
 ## 6. AI SDK turn (design D3, D5, D6)
 

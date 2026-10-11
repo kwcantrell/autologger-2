@@ -136,10 +136,26 @@ const measureCompressibleBody: MiddlewareHandler<AppEnv> = async (c, next) => {
   c.res = measured;
 };
 
+/** The marker every AI SDK `AISDKError` carries, which `AISDKError.isInstance` checks. `ai` is not
+ * a server dependency, so the marker is read directly instead of importing the class. */
+const AI_SDK_ERROR_MARKER = Symbol.for('vercel.ai.error');
+
+/** An AI SDK error, or any error carrying its content fields (ai-sdk-agent-harness D5). */
+function isAiSdkError(err: unknown): err is object {
+  if (err === null || (typeof err !== 'object' && typeof err !== 'function')) return false;
+  const e = err as Record<string | symbol, unknown>;
+  return e[AI_SDK_ERROR_MARKER] === true || 'requestBodyValues' in e || 'responseBody' in e;
+}
+
 /** A Postgres error's message, `detail` and `where` can echo the values involved (an email, a
  * Google subject id), so it is logged by code, constraint and table only (catalog-on-postgres D8).
- * Anything else is logged whole, as before. */
+ * An AI SDK error carries the whole prompt and the provider's body, so it is logged as its class
+ * name only (ai-sdk-agent-harness D5). Anything else is logged whole, as before. */
 function redactDatabaseError(err: unknown): unknown[] {
+  if (isAiSdkError(err)) {
+    const ctor = (err as { constructor?: { name?: unknown } }).constructor?.name;
+    return [{ name: typeof ctor === 'string' && ctor !== '' ? ctor : 'Error' }];
+  }
   const e = err as Record<string, unknown> | null;
   // catalog-roles D8: a refused bound statement, by name, code, table and binding only.
   if (e?.name === 'CatalogForbiddenError') {
