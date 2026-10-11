@@ -102,15 +102,16 @@ Anything else is a stop: update the artifacts and ask the owner.
 
 ## 4. Route resolution (design D1)
 
-- [ ] 4.1 Test first, in a new `server/src/auth/providerResolve.test.ts`. `resolveLlmRoute` gives:
+- [x] 4.1 Test first, in a new `server/src/auth/providerResolve.test.ts`. `resolveLlmRoute` gives:
   - **CLI** for a `claude-cli` row when the caller is allowlisted and `CLAUDE_CLI_PATH` is set;
   - **null** for that row after the email is removed, or with `CLAUDE_CLI_PATH` blank;
   - **SDK** with the decrypted key for each key provider;
   - **null** for an undecryptable row;
   - **null** for a caller with no row, allowlisted or not, in development and production mode
     alike (no fallback).
-
   Then the resolver. Green.
+  - Evidence: red, the new `server/src/auth/providerResolve.test.ts` (an in-memory store, the real `ProviderKeyCipher`): `cd server && npx vitest run --project unit src/auth/providerResolve.test.ts` -> `TypeError: resolveLlmRoute is not a function`, `Tests  6 failed (6)` (log `sdk-4.1-red.log`). Green -> `Tests  6 passed (6)` (log `sdk-4.1-green.log`); `npm run typecheck` -> exit 0, 0 `error TS`.
+  - Evidence: the cases: CLI for a `claude-cli` row with the caller listed (in either case and with spaces) and `CLAUDE_CLI_PATH` set, in development and production mode; null after the email is removed, with an empty list, with `CLAUDE_CLI_PATH` blank or whitespace, and for an unlisted bootstrap owner; SDK with the decrypted key for `anthropic`, `openai`, `google` and `openai-compatible` (with its base URL and origin); null for a row encrypted for another user or under another secret; null for no row for listed, unlisted and owner emails with `PROVIDER_DEV_MODE` true, false and absent; an `stt` row ignored. `resolveLlmRoute(env, user)` in `providerResolve.ts` returns `{kind:'cli'}`, `{kind:'sdk', provider, baseUrl, baseOrigin, model, apiKey}` or null, and uses `claudeCliAllowed` (3.2).
 
 ## 5. Guarded model requests (design D4, D5)
 
