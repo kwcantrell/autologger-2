@@ -244,7 +244,7 @@ Anything else is a stop: update the artifacts and ask the owner.
 
 ## 6. Web (design D6)
 
-- [ ] 6.1 Test first, `AdvancedSection.test.tsx` in the `CompanionDevicesSection.test.tsx` style,
+- [x] 6.1 Test first, `AdvancedSection.test.tsx` in the `CompanionDevicesSection.test.tsx` style,
   covering every scenario of web-ui-system "Settings manages the user's AI providers":
   - the tabs and a draft surviving a switch;
   - a save showing only the last four characters, with the key in no query or mutation cache;
@@ -258,6 +258,9 @@ Anything else is a stop: update the artifacts and ask the owner.
   The `SettingsView.test.tsx` order gains Advanced (D7 category 6). Red, then build the hook,
   types, fixtures and section from the prototype at `c831e510` (shadcn primitives only, no MCP
   tab). Green.
+  - Evidence: red, `cd web && npx vitest run src/pages/index/components/settings/AdvancedSection.test.tsx` against the mocked prototype -> `Tests  9 failed | 1 passed (10)` (only the tab-switch draft passed, which the prototype already did; log `byo-6.1-red.log`); `SettingsView.test.tsx` with the registration at `HEAD` -> `× Opening the modal mounts only the active tab’s content`, `Tests  1 failed | 16 passed (17)` (log `byo-6.1-nav-red.log`); the server fixture test before capture -> `Missing captured fixture providerSave.json` (log `byo-6.1-fix-red.log`). Green: `AdvancedSection.test.tsx` -> `Tests  10 passed (10)` (log `byo-6.1-green.log`); the settings folder -> `Tests  154 passed (154)`; `cd web && npx vitest run` -> `Test Files  145 passed (145)`, `Tests  1919 passed (1919)` (log `byo-6.1-web.log`); `cd server && npx vitest run --project integration src/routers/apiResponseFixtures.int.test.ts` -> `Tests  45 passed (45)` (log `byo-6.1-fixtures.log`); `npm run typecheck` -> exit 0, 0 `error TS`.
+  - Evidence: three new captured fixtures (`providersList.json`, `providerSave.json`, `providerTest.json`, written with `UPDATE_API_FIXTURES=1`), with no key and only `key_last4`. The web types (`ProviderCredential` with `kind` and `provider` as wire strings, `ProvidersResponse`, `ProviderSaveBody`, `ProviderTestResponse`) are conformance-checked against those fixtures, plus one `apiResponseShapes` exemption for the empty `204` delete. `useProviders.ts` has the list query and save, delete and test mutations (save and test with `gcTime: 0`). `AdvancedSection.tsx` replaces the prototype: shadcn only, no MCP tab, one `useInlineDraft` holding both kinds (the guard registry is per section), a provider `Select` with Base URL only for OpenAI-compatible, the write-only key row (Replace, Remove with confirm), the new provider or host prompt with Save disabled until a key is typed, Test connection with the server's result cleared on edit, server error details, and the approval note. The 10 cases: tabs and badges; a save showing only the last four with the key in no query or mutation cache; a draft surviving a tab switch; a fixed-host provider hiding and not sending the base URL; a provider or host change asking for the key (the same origin written differently keeps it); a model-only save keeping the key; Remove asking first; the test result shown and cleared; a failed save's detail; and the approval note with fields still enabled. D7 category 6: `SettingsView.test.tsx` gains `advanced` in the stub list, the unmounted list and the You-group order.
+
 - [ ] 6.2 Test first, the web-session-console scenarios:
   - the transcription latch copy names Settings → Advanced and no server setting;
   - saving a speech-to-text credential clears the latch without a reload;

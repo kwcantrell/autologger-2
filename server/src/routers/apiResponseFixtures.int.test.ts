@@ -1415,3 +1415,84 @@ describe('companion devices', () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Provider credentials (byo-ai-providers task 6.1, design D6): the list with both kinds, one save
+// and one connection-test result, as `useProviders.ts` types them. The key never appears; only
+// its last four characters do.
+// ---------------------------------------------------------------------------
+
+describe('provider credentials', () => {
+  it('GET, PUT and POST test on /api/me/providers match the captured fixtures', async () => {
+    const cookie = await loginCookie(await seedUser({ email: 'pat@example.com', sub: 'sub-pat' }));
+    const put = (kind: string, body: unknown) =>
+      app.request(
+        `/api/me/providers/${kind}`,
+        { method: 'PUT', headers: { ...JSON_HEADERS, Cookie: cookie }, body: JSON.stringify(body) },
+        envWith({ PROVIDER_DEV_MODE: false }),
+      );
+    const saved = await put('stt', {
+      provider: 'deepgram',
+      model: 'nova-3',
+      api_key: 'dg_secret_abcd',
+    });
+    await expectCapturedResponse(
+      { name: 'providerSave', endpoint: 'PUT /api/me/providers/:kind', format: 'json' },
+      saved,
+    );
+    expect(
+      (
+        await put('llm', {
+          provider: 'openai-compatible',
+          base_url: 'https://api.example.com/v1',
+          model: 'gpt-4o-mini',
+          api_key: 'sk-test-0123456789-9f2c',
+        })
+      ).status,
+    ).toBe(200);
+
+    const list = await app.request(
+      '/api/me/providers',
+      { method: 'GET', headers: { Cookie: cookie } },
+      { ...env },
+    );
+    const body = await expectCapturedResponse(
+      { name: 'providersList', endpoint: 'GET /api/me/providers', format: 'json' },
+      list,
+    );
+    expect(JSON.stringify(body)).not.toMatch(/dg_secret|sk-test/);
+
+    // A connection-test result, against a local fake standing in for DeepGram.
+    const { createServer } = await import('node:http');
+    const { ProviderTester } = await import('../auth/providerTester');
+    const fake = createServer((_req, res) => {
+      _req.resume();
+      _req.on('end', () => res.end('{}'));
+    });
+    await new Promise<void>((r) => fake.listen(0, '127.0.0.1', r));
+    const origin = `http://127.0.0.1:${(fake.address() as { port: number }).port}`;
+    try {
+      const test = await app.request(
+        '/api/me/providers/stt/test',
+        { method: 'POST', headers: { Cookie: cookie } },
+        envWith(
+          { PROVIDER_DEV_MODE: false },
+          {
+            providerTester: new ProviderTester({
+              openai: origin,
+              anthropic: origin,
+              google: origin,
+              deepgram: origin,
+            }),
+          },
+        ),
+      );
+      await expectCapturedResponse(
+        { name: 'providerTest', endpoint: 'POST /api/me/providers/:kind/test', format: 'json' },
+        test,
+      );
+    } finally {
+      await new Promise((r) => fake.close(r));
+    }
+  });
+});

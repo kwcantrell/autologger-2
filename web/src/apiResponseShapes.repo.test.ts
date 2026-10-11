@@ -1412,6 +1412,12 @@ const EXEMPTIONS: readonly Exemption[] = [
       "companion-devices D5/D6 — revoke a Companion device: `c.body(null, 204)` (server/src/routers/companionDevices.ts), an empty body with no content-type, so `apiFetch` returns `''` as `void`. No JSON payload exists to check; the 404 is an `ApiError` carrying `detail`. The list and create sites in the same file are fixture-checked.",
   },
 
+  {
+    key: 'api/hooks/useProviders.ts :: apiFetch<void>(`me/providers/<var>`) [DELETE]',
+    reason:
+      "byo-ai-providers D4/D6 — delete a provider credential: `c.body(null, 204)` (server/src/routers/providers.ts), an empty body with no content-type, so `apiFetch` returns `''` as `void`. No JSON payload exists to check; the 404 is an `ApiError` carrying `detail`. The list, save and test sites in the same file are fixture-checked.",
+  },
+
   // --- `apiFetch<EventsGenerateResponse>` — auto-generate-event-logs task 5.1.
   {
     key: 'api/hooks/useEvents.ts :: apiFetch<EventsGenerateResponse>(`sessions/<var>/events/generate`) [POST]',

@@ -55,6 +55,9 @@ import audioSegmentCreate from '../../../fixtures/api-responses/audioSegmentCrea
 import audioSegmentsList from '../../../fixtures/api-responses/audioSegmentsList.json';
 import companionDeviceCreate from '../../../fixtures/api-responses/companionDeviceCreate.json';
 import companionDevicesList from '../../../fixtures/api-responses/companionDevicesList.json';
+import providerSave from '../../../fixtures/api-responses/providerSave.json';
+import providersList from '../../../fixtures/api-responses/providersList.json';
+import providerTest from '../../../fixtures/api-responses/providerTest.json';
 import eventCreate from '../../../fixtures/api-responses/eventCreate.json';
 import eventDeleteConflict from '../../../fixtures/api-responses/eventDeleteConflict.json';
 import eventsList from '../../../fixtures/api-responses/eventsList.json';
@@ -110,6 +113,9 @@ import type {
   Category,
   CompanionDeviceCreatedResponse,
   CompanionDeviceListResponse,
+  ProviderCredential,
+  ProvidersResponse,
+  ProviderTestResponse,
   EventsResponse,
   EventVersionConflict,
   LogEvent,
@@ -777,6 +783,24 @@ describe('Companion devices — the responses `useCompanionDevices.ts` types (co
   it('the POST capture is assignable to CompanionDeviceCreatedResponse, the one body with the token', () => {
     const check: CompanionDeviceCreatedResponse = companionDeviceCreate;
     expect(check.token).toMatch(/^ald_#{43}$/);
+  });
+});
+
+describe('provider credentials — the responses `useProviders.ts` types (byo-ai-providers D6)', () => {
+  it('the GET capture is assignable to ProvidersResponse, with both kinds and no key', () => {
+    const check: ProvidersResponse = providersList;
+    expect(check.llm?.provider).toBe('openai-compatible');
+    expect(check.llm?.base_url).toBe('https://api.example.com/v1');
+    expect(check.stt?.base_url).toBeNull();
+    expect(typeof check.run_features_allowed).toBe('boolean');
+    expect(JSON.stringify(check)).not.toMatch(/api_key|ciphertext/);
+  });
+
+  it('the PUT capture is assignable to ProviderCredential, and the test capture to ProviderTestResponse', () => {
+    const saved: ProviderCredential = providerSave;
+    expect(saved.key_last4).toHaveLength(4);
+    const test: ProviderTestResponse = providerTest;
+    expect(test).toEqual({ ok: true, detail: 'Connected.' });
   });
 });
 
