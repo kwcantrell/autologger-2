@@ -492,12 +492,14 @@ the redaction and the status codes are unchanged.
 - **THEN** B responds `200` with `in_flight` true, `session_id` S and S's start time
 
 ### Requirement: Transcript generation endpoint behavior
-`POST /api/sessions/:sessionId/transcript-words/generate` SHALL move from unconditional
-`503` to configuration-dependent behavior, which becomes frozen surface on shipping:
+`POST /api/sessions/:sessionId/transcript-words/generate` SHALL behave as the table below
+specifies. "Configured" means the caller has a usable speech-to-text credential, as
+provider-credentials "Work runs on its user's credentials" resolves it, including the fallback to
+`DEEPGRAM_API_KEY` in development mode:
 
 | Condition | Response |
 |---|---|
-| `DEEPGRAM_API_KEY` unset/blank | `503 {detail}` — identical to the current unavailable response |
+| not configured for the caller | `503 {"detail": "Add a speech-to-text key in Settings → Advanced to generate transcripts."}`; no provider request issued |
 | configured, requester not an approved user (see "Run features are limited to approved users") | `403 {"detail": "This feature is limited to approved users on this server."}`; checked before every row below, no provider request issued |
 | configured, success | `200 {words: [...]}` — each word in the same trimmed wire shape `GET …/transcript-words` returns, namely exactly the seven keys `{id, session_time, speaker, word, start_sec, end_sec, ordinal}`; `start_sec`/`end_sec` carry remapped session-timeline seconds (`0` for anchorless words) rounded to 3 decimals; the array is the complete post-replace list in ordinal order |
 | configured, session has no audio segments | `400 {detail}` |
@@ -523,9 +525,11 @@ keep their current frozen behavior, except that `GET /api/transcript-generation/
 an additional authorized surface (see above).
 
 #### Scenario: Unconfigured deployments are byte-for-byte unchanged
-- **WHEN** a deployment without `DEEPGRAM_API_KEY` receives `POST
+- **WHEN** in production mode a user without a speech-to-text credential sends `POST
   /api/sessions/:id/transcript-words/generate`
-- **THEN** the response status and body match the pre-change `503 {detail}` exactly
+- **THEN** the response is `503 {"detail": "Add a speech-to-text key in Settings → Advanced to
+  generate transcripts."}`, byte-for-byte for every unconfigured caller, and no provider request
+  is made
 
 #### Scenario: Configured success returns the list shape
 - **WHEN** a configured deployment successfully generates a transcript
@@ -2345,3 +2349,106 @@ inserts that user id. These predicates are the only isolation between users.
 - **WHEN** `GET /api/companion-devices` is sent with no session cookie, and again with only a live
   device's token as a `Bearer`
 - **THEN** both answer `401` `{"detail": "Login required."}`
+
+### Requirement: Provider credential routes
+Each user SHALL manage their own provider credentials (provider-credentials) through four routes.
+They SHALL be listed in the README endpoint table and in `packages/contract`.
+
+**Access**
+- The routes SHALL accept only a session cookie. A request without one SHALL get
+  `401 {"detail": "Login required."}`. A Companion device token is never a credential for them.
+- They use a system store, and every statement SHALL carry the caller's user id. These predicates
+  are the only isolation between users.
+- `:kind` SHALL be `llm` or `stt`. Any other value SHALL get `404 {"detail": "Not found."}`.
+
+**A credential's wire shape** is `{kind, provider, base_url, model, key_last4, updated_at}`:
+- `base_url` is `null` for every provider but `openai-compatible`;
+- `key_last4` is the key's last four characters;
+- `updated_at` is ISO-8601 UTC.
+
+No route SHALL return a key or its ciphertext.
+
+- **`GET /api/me/providers`** SHALL return `200 {llm, stt, run_features_allowed}`:
+  - `llm` and `stt` are each the caller's credential of that kind, or `null`;
+  - `run_features_allowed` is whether the caller is an approved user for run features ("Run
+    features are limited to approved users").
+- **`PUT /api/me/providers/:kind`** with body `{provider, base_url?, model, api_key?}` SHALL
+  create or replace the caller's credential of that kind:
+  - `provider` SHALL be `openai-compatible`, `anthropic`, `openai` or `google` for `llm`, and
+    `deepgram` for `stt`;
+  - `base_url` is required for `openai-compatible` and SHALL be absent or `null` for every other
+    provider, and SHALL follow provider-credentials "LLM base URLs are restricted in production
+    mode";
+  - `model` SHALL be 1 to 200 printable ASCII characters other than space, after trimming;
+  - `api_key` SHALL be 8 to 4096 printable ASCII characters other than space, after trimming:
+    - it is required when the caller has no credential of this kind, and when the save changes
+      the provider or the `openai-compatible` base URL origin (provider-credentials "A stored key
+      is bound to its destination");
+    - otherwise, when absent, the stored key is kept;
+  - a value containing NUL SHALL get the existing NUL `400`; any other invalid body SHALL get `422`
+    with the existing validation-error body; in both cases nothing is stored;
+  - success SHALL answer `200` with the credential's wire shape.
+- **`DELETE /api/me/providers/:kind`** SHALL delete the caller's credential of that kind and
+  answer `204` with no body. When the caller has none, it SHALL answer
+  `404 {"detail": "Provider not set up."}`.
+- **`POST /api/me/providers/:kind/test`** with an empty body SHALL test the caller's stored
+  credential of that kind, as provider-credentials "The connection test reports without leaking"
+  defines:
+  - it SHALL answer `200 {ok, detail}`, where `ok` is a boolean and `detail` is one of the fixed
+    result strings;
+  - when the caller has no credential of that kind, it SHALL answer
+    `404 {"detail": "Provider not set up."}`;
+  - past the per-user limit, it SHALL answer
+    `429 {"detail": "Too many connection tests. Try again in a minute."}`.
+
+Saving and deleting SHALL write one audit log line naming the user id, the kind and the action,
+never the key.
+
+#### Scenario: Save, read, replace and delete a credential
+- **WHEN** a signed-in user saves an `stt` credential with key `dg_secret_abcd`, reads their
+  providers, saves again with model `nova-2` and no `api_key`, then deletes it
+- **THEN**:
+  - the first save answers `200` with `key_last4` `abcd` and no key;
+  - the read returns that `stt` credential, `llm: null` and `run_features_allowed`;
+  - the second save keeps the stored key and changes the model;
+  - the delete answers `204`;
+  - a later read returns `stt: null`
+
+#### Scenario: The first save needs a key
+- **WHEN** a user with no `llm` credential saves one without `api_key`
+- **THEN** the response is `422` and nothing is stored
+
+#### Scenario: A new base URL host needs a new key
+- **WHEN** a user with an `llm` credential for `https://api.openai.com/v1` saves base URL
+  `https://other.example/v1` without `api_key`
+- **THEN** the response is `422` naming `api_key`, and the stored credential is unchanged
+
+#### Scenario: A new provider needs a new key
+- **WHEN** a user with an `openai-compatible` credential saves `{provider: "openai", model:
+  "gpt-5.5"}` without `api_key`
+- **THEN** the response is `422` naming `api_key`, and the stored credential is unchanged
+
+#### Scenario: A fixed-host provider takes no base URL
+- **WHEN** a user saves an `llm` credential with provider `anthropic` and a `base_url`
+- **THEN** the response is `422` and nothing is stored
+
+#### Scenario: A key with a control character is refused
+- **WHEN** a user saves an `stt` credential whose `api_key` contains a line feed or a space
+- **THEN** the response is `422` and nothing is stored
+
+#### Scenario: Users cannot see each other's credentials
+- **WHEN** user A has an `llm` credential and user B reads their providers and deletes `llm`
+- **THEN** B reads `llm: null`, the delete answers `404`, and A's credential is unchanged
+
+#### Scenario: Signed-out and device callers are refused
+- **WHEN** `GET /api/me/providers` is sent with no session cookie, and again with only a live
+  Companion device token as a `Bearer`
+- **THEN** both answer `401` `{"detail": "Login required."}`
+
+#### Scenario: An unknown kind is not found
+- **WHEN** a user sends `PUT /api/me/providers/tts`
+- **THEN** the response is `404 {"detail": "Not found."}`
+
+#### Scenario: Tests past the limit are refused
+- **WHEN** a user sends a sixth `POST /api/me/providers/stt/test` within a minute
+- **THEN** the response is `429` with the try-again detail and no outbound request is made

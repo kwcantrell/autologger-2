@@ -1303,7 +1303,12 @@ creator), `oauth-callback`, `bootstrap-claim`, `support-plane` (`/api/admin/*`),
 `bindSystem('companion-device')` and wired as `Bindings.ports.companionDevices`, not a catalog
 facade store: the device-token lookup, its last-used update, and the management routes' list,
 create and revoke, each scoped by user id in SQL),
-`companion-presence` (the shared Companion presence table), `access-loss-check`,
+`companion-presence` (the shared Companion presence table),
+`provider-credentials` (the `ProviderCredentialStore` of `packages/storage`, on
+`bindSystem('provider-credentials')` and wired as `Bindings.ports.providerCredentials`, not a
+catalog facade store: the provider routes' read, save and delete, and the credential lookup for a
+request or a log-import job, each scoped by user id in SQL; and the boot check of the provider-key
+check value), `access-loss-check`,
 `team-invite` and `team-create`. The `session-mirror` reason was retired with the mirror (ADR 0021
 slice 7b-1), the `session-hub` reason with the per-call caller (slice 7b-2), and the
 `companion-token` reason with `API_TOKEN` (slice 9d): a Companion call runs as the device's user.
@@ -1371,6 +1376,12 @@ slice 7b-1), the `session-hub` reason with the per-call caller (slice 7b-2), and
   the session storage, a caller is written as an object literal outside the implementing modules,
   or a system session caller's reason is not a literal or not on the allowlist
 - **THEN** the repository test fails and names the file
+
+#### Scenario: A provider credential lookup runs under its reviewed reason
+- **WHEN** a signed-in user generates a transcript with their own speech-to-text credential
+- **THEN** the credential read runs under the system binding `provider-credentials` through
+  `Bindings.ports.providerCredentials`, scoped by that user's id, and the hub's writes run as
+  `catalog_user` with that user's id
 
 ### Requirement: Version checks are atomic with the session write
 The session hub's update and delete operations for events, transcript words and topics SHALL take
