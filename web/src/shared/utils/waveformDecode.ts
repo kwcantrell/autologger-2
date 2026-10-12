@@ -1,3 +1,8 @@
+// `computeDbPeaks01` is mirrored by `packages/domain/src/waveformPeaks.ts` (`DbPeaksAccumulator`),
+// which the server-side backfill (`server/scripts/backfillWaveforms.ts`) uses; `web/` does not import
+// `packages/` (web-package-boundary). `waveformDecode.pinning.test.ts` pins the two bit for bit:
+// change both together.
+
 export function computeDbPeaks01(
   audioBuffer: AudioBuffer,
   bucketCount: number,

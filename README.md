@@ -1571,6 +1571,61 @@ sudo du -sb "$VOL/blobs/audio" "$BVOL/audio"
 
 Then start `api` again and play an old and a new segment.
 
+### Waveform peaks backfill
+
+The timeline waveform of a segment comes from `waveform_peaks_json`. When it is NULL the browser
+fetches and decodes the whole file and stores the result, which never succeeds for large files
+(imported WAVs of a GB and more, hundreds of MP3s). `server/scripts/backfillWaveforms.ts` computes
+the same peaks offline for every NULL row and writes SQL for you to apply. Run it after an import
+of existing audio (the legacy import, an rsync of blobs) or whenever sessions show no waveform.
+
+- **Same values as the browser.** The peak math is `@autologger/domain`'s `waveformPeaks.ts`,
+  pinned bit for bit to the web's copy (`web/src/shared/utils/waveformDecode.pinning.test.ts`);
+  the bucket count is the browser's rule for a segment decoded on its own (4096 for anything over
+  0.41 s), the floor is -48. ffmpeg decodes at 48 kHz with every channel kept, like an
+  `AudioContext` at 48 kHz; on another rate or decoder the values differ by about 1% (<0.5 dB).
+- **Decoder.** By default ffmpeg runs in the pinned `linuxserver/ffmpeg` image (`docker run --rm
+  --network none`, the blob dir mounted read-only); `--ffmpeg <binary>` uses a local one instead.
+  The app images have no ffmpeg. Decoding streams (each file twice: count, then peaks), so memory
+  stays flat: a 1 GB, one-hour WAV takes about 40 s and 140 MB.
+- **Safe to re-run.** Every `UPDATE` has `... and waveform_peaks_json is null`, the file is one
+  transaction under `ON_ERROR_STOP`, and existing peaks (browser-made, legacy `-72` floors) are never
+  touched. Ids and keys are validated (`audio/<session_id>/<file>`, inside the blob dir) before
+  anything is opened or written.
+- **Report.** One line per segment on stderr: `ok`, `failed` (decode error), `missing` (no blob) or
+  `invalid` (bad id/key); a failure doesn't stop the rest. Exit `0` all filled, `1` any not filled
+  (the SQL still holds the ones that worked), `2` usage.
+- **Parallel.** `--jobs N` (1-64, default 1) decodes N files at once. The SQL is identical for any
+  N: rows keep the export's order. One job runs about 1.2 files a minute on the legacy import's mix.
+
+**Dev (on the VM, from the repo checkout, as a user in the `docker` group; the blob volume's
+mountpoint is root-only, hence `sudo`).**
+
+```bash
+DB=autologger-dev-db-1
+BLOBS=/var/lib/docker/volumes/autologger-dev_dev-blobs/_data
+W=$(mktemp -d)
+# 1. export the segments that have no peaks
+docker exec -i "$DB" psql -X -U postgres -c "$(npx tsx server/scripts/backfillWaveforms.ts --print-query)" > "$W/segments.csv"
+# 2. compute (pulls the pinned ffmpeg image on first use); --jobs decodes several files at once
+#    (one ffmpeg each; about a core per job, so leave headroom on a host serving traffic)
+sudo env "PATH=$PATH" npx tsx server/scripts/backfillWaveforms.ts \
+    --blob-dir "$BLOBS" --segments "$W/segments.csv" --out "$W/updates.sql" --jobs 8
+# 3. apply, then check what is left
+docker exec -i "$DB" psql -X -U postgres -v ON_ERROR_STOP=1 < "$W/updates.sql"
+docker exec -i "$DB" psql -X -U postgres -Atc \
+    "select count(*) filter (where waveform_peaks_json is null), count(*) from catalog.session_audio_segments"
+```
+
+**Stage and prod.** The same three steps on the host with the blob volume, with `DB` and `BLOBS`
+for that stack (`autologger-stage-db-1` and `autologger-stage_…-blobs` for stage, `autologger-db-1`
+and `autologger_autologger-blobs` for prod; `docker volume inspect -f '{{.Mountpoint}}' <volume>`).
+The api image ships no `server/scripts`, so step 2 needs a checkout of this repo with `npm ci`
+and Node 22+ on that host. Without one, copy the listed blobs (only the keys in `segments.csv`) to
+a machine that has it, run step 2 there with `--blob-dir` pointing at the copy, and apply the SQL on
+the target host: the updates are keyed by `(session_id, id)` only. The app needs no restart; an open
+session shows the waveform after a reload.
+
 ### Backup
 
 This section describes prod, which runs `main` (catalog and session content in SQLite files)

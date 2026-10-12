@@ -7,3 +7,4 @@ export * from './dbShared';
 export * from './eventMetadata';
 export * from './studio';
 export * from './timecode';
+export * from './waveformPeaks';
