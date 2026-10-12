@@ -155,7 +155,10 @@ export function fakeReads(
     async recordingSegments(sessionId, ordinal) {
       return segments
         .filter((s) => (s.sessionId ?? 's1') === sessionId && (s.recordingOrdinal ?? 1) === ordinal)
-        .sort((a, b) => a.startedAtUtc.localeCompare(b.startedAtUtc) || a.ordinal - b.ordinal);
+        .sort(
+          (a, b) =>
+            (a.startedAtUtc ?? '').localeCompare(b.startedAtUtc ?? '') || a.ordinal - b.ordinal,
+        );
     },
     async recordingSeams(sessionId, ordinal) {
       return seams

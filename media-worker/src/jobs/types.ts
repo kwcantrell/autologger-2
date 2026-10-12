@@ -15,7 +15,8 @@ export type JobOutcome =
 export interface SegmentRow {
   id: string;
   ordinal: number;
-  startedAtUtc: string;
+  /** NULL on some legacy rows; such a row is never merged. */
+  startedAtUtc: string | null;
   endedAtUtc: string | null;
   mimeType: string;
   r2Key: string;

@@ -1,6 +1,6 @@
 // The worker loop with a fake queue, fake statfs and fake jobs (media-worker design D2, D8).
 
-import { mkdir, mkdtemp, readdir, rm, stat } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { MediaJob, MediaJobKind, MediaSql } from '@autologger/ports/media';
@@ -265,13 +265,14 @@ describe('MediaWorker', () => {
     expect(q.calls.finish).toEqual([]);
   });
 
-  it('a finish that affects 0 rows drops the result, removes media/<job>/ and logs', async () => {
+  it('a finish that affects 0 rows drops the result, removes only this attempt’s files and logs', async () => {
     const q = fakeQueue();
     q.push(mkJob('j1', 'ingest', 1000));
     q.loseLease();
     make(q, {
       run: async (job) => {
         await mkdir(join(blobDir, 'media', job.id), { mode: 0o777 });
+        await writeFile(join(blobDir, 'media', job.id, `converted-a${job.attempts}.flac`), 'x');
         return {
           kind: 'done',
           result: {
@@ -286,7 +287,31 @@ describe('MediaWorker', () => {
       },
     }).start();
     await until(() => logs.some((l) => l.event === 'lease-lost'));
-    expect(await readdir(join(blobDir, 'media'))).toEqual([]);
+    expect(await readdir(join(blobDir, 'media', 'j1'))).toEqual([]);
+  });
+
+  it('a lost lease never deletes the re-claimer’s output (interleaving across an expired lease)', async () => {
+    const q = fakeQueue();
+    q.push(mkJob('jx', 'merge', 1000));
+    let aborted = false;
+    make(q, {
+      renewMs: 20,
+      run: async (job, signal) => {
+        const dir = join(blobDir, 'media', job.id);
+        await mkdir(dir, { recursive: true, mode: 0o777 });
+        await writeFile(join(dir, `merged-a${job.attempts}.webm`), 'mine');
+        // meanwhile the lease expired and another worker re-claimed (attempt 2) and wrote
+        await writeFile(join(dir, `merged-a${job.attempts + 1}.webm`), 'theirs');
+        await new Promise<void>((r) => signal?.addEventListener('abort', () => r()));
+        aborted = true;
+        return { kind: 'fail', error: 'internal', final: false };
+      },
+    });
+    q.loseLease();
+    worker?.start();
+    await until(() => aborted && logs.some((l) => l.event === 'lease-lost'));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(await readdir(join(blobDir, 'media', 'jx'))).toEqual(['merged-a2.webm']);
   });
 
   it('a thrown job → fail internal (the queue applies the backoff); a final outcome is passed on', async () => {

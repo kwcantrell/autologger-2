@@ -65,14 +65,14 @@ d('runIngest with ffmpeg', () => {
       intWav([wave(len, 1, 0.7), wave(len, 2, 0.3)], 48_000, 16),
     );
     const r = resultOf(await ingest(key));
-    expect(r.flac).toEqual({ key: `${JOB_DIR}/converted.flac`, mime: 'audio/flac' });
+    expect(r.flac).toEqual({ key: `${JOB_DIR}/converted-a1.flac`, mime: 'audio/flac' });
     expect(r.duration_ms).toBe(Math.round((len / 48_000) * 1000));
     expect(r.sample_rate).toBe(48_000);
     expect(r.channels).toBe(2);
     expect(r.codec).toMatch(/pcm/);
     expect(r.peaks.length).toBe(4096);
     expect(r.peaks.every((p) => p >= 0 && p <= 1)).toBe(true);
-    const flacPath = join(tree.blobDir, JOB_DIR, 'converted.flac');
+    const flacPath = join(tree.blobDir, JOB_DIR, 'converted-a1.flac');
     const info = parseFlacStreamInfo(await readFile(flacPath));
     expect(info).toEqual({ sampleRate: 48_000, channels: 2, bitsPerSample: 16, totalSamples: len });
     expect((await stat(flacPath)).mode & 0o777).toBe(0o644);
@@ -84,8 +84,10 @@ d('runIngest with ffmpeg', () => {
     const len = 44_100;
     const key = await tree.put('3_a.wav', intWav([wave(len, 3, 0.9)], 44_100, 24));
     const r = resultOf(await ingest(key));
-    expect(r.flac?.key).toBe(`${JOB_DIR}/converted.flac`);
-    const info = parseFlacStreamInfo(await readFile(join(tree.blobDir, JOB_DIR, 'converted.flac')));
+    expect(r.flac?.key).toBe(`${JOB_DIR}/converted-a1.flac`);
+    const info = parseFlacStreamInfo(
+      await readFile(join(tree.blobDir, JOB_DIR, 'converted-a1.flac')),
+    );
     expect(info).toMatchObject({
       sampleRate: 44_100,
       channels: 1,
@@ -199,7 +201,7 @@ d('runIngest with ffmpeg', () => {
     const after = await readdir(join(tree.blobDir, 'audio/s1'));
     expect(after.filter((f) => !before.includes(f))).toEqual(['9_a.wav']);
     expect(await readdir(join(tree.blobDir, 'media'))).toEqual([JOB.id]);
-    expect(await readdir(join(tree.blobDir, JOB_DIR))).toEqual(['converted.flac']);
+    expect(await readdir(join(tree.blobDir, JOB_DIR))).toEqual(['converted-a1.flac']);
   });
 
   it('the input is never modified', async () => {

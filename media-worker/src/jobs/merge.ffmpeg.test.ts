@@ -1,7 +1,7 @@
 // Merge with a real ffmpeg (skips without one): packet copy per family, exact verification,
 // seams, and refusals that leave no output.
 
-import { copyFile, readdir, readFile, rm, stat } from 'node:fs/promises';
+import { copyFile, mkdir, readdir, readFile, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { AudioSeam, MediaMergeResult } from '@autologger/ports/media';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -135,7 +135,7 @@ d('runMerge with ffmpeg', () => {
     expect(await frames(join(tree.blobDir, r.key), false, true)).toBe(fullA + fullB);
     const played = await frames(join(tree.blobDir, r.key));
     expect(played).toBe(fullA + fullB - pre);
-    expect(r.key).toBe(`${JOB_DIR}/merged.webm`);
+    expect(r.key).toBe(`${JOB_DIR}/merged-a1.webm`);
     expect(r.mime).toBe('audio/webm');
     expect(r.input_ids).toEqual(['a', 'b']);
     expect(r.seams).toEqual([
@@ -145,7 +145,7 @@ d('runMerge with ffmpeg', () => {
     expect(r.duration_ms).toBe(ms(played, 48_000));
     expect(r.peaks.length).toBe(4096);
     expect((await stat(join(tree.blobDir, r.key))).mode & 0o777).toBe(0o644);
-    expect(await readdir(join(tree.blobDir, JOB_DIR))).toEqual(['merged.webm']);
+    expect(await readdir(join(tree.blobDir, JOB_DIR))).toEqual(['merged-a1.webm']);
   });
 
   it('Ogg + WebM Opus → WebM, exact', async () => {
@@ -186,6 +186,50 @@ d('runMerge with ffmpeg', () => {
     );
   });
 
+  it('AAC inputs with encoder priming: seam i starts after input i’s own priming (per-input skip)', async () => {
+    const gen = async (name: string, freq: number, dur: number) => {
+      await mkdir(join(tree.blobDir, 'audio/s1'), { recursive: true });
+      const out = join(tree.blobDir, 'audio/s1', name);
+      const r = await runFfmpeg({
+        ffmpegPath: FFMPEG as string,
+        args: [
+          '-nostdin',
+          '-loglevel',
+          'error',
+          '-f',
+          'lavfi',
+          '-i',
+          `sine=frequency=${freq}:duration=${dur}:sample_rate=44100`,
+          '-c:a',
+          'aac',
+          '-b:a',
+          '64k',
+          '-y',
+          `file:${out}`,
+        ],
+        timeoutMs: 60_000,
+      });
+      expect(r.code, r.stderrTail).toBe(0);
+      return { key: `audio/s1/${name}`, path: out };
+    };
+    const a = await gen('mp_a.m4a', 440, 0.5);
+    const b = await gen('mp_b.m4a', 660, 0.7);
+    const r = resultOf(
+      await merge([
+        { id: 'a', key: a.key, start: 0 },
+        { id: 'b', key: b.key, start: 10 },
+      ]),
+    );
+    expect(r.verify.merged_samples).toBe(r.verify.expected_samples);
+    const untrimA = await frames(a.path, true, true);
+    // start skip = edit-list priming = (decoded with edit lists ignored) − played
+    const skipB = (await frames(b.path, true)) - (await frames(b.path));
+    expect(skipB).toBe(1024);
+    const merged = join(tree.blobDir, r.key);
+    const lead = (await frames(merged, true)) - (await frames(merged));
+    expect(r.seams[1].offset_ms).toBe(ms(untrimA + skipB - lead, 44_100));
+  });
+
   it('FLAC + FLAC → FLAC, exact', async () => {
     const a = await tree.copyFixture('seg-flac.flac', 'm4_a.flac');
     const b = await tree.copyFixture('seg-flac2.flac', 'm4_b.flac');
@@ -211,7 +255,7 @@ d('runMerge with ffmpeg', () => {
         { id: 'b', key: b, start: 10 },
       ]),
     );
-    expect(r.key).toBe(`${JOB_DIR}/merged.flac`);
+    expect(r.key).toBe(`${JOB_DIR}/merged-a1.flac`);
     expect(r.mime).toBe('audio/flac');
     expect(r.verify).toEqual({ merged_samples: 24_000, expected_samples: 24_000 });
     expect(parseFlacStreamInfo(await readFile(join(tree.blobDir, r.key)))).toMatchObject({
@@ -220,7 +264,7 @@ d('runMerge with ffmpeg', () => {
     });
     expect(r.seams[1].offset_ms).toBe(1000);
     expect(r.duration_ms).toBe(1500);
-    expect(await readdir(join(tree.blobDir, JOB_DIR))).toEqual(['merged.flac']);
+    expect(await readdir(join(tree.blobDir, JOB_DIR))).toEqual(['merged-a1.flac']);
   });
 
   it('mixed Opus + AAC → mixed-codecs, no output left', async () => {
@@ -236,7 +280,7 @@ d('runMerge with ffmpeg', () => {
       error: 'mixed-codecs',
       final: true,
     });
-    await expect(stat(join(tree.blobDir, JOB_DIR))).rejects.toThrow();
+    expect(await readdir(join(tree.blobDir, JOB_DIR)).catch(() => [])).toEqual([]);
   });
 
   it('two groups (stream parameters differ) → mixed-codecs; a skipped input → decode-failed; no output', async () => {
@@ -263,7 +307,7 @@ d('runMerge with ffmpeg', () => {
       kind: 'fail',
       error: 'decode-failed',
     });
-    await expect(stat(join(tree.blobDir, JOB_DIR))).rejects.toThrow();
+    expect(await readdir(join(tree.blobDir, JOB_DIR)).catch(() => [])).toEqual([]);
   });
 
   it('a corrupt second chunk → decode-failed', async () => {
@@ -363,7 +407,7 @@ d('runMerge with ffmpeg', () => {
         { id: 'b', key: b, start: 10 },
       ]),
     ).toEqual({ kind: 'fail', error: 'interleaved-input', final: true });
-    await expect(stat(join(tree.blobDir, JOB_DIR))).rejects.toThrow();
+    expect(await readdir(join(tree.blobDir, JOB_DIR)).catch(() => [])).toEqual([]);
   });
 
   it('inputs are never modified and nothing is written outside media/<job>/', async () => {

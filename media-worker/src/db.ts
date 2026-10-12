@@ -45,7 +45,8 @@ type Row = Record<string, unknown>;
 const segmentFromRow = (r: Row): SegmentRow => ({
   id: String(r.id),
   ordinal: Number(r.ordinal),
-  startedAtUtc: String(r.started_at_utc),
+  startedAtUtc:
+    r.started_at_utc === null || r.started_at_utc === undefined ? null : String(r.started_at_utc),
   endedAtUtc:
     r.ended_at_utc === null || r.ended_at_utc === undefined ? null : String(r.ended_at_utc),
   mimeType: String(r.mime_type),

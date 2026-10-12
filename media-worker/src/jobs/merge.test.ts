@@ -56,6 +56,22 @@ describe('runMerge low-disk', () => {
   });
 });
 
+describe('runMerge refuses rows without a wall-clock start', () => {
+  it('a legacy row with started_at_utc NULL cannot be ordered → interleaved-input, final', async () => {
+    const out = await runMerge(
+      ctx(
+        tree,
+        fakeReads([
+          seg({ id: 'a', r2Key: 'audio/s1/a.webm', startedAtUtc: T(0) }),
+          seg({ id: 'b', r2Key: 'audio/s1/b.webm', startedAtUtc: null }),
+        ]),
+      ),
+      MJOB,
+    );
+    expect(out).toEqual({ kind: 'fail', error: 'interleaved-input', final: true });
+  });
+});
+
 describe('planMerge', () => {
   it('plain chunks: one input each, in started_at order, with their own seam (or a synthesized one)', async () => {
     const rows = [

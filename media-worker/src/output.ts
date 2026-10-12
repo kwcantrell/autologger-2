@@ -5,7 +5,7 @@
 // Files the worker writes are 0644. Nothing here ever touches `audio/`, `.tmp/` or `.trash/`.
 
 import { constants } from 'node:fs';
-import { chmod, lstat, mkdir, open, rm } from 'node:fs/promises';
+import { chmod, lstat, mkdir, open, readdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { classifyOpened, type Prepared } from './decode';
 import { JobFailure } from './jobs/types';
@@ -25,27 +25,56 @@ export function resultKey(jobId: string, name: string): string {
   return `${jobDirKey(jobId)}/${name}`;
 }
 
-/** Creates a fresh `media/<job id>/` (mode 0777), replacing one a crashed attempt left. */
+/** `<base>-a<attempt>.<ext>`: every attempt of a job writes its own names in the shared job
+ * directory, so an attempt whose lease was lost never touches the re-claimer's files (W.8). */
+export function attemptName(base: string, attempt: number, ext: string): string {
+  const name = `${base}-a${attempt}.${ext}`;
+  if (!Number.isSafeInteger(attempt) || attempt < 0 || !NAME_RE.test(name) || name.includes('..')) {
+    throw new JobFailure('internal', 'output name is not plain', true);
+  }
+  return name;
+}
+
+/** This attempt's scratch directory inside the job directory (mergeAudioSegments' outDir). */
+export function scratchDir(attempt: number): string {
+  return `a${attempt}.tmp`;
+}
+
+/** Ensures `media/<job id>/` exists with mode 0777. Never removes anything: another attempt
+ * (after a lease expiry) may be writing there. */
 export async function makeJobDir(blobDir: string, jobId: string): Promise<string> {
   const media = join(blobDir, 'media');
   const st = await lstat(media).catch(() => null);
   if (!st?.isDirectory())
     throw new JobFailure('internal', 'media/ is missing (the API creates it at boot)');
   const dir = join(blobDir, jobDirKey(jobId));
-  const old = await lstat(dir).catch(() => null);
-  if (old) {
+  try {
+    await mkdir(dir, { mode: 0o777 });
+    await chmod(dir, 0o777);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+    const old = await lstat(dir);
     if (!old.isDirectory()) throw new JobFailure('internal', 'job path is not a directory');
-    await rm(dir, { recursive: true, force: true });
   }
-  await mkdir(dir, { mode: 0o777 });
-  await chmod(dir, 0o777);
   return dir;
 }
 
-export async function removeJobDir(blobDir: string, jobId: string): Promise<void> {
+/** Removes only this attempt's outputs (`*-a<attempt>.*`) and scratch; the shared directory and
+ * other attempts' files stay (the API's sweep removes directories of jobs no longer live). */
+export async function removeAttemptFiles(
+  blobDir: string,
+  jobId: string,
+  attempt: number,
+): Promise<void> {
   const dir = join(blobDir, jobDirKey(jobId));
   const st = await lstat(dir).catch(() => null);
-  if (st?.isDirectory()) await rm(dir, { recursive: true, force: true });
+  if (!st?.isDirectory()) return;
+  const mine = new RegExp(`-a${attempt}\\.[A-Za-z0-9]+$`);
+  for (const name of await readdir(dir)) {
+    if (name === scratchDir(attempt) || mine.test(name)) {
+      await rm(join(dir, name), { recursive: true, force: true });
+    }
+  }
 }
 
 /** Opens a file the worker wrote in its job directory (O_NOFOLLOW, regular file) and sniffs it. */

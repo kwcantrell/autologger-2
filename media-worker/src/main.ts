@@ -24,7 +24,7 @@ import {
 import { runIngest } from './jobs/ingest';
 import { runMerge } from './jobs/merge';
 import type { JobCtx, JobOutcome, WorkerReads } from './jobs/types';
-import { removeJobDir } from './output';
+import { removeAttemptFiles } from './output';
 
 export const HEARTBEAT_PATH = '/tmp/media-worker.heartbeat';
 
@@ -218,11 +218,11 @@ export class MediaWorker {
     try {
       if (lost) {
         this.d.log('lease-lost', { job: job.id });
-        await removeJobDir(this.d.blobDir, job.id).catch(() => {});
+        await removeAttemptFiles(this.d.blobDir, job.id, job.attempts).catch(() => {});
         return;
       }
       if (r.shutdown) {
-        await removeJobDir(this.d.blobDir, job.id).catch(() => {});
+        await removeAttemptFiles(this.d.blobDir, job.id, job.attempts).catch(() => {});
         const ok = await this.d.jobs.release(this.d.db, {
           ...fence,
           runAfterMs: fence.nowMs,
@@ -235,7 +235,7 @@ export class MediaWorker {
       if (outcome.kind === 'done') {
         const resultJson = JSON.stringify(outcome.result);
         if (Buffer.byteLength(resultJson) > MEDIA_RESULT_MAX_BYTES) {
-          await removeJobDir(this.d.blobDir, job.id).catch(() => {});
+          await removeAttemptFiles(this.d.blobDir, job.id, job.attempts).catch(() => {});
           ok = await this.d.jobs.fail(this.d.db, { ...fence, error: 'internal', final: true });
           this.d.log('job-failed', { job: job.id, error: 'internal', ms });
         } else {
@@ -243,7 +243,7 @@ export class MediaWorker {
           if (ok) this.d.log('job-done', { job: job.id, kind: job.kind, ms });
         }
       } else if (outcome.kind === 'release') {
-        await removeJobDir(this.d.blobDir, job.id).catch(() => {});
+        await removeAttemptFiles(this.d.blobDir, job.id, job.attempts).catch(() => {});
         ok = await this.d.jobs.release(this.d.db, {
           ...fence,
           runAfterMs: outcome.runAfterMs,
@@ -251,7 +251,7 @@ export class MediaWorker {
         });
         if (ok) this.d.log('job-released', { job: job.id, error: outcome.error });
       } else {
-        await removeJobDir(this.d.blobDir, job.id).catch(() => {});
+        await removeAttemptFiles(this.d.blobDir, job.id, job.attempts).catch(() => {});
         ok = await this.d.jobs.fail(this.d.db, {
           ...fence,
           error: outcome.error,
@@ -262,7 +262,7 @@ export class MediaWorker {
       }
       if (!ok) {
         this.d.log('lease-lost', { job: job.id });
-        await removeJobDir(this.d.blobDir, job.id).catch(() => {});
+        await removeAttemptFiles(this.d.blobDir, job.id, job.attempts).catch(() => {});
       }
     } catch {
       this.d.log('db-error', { lane, job: job.id });

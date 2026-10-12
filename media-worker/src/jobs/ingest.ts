@@ -5,7 +5,7 @@
 import type { MediaIngestResult, MediaJob } from '@autologger/ports/media';
 import { mediaJobBackoffMs } from '@autologger/storage/mediaLimits';
 import { peaksDecode, prepareInput, probeStream } from '../decode';
-import { makeJobDir, removeJobDir, resultKey } from '../output';
+import { attemptName, makeJobDir, removeAttemptFiles, resultKey } from '../output';
 import { PEAKS_SAMPLE_RATE, peaksFromDecodes } from '../peaks';
 import { convertToFlac, probeWavHeader } from '../verify';
 import { type JobCtx, JobFailure, type JobOutcome } from './types';
@@ -31,9 +31,10 @@ export async function runIngest(ctx: JobCtx, job: MediaJob): Promise<JobOutcome>
       if (wav?.ok) {
         const dir = await makeJobDir(ctx.blobDir, job.id);
         madeDir = true;
-        const { frames } = await convertToFlac(ctx, p, wav, dir, 'converted.flac');
+        const name = attemptName('converted', job.attempts, 'flac');
+        const { frames } = await convertToFlac(ctx, p, wav, dir, name);
         if (frames <= 0) throw new JobFailure('decode-failed', 'no audio');
-        flac = { key: resultKey(job.id, 'converted.flac'), mime: 'audio/flac' };
+        flac = { key: resultKey(job.id, name), mime: 'audio/flac' };
       }
       const result: MediaIngestResult = {
         duration_ms: decoded.durationMs,
@@ -49,7 +50,7 @@ export async function runIngest(ctx: JobCtx, job: MediaJob): Promise<JobOutcome>
       await p.opened.close();
     }
   } catch (err) {
-    if (madeDir) await removeJobDir(ctx.blobDir, job.id).catch(() => {});
+    if (madeDir) await removeAttemptFiles(ctx.blobDir, job.id, job.attempts).catch(() => {});
     if (err instanceof JobFailure) return { kind: 'fail', error: err.code, final: err.final };
     if (
       err instanceof Error &&

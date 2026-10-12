@@ -17,7 +17,14 @@ import type {
 import { MEDIA_MIN_FREE_BYTES, mediaJobBackoffMs } from '@autologger/storage/mediaLimits';
 import { mergeAudioSegments } from '@autologger/transcription/audioMerge';
 import { nativeFrames, type Prepared, peaksDecode, prepareInput, preSkipOf } from '../decode';
-import { makeJobDir, openOwn, removeJobDir, resultKey } from '../output';
+import {
+  attemptName,
+  makeJobDir,
+  openOwn,
+  removeAttemptFiles,
+  resultKey,
+  scratchDir,
+} from '../output';
 import { peaksFromDecodes } from '../peaks';
 import { convertToFlac, probeWavHeader } from '../verify';
 import { type JobCtx, JobFailure, type JobOutcome, type SegmentRow } from './types';
@@ -63,7 +70,10 @@ export async function planMerge(
   rows: SegmentRow[],
   seams: AudioSeam[],
 ): Promise<MergePlan> {
-  const ordered = [...rows].sort(
+  type Timed = SegmentRow & { startedAtUtc: string };
+  if (!rows.every((r): r is Timed => !!r.startedAtUtc)) return { kind: 'interleaved' };
+  const timed: Timed[] = rows;
+  const ordered = [...timed].sort(
     (a, b) => a.startedAtUtc.localeCompare(b.startedAtUtc) || a.ordinal - b.ordinal,
   );
   const withSeams = ordered.map((row) => {
@@ -140,6 +150,11 @@ export async function runMerge(ctx: JobCtx, job: MediaJob): Promise<JobOutcome> 
     }
     const rows = await ctx.reads.recordingSegments(job.sessionId, ordinal);
     if (rows.length < 2) return { kind: 'fail', error: 'internal', final: true };
+    // A legacy row without a wall-clock start cannot be placed in the recording's order (W.8):
+    // the same outcome as an input that cannot be ordered, and the rows stay as they are.
+    if (rows.some((r) => !r.startedAtUtc)) {
+      return { kind: 'fail', error: 'interleaved-input', final: true };
+    }
     const plan = await planMerge(
       ctx.blobDir,
       rows,
@@ -152,9 +167,10 @@ export async function runMerge(ctx: JobCtx, job: MediaJob): Promise<JobOutcome> 
     const dir = await makeJobDir(ctx.blobDir, job.id);
     madeDir = true;
 
+    const scratch = join(dir, scratchDir(job.attempts));
     const merged = await mergeAudioSegments(
       opened.map((p) => p.opened.fdPath),
-      dir,
+      scratch,
     );
     if (merged.skipped.length > 0)
       throw new JobFailure('decode-failed', 'an input could not be read', false);
@@ -163,9 +179,10 @@ export async function runMerge(ctx: JobCtx, job: MediaJob): Promise<JobOutcome> 
     const group = merged.groups[0];
     if (group.family === 'mp3') throw new JobFailure('mixed-codecs', 'MP3 is never merged', true);
     const ext = group.outPath.split('.').at(-1) as string;
-    await rename(group.outPath, join(dir, `merged.${ext}`));
-    await chmod(join(dir, `merged.${ext}`), 0o644);
-    let name = `merged.${ext}`;
+    let name = attemptName('merged', job.attempts, ext);
+    await rename(group.outPath, join(dir, name));
+    await chmod(join(dir, name), 0o644);
+    await rm(scratch, { recursive: true, force: true });
 
     // Verification (D7): packet copy keeps every packet, so the merged file decoded with nothing
     // trimmed (`-flags2 +skip_manual`; mov also `-ignore_editlist 1`) must hold exactly the
@@ -185,7 +202,14 @@ export async function runMerge(ctx: JobCtx, job: MediaJob): Promise<JobOutcome> 
     const expected = raws.reduce((a, b) => a + b, 0);
     // Each input's own start skip (Opus pre-skip), and the merged file's: input i's audio starts
     // at Σ_{j<i} untrimmed_j + skip_i in the untrimmed merged stream, which plays from its skip.
-    const skips = opened.map((p) => (opus ? preSkipOf(p) : 0));
+    // AAC: the start skip is the edit-list priming, (decoded with edit lists ignored) − played;
+    // packet copy keeps every input's priming in the merged stream (W.8).
+    const aacSkip = async (p: Prepared) =>
+      (await nativeFrames(ctx, p, { ignoreEditlist: true })).frames -
+      (await nativeFrames(ctx, p)).frames;
+    const skips: number[] = [];
+    for (const p of opened)
+      skips.push(opus ? preSkipOf(p) : aac ? Math.max(0, await aacSkip(p)) : 0);
 
     let out = await openOwn(dir, name);
     let mergedSamples: number;
@@ -195,7 +219,7 @@ export async function runMerge(ctx: JobCtx, job: MediaJob): Promise<JobOutcome> 
       mergedSamples = m.frames;
       rate = m.sampleRate;
       if (opus) lead = preSkipOf(out);
-      else if (aac) lead = Math.max(0, m.frames - (await nativeFrames(ctx, out)).frames);
+      else if (aac) lead = Math.max(0, await aacSkip(out));
     } finally {
       await out.opened.close();
     }
@@ -208,14 +232,15 @@ export async function runMerge(ctx: JobCtx, job: MediaJob): Promise<JobOutcome> 
       if (first.ok && probes.every((q) => q.ok && q.bitsPerSample === first.bitsPerSample)) {
         const wav = await openOwn(dir, name);
         try {
-          const { frames } = await convertToFlac(ctx, wav, first, dir, 'merged.flac');
+          const flacName = attemptName('merged', job.attempts, 'flac');
+          const { frames } = await convertToFlac(ctx, wav, first, dir, flacName);
           if (frames !== expected)
             throw new JobFailure('verify-mismatch', 'FLAC sample count differs');
         } finally {
           await wav.opened.close();
         }
         await rm(join(dir, name));
-        name = 'merged.flac';
+        name = attemptName('merged', job.attempts, 'flac');
       }
     }
 
@@ -246,7 +271,7 @@ export async function runMerge(ctx: JobCtx, job: MediaJob): Promise<JobOutcome> 
     };
     return { kind: 'done', result };
   } catch (err) {
-    if (madeDir) await removeJobDir(ctx.blobDir, job.id).catch(() => {});
+    if (madeDir) await removeAttemptFiles(ctx.blobDir, job.id, job.attempts).catch(() => {});
     if (err instanceof JobFailure) return { kind: 'fail', error: err.code, final: err.final };
     if (
       err instanceof Error &&
