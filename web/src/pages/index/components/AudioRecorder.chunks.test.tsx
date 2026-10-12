@@ -1,10 +1,15 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, render } from '@testing-library/react';
+import { cleanup, render, act as rtlAct } from '@testing-library/react';
 import { createRef } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError } from '../../../api/client';
 import type { LogEvent } from '../../../api/types';
 import { showToast } from '../../../shared/components/Toast';
+import { createWorkerInterval } from '../../../shared/utils/workerInterval';
+import { FakeLockRegistry } from '../../../test/fakes/locks';
+import { FakeWakeLock } from '../../../test/fakes/wakeLock';
+import { type ChunkStore, createChunkStore, setChunkStoreForTesting } from '../utils/chunkStore';
+import { createMemoryBackend } from '../utils/chunkStore/memoryBackend';
 import { getChunkUploadQueue, resetChunkUploadQueueForTesting } from '../utils/chunkUploadQueue';
 import type { AudioRecorderHandle } from './AudioRecorder';
 import { AudioRecorder, deriveNextOrdinal } from './AudioRecorder';
@@ -23,6 +28,7 @@ import { AudioRecorder, deriveNextOrdinal } from './AudioRecorder';
 // prop switch, per-chunk waveform PUT, and zero-byte final chunk.
 
 const h = vi.hoisted(() => ({
+  userId: 'user-1' as string | null,
   segments: [] as { recording_ordinal: number | null }[],
   events: [] as Partial<LogEvent>[],
   // mutateAsync since session-leases D7: the recorder acts on the heartbeat's `{ok}` answer.
@@ -53,6 +59,31 @@ vi.mock('../../../api/hooks/useEvents', () => ({
   useLogEvent: () => ({ mutateAsync: h.logEventMutateAsync }),
 }));
 vi.mock('../../../shared/components/Toast', () => ({ showToast: vi.fn() }));
+vi.mock('../../../api/hooks/useProfile', () => ({
+  useProfile: () => ({ data: { auth: { user: h.userId ? { id: h.userId } : null } } }),
+}));
+// media-worker A.5: the recorder's timers run on worker intervals (jsdom has no Worker, so the
+// real helper falls back to the faked setInterval; the spy records who asked for which period).
+vi.mock('../../../shared/utils/workerInterval', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../../../shared/utils/workerInterval')>();
+  return { createWorkerInterval: vi.fn(real.createWorkerInterval) };
+});
+
+/**
+ * `act` that also drains the chunk store's promise chains (media-worker D10: every slice is
+ * appended asynchronously and a chunk is enqueued once its bytes are persisted). Real
+ * `setTimeout` is not faked in this file, so a few macrotask turns settle them.
+ */
+async function act(fn: () => unknown): Promise<void> {
+  await rtlAct(async () => {
+    await fn();
+  });
+  for (let i = 0; i < 6; i += 1) {
+    await rtlAct(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+  }
+}
 
 class FakeAudioContext {
   static instances: FakeAudioContext[] = [];
@@ -87,8 +118,15 @@ class FakeMediaRecorder {
   constructor(public stream: MediaStream) {
     FakeMediaRecorder.instances.push(this);
   }
-  start() {
+  timeslice: number | undefined;
+  requestData = vi.fn();
+  start(timeslice?: number) {
+    this.timeslice = timeslice;
     this.state = 'recording';
+  }
+  /** Deliver one timeslice, as the browser does every `timeslice` ms. */
+  emitSlice(bytes: number) {
+    this.ondataavailable?.({ data: new Blob([new Uint8Array(bytes)], { type: 'audio/webm' }) });
   }
   stop() {
     this.state = 'inactive';
@@ -158,12 +196,26 @@ function waveformPuts(): string[] {
     .map(([input]) => String(input));
 }
 
+function finalizePosts(): Array<{ url: string; body: unknown }> {
+  return fetchMock.mock.calls
+    .filter(
+      ([input, init]) =>
+        (init?.method ?? 'GET') === 'POST' &&
+        /\/audio\/recordings\/\d+\/finalize$/.test(String(input)),
+    )
+    .map(([input, init]) => ({ url: String(input), body: JSON.parse(String(init?.body)) }));
+}
+
 function paramOf(url: string, name: string): string | null {
   return new URL(url, 'http://localhost').searchParams.get(name);
 }
 
 const fakeTrack = { readyState: 'live', stop: vi.fn() };
-const fakeStream = { getTracks: () => [fakeTrack] } as unknown as MediaStream;
+const fakeStream = {
+  getTracks: () => [fakeTrack],
+  getAudioTracks: () => [fakeTrack],
+} as unknown as MediaStream;
+let store: ChunkStore;
 
 const CHUNK_MS_TEST = 10_000;
 const T0 = new Date('2026-08-12T10:00:00.000Z');
@@ -187,7 +239,11 @@ beforeEach(() => {
   FakeMediaRecorder.instances = [];
   FakeMediaRecorder.emitData = true;
   rafQueue = [];
+  h.userId = 'user-1';
   resetChunkUploadQueueForTesting();
+  store = createChunkStore({ backends: [() => createMemoryBackend()], warn: () => {} });
+  setChunkStoreForTesting(store);
+  vi.mocked(createWorkerInterval).mockClear();
   vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] });
   vi.setSystemTime(T0);
   vi.stubGlobal('AudioContext', FakeAudioContext);
@@ -204,7 +260,13 @@ beforeEach(() => {
   });
 });
 
-afterEach(() => {
+afterEach(async () => {
+  // Unmount now and let the unmount's final stop persist, enqueue and upload before the next
+  // test (the chunk store makes that asynchronous).
+  cleanup();
+  for (let i = 0; i < 10; i += 1) await new Promise((r) => setTimeout(r, 0));
+  resetChunkUploadQueueForTesting();
+  setChunkStoreForTesting(null);
   vi.unstubAllGlobals();
   vi.useRealTimers();
   Object.defineProperty(navigator, 'mediaDevices', { configurable: true, value: undefined });
@@ -212,7 +274,7 @@ afterEach(() => {
   document.body.classList.remove('v4-is-recording', 'v4-local-recording');
 });
 
-function renderRecorder(sessionId = 'sess-A') {
+function renderRecorder(sessionId = 'sess-A', extra: { micRetryWindowMs?: number } = {}) {
   const ref = createRef<AudioRecorderHandle>();
   const onPhaseChange = vi.fn();
   const queryClient = new QueryClient();
@@ -223,6 +285,7 @@ function renderRecorder(sessionId = 'sess-A') {
         sessionId={sessionId}
         onPhaseChange={onPhaseChange}
         chunkMs={CHUNK_MS_TEST}
+        {...extra}
       />
     </QueryClientProvider>,
   );
@@ -234,6 +297,7 @@ function renderRecorder(sessionId = 'sess-A') {
           sessionId={nextSessionId}
           onPhaseChange={onPhaseChange}
           chunkMs={CHUNK_MS_TEST}
+          {...extra}
         />
       </QueryClientProvider>,
     );
@@ -242,6 +306,7 @@ function renderRecorder(sessionId = 'sess-A') {
 
 async function startRecording(sessionId = 'sess-A') {
   const utils = renderRecorder(sessionId);
+  await act(async () => {}); // the recovery scan completes before Record is enabled
   await act(async () => {
     await utils.ref.current?.toggle();
   });
@@ -431,18 +496,31 @@ describe('AudioRecorder chunk rollover (task 4.2)', () => {
     // enqueue the final chunk and call finalizeStop, whose first pump()
     // must collapse onto (not race ahead of) the still-running rollover
     // pump.
-    const togglePromise = act(async () => {
-      await ref.current?.toggle();
+    // Not wrapped in its own act: the loop below drives React one act at a time
+    // (overlapping act scopes would leave React's act queue open).
+    let togglePromise!: Promise<boolean | undefined>;
+    await rtlAct(async () => {
+      togglePromise = ref.current?.toggle() ?? Promise.resolve(undefined);
     });
 
-    // Release the barrier once the stop path has had a chance to enqueue
-    // the final chunk and start awaiting the collapsed pump.
-    await Promise.resolve();
+    // Release the barrier once the stop path has enqueued the final chunk and
+    // is awaiting the collapsed pump (the saving presentation is up). The
+    // chunk store makes the stop path asynchronous (media-worker D10), so wait
+    // for that phase rather than a fixed number of microtasks.
+    for (let i = 0; i < 50; i += 1) {
+      if (onPhaseChange.mock.calls.some(([p]) => p === 'uploading')) break;
+      await rtlAct(async () => {
+        await new Promise((r) => setTimeout(r, 0));
+      });
+    }
+    expect(segmentPosts()).toHaveLength(1); // the final chunk still waits behind the barrier
     await act(async () => {
       releaseUploads();
       uploadBarrier = null;
     });
-    await togglePromise;
+    await act(async () => {
+      await togglePromise;
+    });
 
     // Both chunks drained — the collapsed pump plus the fresh re-pump
     // together finish the whole queue.
@@ -463,7 +541,7 @@ describe('AudioRecorder chunk rollover (task 4.2)', () => {
     expect(queue.getSnapshot().idle).toBe(true);
   });
 
-  it('uploads each chunk with its own waveform PUT (best-effort, off the upload path)', async () => {
+  it('sends no waveform PUT and decodes nothing after a chunk upload (media-worker D5)', async () => {
     const { ref } = await startRecording();
     await act(async () => {
       vi.advanceTimersByTime(CHUNK_MS_TEST);
@@ -472,10 +550,11 @@ describe('AudioRecorder chunk rollover (task 4.2)', () => {
       await ref.current?.toggle();
     });
     expect(segmentPosts()).toHaveLength(2);
-    const puts = waveformPuts();
-    expect(puts).toHaveLength(2);
-    expect(puts[0]).toContain('/audio/segments/seg-1/waveform');
-    expect(puts[1]).toContain('/audio/segments/seg-2/waveform');
+    // media-worker D5: the server computes peaks and duration; the browser no longer decodes
+    // its own chunks or PUTs a waveform.
+    expect(waveformPuts()).toHaveLength(0);
+    for (const ctx of FakeAudioContext.instances)
+      expect(ctx.decodeAudioData).not.toHaveBeenCalled();
   });
 
   it('binds uploads to the recording-start session even after the prop switches', async () => {
@@ -521,36 +600,81 @@ describe('AudioRecorder chunk rollover (task 4.2)', () => {
     expect(onPhaseChange.mock.calls.at(-1)?.[0]).toBe('idle');
   });
 
-  it('treats an unexpected onstop as a stop: no restart, lease released, Stopped logged, toast shown', async () => {
+  it('an unexpected onstop re-acquires the microphone and continues the same take (D19)', async () => {
     const { ref, onPhaseChange } = await startRecording();
     const mr = FakeMediaRecorder.instances[0];
     await act(async () => {
-      // Simulate the browser ending capture (mic unplugged): onstop fires
-      // without the component having marked a reason.
+      // The browser ends capture (mic unplugged): onstop fires with no reason set.
       mr.stop();
     });
+    // The captured chunk is persisted and uploaded; a new chunk starts on the re-acquired input.
+    expect(segmentPosts()).toHaveLength(1);
+    expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalledTimes(2);
+    expect(FakeMediaRecorder.instances).toHaveLength(2);
+    expect(FakeMediaRecorder.instances[1].state).toBe('recording');
+    expect(ref.current?.isRecording()).toBe(true);
+    expect(onPhaseChange.mock.calls.at(-1)?.[0]).toBe('recording');
+    // Same take: no Stopped event, no lease release, the notice names the change.
+    expect(h.logEventMutateAsync).not.toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'Recording 1 Stopped' }),
+    );
+    expect(h.releaseMutateAsync).not.toHaveBeenCalled();
+    expect(document.body.textContent).toContain('Microphone changed; recording continues.');
+    // The next chunk carries the next index and the same ordinal.
+    await act(async () => {
+      await ref.current?.toggle();
+    });
+    const posts = segmentPosts();
+    expect(posts).toHaveLength(2);
+    expect(posts.map((u) => paramOf(u, 'recording_ordinal'))).toEqual(['1', '1']);
+    expect(h.logEventMutateAsync).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'Recording 1 Stopped' }),
+    );
+  });
 
-    expect(FakeMediaRecorder.instances).toHaveLength(1); // never restarted on the dead stream
-    expect(vi.mocked(showToast)).toHaveBeenCalledWith(expect.stringContaining('microphone'), true);
+  it('a rollover boundary on a dead stream re-acquires instead of ending the take', async () => {
+    const { ref } = await startRecording();
+    fakeTrack.readyState = 'ended';
+    const freshTrack = { readyState: 'live', stop: vi.fn() };
+    vi.mocked(navigator.mediaDevices.getUserMedia).mockResolvedValueOnce({
+      getTracks: () => [freshTrack],
+      getAudioTracks: () => [freshTrack],
+    } as unknown as MediaStream);
+    await act(async () => {
+      vi.advanceTimersByTime(CHUNK_MS_TEST);
+    });
+    expect(FakeMediaRecorder.instances).toHaveLength(2); // a recorder on the NEW stream only
+    expect(FakeMediaRecorder.instances[1].stream).not.toBe(fakeStream);
+    expect(h.releaseMutateAsync).not.toHaveBeenCalled();
+    expect(segmentPosts()).toHaveLength(1);
+    expect(ref.current?.isRecording()).toBe(true);
+  });
+
+  it('when no microphone comes back within the window the take is finalized with the reason', async () => {
+    const utils = renderRecorder('sess-A', { micRetryWindowMs: 0 });
+    await act(async () => {});
+    await act(async () => {
+      await utils.ref.current?.toggle();
+    });
+    const denied = Object.assign(new Error('Requested device not found'), {
+      name: 'NotFoundError',
+    });
+    vi.mocked(navigator.mediaDevices.getUserMedia).mockRejectedValue(denied);
+    await act(async () => {
+      FakeMediaRecorder.instances[0].stop();
+    });
+    expect(FakeMediaRecorder.instances).toHaveLength(1);
+    expect(vi.mocked(showToast)).toHaveBeenCalledWith(
+      expect.stringContaining('NotFoundError'),
+      true,
+    );
     expect(h.logEventMutateAsync).toHaveBeenCalledWith(
       expect.objectContaining({ message: 'Recording 1 Stopped' }),
     );
     expect(h.releaseMutateAsync).toHaveBeenCalledTimes(1);
-    expect(segmentPosts()).toHaveLength(1); // what was captured still uploaded
-    expect(onPhaseChange.mock.calls.at(-1)?.[0]).toBe('idle');
-    expect(ref.current?.isRecording()).toBe(false);
-  });
-
-  it('a rollover boundary on a dead stream finalizes instead of constructing a new recorder', async () => {
-    const { onPhaseChange } = await startRecording();
-    fakeTrack.readyState = 'ended';
-    await act(async () => {
-      vi.advanceTimersByTime(CHUNK_MS_TEST);
-    });
-    expect(FakeMediaRecorder.instances).toHaveLength(1); // no recorder on a dead stream (D1)
-    expect(h.releaseMutateAsync).toHaveBeenCalledTimes(1);
-    expect(segmentPosts()).toHaveLength(1);
-    expect(onPhaseChange.mock.calls.at(-1)?.[0]).toBe('idle');
+    expect(segmentPosts()).toHaveLength(1); // what was captured still uploads
+    expect(finalizePosts()).toHaveLength(1); // and the captured windows are finalized
+    expect(utils.onPhaseChange.mock.calls.at(-1)?.[0]).toBe('idle');
   });
 
   it('unmount mid-recording still uploads the captured chunk via the module-owned queue', async () => {
@@ -596,6 +720,7 @@ describe('fresh-mount queue reconciliation (fix-wave F2)', () => {
       mimeType: 'audio/webm',
     });
     expect(seedQueue.getSnapshot().idle).toBe(false);
+    await seedQueue.recover('user-1'); // this page load's storage scan already ran (media-worker D10)
 
     const { ref, onPhaseChange } = renderRecorder('sess-A');
 
@@ -614,6 +739,7 @@ describe('fresh-mount queue reconciliation (fix-wave F2)', () => {
     // reactively re-blocks an already-idle recorder when a later,
     // unrelated straggler arrives (only drain_blocked -> idle is watched).
     const { ref } = renderRecorder('sess-A');
+    await act(async () => {}); // the storage scan completes
 
     const queue = getChunkUploadQueue({
       upload: async () => ({ ok: false, status: 500, message: 'still failing' }),
@@ -664,6 +790,7 @@ describe('drain_blocked mount reconciliation (fix-wave F6/D2)', () => {
       mimeType: 'audio/webm',
     });
     expect(seedQueue.getSnapshot().idle).toBe(false);
+    await seedQueue.recover('user-1'); // this page load's storage scan already ran (media-worker D10)
 
     // Simulate the queue draining to idle in the window between the
     // component's first render (which already committed 'drain_blocked'
@@ -708,6 +835,7 @@ describe('drain_blocked mount reconciliation (fix-wave F6/D2)', () => {
       endedAtUtc: T0.toISOString(),
       mimeType: 'audio/webm',
     });
+    await seedQueue.recover('user-1'); // this page load's storage scan already ran (media-worker D10)
 
     // Patch getSnapshot so the very FIRST call (the lazy initializer, which
     // runs before any render) still observes drain_blocked, but the queue
@@ -904,6 +1032,7 @@ describe('beforeunload registration is scoped to an active recording (bfcache)',
       addSpy.mock.calls.filter((call) => call[0] === 'beforeunload').length;
     try {
       const utils = renderRecorder();
+      await act(async () => {}); // the storage scan completes
       expect(beforeUnloadRegistrations()).toBe(0);
 
       await act(async () => {
@@ -1239,5 +1368,197 @@ describe('AudioRecorder lease re-claim (session-leases D7, task 6.1)', () => {
     });
     expect(h.claimMutateAsync).toHaveBeenCalledTimes(1);
     expect(h.releaseMutateAsync).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('media-worker A.5: persistence, locks, timers, finalize, wake lock, hidden tab', () => {
+  it('starts each chunk with the 5 s timeslice and appends every slice to the store', async () => {
+    await startRecording();
+    const mr = FakeMediaRecorder.instances[0];
+    expect(mr.timeslice).toBe(5_000);
+    await act(async () => {
+      mr.emitSlice(3);
+      mr.emitSlice(4);
+    });
+    const [m] = await store.list('user-1');
+    expect(m).toMatchObject({
+      sessionId: 'sess-A',
+      recordingOrdinal: 1,
+      chunkIndex: 0,
+      finalized: false,
+      bytes: 7,
+      userId: 'user-1',
+    });
+    expect(m.sliceLog.map((e) => e.bytes)).toEqual([3, 4]);
+  });
+
+  it('holds the take lock from start until the last chunk is persisted', async () => {
+    const reg = new FakeLockRegistry();
+    Object.defineProperty(navigator, 'locks', { configurable: true, value: reg.tab() });
+    try {
+      const { ref } = await startRecording();
+      expect(reg.isHeld('autologger:recording:sess-A:1')).toBe(true);
+      await act(async () => {
+        vi.advanceTimersByTime(CHUNK_MS_TEST);
+      });
+      expect(reg.isHeld('autologger:recording:sess-A:1')).toBe(true); // across the rollover
+      await act(async () => {
+        await ref.current?.toggle();
+      });
+      expect(reg.isHeld('autologger:recording:sess-A:1')).toBe(false);
+    } finally {
+      Object.defineProperty(navigator, 'locks', { configurable: true, value: undefined });
+    }
+  });
+
+  it('runs the rollover and the lease heartbeat on worker intervals', async () => {
+    await startRecording();
+    const periods = vi.mocked(createWorkerInterval).mock.calls.map(([p]) => p);
+    expect(periods).toContain(CHUNK_MS_TEST);
+    expect(periods).toContain(8_000);
+  });
+
+  it('pagehide asks the recorder for the pending slice and still releases the lease by beacon', async () => {
+    const beacon = vi.fn(() => true);
+    Object.defineProperty(navigator, 'sendBeacon', { configurable: true, value: beacon });
+    try {
+      await startRecording();
+      window.dispatchEvent(new Event('pagehide'));
+      expect(FakeMediaRecorder.instances[0].requestData).toHaveBeenCalledTimes(1);
+      expect(beacon).toHaveBeenCalledTimes(1);
+    } finally {
+      Object.defineProperty(navigator, 'sendBeacon', { configurable: true, value: undefined });
+    }
+  });
+
+  it('requests persistent storage at start without waiting for the answer', async () => {
+    const persist = vi.fn(() => new Promise<boolean>(() => {})); // Firefox: never settles headless
+    Object.defineProperty(navigator, 'storage', { configurable: true, value: { persist } });
+    try {
+      const { ref } = await startRecording();
+      expect(persist).toHaveBeenCalledTimes(1);
+      expect(ref.current?.isRecording()).toBe(true);
+    } finally {
+      Object.defineProperty(navigator, 'storage', { configurable: true, value: undefined });
+    }
+  });
+
+  it('finalizes the recording after its last chunk is confirmed, listing every window', async () => {
+    const { ref } = await startRecording();
+    await act(async () => {
+      vi.advanceTimersByTime(CHUNK_MS_TEST);
+    });
+    expect(finalizePosts()).toHaveLength(0); // not while recording
+    await act(async () => {
+      await ref.current?.toggle();
+    });
+    const posts = segmentPosts();
+    const fin = finalizePosts();
+    expect(fin).toHaveLength(1);
+    expect(fin[0].url).toContain('/sessions/sess-A/audio/recordings/1/finalize');
+    expect(fin[0].body).toEqual({
+      chunks: posts.map((u) => paramOf(u, 'started_at_utc')),
+    });
+    // After confirmation nothing is left in storage.
+    expect(await store.list('user-1')).toEqual([]);
+  });
+
+  it('Record waits for the recovery scan; recovered ordinal 3 makes the new recording 4', async () => {
+    // A previous page left a chunk of recording 3 in storage a minute ago (its heartbeat is
+    // stale: jsdom has no Web Locks, so the 30 s heartbeat lease decides); uploads keep failing.
+    vi.setSystemTime(new Date(T0.getTime() - 60_000));
+    const h3 = await store.openChunk({
+      userId: 'user-1',
+      sessionId: 'sess-A',
+      recordingOrdinal: 3,
+      chunkIndex: 0,
+      startedAtUtc: '2026-08-12T09:00:00.000Z',
+      mimeType: 'audio/webm',
+    });
+    await store.append(h3, new Blob([new Uint8Array(5)]));
+    vi.setSystemTime(T0);
+    let releaseList!: () => void;
+    const gate = new Promise<void>((r) => {
+      releaseList = r;
+    });
+    const realList = store.list.bind(store);
+    store.list = async (u) => {
+      await gate;
+      return realList(u);
+    };
+    uploadStatus = 503;
+
+    const { ref, onPhaseChange } = renderRecorder('sess-A');
+    await act(async () => {});
+    expect(onPhaseChange.mock.calls.at(-1)?.[0]).toBe('scanning');
+    await expect(ref.current?.toggle()).resolves.toBe(false);
+    expect(h.claimMutateAsync).not.toHaveBeenCalled();
+
+    await act(async () => {
+      releaseList();
+    });
+    expect(onPhaseChange.mock.calls.at(-1)?.[0]).toBe('idle'); // recovered chunks do not block
+    await act(async () => {
+      await ref.current?.toggle();
+    });
+    expect(h.logEventMutateAsync).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'Recording 4 Started' }),
+    );
+  });
+
+  it('holds a screen wake lock while recording and releases it on stop', async () => {
+    const wl = new FakeWakeLock();
+    Object.defineProperty(navigator, 'wakeLock', { configurable: true, value: wl });
+    try {
+      const { ref } = await startRecording();
+      expect(wl.held()).toHaveLength(1);
+      await act(async () => {
+        await ref.current?.toggle();
+      });
+      expect(wl.held()).toHaveLength(0);
+    } finally {
+      Object.defineProperty(navigator, 'wakeLock', { configurable: true, value: undefined });
+    }
+  });
+
+  it('a recording tab hidden and shown again warns with the interval until the next user action', async () => {
+    let visibility: 'visible' | 'hidden' = 'visible';
+    Object.defineProperty(document, 'visibilityState', {
+      configurable: true,
+      get: () => visibility,
+    });
+    try {
+      await startRecording();
+      await act(async () => {
+        visibility = 'hidden';
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+      await act(async () => {
+        vi.setSystemTime(new Date(T0.getTime() + 3 * 60_000));
+        visibility = 'visible';
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+      const warning = document.querySelector('[data-testid="hidden-tab-warning"]');
+      expect(warning?.textContent).toContain('3 min');
+      expect(warning?.textContent).toMatch(/background/);
+      await act(async () => {
+        window.dispatchEvent(new Event('pointerdown'));
+      });
+      expect(document.querySelector('[data-testid="hidden-tab-warning"]')).toBeNull();
+    } finally {
+      Object.defineProperty(document, 'visibilityState', {
+        configurable: true,
+        get: () => 'visible',
+      });
+    }
+  });
+
+  it('without a signed-in user the recorder still records (chunks stay in memory)', async () => {
+    h.userId = null;
+    const { ref } = await startRecording();
+    await act(async () => {
+      await ref.current?.toggle();
+    });
+    expect(segmentPosts()).toHaveLength(1);
   });
 });

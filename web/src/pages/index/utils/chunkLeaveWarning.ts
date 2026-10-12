@@ -29,6 +29,9 @@
 // doesn't exist yet, which is exactly "nothing to warn about" — and now also
 // "nothing blocking bfcache".
 
+import { useCallback } from 'react';
+import { useConfirm } from '../../../shared/ui/ConfirmDialog';
+import { type ChunkStore, getChunkStore } from './chunkStore';
 import {
   type ChunkQueueSnapshot,
   type ChunkUploadQueue,
@@ -105,3 +108,101 @@ export function uninstallChunkLeaveWarningForTesting(): void {
 }
 
 installChunkLeaveWarning();
+
+// ---------------------------------------------------------------------------
+// Sign-out (media-worker design D10, panel A: shared machines). Stored chunks are per user; signing
+// out first warns when that user has unsent chunks (the leave-warning's subject), then wipes that
+// user's storage. Another user's entries are never read or touched.
+// ---------------------------------------------------------------------------
+
+export interface ConfirmOptions {
+  title: string;
+  message: string;
+  confirmLabel?: string;
+  danger?: boolean;
+}
+
+export interface SignOutGuardDeps {
+  userId: string | null;
+  confirm: (opts: ConfirmOptions) => Promise<boolean>;
+  store?: Pick<ChunkStore, 'list' | 'wipe'>;
+  /** The tab's queue (`peekChunkUploadQueue()` when omitted); `null` for none. */
+  queue?: ChunkUploadQueue | null;
+}
+
+function spanSec(startedAtUtc: string, endedAtUtc: string | null, fallbackMs: number): number {
+  const start = Date.parse(startedAtUtc);
+  const end = endedAtUtc ? Date.parse(endedAtUtc) : fallbackMs;
+  return Number.isFinite(start) && Number.isFinite(end) && end > start ? (end - start) / 1000 : 0;
+}
+
+function amountPhrase(count: number, seconds: number): string {
+  const word = count === 1 ? 'chunk' : 'chunks';
+  if (seconds <= 0) return `${count} recorded audio ${word}`;
+  const sec = Math.round(seconds);
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  const dur = m === 0 ? `${s}s` : s === 0 ? `${m}m` : `${m}m ${s}s`;
+  return `${count} recorded audio ${word} (${dur})`;
+}
+
+/**
+ * Resolve `true` when sign-out may proceed. Unsent chunks of `userId` (stored, or held by the
+ * queue) ask for a confirmation naming them; on confirm, or when there are none, the user's
+ * stored chunks are wiped and the queue's chunks discarded.
+ */
+export async function guardSignOut(deps: SignOutGuardDeps): Promise<boolean> {
+  const { userId } = deps;
+  if (!userId) return true;
+  const store = deps.store ?? getChunkStore();
+  const queue = deps.queue === undefined ? peekChunkUploadQueue() : deps.queue;
+
+  let stored: Awaited<ReturnType<ChunkStore['list']>> = [];
+  try {
+    stored = (await store.list(userId)).filter((m) => m.kind === 'chunk');
+  } catch {
+    stored = [];
+  }
+  const storedIds = new Set(stored.map((m) => m.id));
+  const queued = (queue?.getSnapshot().chunks ?? []).filter(
+    (c) => !c.storeId || !storedIds.has(c.storeId),
+  );
+  const count = stored.length + queued.length;
+  if (count > 0) {
+    const seconds =
+      stored.reduce((t, m) => t + spanSec(m.startedAtUtc, m.endedAtUtc, m.updatedAt), 0) +
+      queued.reduce((t, c) => t + spanSec(c.startedAtUtc, c.endedAtUtc, 0), 0);
+    const ok = await deps.confirm({
+      title: 'Sign out with unsent audio?',
+      message: `${amountPhrase(count, seconds)} ${count === 1 ? 'has' : 'have'} not finished uploading. Signing out deletes ${count === 1 ? 'it' : 'them'} from this browser. Download ${count === 1 ? 'it' : 'them'} from the rescue banner first if you need ${count === 1 ? 'it' : 'them'}.`,
+      confirmLabel: 'Sign out and delete',
+      danger: true,
+    });
+    if (!ok) return false;
+  }
+  try {
+    await store.wipe(userId);
+  } catch {
+    /* best effort: the 30-day cleanup is the backstop */
+  }
+  queue?.discardAll();
+  return true;
+}
+
+/**
+ * The sign-out control's guard: `onSignOut(event)` holds the navigation, runs `guardSignOut`, and
+ * then follows the link. Render `confirmElement` beside the control.
+ */
+export function useChunkSignOutGuard(userId: string | null, href = '/auth/logout') {
+  const { confirm, confirmElement } = useConfirm();
+  const onSignOut = useCallback(
+    (event: { preventDefault(): void }) => {
+      event.preventDefault();
+      void guardSignOut({ userId, confirm }).then((ok) => {
+        if (ok) window.location.assign(href);
+      });
+    },
+    [userId, confirm, href],
+  );
+  return { onSignOut, confirmElement };
+}

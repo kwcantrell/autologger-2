@@ -303,19 +303,29 @@ environments" ("Dev, stage and prod compared"). No other README section is touch
 
 ## A. Web recorder: persistence, locks, retry, finalize, microphone, wake lock
 
-- [ ] A.1 Test first: `web/src/pages/index/utils/chunkStore/chunkStore.test.ts` with fakes
+- [x] A.1 Test first: `web/src/pages/index/utils/chunkStore/chunkStore.test.ts` with fakes
   `web/src/test/fakes/{opfs,idb}.ts` (open/append/finalize/read round-trips bytes; manifest
   fields including `userId`, `bytes`, `sliceLog`, `pendingFinalize` windows; per-user directories:
   `list(userId)` returns only that user's chunks, `wipe(userId)` removes only theirs; finalized
   and partial chunks listed with metadata; `remove`; backend selection OPFS → IDB → memory; quota
   short → memory with one warning; 30-day orphan cleanup; Safari copy flag). Then
   `chunkStore/{index,opfsBackend,opfsWorker,idbBackend,memoryBackend}.ts`.
-- [ ] A.2 Test first: `web/src/pages/index/utils/recorderLocks.test.ts` with
+  Evidence: `cd web && npx vitest run src/pages/index/utils/chunkStore/chunkStore.test.ts`: red
+  `Failed to resolve import "./idbBackend"`, `Tests no tests`; green `Tests 31 passed (31)` (each
+  of opfs/idb/memory round-trips, per-user list/wipe, finalize records, 30-day cleanup with one
+  warning; OPFS `UnknownError` → idb, both failing → memory with one `onDegraded`; quota short and
+  `QuotaExceededError` → chunk moves to memory with its persisted prefix; partial read cut at the
+  slice log). Backend choice is a real write probe (3 s timeout), per spike 0.3.
+- [x] A.2 Test first: `web/src/pages/index/utils/recorderLocks.test.ts` with
   `web/src/test/fakes/locks.ts` (take lock held for the take, chunk lock per attempt, `scan`
   skips held chunk and take locks with `ifAvailable`, the heartbeat-lease fallback when
   `navigator.locks` is absent: fresh lease skipped, 30 s-stale lease recovered). Then
   `recorderLocks.ts`.
-- [ ] A.3 Test first: `web/src/pages/index/utils/uploadBackoff.test.ts` (schedule 2 s → 5 min
+  Evidence: `cd web && npx vitest run src/pages/index/utils/recorderLocks.test.ts`: red `Cannot
+  find module './recorderLocks'`; green `Tests 10 passed (10)` (take lock held/released, chunk
+  lock per attempt, second tab refused, scan skips held take/chunk locks and leaves nothing held,
+  heartbeat fallback 30 s, a throwing lock manager degrades to the heartbeat rule).
+- [x] A.3 Test first: `web/src/pages/index/utils/uploadBackoff.test.ts` (schedule 2 s → 5 min
   cap, jitter bounds, reset) and `chunkUploadQueue.test.ts` additions (a scheduler tick pumps a
   due transient chunk without a rollover; `offline` suspends and does not count attempts;
   `online` pumps now; `401`/`403` → `blocked`, not auto-retried; `413` → re-sent through the
@@ -331,14 +341,31 @@ environments" ("Dev, stage and prod compared"). No other README section is touch
   deps by a provider). Then `chunkUploadQueue.ts` (store-backed chunks, `nextAttemptAt`,
   `blocked`, the parts fallback), `uploadBackoff.ts`, `workerInterval.ts` (a one-shot or tick
   helper if needed).
-- [ ] A.4 Test first: `web/src/pages/index/utils/micReacquire.test.ts` (track `ended` → persist
+  Evidence: `cd web && npx vitest run src/pages/index/utils/uploadBackoff.test.ts`: red `Cannot
+  find module './uploadBackoff'`, green `Tests 4 passed (4)`; `npx vitest run
+  src/pages/index/utils/chunkUploadQueue.test.ts`: red `Tests 32 failed | 28 passed (60)`, green
+  `Tests 60 passed (60)` (tick pumps a due chunk, 2/4/8 s, offline counts nothing and `online`
+  pumps both in order, 401/403 `blocked`, 413 → `uploadSegmentInParts` (D.3) and parts again on a
+  transient retry, `retryAll`/`retryChunk` reach blocked/permanent once, dedupe normalised like
+  `parseOptionalMarkedAt` incl. seams (local fixture until B.3's), recovery in capture order and
+  ambiguous-first, partial `ended_at_utc` from probe else slice-log rate, existing-segment answer
+  confirmed, store removal before the next attempt, finalize once after the last confirm /
+  `waiting` done / backoff retry / window dropped on discard / recovered and persisted finalize,
+  `getChunkUploadQueue()` needs no deps; the 401/403 expectation of the old classification test
+  changed to `blocked`).
+- [x] A.4 Test first: `web/src/pages/index/utils/micReacquire.test.ts` (track `ended` → persist
   the open chunk, `getUserMedia` with the previous `deviceId`, then default, retried on the
   backoff up to 60 s; success → next chunk index on the new stream, same take; failure for 60 s →
   finalize with the reason; `devicechange` with a live track → log only; a rollover boundary with
   no live track waits) and `wakeLock.test.ts` with `web/src/test/fakes/wakeLock.ts` (held while
   recording, released on stop, re-requested on `visibilitychange` to visible, absence logged
   once). Then `micReacquire.ts`, `wakeLock.ts`.
-- [ ] A.5 Test first: `AudioRecorder.chunks.test.tsx` additions (`mr.start(5000)`; each
+  Evidence: `cd web && npx vitest run src/pages/index/utils/wakeLock.test.ts
+  src/pages/index/utils/micReacquire.test.ts`: red `Cannot find module './micReacquire'` / `'./wakeLock'`;
+  green `Tests 16 passed (16)` (previous device then default, 2/4/8 s retries, gives up at 60 s
+  with the reason, dead stream not a success, cancel; `ended`/`devicechange` handling; rollover
+  waits; wake lock held/released/re-requested on visible, absence and `NotAllowedError` logged once).
+- [x] A.5 Test first: `AudioRecorder.chunks.test.tsx` additions (`mr.start(5000)`; each
   `dataavailable` appended to the store; the take lock held from start to finalize; rollover and
   heartbeat use `createWorkerInterval`; `pagehide` calls `requestData()` and the beacon; no
   waveform decode/PUT after upload; `navigator.storage.persist()` requested at start; Record
@@ -347,13 +374,26 @@ environments" ("Dev, stage and prod compared"). No other README section is touch
   wake lock is held while recording; hidden → visible shows the `HiddenTabWarning` with the
   interval and clears on the next user action). Then `AudioRecorder.tsx`,
   `HiddenTabWarning.tsx`.
-- [ ] A.6 Test first: `ChunkRescueBanner.test.tsx` additions (recovered group header with count
+  Evidence: `cd web && npx vitest run src/pages/index/components/AudioRecorder.chunks.test.tsx`
+  against HEAD's `AudioRecorder.tsx`: red `Tests 13 failed | 35 passed (48)`; with the new
+  recorder green `Tests 48 passed (48)`; `AudioRecorder.meter.test.tsx` `Tests 3 passed (3)`.
+  (The recorder was written before these cases; the red run swapped HEAD's file back in.) Spec
+  changes replaced three old cases: waveform PUT → none, unexpected stop / dead stream at a
+  rollover → re-acquire. Record refusal is phase `scanning` (toggle returns false with a toast);
+  the button's visual disabled state lives in files A does not own.
+- [x] A.6 Test first: `ChunkRescueBanner.test.tsx` additions (recovered group header with count
   and minutes, Safari 7-day note when applicable; Upload all; `blocked` row text names sign-in;
   Retry on a `permanent` row attempts once; partial chunk labelled; Discard confirms with the
   amount) and the sign-out hook test (unsent chunks → a confirm naming them; confirmed → the
   user's storage wiped; none → silent). Then `ChunkRescueBanner.tsx`, `chunkLeaveWarning.ts`
   (unchanged semantics: armed while the queue is non-empty; recovered chunks count), the sign-out
   call site.
+  Evidence: `cd web && npx vitest run src/pages/index/components/ChunkRescueBanner.test.tsx
+  src/pages/index/utils/chunkLeaveWarning.test.tsx`: red `Tests 11 failed | 18 passed (29)`
+  (`guardSignOut is not a function`, recovered-group cases); green `Tests 29 passed (29)`;
+  `AccountSection.test.tsx` `Tests 8 passed (8)`. No `useAuth*` hook exists and `api/` may not
+  import `pages/`, so the guard is `useChunkSignOutGuard` in `chunkLeaveWarning.ts`, called once
+  from `settings/AccountSection.tsx`'s sign-out link.
 - [ ] A.7 Suites: `cd web && npx vitest run`, `npm run typecheck -w web`, `npm run lint -w web`;
   manual checklist in dev on Chromium and Firefox (and Safari if available): kill the tab at
   2.5 cadences → reload → recovered chunks upload → finalize → one merged segment appears with
