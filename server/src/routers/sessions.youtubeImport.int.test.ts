@@ -557,7 +557,9 @@ describe('sibling stubs stay frozen even with yt-dlp configured', () => {
       testEnv,
     );
     expect(topics.status).toBe(503);
-    expect(await topics.json()).toEqual({ detail: TRANSCRIPTION_UNAVAILABLE_DETAIL });
+    expect(await topics.json()).toEqual({
+      detail: 'Add a language model in Settings → Advanced to generate topics.',
+    });
 
     const csv = await app.request(
       `/api/sessions/${session}/transcribe.csv`,

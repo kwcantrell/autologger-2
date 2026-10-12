@@ -30,8 +30,9 @@ import {
 import { Hono } from 'hono';
 import type { AppEnv } from '../appEnv';
 import { resolveSttCredential } from '../auth/providerResolve';
-import { aiChatConfigured, topicGenerateMaxBudgetUsd, topicGenerateTimeoutSec } from '../env';
+import { generateSdkLimits, topicGenerateMaxBudgetUsd, topicGenerateTimeoutSec } from '../env';
 import { ApiError } from '../httpError';
+import { callerLlmRoute, sdkTurnSpec } from './_aiRoute';
 import { claimAiLease } from './_aiSlot';
 import {
   canAccessSession,
@@ -254,6 +255,9 @@ transcribeRouter.get('/api/sessions/:sessionId/topics', async (c) => {
 // `ai.ts`'s per-endpoint slot lifecycle (409 wording is generate-specific).
 
 const NO_TRANSCRIPT_DETAIL = 'This session has no transcript words to generate topics from.';
+// ai-sdk-agent-harness D1: the caller has no usable language model route.
+const TOPIC_GENERATE_NOT_CONFIGURED_DETAIL =
+  'Add a language model in Settings → Advanced to generate topics.';
 // Names EVERY possible slot holder (the registry is shared with AI chat,
 // AI v2, and event generation; wording change authorized by the
 // auto-event-generation delta).
@@ -268,10 +272,11 @@ transcribeRouter.post('/api/sessions/:sessionId/topics/generate', async (c) => {
   const sessionId = c.req.param('sessionId');
   await requireSession(c, sessionId);
 
-  // Configuration gate — 503, before any spawn, byte-identical unconfigured
-  // detail to the pre-change stub (task 1.1).
-  if (!aiChatConfigured(c.env.config)) {
-    throw new ApiError(503, UNAVAILABLE);
+  // Configuration gate — 503, before any spawn or model request: the caller's route
+  // (ai-sdk-agent-harness D1), the Claude CLI or the AI SDK on the caller's own credential.
+  const route = await callerLlmRoute(c);
+  if (route === null) {
+    throw new ApiError(503, TOPIC_GENERATE_NOT_CONFIGURED_DETAIL);
   }
   // Approved users only (run-status-and-sweeper D9) — 403, before any slot, lease or spawn.
   requireRunFeature(c);
@@ -300,15 +305,26 @@ transcribeRouter.post('/api/sessions/:sessionId/topics/generate', async (c) => {
       (await (await getSessionHub(c, sessionId)).listTopics()).map((t) => t.id),
     );
 
-    const outcome = await generateTopicsTurn({
+    const common = {
       clock: c.env.ports.clock,
       registry: c.env.ports.sessions,
       caller: sessionCaller(c),
-      cliPath: c.env.config.CLAUDE_CLI_PATH.trim(),
       sessionId,
-      maxBudgetUsd: topicGenerateMaxBudgetUsd(c.env.config),
       timeoutMs: topicGenerateTimeoutSec(c.env.config) * 1000,
-    });
+    };
+    const outcome = await generateTopicsTurn(
+      route.kind === 'cli'
+        ? {
+            ...common,
+            cliPath: c.env.config.CLAUDE_CLI_PATH.trim(),
+            maxBudgetUsd: topicGenerateMaxBudgetUsd(c.env.config),
+          }
+        : { ...common, sdk: sdkTurnSpec(c, route, 'topics', generateSdkLimits(c.env.config)) },
+    );
+    // An AI SDK run's tool bodies may still be running after a timeout: wait for them before
+    // reading the run's topics, so none lands after the cleanup below (D3 "Draining tool
+    // bodies"). The lease keeps renewing meanwhile.
+    await outcome.toolsDrained?.();
 
     // Re-acquire the hub after the async, potentially multi-minute turn
     // above — the idle sweeper may have closed the prior handle in the

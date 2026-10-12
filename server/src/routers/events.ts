@@ -46,14 +46,15 @@ import type { Context } from 'hono';
 import { Hono } from 'hono';
 import type { AppEnv } from '../appEnv';
 import {
-  aiChatConfigured,
   eventGenerateMaxBudgetUsd,
   eventGenerateMaxCreatedEvents,
   eventGenerateMaxInstructionBytes,
   eventGenerateMaxInstructionEntries,
   eventGenerateTimeoutSec,
+  generateSdkLimits,
 } from '../env';
 import { ApiError } from '../httpError';
+import { callerLlmRoute, sdkTurnSpec } from './_aiRoute';
 import { claimAiLease } from './_aiSlot';
 import {
   expectedVersion,
@@ -271,8 +272,9 @@ eventsRouter.post('/api/sessions/:sessionId/events', async (c) => {
 // HERE and released in this handler's own `finally` (router-owned slot
 // lifecycle, the transcribe.ts pattern).
 
+// ai-sdk-agent-harness D1: the caller has no usable language model route.
 const EVENT_GENERATE_NOT_CONFIGURED_DETAIL =
-  'Event generation is not configured on this deployment. Set CLAUDE_CLI_PATH to the claude CLI to enable it.';
+  'Add a language model in Settings → Advanced to generate events.';
 const EVENT_GENERATE_NO_TRANSCRIPT_DETAIL =
   'This session has no transcript words to generate events from. Generate or import a transcript first.';
 const EVENT_GENERATE_NO_ANCHORS_DETAIL =
@@ -460,9 +462,11 @@ eventsRouter.post('/api/sessions/:sessionId/events/generate', async (c) => {
   }
   const body = parsedBody.data;
 
-  // 2. Configuration gate — 503, before any spawn (a run spends the
-  // operator's Anthropic budget and writes into the session).
-  if (!aiChatConfigured(c.env.config)) {
+  // 2. Configuration gate — 503, before any spawn or model request (a run spends the caller's
+  // provider budget, or the operator's CLI subscription, and writes into the session): the
+  // caller's route (ai-sdk-agent-harness D1).
+  const route = await callerLlmRoute(c);
+  if (route === null) {
     throw new ApiError(503, EVENT_GENERATE_NOT_CONFIGURED_DETAIL);
   }
   // 2b. Approved users only (run-status-and-sweeper D9) — 403; the body 400 above keeps its place.
@@ -583,23 +587,33 @@ eventsRouter.post('/api/sessions/:sessionId/events/generate', async (c) => {
       ),
     });
 
-    const outcome = await driveAiTurn({
+    const common = {
       clock: c.env.ports.clock,
       registry: c.env.ports.sessions,
       caller: sessionCaller(c),
-      cliPath: c.env.config.CLAUDE_CLI_PATH.trim(),
       sessionId,
       message,
       systemPrompt: EVENT_GENERATE_SYSTEM_PROMPT,
-      allowedTools: EVENT_GENERATE_ALLOWED_TOOLS,
       mcpContext: { tools: EVENT_GENERATE_ALLOWED_TOOLS, generation },
-      maxBudgetUsd: eventGenerateMaxBudgetUsd(c.env.config),
       timeoutMs: eventGenerateTimeoutSec(c.env.config) * 1000,
       emit: () => {},
       // NO abortSignal — spec: a run always completes server-side regardless
       // of the initiating client's connection (the topics/generate D2
       // precedent); events land via event.changed broadcasts either way.
-    });
+    };
+    const outcome = await driveAiTurn(
+      route.kind === 'cli'
+        ? {
+            ...common,
+            cliPath: c.env.config.CLAUDE_CLI_PATH.trim(),
+            allowedTools: EVENT_GENERATE_ALLOWED_TOOLS,
+            maxBudgetUsd: eventGenerateMaxBudgetUsd(c.env.config),
+          }
+        : { ...common, sdk: sdkTurnSpec(c, route, 'events', generateSdkLimits(c.env.config)) },
+    );
+    // An AI SDK run's tool bodies may still be running after a timeout: wait for them before the
+    // regenerate delete or the slot release (D3 "Draining tool bodies"). The lease keeps renewing.
+    await outcome.toolsDrained?.();
 
     if (outcome.ok) {
       // event-generate-hardening D2 (gate ruling E1) — delete-after-success:

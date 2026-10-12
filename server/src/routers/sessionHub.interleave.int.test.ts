@@ -36,6 +36,7 @@ import {
   seedShow,
   setCompanionPresence,
 } from '../test/helpers';
+import { CLI_TEST_EMAILS, chooseClaudeCliForAll } from '../test/llmRoutes';
 import { harnessHub } from '../test/session/sessionRows';
 
 const EVENTS_SUCCESS_FIXTURE = fileURLToPath(
@@ -81,7 +82,12 @@ beforeAll(async () => {
   const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
   // The generate route needs the CLI configured on a loopback host; the other routes ignore both.
   wireApp(app, upgradeWebSocket, {
-    bindings: envWith({ CLAUDE_CLI_PATH: EVENTS_SUCCESS_FIXTURE, HOST: '127.0.0.1' }),
+    bindings: envWith({
+      CLAUDE_CLI_PATH: EVENTS_SUCCESS_FIXTURE,
+      // ai-sdk-agent-harness D9 category 1: the caller is listed and chose the Claude CLI.
+      CLAUDE_CLI_EMAILS: CLI_TEST_EMAILS,
+      HOST: '127.0.0.1',
+    }),
   });
   port = await new Promise<number>((resolve) => {
     server = serve({ fetch: app.fetch, port: 0, hostname: '127.0.0.1' }, (info: AddressInfo) =>
@@ -153,6 +159,7 @@ describe('session hub under a mixed concurrent load (design D10)', () => {
     const { sessionId } = await seededSession({ categoriesJson: CATEGORIES_JSON });
     seededIds.push(sessionId);
     const { cookie } = await defaultUser();
+    await chooseClaudeCliForAll();
     const base = `/api/sessions/${sessionId}`;
 
     // Seed: an anchored transcript and a manual slate event (the generate run's anchor), then 80

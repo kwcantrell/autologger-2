@@ -38,6 +38,8 @@ import {
   runLeaseRows,
   runLeaseStartedAtMs,
 } from '../test/runLeases';
+import { answer, callTools, type FakeLlm, type FakeScript, startFakeLlm } from '../test/fakeLlm';
+import { CLI_TEST_EMAILS, chooseClaudeCliForAll, saveSdkCredential } from '../test/llmRoutes';
 import { busProcess, closeBusProcesses } from '../test/session/busProcesses';
 import { harnessHub } from '../test/session/sessionRows';
 
@@ -86,7 +88,7 @@ describe('unavailable endpoints (503)', () => {
     );
     expect(res.status).toBe(503);
     expect(await res.json()).toEqual({
-      detail: 'Transcription is unavailable on this deployment.',
+      detail: 'Add a language model in Settings → Advanced to generate topics.',
     });
   });
 
@@ -171,6 +173,9 @@ describe('topics/generate — configured behavior (topic-generation)', () => {
     return envWith(
       {
         CLAUDE_CLI_PATH: cliPath,
+        // ai-sdk-agent-harness D9 category 1: the callers are listed, and `generateReq` saves
+        // their `claude-cli` choice.
+        CLAUDE_CLI_EMAILS: CLI_TEST_EMAILS,
         HOST: '127.0.0.1',
         ...overrides,
       },
@@ -178,7 +183,8 @@ describe('topics/generate — configured behavior (topic-generation)', () => {
     );
   }
 
-  function generateReq(sessionId: string, envOverride: ReturnType<typeof envWith>) {
+  async function generateReq(sessionId: string, envOverride: ReturnType<typeof envWith>) {
+    await chooseClaudeCliForAll();
     return app.request(
       `/api/sessions/${sessionId}/topics/generate`,
       { method: 'POST' },
@@ -249,7 +255,7 @@ describe('topics/generate — configured behavior (topic-generation)', () => {
     const res = await generateReq(s, envWith({ CLAUDE_CLI_PATH: '' }));
     expect(res.status).toBe(503);
     expect(await res.json()).toEqual({
-      detail: 'Transcription is unavailable on this deployment.',
+      detail: 'Add a language model in Settings → Advanced to generate topics.',
     });
     expect(neverSpawned(s)).toBe(true);
   });
@@ -630,12 +636,15 @@ describe('topics/generate — page-coverage gate on the crash-safe swap', () => 
     return { sessionId, priorIds };
   }
 
-  const generateReq = async (sessionId: string): Promise<Response> =>
-    app.request(
+  const generateReq = async (sessionId: string): Promise<Response> => {
+    // ai-sdk-agent-harness D9 category 1: the caller is listed and chose the Claude CLI.
+    await chooseClaudeCliForAll();
+    return app.request(
       `/api/sessions/${sessionId}/topics/generate`,
       { method: 'POST' },
-      envWith({ CLAUDE_CLI_PATH: CLI, HOST: '127.0.0.1' }),
+      envWith({ CLAUDE_CLI_PATH: CLI, CLAUDE_CLI_EMAILS: CLI_TEST_EMAILS, HOST: '127.0.0.1' }),
     );
+  };
 
   // Every strict subset of the snapshot's pages, including the two the gate
   // exists for: the page-0-only prefix read (the motivating hazard) and the
@@ -1726,7 +1735,9 @@ describe('topics/generate and transcript-words/generate — approved users only 
 
   const neverSpawned = (s: string) => !existsSync(join(stableSessionCwd(s), '.fixture-argv.json'));
 
-  function topics(s: string, cookie: string, e: Bindings) {
+  async function topics(s: string, cookie: string, e: Bindings) {
+    // ai-sdk-agent-harness D9 category 1: the caller chose the Claude CLI.
+    await chooseClaudeCliForAll();
     return app.request(
       `/api/sessions/${s}/topics/generate`,
       { method: 'POST', headers: { cookie } },
@@ -1758,7 +1769,7 @@ describe('topics/generate and transcript-words/generate — approved users only 
       const res = await topics(
         s,
         cookie,
-        envWith({ CLAUDE_CLI_PATH: TOPICS_CLI, HOST: '127.0.0.1' }),
+        envWith({ CLAUDE_CLI_PATH: TOPICS_CLI, CLAUDE_CLI_EMAILS: CLI_TEST_EMAILS, HOST: '127.0.0.1' }),
       );
       expect(res.status).toBe(403);
       expect(await res.json()).toEqual(FORBIDDEN);
@@ -1776,7 +1787,7 @@ describe('topics/generate and transcript-words/generate — approved users only 
     const res = await topics(s, cookie, envWith({ CLAUDE_CLI_PATH: '' }));
     expect(res.status).toBe(503);
     expect(await res.json()).toEqual({
-      detail: 'Transcription is unavailable on this deployment.',
+      detail: 'Add a language model in Settings → Advanced to generate topics.',
     });
   });
 
@@ -1787,6 +1798,7 @@ describe('topics/generate and transcript-words/generate — approved users only 
       cookie,
       envWith({
         CLAUDE_CLI_PATH: TOPICS_CLI,
+        CLAUDE_CLI_EMAILS: CLI_TEST_EMAILS,
         HOST: '127.0.0.1',
         RUN_FEATURE_EMAILS: 'approved.member@example.com',
       }),
@@ -1979,5 +1991,152 @@ describe("transcript generation on the caller's own speech-to-text key (byo-ai-p
     expect(configured.status).toBe(403);
     expect(await configured.json()).toEqual(FORBIDDEN);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+// ── ai-sdk-agent-harness task 7.2: topics/generate on the caller's route (D1, D3) ──────────────
+describe('topics/generate on the AI SDK route (ai-sdk-agent-harness task 7.2)', () => {
+  const ADD_LLM = 'Add a language model in Settings → Advanced to generate topics.';
+  const FAILURE = { detail: 'Topic generation failed.' };
+  const fakes: FakeLlm[] = [];
+  const cwds: string[] = [];
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    aiChatTurns.reset();
+    await __resetAiMcpListenerForTests();
+    await Promise.all(fakes.splice(0).map((f) => f.close()));
+    for (const id of cwds.splice(0)) rmSync(stableSessionCwd(id), { recursive: true, force: true });
+  });
+  async function fakeProvider(script: FakeScript): Promise<FakeLlm> {
+    const f = await startFakeLlm(script);
+    fakes.push(f);
+    return f;
+  }
+  /** CLAUDE_CLI_PATH set and the caller listed: only the saved credential decides the route. */
+  const sdkEnv = (o: Record<string, unknown> = {}) =>
+    envWith({
+      CLAUDE_CLI_PATH: join(AI_RUNTIME_FIXTURES_DIR, 'fake-claude.mjs'),
+      CLAUDE_CLI_EMAILS: CLI_TEST_EMAILS,
+      HOST: '127.0.0.1',
+      ...o,
+    });
+  const req = (s: string, e: Bindings = sdkEnv()) =>
+    app.request(`/api/sessions/${s}/topics/generate`, { method: 'POST' }, e);
+
+  async function seeded(): Promise<{ s: string; prior: Array<{ id: string; summary: string }> }> {
+    const s = (await seededSession()).sessionId;
+    cwds.push(s);
+    const hub = await harnessHub(s);
+    await hub.insertTranscriptWord({ session_time: '00:00:01', speaker: 'Host', word: 'hello' });
+    for (const summary of ['Old topic A', 'Old topic B']) {
+      await hub.insertTopic({ session_time: '00:00:00', duration_sec: 10, topic_level: 1, summary });
+    }
+    return { s, prior: await hub.listTopics() };
+  }
+  const topicsOf = async (s: string) => (await harnessHub(s)).listTopics();
+  const create = (summary: string) => ({
+    name: 'create_topic',
+    args: { session_time: '00:00:01', duration_sec: 5, topic_level: 1, summary },
+  });
+  /** Read page 0, create two topics, then answer: the success path. */
+  const success: FakeScript = (n) =>
+    n === 1
+      ? callTools(1, [{ name: 'get_transcript_words', args: { page: 0 } }])
+      : n === 2
+        ? callTools(2, [create('Fresh SDK topic 0'), create('Fresh SDK topic 1')])
+        : answer('done');
+
+  it('with no route, the new 503 and no model request', async () => {
+    const llm = await fakeProvider(success);
+    const { s, prior } = await seeded();
+    const res = await req(s);
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ detail: ADD_LLM });
+    expect(llm.requests).toHaveLength(0);
+    expect(await topicsOf(s)).toEqual(prior);
+  });
+
+  it('the fake model creates topics through the tools, and the replace-all matches the CLI path', async () => {
+    const llm = await fakeProvider(success);
+    const { s, prior } = await seeded();
+    await saveSdkCredential(llm.baseURL);
+    const res = await req(s);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { topics: Array<{ id: string; summary: string }> };
+    expect(body.topics.map((t) => t.summary)).toEqual(['Fresh SDK topic 0', 'Fresh SDK topic 1']);
+    for (const p of prior) expect(body.topics.map((t) => t.id)).not.toContain(p.id);
+    expect(await topicsOf(s)).toEqual(body.topics);
+    // The generation tool set: no list_topics.
+    const tools = ((llm.requests[0]?.tools ?? []) as Array<{ function: { name: string } }>).map(
+      (t) => t.function.name,
+    );
+    expect(tools.sort()).toEqual(['create_topic', 'get_transcript_words']);
+    expect(aiChatTurns.isSessionInFlight(s)).toBe(false);
+  });
+
+  it('a provider error maps to the existing 502, with prior topics unchanged', async () => {
+    const llm = await fakeProvider(() => ({ status: 401, body: '{"error":"no"}' }));
+    const { s, prior } = await seeded();
+    await saveSdkCredential(llm.baseURL);
+    const res = await req(s);
+    expect(res.status).toBe(502);
+    expect(await res.json()).toEqual(FAILURE);
+    expect(await topicsOf(s)).toEqual(prior);
+  });
+
+  it('a run stopped by the step cap maps to the 502, prior topics unchanged and its new topics removed; GENERATE_MAX_STEPS applies', async () => {
+    // Reads the page, creates a topic, then keeps calling tools until the cap.
+    const llm = await fakeProvider((n) =>
+      n === 2 ? callTools(2, [create('Capped topic')]) : callTools(n, [{ name: 'get_transcript_words' }]),
+    );
+    const { s, prior } = await seeded();
+    await saveSdkCredential(llm.baseURL);
+    const res = await req(s, sdkEnv({ GENERATE_MAX_STEPS: '3' }));
+    expect(res.status).toBe(502);
+    expect(await res.json()).toEqual(FAILURE);
+    expect(llm.requests).toHaveLength(3);
+    expect(await topicsOf(s)).toEqual(prior);
+  });
+
+  it('a run stopped by the token budget maps to the 502, prior topics unchanged; GENERATE_MAX_TOKENS applies', async () => {
+    // 15 tokens a step (the fake's usage); a budget of 40 stops after the third step.
+    const llm = await fakeProvider((n) =>
+      n === 2 ? callTools(2, [create('Budget topic')]) : callTools(n, [{ name: 'get_transcript_words' }]),
+    );
+    const { s, prior } = await seeded();
+    await saveSdkCredential(llm.baseURL);
+    const res = await req(s, sdkEnv({ GENERATE_MAX_TOKENS: '40' }));
+    expect(res.status).toBe(502);
+    expect(llm.requests).toHaveLength(3);
+    expect(await topicsOf(s)).toEqual(prior);
+  });
+
+  it('a slow tool body still running at the route timeout finishes before the route removes the run’s new topics and frees the slot and lease', { timeout: 30_000 }, async () => {
+    const realInsert = SessionHubView.prototype.insertTopic;
+    let bodyDone = false;
+    vi.spyOn(SessionHubView.prototype, 'insertTopic').mockImplementation(async function (
+      this: SessionHubView,
+      ...a: Parameters<SessionHubView['insertTopic']>
+    ) {
+      await new Promise((r) => setTimeout(r, 1500));
+      const row = await realInsert.apply(this, a);
+      bodyDone = true;
+      return row;
+    });
+    const llm = await fakeProvider((n) =>
+      n === 1 ? callTools(1, [create('Late topic')]) : answer('done'),
+    );
+    const { s, prior } = await seeded();
+    await saveSdkCredential(llm.baseURL);
+    const started = Date.now();
+    const res = await req(s, sdkEnv({ TOPIC_GENERATE_TIMEOUT_SEC: '0.5' }));
+    expect(res.status).toBe(502);
+    expect(bodyDone).toBe(true);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(1400);
+    expect(aiChatTurns.isSessionInFlight(s)).toBe(false);
+    vi.restoreAllMocks();
+    await new Promise((r) => setTimeout(r, 500));
+    // No stray topic after the cleanup.
+    expect(await topicsOf(s)).toEqual(prior);
   });
 });
