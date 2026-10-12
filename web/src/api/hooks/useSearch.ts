@@ -19,20 +19,31 @@ export interface SearchParams {
   q: string;
   studioId?: string;
   showId?: string;
+  /** One session's moments only (D11 "Show more in this session"); the other groups come back
+   * empty. */
+  sessionId?: string;
   limit?: number;
 }
 
 export const searchKeys = {
   all: () => ['search'] as const,
-  query: ({ q, studioId, showId, limit }: SearchParams) =>
-    ['search', q.trim(), studioId || null, showId || null, limit ?? null] as const,
+  query: ({ q, studioId, showId, sessionId, limit }: SearchParams) =>
+    [
+      'search',
+      q.trim(),
+      studioId || null,
+      showId || null,
+      limit ?? null,
+      sessionId || null,
+    ] as const,
 };
 
 /** The `search?…` path for these parameters (trimmed `q`, empty filters left out). */
-export function searchPath({ q, studioId, showId, limit }: SearchParams): string {
+export function searchPath({ q, studioId, showId, sessionId, limit }: SearchParams): string {
   const params = new URLSearchParams({ q: q.trim() });
   if (studioId) params.set('studio_id', studioId);
   if (showId) params.set('show_id', showId);
+  if (sessionId) params.set('session_id', sessionId);
   if (limit != null) params.set('limit', String(limit));
   return `search?${params.toString()}`;
 }

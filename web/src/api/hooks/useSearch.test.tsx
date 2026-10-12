@@ -121,3 +121,30 @@ describe('useSearch', () => {
     expect(signals[0].aborted).toBe(true);
   });
 });
+
+// catalog-search task 7.3 (design D11.3): "Show more in this session" asks for one session's
+// moments through the same hook and factory.
+describe('useSearch: one session (D11)', () => {
+  it('the key separates sessions, and no session differs from one', () => {
+    const base = { q: 'divorce', studioId: '', showId: '', limit: 25 };
+    const a = searchKeys.query({ ...base, sessionId: 'sess-a' });
+    expect(a[0]).toBe('search');
+    expect(a).not.toEqual(searchKeys.query({ ...base, sessionId: 'sess-b' }));
+    expect(a).not.toEqual(searchKeys.query(base));
+  });
+
+  it('sends session_id with the filters it is given, leaving empty ones out', async () => {
+    mockedApiFetch.mockResolvedValue(EMPTY);
+    const { result } = renderHook(
+      () =>
+        useSearch({ q: 'divorce', studioId: 'st-1', showId: '', sessionId: 'sess a', limit: 25 }),
+      { wrapper: wrapperFor(makeClient()) },
+    );
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    const path = String(mockedApiFetch.mock.calls[0][0]);
+    const params = new URLSearchParams(path.split('?')[1]);
+    expect([...params.keys()].sort()).toEqual(['limit', 'q', 'session_id', 'studio_id']);
+    expect(params.get('session_id')).toBe('sess a');
+    expect(params.get('limit')).toBe('25');
+  });
+});

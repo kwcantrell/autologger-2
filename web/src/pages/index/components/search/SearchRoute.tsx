@@ -3,7 +3,7 @@ import { type ReactNode, useEffect, useId, useMemo, useState } from 'react';
 import { useSearch as useLocationSearch } from 'wouter';
 import { useProfile } from '../../../../api/hooks/useProfile';
 import { isSearchableQuery, useSearch } from '../../../../api/hooks/useSearch';
-import type { SearchResponse } from '../../../../api/types';
+import type { SearchMoment, SearchResponse } from '../../../../api/types';
 import { Button } from '../../../../shared/components/ui/button';
 import { Input } from '../../../../shared/components/ui/input';
 import { Spinner } from '../../../../shared/components/ui/spinner';
@@ -12,7 +12,7 @@ import { navigate } from '../../navigation';
 import { Select, type SelectOption } from '../Select';
 import { SEARCH_DEBOUNCE_MS } from './SearchPalette';
 import { SearchSnippet } from './SearchSnippet';
-import { MOMENT_KIND_LABEL, useSearchChoose } from './searchLinks';
+import { momentLabel, sessionHref, useSearchChoose } from './searchLinks';
 
 // --- The `/search` results page (catalog-search D9; catalog-search "Command palette and results
 // page"; web-session-routing "Search route is a first-class app route") ---
@@ -21,8 +21,15 @@ import { MOMENT_KIND_LABEL, useSearchChoose } from './searchLinks';
 // the entry (Back leaves the page rather than stepping through keystrokes). Each group shows up
 // to 25 results. Empty filters are left out of the request (the server reads `studio_id=` as an
 // id). Choosing a result routes exactly as the palette does (`useSearchChoose`).
+//
+// Moments are grouped under their session (D11.3): the search's own (at most 3 per session)
+// first, then "Show N more in this session", N = min(total, 25) − shown, which asks for that
+// session's moments (`session_id`, limit 25, the same filters) and lists them in place. Past 25 the
+// group says how many there are and links to the session. A new search collapses every group.
 
 const PAGE_LIMIT = 25;
+/** What one "Show more" can list for a session (the API's largest `limit`). */
+const SESSION_LIMIT = 25;
 // Radix Select has no empty value; this stands for "no filter" and never reaches the URL.
 const ALL = '__all__';
 
@@ -55,6 +62,19 @@ function isEmpty(r: SearchResponse): boolean {
 const RESULT_BUTTON =
   'flex w-full min-w-0 flex-col items-start gap-1 rounded-ctl px-3 py-2.5 text-left outline-none transition-colors hover:bg-si-panel-2 focus-visible:ring-[3px] focus-visible:ring-ring/50';
 
+/** The "Moments" region: its own session sub-groups hold the lists. */
+function MomentsGroup({ children }: { children: ReactNode }) {
+  const id = useId();
+  return (
+    <section aria-labelledby={id} className="flex flex-col gap-1">
+      <h2 id={id} className="m-0 px-3 text-xs font-semibold tracking-wide text-si-dim uppercase">
+        Moments
+      </h2>
+      {children}
+    </section>
+  );
+}
+
 function ResultGroup({ title, children }: { title: string; children: ReactNode }) {
   const id = useId();
   return (
@@ -64,6 +84,176 @@ function ResultGroup({ title, children }: { title: string; children: ReactNode }
       </h2>
       <ul className="m-0 flex list-none flex-col p-0">{children}</ul>
     </section>
+  );
+}
+
+type Choose = ReturnType<typeof useSearchChoose>;
+
+interface SearchFilters {
+  q: string;
+  studioId: string;
+  showId: string;
+}
+
+function MomentItem({ m, choose }: { m: SearchMoment; choose: Choose }) {
+  return (
+    <li>
+      <button type="button" className={RESULT_BUTTON} onClick={() => choose.chooseMoment(m)}>
+        <span data-slot="moment-label" className="text-xs font-medium tracking-wide text-si-dim">
+          {momentLabel(m)}
+        </span>
+        <SearchSnippet text={m.snippet} className="text-sm" />
+      </button>
+    </li>
+  );
+}
+
+function MomentList({ moments, choose }: { moments: SearchMoment[]; choose: Choose }) {
+  return (
+    <ul className="m-0 flex list-none flex-col p-0">
+      {moments.map((m) => (
+        <MomentItem key={`${m.kind}:${m.session_id}:${m.id}`} m={m} choose={choose} />
+      ))}
+    </ul>
+  );
+}
+
+function SessionGroup({ title, children }: { title: string; children: ReactNode }) {
+  const id = useId();
+  return (
+    <section aria-labelledby={id} className="flex flex-col gap-0.5">
+      <h3 id={id} className="m-0 truncate px-3 pt-1 text-sm font-medium text-si-fg">
+        {title.trim() || 'Untitled session'}
+      </h3>
+      {children}
+    </section>
+  );
+}
+
+/** One session's moments after "Show more": up to 25 from a `session_id` search, the first ones
+ * kept while it loads or if it fails. */
+function ExpandedSession({
+  sessionId,
+  initial,
+  total,
+  filters,
+  choose,
+}: {
+  sessionId: string;
+  initial: SearchMoment[];
+  total: number;
+  filters: SearchFilters;
+  choose: Choose;
+}) {
+  const { data, isError, error, refetch } = useSearch({
+    ...filters,
+    sessionId,
+    limit: SESSION_LIMIT,
+  });
+  const moments = data?.moments ?? initial;
+  const sessionTotal =
+    data?.moment_sessions.find((t) => t.session_id === sessionId)?.total ?? total;
+  const href = sessionHref(sessionId);
+  return (
+    <>
+      <MomentList moments={moments} choose={choose} />
+      {isError ? (
+        <div role="alert" className="flex items-center gap-2 px-3 text-xs text-si-fg">
+          <span>{error?.message || 'Search failed.'}</span>
+          <Button variant="link" size="xs" onClick={() => void refetch()}>
+            Try again
+          </Button>
+        </div>
+      ) : !data ? (
+        <div role="status" className="flex items-center gap-2 px-3 text-xs text-si-muted">
+          <Spinner role="presentation" aria-hidden="true" className="size-3" /> Loading this
+          session’s matches…
+        </div>
+      ) : (
+        sessionTotal > moments.length && (
+          <p className="m-0 flex flex-wrap items-center gap-x-2 px-3 text-xs text-si-dim">
+            <span>
+              Showing {moments.length} of {sessionTotal} matches in this session
+            </span>
+            <Button asChild variant="link" size="xs" className="px-0">
+              <a
+                href={href}
+                onClick={(e) => {
+                  if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+                  e.preventDefault();
+                  navigate(href);
+                }}
+              >
+                Open session
+              </a>
+            </Button>
+          </p>
+        )
+      )}
+    </>
+  );
+}
+
+/** The moments group: one sub-group per session, in the order the search ranked them. */
+function MomentsBySession({
+  results,
+  filters,
+  choose,
+}: {
+  results: SearchResponse;
+  filters: SearchFilters;
+  choose: Choose;
+}) {
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
+  const groups = useMemo(() => {
+    const bySession = new Map<string, SearchMoment[]>();
+    for (const m of results.moments) {
+      const list = bySession.get(m.session_id);
+      if (list) list.push(m);
+      else bySession.set(m.session_id, [m]);
+    }
+    const totals = new Map(results.moment_sessions.map((t) => [t.session_id, t.total]));
+    return [...bySession].map(([sessionId, moments]) => ({
+      sessionId,
+      moments,
+      title: moments[0]?.session_title ?? '',
+      total: Math.max(totals.get(sessionId) ?? 0, moments.length),
+    }));
+  }, [results]);
+
+  return (
+    <div className="flex flex-col gap-3">
+      {groups.map(({ sessionId, moments, title, total }) => {
+        const more = Math.min(total, SESSION_LIMIT) - moments.length;
+        return (
+          <SessionGroup key={sessionId} title={title}>
+            {expanded.has(sessionId) ? (
+              <ExpandedSession
+                sessionId={sessionId}
+                initial={moments}
+                total={total}
+                filters={filters}
+                choose={choose}
+              />
+            ) : (
+              <>
+                <MomentList moments={moments} choose={choose} />
+                {more > 0 && (
+                  <Button
+                    variant="link"
+                    size="xs"
+                    className="self-start px-3"
+                    onClick={() => setExpanded((s) => new Set(s).add(sessionId))}
+                  >
+                    Show {more} more in this session
+                  </Button>
+                )}
+              </>
+            )}
+          </SessionGroup>
+        );
+      })}
+    </div>
   );
 }
 
@@ -219,26 +409,14 @@ export function SearchRoute({ onCloseSession, confirmSwitch }: Props) {
           </ResultGroup>
         )}
         {results.moments.length > 0 && (
-          <ResultGroup title="Moments">
-            {results.moments.map((m) => (
-              <li key={`${m.kind}:${m.session_id}:${m.id}`}>
-                <button
-                  type="button"
-                  className={RESULT_BUTTON}
-                  onClick={() => choose.chooseMoment(m)}
-                >
-                  <span className="flex w-full min-w-0 items-baseline gap-2 text-xs text-si-dim">
-                    <span className="shrink-0 font-medium tracking-wide uppercase">
-                      {MOMENT_KIND_LABEL[m.kind]}
-                    </span>
-                    <span className="truncate">{m.session_title.trim() || 'Untitled session'}</span>
-                    {m.speaker && <span className="shrink-0">· {m.speaker}</span>}
-                  </span>
-                  <SearchSnippet text={m.snippet} className="text-sm" />
-                </button>
-              </li>
-            ))}
-          </ResultGroup>
+          <MomentsGroup>
+            <MomentsBySession
+              key={`${debouncedQ}\n${state.studioId}\n${state.showId}`}
+              results={results}
+              filters={{ q: debouncedQ, studioId: state.studioId, showId: state.showId }}
+              choose={choose}
+            />
+          </MomentsGroup>
         )}
       </div>
     );

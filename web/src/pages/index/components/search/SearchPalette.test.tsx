@@ -350,3 +350,64 @@ describe('SearchPalette: choosing a result', () => {
     expect(memory.history?.at(-1)).toBe(`/search?q=${encodeURIComponent('café budget')}`);
   });
 });
+
+// catalog-search task 7.3 (design D11.3, D11.4; spec "A transcript moment's label"): the palette
+// labels moments as the page does and keeps a flat list, whatever the per-session totals.
+describe('SearchPalette: moment labels and the flat list (D11)', () => {
+  const momentsGroup = () => screen.getByRole('group', { name: 'Moments' });
+
+  it('a transcript moment reads "<speaker> · h:mm:ss"; topics and events their kind', async () => {
+    renderPalette();
+    await openAndType('budget');
+    const [transcript, topic, event] = within(momentsGroup()).getAllByRole('option');
+    expect(transcript.textContent).toContain('Ana · 0:12:34');
+    expect(transcript.textContent).toContain('Town hall');
+    expect(transcript.textContent).not.toMatch(/transcript/i);
+    expect(topic.textContent).toMatch(/^Topic/);
+    expect(event.textContent).toMatch(/^Event/);
+  });
+
+  it('a bare-number speaker reads "Speaker n"; an empty speaker or a null sec is left out', async () => {
+    const [ana] = RESULTS.moments;
+    const moments = [
+      { ...ana, id: '1', speaker: '1', sec: 4323.49, snippet: 'one' },
+      { ...ana, id: '2', speaker: '', sec: 5, snippet: 'two' },
+      { ...ana, id: '3', speaker: '2', sec: null, snippet: 'three' },
+    ] as SearchResponse['moments'];
+    useSearchMock.mockImplementation(
+      (p) =>
+        ({
+          ...searchResult(p.q),
+          data: { ...RESULTS, q: p.q.trim(), moments },
+        }) as unknown as ReturnType<typeof useSearch>,
+    );
+    renderPalette();
+    await openAndType('budget');
+    const labels = within(momentsGroup())
+      .getAllByRole('option')
+      .map((o) => o.querySelector('[data-slot="moment-label"]')?.textContent);
+    expect(labels).toEqual(['Speaker 1 · 1:12:03', '0:00:05', 'Speaker 2']);
+  });
+
+  it('stays a flat list: no per-session groups or "Show more", even with large totals', async () => {
+    useSearchMock.mockImplementation(
+      (p) =>
+        ({
+          ...searchResult(p.q),
+          data: {
+            ...RESULTS,
+            q: p.q.trim(),
+            moment_sessions: [
+              { session_id: 'sess-2', total: 40 },
+              { session_id: 'sess-3', total: 12 },
+            ],
+          },
+        }) as unknown as ReturnType<typeof useSearch>,
+    );
+    renderPalette();
+    await openAndType('budget');
+    expect(within(momentsGroup()).getAllByRole('option')).toHaveLength(3);
+    expect(screen.queryByText(/more in this session/i)).toBeNull();
+    expect(useSearchMock.mock.calls.every(([p]) => p.sessionId === undefined)).toBe(true);
+  });
+});

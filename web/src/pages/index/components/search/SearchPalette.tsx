@@ -19,7 +19,7 @@ import { Tooltip } from '../../../../shared/ui/Tooltip';
 import { navigate } from '../../navigation';
 import { isTypingTarget } from '../ShortcutsDialog';
 import { SearchSnippet } from './SearchSnippet';
-import { MOMENT_KIND_LABEL, searchPageHref, useSearchChoose } from './searchLinks';
+import { momentLabel, searchPageHref, useSearchChoose } from './searchLinks';
 
 // --- Search palette (catalog-search D9; catalog-search "Command palette and results page") ---
 //
@@ -214,11 +214,10 @@ function PaletteBody({ choose, onDone }: { choose: Choose; onDone: () => void })
                 className="flex-col items-start gap-0.5"
               >
                 <span className="flex w-full min-w-0 items-baseline gap-2 text-xs text-si-dim">
-                  <span className="shrink-0 font-medium uppercase tracking-wide">
-                    {MOMENT_KIND_LABEL[m.kind]}
+                  <span data-slot="moment-label" className="shrink-0 font-medium">
+                    {momentLabel(m)}
                   </span>
                   <span className="truncate">{m.session_title.trim() || 'Untitled session'}</span>
-                  {m.speaker && <span className="shrink-0">· {m.speaker}</span>}
                 </span>
                 <SearchSnippet text={m.snippet} className="line-clamp-2 text-sm" />
               </CommandItem>

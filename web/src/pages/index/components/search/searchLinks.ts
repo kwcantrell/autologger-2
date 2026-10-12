@@ -18,6 +18,31 @@ export const MOMENT_KIND_LABEL: Record<SearchMoment['kind'], string> = {
   event: 'Event',
 };
 
+/** Seconds as `h:mm:ss` (whole seconds, rounded down): 4323.49 -> `1:12:03`. */
+export function formatMomentTime(sec: number): string {
+  const total = Math.max(0, Math.floor(sec));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
+
+/**
+ * A moment's label (D11.4; spec "A transcript moment's label"). A transcript moment reads
+ * `Speaker <n> · <h:mm:ss>`: "Speaker n" for a bare-number speaker, the name otherwise, left out
+ * when empty; the time left out when `sec` is null (and "Transcript" when both are). Topics and
+ * events read their kind.
+ */
+export function momentLabel(m: SearchMoment): string {
+  if (m.kind !== 'transcript') return MOMENT_KIND_LABEL[m.kind];
+  const speaker = m.speaker.trim();
+  const parts = [
+    /^\d+$/.test(speaker) ? `Speaker ${speaker}` : speaker,
+    m.sec == null ? '' : formatMomentTime(m.sec),
+  ].filter(Boolean);
+  return parts.length ? parts.join(' · ') : MOMENT_KIND_LABEL.transcript;
+}
+
 export function sessionHref(sessionId: string): string {
   return `/sessions/${encodeURIComponent(sessionId)}`;
 }
