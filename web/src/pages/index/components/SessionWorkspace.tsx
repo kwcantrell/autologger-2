@@ -107,11 +107,11 @@ export function SessionWorkspace({ sessionId, ytImportPending }: Props) {
 
   const blocksMedia = useRemoteRecordingGate(sessionId || null);
   const recoveryStopPending = useRecoveryStopWarning(sessionId || null, blocksMedia);
-  const { mergedPeaks, isDecoding: isWaveformDecoding } = useWaveforms(
-    sessionId,
-    audioClips,
-    audioTotalSec,
-  );
+  const {
+    mergedPeaks,
+    isDecoding: isWaveformDecoding,
+    unavailable: waveformUnavailable,
+  } = useWaveforms(sessionId, audioClips, audioTotalSec);
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [audioPlaybackSec, setAudioPlaybackSec] = useState<number | null>(null);
@@ -530,6 +530,7 @@ export function SessionWorkspace({ sessionId, ytImportPending }: Props) {
                     totalSec={audioTotalSec}
                     mergedPeaks={mergedPeaks}
                     isWaveformDecoding={isWaveformDecoding}
+                    waveformUnavailable={waveformUnavailable}
                     audioPlaybackSec={audioPlaybackSec}
                     onSeekAudio={handleSeekAudio}
                     onAudioRecord={handleAudioRecord}
