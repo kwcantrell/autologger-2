@@ -84,7 +84,7 @@
 
 ## 3. Search function and store
 
-- [ ] 3.1 Test first: write `server/src/test/pg/catalogSearchQuery.pg.test.ts`, calling `catalog.search` as `catalog_user` with `app.user_id` set. It covers:
+- [x] 3.1 Test first: write `server/src/test/pg/catalogSearchQuery.pg.test.ts`, calling `catalog.search` as `catalog_user` with `app.user_id` set. It covers:
   - each group;
   - stemming and accents;
   - phrases and `-exclusion`;
@@ -102,12 +102,14 @@
   - index use: with at least 5,000 seeded chunks, sessions and shows, and planner statistics refreshed, `pg_stat_user_indexes.idx_scan` rises across one `catalog.search` call (after `pg_stat_force_next_flush()`) for the chunks GIN index, the `search_meta` GIN index and the show-name trigram index (`EXPLAIN` can't see inside the function);
   - a temp table named `sessions` created by `catalog_user` doesn't change the results;
   - a null `app.user_id` returns empty.
+  - Evidence: `catalog.search` already existed (2.3, `ef1ac326`), so no test could be red for a missing function; the first run, `cd server && npx vitest run --project pg src/test/pg/catalogSearchQuery.pg.test.ts` -> `Tests  5 failed | 15 passed (20)` (log `cs-3.1-red.log`), failed only on test faults, none on the function: the title word `lighthouse` also fuzzy-matched the show "Harbor Lights" (renamed to `osprey`); `ts_headline` drops a leading stop word (`walrus sang \uE000beacon\uE001`); the ranking check scanned the echoed `q`; `ts_headline` trims the start of a fragment, so `<img src=x ` is cut but the rest stays unescaped plain text (asserted as such; the web renders it literally, 5.3); and the index check used plain `ANALYZE`, which leaves rows in the GIN pending lists, so the trigram and `search_meta` scans lost to a seq scan at 5,000 rows (an owner-run `EXPLAIN` probe, not committed, showed `Seq Scan` before and `BitmapOr` over `idx_shows_name_trgm` / `idx_sessions_search_meta` / `idx_sessions_title_trgm` / `idx_sessions_search_notes` after `VACUUM ANALYZE`; the test now runs `VACUUM ANALYZE`). The 15 cases that passed on first run pass because 2.3 already implements D5/D6/D8: the D6 matrix (owner, admin, granted, ungranted, outsider over studios, shows, title, episode, notes, transcript, topic, event, plus a word in all of them), snippets, "An ungranted member matches titles only", other teams invisible, filters (foreign and unknown show or studio ids give identical `{q, …empty}` bodies; `show_id` s1 narrows every group), null user, the temp `sessions`/`shows`/`session_transcript_chunks` tables, "Hidden notes don't affect ranking", stemming and accents, phrases/`-`/`or`, `christna`, stop words, hidden and showless sessions, limits (default 5, clamp 1–25), 3 moments per session, `sec`, `Café` at word 35, forged sentinels. No migration change. Green: same command -> `Test Files  1 passed (1)`, `Tests  20 passed (20)` (log `cs-3.1-green.log`); the index case asserts `idx_scan` rises for `idx_session_chunks_search`, `idx_sessions_search_meta` and `idx_shows_name_trgm` across one call (after `pg_stat_force_next_flush()`).
 
   Red first. Verified by red, then green after 2.3.
-- [ ] 3.2 Test first: write unit tests for `searchStore.ts` with a fake `CatalogDb`:
+- [x] 3.2 Test first: write unit tests for `searchStore.ts` with a fake `CatalogDb`:
   - it sends `SET LOCAL statement_timeout = '3s'` and one `select catalog.search(…)` in one transaction;
   - `57014` maps to `SearchTimeoutError`;
   - a third concurrent search waits, and gets `SearchBusyError` after 1 s while two are running.
+  - Evidence: red: `cd packages/catalog && npx vitest run` -> `Test Files  1 failed | 7 passed (8)`, `Error: Cannot find module './searchStore'` (log `cs-3.2-red.log`). Green after `packages/catalog/src/searchStore.ts` (`SearchStore`, `SearchSlots`, `SEARCH_SLOTS` = 2 slots / 1000 ms, `SearchTimeoutError`, `SearchBusyError`, exported from the package) and `Catalog.search` (a method over a private store, so `Object.keys(catalog)` is unchanged): same command -> `Test Files  8 passed (8)`, `Tests  60 passed (60)` (log `cs-3.2-green.log`), covering the one-transaction pair `SET LOCAL statement_timeout = '3s'` + `select catalog.search(?::text, ?::text, ?::text, ?::int) as r`, defaults (null filters, limit 5), `57014` -> `SearchTimeoutError` with `cause`, other errors unchanged, slots released on error, the third search pending at 999 ms and `SearchBusyError` at 1000 ms (fake timers), a waiter granted within the second, FIFO waiters, and the facade sharing the process-wide slots. `npm run typecheck` -> exit 0, 0 `error TS` (log `cs-3.2-typecheck.log`).
 
   Then implement the store and expose it as `catalog.search`. Verified by the tests and `npm run typecheck` exit 0.
 
