@@ -130,7 +130,7 @@ Vercel gateway dependency, so a repo test forbids it.
 
 | Provider | Model | `baseURL` | Notes |
 | --- | --- | --- | --- |
-| `anthropic` | `createAnthropic(…)(model)` | `https://api.anthropic.com/v1` | |
+| `anthropic` | `createAnthropic(…)(model)` | `https://api.anthropic.com/v1` | `providerOptions.anthropic.cacheControl = {type:"ephemeral"}` (automatic prompt caching, 5-minute TTL): Anthropic places the breakpoint on the last cacheable block and moves it forward as the turn grows, so each step re-reads the earlier context from cache. Cache reads don't count toward Anthropic's input-tokens-per-minute limit and cost 0.1× input (0.05× on Opus and Sonnet 5.5) (owner, 2026-10-12, after a long-transcript generation failed; A41) |
 | `openai` | `createOpenAI(…)(model)` (Responses API) | `https://api.openai.com/v1` | `providerOptions.openai.store = false`, so OpenAI does not retain the prompt (its default is to store, A19) |
 | `google` | `createGoogleGenerativeAI(…)(model)` | `https://generativelanguage.googleapis.com/v1beta` | |
 | `openai-compatible` | `createOpenAICompatible({name:"llm", includeUsage:true, …})(model)`, wrapped with `extractReasoningMiddleware({tagName:"think"})` | the saved `base_url` | servers without a reasoning parser (e.g. Qwen on SGLang) inline `<think>…</think>` in content; the middleware turns it into reasoning parts, which are not relayed (verified A20, including a tag split across chunks). A server whose chat template opens `<think>` inside the prompt emits only `</think>` (A39), and its reasoning would pass through as text. So the guarantee is scoped: reasoning in the provider's reasoning field, or between `<think>` and `</think>`, is never relayed. The README and the Settings help say to enable the server's reasoning parser (as the owner's SGLang does: `reasoning_parser: qwen3`). |
@@ -189,7 +189,10 @@ streamText({
 - `maxOutputTokens` is always set. Without it Anthropic requests `max_tokens: 128000` (A24).
 
 **The token budget.**
-- `tokenBudget` is a custom `StopCondition` over the accumulated `usage.totalTokens` (A25).
+- `tokenBudget` is a custom `StopCondition` over the accumulated billable tokens: each step's
+  `usage.totalTokens` minus its `inputTokenDetails.cacheReadTokens` when reported (A25, A41). Cache
+  reads are excluded because they don't count toward provider rate limits and cost a fraction of
+  input; uncached input, cache writes and output do count (owner, 2026-10-12).
 - For a step whose provider reports no usage (an OpenAI-compatible server that ignores
   `include_usage`, A26), it counts an estimate instead: (that step's request and response body
   bytes, counted by the guarded fetch) ÷ 4. So the budget never silently turns off.
@@ -318,6 +321,13 @@ history), `responseBody`, `responseHeaders` and a message that can repeat the pr
   `upstream-failed`, whatever its class: `APICallError` of any status, `RetryError`, an
   `OutboundFailure` (`unreachable`, `timeout` or a cap breach) or anything else. Only the class
   name may be counted in a metric, never logged with properties.
+- **A content-free diagnostic** (owner, 2026-10-12, caching re-panel). `SdkTurnFailure` carries
+  only a `kind` (`provider`, `breach` or `internal`), plus either the upstream HTTP `status` as a
+  number (when the error had one; for a `RetryError`, the last attempt's) or the breach name
+  (`requests`, `request-bytes`, `request-total`, `response-bytes`, `tool-calls`). The routes'
+  existing failure line appends exactly these, e.g. `… failed — upstream-failed (status=429)` or
+  `(breach=request-total)`. That makes a failure diagnosable without logging any message, body,
+  header, prompt or key.
 - **Never surfaced.** The error object is never logged, stringified, stored or forwarded. A repo
   test forbids passing an AI SDK error to `console.*` or the server logger in `ai-runtime` and the
   AI routes, and requires `onError` on every `streamText`. The no-op `onError` suppresses all of
@@ -494,6 +504,7 @@ Each assumption below was tested on 2026-10-11 in a scratch install of the pinne
 | A38 | `providerOptions.openai.store=false` reaches the request | fresh review `node fresh-review/store.mjs` | `store= false` (gpt-4.1); `store= false include= ["reasoning.encrypted_content"]` (gpt-5) |
 | A39 | A server whose template opens `<think>` in the prompt emits only the closing tag; the middleware then passes the reasoning through as text | fresh review `node fresh-review/think3.mjs noopen` | `t:"REASON-NO-OPEN-TAG" \| t:"</think>Answer1 "` |
 | A40 | Database statements of tool bodies are time-bounded | `grep -n statement_timeout supabase/migrations/20261001000000_catalog_schema.sql` | `137:alter role autologger_app set statement_timeout = '30s';` |
+| A41 | With `providerOptions.anthropic.cacheControl`, the Anthropic request carries a top-level `cache_control`, and usage reports cache reads and writes separately | `node cache.mjs` (fake Anthropic stream with `cache_read_input_tokens: 9000`) in `aisdk-probe` | `top-level cache_control: {"type":"ephemeral"}`; `usage: {"inputTokens":9250,"inputTokenDetails":{"noCacheTokens":50,"cacheReadTokens":9000,"cacheWriteTokens":200},…,"totalTokens":9255}`. Anthropic docs: "only uncached input tokens count toward your ITPM rate limits" (rate-limits, cache-aware ITPM); automatic caching "moves [the breakpoint] forward as conversations grow" (prompt-caching) |
 | A16 | The credential key columns are non-null today | `supabase/migrations/20261016000000_user_provider_credentials.sql:39-45` | `key_nonce bytea not null`, … `key_last4 … not null` |
 
 ## Risks / Trade-offs

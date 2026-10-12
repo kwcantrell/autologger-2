@@ -94,6 +94,8 @@ AI SDK route are guarded"):
   request bodies and 64 MB of responses; past a cap the request SHALL be refused without a
   connection, or the response ended, and the turn SHALL end with the upstream-failed error;
 - OpenAI model requests SHALL ask OpenAI not to store the conversation (`store: false`);
+- Anthropic model requests SHALL ask Anthropic to cache the conversation prefix (automatic prompt
+  caching), which changes neither the destination nor where the key is sent;
 - the turn SHALL use only the credential's key and destination: the server SHALL NOT fall back to
   an operator key or base URL from the environment when the credential's is absent, and a turn
   with no usable key SHALL NOT start;

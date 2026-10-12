@@ -98,7 +98,7 @@ The bound that applies depends on the route:
 - the **AI SDK** turn has no dollar cap (the caller pays their own provider). It SHALL be bounded
   by the generation step cap (`GENERATE_MAX_STEPS`, default 40, distinct from and higher than the
   chat's), at most 4000 output tokens per step, the generation per-turn token budget
-  (`GENERATE_MAX_TOKENS`, default 3 000 000 total tokens, checked after each step so a turn may
+  (`GENERATE_MAX_TOKENS`, default 3 000 000 tokens, counting each step's total tokens minus its prompt-cache reads, checked after each step so a turn may
   overrun it by at most one step, and counting an estimate of the step's request and response
   bytes divided by 4 when the provider reports no usage), at most 2 retries of a failed model
   request, the same `TOPIC_GENERATE_TIMEOUT_SEC`, at most 16 tool calls per step (soft: further

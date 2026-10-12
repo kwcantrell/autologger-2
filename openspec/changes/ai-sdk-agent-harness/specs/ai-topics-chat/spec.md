@@ -39,6 +39,10 @@ For each request the guard SHALL:
 Every OpenAI model request SHALL ask OpenAI not to store the conversation (`store: false`), since
 OpenAI stores it by default.
 
+Every Anthropic model request SHALL ask Anthropic to cache the conversation prefix (automatic prompt
+caching, a top-level `cache_control` of type `ephemeral`), so each step re-reads the earlier context
+from the provider's cache instead of sending it as new input.
+
 The user's API key SHALL appear only in the provider's own authentication header of a request to
 the credential's destination (`x-api-key` for Anthropic, `authorization: Bearer` for OpenAI and
 OpenAI-compatible, `x-goog-api-key` for Google). Nothing from a model request or response
@@ -86,6 +90,11 @@ the SDK's default error logging SHALL be suppressed.
 #### Scenario: OpenAI is asked not to store the conversation
 - **WHEN** an AI SDK turn on an `openai` credential makes a model request
 - **THEN** the request body carries `store: false`
+
+#### Scenario: Anthropic is asked to cache the conversation prefix
+- **WHEN** an AI SDK turn on an `anthropic` credential makes a model request
+- **THEN** the request body carries a top-level `cache_control` of type `ephemeral`, and requests to
+  the other providers carry none
 
 #### Scenario: No operator key or base URL is used in place of the caller's
 - **WHEN** the server's environment sets `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
@@ -455,6 +464,13 @@ name only — never the prompt, transcript, history, provider body or key.
 - **WHEN** a chat turn runs
 - **THEN** captured server stdout/stderr contains none of the message, history or reply text
 
+#### Scenario: A failed AI SDK turn is diagnosable from the server log without content
+- **WHEN** an AI SDK turn fails because the provider answered `429`, or because a request or byte
+  cap was reached
+- **THEN** the server's failure line names only the classification and the HTTP status (for
+  example `status=429`) or the cap that was reached, and holds no message, provider body, header,
+  prompt, transcript, history or key
+
 #### Scenario: A failing turn leaves no prompt, transcript or key in the server logs
 - **WHEN** an AI SDK turn fails with a provider error that carries the turn's prompt, history and
   the provider's response body, and, separately, such an error reaches the server's global error
@@ -758,10 +774,13 @@ across tab switches, the liveness refresh, the Stop control, and the not-configu
 The README SHALL document the AI chat feature per route. For the **AI SDK** route: that a turn
 sends session transcript and topic content, the message and the re-sent history from the server
 directly to the caller's own language model provider, that the caller's own provider account
-pays, that OpenAI requests are sent with storage off (`store: false`), and the bounds of each
+pays, that OpenAI requests are sent with storage off (`store: false`), that Anthropic requests use
+prompt caching (cache reads are cheaper and don't count toward Anthropic's input rate limit), and
+the bounds of each
 route (chat, topic generation, event generation): the step cap, 4000 output tokens per step, the
-per-turn token budget (which a turn may overrun by at most one step, and which counts an estimate
-when a provider reports no usage), at most 2 retries per model request, the turn timeout, at most
+per-turn token budget (which counts uncached input, cache writes and output but not cache reads,
+which a turn may overrun by at most one step, and which counts an estimate when a provider reports
+no usage), at most 2 retries per model request, the turn timeout, at most
 16 tool calls per step (further calls in the step get a tool error and the turn continues) and 32
 (chat) or 300 (generation) per turn, and the per-turn request and byte caps of the guarded model
 requests (60 requests, 4 MB per request body, 48 MB of request bodies, 64 MB of responses), with no
@@ -822,8 +841,9 @@ configured value). Each AI SDK chat turn SHALL be bounded by:
 
 - a step cap (`AI_CHAT_MAX_STEPS`, default 8);
 - at most 4000 output tokens per step;
-- a per-turn token budget (`AI_CHAT_MAX_TOKENS`, default 400 000 total tokens), checked after
-  each step, so a turn may overrun it by at most one step;
+- a per-turn token budget (`AI_CHAT_MAX_TOKENS`, default 400 000 tokens), counting each step's
+  total tokens minus the tokens it read from the provider's prompt cache, checked after each step,
+  so a turn may overrun it by at most one step;
 - at most 2 retries of a failed model request;
 - the turn timeout (`AI_CHAT_TIMEOUT_SEC`);
 - at most 16 tool calls per step (soft: further calls in the step get a tool error and the turn
@@ -863,6 +883,12 @@ The AI SDK route has no dollar cap, and the caller's own provider account pays f
 - **WHEN** an AI SDK chat turn's accumulated token usage passes the per-turn token budget
 - **THEN** the turn makes no further step after the one that passed the budget, and the stream
   ends with exactly one `done` event after the text streamed so far
+
+#### Scenario: Cache reads do not count toward the token budget
+- **WHEN** an AI SDK chat turn's provider reports, for each step, token usage that is mostly read
+  from its prompt cache, and the total including cache reads passes the budget but the total
+  without them does not
+- **THEN** the token budget does not stop the turn
 
 #### Scenario: The token budget applies when the provider reports no usage
 - **WHEN** an AI SDK chat turn's OpenAI-compatible provider reports no token usage, and the model

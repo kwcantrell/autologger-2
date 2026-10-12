@@ -220,6 +220,17 @@ Anything else is a stop: update the artifacts and ask the owner.
   check, with a stub transport). Then the factory table. Green.
   - Evidence: red, a new `the factory table` block in `sdkTurn.test.ts`: `cd packages/ai-runtime && npx vitest run src/sdkTurn.test.ts -t "factory table"` -> `× anthropic builds its model through its factory with apiKey and our fetch, and its first request reaches its fixed host`, `× google …`, `SdkTurnFailure: AI SDK turn failed`, `Tests  2 failed | 2 passed | 33 skipped (37)` (log `sdk-6.4-red.log`). Already passing, as expected: `openai` and `openai-compatible`, whose factories 6.3 needed (the `store: false` case and the fake server). Green: `createAnthropic` and `createGoogleGenerativeAI` join the table, each with `apiKey`, `baseURL` and our `fetch` only -> the file `Tests  37 passed (37)`, the package `Tests  242 passed (242)` (log `sdk-6.4-green.log`); `npm run typecheck` -> exit 0, 0 `error TS` (log `sdk-6.4-tc.log`).
   - Evidence: the cases build each model from its server-computed `baseURL` (`https://api.anthropic.com/v1`, `https://api.openai.com/v1`, `https://generativelanguage.googleapis.com/v1beta`, a saved `https://llm.example.test/sub/v1`) and run a turn whose stub transport records the first request and answers `400`: it reaches `/v1/messages`, `/v1/responses`, `/v1beta/models/gemini-test:streamGenerateContent?alt=sse` and `/sub/v1/chat/completions` on the expected origin, with the key only in `x-api-key`, `authorization: Bearer`, `x-goog-api-key` and `authorization: Bearer`, and the turn ends `upstream-failed`. Judgment call: `ai-runtime` may not import `server/src`, so the stub restates the guarded fetch's destination rule (`providerOutbound.ts` D4 step 1) instead of calling `guardedFetch`.
+- [ ] 6.5 Test first, in `sdkTurn.test.ts` (design D3, A41, owner 2026-10-12): Anthropic requests
+  carry the top-level `cache_control: {"type":"ephemeral"}` and the other providers' requests carry
+  none; the token budget counts each step's `totalTokens` minus `cacheReadTokens`, so a fake
+  Anthropic stream reporting large cache reads does not fire the budget while one reporting the
+  same total as uncached input does. Then the provider options and the budget. Green.
+- [ ] 6.6 Test first, in `sdkTurn.test.ts` and the topics route test (design D5 diagnostic): a
+  `429` (and a `RetryError` whose last attempt was `429`), a guarded-fetch cap breach and a
+  tool-call breach each yield an `SdkTurnFailure` carrying only `kind` plus `status` or the breach
+  name. The route's failure log line ends `(status=429)` / `(breach=…)`, and the captured log holds
+  no marker from the prompt, the provider body or the key. Then the failure fields and the log
+  suffix. Green.
 
 ## 7. AI routes on the caller's route (design D1, D3, D6)
 
