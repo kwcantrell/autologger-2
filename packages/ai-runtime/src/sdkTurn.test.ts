@@ -875,3 +875,92 @@ describe('history (D6)', () => {
     ]);
   });
 });
+
+describe('the factory table (D3, task 6.4)', () => {
+  // The guarded fetch's destination rule (server/src/auth/providerOutbound.ts, D4 step 1), as a
+  // stub transport: the package may not import server code, so the rule is restated here.
+  const FIXED: Record<
+    string,
+    { origin: string; path: (model: string) => string; queries: string[] }
+  > = {
+    anthropic: { origin: 'https://api.anthropic.com', path: () => '/v1/messages', queries: [''] },
+    openai: { origin: 'https://api.openai.com', path: () => '/v1/responses', queries: [''] },
+    google: {
+      origin: 'https://generativelanguage.googleapis.com',
+      path: (m) => `/v1beta/models/${m}:streamGenerateContent`,
+      queries: ['', '?alt=sse'],
+    },
+  };
+  const SAVED_BASE = 'https://llm.example.test/sub/v1';
+  const destinationAllowed = (provider: string, model: string, raw: string): boolean => {
+    const u = new URL(raw);
+    if (provider === 'openai-compatible') {
+      const base = new URL(SAVED_BASE);
+      return (
+        u.origin === base.origin &&
+        u.pathname === `${base.pathname}/chat/completions` &&
+        u.search === ''
+      );
+    }
+    const f = FIXED[provider];
+    return (
+      f !== undefined &&
+      u.origin === f.origin &&
+      u.pathname === f.path(model) &&
+      f.queries.includes(u.search)
+    );
+  };
+  const KEY_HEADER: Record<string, (h: Record<string, string>) => string | undefined> = {
+    anthropic: (h) => h['x-api-key'],
+    openai: (h) => h.authorization,
+    google: (h) => h['x-goog-api-key'],
+    'openai-compatible': (h) => h.authorization,
+  };
+
+  for (const [provider, baseURL, model, wantKey] of [
+    ['anthropic', 'https://api.anthropic.com/v1', 'claude-test', 'sk-ant-KEY'],
+    ['openai', 'https://api.openai.com/v1', 'gpt-test', 'Bearer sk-oai-KEY'],
+    ['google', 'https://generativelanguage.googleapis.com/v1beta', 'gemini-test', 'g-KEY'],
+    ['openai-compatible', SAVED_BASE, 'qwen-test', 'Bearer oc-KEY'],
+  ] as const) {
+    it(`${provider} builds its model through its factory with apiKey and our fetch, and its first request reaches ${provider === 'openai-compatible' ? 'the saved origin' : 'its fixed host'}`, async () => {
+      const seen: Array<{ url: string; allowed: boolean; key: string | undefined }> = [];
+      const stub = async (input: string | URL, init?: RequestInit): Promise<Response> => {
+        const url = String(input);
+        const headers = Object.fromEntries(
+          Object.entries((init?.headers ?? {}) as Record<string, string>).map(([k, v]) => [
+            k.toLowerCase(),
+            v,
+          ]),
+        );
+        seen.push({
+          url,
+          allowed: destinationAllowed(provider, model, url),
+          key: KEY_HEADER[provider]?.(headers),
+        });
+        return new Response('{"error":{"message":"stub"}}', {
+          status: 400,
+          headers: { 'content-type': 'application/json' },
+        });
+      };
+      const apiKey = wantKey.replace(/^Bearer /, '');
+      const deps: SdkTurnDeps = {
+        provider,
+        baseURL,
+        model,
+        apiKey,
+        fetch: stub,
+        byteLog: () => [],
+        breach: () => null,
+      };
+      expect(() => buildSdkModel(deps)).not.toThrow();
+      const llm = await llmWith(() => answer('unused'));
+      const { res } = await run(llm, { deps });
+      expect(res).toMatchObject({ ok: false, detail: 'upstream-failed' });
+      expect(seen.length).toBeGreaterThanOrEqual(1);
+      expect(seen[0]?.allowed).toBe(true);
+      expect(seen[0]?.key).toBe(wantKey);
+      expect(llm.requests).toHaveLength(0);
+    });
+  }
+});

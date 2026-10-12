@@ -26,6 +26,8 @@
 // no-op `.catch` when the call is made, because they reject after an abort or an error, A34), and
 // the only thing thrown is the property-free `SdkTurnFailure`. Nothing here logs.
 
+import { createAnthropic } from '@ai-sdk/anthropic';
+import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import type { SessionCaller, SessionHubRegistryFacade } from '@autologger/session-core';
@@ -155,6 +157,10 @@ export function buildSdkModel(deps: SdkTurnDeps): {
   };
   try {
     switch (deps.provider) {
+      case 'anthropic':
+        return { model: createAnthropic(common)(deps.model), providerOptions: undefined };
+      case 'google':
+        return { model: createGoogleGenerativeAI(common)(deps.model), providerOptions: undefined };
       case 'openai':
         // The Responses API; `store: false` so OpenAI does not retain the prompt (A19, A38).
         return {
