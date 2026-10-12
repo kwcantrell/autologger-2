@@ -870,6 +870,25 @@ describe('provider keys secret (byo-ai-providers D2)', () => {
   });
 });
 
+// ai-sdk-agent-harness: the CLI allowlist and the AI SDK turn limits come from the OpenBao secret.
+describe('AI SDK harness keys (ai-sdk-agent-harness)', () => {
+  const AI_KEYS = { CLAUDE_CLI_EMAILS: 'owner@example.com, b@example.com', AI_CHAT_MAX_STEPS: '8', AI_CHAT_MAX_TOKENS: '400000', GENERATE_MAX_STEPS: '40', GENERATE_MAX_TOKENS: '3000000' };
+  it('are accepted from the OpenBao secret in every stack', () => {
+    for (const env of ['dev', 'stage', 'prod']) {
+      const got = validateSecrets(kv(Object.entries(AI_KEYS)), allowedNames(env));
+      for (const [k, v] of Object.entries(AI_KEYS)) assert.equal(got.get(k), v, `${env} ${k}`);
+    }
+  });
+  it('a dev run passes them to compose', async () => {
+    writeCreds('dev');
+    handler = standIn([secret('GOOGLE_CLIENT_ID', 'gid'), secret('GOOGLE_CLIENT_SECRET', 'gsecret'), secret('BOOTSTRAP_OWNER_EMAIL', 'owner@example.com'), secret('PROVIDER_KEYS_SECRET', PKS), secret('DEV_PORT', '18787'), ...sbSecrets(), ...Object.entries(AI_KEYS).map(([k, v]) => secret(k, v))]);
+    const r = await run(['dev', 'compose version']);
+    assert.equal(r.code, 0, r.out);
+    const env = log('env');
+    for (const [k, v] of Object.entries(AI_KEYS)) assert.ok(env.split('\n').includes(`${k}=${v}`), k);
+  });
+});
+
 // stage-public-https: the stage operator values (STAGE_IMAGE_TAG, STAGE_PUBLIC_BASE_URL, DOCKER_CONFIG).
 describe('stage public mode (stage-public-https)', () => {
   const SHA = 'a'.repeat(40);

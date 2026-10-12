@@ -140,6 +140,18 @@ Other rules:
   someone, add their email to the key in the stack's KV secret and restart the stack
   (`make <env>-up`). At boot the server logs `run-feature users: <count> (<masked forms>)`, never
   the addresses.
+- **`CLAUDE_CLI_EMAILS` is optional** (ai-sdk-agent-harness). It lists, comma-separated, the
+  accounts that may choose "Claude CLI (operator)" in Settings → Advanced. A CLI turn runs on the
+  operator's `claude` login and quota, so the list names exactly who may spend it: the bootstrap
+  owner is not implicitly listed, and an empty or missing key means nobody. Entries match like the
+  bootstrap owner (trimmed, ASCII case-insensitive). Anyone else does not see the option, and a
+  save of it gets `403`. Add or remove an email in the stack's KV secret and restart the stack
+  (`make <env>-up`). See [ADR 0028](decisions/0028-ai-sdk-agent-harness.md).
+- **The AI SDK turn limits are optional** (ai-sdk-agent-harness). `AI_CHAT_MAX_STEPS` and
+  `AI_CHAT_MAX_TOKENS` (defaults 8 and 400000) cap one chat turn's model steps and tokens;
+  `GENERATE_MAX_STEPS` and `GENERATE_MAX_TOKENS` (defaults 40 and 3000000) cap one topic or event
+  generation. Each is a positive integer; anything else falls back to the default. The caller's
+  own provider key pays, so these are per-turn caps, not a deployment-wide ceiling.
 - **Never reuse prod secrets in dev or stage.** Use separate, low-limit keys and separate OAuth
   clients.
 - **Ports are set in OpenBao.** `DEV_PORT=9000 make dev-up` does not override them, because the

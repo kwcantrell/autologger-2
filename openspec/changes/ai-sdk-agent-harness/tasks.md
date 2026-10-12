@@ -306,10 +306,12 @@ The integration tests point SDK routes at a local fake provider through a dev-mo
 
 ## 9. Secrets, docs and integration checks
 
-- [ ] 9.1 Test first, in `docker/scripts/compose-run.test.mjs`: `CLAUDE_CLI_EMAILS`,
+- [x] 9.1 Test first, in `docker/scripts/compose-run.test.mjs`: `CLAUDE_CLI_EMAILS`,
   `AI_CHAT_MAX_STEPS`, `AI_CHAT_MAX_TOKENS`, `GENERATE_MAX_STEPS` and `GENERATE_MAX_TOKENS` are
   accepted from the OpenBao secret. Then `docker/secrets-env.yaml`, `docker/.env.example` and
   `docs/openbao-secrets.md`. Green.
+  - Evidence: red, `node --test --test-name-pattern="AI SDK harness" docker/scripts/compose-run.test.mjs` -> `✖ are accepted from the OpenBao secret in every stack` and `✖ a dev run passes them to compose` (`refusing the OpenBao secret: AI_CHAT_MAX_STEPS AI_CHAT_MAX_TOKENS CLAUDE_CLI_EMAILS GENERATE_MAX_STEPS GENERATE_MAX_TOKENS [not-allowed]`), `ℹ tests 2`, `ℹ fail 2` (log `sdk-9.1-red.log`). Green, `node --test docker/scripts/compose-run.test.mjs` -> `ℹ tests 80`, `ℹ pass 80`, `ℹ fail 0`; `sh docker/scripts/check-envs.sh dev|stage|prod` -> `check-envs: ok` for each (log `sdk-9.1-green.log`).
+  - Evidence: the five keys are null passthroughs in `docker/secrets-env.yaml` under one comment. `docker/.env.example` has an empty `CLAUDE_CLI_EMAILS=` with its comment (no address) and the four limits commented out with their defaults. `docs/openbao-secrets.md` gains a `CLAUDE_CLI_EMAILS` rule (optional, owner not implicit, empty means nobody, `403` for others, restart to apply, link to ADR 0028) and a limits rule (defaults, positive integers, per-turn caps paid by the caller's key).
 - [ ] 9.2 Write `docs/decisions/0028-ai-sdk-agent-harness.md`. It covers:
   - the in-process AI SDK harness;
   - the guarded fetch;
