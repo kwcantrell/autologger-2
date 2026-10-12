@@ -579,3 +579,19 @@ describe('ChunkRescueBanner (media-worker A.6)', () => {
     expect(add.mock.calls.filter(([t]) => t === 'beforeunload')).toHaveLength(1);
   });
 });
+
+describe('ChunkRescueBanner shows only the signed-in user’s chunks (A.8)', () => {
+  it("never lists another user's chunk", async () => {
+    const queue = seedQueue();
+    queue.enqueue({ ...chunkInput({ chunkIndex: 0 }), userId: 'user-a' });
+    queue.enqueue({ ...chunkInput({ chunkIndex: 1 }), userId: 'user-b' });
+    queue.setCurrentUser('user-a'); // let user-a's fail so both would be shown
+    await queue.pump();
+    queue.setCurrentUser('user-b');
+    await queue.pump();
+    render(<ChunkRescueBanner />);
+    await screen.findByRole('alert');
+    expect(screen.getByText(/chunk 2/)).toBeTruthy();
+    expect(screen.queryByText(/chunk 1\b/)).toBeNull();
+  });
+});

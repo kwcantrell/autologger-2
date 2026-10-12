@@ -151,3 +151,25 @@ describe('recorderLocks without navigator.locks (heartbeat lease)', () => {
     );
   });
 });
+
+describe('holdChunk (A.8: the queue owns a chunk for its whole stay)', () => {
+  it('holds the chunk lock until released; a second holder gets null', async () => {
+    const reg = new FakeLockRegistry();
+    const a = createRecorderLocks({ locks: reg.tab(), now: () => T0 });
+    const b = createRecorderLocks({ locks: reg.tab(), now: () => T0 });
+    const release = await a.holdChunk('c1');
+    expect(release).not.toBeNull();
+    expect(reg.isHeld('autologger:chunk:c1')).toBe(true);
+    expect(await b.holdChunk('c1')).toBeNull();
+    release?.();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(reg.isHeld('autologger:chunk:c1')).toBe(false);
+  });
+
+  it('heartbeat mode returns a no-op release', async () => {
+    const locks = createRecorderLocks({ locks: null, now: () => T0 });
+    const release = await locks.holdChunk('c1');
+    expect(typeof release).toBe('function');
+  });
+});

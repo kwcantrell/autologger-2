@@ -258,8 +258,14 @@ export function ChunkRescueBanner() {
   // actually FAILED (visual-gate finding, U9) — a healthy chunk mid-first-
   // attempt, or one merely queued behind a failed head with no failure of
   // its own, is neither shown nor swept up by "Discard remaining".
-  const failedChunks = snapshot.chunks.filter(isShown);
-  const recovered = snapshot.chunks.filter((c) => c.recovered);
+  // Only the signed-in user's chunks (a shared machine never shows another user's audio, A.8).
+  // The recorder tells the queue who is signed in; until then every chunk held is this tab's own.
+  const { currentUser } = snapshot;
+  const mine = snapshot.chunks.filter(
+    (c) => currentUser === undefined || c.userId === null || c.userId === currentUser,
+  );
+  const failedChunks = mine.filter(isShown);
+  const recovered = mine.filter((c) => c.recovered);
   const recoveredMin = Math.max(
     1,
     Math.round(recovered.reduce((t, c) => t + (chunkDurationSec(c) ?? 0), 0) / 60),

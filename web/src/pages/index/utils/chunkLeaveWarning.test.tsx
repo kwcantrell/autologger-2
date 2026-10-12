@@ -78,6 +78,7 @@ describe('guardSignOut', () => {
       endedAtUtc: '2026-10-12T10:01:00.000Z',
       mimeType: 'audio/webm',
       blob: new Blob([new Uint8Array(3)]),
+      userId: 'user-a',
     });
     const confirm = vi.fn(async () => true);
     expect(await guardSignOut({ userId: 'user-a', confirm, store, queue })).toBe(true);
@@ -89,5 +90,27 @@ describe('guardSignOut', () => {
     const confirm = vi.fn(async () => true);
     expect(await guardSignOut({ userId: null, confirm, queue: null })).toBe(true);
     expect(confirm).not.toHaveBeenCalled();
+  });
+
+  it("counts and discards only the signing-out user's queued chunks", async () => {
+    const store = createChunkStore({ backends: [() => createMemoryBackend()] });
+    const queue = createChunkUploadQueue({
+      upload: async () => ({ ok: false, status: 503, message: 'down' }),
+      listSegments: async () => [],
+      clock: { now: () => 0 },
+    });
+    const base = {
+      sessionId: 's',
+      recordingOrdinal: 1,
+      startedAtUtc: '2026-10-12T10:00:00.000Z',
+      endedAtUtc: '2026-10-12T10:01:00.000Z',
+      mimeType: 'audio/webm',
+      blob: new Blob([new Uint8Array(3)]),
+    };
+    queue.enqueue({ ...base, chunkIndex: 0, userId: 'user-b' });
+    const confirm = vi.fn(async () => true);
+    expect(await guardSignOut({ userId: 'user-a', confirm, store, queue })).toBe(true);
+    expect(confirm).not.toHaveBeenCalled();
+    expect(queue.getSnapshot().chunks).toHaveLength(1); // user-b's stays
   });
 });

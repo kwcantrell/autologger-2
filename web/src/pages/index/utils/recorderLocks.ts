@@ -48,6 +48,11 @@ export interface RecorderLocks {
   readonly mode: 'locks' | 'heartbeat';
   /** Take the take lock; resolves once held (or at once in heartbeat mode) with its release. */
   holdTake(sessionId: string, recordingOrdinal: number): Promise<() => void>;
+  /**
+   * Hold the chunk's lock until the returned release is called (the queue owns the chunk while it
+   * waits in backoff, offline or blocked, A.8). `null` when another tab holds it.
+   */
+  holdChunk(chunkId: string): Promise<(() => void) | null>;
   /** Run one upload attempt under the chunk's lock; `{acquired: false}` when another tab holds it. */
   withChunkLock<T>(chunkId: string, fn: () => Promise<T>): Promise<ChunkLockOutcome<T>>;
   /** False when the entry's take or chunk lock (or a fresh heartbeat) says another owner is live. */
@@ -87,6 +92,23 @@ export function createRecorderLocks(deps: RecorderLocksDeps): RecorderLocks {
             return lock ? released : undefined;
           })
           .catch(() => resolveHeld(release));
+      });
+    },
+
+    holdChunk(chunkId) {
+      const manager = locks;
+      if (!manager) return Promise.resolve(() => {});
+      return new Promise<(() => void) | null>((resolveHeld) => {
+        let release!: () => void;
+        const released = new Promise<void>((r) => {
+          release = r;
+        });
+        manager
+          .request(chunkLockName(chunkId), { ifAvailable: true }, (lock) => {
+            resolveHeld(lock ? release : null);
+            return lock ? released : undefined;
+          })
+          .catch(() => resolveHeld(() => {}));
       });
     },
 

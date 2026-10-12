@@ -281,7 +281,7 @@ describe('backend selection (probe with a real write)', () => {
 });
 
 describe('quota pressure', () => {
-  it('free quota under 2 × the expected chunk size → that chunk moves to memory, one warning', async () => {
+  it('free quota under 2 × the expected chunk size → later slices stay in memory, one warning; the persisted prefix stays on disk', async () => {
     const e = env();
     const s = store(e, [() => opfsBackend(e)]);
     const h = await s.openChunk(META);
@@ -290,14 +290,20 @@ describe('quota pressure', () => {
     await s.append(h, bytesOf(2, 2));
     await s.append(h, bytesOf(1, 3));
     expect(e.onDegraded).toHaveBeenCalledTimes(1);
-    // All bytes are still readable (the persisted prefix moved with the chunk).
+    // Every byte is readable: the durable prefix from disk plus the in-memory tail.
     expect(await blobBytes(await s.read('user-a', h.id))).toEqual([1, 1, 2, 2, 3]);
-    // Nothing is left on disk for it, and later chunks stay in memory.
-    expect(e.opfs.namesAt('autologger-chunks/user-a')).toEqual([]);
+    // The durable prefix never leaves the disk (a crash now still recovers it, header included).
+    expect(e.opfs.namesAt('autologger-chunks/user-a')).toEqual([`${h.id}.bin`, `${h.id}.json`]);
+    const recovered = store(e, [() => opfsBackend(e)]);
+    expect(await blobBytes(await recovered.read('user-a', h.id))).toEqual([1, 1]);
+    // Later chunks start in memory.
     const next = await s.openChunk({ ...META, chunkIndex: 1 });
     await s.append(next, bytesOf(1, 4));
-    expect(e.opfs.namesAt('autologger-chunks/user-a')).toEqual([]);
+    expect(e.opfs.namesAt('autologger-chunks/user-a')).toEqual([`${h.id}.bin`, `${h.id}.json`]);
     expect(e.onDegraded).toHaveBeenCalledTimes(1);
+    // Removing the chunk removes both halves.
+    await s.remove('user-a', h.id);
+    expect(e.opfs.namesAt('autologger-chunks/user-a')).toEqual([]);
   });
 
   it('a write that throws QuotaExceededError degrades the same way and never fails the append', async () => {
@@ -309,6 +315,61 @@ describe('quota pressure', () => {
     await expect(s.append(h, bytesOf(1, 2))).resolves.toBeUndefined();
     expect(await blobBytes(await s.read('user-a', h.id))).toEqual([1, 2]);
     expect(e.onDegraded).toHaveBeenCalledTimes(1);
+    expect(e.opfs.fileAt(`autologger-chunks/user-a/${h.id}.bin`)?.data.length).toBe(1);
+  });
+});
+
+describe('implementation panel fixes (A.8)', () => {
+  it('operations on an unknown or removed handle never throw', async () => {
+    const e = env();
+    const s = store(e, [() => createMemoryBackend()]);
+    const h = await s.openChunk(META);
+    await s.remove('user-a', h.id);
+    await expect(s.append(h, bytesOf(1, 1))).resolves.toBeUndefined();
+    await expect(s.finalize(h, META.startedAtUtc)).resolves.toBeUndefined();
+    await expect(s.setPendingFinalize(h, ['w'])).resolves.toBeUndefined();
+    await expect(s.touch('user-a', h.id)).resolves.toBeUndefined();
+  });
+
+  it('a hung OPFS worker times out per call, is marked dead, and the chunk degrades to memory', async () => {
+    const e = env();
+    const inner = createInProcessOpfsTransport(e.opfs.getDirectory);
+    let hang = false;
+    let calls = 0;
+    const transport = {
+      call: (req: Parameters<typeof inner.call>[0], t?: Transferable[]) => {
+        calls += 1;
+        return hang ? new Promise<never>(() => {}) : inner.call(req, t);
+      },
+    };
+    const backend = createOpfsBackend(transport, { timeoutMs: 20 });
+    const s = store(e, [() => backend]);
+    const h = await s.openChunk(META);
+    await s.append(h, bytesOf(2, 1));
+    hang = true;
+    await s.append(h, bytesOf(1, 2)); // times out → memory tail
+    expect(e.onDegraded).toHaveBeenCalledTimes(1);
+    const before = calls;
+    await s.append(h, bytesOf(1, 3)); // dead: no further worker call, no wait
+    expect(calls).toBe(before);
+    // The list of a dead backend resolves (the scan never hangs).
+    await expect(s.list('user-a')).resolves.toBeDefined();
+    // What reached disk stays there for the next page load.
+    expect(e.opfs.fileAt(`autologger-chunks/user-a/${h.id}.bin`)?.data.length).toBe(2);
+  });
+
+  it('a probe that times out disposes its backend (no leaked worker)', async () => {
+    const e = env();
+    const dispose = vi.fn();
+    const hung: ChunkBackend = {
+      ...createMemoryBackend(),
+      kind: 'opfs',
+      probe: () => new Promise<void>(() => {}),
+      dispose,
+    };
+    const s = store(e, [() => hung, () => createMemoryBackend()], { probeTimeoutMs: 10 });
+    expect(await s.ready()).toBe('memory');
+    expect(dispose).toHaveBeenCalledTimes(1);
   });
 });
 

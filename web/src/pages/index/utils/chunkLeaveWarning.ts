@@ -164,8 +164,9 @@ export async function guardSignOut(deps: SignOutGuardDeps): Promise<boolean> {
     stored = [];
   }
   const storedIds = new Set(stored.map((m) => m.id));
+  // Only this user's chunks: another user's are never counted, shown or discarded (A.8).
   const queued = (queue?.getSnapshot().chunks ?? []).filter(
-    (c) => !c.storeId || !storedIds.has(c.storeId),
+    (c) => c.userId === userId && (!c.storeId || !storedIds.has(c.storeId)),
   );
   const count = stored.length + queued.length;
   if (count > 0) {
@@ -185,7 +186,7 @@ export async function guardSignOut(deps: SignOutGuardDeps): Promise<boolean> {
   } catch {
     /* best effort: the 30-day cleanup is the backstop */
   }
-  queue?.discardAll();
+  queue?.discardUser(userId);
   return true;
 }
 

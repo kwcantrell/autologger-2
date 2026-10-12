@@ -29,6 +29,7 @@ import { AudioRecorder, deriveNextOrdinal } from './AudioRecorder';
 
 const h = vi.hoisted(() => ({
   userId: 'user-1' as string | null,
+  profileState: 'ok' as 'ok' | 'error' | 'pending',
   segments: [] as { recording_ordinal: number | null }[],
   events: [] as Partial<LogEvent>[],
   // mutateAsync since session-leases D7: the recorder acts on the heartbeat's `{ok}` answer.
@@ -60,7 +61,12 @@ vi.mock('../../../api/hooks/useEvents', () => ({
 }));
 vi.mock('../../../shared/components/Toast', () => ({ showToast: vi.fn() }));
 vi.mock('../../../api/hooks/useProfile', () => ({
-  useProfile: () => ({ data: { auth: { user: h.userId ? { id: h.userId } : null } } }),
+  useProfile: () =>
+    h.profileState === 'error'
+      ? { data: undefined, isError: true }
+      : h.profileState === 'pending'
+        ? { data: undefined, isError: false }
+        : { data: { auth: { user: h.userId ? { id: h.userId } : null } }, isError: false },
 }));
 // media-worker A.5: the recorder's timers run on worker intervals (jsdom has no Worker, so the
 // real helper falls back to the faked setInterval; the spy records who asked for which period).
@@ -240,6 +246,7 @@ beforeEach(() => {
   FakeMediaRecorder.emitData = true;
   rafQueue = [];
   h.userId = 'user-1';
+  h.profileState = 'ok';
   resetChunkUploadQueueForTesting();
   store = createChunkStore({ backends: [() => createMemoryBackend()], warn: () => {} });
   setChunkStoreForTesting(store);
@@ -274,7 +281,10 @@ afterEach(async () => {
   document.body.classList.remove('v4-is-recording', 'v4-local-recording');
 });
 
-function renderRecorder(sessionId = 'sess-A', extra: { micRetryWindowMs?: number } = {}) {
+function renderRecorder(
+  sessionId = 'sess-A',
+  extra: { micRetryWindowMs?: number; scanTimeoutMs?: number } = {},
+) {
   const ref = createRef<AudioRecorderHandle>();
   const onPhaseChange = vi.fn();
   const queryClient = new QueryClient();
@@ -1560,5 +1570,175 @@ describe('media-worker A.5: persistence, locks, timers, finalize, wake lock, hid
       await ref.current?.toggle();
     });
     expect(segmentPosts()).toHaveLength(1);
+  });
+});
+
+describe('implementation panel fixes (A.8)', () => {
+  function postedSizes(): number[] {
+    return fetchMock.mock.calls
+      .filter(
+        ([input, init]) =>
+          (init?.method ?? 'GET') === 'POST' && String(input).includes('/audio/segments?'),
+      )
+      .map(([, init]) => (init?.body as Blob | undefined)?.size ?? 0);
+  }
+
+  it('a store finalize that throws still enqueues, uploads and stops (no unhandled rejection)', async () => {
+    store.finalize = async () => {
+      throw new Error('chunkStore: unknown handle');
+    };
+    const { ref, onPhaseChange } = await startRecording();
+    await act(async () => {
+      await ref.current?.toggle();
+    });
+    expect(segmentPosts()).toHaveLength(1);
+    expect(onPhaseChange.mock.calls.at(-1)?.[0]).toBe('idle');
+    expect(h.releaseMutateAsync).toHaveBeenCalledTimes(1);
+  });
+
+  it('a slice append that throws keeps that slice and every later one', async () => {
+    const realAppend = store.append.bind(store);
+    let n = 0;
+    store.append = async (handle, bytes) => {
+      n += 1;
+      if (n === 2) throw new Error('disk gone');
+      return realAppend(handle, bytes);
+    };
+    FakeMediaRecorder.emitData = false;
+    const { ref } = await startRecording();
+    const mr = FakeMediaRecorder.instances[0];
+    await act(async () => {
+      mr.emitSlice(3);
+      mr.emitSlice(4);
+      mr.emitSlice(5);
+    });
+    await act(async () => {
+      await ref.current?.toggle();
+    });
+    expect(postedSizes()).toEqual([12]);
+  });
+
+  it('a duplicate onstop for one chunk is ignored', async () => {
+    const { ref } = await startRecording();
+    const mr = FakeMediaRecorder.instances[0];
+    const onstop = mr.onstop;
+    await act(async () => {
+      await ref.current?.toggle();
+    });
+    await act(async () => {
+      onstop?.();
+    });
+    expect(segmentPosts()).toHaveLength(1);
+  });
+
+  it('finalize lists every window even when an earlier chunk persists after a later one', async () => {
+    const realFinalize = store.finalize.bind(store);
+    let gate!: () => void;
+    const slow = new Promise<void>((r) => {
+      gate = r;
+    });
+    let first = true;
+    store.finalize = async (handle, ended, mime) => {
+      if (first) {
+        first = false;
+        await slow;
+      }
+      return realFinalize(handle, ended, mime);
+    };
+    const { ref } = await startRecording();
+    await act(async () => {
+      vi.advanceTimersByTime(CHUNK_MS_TEST); // chunk 0 stops; its persistence is slow
+    });
+    await act(async () => {
+      await ref.current?.toggle(); // chunk 1 stops quickly
+    });
+    await act(async () => {
+      gate();
+    });
+    const fin = finalizePosts();
+    expect(fin).toHaveLength(1);
+    expect((fin[0].body as { chunks: string[] }).chunks).toHaveLength(2);
+    // …and it is sent only after both chunks were uploaded.
+    const order = fetchMock.mock.calls
+      .map(([input, init]) => `${init?.method ?? 'GET'} ${String(input)}`)
+      .filter((c) => c.startsWith('POST'));
+    const lastSegment = order.map((c) => c.includes('/audio/segments?')).lastIndexOf(true);
+    const finalizeAt = order.findIndex((c) => c.endsWith('/finalize'));
+    expect(segmentPosts()).toHaveLength(2);
+    expect(finalizeAt).toBeGreaterThan(lastSegment);
+  });
+
+  it('unmount during a microphone re-acquisition cancels the take; nothing records afterwards', async () => {
+    const { view } = await startRecording();
+    let resolveMic!: (s: MediaStream) => void;
+    const lateTrack = { readyState: 'live', stop: vi.fn() };
+    vi.mocked(navigator.mediaDevices.getUserMedia).mockImplementationOnce(
+      () =>
+        new Promise<MediaStream>((r) => {
+          resolveMic = r;
+        }),
+    );
+    await act(async () => {
+      FakeMediaRecorder.instances[0].stop(); // the mic is lost; re-acquisition starts
+    });
+    await act(async () => {
+      view.unmount();
+    });
+    await act(async () => {
+      resolveMic({
+        getTracks: () => [lateTrack],
+        getAudioTracks: () => [lateTrack],
+      } as unknown as MediaStream);
+    });
+    expect(FakeMediaRecorder.instances).toHaveLength(1);
+    expect(lateTrack.stop).toHaveBeenCalled();
+    expect(h.logEventMutateAsync).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'Recording 1 Stopped' }),
+    );
+    expect(h.releaseMutateAsync).toHaveBeenCalledTimes(1);
+  });
+
+  it('a scan that never answers does not hold Record forever', async () => {
+    store.list = () => new Promise(() => {});
+    const { onPhaseChange } = renderRecorder('sess-A', { scanTimeoutMs: 20 });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 40));
+    });
+    expect(onPhaseChange.mock.calls.at(-1)?.[0]).toBe('idle');
+  });
+
+  it('a failed profile query allows recording (recovery deferred)', async () => {
+    h.profileState = 'error';
+    const { onPhaseChange } = renderRecorder('sess-A');
+    await act(async () => {});
+    expect(onPhaseChange.mock.calls.at(-1)?.[0]).toBe('idle');
+  });
+
+  it('a profile that never loads does not hold Record forever', async () => {
+    h.profileState = 'pending';
+    const { onPhaseChange } = renderRecorder('sess-A', { scanTimeoutMs: 20 });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 40));
+    });
+    expect(onPhaseChange.mock.calls.at(-1)?.[0]).toBe('idle');
+  });
+
+  it("the queue is told the signed-in user, so another user's chunk is never uploaded", async () => {
+    await startRecording();
+    const queue = getChunkUploadQueue();
+    queue.enqueue({
+      sessionId: 'sess-A',
+      recordingOrdinal: 9,
+      chunkIndex: 0,
+      startedAtUtc: '2026-08-12T09:00:00.000Z',
+      endedAtUtc: '2026-08-12T09:01:00.000Z',
+      mimeType: 'audio/webm',
+      blob: new Blob([new Uint8Array(4)]),
+      userId: 'someone-else',
+    });
+    await act(async () => {
+      await queue.pump();
+    });
+    expect(segmentPosts()).toHaveLength(0);
   });
 });

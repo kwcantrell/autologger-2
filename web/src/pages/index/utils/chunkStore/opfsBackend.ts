@@ -15,7 +15,12 @@ import type { ChunkBackend, ChunkManifest } from './types';
  */
 export interface OpfsTransport {
   call(req: OpfsRequest, transfer?: Transferable[]): Promise<OpfsResult>;
+  /** Stop the worker and fail whatever is pending. */
+  terminate?(): void;
 }
+
+/** A worker call that has not answered by then marks the backend dead (A.8). */
+export const OPFS_CALL_TIMEOUT_MS = 10_000;
 
 /** Runs the worker's handler on this thread (tests; never production, which has no sync API). */
 export function createInProcessOpfsTransport(getRoot: () => Promise<unknown>): OpfsTransport {
@@ -64,13 +69,58 @@ export function createWorkerOpfsTransport(): OpfsTransport {
         worker.postMessage(envelope, transfer);
       });
     },
+    terminate() {
+      try {
+        worker.terminate();
+      } finally {
+        failAll('OPFS worker terminated');
+      }
+    },
   };
 }
 
-export function createOpfsBackend(transport: OpfsTransport): ChunkBackend {
-  const call = transport.call.bind(transport);
+export function createOpfsBackend(
+  transport: OpfsTransport,
+  opts: { timeoutMs?: number } = {},
+): ChunkBackend {
+  const timeoutMs = opts.timeoutMs ?? OPFS_CALL_TIMEOUT_MS;
+  /**
+   * Once a call times out the worker is presumed hung: every later call rejects at once, so the
+   * store degrades to memory and nothing (Stop, the recovery scan) waits on it again. What it
+   * already wrote stays on disk for the next page load.
+   */
+  let dead = false;
+  const kill = () => {
+    if (dead) return;
+    dead = true;
+    try {
+      transport.terminate?.();
+    } catch {
+      /* already gone */
+    }
+  };
+  const call = (req: OpfsRequest, transfer?: Transferable[]): Promise<OpfsResult> => {
+    if (dead) return Promise.reject(new Error('OPFS worker is unresponsive'));
+    return new Promise<OpfsResult>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        kill();
+        reject(new Error(`OPFS worker did not answer ${req.op} within ${timeoutMs} ms`));
+      }, timeoutMs);
+      transport.call(req, transfer).then(
+        (r) => {
+          clearTimeout(timer);
+          resolve(r);
+        },
+        (e) => {
+          clearTimeout(timer);
+          reject(e);
+        },
+      );
+    });
+  };
   return {
     kind: 'opfs',
+    dispose: kill,
     async probe() {
       await call({ op: 'probe' });
     },

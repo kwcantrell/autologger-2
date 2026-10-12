@@ -66,4 +66,6 @@ export interface ChunkBackend {
   list(userId: string): Promise<ChunkManifest[]>;
   remove(userId: string, id: string): Promise<void>;
   wipe(userId: string): Promise<void>;
+  /** Release what the backend holds (the OPFS worker). */
+  dispose?(): void;
 }

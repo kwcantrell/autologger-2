@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { PartsUploadError } from '../../../api/uploads';
 import { FakeLockRegistry } from '../../../test/fakes/locks';
 import { type ChunkStore, createChunkStore } from './chunkStore';
 import { createMemoryBackend } from './chunkStore/memoryBackend';
@@ -12,8 +13,9 @@ import {
   onChunkUploadQueueCreated,
   resetChunkUploadQueueForTesting,
   type UploadOutcome,
+  uploadChunkViaParts,
 } from './chunkUploadQueue';
-import { createRecorderLocks, takeLockName } from './recorderLocks';
+import { chunkLockName, createRecorderLocks, takeLockName } from './recorderLocks';
 
 // --- chunk-upload pipeline tests (chunked-live-recording, task 4.1) ---
 //
@@ -1574,5 +1576,172 @@ describe('media-worker A.3: the provider builds real deps', () => {
     const q = getChunkUploadQueue();
     expect(q).toBe(getChunkUploadQueue());
     expect(q.getSnapshot().idle).toBe(true);
+  });
+});
+
+describe('implementation panel fixes (A.8)', () => {
+  const USER = 'user-a';
+  const START = Date.parse('2026-10-12T10:00:00.000Z');
+  const iso = (ms: number) => new Date(ms).toISOString();
+
+  async function storedChunk(s: ChunkStore, userId = USER, index = 0) {
+    const h = await s.openChunk({
+      userId,
+      sessionId: 'sess-1',
+      recordingOrdinal: 2,
+      chunkIndex: index,
+      startedAtUtc: iso(START + index * 600_000),
+      mimeType: 'audio/webm',
+    });
+    await s.append(h, new Blob([new Uint8Array(3)]));
+    await s.finalize(h, iso(START + (index + 1) * 600_000));
+    return h;
+  }
+
+  it('the queue holds a chunk lock for as long as it owns the chunk, so another tab never recovers it', async () => {
+    const s = createChunkStore({ backends: [() => createMemoryBackend()] });
+    const reg = new FakeLockRegistry();
+    const h = await storedChunk(s);
+    let fail = true;
+    const q = createChunkUploadQueue({
+      upload: vi.fn(async (c: ChunkInput) => {
+        if (fail) throw new FakeApiError(503, 'down');
+        return okFor(c);
+      }),
+      listSegments: vi.fn(async () => []),
+      clock: { now: () => 0 },
+      store: s,
+      locks: createRecorderLocks({ locks: reg.tab(), now: () => 0 }),
+    });
+    q.enqueue({
+      sessionId: 'sess-1',
+      recordingOrdinal: 2,
+      chunkIndex: 0,
+      startedAtUtc: iso(START),
+      endedAtUtc: iso(START + 600_000),
+      mimeType: 'audio/webm',
+      storeId: h.id,
+      userId: USER,
+      bytes: 3,
+    });
+    await q.whenOwned();
+    await q.pump(); // fails: waiting in backoff
+    expect(reg.isHeld(chunkLockName(h.id))).toBe(true);
+    const tabB = createChunkUploadQueue({
+      upload: vi.fn(),
+      listSegments: vi.fn(async () => []),
+      clock: { now: () => 0 },
+      store: s,
+      locks: createRecorderLocks({ locks: reg.tab(), now: () => 0 }),
+    });
+    expect((await tabB.recover(USER)).recovered).toBe(0);
+    fail = false;
+    await q.pump();
+    expect(q.getSnapshot().chunks).toEqual([]);
+    expect(reg.isHeld(chunkLockName(h.id))).toBe(false);
+  });
+
+  it('a recovered chunk is held by the recovering tab until it is confirmed', async () => {
+    const s = createChunkStore({ backends: [() => createMemoryBackend()] });
+    const reg = new FakeLockRegistry();
+    const h = await storedChunk(s);
+    const q = createChunkUploadQueue({
+      upload: vi.fn(async () => {
+        throw new FakeApiError(503, 'down');
+      }),
+      listSegments: vi.fn(async () => []),
+      clock: { now: () => 0 },
+      store: s,
+      locks: createRecorderLocks({ locks: reg.tab(), now: () => 0 }),
+    });
+    await q.recover(USER);
+    expect(reg.isHeld(chunkLockName(h.id))).toBe(true);
+  });
+
+  it('bytes that vanished because another tab uploaded them are confirmed by the server, not parked', async () => {
+    const s = createChunkStore({ backends: [() => createMemoryBackend()] });
+    const h = await storedChunk(s);
+    const q = createChunkUploadQueue({
+      upload: vi.fn(),
+      listSegments: vi.fn(async () => [{ recording_ordinal: 2, started_at_utc: iso(START) }]),
+      clock: { now: () => 0 },
+      store: s,
+    });
+    q.enqueue({
+      sessionId: 'sess-1',
+      recordingOrdinal: 2,
+      chunkIndex: 0,
+      startedAtUtc: iso(START),
+      endedAtUtc: iso(START + 600_000),
+      mimeType: 'audio/webm',
+      storeId: h.id,
+      userId: USER,
+      bytes: 3,
+    });
+    await s.remove(USER, h.id); // the other tab confirmed and removed it
+    await q.pump();
+    expect(q.getSnapshot().chunks).toEqual([]);
+  });
+
+  it('a 401 on the dedupe lookup marks the chunk blocked (signed out), not an endless lookup retry', async () => {
+    const t = { now: 0 };
+    const sched = fakeScheduler();
+    const listSegments = vi.fn(async () => {
+      throw new FakeApiError(401, 'Not authenticated.');
+    });
+    const q = createChunkUploadQueue({
+      upload: vi.fn(() => Promise.reject(new FakeNetworkError('lost'))),
+      listSegments,
+      clock: { now: () => t.now },
+      scheduler: sched.make,
+    });
+    q.enqueue(chunk());
+    await q.pump(); // ambiguous
+    await q.pump(); // lookup answers 401
+    expect(q.getSnapshot().chunks[0].classification).toBe('blocked');
+    t.now += 3_600_000;
+    sched.tick();
+    await settle();
+    expect(listSegments).toHaveBeenCalledTimes(1);
+  });
+
+  it("never uploads another user's chunk", async () => {
+    const upload = vi.fn(async (c: ChunkInput) => okFor(c));
+    const q = createChunkUploadQueue({ upload, listSegments: vi.fn(), clock: makeClock() });
+    q.setCurrentUser('user-b');
+    q.enqueue({ ...chunk({ chunkIndex: 0 }), userId: 'user-a' });
+    q.enqueue({ ...chunk({ chunkIndex: 1 }), userId: 'user-b' });
+    await q.pump();
+    expect(upload.mock.calls.map(([c]) => c.userId)).toEqual(['user-b']);
+    expect(q.getSnapshot().chunks.map((c) => c.userId)).toEqual(['user-a']);
+    q.discardUser('user-a');
+    expect(q.getSnapshot().chunks).toEqual([]);
+  });
+
+  describe('uploadChunkViaParts (413 fallback)', () => {
+    const live = (over: Partial<ChunkInput> = {}) =>
+      ({ ...chunk(over), blob: blob(5), storeId: 'store-1' }) as ChunkInput & { blob: Blob };
+
+    it('reuses one remembered upload per chunk (resume key), in segment mode', async () => {
+      const uploader = vi.fn(async () => ({ segmentId: 'seg-9' }));
+      const out = await uploadChunkViaParts(live(), uploader);
+      expect(out).toMatchObject({ ok: true, segment: { id: 'seg-9' } });
+      const opts = (uploader.mock.calls[0] as unknown as [Record<string, unknown>])[0];
+      expect(opts.resumeKey).toBe('live-chunk:store-1');
+      expect(opts.completion).toMatchObject({ mode: 'segment', recordingOrdinal: 1 });
+    });
+
+    it.each([
+      [new PartsUploadError('failed', 'gone', null, false), 400],
+      [new PartsUploadError('failed', 'network', null, true), 503],
+      [new PartsUploadError('capacity', 'too many', 429, true), 429],
+      [new PartsUploadError('disk', 'low disk', 507, true), 507],
+      [new PartsUploadError('rejected', 'nope', 404, false), 404],
+    ])('maps %s to a status-bearing failure (%i)', async (err, status) => {
+      const uploader = vi.fn(async () => {
+        throw err;
+      });
+      await expect(uploadChunkViaParts(live(), uploader)).rejects.toMatchObject({ status });
+    });
   });
 });

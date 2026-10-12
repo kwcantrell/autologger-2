@@ -50,7 +50,7 @@ import type {
   AudioSegmentsResponse,
   RecordingFinalizeResponse,
 } from '../../../api/types';
-import { uploadSegmentInParts } from '../../../api/uploads';
+import { PartsUploadError, type PartsUploadOptions, uploadInParts } from '../../../api/uploads';
 import { createWorkerInterval } from '../../../shared/utils/workerInterval';
 import { type ChunkStore, getChunkStore } from './chunkStore';
 import type { ChunkManifest } from './chunkStore/types';
@@ -135,6 +135,8 @@ export interface QueuedChunk {
   recovered: boolean;
   partial: boolean;
   safari: boolean;
+  /** The signed-in user who recorded it (`null`: unknown). */
+  userId: string | null;
 }
 
 export interface PendingFinalizeRef {
@@ -152,6 +154,8 @@ export interface ChunkQueueSnapshot {
   pendingOrdinals: number[];
   offline: boolean;
   pendingFinalizes: PendingFinalizeRef[];
+  /** The signed-in user the recorder reported (`undefined` until it did). */
+  currentUser: string | null | undefined;
 }
 
 // The finalize answer is a client response type (api/types, checked against its capture).
@@ -207,7 +211,6 @@ export interface RequestFinalizeInput {
 export const SCHEDULER_TICK_MS = 1_000;
 
 interface InternalChunk extends QueuedChunk {
-  userId: string | null;
   /** Failures counted for the backoff (reset by `online`). */
   failures: number;
   ambiguous: boolean;
@@ -216,6 +219,8 @@ interface InternalChunk extends QueuedChunk {
   /** A `413` sent this chunk to the parts upload; later attempts go there directly. */
   viaParts: boolean;
   seq: number;
+  /** Releases the chunk lock this queue holds while it owns the chunk (A.8). */
+  releaseLock: (() => void) | null;
   /** A recovered partial chunk whose end is measured from its bytes before its first upload. */
   measure: ChunkManifest | null;
 }
@@ -285,6 +290,8 @@ export function createChunkUploadQueue(deps: ChunkUploadQueueDeps) {
   let lastHeartbeatAt = 0;
   const recoveries = new Map<string, Promise<{ recovered: number }>>();
   const recoveredUsers = new Set<string>();
+  /** The signed-in user; `undefined` until told (then nothing is filtered). */
+  let currentUser: string | null | undefined;
 
   function toSnapshot(): ChunkQueueSnapshot {
     const snapshotChunks: QueuedChunk[] = chunks.map((c) => ({
@@ -301,6 +308,7 @@ export function createChunkUploadQueue(deps: ChunkUploadQueueDeps) {
       classification: c.classification,
       lastError: c.lastError,
       attempts: c.attempts,
+      userId: c.userId,
       nextAttemptAt: c.nextAttemptAt,
       recovered: c.recovered,
       partial: c.partial,
@@ -315,6 +323,7 @@ export function createChunkUploadQueue(deps: ChunkUploadQueueDeps) {
       idle: !inFlight && chunks.length === 0,
       pendingOrdinals,
       offline,
+      currentUser,
       pendingFinalizes: Array.from(finalizes.values(), (f) => ({
         sessionId: f.sessionId,
         recordingOrdinal: f.recordingOrdinal,
@@ -348,9 +357,59 @@ export function createChunkUploadQueue(deps: ChunkUploadQueueDeps) {
     c.nextAttemptAt = clock.now() + backoffDelayMs(c.failures, random);
   }
 
+  /** Pending chunk-lock acquisitions (`whenOwned`). */
+  const owning = new Set<Promise<void>>();
+
+  /**
+   * Hold the chunk's Web Lock for as long as this queue owns the chunk — through backoff,
+   * offline and blocked, not only during an attempt — so another tab's scan never recovers it
+   * (A.8). When another tab already holds it, the chunk is checked against the server first.
+   */
+  function own(record: InternalChunk): void {
+    const locks = deps.locks;
+    if (locks?.mode !== 'locks' || !record.storeId) return;
+    const p = locks.holdChunk(record.storeId).then((release) => {
+      if (!release) {
+        record.ambiguous = true;
+        return;
+      }
+      if (chunks.includes(record)) record.releaseLock = release;
+      else release();
+    });
+    owning.add(p);
+    void p.finally(() => owning.delete(p));
+  }
+
+  function disown(record: InternalChunk): void {
+    const release = record.releaseLock;
+    record.releaseLock = null;
+    release?.();
+  }
+
+  /** Settles once every chunk lock this queue is acquiring is held. */
+  async function whenOwned(): Promise<void> {
+    await Promise.all(Array.from(owning));
+  }
+
+  /** A chunk this tab may upload: never another user's (the request carries this user's cookie). */
+  const mayUpload = (c: InternalChunk) =>
+    currentUser === undefined || c.userId === null || c.userId === currentUser;
+
+  function setCurrentUser(userId: string | null): void {
+    currentUser = userId;
+    notify();
+  }
+
+  /** Drop every chunk and pending finalize of `userId` (sign-out wipes their storage). */
+  function discardUser(userId: string): void {
+    for (const c of chunks.slice()) if (c.userId === userId) void discardChunk(c.key);
+    for (const [k, f] of Array.from(finalizes)) if (f.userId === userId) finalizes.delete(k);
+    notify();
+  }
+
   function enqueueInternal(
     input: ChunkInput,
-    flags: { ambiguous?: boolean; measure?: ChunkManifest } = {},
+    flags: { ambiguous?: boolean; measure?: ChunkManifest; held?: () => void } = {},
   ): InternalChunk | null {
     const size = input.blob ? input.blob.size : (input.bytes ?? 0);
     if (size === 0) return null;
@@ -381,10 +440,13 @@ export function createChunkUploadQueue(deps: ChunkUploadQueueDeps) {
       viaParts: false,
       seq,
       measure: null,
+      releaseLock: null,
     };
     record.measure = flags.measure ?? null;
     chunks.push(record);
     chunks.sort(compareCapture);
+    if (record.storeId && !flags.held) own(record);
+    else if (flags.held) record.releaseLock = flags.held;
     return record;
   }
 
@@ -398,17 +460,19 @@ export function createChunkUploadQueue(deps: ChunkUploadQueueDeps) {
 
   /** The earliest chunk eligible for an attempt: `queued`, or given one attempt by Retry. */
   function nextAttemptable(): InternalChunk | undefined {
-    return chunks.find((c) => c.classification === 'queued' || c.retryOnce);
+    return chunks.find((c) => (c.classification === 'queued' || c.retryOnce) && mayUpload(c));
   }
 
-  type DedupeResult = 'confirmed' | 'not-found' | 'lookup-failed';
+  type DedupeResult = 'confirmed' | 'not-found' | 'lookup-failed' | 'blocked';
 
   async function resolveAmbiguous(chunk: InternalChunk): Promise<DedupeResult> {
     let existing: ExistingSegment[];
     try {
       existing = await listSegments(chunk.sessionId);
-    } catch {
-      return 'lookup-failed';
+    } catch (err) {
+      const status = extractStatus(err);
+      // Signed out: retrying the lookup on its own can never succeed (A.8).
+      return status === 401 || status === 403 ? 'blocked' : 'lookup-failed';
     }
     const want = normaliseWindow(chunk.startedAtUtc);
     const found = existing.some(
@@ -429,6 +493,7 @@ export function createChunkUploadQueue(deps: ChunkUploadQueueDeps) {
       }
     }
     chunks = chunks.filter((c) => c !== chunk);
+    disown(chunk);
     deps.onConfirmed?.(chunk.sessionId);
     notify();
   }
@@ -471,6 +536,12 @@ export function createChunkUploadQueue(deps: ChunkUploadQueueDeps) {
         await confirmChunk(head);
         return 'continue';
       }
+      if (result === 'blocked') {
+        head.classification = 'blocked';
+        head.lastError = 'Signed out: the server refused the upload check.';
+        head.nextAttemptAt = null;
+        return 'continue';
+      }
       if (result === 'lookup-failed') {
         // Still unknown: never re-upload blind. The tick tries the lookup again.
         scheduleRetry(head);
@@ -484,7 +555,19 @@ export function createChunkUploadQueue(deps: ChunkUploadQueueDeps) {
       try {
         blob = await bytesOf(head);
       } catch {
-        head.classification = 'permanent';
+        // The bytes vanished: most likely another tab uploaded the chunk and removed it. Ask the
+        // server before parking it (A.8).
+        const result = await resolveAmbiguous(head);
+        if (result === 'confirmed') {
+          await confirmChunk(head);
+          return 'continue';
+        }
+        if (result === 'lookup-failed') {
+          head.ambiguous = true;
+          scheduleRetry(head);
+          return 'stop';
+        }
+        head.classification = result === 'blocked' ? 'blocked' : 'permanent';
         head.lastError = 'The locally stored audio for this chunk is no longer available.';
         return 'continue';
       }
@@ -549,7 +632,8 @@ export function createChunkUploadQueue(deps: ChunkUploadQueueDeps) {
       return onFailure(head, outcome.status, outcome.message);
     };
 
-    if (!deps.locks) return run();
+    // The queue already holds this chunk's lock for its whole stay (locks are not re-entrant).
+    if (!deps.locks || head.releaseLock) return run();
     const locked = await deps.locks.withChunkLock(head.storeId ?? head.key, run);
     if (locked.acquired) return locked.value;
     // Another tab is uploading this chunk: check the segments list later instead.
@@ -565,6 +649,7 @@ export function createChunkUploadQueue(deps: ChunkUploadQueueDeps) {
     for (const [key, f] of Array.from(finalizes)) {
       if (offline) return;
       if (holdsOrdinal(f.sessionId, f.recordingOrdinal)) continue;
+      if (currentUser !== undefined && f.userId !== null && f.userId !== currentUser) continue;
       if (auto && !due(f.nextAttemptAt)) continue;
       try {
         await send(f.sessionId, f.recordingOrdinal, [...f.windows]);
@@ -695,6 +780,7 @@ export function createChunkUploadQueue(deps: ChunkUploadQueueDeps) {
     const chunk = chunks.find((c) => c.key === key);
     if (!chunk) return Promise.resolve();
     chunks = chunks.filter((c) => c !== chunk);
+    disown(chunk);
     dropWindow(chunk);
     notify();
     // The remaining windows of that recording may now be complete.
@@ -816,6 +902,13 @@ export function createChunkUploadQueue(deps: ChunkUploadQueueDeps) {
         await store.remove(userId, m.id).catch(() => {});
         continue;
       }
+      // Own it for its whole stay here; another tab that got there first keeps it.
+      let held: (() => void) | undefined;
+      if (deps.locks?.mode === 'locks') {
+        const release = await deps.locks.holdChunk(m.id);
+        if (!release) continue;
+        held = release;
+      }
       g.starts.push(m.startedAtUtc);
       const partial = !(m.finalized && m.endedAtUtc);
       const added = enqueueInternal(
@@ -834,9 +927,10 @@ export function createChunkUploadQueue(deps: ChunkUploadQueueDeps) {
           partial: !m.finalized,
           safari: m.safari,
         },
-        partial ? { ambiguous: true, measure: m } : { ambiguous: true },
+        partial ? { ambiguous: true, measure: m, held } : { ambiguous: true, held },
       );
       if (added) recovered += 1;
+      else held?.();
     }
 
     // Every recovered recording is over (its tab is gone): finalize it with its windows.
@@ -934,6 +1028,7 @@ export function createChunkUploadQueue(deps: ChunkUploadQueueDeps) {
 
   /** Stop the tick and the network subscription (tests; the singleton lives with the tab). */
   function dispose(): void {
+    for (const c of chunks) disown(c);
     ticker?.stop();
     ticker = null;
     unsubscribeNetwork?.();
@@ -951,6 +1046,9 @@ export function createChunkUploadQueue(deps: ChunkUploadQueueDeps) {
     requestFinalize,
     recover,
     recoveryDone,
+    whenOwned,
+    setCurrentUser,
+    discardUser,
     subscribe,
     getSnapshot,
     now,
@@ -1027,6 +1125,67 @@ function browserNetwork(): NetworkStatus | undefined {
   };
 }
 
+/** A failure carrying an HTTP-like status the queue classifies (parts upload, A.8). */
+export class ChunkUploadError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'ChunkUploadError';
+  }
+}
+
+/**
+ * The `413` fallback (D11/D12): one live chunk through the resumable parts upload in segment
+ * mode. The upload is remembered per chunk (`resumeKey`), so a retry resumes it instead of
+ * opening another (the server allows 2 open uploads per user). A `PartsUploadError` becomes a
+ * status the queue classifies: capacity 429 and low disk 507 retry on the backoff, an interrupted
+ * resumable upload retries as 503, and a non-resumable failure is terminal (400) and visible.
+ */
+export async function uploadChunkViaParts(
+  chunk: UploadChunk,
+  uploader: (opts: PartsUploadOptions) => Promise<{ segmentId: string }> = uploadInParts,
+): Promise<UploadOutcome> {
+  try {
+    const { segmentId } = await uploader({
+      sessionId: chunk.sessionId,
+      blob: chunk.blob,
+      contentType: chunk.mimeType || chunk.blob.type || 'audio/webm',
+      completion: {
+        mode: 'segment',
+        recordingOrdinal: chunk.recordingOrdinal,
+        startedAtUtc: chunk.startedAtUtc,
+        endedAtUtc: chunk.endedAtUtc,
+      },
+      resumeKey: `live-chunk:${chunk.storeId ?? `${chunk.sessionId}:${chunk.recordingOrdinal}:${chunk.startedAtUtc}`}`,
+    });
+    return {
+      ok: true,
+      segment: {
+        id: segmentId,
+        recording_ordinal: chunk.recordingOrdinal,
+        started_at_utc: chunk.startedAtUtc,
+      },
+    };
+  } catch (err) {
+    if (err instanceof PartsUploadError) {
+      const status =
+        err.kind === 'capacity'
+          ? 429
+          : err.kind === 'disk'
+            ? 507
+            : err.kind === 'rejected'
+              ? (err.status ?? 400)
+              : err.resumable
+                ? 503
+                : 400;
+      throw new ChunkUploadError(status, `Large-chunk upload: ${err.message}`);
+    }
+    throw err;
+  }
+}
+
 /** The real dependencies: the segment POST, the segments list, finalize, parts, store, locks. */
 export function createDefaultChunkUploadQueueDeps(): ChunkUploadQueueDeps {
   return {
@@ -1053,21 +1212,7 @@ export function createDefaultChunkUploadQueueDeps(): ChunkUploadQueueDeps {
         },
       };
     },
-    uploadSegmentParts: async (chunk) => {
-      const { segmentId } = await uploadSegmentInParts(chunk.sessionId, chunk.blob, {
-        recordingOrdinal: chunk.recordingOrdinal,
-        startedAtUtc: chunk.startedAtUtc,
-        endedAtUtc: chunk.endedAtUtc,
-      });
-      return {
-        ok: true as const,
-        segment: {
-          id: segmentId,
-          recording_ordinal: chunk.recordingOrdinal,
-          started_at_utc: chunk.startedAtUtc,
-        },
-      };
-    },
+    uploadSegmentParts: (chunk) => uploadChunkViaParts(chunk),
     listSegments: async (sessionId: string) =>
       (await apiFetch<AudioSegmentsResponse>(`sessions/${sessionId}/audio/segments`)).segments,
     finalize: (sessionId, recordingOrdinal, windows) =>

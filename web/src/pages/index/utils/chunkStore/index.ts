@@ -46,6 +46,8 @@ export interface ChunkStoreOptions {
   /** Safari evicts site storage after 7 days without use; entries record it. */
   isSafari?: boolean;
   newId?: () => string;
+  /** Test seam (default `PROBE_TIMEOUT_MS`). */
+  probeTimeoutMs?: number;
 }
 
 export interface OpenChunkMeta {
@@ -75,7 +77,11 @@ export interface ChunkStore {
   ready(): Promise<BackendKind>;
   backendKind(): BackendKind | null;
   openChunk(meta: OpenChunkMeta): Promise<ChunkHandle>;
-  /** Append one slice. Never rejects: a failing write moves the chunk to memory. */
+  /**
+   * Append one slice. Never rejects: when a write fails (or quota runs short) the bytes already
+   * on disk stay there and this chunk's later slices are kept in memory. An unknown handle
+   * (removed meanwhile) is a no-op, like every handle method below.
+   */
   append(handle: ChunkHandle, bytes: Blob): Promise<void>;
   /** Mark the chunk complete with its end time (and the mime type learned from its data). */
   finalize(handle: ChunkHandle, endedAtUtc: string, mimeType?: string): Promise<void>;
@@ -123,6 +129,13 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
 interface OpenEntry {
   manifest: ChunkManifest;
   backend: ChunkBackend;
+  /**
+   * Slices kept in memory after persistence degraded mid-chunk (A.8): the first `diskBytes` stay
+   * durable on `backend` (a crash still recovers that prefix, container header included) and the
+   * tail lives here until upload. `null` while every slice is on `backend`.
+   */
+  tail: Blob[] | null;
+  diskBytes: number;
   /** Serialises this chunk's writes (slices must land in order). */
   chain: Promise<void>;
 }
@@ -162,8 +175,14 @@ export function createChunkStore(opts: ChunkStoreOptions): ChunkStore {
             continue;
           }
           try {
-            await withTimeout(backend.probe(), PROBE_TIMEOUT_MS);
+            await withTimeout(backend.probe(), opts.probeTimeoutMs ?? PROBE_TIMEOUT_MS);
           } catch {
+            // A failed or hung probe must not leave its worker running.
+            try {
+              backend.dispose?.();
+            } catch {
+              /* already gone */
+            }
             continue;
           }
           primary = backend;
@@ -208,37 +227,20 @@ export function createChunkStore(opts: ChunkStoreOptions): ChunkStore {
     }
   }
 
-  /** Move an open chunk to memory with the bytes it already persisted. */
-  async function moveToMemory(userId: string, entry: OpenEntry): Promise<void> {
-    const from = entry.backend;
+  /**
+   * Stop persisting this chunk: the bytes already written stay on disk (never moved or removed,
+   * so a failed read can never cost the durable prefix) and later slices go to memory.
+   */
+  function startTail(entry: OpenEntry): void {
     degrade();
-    if (from === memory) return;
-    let persisted: Blob | null = null;
-    try {
-      persisted = await from.read(
-        userId,
-        entry.manifest.id,
-        entry.manifest.mimeType,
-        entry.manifest.bytes,
-      );
-    } catch {
-      persisted = null;
-    }
-    await memory.create(userId, entry.manifest);
-    if (persisted && persisted.size > 0) await memory.append(userId, entry.manifest, persisted);
-    entry.backend = memory;
-    location.set(entry.manifest.id, memory);
-    try {
-      await from.remove(userId, entry.manifest.id);
-    } catch {
-      /* best effort: the 30-day cleanup removes a leftover */
-    }
+    if (entry.backend === memory || entry.tail) return;
+    entry.tail = [];
+    entry.diskBytes = entry.manifest.bytes;
   }
 
-  function entryOf(handle: ChunkHandle): OpenEntry {
-    const entry = open.get(handle.id);
-    if (!entry) throw new Error(`chunkStore: unknown handle ${handle.id}`);
-    return entry;
+  /** A resolved no-op (handle methods on a removed or unknown handle). */
+  function noop(): Promise<void> {
+    return Promise.resolve();
   }
 
   function serial(entry: OpenEntry, fn: () => Promise<void>): Promise<void> {
@@ -248,11 +250,12 @@ export function createChunkStore(opts: ChunkStoreOptions): ChunkStore {
   }
 
   async function writeManifestSafe(userId: string, entry: OpenEntry): Promise<void> {
+    // With a memory tail the disk manifest keeps describing the durable prefix only.
+    if (entry.tail) return;
     try {
       await entry.backend.writeManifest(userId, entry.manifest);
     } catch {
-      await moveToMemory(userId, entry);
-      await memory.writeManifest(userId, entry.manifest);
+      startTail(entry);
     }
   }
 
@@ -289,18 +292,23 @@ export function createChunkStore(opts: ChunkStoreOptions): ChunkStore {
         backend = memory;
         await memory.create(meta.userId, manifest);
       }
-      open.set(manifest.id, { manifest, backend, chain: Promise.resolve() });
+      open.set(manifest.id, {
+        manifest,
+        backend,
+        chain: Promise.resolve(),
+        tail: null,
+        diskBytes: 0,
+      });
       if (backend !== primary) location.set(manifest.id, backend);
       return { id: manifest.id, userId: meta.userId };
     },
 
     append(handle, bytes) {
-      const entry = entryOf(handle);
+      const entry = open.get(handle.id);
+      if (!entry) return noop();
       return serial(entry, async () => {
         if (bytes.size === 0) return;
-        if (entry.backend !== memory && (await quotaShort())) {
-          await moveToMemory(handle.userId, entry);
-        }
+        if (entry.backend !== memory && !entry.tail && (await quotaShort())) startTail(entry);
         const t = now();
         const next: ChunkManifest = {
           ...entry.manifest,
@@ -310,18 +318,21 @@ export function createChunkStore(opts: ChunkStoreOptions): ChunkStore {
           updatedAt: t,
           heartbeatAt: t,
         };
-        try {
-          await entry.backend.append(handle.userId, next, bytes);
-        } catch {
-          await moveToMemory(handle.userId, entry);
-          await memory.append(handle.userId, next, bytes);
+        if (!entry.tail) {
+          try {
+            await entry.backend.append(handle.userId, next, bytes);
+          } catch {
+            startTail(entry);
+          }
         }
+        if (entry.tail) entry.tail.push(bytes);
         entry.manifest = next;
       });
     },
 
     finalize(handle, endedAtUtc, mimeType) {
-      const entry = entryOf(handle);
+      const entry = open.get(handle.id);
+      if (!entry) return noop();
       return serial(entry, async () => {
         const t = now();
         entry.manifest = {
@@ -337,7 +348,8 @@ export function createChunkStore(opts: ChunkStoreOptions): ChunkStore {
     },
 
     setPendingFinalize(handle, windows) {
-      const entry = entryOf(handle);
+      const entry = open.get(handle.id);
+      if (!entry) return noop();
       return serial(entry, async () => {
         entry.manifest = { ...entry.manifest, pendingFinalize: [...windows], updatedAt: now() };
         await writeManifestSafe(handle.userId, entry);
@@ -345,7 +357,9 @@ export function createChunkStore(opts: ChunkStoreOptions): ChunkStore {
     },
 
     manifestOf(handle) {
-      return { ...entryOf(handle).manifest };
+      const entry = open.get(handle.id);
+      if (!entry) throw new Error(`chunkStore: unknown handle ${handle.id}`);
+      return { ...entry.manifest };
     },
 
     async saveFinalize(userId, input) {
@@ -425,6 +439,14 @@ export function createChunkStore(opts: ChunkStoreOptions): ChunkStore {
     async read(userId, id) {
       const entry = open.get(id);
       if (entry) await entry.chain;
+      if (entry?.tail) {
+        const { mimeType } = entry.manifest;
+        const prefix =
+          entry.diskBytes > 0
+            ? await entry.backend.read(userId, id, mimeType, entry.diskBytes)
+            : new Blob([], { type: mimeType });
+        return new Blob([prefix, ...entry.tail], { type: mimeType });
+      }
       const backend = await locate(id);
       let manifest = entry?.manifest;
       if (!manifest) {
@@ -438,9 +460,12 @@ export function createChunkStore(opts: ChunkStoreOptions): ChunkStore {
       const entry = open.get(id);
       if (entry) await entry.chain;
       const backend = await locate(id);
-      await backend.remove(userId, id);
-      open.delete(id);
-      location.delete(id);
+      try {
+        await backend.remove(userId, id);
+      } finally {
+        open.delete(id);
+        location.delete(id);
+      }
     },
 
     async wipe(userId) {

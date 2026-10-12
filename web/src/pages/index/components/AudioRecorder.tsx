@@ -30,6 +30,7 @@ import {
   setChunkStoreDegradedListener,
 } from '../utils/chunkStore';
 import {
+  type ChunkInput,
   type ChunkQueueSnapshot,
   type ChunkUploadQueue,
   getChunkUploadQueue,
@@ -213,7 +214,11 @@ export interface AudioRecorderProps {
   chunkMs?: number;
   /** Test seam for the microphone re-acquisition window (design D19: 60 s). */
   micRetryWindowMs?: number;
+  /** Longest Record waits for the profile and the storage scan (A.8: never forever). */
+  scanTimeoutMs?: number;
 }
+
+const SCAN_TIMEOUT_MS = 10_000;
 
 function isMobileSafari(): boolean {
   if (typeof navigator === 'undefined') return false;
@@ -232,13 +237,21 @@ function requestPersistentStorage(): void {
 
 export const AudioRecorder = forwardRef<AudioRecorderHandle, AudioRecorderProps>(
   function AudioRecorder(
-    { sessionId, onPhaseChange, chunkMs = CHUNK_MS, micRetryWindowMs = MIC_REACQUIRE_WINDOW_MS },
+    {
+      sessionId,
+      onPhaseChange,
+      chunkMs = CHUNK_MS,
+      micRetryWindowMs = MIC_REACQUIRE_WINDOW_MS,
+      scanTimeoutMs = SCAN_TIMEOUT_MS,
+    },
     ref,
   ) {
     const queryClient = useQueryClient();
-    const { data: profile } = useProfile();
+    const profileQuery = useProfile();
+    const profile = profileQuery.data;
     const userId = profile?.auth?.user?.id ?? null;
-    const profileKnown = profile !== undefined;
+    // A failed profile query allows recording (in memory); recovery waits for a profile (A.8).
+    const profileKnown = profile !== undefined || profileQuery.isError === true;
 
     // Module-owned singleton (design D6), built with its real deps by the provider.
     const queueRef = useRef<ChunkUploadQueue | null>(null);
@@ -266,6 +279,9 @@ export const AudioRecorder = forwardRef<AudioRecorderHandle, AudioRecorderProps>
     const wakeLockRef = useRef<WakeLockController | null>(null);
     const hiddenSinceRef = useRef<number | null>(null);
     const startReacquireRef = useRef<(take: ActiveTake) => Promise<void>>(async () => {});
+    const finalizeStopRef = useRef<(take: ActiveTake, r: 'final' | 'unexpected') => Promise<void>>(
+      async () => {},
+    );
     const stateRef = useRef(state);
     stateRef.current = state;
 
@@ -279,6 +295,22 @@ export const AudioRecorder = forwardRef<AudioRecorderHandle, AudioRecorderProps>
     const showToast = useCallback((msg: string, isError = false) => {
       appShowToast(msg, isError);
     }, []);
+
+    // Never hold Record forever: a profile or scan that has not answered by then lets the user
+    // record (A.8); a late scan still enqueues what it finds.
+    useEffect(() => {
+      const timer = setTimeout(() => {
+        if (stateRef.current.phase !== 'scanning') return;
+        console.warn('Recorder: the storage scan is taking too long; recording is allowed now.');
+        dispatch({ type: 'SCAN_DONE', blocked: blocksNewRecording(queue.getSnapshot()) });
+      }, scanTimeoutMs);
+      return () => clearTimeout(timer);
+    }, [scanTimeoutMs, queue]);
+
+    // The queue uploads only the signed-in user's chunks (the request carries their cookie).
+    useEffect(() => {
+      if (profile !== undefined) queue.setCurrentUser(userId);
+    }, [profile, userId, queue]);
 
     // Recovery scan (D10): once per user per page load; Record waits for it.
     useEffect(() => {
@@ -482,6 +514,8 @@ export const AudioRecorder = forwardRef<AudioRecorderHandle, AudioRecorderProps>
         // The last chunk is persisted and enqueued before the take lock goes and finalize is
         // requested (finalize lists every window; the queue sends it after the last confirm).
         await take.chunkSettled;
+        // The queue holds each chunk's lock from here on; only then may the take lock go (A.8).
+        await queue.whenOwned();
         take.releaseTakeLock();
         if (take.windows.length > 0) {
           await queue.requestFinalize({
@@ -524,6 +558,8 @@ export const AudioRecorder = forwardRef<AudioRecorderHandle, AudioRecorderProps>
       ],
     );
 
+    finalizeStopRef.current = finalizeStop;
+
     /**
      * Construct + start a MediaRecorder for one chunk on the (live) stream with
      * a 5 s timeslice (media-worker D10): each slice is appended to the chunk's
@@ -564,42 +600,82 @@ export const AudioRecorder = forwardRef<AudioRecorderHandle, AudioRecorderProps>
             }
           });
         }
+        /** A slice the store refused: this chunk's later slices stay in memory too. */
+        let fallback = false;
         mr.ondataavailable = (e) => {
           if (!e.data || e.data.size === 0) return;
           const data = e.data;
           if (!dataMime && data.type) dataMime = data.type;
           bytes += data.size;
           chain = chain.then(async () => {
-            if (handle) await store.append(handle, data);
-            else memParts.push(data);
+            if (handle && !fallback) {
+              try {
+                await store.append(handle, data);
+                return;
+              } catch {
+                fallback = true;
+              }
+            }
+            memParts.push(data);
           });
         };
+        let stopped = false;
         mr.onstop = () => {
+          // A browser (or a racing stop) may deliver onstop twice: one chunk, one enqueue.
+          if (stopped) return;
+          stopped = true;
           const endedAtUtc = new Date().toISOString();
-          const settled = (async () => {
-            await chain;
+          /** Persist the chunk and say what to enqueue. Never rejects (A.8). */
+          const persist = async (): Promise<ChunkInput | null> => {
+            await chain.catch(() => undefined);
             const mime = mimeAtStart || dataMime || 'audio/webm';
-            if (bytes > 0) {
-              take.windows.push(startedAtUtc);
-              const base = {
-                sessionId: take.sessionId,
-                recordingOrdinal: take.ordinal,
-                chunkIndex,
-                startedAtUtc,
-                endedAtUtc,
-                mimeType: mime,
-              };
-              if (handle && take.userId) {
-                await store.finalize(handle, endedAtUtc, mime);
-                queue.enqueue({ ...base, storeId: handle.id, userId: take.userId, bytes });
-              } else {
-                queue.enqueue({ ...base, blob: new Blob(memParts, { type: mime }) });
-              }
-            } else if (handle && take.userId) {
+            const owner = take.userId;
+            if (bytes === 0) {
               // Zero-byte chunk: never uploaded (the server 400s empty payloads).
-              await store.remove(take.userId, handle.id).catch(() => {});
+              if (handle && owner) await store.remove(owner, handle.id).catch(() => {});
+              return null;
             }
-          })();
+            take.windows.push(startedAtUtc);
+            const base = {
+              sessionId: take.sessionId,
+              recordingOrdinal: take.ordinal,
+              chunkIndex,
+              startedAtUtc,
+              endedAtUtc,
+              mimeType: mime,
+            };
+            if (handle && owner && !fallback) {
+              try {
+                await store.finalize(handle, endedAtUtc, mime);
+                return { ...base, storeId: handle.id, userId: owner, bytes };
+              } catch {
+                /* fall through to an in-memory copy */
+              }
+            }
+            // Memory: what the store holds plus the slices it could not take. The store id stays
+            // attached so a confirmation still removes the durable prefix.
+            let prefix: Blob | null = null;
+            if (handle && owner) {
+              prefix = await store.read(owner, handle.id).catch(() => null);
+            }
+            const blob = new Blob(prefix ? [prefix, ...memParts] : memParts, { type: mime });
+            return {
+              ...base,
+              blob,
+              storeId: handle && owner ? handle.id : undefined,
+              userId: owner ?? undefined,
+            };
+          };
+          const persisted = persist().catch((err: unknown) => {
+            console.warn('Recorded chunk could not be prepared for upload.', err);
+            return null;
+          });
+          // Chunks enqueue in capture order, and the take's settle covers every chunk (finalize
+          // must list them all and follow their enqueue).
+          const settled = take.chunkSettled.then(async () => {
+            const input = await persisted;
+            if (input) queue.enqueue(input);
+          });
           take.chunkSettled = settled;
           void settled.then(() => {
             if (rec.reason === 'final') {
@@ -996,6 +1072,10 @@ export const AudioRecorder = forwardRef<AudioRecorderHandle, AudioRecorderProps>
         if (rec && rec.mr.state === 'recording') {
           rec.reason = 'final';
           rec.mr.stop();
+        } else if (takeRef.current) {
+          // Unmounted mid re-acquisition (no live recorder): end the take now, which also
+          // cancels the re-acquisition so it can never start a recorder after unmount (A.8).
+          void finalizeStopRef.current(takeRef.current, 'final');
         }
         micWatchRef.current?.();
         micWatchRef.current = null;
