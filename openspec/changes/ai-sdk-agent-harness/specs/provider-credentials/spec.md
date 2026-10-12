@@ -91,7 +91,7 @@ AI SDK route are guarded"):
   only that wait, and the route's turn timeout bounds the whole turn (the connection test keeps
   its own rule below);
 - each turn SHALL be capped at 60 requests (retries included), 4 MB per request body, 48 MB of
-  request bodies and 64 MB of responses; past a cap the request SHALL be refused without a
+  request bodies, and a per-turn response-byte cap of the turn's step cap × its per-step output cap × 400 bytes; past a cap the request SHALL be refused without a
   connection, or the response ended, and the turn SHALL end with the upstream-failed error;
 - OpenAI model requests SHALL ask OpenAI not to store the conversation (`store: false`);
 - Anthropic model requests SHALL ask Anthropic to cache the conversation prefix (automatic prompt

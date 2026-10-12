@@ -177,7 +177,7 @@ A turn gets exactly its kind's tool set:
 streamText({
   model, system, messages, tools,
   stopWhen: [isStepCount(steps), tokenBudget(maxTotalTokens, usageEstimate)],
-  maxOutputTokens: 4000, maxRetries: 2, abortSignal,
+  maxOutputTokens, maxRetries: 2, abortSignal,
   providerOptions, onError: () => {},
 })
 ```
@@ -250,13 +250,30 @@ registration, as today.
 
 **Limits** (optional `Config` fields, with these defaults):
 
-| Turn kind | `steps` | `maxTotalTokens` | Tool calls per turn |
-| --- | --- | --- | --- |
-| chat (`AI_CHAT_MAX_STEPS`, `AI_CHAT_MAX_TOKENS`) | 8 | 400 000 | 32 |
-| generation (`GENERATE_MAX_STEPS`, `GENERATE_MAX_TOKENS`) | 40 | 3 000 000 | 300 |
+| Turn kind | `steps` | `maxOutputTokens` per step | `maxTotalTokens` | Tool calls per turn |
+| --- | --- | --- | --- | --- |
+| chat (`AI_CHAT_MAX_STEPS`, `AI_CHAT_MAX_TOKENS`) | 8 | 4000 (fixed) | 400 000 | 32 |
+| generation (`GENERATE_MAX_STEPS`, `GENERATE_MAX_OUTPUT_TOKENS`, `GENERATE_MAX_TOKENS`) | 40 | 16 000 | 3 000 000 | 300 |
 
 - `*_MAX_STEPS` sets `steps`, and `*_MAX_TOKENS` sets the per-turn `maxTotalTokens` budget.
-- `maxOutputTokens` (4000), the 16 calls per step and the per-turn call caps are fixed constants.
+- **`GENERATE_MAX_OUTPUT_TOKENS`** (default 16 000) sets generation's per-step output cap (owner,
+  2026-10-12). A generation step writes a batch of `create_event` / `create_topic` calls in one
+  response. On a 2h52m transcript, step 7 hit 4000 and was cut off mid-call: the dev log showed
+  `(ending=incomplete, steps=7, last=length)`, and the run failed with no events written (A42).
+  Chat's 4000 stays fixed.
+- **Valid ranges** (validated values only; blank, non-numeric or out-of-range falls back to the
+  default): `GENERATE_MAX_OUTPUT_TOKENS` 1 000–128 000, `AI_CHAT_MAX_STEPS` 1–50,
+  `GENERATE_MAX_STEPS` 1–100. The response-byte cap (D4) is computed from the validated values, so
+  it stays bounded (at most 100 × 128 000 × 400 ≈ 5.1 GB as a stream counter, at the extreme
+  configuration).
+- **A smaller-model fallback.** Some models and servers reject a 16 000 output cap with `400`
+  before doing anything: older models (e.g. 4–8k output limits) and OpenAI-compatible servers with
+  a small context window. So if a generation turn's **first** model request is answered `400` while
+  its output cap is above 4000, the turn starts again once with 4000. This happens before any tool
+  has run, so nothing is duplicated. The route's log line notes it content-free as
+  `(output-cap fallback 4000)`. A second `400`, or a `400` on any later request, fails as usual
+  (re-panel 2026-10-12).
+- The 16 calls per step and the per-turn call caps are fixed constants.
 - Timeouts reuse `AI_CHAT_TIMEOUT_SEC`, `TOPIC_GENERATE_TIMEOUT_SEC` and
   `EVENT_GENERATE_TIMEOUT_SEC` through `runOuterAiTurn`, which aborts `streamText` through its
   signal (A6).
@@ -301,9 +318,12 @@ and its 10 s timeout covers the whole request.
 3. **Applies per-turn caps:**
    - at most 60 requests, including the SDK's retries;
    - 4 MB per request body, and 48 MB of request bodies per turn (derivation A11);
-   - 64 MB of response bytes per turn. The derivation: generation's 40 steps × 4000 output
-     tokens × ~200 bytes of streamed SSE per token chunk ≈ 32 MB, doubled for headroom. It
-     bounds a hostile server streaming bytes regardless of `max_tokens`.
+   - a response-byte cap per turn derived from the turn's own limits: `steps × maxOutputTokens ×
+     400` bytes, i.e. ~200 bytes of streamed SSE per token chunk, doubled for headroom. That is
+     12.8 MB for chat (8 × 4000) and 256 MB for generation at the defaults (40 × 16 000). The
+     response is streamed, never buffered, so the cap is a counter, not memory. It bounds a
+     hostile server streaming bytes regardless of `max_tokens` (owner, 2026-10-12, replacing the
+     fixed 64 MB derived from 4000 tokens per step).
 
    Past a cap it throws a classified `OutboundFailure` without a connection, or aborts the
    response stream. The turn ends as a cap breach.
@@ -391,7 +411,7 @@ There is no image or compose change. The secrets allowlist `docker/secrets-env.y
 - `AI_CHAT_MAX_STEPS`, `AI_CHAT_MAX_TOKENS`, `GENERATE_MAX_STEPS` and `GENERATE_MAX_TOKENS`.
 
 The allowlist refuses a whole secret holding an unlisted key, so a tunable variable has to be
-listed (re-panel). The same five go in `server/.env.example` and `docker/.env.example` (no
+listed (re-panel). `GENERATE_MAX_OUTPUT_TOKENS` joins them (amendment 2026-10-12). The same variables go in `server/.env.example` and `docker/.env.example` (no
 email value) and `docs/openbao-secrets.md`.
 
 ### D8. Web
@@ -505,6 +525,7 @@ Each assumption below was tested on 2026-10-11 in a scratch install of the pinne
 | A39 | A server whose template opens `<think>` in the prompt emits only the closing tag; the middleware then passes the reasoning through as text | fresh review `node fresh-review/think3.mjs noopen` | `t:"REASON-NO-OPEN-TAG" \| t:"</think>Answer1 "` |
 | A40 | Database statements of tool bodies are time-bounded | `grep -n statement_timeout supabase/migrations/20261001000000_catalog_schema.sql` | `137:alter role autologger_app set statement_timeout = '30s';` |
 | A41 | With `providerOptions.anthropic.cacheControl`, the Anthropic request carries a top-level `cache_control`, and usage reports cache reads and writes separately | `node cache.mjs` (fake Anthropic stream with `cache_read_input_tokens: 9000`) in `aisdk-probe` | `top-level cache_control: {"type":"ephemeral"}`; `usage: {"inputTokens":9250,"inputTokenDetails":{"noCacheTokens":50,"cacheReadTokens":9000,"cacheWriteTokens":200},…,"totalTokens":9255}`. Anthropic docs: "only uncached input tokens count toward your ITPM rate limits" (rate-limits, cache-aware ITPM); automatic caching "moves [the breakpoint] forward as conversations grow" (prompt-caching) |
+| A42 | Event generation with a 4000-token per-step output cap fails on a long transcript | dev stack, 2h52m session (28 579 words), Anthropic `claude-sonnet-5-5`, `POST …/events/generate` | `502`; server log `generation failed — AI turn failed (upstream-failed) (ending=incomplete, steps=7, last=length)`; events before and after: 2 |
 | A16 | The credential key columns are non-null today | `supabase/migrations/20261016000000_user_provider_credentials.sql:39-45` | `key_nonce bytea not null`, … `key_last4 … not null` |
 
 ## Risks / Trade-offs

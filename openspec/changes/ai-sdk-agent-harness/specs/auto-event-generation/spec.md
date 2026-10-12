@@ -28,7 +28,7 @@ SHALL be exactly `get_transcript_words`, `create_event`: on the CLI route as the
 tools and the turn's MCP registration, and on the AI SDK route as the only tools given to the
 model. The CLI turn SHALL run under the configured generation budget (`--max-budget-usd`) and
 server-side timeout. The AI SDK turn has no dollar cap; it SHALL run under the generation step cap
-(`GENERATE_MAX_STEPS`, default 40), at most 4000 output tokens per step, the generation per-turn
+(`GENERATE_MAX_STEPS`, default 40), at most `GENERATE_MAX_OUTPUT_TOKENS` output tokens per step (default 16 000, valid 1 000–128 000, so a step can hold a batch of `create_event` calls; if the turn's first model request is rejected with `400` at a cap above 4000, the turn starts again once at 4000 before any tool has run), the generation per-turn
 token budget (`GENERATE_MAX_TOKENS`, default 3 000 000 tokens, counting each step's total tokens minus its prompt-cache reads, checked after each step so a
 turn may overrun it by at most one step, and counting an estimate of the step's request and
 response bytes divided by 4 when the provider reports no usage), at most 2 retries of a failed

@@ -19,13 +19,13 @@ The following SHALL be settable through the OpenBao `dev` KV secret:
 - `AI_V2_API_KEY`
 - `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`
 - `CLAUDE_CLI_EMAILS`
-- `AI_CHAT_MAX_STEPS`, `AI_CHAT_MAX_TOKENS`, `GENERATE_MAX_STEPS` and `GENERATE_MAX_TOKENS`
+- `AI_CHAT_MAX_STEPS`, `AI_CHAT_MAX_TOKENS`, `GENERATE_MAX_STEPS`, `GENERATE_MAX_OUTPUT_TOKENS` and `GENERATE_MAX_TOKENS`
 
-`CLAUDE_CLI_EMAILS`, `AI_CHAT_MAX_STEPS`, `AI_CHAT_MAX_TOKENS`, `GENERATE_MAX_STEPS` and
+`CLAUDE_CLI_EMAILS`, `AI_CHAT_MAX_STEPS`, `AI_CHAT_MAX_TOKENS`, `GENERATE_MAX_STEPS`, `GENERATE_MAX_OUTPUT_TOKENS` and
 `GENERATE_MAX_TOKENS` SHALL be listed in the shared allowlist file, so every stack's app container
 can receive them from its own OpenBao KV secret; the step and token variables must be listed
 because the allowlist refuses a whole secret that holds an unlisted key. The env examples and the
-OpenBao documentation SHALL name all five, `CLAUDE_CLI_EMAILS` with no value, and no email address
+OpenBao documentation SHALL name all six, `CLAUDE_CLI_EMAILS` with no value, and no email address
 SHALL appear in any committed file.
 
 `API_TOKEN` is no longer read by the server (ADR 0021 slice 9d). `docker/secrets-env.yaml` SHALL
@@ -71,9 +71,9 @@ Sign-in is required, as in every stack:
 
 #### Scenario: The AI allowlist and cap variables pass through
 - **WHEN** a stack's OpenBao KV secret holds `CLAUDE_CLI_EMAILS`, `AI_CHAT_MAX_STEPS`,
-  `AI_CHAT_MAX_TOKENS`, `GENERATE_MAX_STEPS` and `GENERATE_MAX_TOKENS`
+  `AI_CHAT_MAX_TOKENS`, `GENERATE_MAX_STEPS`, `GENERATE_MAX_OUTPUT_TOKENS` and `GENERATE_MAX_TOKENS`
 - **THEN** the secret is accepted, not refused as holding an unlisted key, and the app container
-  receives all five variables
+  receives all six variables
 
 #### Scenario: Optional sign-in
 - **WHEN** the OpenBao `dev` KV secret sets a Google OAuth client whose redirect URI is

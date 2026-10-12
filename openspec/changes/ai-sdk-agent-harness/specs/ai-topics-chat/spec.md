@@ -29,7 +29,7 @@ For each request the guard SHALL:
   headers is not cut; the route's turn timeout bounds the whole turn;
 - **cap the turn**: at most 60 requests per turn, retries included; at most 4 MB per request body;
   at most 48 MB of request bodies per turn, which bounds the input tokens each step re-sends; and
-  at most 64 MB of response bytes per turn. A request past a cap SHALL be refused without opening a
+  at most (the turn's step cap × its per-step output-token cap × 400) response bytes per turn (12.8 MB for chat and 256 MB for generation at the defaults). A request past a cap SHALL be refused without opening a
   connection, a response that passes the response cap SHALL be ended, and in both cases the turn
   SHALL end with the upstream-failed error;
 - **stream the response through unbuffered**, counting its bytes per step for the token-budget
@@ -117,7 +117,7 @@ the SDK's default error logging SHALL be suppressed.
 
 #### Scenario: The byte caps are enforced
 - **WHEN** an AI SDK turn makes a request whose body is larger than 4 MB, or one that would take
-  the turn's request bodies past 48 MB, or the turn's responses pass 64 MB
+  the turn's request bodies past 48 MB, or the turn's responses pass the turn's response-byte cap
 - **THEN** the guard refuses the request (or ends the response) with no further connection, and
   the turn ends with the upstream-failed error
 
@@ -777,13 +777,13 @@ directly to the caller's own language model provider, that the caller's own prov
 pays, that OpenAI requests are sent with storage off (`store: false`), that Anthropic requests use
 prompt caching (cache reads are cheaper and don't count toward Anthropic's input rate limit), and
 the bounds of each
-route (chat, topic generation, event generation): the step cap, 4000 output tokens per step, the
+route (chat, topic generation, event generation): the step cap, the output tokens per step (4000 for chat; `GENERATE_MAX_OUTPUT_TOKENS`, default 16 000, for generation), the
 per-turn token budget (which counts uncached input, cache writes and output but not cache reads,
 which a turn may overrun by at most one step, and which counts an estimate when a provider reports
 no usage), at most 2 retries per model request, the turn timeout, at most
 16 tool calls per step (further calls in the step get a tool error and the turn continues) and 32
 (chat) or 300 (generation) per turn, and the per-turn request and byte caps of the guarded model
-requests (60 requests, 4 MB per request body, 48 MB of request bodies, 64 MB of responses), with no
+requests (60 requests, 4 MB per request body, 48 MB of request bodies, and the derived per-turn response-byte cap), with no
 dollar cap. It SHALL also tell operators of OpenAI-compatible servers to enable the server's
 reasoning parser: reasoning in the provider's reasoning field, or between `<think>` and `</think>`
 in text, is never relayed, but reasoning a server emits as plain text without an opening `<think>`
@@ -797,13 +797,13 @@ requirement to run the server as the logged-in operator (and that
 node-on-PATH / proxy vars may be needed), and the minimum tested CLI version. The README SHALL
 also document the per-user route gate (`CLAUDE_CLI_PATH`, `CLAUDE_CLI_EMAILS` and the saved
 language model, with no fallback to the Claude CLI in any mode), the step and token caps
-(`AI_CHAT_MAX_STEPS`, `AI_CHAT_MAX_TOKENS`, `GENERATE_MAX_STEPS`, `GENERATE_MAX_TOKENS`), and the
+(`AI_CHAT_MAX_STEPS`, `AI_CHAT_MAX_TOKENS`, `GENERATE_MAX_STEPS`, `GENERATE_MAX_OUTPUT_TOKENS`, `GENERATE_MAX_TOKENS`), and the
 security posture of both routes (no operator hooks/plugins/CLAUDE.md, an autologger-tools-only
 toolset, no host shell/filesystem access, a model on the AI SDK route that can only call the
 turn's tools, and the user's key sent only to that user's provider).
 `.env.example` SHALL carry the variables (`CLAUDE_CLI_PATH`, `CLAUDE_CLI_EMAILS` commented with no
 value, `AI_CHAT_TIMEOUT_SEC`, `AI_PROVIDER`, the per-turn budget var, `AI_CHAT_MAX_STEPS`,
-`AI_CHAT_MAX_TOKENS`, `GENERATE_MAX_STEPS` and `GENERATE_MAX_TOKENS`) with comments.
+`AI_CHAT_MAX_TOKENS`, `GENERATE_MAX_STEPS`, `GENERATE_MAX_OUTPUT_TOKENS` and `GENERATE_MAX_TOKENS`) with comments.
 `.env.example` SHALL NOT name an email address. `.env.example` SHALL NOT name
 `AI_CHAT_MAX_CONCURRENT`. `docker/secrets-env.yaml` SHALL allow `AI_PROVIDER` and SHALL keep
 `AI_CHAT_MAX_CONCURRENT`, marked as ignored, until every OpenBao secret has dropped it, because
@@ -819,7 +819,7 @@ the allowlist refuses a whole secret that holds an unlisted key (run-status-and-
 #### Scenario: The allowlist variable carries no value
 - **WHEN** `server/.env.example` is read
 - **THEN** it names `CLAUDE_CLI_EMAILS` in a comment with no email address, and names
-  `AI_CHAT_MAX_STEPS`, `AI_CHAT_MAX_TOKENS`, `GENERATE_MAX_STEPS` and `GENERATE_MAX_TOKENS`
+  `AI_CHAT_MAX_STEPS`, `AI_CHAT_MAX_TOKENS`, `GENERATE_MAX_STEPS`, `GENERATE_MAX_OUTPUT_TOKENS` and `GENERATE_MAX_TOKENS`
 
 #### Scenario: The removed ceiling variable is gone
 - **WHEN** `server/.env.example` and `docker/secrets-env.yaml` are read

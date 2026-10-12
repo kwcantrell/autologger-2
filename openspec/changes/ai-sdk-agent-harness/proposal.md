@@ -9,7 +9,7 @@ Tier reason:
   topic generation and event generation, and the provider routes (`packages/contract/**`,
   `server/src/routers/**`).
 
-Approved-by: Kalen 2026-10-11 (again 2026-10-12)
+Approved-by: Kalen 2026-10-11 (again 2026-10-12, again 2026-10-12)
 
 ## Why
 
