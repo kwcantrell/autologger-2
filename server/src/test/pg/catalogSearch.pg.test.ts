@@ -515,7 +515,7 @@ describe('transcript chunks (catalog-search D4)', () => {
     expect(c0?.text.split(' ').slice(5, 7)).toEqual(['alpha', 'beta']);
   });
 
-  it('a 30k-word bulk replace stays under 2 s', async () => {
+  it('a 30k-word bulk replace stays under 5 s', async () => {
     const db = await createTestDatabase();
     await seedPolicyFixture(connect(db.system));
     const sys = connect(db.system);
@@ -526,7 +526,7 @@ describe('transcript chunks (catalog-search D4)', () => {
     const [r] = await connect(db.admin)`select count(*)::int as n
                                         from catalog.session_transcript_chunks where session_id = 'ss1'`;
     expect(r?.n).toBe(750);
-    expect(ms).toBeLessThan(2000);
+    expect(ms).toBeLessThan(5000);
   });
 });
 

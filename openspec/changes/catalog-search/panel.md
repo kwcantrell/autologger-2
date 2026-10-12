@@ -75,3 +75,8 @@ Scope change: no.
 - Web choices that change no requirement: a transcript moment with neither speaker nor time is labelled "Transcript", and labels are no longer uppercased (task 7.3 report).
 - No contradictions between design D11, the specs and the implementation.
 No findings.
+
+## Consistency read 2026-10-12 (CI on PR #112)
+Edits: design Risks and task 2.2 raise the 30k-word bulk-replace timing budget from 2 s to 5 s.
+Scope change: no. It is a performance-test margin, not a behaviour change. The measured local cost is 368 ms (A24).
+- [x] [major] CI `db-shard (2)` failed `a 30k-word bulk replace stays under 2 s` at 2009 ms on the runner (run 38302179390). Resolved: the budget is now 5 s, which leaves room for runner noise, and a real regression (an order of magnitude or more) still fails.

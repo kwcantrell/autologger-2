@@ -292,7 +292,7 @@ Each was tested on 2026-10-12. The DB probes ran in a transaction that was rolle
 ## Risks / Trade-offs
 
 - **[Risk] Changes to unaccent data.** If the unaccent rules file changed in an image upgrade, stored vectors, the trigram indexes and `search_norm` would no longer match. → Mitigation: the dictionary is part of the pinned Postgres image. ADR 0029 records the upgrade step: rewrite the generated columns and `REINDEX` the search indexes.
-- **[Risk] Bulk replace cost.** Each replace rebuilds every bucket, once in the delete pass and once in the insert pass. → Measured at 368 ms for 28,579 words (A24). A pg test keeps it under 2 s.
+- **[Risk] Bulk replace cost.** Each replace rebuilds every bucket, once in the delete pass and once in the insert pass. → Measured at 368 ms for 28,579 words (A24). A pg test keeps it under 5 s; 2 s was too tight on CI runners, where the first PR run measured 2,009 ms.
 - **[Risk] Definer search function bypasses RLS.** A bug in it leaks across teams. → Mitigation: it is built only from the policy helpers; the D6 matrix test covers every caller and group; EXECUTE is granted only to `catalog_user`; and it reads the user from `app_user_id()`, never from an argument.
 - **[Risk] Chunk boundaries ignore speakers.** A chunk can span two speakers, and its `speaker` is the first one. → Accepted: search finds moments; it doesn't attribute quotes. The wiki change cites seconds and a quote (show-wiki decision).
 - **[Risk] Manual words with `start_sec` 0.** Chunks made only of manual words have a null `start_sec`, so the moment opens with no seek. → Accepted, and it matches the spec's "no seek when unmappable".
