@@ -191,11 +191,16 @@ within the mount:
 speech-to-text key in Settings → Advanced", with the audio-egress consequence. The copy SHALL link
 or point to that section.
 
+**Topic and event generation.** The cause and remedy are the caller's own language model: "Add a
+language model in Settings → Advanced to generate topics." on the topics panel, and "Add a
+language model in Settings → Advanced to generate events." on the event feed. The copy SHALL link
+or point to that section, and SHALL NOT name a server setting or tell anyone to reload.
+
 **Clearing the latch.**
 - The transcription latch SHALL clear without a reload when the user saves a speech-to-text
   credential in this page load.
-- The topic and event generation latches are cleared by reload, and their copy names "no
-  integration configured" and tells the operator to reload after configuring.
+- The topic and event generation latches SHALL clear without a reload when the user saves a
+  language model credential in this page load.
 
 Generation errors SHALL render in exactly one channel (inline in the panel), not duplicated as
 toasts.
@@ -219,9 +224,20 @@ toasts.
 
 #### Scenario: Unconfigured event generation latches
 - **WHEN** AUTO GENERATE on the event feed returns 503
-- **THEN** the control latches non-actionable for the mounted panel with a
-  keyboard-reachable reason naming the missing integration and the reload-after-configuring
-  remedy, and manual logging remains available unchanged
+- **THEN** the control latches non-actionable for the mounted panel with a keyboard-reachable
+  reason saying to add a language model in Settings → Advanced, no copy names `CLAUDE_CLI_PATH`,
+  a server setting or a reload, and manual logging remains available unchanged
+
+#### Scenario: Unconfigured topic generation names the language model
+- **WHEN** topic generation returns 503 on the Topics tab
+- **THEN** the control becomes non-actionable with a keyboard-reachable reason, the empty state
+  says to add a language model in Settings → Advanced and points to that section, and no toast
+  duplicates the message
+
+#### Scenario: Saving a language model clears the topic and event latches
+- **WHEN** the Topics tab and the event feed's AUTO GENERATE are latched unavailable and the user
+  saves a language model credential in Settings → Advanced without reloading
+- **THEN** both generate controls are actionable again
 
 ### Requirement: AUTO GENERATE affordance on the event feed
 The event feed tab SHALL provide an AUTO GENERATE control that starts one generation run for the open session through the `auto-event-generation` endpoint (synchronous POST).
