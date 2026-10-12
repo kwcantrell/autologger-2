@@ -74,4 +74,4 @@ None. The `api-contract-freeze` cap requirement (at most 10 devices, 409 on the 
 
 ## Impact
 
-- `packages/storage/src/companionDevices.ts`, `companionDevices.pg.test.ts`, and the `txTimeoutMs` field of `postgresCatalogStore.ts`.
+- `packages/storage/src/companionDevices.ts`, `companionDevices.pg.test.ts`, the `txTimeoutMs` field of `postgresCatalogStore.ts`, and one route test in `server/src/routers/companionDevices.int.test.ts` (a high-risk path; test only).

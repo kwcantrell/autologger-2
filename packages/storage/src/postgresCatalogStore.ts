@@ -388,7 +388,8 @@ export class PostgresCatalogDb implements CatalogRoot {
   private readonly running = new Set<Promise<unknown>>();
   private readonly connect: (opts: PgClientOptions) => PgClient;
   private readonly conn: Omit<PgClientOptions, 'max' | 'onclose'>;
-  private readonly txTimeoutMs: number;
+  /** One transaction's deadline, waiting for a connection included. */
+  readonly txTimeoutMs: number;
   private readonly rootTimeoutMs: number;
   private readonly rootSettleMs: number;
   private readonly maxTries: number;
