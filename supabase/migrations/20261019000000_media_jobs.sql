@@ -50,7 +50,11 @@ create table catalog.media_jobs (
   created_at_ms   bigint not null,
   updated_at_ms   bigint not null,
   applied_at_ms   bigint,
-  constraint media_jobs_result_json_size check (octet_length(result_json) <= 262144)
+  constraint media_jobs_result_json_size check (octet_length(result_json) <= 262144),
+  -- The classified codes only (D2): never a path or tool output.
+  constraint media_jobs_error_code check (error is null or error in ('decode-failed',
+    'mixed-codecs', 'verify-mismatch', 'interleaved-input', 'missing-blob', 'timeout', 'low-disk',
+    'internal', 'invalid-result', 'inputs-changed'))
 );
 create unique index idx_media_jobs_live on catalog.media_jobs (kind, session_id, target)
   where status in ('queued', 'running', 'done');
@@ -207,16 +211,26 @@ create or replace function catalog.media_jobs_worker_guard() returns trigger
     if current_user <> 'autologger_media' then
       return new;
     end if;
+    -- Bounded values (the app's clocks may lead the database's by a few minutes): a lease at most
+    -- 15 min ahead (10 min lease + slack), a new run-after at most 2 h ahead (1 h backoff cap +
+    -- slack), so no statement can park a job or hold its lease indefinitely.
+    if new.locked_until_ms > now_ms + 900000
+       or (new.run_after_ms is distinct from old.run_after_ms
+           and new.run_after_ms > now_ms + 7200000) then
+      raise exception 'media worker value out of bounds' using errcode = '42501';
+    end if;
     if old.status = 'queued' and new.status = 'running' then
       if (old.locked_by is null or old.locked_until_ms is null or old.locked_until_ms <= now_ms)
          and new.locked_by is not null and new.attempts = old.attempts + 1 then
         return new;
       end if;
     elsif old.status = 'running' and new.status in ('running', 'queued', 'done', 'failed') then
-      -- A release (`running → queued` without counting the attempt) may give the attempt back.
+      -- A release (`running → queued` without counting the attempt) may give the attempt back,
+      -- only under a live lease (its holder, before expiry; a sweep of an expired one may not).
       if new.locked_by is not distinct from old.locked_by
          and (new.attempts = old.attempts
-              or (new.status = 'queued' and new.attempts = old.attempts - 1)) then
+              or (new.status = 'queued' and new.attempts = old.attempts - 1 and old.attempts > 0
+                  and old.locked_until_ms > now_ms)) then
         return new;
       end if;
     end if;

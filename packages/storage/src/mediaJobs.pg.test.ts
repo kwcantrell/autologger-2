@@ -231,6 +231,9 @@ describe('renew, finish, fail and release are fenced on the lease (D2)', () => {
       workerId: W(1),
       nowMs: later + mediaJobBackoffMs(1),
       maxInputBytes: MiB,
+      // The trigger bounds a lease to 15 min past the database clock (S.7); this claim's clock is
+      // ~10.5 min ahead.
+      leaseMs: 60_000,
     });
     expect(taken).toMatchObject({ id: 'a', lockedBy: W(1), attempts: 2 });
     const now = Date.now();
@@ -269,7 +272,15 @@ describe('renew, finish, fail and release are fenced on the lease (D2)', () => {
         });
         now = job?.runAfterMs ?? now;
         expect(
-          (await mediaJobs.claim(w, { workerId: W(0), nowMs: now, maxInputBytes: MiB }))?.id,
+          // A short lease: this clock runs ahead of the database's (the S.7 bound is 15 min).
+          (
+            await mediaJobs.claim(w, {
+              workerId: W(0),
+              nowMs: now,
+              maxInputBytes: MiB,
+              leaseMs: 60_000,
+            })
+          )?.id,
         ).toBe('a');
       } else {
         expect(job).toMatchObject({ status: 'failed', error: 'decode-failed', attempts: 5 });

@@ -66,6 +66,9 @@ const FILE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const UPLOAD_ID = /^[A-Za-z0-9][A-Za-z0-9-]{0,127}$/;
 const DAY_DIR = /^(\d{4})-(\d{2})-(\d{2})$/;
 const COPY_CHUNK = 1024 * 1024;
+/** Blob files and their directories: readable by the worker's uid, writable by the API only. */
+const BLOB_FILE_MODE = 0o644;
+const BLOB_DIR_MODE = 0o755;
 
 function utcDay(ms: number): string {
   return new Date(ms).toISOString().slice(0, 10);
@@ -164,7 +167,7 @@ export class BlobStore implements BlobStorePort, MediaBlobStore {
   ): Promise<void> {
     const dest = this.pathFor(key);
     await mkdir(this.putTmpDir, { recursive: true });
-    await mkdir(dirname(dest), { recursive: true });
+    await this.ensureBlobDir(dirname(dest));
     // shared-blob-volume D3: a random name, since every container usually runs the server under
     // the same pid, so a pid and counter could collide across processes.
     const tmp = join(this.putTmpDir, `put-${randomUUID()}`);
@@ -172,6 +175,7 @@ export class BlobStore implements BlobStorePort, MediaBlobStore {
       const fh = await open(tmp, 'w');
       try {
         await fh.writeFile(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes));
+        await fh.chmod(BLOB_FILE_MODE);
         await fh.sync();
       } finally {
         await fh.close();
@@ -255,6 +259,21 @@ export class BlobStore implements BlobStorePort, MediaBlobStore {
     };
     await walk(startDir);
     return { objects, truncated: false };
+  }
+
+  /** Creates `dir` (under the root) and gives each directory from the root down to it mode 0755,
+   * whatever the umask, so the worker's uid can read every blob (media-worker D4; S.7). A
+   * directory this process does not own keeps its mode (EPERM is ignored). */
+  private async ensureBlobDir(dir: string): Promise<void> {
+    await mkdir(dir, { recursive: true });
+    if (!dir.startsWith(this.rootAbs + sep)) return;
+    let cur = this.rootAbs;
+    for (const part of dir.slice(this.rootAbs.length + 1).split(sep)) {
+      cur = join(cur, part);
+      await chmod(cur, BLOB_DIR_MODE).catch((err: NodeJS.ErrnoException) => {
+        if (err?.code !== 'EPERM' && err?.code !== 'ENOENT') throw err;
+      });
+    }
   }
 
   // -- media-worker D3: the worker's directory and the handle-based adopt ---------------------------
@@ -385,7 +404,7 @@ export class BlobStore implements BlobStorePort, MediaBlobStore {
 
   private async copyFromHandle(src: FileHandle, size: number, dest: string): Promise<void> {
     await mkdir(this.putTmpDir, { recursive: true });
-    await mkdir(dirname(dest), { recursive: true });
+    await this.ensureBlobDir(dirname(dest));
     const tmp = join(this.putTmpDir, `put-${randomUUID()}`);
     try {
       const out = await open(tmp, 'w');
@@ -398,6 +417,7 @@ export class BlobStore implements BlobStorePort, MediaBlobStore {
           await out.write(buf, 0, bytesRead);
           pos += bytesRead;
         }
+        await out.chmod(BLOB_FILE_MODE);
         await out.sync();
       } finally {
         await out.close();
@@ -421,7 +441,7 @@ export class BlobStore implements BlobStorePort, MediaBlobStore {
     const rel = src.slice(this.rootAbs.length + 1);
     const dest = join(this.trashDir, utcDay(nowMs), rel);
     try {
-      await mkdir(dirname(dest), { recursive: true });
+      await this.ensureBlobDir(dirname(dest));
       await rename(src, dest);
       return true;
     } catch (err) {
@@ -593,11 +613,13 @@ export class BlobStore implements BlobStorePort, MediaBlobStore {
     const dest = this.pathFor(key);
     const fh = await open(p, constants.O_RDONLY | constants.O_NOFOLLOW);
     try {
+      // Staged 0600 (API-only); readable by the worker once it is a blob (S.7).
+      await fh.chmod(BLOB_FILE_MODE);
       await fh.sync();
     } finally {
       await fh.close();
     }
-    await mkdir(dirname(dest), { recursive: true });
+    await this.ensureBlobDir(dirname(dest));
     await rename(p, dest);
   }
 

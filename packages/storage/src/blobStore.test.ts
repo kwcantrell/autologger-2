@@ -546,6 +546,102 @@ describe('BlobStore media additions (media-worker D3, D8, D12)', () => {
     });
   });
 
+  // Implementation panel (S.7): the worker (uid 10001) must read every blob the API writes, so
+  // files under audio/ and .trash/ are 0644 and their directories 0755 whatever the umask.
+  describe('blob modes for the worker (S.7)', () => {
+    async function underUmask<T>(mask: number, fn: () => Promise<T>): Promise<T> {
+      const old = process.umask(mask);
+      try {
+        return await fn();
+      } finally {
+        process.umask(old);
+      }
+    }
+    const mode = (p: string) => statSync(p).mode & 0o7777;
+
+    it('put, adoptCopy, adoptStaging and trash leave 0644 files in 0755 directories under umask 077', async () => {
+      const { root, s } = layout();
+      chmodSync(root, 0o755);
+      await underUmask(0o077, async () => {
+        await s.put('audio/s1/put.webm', new TextEncoder().encode('p'));
+        await s.ensureMediaDir();
+        workerFile(root, 'j', 'out.webm', 'w');
+        await s.adoptCopy('media/j/out.webm', 'audio/s2/adopted.webm');
+        await s.openStaging('up', 2);
+        await s.writePart('up', 0, new TextEncoder().encode('ab'));
+        await s.adoptStaging('up', 'audio/s3/import.wav');
+        await s.put('audio/s4/old.webm', new TextEncoder().encode('o'));
+        await s.trash('audio/s4/old.webm', Date.UTC(2026, 9, 19));
+      });
+      for (const f of [
+        'audio/s1/put.webm',
+        'audio/s2/adopted.webm',
+        'audio/s3/import.wav',
+        '.trash/2026-10-19/audio/s4/old.webm',
+      ]) {
+        expect(mode(join(root, f)), f).toBe(0o644);
+      }
+      for (const d of [
+        'audio',
+        'audio/s1',
+        'audio/s2',
+        'audio/s3',
+        '.trash',
+        '.trash/2026-10-19',
+        '.trash/2026-10-19/audio',
+        '.trash/2026-10-19/audio/s4',
+      ]) {
+        expect(mode(join(root, d)), d).toBe(0o755);
+      }
+    });
+
+    const docker = (() => {
+      try {
+        execFileSync('docker', ['image', 'inspect', 'node:22-bookworm-slim'], { stdio: 'ignore' });
+        return true;
+      } catch {
+        return false;
+      }
+    })();
+
+    it.skipIf(!docker)(
+      'another uid (10001, the worker) reads what the store wrote (spike 0.1)',
+      async () => {
+        const { root, s } = layout();
+        chmodSync(root, 0o755);
+        await underUmask(0o077, async () => {
+          await s.put('audio/s1/put.webm', new TextEncoder().encode('put'));
+          await s.openStaging('up', 6);
+          await s.writePart('up', 0, new TextEncoder().encode('staged'));
+          await s.adoptStaging('up', 'audio/s1/import.wav');
+          await s.put('audio/s1/gone.webm', new TextEncoder().encode('trashed'));
+          await s.trash('audio/s1/gone.webm', Date.UTC(2026, 9, 19));
+        });
+        const out = execFileSync(
+          'docker',
+          [
+            'run',
+            '--rm',
+            '--network',
+            'none',
+            '--user',
+            '10001:10001',
+            '-v',
+            `${root}:/blobs:ro`,
+            'node:22-bookworm-slim',
+            'cat',
+            '/blobs/audio/s1/put.webm',
+            '/blobs/audio/s1/import.wav',
+            '/blobs/.trash/2026-10-19/audio/s1/gone.webm',
+          ],
+          { encoding: 'utf8' },
+        );
+        expect(out).toBe('putstagedtrashed');
+      },
+      60_000,
+    );
+  });
+
   it('list() ignores .trash, .tmp and media at the root', async () => {
     const { root, s } = layout();
     await s.put('audio/s1/a.webm', new TextEncoder().encode('a'));
