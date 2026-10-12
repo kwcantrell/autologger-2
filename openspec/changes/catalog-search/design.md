@@ -206,7 +206,8 @@ An existing test may change only in these categories. Anything else is a stop.
    - `catalogSearch.pg.test.ts`: the threshold (0.4 → 0.5), the `catalog.search` signature and the function inventory;
    - `packages/contract/src/schemas.search.test.ts`, `server/src/routers/search.int.test.ts` and `packages/catalog/src/searchStore.test.ts`: the new parameter and the new field;
    - `fixtures/api-responses/search.ts`: recaptured;
-   - `SearchRoute.test.tsx` and `SearchPalette.test.tsx`: grouped moments and the new labels.
+   - `SearchRoute.test.tsx` and `SearchPalette.test.tsx`: grouped moments and the new labels;
+   - `web/src/api/hooks/useSearch.test.tsx`: its mock responses gain `moment_sessions` (mock data only; owner-approved, 2026-10-12).
 
 ### D11. Post-approval tuning (owner, 2026-10-12)
 After the dev-stack check (task 5.8), the owner asked for four behaviours to be tuned.
@@ -226,10 +227,10 @@ After the dev-stack check (task 5.8), the owner asked for four behaviours to be 
    - **New trigram indexes** (`extensions.gin_trgm_ops`) on `search_phrase_norm` of `session_transcript_chunks.text`, `session_topics.summary` and `session_events.message`. The two on topics and events are further content-table indexes that don't lead with `session_id`, and the "Session content tables" delta names them.
    - **When it runs.** Only when `numnode(query) = 0` and the normalised phrase has at least 2 words and at least 6 characters. A lone common word such as `the` doesn't trigger it: on 250k chunks, `the` took 4.4 s against `why did he do that` at 42 ms (re-panel probe A31).
    - **Matching is whole-word.** `' ' || search_phrase_norm(text) || ' ' LIKE '% ' || phrase || ' %'`, so `and the` doesn't match "the band then", and the trigram index still applies. `%` and `_` can't act as wildcards, because the normaliser removes them from both sides.
-   - **Bounded work.** For each source, the fallback reads at most 2,000 matching rows, using a `LIMIT` inside the candidate subquery so the bitmap recheck stops early. The access sets, hidden-session rule and per-session cap then apply as usual. Ranking is session `started_at_utc` descending, then ordinal. `moment_sessions` totals for a fallback search count within those candidates.
+   - **Bounded work.** For each source, the fallback reads at most 2,000 matching rows from visible sessions on shows in `Sh_access`. The access set and the hidden-session rule are applied inside the candidate subquery, before its `LIMIT`, so other teams' rows can't use up a caller's candidates (owner decision, 2026-10-12). The `LIMIT` still stops the bitmap recheck early, and the 3 s budget bounds the rest. The per-session cap then applies as usual. Ranking is session `started_at_utc` descending, then ordinal. `moment_sessions` totals for a fallback search count within those candidates.
    - **Unchanged groups.** Sessions, studios and shows are unaffected: titles already have trigram matching, and notes stay full-text only. A phrase split across two 40-word chunks is not found; that is accepted.
    - **Snippet built by the function.** `ts_headline` needs a tsquery, which the fallback doesn't have.
-     - The original text, with forged sentinels stripped as in D8, is split on whitespace into tokens. Each token is folded on its own with `search_phrase_norm`, which yields zero, one or more folded words (`—` gives none; `3½kg` gives `3 1 2kg`).
+     - The original text, with forged sentinels stripped as in D8, is split on whitespace into tokens. Each token is folded on its own with `search_phrase_norm`, which yields zero, one or more folded words (`—` gives none; `3½kg` gives `3 12kg`).
      - The function records which original token each folded word came from, finds the phrase's word sequence in the folded words, and puts the sentinels around the original tokens that cover it.
      - It keeps up to 12 original tokens on each side.
 3. **Moments grouped by session, with "Show more".**

@@ -54,3 +54,13 @@ Scope: design D11, the spec edits for the tuning, proposal "Tuning after the dev
 - [x] [major] Dropping the 4-argument `catalog.search` would break a server not yet upgraded during a rollout or rollback (`42883` -> 500), and "grants are reapplied" didn't say revoke from public (failure reviewer). Resolved: `p_session text default null` keeps 4-argument calls resolving, and the migration runs an explicit `revoke all … from public` and `grant execute … to catalog_user` (D11.3, task 7.1, which tests a 4-argument call).
 - [x] [major] Nothing checked that the new phrase indexes are used (scope reviewer). Resolved: task 7.1 extends the existing `idx_scan` test to the chunk phrase index and the `p_session` path.
 - [x] [major] Task 7.1's "`%`/`_` matched literally" couldn't be met, because the normaliser strips both from the query and the text (failure reviewer). Resolved: reworded to "act as no wildcard" (D11.2, task 7.1).
+
+## Consistency read 2026-10-12 (after 7.1–7.2)
+Edits since the D11 re-approval (`9677c833`):
+- D11.2: the phrase fallback applies the access set and the hidden-session rule before its 2,000-row cap;
+- D11.2: the `3½kg` example is corrected to `3 12kg`;
+- D10 category 4 adds `useSearch.test.tsx` (mock data only);
+- task 7.5 added.
+
+Scope change: no. Both decisions were the owner's in chat (2026-10-12); one tightens access and the other keeps the web type as strict as the contract.
+- [x] [major] The phrase fallback's 2,000-candidate cap applied before access filtering, so other teams' matching rows could use up a caller's candidates: a weak cross-team signal (found while implementing 7.1). Resolved: the owner chose to filter by access before the cap (D11.2, task 7.5).
