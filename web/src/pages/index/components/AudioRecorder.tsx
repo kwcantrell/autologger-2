@@ -36,6 +36,7 @@ import {
   getChunkUploadQueue,
   onChunkConfirmed,
 } from '../utils/chunkUploadQueue';
+import { devChunkMsOverride } from '../utils/devChunkMs';
 import { runMicLevelMeter } from '../utils/micLevelMeter';
 import {
   audioTracksOf,
@@ -240,7 +241,7 @@ export const AudioRecorder = forwardRef<AudioRecorderHandle, AudioRecorderProps>
     {
       sessionId,
       onPhaseChange,
-      chunkMs = CHUNK_MS,
+      chunkMs = devChunkMsOverride() ?? CHUNK_MS,
       micRetryWindowMs = MIC_REACQUIRE_WINDOW_MS,
       scanTimeoutMs = SCAN_TIMEOUT_MS,
     },
