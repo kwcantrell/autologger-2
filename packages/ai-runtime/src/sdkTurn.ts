@@ -32,10 +32,12 @@ import { createOpenAI } from '@ai-sdk/openai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import type { SessionCaller, SessionHubRegistryFacade } from '@autologger/session-core';
 import {
+  APICallError,
   extractReasoningMiddleware,
   isStepCount,
   type LanguageModel,
   type ModelMessage,
+  RetryError,
   type StopCondition,
   streamText,
   wrapLanguageModel,
@@ -116,17 +118,64 @@ export interface SdkTurnSpec {
   history?: readonly SdkHistoryEntry[];
 }
 
-/** The only error that leaves this module. It carries a fixed kind and nothing else: no message
- * text from the cause, no cause, no properties. */
+/** The cap a breach passed (D5 diagnostic): the guarded fetch's four caps, or the tool-call cap. */
+export type SdkBreach =
+  | 'requests'
+  | 'request-bytes'
+  | 'request-total'
+  | 'response-bytes'
+  | 'tool-calls';
+
+/** The only error that leaves this module, and a failed turn's content-free diagnostic (D5,
+ * owner 2026-10-12). It carries a `kind` and, at most, the upstream HTTP `status` (a number; for a
+ * `RetryError`, the last attempt's) or the `breach` name: no message text from the cause, no
+ * cause, no other properties. The routes append `sdkFailureSuffix` to their failure line. */
 export class SdkTurnFailure extends Error {
-  readonly kind: 'invalid-deps' | 'internal-error' | 'upstream-failed';
-  constructor(kind: SdkTurnFailure['kind']) {
+  readonly kind: 'provider' | 'breach' | 'internal';
+  declare readonly status?: number;
+  declare readonly breach?: SdkBreach;
+  constructor(kind: SdkTurnFailure['kind'], detail: { status?: number; breach?: SdkBreach } = {}) {
     super('AI SDK turn failed');
     this.kind = kind;
+    if (typeof detail.status === 'number' && Number.isInteger(detail.status)) {
+      Object.defineProperty(this, 'status', { value: detail.status, enumerable: true });
+    } else if (detail.breach !== undefined) {
+      Object.defineProperty(this, 'breach', { value: detail.breach, enumerable: true });
+    }
     Object.defineProperty(this, 'name', { value: 'SdkTurnFailure', enumerable: false });
     Object.defineProperty(this, 'stack', { value: 'SdkTurnFailure', enumerable: false });
   }
 }
+
+/** The suffix a route appends to its failure line: ` (status=N)`, ` (breach=name)`, or nothing. */
+export function sdkFailureSuffix(failure: SdkTurnFailure | undefined): string {
+  if (failure?.status !== undefined) return ` (status=${failure.status})`;
+  if (failure?.breach !== undefined) return ` (breach=${failure.breach})`;
+  return '';
+}
+
+/** The upstream HTTP status of an AI SDK error: an `APICallError`'s, or a `RetryError`'s last
+ * attempt's. Reads only that number. */
+function statusOf(error: unknown): number | undefined {
+  if (RetryError.isInstance(error)) return statusOf(error.lastError);
+  if (APICallError.isInstance(error) && typeof error.statusCode === 'number') {
+    return error.statusCode;
+  }
+  return undefined;
+}
+
+/** A provider failure's diagnostic from the error (which is not kept). */
+export function providerFailure(error: unknown): SdkTurnFailure {
+  return new SdkTurnFailure('provider', { status: statusOf(error) });
+}
+
+/** The guarded fetch's breach names, as the diagnostic names them. */
+const FETCH_BREACHES: Readonly<Record<string, SdkBreach>> = {
+  requests: 'requests',
+  'request-body': 'request-bytes',
+  'request-total': 'request-total',
+  'response-total': 'response-bytes',
+};
 
 const isNonEmptyString = (v: unknown): v is string => typeof v === 'string' && v.length > 0;
 
@@ -146,7 +195,7 @@ export function buildSdkModel(deps: SdkTurnDeps): {
     !isNonEmptyString(deps.model) ||
     !SDK_PROVIDERS.has(deps.provider)
   ) {
-    throw new SdkTurnFailure('invalid-deps');
+    throw new SdkTurnFailure('internal');
   }
   // Every factory gets `apiKey`, `baseURL` and `fetch`, and no extra headers. The factories call
   // `fetch` with a URL string (A17); the guarded fetch refuses a `Request` object, hence the cast.
@@ -183,10 +232,10 @@ export function buildSdkModel(deps: SdkTurnDeps): {
           providerOptions: undefined,
         };
       default:
-        throw new SdkTurnFailure('invalid-deps');
+        throw new SdkTurnFailure('internal');
     }
   } catch {
-    throw new SdkTurnFailure('invalid-deps');
+    throw new SdkTurnFailure('internal');
   }
 }
 
@@ -234,6 +283,8 @@ export type SdkTurnResult = (
   /** Resolves once no tool body of the turn is running. The route awaits it before it acts on a
    * result, removes a failed run's topics, or releases the slot and lease (D3 "Draining"). */
   toolsDrained: () => Promise<void>;
+  /** A provider or breach ending's content-free diagnostic (D5); absent otherwise. */
+  failure?: SdkTurnFailure;
 };
 
 type RelayOutcome =
@@ -243,7 +294,7 @@ type RelayOutcome =
 const noop = (): void => {};
 
 /**
- * Run one AI SDK turn to its ending. Throws only `SdkTurnFailure('invalid-deps')`, before any
+ * Run one AI SDK turn to its ending. Throws only `SdkTurnFailure('internal')` (bad deps), before any
  * registration or request; otherwise resolves, having emitted at most one terminal event (none
  * for a client abort), with the registration released and the turn no longer live.
  */
@@ -269,6 +320,7 @@ export async function runSdkTurn(o: RunSdkTurnOptions): Promise<SdkTurnResult> {
     /** `byteLog()` length when each step started: that step's requests follow it. */
     const stepMarks: number[] = [];
     let stepCapFired = false;
+    let failure: SdkTurnFailure | undefined;
     let budgetFired = false;
 
     const stepCap = isStepCount(limits.maxSteps);
@@ -305,6 +357,7 @@ export async function runSdkTurn(o: RunSdkTurnOptions): Promise<SdkTurnResult> {
 
     const runRelay = async (guardedEmit: (event: AiChatSseEvent) => Promise<void>) => {
       let errored = false;
+      let status: number | undefined;
       try {
         const result = streamText({
           model,
@@ -337,12 +390,14 @@ export async function runSdkTurn(o: RunSdkTurnOptions): Promise<SdkTurnResult> {
         result.text.then(undefined, noop);
         result.finishReason.then(undefined, noop);
         result.totalUsage.then(undefined, noop);
-        ({ errored } = await relaySdkStream(result.fullStream, {
+        ({ errored, status } = await relaySdkStream(result.fullStream, {
           emit: guardedEmit,
           toolNames: new Set(toolNames),
+          statusOf,
         }));
-      } catch {
+      } catch (thrown) {
         errored = true;
+        status = statusOf(thrown);
       }
       guard.end();
       ending = decideSdkEnding({
@@ -353,6 +408,18 @@ export async function runSdkTurn(o: RunSdkTurnOptions): Promise<SdkTurnResult> {
         budgetFired,
         steps,
       });
+      if (ending === 'breach') {
+        const fetchBreach = deps.breach();
+        failure = new SdkTurnFailure('breach', {
+          breach: guard.breached
+            ? 'tool-calls'
+            : fetchBreach === null
+              ? undefined
+              : FETCH_BREACHES[fetchBreach],
+        });
+      } else if (ending === 'error') {
+        failure = new SdkTurnFailure('provider', { status });
+      }
       return emitEnding(ending, generation, guardedEmit);
     };
 
@@ -376,7 +443,13 @@ export async function runSdkTurn(o: RunSdkTurnOptions): Promise<SdkTurnResult> {
     // `runOuterAiTurn`'s own timeout or abort outcome carries no ending of the relay's.
     if (!('ending' in outcome))
       return { ...base, ok: false, detail: outcome.detail, ending: 'abort' };
-    return { ...base, ok: false, detail: outcome.detail, ending: outcome.ending };
+    return {
+      ...base,
+      ok: false,
+      detail: outcome.detail,
+      ending: outcome.ending,
+      ...(failure === undefined ? {} : { failure }),
+    };
   } finally {
     guard.end();
     internal.abort();

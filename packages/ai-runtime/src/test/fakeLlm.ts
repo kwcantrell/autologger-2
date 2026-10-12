@@ -12,6 +12,8 @@ export interface FakeReply {
   status?: number;
   /** A non-200 answer's body. */
   body?: string;
+  /** Extra headers on a non-200 answer (e.g. `retry-after-ms`). */
+  headers?: Record<string, string>;
   /** SSE `data:` payloads, written in order (`[DONE]` is appended unless `hang` or `drop`). */
   frames?: readonly unknown[];
   /** Write the frames, then destroy the socket mid-response. */
@@ -58,7 +60,7 @@ export async function startFakeLlm(script: FakeScript): Promise<FakeLlm> {
       const reply = script(requests.length, body);
       const status = reply.status ?? 200;
       if (status !== 200) {
-        res.writeHead(status, { 'content-type': 'application/json' });
+        res.writeHead(status, { 'content-type': 'application/json', ...reply.headers });
         res.end(reply.body ?? '{}');
         return;
       }

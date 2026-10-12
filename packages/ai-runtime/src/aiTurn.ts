@@ -41,7 +41,7 @@ import {
   type AiMcpTurnContext,
   getAiMcpListener,
 } from './aiMcpServer';
-import { runSdkTurn, type SdkTurnEnding, type SdkTurnSpec } from './sdkTurn';
+import { runSdkTurn, type SdkTurnEnding, SdkTurnFailure, type SdkTurnSpec } from './sdkTurn';
 
 /** What a turn reports when its registration never carried a transcript word
  * snapshot — and what a turn that failed BEFORE registering reports: no
@@ -145,6 +145,9 @@ type WithTurnBookkeeping<T> = T & {
   /** AI SDK turns only (D3 "Draining tool bodies"): resolves once no tool body of the turn is
    * running. The route awaits it before acting on a result or releasing the slot and lease. */
   toolsDrained?: () => Promise<void>;
+  /** AI SDK turns only (D5 diagnostic): a failed turn's kind plus status or breach name, which
+   * the route appends to its failure line (`sdkFailureSuffix`). */
+  failure?: SdkTurnFailure;
 };
 export type DriveAiTurnResult =
   | WithTurnBookkeeping<Extract<AiChatTurnOutcome, { ok: true }>>
@@ -190,6 +193,7 @@ async function driveSdkTurn(
       detail: 'internal-error',
       createdEvents: 0,
       pageCoverage: NO_PAGE_COVERAGE,
+      failure: new SdkTurnFailure('internal'),
     };
   }
 }

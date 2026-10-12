@@ -2124,6 +2124,51 @@ describe('topics/generate on the AI SDK route (ai-sdk-agent-harness task 7.2)', 
     expect(await topicsOf(s)).toEqual(prior);
   });
 
+  it('the failure line names only the classification and status=429 or breach=tool-calls, with no prompt, body or key', {
+    timeout: 60_000,
+  }, async () => {
+    const lines: string[] = [];
+    const grab = (...a: unknown[]) => {
+      lines.push(a.map((x) => (typeof x === 'string' ? x : JSON.stringify(x))).join(' '));
+    };
+    const spies = [
+      vi.spyOn(console, 'warn').mockImplementation(grab),
+      vi.spyOn(console, 'error').mockImplementation(grab),
+      vi.spyOn(console, 'log').mockImplementation(grab),
+    ];
+    const sixteen = Array.from({ length: 16 }, () => ({ name: 'get_transcript_words' }));
+    for (const [script, suffix] of [
+      [
+        () => ({
+          status: 429,
+          body: '{"error":{"message":"RATE-BODY-MARKER"}}',
+          headers: { 'retry-after-ms': '5' },
+        }),
+        '(status=429)',
+      ],
+      [(n: number) => callTools(n, sixteen), '(breach=tool-calls)'],
+    ] as Array<[FakeScript, string]>) {
+      lines.length = 0;
+      const llm = await fakeProvider(script);
+      const { s, prior } = await seeded();
+      await (await harnessHub(s)).insertTranscriptWord({
+        session_time: '00:00:02',
+        speaker: 'Host',
+        word: 'TRANSCRIPT-MARKER',
+      });
+      await saveSdkCredential(llm.baseURL, { apiKey: 'sk-KEY-MARKER-1234' });
+      const res = await req(s);
+      expect(res.status).toBe(502);
+      expect(await res.json()).toEqual(FAILURE);
+      expect(await topicsOf(s)).toEqual(prior);
+      const failure = lines.filter((l) => l.startsWith('[topics/generate]'));
+      expect(failure).toHaveLength(1);
+      expect(failure[0]?.endsWith(suffix)).toBe(true);
+      expect(lines.join('\n')).not.toMatch(/MARKER/);
+    }
+    for (const sp of spies) sp.mockRestore();
+  });
+
   it('a slow tool body still running at the route timeout finishes before the route removes the run’s new topics and frees the slot and lease', {
     timeout: 30_000,
   }, async () => {

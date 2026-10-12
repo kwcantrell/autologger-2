@@ -28,6 +28,7 @@ import { aiChatTurns } from '@autologger/ai-runtime/aiChatRegistry';
 import { aiChatConversationFile } from '@autologger/ai-runtime/aiChatRunner';
 import type { AiMcpToolName } from '@autologger/ai-runtime/aiMcpServer';
 import { driveAiTurn } from '@autologger/ai-runtime/aiTurn';
+import { sdkFailureSuffix } from '@autologger/ai-runtime/sdkTurn';
 import { chatRequestSchema } from '@autologger/contract';
 import { type Context, Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
@@ -211,6 +212,13 @@ aiRouter.post('/api/sessions/:sessionId/ai/chat', async (c) => {
       );
       // Only a CLI turn issues a session id; an AI SDK turn's `done` carries null and records no
       // resume binding (D6).
+      // A failed AI SDK turn's content-free diagnostic (D5): the classification plus the upstream
+      // status or the cap reached, never a message, body, header, prompt or key.
+      if (!outcome.ok && outcome.failure !== undefined) {
+        console.warn(
+          `[ai-chat] session=${sessionId}: turn failed — ${outcome.detail}${sdkFailureSuffix(outcome.failure)}`,
+        );
+      }
       if (outcome.ok && outcome.claudeSessionId !== null) {
         // A write error is logged and does not fail the turn; the next resume then gets 422 (D3).
         try {

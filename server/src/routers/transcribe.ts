@@ -9,6 +9,7 @@
 
 import { aiChatTurns } from '@autologger/ai-runtime/aiChatRegistry';
 import { allTranscriptPagesServed } from '@autologger/ai-runtime/aiMcpServer';
+import { sdkFailureSuffix } from '@autologger/ai-runtime/sdkTurn';
 import { generateTopicsTurn } from '@autologger/ai-runtime/topicGenerate';
 import {
   deleteVersionQuerySchema,
@@ -365,7 +366,7 @@ transcribeRouter.post('/api/sessions/:sessionId/topics/generate', async (c) => {
     console.warn(
       `[topics/generate] session=${sessionId}: generation failed — ` +
         (!outcome.ok
-          ? `CLI turn failed (${outcome.detail})`
+          ? `CLI turn failed (${outcome.detail})${sdkFailureSuffix(outcome.failure)}`
           : newIds.length === 0
             ? 'CLI turn succeeded but created 0 topics'
             : `CLI turn created ${newIds.length} topic(s) after reading only ` +

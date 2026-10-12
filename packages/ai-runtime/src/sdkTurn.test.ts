@@ -24,11 +24,13 @@ import {
 import {
   buildSdkModel,
   historyToMessages,
+  providerFailure,
   runSdkTurn,
   SDK_TURN_TOOLS,
   type SdkTurnDeps,
   SdkTurnFailure,
   type SdkTurnKind,
+  sdkFailureSuffix,
 } from './sdkTurn';
 import {
   answer,
@@ -616,11 +618,12 @@ describe('endings (D3 table)', () => {
   });
 
   it('no AISDKError leaves the turn: callers only ever see SdkTurnFailure or a scrubbed outcome', async () => {
-    expect(new SdkTurnFailure('internal-error')).toMatchObject({
+    // Kinds per the 2026-10-12 amendment (D5 diagnostic, task 6.6).
+    expect(new SdkTurnFailure('internal')).toMatchObject({
       name: 'SdkTurnFailure',
-      kind: 'internal-error',
+      kind: 'internal',
     });
-    expect(Object.keys(new SdkTurnFailure('upstream-failed'))).toEqual(['kind']);
+    expect(Object.keys(new SdkTurnFailure('provider'))).toEqual(['kind']);
     const MARKERS = /MARKER|requestBodyValues|responseBody|APICallError|AI_/;
     const llm = await llmWith(() => answer('x'));
     // An AI SDK error thrown synchronously by streamText itself.
@@ -1093,5 +1096,129 @@ describe('Anthropic prompt caching and the cache-aware budget (D3, A41, task 6.5
     });
     expect(b.res).toMatchObject({ ok: false, ending: 'capped' });
     expect(uncached.bodies).toHaveLength(1);
+  });
+});
+
+describe('a content-free failure diagnostic (D5, task 6.6)', () => {
+  const MARKERS = /MARKER|sk-test-KEY|requestBodyValues|responseBody|please/;
+  const only = (f: unknown) => Object.keys(f as object).sort();
+
+  it('SdkTurnFailure carries only its kind plus a status or a breach name', () => {
+    expect(only(new SdkTurnFailure('internal'))).toEqual(['kind']);
+    expect(only(new SdkTurnFailure('provider', { status: 429 }))).toEqual(['kind', 'status']);
+    expect(only(new SdkTurnFailure('breach', { breach: 'tool-calls' }))).toEqual([
+      'breach',
+      'kind',
+    ]);
+    expect(new SdkTurnFailure('provider', { status: 429 }).message).toBe('AI SDK turn failed');
+    expect(sdkFailureSuffix(new SdkTurnFailure('provider', { status: 429 }))).toBe(' (status=429)');
+    expect(sdkFailureSuffix(new SdkTurnFailure('breach', { breach: 'request-total' }))).toBe(
+      ' (breach=request-total)',
+    );
+    expect(sdkFailureSuffix(new SdkTurnFailure('internal'))).toBe('');
+    expect(sdkFailureSuffix(undefined)).toBe('');
+  });
+
+  it('a 429 and a RetryError whose last attempt was 429 give status 429; the error itself is not kept', async () => {
+    const { APICallError, RetryError } = await import('ai');
+    const e429 = new APICallError({
+      message: 'BODY-MARKER',
+      url: 'http://x',
+      requestBodyValues: { prompt: 'PROMPT-MARKER' },
+      statusCode: 429,
+      responseBody: 'BODY-MARKER',
+    });
+    const e500 = new APICallError({
+      message: 'm',
+      url: 'http://x',
+      requestBodyValues: {},
+      statusCode: 500,
+    });
+    expect(providerFailure(e429)).toEqual(new SdkTurnFailure('provider', { status: 429 }));
+    const retry = new RetryError({
+      message: 'MARKER',
+      reason: 'maxRetriesExceeded',
+      errors: [e500, e429],
+    });
+    const f = providerFailure(retry);
+    expect(only(f)).toEqual(['kind', 'status']);
+    expect(f.status).toBe(429);
+    expect(only(providerFailure(new Error('PROMPT-MARKER')))).toEqual(['kind']);
+    expect(JSON.stringify(f) + String(f.message) + String(f.stack)).not.toMatch(MARKERS);
+  });
+
+  it('a turn whose provider answers 429 on every attempt ends with {kind: provider, status: 429}', {
+    timeout: 30_000,
+  }, async () => {
+    const llm = await llmWith(() => ({
+      status: 429,
+      body: '{"error":{"message":"RATE-BODY-MARKER"}}',
+      headers: { 'retry-after-ms': '5' },
+    }));
+    const { res } = await run(llm, { message: 'please PROMPT-MARKER' });
+    expect(llm.requests).toHaveLength(3);
+    expect(res).toMatchObject({ ok: false, detail: 'upstream-failed', ending: 'error' });
+    expect(res.failure).toBeInstanceOf(SdkTurnFailure);
+    expect(only(res.failure)).toEqual(['kind', 'status']);
+    expect(res.failure).toMatchObject({ kind: 'provider', status: 429 });
+    expect(JSON.stringify(res.failure)).not.toMatch(MARKERS);
+  });
+
+  it('a guarded-fetch cap breach ends with {kind: breach, breach: request-total}', async () => {
+    const llm = await llmWith((n) => callTools(n, [{ name: 'list_topics' }]));
+    const counted = depsFor(llm);
+    let breach: string | null = null;
+    const deps: SdkTurnDeps = {
+      ...counted.deps,
+      fetch: async (u, i) => {
+        if (counted.log.length >= 1) {
+          breach = 'request-total';
+          throw new Error('cap');
+        }
+        return counted.deps.fetch(u, i);
+      },
+      breach: () => breach,
+    };
+    const { res } = await run(llm, { deps });
+    expect(res.ending).toBe('breach');
+    expect(only(res.failure)).toEqual(['breach', 'kind']);
+    expect(res.failure).toMatchObject({ kind: 'breach', breach: 'request-total' });
+  });
+
+  it('the guarded fetch’s body and response caps are named request-bytes and response-bytes', async () => {
+    for (const [raw, named] of [
+      ['request-body', 'request-bytes'],
+      ['response-total', 'response-bytes'],
+      ['requests', 'requests'],
+    ] as const) {
+      const llm = await llmWith(() => answer('x'));
+      const counted = depsFor(llm);
+      const deps: SdkTurnDeps = {
+        ...counted.deps,
+        fetch: async () => {
+          throw new Error('cap');
+        },
+        breach: () => raw,
+      };
+      const { res } = await run(llm, { deps });
+      expect(res.failure).toMatchObject({ kind: 'breach', breach: named });
+    }
+  });
+
+  it('a tool-call breach ends with {kind: breach, breach: tool-calls}', async () => {
+    const sixteen = Array.from({ length: 16 }, () => ({ name: 'list_topics' }));
+    const llm = await llmWith((n) => callTools(n, sixteen));
+    const { res } = await run(llm);
+    expect(res.ending).toBe('breach');
+    expect(only(res.failure)).toEqual(['breach', 'kind']);
+    expect(res.failure).toMatchObject({ kind: 'breach', breach: 'tool-calls' });
+  });
+
+  it('bad deps end as {kind: internal}', async () => {
+    const llm = await llmWith(() => answer('x'));
+    const { res } = await run(llm, { deps: { ...depsFor(llm).deps, apiKey: '' } });
+    expect(res).toMatchObject({ ok: false, detail: 'internal-error' });
+    expect(only(res.failure)).toEqual(['kind']);
+    expect(res.failure).toMatchObject({ kind: 'internal' });
   });
 });

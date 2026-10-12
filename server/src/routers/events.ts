@@ -17,6 +17,7 @@ import {
   EVENT_GENERATE_SYSTEM_PROMPT,
   type EventGenerateExistingEvent,
 } from '@autologger/ai-runtime/eventGeneratePrompt';
+import { sdkFailureSuffix } from '@autologger/ai-runtime/sdkTurn';
 import { showCategoriesApiShape } from '@autologger/catalog';
 import {
   audioRecordingLeaseBodySchema,
@@ -642,7 +643,8 @@ eventsRouter.post('/api/sessions/:sessionId/events/generate', async (c) => {
     // prior auto rows persist alongside any partial new rows the failed run
     // inserted, exactly like the existing append-failure semantics.
     console.warn(
-      `[events/generate] session=${sessionId}: generation failed — CLI turn failed (${outcome.detail})`,
+      `[events/generate] session=${sessionId}: generation failed — CLI turn failed (${outcome.detail})` +
+        sdkFailureSuffix(outcome.failure),
     );
     throw new ApiError(502, EVENT_GENERATE_FAILURE_DETAIL);
   } finally {

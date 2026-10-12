@@ -12,7 +12,7 @@
 // own step records (`decideSdkEnding`), after the stream ends. The iteration is wrapped, because a
 // provider stream dropped mid-response throws from `fullStream` instead of emitting an `error`
 // part (A27); a throw is recorded as an error. Neither the part's error nor the thrown value is
-// kept, logged or forwarded (D5).
+// kept, logged or forwarded (D5): only its upstream HTTP status, a number, is read.
 
 import type { AiChatSseEvent } from './aiChatRelay';
 
@@ -22,20 +22,25 @@ export interface SdkStreamPart {
   text?: string;
   toolName?: string;
   invalid?: boolean;
+  error?: unknown;
 }
 
 export interface SdkRelayOptions {
   emit: (event: AiChatSseEvent) => Promise<void>;
   /** The turn's tool names: only these are relayed as `tool`. */
   toolNames: ReadonlySet<string>;
+  /** The upstream HTTP status of an error part or a thrown error, if it has one (D5 diagnostic).
+   * Only this number is kept; the error itself is dropped here. */
+  statusOf: (error: unknown) => number | undefined;
 }
 
 /** Relay one turn's `fullStream`. Never throws; resolves with whether the stream errored. */
 export async function relaySdkStream(
   stream: AsyncIterable<SdkStreamPart>,
   opts: SdkRelayOptions,
-): Promise<{ errored: boolean }> {
+): Promise<{ errored: boolean; status?: number }> {
   let errored = false;
+  let status: number | undefined;
   try {
     for await (const part of stream) {
       if (part.type === 'text-delta') {
@@ -52,12 +57,14 @@ export async function relaySdkStream(
         }
       } else if (part.type === 'error') {
         errored = true;
+        status ??= opts.statusOf(part.error);
       }
     }
-  } catch {
+  } catch (thrown) {
     errored = true;
+    status ??= opts.statusOf(thrown);
   }
-  return { errored };
+  return status === undefined ? { errored } : { errored, status };
 }
 
 /** How a turn ended (design D3 ending table). */
