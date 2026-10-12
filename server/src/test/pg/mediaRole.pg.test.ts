@@ -351,6 +351,60 @@ describe('the media_jobs guard trigger (media-worker D2)', () => {
     ]);
   });
 
+  // Implementation panel (S.7): the trigger bounds the values a worker writes, against the
+  // database clock with slack: a lease at most 15 min ahead, a run-after at most 2 h ahead, and an
+  // attempt refunded only by a live lease's holder.
+  it('bounds the lease and the run-after time, and refunds an attempt only under a live lease', async () => {
+    const { db, admin } = await seeded([
+      { id: 'q', status: 'queued' },
+      { id: 'r', status: 'running', lockedBy: 'w1', lockedUntilMs: later(), attempts: 1 },
+      { id: 'x', status: 'running', lockedBy: 'w1', lockedUntilMs: earlier(), attempts: 2 },
+    ]);
+    const w = connect(db.media);
+    const MAX = '9223372036854775807';
+    expect(
+      await code(w`update media_jobs set status = 'running', locked_by = 'w1',
+                     locked_until_ms = ${MAX}, attempts = attempts + 1 where id = 'q'`),
+    ).toBe('42501');
+    expect(
+      await code(w`update media_jobs set locked_until_ms = ${Date.now() + 86_400_000}
+                   where id = 'r'`),
+    ).toBe('42501');
+    expect(
+      await code(w`update media_jobs set locked_until_ms = ${Date.now() + 600_000} where id = 'r'`),
+    ).toBe('ok');
+    // A release parking the job far ahead is refused; within the backoff bound it is fine.
+    const release = (id: string, runAfter: number | string) =>
+      code(w`update media_jobs set status = 'queued', attempts = attempts - 1,
+               locked_until_ms = null, run_after_ms = ${runAfter} where id = ${id}`);
+    expect(await release('r', MAX)).toBe('42501');
+    expect(await release('r', Date.now() + 3 * 3_600_000)).toBe('42501');
+    // An expired lease's sweep may re-queue but not refund.
+    expect(await release('x', Date.now())).toBe('42501');
+    expect(await release('r', Date.now() + 3_600_000)).toBe('ok');
+    const rows = await admin`select id, status, attempts from catalog.media_jobs order by id`;
+    expect(rows.map((r) => `${r.id} ${r.status} ${r.attempts}`)).toEqual([
+      'q queued 0',
+      'r queued 0',
+      'x running 2',
+    ]);
+  });
+
+  it('accepts only the classified error codes', async () => {
+    const { db, admin } = await seeded([
+      { id: 'r', status: 'running', lockedBy: 'w1', lockedUntilMs: later(), attempts: 1 },
+    ]);
+    const w = connect(db.media);
+    const failWith = (e: string) =>
+      code(w`update media_jobs set status = 'failed', error = ${e} where id = 'r'`);
+    expect(await failWith('x'.repeat(100_000))).toBe('23514');
+    expect(await failWith('/blobs/audio/s/1.webm: Invalid data')).toBe('23514');
+    expect(await failWith('decode-failed')).toBe('ok');
+    await expect(
+      admin`update catalog.media_jobs set error = 'free text' where id = 'r'`,
+    ).rejects.toMatchObject({ code: '23514' });
+  });
+
   it('does not bind catalog_system or postgres', async () => {
     const { db, admin } = await seeded([{ id: 'd', status: 'done', lockedBy: 'w1' }]);
     const sys = connect(db.system);

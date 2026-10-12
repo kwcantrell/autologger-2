@@ -702,6 +702,7 @@ const EXPECTED_SCHEMA: SchemaRecord = {
     'catalog.companion_devices companion_devices_name_check CHECK (((char_length(name) >= 1) AND (char_length(name) <= 80)))',
     'catalog.companion_presence companion_presence_client_id_check CHECK (((char_length(client_id) >= 1) AND (char_length(client_id) <= 256)))',
     // media-worker D2, D12, D5, D7.
+    "catalog.media_jobs media_jobs_error_code CHECK (((error IS NULL) OR (error = ANY (ARRAY['decode-failed'::text, 'mixed-codecs'::text, 'verify-mismatch'::text, 'interleaved-input'::text, 'missing-blob'::text, 'timeout'::text, 'low-disk'::text, 'internal'::text, 'invalid-result'::text, 'inputs-changed'::text]))))",
     'catalog.media_jobs media_jobs_input_bytes_check CHECK ((input_bytes >= 0))',
     "catalog.media_jobs media_jobs_kind_check CHECK ((kind = ANY (ARRAY['ingest'::text, 'merge'::text])))",
     'catalog.media_jobs media_jobs_result_json_size CHECK ((octet_length(result_json) <= 262144))',
