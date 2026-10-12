@@ -452,7 +452,9 @@ function ProviderPanel({
             label="Connection"
             description={
               dirty
-                ? 'Save your changes first: the test checks the saved key and model.'
+                ? cli
+                  ? 'Save your changes first: the test checks the saved choice.'
+                  : 'Save your changes first: the test checks the saved key and model.'
                 : cli
                   ? "Checks that this account can use the server's Claude CLI."
                   : kind === 'stt'

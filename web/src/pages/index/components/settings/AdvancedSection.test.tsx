@@ -400,6 +400,8 @@ describe('Settings › Advanced — the Claude CLI option (ai-sdk-agent-harness 
     expect(within(llm).queryByLabelText('API key')).toBeNull();
     expect(within(llm).queryByText('API key')).toBeNull();
     expect(within(llm).getByText(CLI_HELP)).not.toBeNull();
+    // 8.3 finding: no help line on the CLI panel mentions a key.
+    expect(llm.textContent).not.toMatch(/\bkey\b/i);
     // Save is enabled with no typed field.
     expect((saveIn('llm') as HTMLButtonElement).disabled).toBe(false);
     fireEvent.click(saveIn('llm'));
