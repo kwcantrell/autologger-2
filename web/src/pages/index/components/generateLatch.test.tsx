@@ -83,7 +83,7 @@ function mockRoutes(generateError: () => Error, generateCalls: { count: number }
   });
 }
 
-let providersState: { llm: null; stt: unknown; run_features_allowed: boolean };
+let providersState: { llm: unknown; stt: unknown; run_features_allowed: boolean };
 
 function renderFeed(feed: 'transcribe' | 'topics') {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -119,7 +119,11 @@ interface FeedCase {
 const CASES: FeedCase[] = [
   // byo-ai-providers D7 category 7: the reason names Settings → Advanced, not a server setting.
   { feed: 'transcribe', reasonText: /Add a speech-to-text key in Settings → Advanced/ },
-  { feed: 'topics', reasonText: /Topic generation isn.t available on this server/ },
+  // ai-sdk-agent-harness D9 category 2: the topics reason names the caller's language model.
+  {
+    feed: 'topics',
+    reasonText: /Add a language model in Settings → Advanced to generate topics\./,
+  },
 ];
 
 describe.each(CASES)('$feed feed — generate 503 latch (ui-refresh D9)', ({ feed, reasonText }) => {
@@ -227,5 +231,66 @@ describe('transcribe feed — the latch points at Settings → Advanced (byo-ai-
     await waitFor(() => expect(generateButton().getAttribute('aria-disabled')).toBeNull());
     fireEvent.click(generateButton());
     await waitFor(() => expect(calls.count).toBe(2));
+  });
+});
+
+// ai-sdk-agent-harness task 8.2 (design D8; web-session-console "Honest capability gating on
+// generation features"): the topics latch points at Settings → Advanced and clears without a reload
+// once the user saves a language model.
+describe('topics feed — the latch names the language model (ai-sdk-agent-harness D8)', () => {
+  const SAVED_LLM = {
+    kind: 'llm',
+    provider: 'anthropic',
+    base_url: null,
+    model: 'claude-sonnet-4-5',
+    key_last4: '1234',
+    updated_at: '2026-10-12T10:00:00.000Z',
+  };
+
+  it('the empty state names Settings → Advanced and Insert, and no server setting or reload', async () => {
+    mockRoutes(
+      () => new ApiError(503, 'Add a language model in Settings → Advanced to generate topics.'),
+      { count: 0 },
+    );
+    renderFeed('topics');
+    fireEvent.click(await screen.findByRole('button', { name: 'Auto generate' }));
+    await waitFor(() => expect(generateButton().getAttribute('aria-disabled')).toBe('true'));
+    const empty = await screen.findByText(/Add a language model in Settings → Advanced/, {
+      selector: 'td *, td',
+    });
+    expect(empty.textContent).toMatch(/Insert/);
+    expect(document.body.textContent).not.toMatch(
+      /CLAUDE_CLI_PATH|server setting|on this server|[Rr]eload/,
+    );
+  });
+
+  it('saving a language model clears the latch without a reload', async () => {
+    const calls = { count: 0 };
+    mockRoutes(() => new ApiError(503, 'needs a model'), calls);
+    renderFeed('topics');
+    fireEvent.click(await screen.findByRole('button', { name: 'Auto generate' }));
+    await waitFor(() => expect(generateButton().getAttribute('aria-disabled')).toBe('true'));
+    await waitFor(() => expect(lastClient.getQueryData(['providers'])).toBeTruthy());
+
+    providersState = { ...providersState, llm: SAVED_LLM };
+    await lastClient.invalidateQueries({ queryKey: ['providers'] });
+    await waitFor(() => expect(generateButton().getAttribute('aria-disabled')).toBeNull());
+    fireEvent.click(generateButton());
+    await waitFor(() => expect(calls.count).toBe(2));
+  });
+
+  it('a latch while a language model is already saved stays until a new save', async () => {
+    providersState = { ...providersState, llm: SAVED_LLM };
+    mockRoutes(() => new ApiError(503, 'needs a model'), { count: 0 });
+    renderFeed('topics');
+    fireEvent.click(await screen.findByRole('button', { name: 'Auto generate' }));
+    await waitFor(() => expect(generateButton().getAttribute('aria-disabled')).toBe('true'));
+    await waitFor(() => expect(lastClient.getQueryData(['providers'])).toBeTruthy());
+    await lastClient.invalidateQueries({ queryKey: ['providers'] });
+    expect(generateButton().getAttribute('aria-disabled')).toBe('true');
+
+    providersState = { ...providersState, llm: { ...SAVED_LLM, updated_at: 'later' } };
+    await lastClient.invalidateQueries({ queryKey: ['providers'] });
+    await waitFor(() => expect(generateButton().getAttribute('aria-disabled')).toBeNull());
   });
 });

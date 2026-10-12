@@ -2,6 +2,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { type MutableRefObject, useEffect, useRef } from 'react';
 import { API_ROOT } from '../../../api/client';
 import { topicsQueryKey } from '../../../api/hooks/useTopics';
+import { ClearOnLanguageModelSave } from '../hooks/useClearOnLanguageModelSave';
 import { SseTurnComposer, useSseTurn } from './useSseTurn';
 
 // Real SSE-driven Chat subtab (ai-topics-chat, task 4.2; design D9; spec "AI
@@ -48,6 +49,46 @@ export interface AiChatProps {
 
 const CONNECTION_LOST_DETAIL = 'Connection to AI chat was lost before the turn finished.';
 
+/** The chat route's `503` detail, and this surface's not-configured copy (ai-sdk-agent-harness D8). */
+export const NOT_CONFIGURED_COPY =
+  'Add a language model in Settings → Advanced to use the assistant.';
+
+// The `history` bounds of the chat request contract (ai-sdk-agent-harness D6).
+const HISTORY_MAX_ENTRIES = 40;
+const HISTORY_MAX_TEXT = 8000;
+const HISTORY_MAX_CHARS = 64_000;
+
+export interface ChatHistoryEntry {
+  role: 'user' | 'assistant';
+  text: string;
+}
+
+/**
+ * The `history` a turn sends (ai-sdk-agent-harness D6): the displayed user and assistant messages,
+ * without error rows or tool chips, each trimmed and cut to 8000 characters, blank ones skipped,
+ * then trimmed from the oldest end to at most 40 entries and 64 000 characters. An assistant entry
+ * left first by the cut is dropped too, so the history opens on a user turn. The caller passes the
+ * messages from before the new turn, so the in-flight reply is never part of it.
+ */
+export function buildChatHistory(messages: ChatMessage[]): ChatHistoryEntry[] {
+  const entries: ChatHistoryEntry[] = [];
+  for (const m of messages) {
+    if (m.role !== 'user' && m.role !== 'assistant') continue;
+    const text = m.text.trim().slice(0, HISTORY_MAX_TEXT).trim();
+    if (text) entries.push({ role: m.role, text });
+  }
+  const kept: ChatHistoryEntry[] = [];
+  let chars = 0;
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const entry = entries[i] as ChatHistoryEntry;
+    if (kept.length === HISTORY_MAX_ENTRIES || chars + entry.text.length > HISTORY_MAX_CHARS) break;
+    kept.unshift(entry);
+    chars += entry.text.length;
+  }
+  while (kept[0]?.role === 'assistant') kept.shift();
+  return kept;
+}
+
 export function AiChat({
   sessionId,
   messages,
@@ -61,14 +102,19 @@ export function AiChat({
   const queryClient = useQueryClient();
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
-  const { input, setInput, notConfigured, sendMessage, stop } = useSseTurn<
+  const { input, setInput, notConfigured, resetNotConfigured, sendMessage, stop } = useSseTurn<
     Extract<ChatMessage, { role: 'tool' }>
   >({
     url: `${API_ROOT}/sessions/${sessionId}/ai/chat`,
-    buildRequestBody: (text) => ({
-      message: text,
-      ...(claudeSessionId ? { claude_session_id: claudeSessionId } : {}),
-    }),
+    buildRequestBody: (text) => {
+      // `messages` is this render's list, from before the new turn's user message (D6).
+      const history = buildChatHistory(messages);
+      return {
+        message: text,
+        ...(claudeSessionId ? { claude_session_id: claudeSessionId } : {}),
+        ...(history.length > 0 ? { history } : {}),
+      };
+    },
     connectionLostDetail: CONNECTION_LOST_DETAIL,
     requestFailedDetail: (status) => `AI chat request failed (${status}).`,
     isStreaming,
@@ -118,10 +164,10 @@ export function AiChat({
           className="flex flex-1 flex-col items-center justify-center gap-2 p-6 text-center text-v5-muted"
           data-testid="ai-chat-not-configured"
         >
-          <p className="m-0 text-sm">
-            Assistant isn't configured on this deployment. Ask an operator to set{' '}
-            <code>CLAUDE_CLI_PATH</code> to the <code>claude</code> CLI to enable it.
-          </p>
+          <p className="m-0 text-sm">{NOT_CONFIGURED_COPY}</p>
+          {/* Clears once the user saves a language model (D8), without a reload. Mounted only
+              here, so the chat reads the providers only while it is not configured. */}
+          <ClearOnLanguageModelSave onSave={resetNotConfigured} />
         </div>
       ) : (
         <>
