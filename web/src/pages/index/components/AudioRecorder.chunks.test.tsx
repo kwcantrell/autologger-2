@@ -144,6 +144,8 @@ class FakeMediaRecorder {
 }
 
 let uploadStatus: number | null = null; // null => uploads succeed
+/** The next N segment POSTs answer this transient failure, then uploads succeed (A.9). */
+let failNext: { count: number; mode: 503 | 'network' } = { count: 0, mode: 503 };
 let uploadBarrier: Promise<void> | null = null; // when set, segment POSTs wait on it
 let segCounter = 0;
 
@@ -163,6 +165,11 @@ const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => 
   const method = init?.method ?? 'GET';
   if (method === 'POST' && url.includes('/audio/segments?')) {
     if (uploadBarrier) await uploadBarrier;
+    if (failNext.count > 0) {
+      failNext.count -= 1;
+      if (failNext.mode === 'network') throw new TypeError('Failed to fetch');
+      return jsonResponse({ detail: 'busy' }, failNext.mode);
+    }
     if (uploadStatus != null) return jsonResponse({ detail: 'upload rejected' }, uploadStatus);
     const u = new URL(url, 'http://localhost');
     segCounter += 1;
@@ -238,6 +245,7 @@ beforeEach(() => {
   vi.mocked(showToast).mockClear();
   fetchMock.mockClear();
   uploadStatus = null;
+  failNext = { count: 0, mode: 503 };
   uploadBarrier = null;
   segCounter = 0;
   fakeTrack.readyState = 'live';
@@ -582,7 +590,7 @@ describe('AudioRecorder chunk rollover (task 4.2)', () => {
   });
 
   it('final-drain failure lands in drain_blocked (toast, no idle, no new recording) and clears when the queue empties', async () => {
-    uploadStatus = 500; // transient — the chunk stays queued
+    uploadStatus = 404; // permanent (A.9: only a terminal failure is an error at stop)
     const { ref, onPhaseChange } = await startRecording();
     await act(async () => {
       await ref.current?.toggle();
@@ -1740,5 +1748,45 @@ describe('implementation panel fixes (A.8)', () => {
       await queue.pump();
     });
     expect(segmentPosts()).toHaveLength(0);
+  });
+});
+
+describe('A.9: a chunk that is merely retrying at Stop is not an error', () => {
+  async function stopAndRetry(mode: 503 | 'network') {
+    const { ref, onPhaseChange } = await startRecording();
+    failNext = { count: 2, mode }; // both stop-time attempts fail transiently
+    await act(async () => {
+      await ref.current?.toggle();
+    });
+    // No error toast while the chunk is only retrying; Record stays blocked.
+    expect(vi.mocked(showToast)).not.toHaveBeenCalledWith(expect.stringContaining('failed'), true);
+    expect(onPhaseChange.mock.calls.at(-1)?.[0]).toBe('drain_blocked');
+    await expect(ref.current?.toggle()).resolves.toBe(false);
+    // The backoff tick uploads it a few seconds later and the recorder goes idle.
+    for (let i = 0; i < 4; i += 1) {
+      await act(async () => {
+        vi.advanceTimersByTime(4_000);
+      });
+    }
+    expect(segmentPosts().length).toBeGreaterThanOrEqual(3);
+    expect(onPhaseChange.mock.calls.at(-1)?.[0]).toBe('idle');
+    expect(vi.mocked(showToast)).not.toHaveBeenCalledWith(expect.stringContaining('failed'), true);
+  }
+
+  it('after transient 503s', async () => {
+    await stopAndRetry(503);
+  });
+
+  it('after network failures (ambiguous, checked against the segments list)', async () => {
+    await stopAndRetry('network');
+  });
+
+  it('a permanent 4xx at Stop still shows the error toast', async () => {
+    uploadStatus = 400;
+    const { ref } = await startRecording();
+    await act(async () => {
+      await ref.current?.toggle();
+    });
+    expect(vi.mocked(showToast)).toHaveBeenCalledWith(expect.stringContaining('failed'), true);
   });
 });

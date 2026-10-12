@@ -52,7 +52,7 @@ function chunkInput(overrides: Partial<ChunkInput> = {}): ChunkInput {
 }
 
 let uploadImpl: (chunk: ChunkInput) => Promise<{ ok: false; status?: number; message: string }> =
-  async () => ({ ok: false, status: 502, message: 'still failing' });
+  async () => ({ ok: false, status: 404, message: 'still failing' }); // permanent: the error alert (A.9)
 
 function seedQueue() {
   return getChunkUploadQueue({
@@ -73,7 +73,7 @@ beforeEach(() => {
   // reinstalled creation subscription is what picks up this test's `seedQueue()`.
   uninstallChunkLeaveWarningForTesting();
   installChunkLeaveWarning();
-  uploadImpl = async () => ({ ok: false, status: 502, message: 'still failing' });
+  uploadImpl = async () => ({ ok: false, status: 404, message: 'still failing' }); // permanent: the error alert (A.9)
 });
 
 afterEach(() => {
@@ -142,12 +142,14 @@ describe('ChunkRescueBanner', () => {
   });
 
   it('failed-then-retrying: banner stays visible while a retry is in flight', async () => {
+    uploadImpl = async () => ({ ok: false, status: 502, message: 'still failing' });
     const queue = seedQueue();
     queue.enqueue(chunkInput());
     await queue.pump(); // fails with status 502 -> queued with lastError set
 
     render(<ChunkRescueBanner />);
-    expect(await screen.findByRole('alert')).toBeTruthy();
+    // Retrying is a neutral status, not the error alert (A.9); it keeps its actions.
+    expect(await screen.findByRole('status')).toBeTruthy();
 
     uploadImpl = () => new Promise(() => {}); // in-flight retry, never settles
 
@@ -158,7 +160,7 @@ describe('ChunkRescueBanner', () => {
     // clears it on a fresh outcome) — the banner must remain visible, not
     // flicker off mid-retry.
     await waitFor(() => expect(queue.getSnapshot().inFlight).toBe(true));
-    expect(screen.getByRole('alert')).toBeTruthy();
+    expect(screen.getByRole('status')).toBeTruthy();
     expect(screen.getByText('Retrying…')).toBeTruthy();
   });
 
@@ -593,5 +595,22 @@ describe('ChunkRescueBanner shows only the signed-in user’s chunks (A.8)', () 
     await screen.findByRole('alert');
     expect(screen.getByText(/chunk 2/)).toBeTruthy();
     expect(screen.queryByText(/chunk 1\b/)).toBeNull();
+  });
+});
+
+describe('A.9: a chunk that is only retrying is a neutral status, not an error alert', () => {
+  it('shows "Uploading … retrying" as a status, and the error alert once a chunk is terminal', async () => {
+    uploadImpl = async () => ({ ok: false, status: 502, message: 'still failing' }); // transient
+    const queue = seedQueue();
+    queue.enqueue(chunkInput());
+    await queue.pump();
+    render(<ChunkRescueBanner />);
+    const status = await screen.findByRole('status');
+    expect(status.textContent).toMatch(/Uploading 1 recorded audio chunk… retrying/);
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy(); // actions stay
+    expect(screen.queryByRole('alert')).toBeNull();
+    uploadImpl = async () => ({ ok: false, status: 404, message: 'Session not found.' });
+    await queue.retryAll();
+    expect(await screen.findByRole('alert')).toBeTruthy();
   });
 });

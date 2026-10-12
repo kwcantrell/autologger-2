@@ -1745,3 +1745,31 @@ describe('implementation panel fixes (A.8)', () => {
     });
   });
 });
+
+describe('A.9: dev diagnostics on a failed attempt', () => {
+  it('reports the failure class and HTTP status (never bytes)', async () => {
+    const debug = vi.fn();
+    let n = 0;
+    const q = createChunkUploadQueue({
+      upload: vi.fn(async (c: ChunkInput) => {
+        n += 1;
+        if (n === 1) throw new FakeApiError(503, 'busy');
+        if (n === 2) throw new FakeNetworkError('Failed to fetch');
+        if (n === 3) throw new FakeApiError(401, 'signed out');
+        return okFor(c);
+      }),
+      listSegments: vi.fn(async () => []),
+      clock: makeClock(),
+      debug,
+    });
+    q.enqueue(chunk());
+    await q.pump();
+    await q.pump();
+    await q.pump();
+    const lines = debug.mock.calls.map(([m]) => String(m));
+    expect(lines[0]).toMatch(/transient.*503/);
+    expect(lines[1]).toMatch(/network/);
+    expect(lines[2]).toMatch(/blocked.*401/);
+    for (const l of lines) expect(l).not.toMatch(/Blob|\[object/);
+  });
+});

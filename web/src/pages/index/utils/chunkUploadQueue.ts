@@ -198,6 +198,11 @@ export interface ChunkUploadQueueDeps {
   probeDuration?: (blob: Blob) => Promise<number | null>;
   /** Called after a chunk is confirmed (segments query invalidation). */
   onConfirmed?: (sessionId: string) => void;
+  /**
+   * Diagnostics for a failed attempt (A.9; development builds only in production wiring): the
+   * failure class and HTTP status, with the chunk's identity — never its bytes.
+   */
+  debug?: (message: string) => void;
 }
 
 export interface RequestFinalizeInput {
@@ -508,9 +513,22 @@ export function createChunkUploadQueue(deps: ChunkUploadQueueDeps) {
 
   type Step = 'continue' | 'stop';
 
+  function report(head: InternalChunk, cls: string, status: number | undefined, message: string) {
+    deps.debug?.(
+      `chunk upload ${cls}${status === undefined ? '' : ` (HTTP ${status})`}: session ${head.sessionId}, recording ${head.recordingOrdinal}, chunk ${head.chunkIndex + 1}, attempt ${head.attempts}: ${message}`,
+    );
+  }
+
   /** Classify a failed outcome that carried a status (or none, reported by the upload fn). */
   function onFailure(head: InternalChunk, status: number | undefined, message: string): Step {
     head.lastError = message;
+    const cls =
+      status === 401 || status === 403
+        ? 'blocked'
+        : status !== undefined && !isTransientStatus(status)
+          ? 'permanent'
+          : 'transient';
+    report(head, cls, status, message);
     if (status === 401 || status === 403) {
       head.classification = 'blocked';
       head.nextAttemptAt = null;
@@ -620,6 +638,7 @@ export function createChunkUploadQueue(deps: ChunkUploadQueueDeps) {
       }
       if (outcome === 'network') {
         // Ambiguous: the request may have reached the server. Dedupe before the next attempt.
+        report(head, 'network (ambiguous)', undefined, head.lastError ?? '');
         head.ambiguous = true;
         head.classification = 'queued';
         scheduleRetry(head);
@@ -1229,6 +1248,7 @@ export function createDefaultChunkUploadQueueDeps(): ChunkUploadQueueDeps {
     onConfirmed: (sessionId) => {
       for (const l of confirmedListeners) l(sessionId);
     },
+    debug: process.env.NODE_ENV === 'development' ? (m) => console.warn(m) : undefined,
   };
 }
 

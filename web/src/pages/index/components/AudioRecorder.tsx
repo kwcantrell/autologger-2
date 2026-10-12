@@ -538,14 +538,20 @@ export const AudioRecorder = forwardRef<AudioRecorderHandle, AudioRecorderProps>
         } finally {
           if (showingUi) showingUi.classList.add('hidden');
         }
-        if (!blocksNewRecording(queue.getSnapshot())) {
+        const own = queue.getSnapshot().chunks.filter((c) => !c.recovered);
+        if (own.length === 0) {
           dispatch({ type: 'DONE' });
         } else {
+          // Record stays blocked until this tab's chunks drain or are discarded (spec). Only a
+          // terminal or user-actionable failure is an error (A.9): a chunk that is merely
+          // retrying on its backoff shows as a neutral status in the rescue surface.
           dispatch({ type: 'DRAIN_BLOCKED' });
-          showToast(
-            'Some recorded audio failed to upload. See the banner above to retry, download, or discard it.',
-            true,
-          );
+          if (own.some((c) => c.classification !== 'queued')) {
+            showToast(
+              'Some recorded audio failed to upload. See the banner above to retry, download, or discard it.',
+              true,
+            );
+          }
         }
       },
       [

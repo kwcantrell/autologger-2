@@ -313,21 +313,36 @@ export function ChunkRescueBanner() {
 
   if (failedChunks.length === 0) return null;
 
+  // A chunk that is only retrying on its backoff is not an error yet (A.9): the surface keeps its
+  // actions but reads as a neutral status. It turns into the error alert once a chunk is blocked,
+  // permanent, or recovered from a previous page.
+  const terminal = failedChunks.some((c) => c.classification !== 'queued' || c.recovered);
+
   return (
     <>
       {/* shadcn-port-shell D6: the destructive Alert (role="alert" — still the one assertive
           surface; never a toast, never auto-dismissed). `block` replaces Alert's icon grid so the
           header row + chunk list lay out as before. */}
       <Alert
-        variant="destructive"
-        aria-live="assertive"
+        variant={terminal ? 'destructive' : 'default'}
+        role={terminal ? 'alert' : 'status'}
+        aria-live={terminal ? 'assertive' : 'polite'}
         className="fixed inset-x-0 top-0 z-(--z-toast) mx-auto mt-2 block w-[min(640px,94vw)] shadow-[0_8px_32px_rgba(0,0,0,0.35)]"
       >
         <div className="flex flex-wrap items-center justify-between gap-2">
           <AlertDescription className="m-0 block font-medium">
-            {failedChunks.length} recorded audio {failedChunks.length === 1 ? 'chunk' : 'chunks'}{' '}
-            could not be uploaded. Keep this tab open until they are retried, downloaded, or
-            discarded.
+            {terminal ? (
+              <>
+                {failedChunks.length} recorded audio{' '}
+                {failedChunks.length === 1 ? 'chunk' : 'chunks'} could not be uploaded. Keep this
+                tab open until they are retried, downloaded, or discarded.
+              </>
+            ) : (
+              <>
+                Uploading {failedChunks.length} recorded audio{' '}
+                {failedChunks.length === 1 ? 'chunk' : 'chunks'}… retrying. Keep this tab open.
+              </>
+            )}
           </AlertDescription>
           <div className="flex gap-2">
             <Button variant="outline" size="sm" onClick={handleRetryAll}>

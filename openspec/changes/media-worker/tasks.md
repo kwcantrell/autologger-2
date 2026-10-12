@@ -600,6 +600,21 @@ environments" ("Dev, stage and prod compared"). No other README section is touch
   passed`, banner + sign-out `31 passed`; `cd web && npx vitest run` `Test Files 160 passed
   (160)`, `Tests 2162 passed (2162)`, no unhandled errors; `npx tsc --noEmit -p .` no errors;
   `npx biome check --error-on-warnings` clean on A's files.
+- [x] A.9 Stop with a chunk still retrying is not an error (owner's VM test, 2026-10-12: a 4-chunk
+  Chrome take showed "Some recorded audio failed to upload" for a moment though all 4 chunks
+  arrived). Stop still attempts every pending chunk at once (explicit pumps ignore `nextAttemptAt`;
+  the first awaits the in-flight attempt), but only a terminal failure (blocked, permanent) shows
+  the error toast; a chunk left on its backoff keeps Record blocked (`drain_blocked`) and the rescue
+  surface reads as a neutral `role="status"` "Uploading N recorded audio chunk(s)… retrying"
+  with its actions, until the tick uploads it and the recorder goes idle. Development builds
+  `console.warn` each failed attempt's class and HTTP status (queue `debug` dep; ids, never bytes).
+  Evidence: red `npx vitest run src/pages/index/components/AudioRecorder.chunks.test.tsx
+  src/pages/index/utils/chunkUploadQueue.test.ts src/pages/index/components/ChunkRescueBanner.test.tsx`
+  `Tests 4 failed | 154 passed (158)` (503 and network at Stop raised the toast; no `debug`; no
+  neutral status); green `Tests 158 passed (158)` (permanent 404/400 still toasts; the old
+  drain-failure test now uses 404, and banner tests that meant "failed" use a permanent status);
+  `cd web && npx vitest run` `Test Files 161 passed (161)`, `Tests 2172 passed (2172)`, no
+  unhandled errors; `npx tsc --noEmit -p .` clean; biome clean on the touched files.
 - [ ] A.7 Suites: `cd web && npx vitest run`, `npm run typecheck -w web`, `npm run lint -w web`;
   manual checklist in dev on Chromium and Firefox (and Safari if available): kill the tab at
   2.5 cadences → reload → recovered chunks upload → finalize → one merged segment appears with
