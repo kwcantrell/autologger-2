@@ -65,8 +65,9 @@ connects as its own read-mostly role"). It SHALL run `ffmpeg` only from a digest
 equal), by argv (no shell), with a demuxer forced from the allowlist Matroska, Ogg, MP4, WAV, FLAC
 and MP3 chosen by sniffing the file's first bytes, the input streamed on `stdin` with the protocol
 whitelist `pipe` (only an MP4 whose `moov` atom follows its data may be read by `file:` path with
-the `mov` demuxer forced and external references disabled), `-xerror` so a decode error fails the
-job, stdin otherwise closed, and a wall-clock limit after which it is killed; the worker itself
+the `mov` demuxer forced and external references disabled), `-xerror` and a refusal of any
+error-level diagnostic other than a truncated-file note, so a decode error (including a dropped
+packet) fails the job, stdin otherwise closed, and a wall-clock limit after which it is killed; the worker itself
 opens every input without following symlinks and only regular files under `BLOB_DIR/audio/` or
 `BLOB_DIR/.trash/`. It SHALL read blobs there and write only under `BLOB_DIR/media/<job id>/`; it
 SHALL write no segment row and no file under `audio/`, `.tmp/` or `.trash/`. The filesystem SHALL
@@ -154,10 +155,9 @@ them. The worker SHALL order the inputs by `started_at_utc`, probe their bytes, 
 unless the probe yields exactly one group with no skipped input (`mixed-codecs` or
 `decode-failed`), and concatenate them by **packet copy** into one container of the family
 (Opus → WebM, AAC → MP4, PCM or FLAC → FLAC), never re-encoding and never inserting silence. It
-SHALL verify the output by decoding it fully with decode errors fatal: its sample count SHALL
-**equal** the count expected from the inputs' headers (for Opus the inputs' raw counts plus every
-non-first input's pre-skip; for AAC both sides decoded with edit lists ignored so priming is
-trimmed on neither; for FLAC and PCM the raw sum), else `verify-mismatch`. The result SHALL carry
+SHALL verify the output by decoding it fully with decode errors fatal: decoded with nothing
+trimmed (no start skip, no end trim, and for AAC edit lists ignored) on both sides, its sample
+count SHALL **equal** the sum of the inputs' untrimmed sample counts, else `verify-mismatch`. The result SHALL carry
 the merged file, its peaks and `duration_ms`, the input ids, and the **seams**: for each input its
 media offset in the merged file, its `started_at_utc`/`ended_at_utc` and its source key. An input
 whose window falls between two seams of an earlier merged input SHALL NOT be appended: the merge
@@ -193,8 +193,8 @@ inputs include the earlier merged file, with its seams carried over.
 
 #### Scenario: Safari AAC chunks verify exactly
 - **WHEN** three AAC/MP4 chunks from Safari are merged
-- **THEN** the merged count equals the inputs' sum with edit lists ignored on both sides, and the
-  priming samples do not produce a mismatch
+- **THEN** the merged untrimmed count equals the inputs' untrimmed sum with edit lists ignored on
+  both sides, and neither the priming samples nor the merged file's own skip produce a mismatch
 
 #### Scenario: A straggler holds the merge
 - **WHEN** finalize lists four windows and only three segments exist

@@ -51,8 +51,12 @@
 // remain the only hand-written values in this file.
 
 import { describe, expect, it } from 'vitest';
-import audioSegmentCreate from '../../../fixtures/api-responses/audioSegmentCreate.json';
-import audioSegmentsList from '../../../fixtures/api-responses/audioSegmentsList.json';
+import { audioRecordingFinalize } from '../../../fixtures/api-responses/audioRecordingFinalize';
+import { audioSegmentCreate } from '../../../fixtures/api-responses/audioSegmentCreate';
+import { audioSegmentsList } from '../../../fixtures/api-responses/audioSegmentsList';
+import { audioUploadComplete } from '../../../fixtures/api-responses/audioUploadComplete';
+import audioUploadCreate from '../../../fixtures/api-responses/audioUploadCreate.json';
+import audioUploadStatus from '../../../fixtures/api-responses/audioUploadStatus.json';
 import companionDeviceCreate from '../../../fixtures/api-responses/companionDeviceCreate.json';
 import companionDevicesList from '../../../fixtures/api-responses/companionDevicesList.json';
 import eventCreate from '../../../fixtures/api-responses/eventCreate.json';
@@ -131,6 +135,9 @@ import type {
   ActiveStudioCategory,
   AudioSegment,
   AudioSegmentsResponse,
+  AudioUploadCompleted,
+  AudioUploadCreated,
+  AudioUploadStatus,
   Category,
   CompanionDeviceCreatedResponse,
   CompanionDeviceListResponse,
@@ -142,6 +149,7 @@ import type {
   ProviderCredential,
   ProvidersResponse,
   ProviderTestResponse,
+  RecordingFinalizeResponse,
   SearchMoment,
   SearchMomentSession,
   SearchResponse,
@@ -422,6 +430,31 @@ describe('media-worker D16 — AudioSegment carries duration, media status and s
     expect(Object.keys(merged).sort()).toEqual([...AUDIO_SEGMENT_KEYS].sort());
     expect(legacy.seams).toBeNull();
     expect(statuses).toHaveLength(3);
+  });
+});
+
+// media-worker D6/D12 (api-contract-freeze "Recording finalize endpoint", "Resumable audio upload
+// endpoints"): the captured upload and finalize responses against the client types `uploads.ts`
+// and the chunk queue name.
+describe('media-worker — upload and finalize responses', () => {
+  it('the captured upload create body is assignable to AudioUploadCreated', () => {
+    const check: AudioUploadCreated = audioUploadCreate;
+    expect(check.part_size).toBe(32 * 1024 * 1024);
+  });
+
+  it('the captured upload status is assignable to AudioUploadStatus', () => {
+    const check: AudioUploadStatus = audioUploadStatus;
+    expect(check.received).toEqual([1]);
+  });
+
+  it('the captured completion is assignable to AudioUploadCompleted', () => {
+    const check: AudioUploadCompleted = audioUploadComplete;
+    expect(check.ok).toBe(true);
+  });
+
+  it('the captured finalize answer is assignable to RecordingFinalizeResponse', () => {
+    const check: RecordingFinalizeResponse = audioRecordingFinalize;
+    expect(check.merge).toBe('queued');
   });
 });
 

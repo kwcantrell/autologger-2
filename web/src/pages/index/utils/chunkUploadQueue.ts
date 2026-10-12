@@ -45,7 +45,11 @@
  */
 
 import { apiFetch } from '../../../api/client';
-import type { AudioSegment, AudioSegmentsResponse } from '../../../api/types';
+import type {
+  AudioSegment,
+  AudioSegmentsResponse,
+  RecordingFinalizeResponse,
+} from '../../../api/types';
 import { uploadSegmentInParts } from '../../../api/uploads';
 import { createWorkerInterval } from '../../../shared/utils/workerInterval';
 import { type ChunkStore, getChunkStore } from './chunkStore';
@@ -150,13 +154,8 @@ export interface ChunkQueueSnapshot {
   pendingFinalizes: PendingFinalizeRef[];
 }
 
-export type RecordingFinalizeMerge = 'queued' | 'not-needed' | 'already-queued' | 'waiting';
-
-/** `200` of `POST /api/sessions/:id/audio/recordings/:ordinal/finalize` (media-worker D6). */
-export interface RecordingFinalizeResponse {
-  ok: boolean;
-  merge: RecordingFinalizeMerge;
-}
+// The finalize answer is a client response type (api/types, checked against its capture).
+export type { RecordingFinalizeMerge, RecordingFinalizeResponse } from '../../../api/types';
 
 export type UploadFn = (chunk: UploadChunk) => Promise<UploadOutcome>;
 export type ListSegmentsFn = (sessionId: string) => Promise<ExistingSegment[]>;

@@ -1,9 +1,11 @@
+import { TranscriptGenerateError } from '@autologger/transcription';
 import { describe, expect, it } from 'vitest';
 import { ApiError } from '../httpError';
 import {
   DEEPGRAM_MAX_GROUP_BYTES,
   enforceGroupSizeLimit,
   exceedsGroupSizeLimit,
+  mapGenerateError,
 } from './transcribe';
 
 describe('exceedsGroupSizeLimit', () => {
@@ -33,5 +35,35 @@ describe('enforceGroupSizeLimit', () => {
       expect((e as ApiError).status).toBe(502);
       expect((e as ApiError).detail).toContain(String(DEEPGRAM_MAX_GROUP_BYTES));
     }
+  });
+});
+
+// media-worker D9 (B, assigned): a listed segment whose blob is missing fails the run with `502`
+// naming it (generateTranscript's `missing_blob` code), never the `400` of an unknown code.
+describe('mapGenerateError', () => {
+  it('maps missing_blob to 502 with the error message', () => {
+    try {
+      mapGenerateError(new TranscriptGenerateError('missing_blob', 'segment seg-1 has no audio'));
+      throw new Error('expected throw');
+    } catch (e) {
+      expect(e).toBeInstanceOf(ApiError);
+      expect((e as ApiError).status).toBe(502);
+      expect((e as ApiError).detail).toBe('segment seg-1 has no audio');
+    }
+  });
+
+  it('keeps the existing codes', () => {
+    const status = (code: ConstructorParameters<typeof TranscriptGenerateError>[0]) => {
+      try {
+        mapGenerateError(new TranscriptGenerateError(code, 'x'));
+      } catch (e) {
+        return (e as ApiError).status;
+      }
+      return null;
+    };
+    expect(status('unavailable')).toBe(503);
+    expect(status('in_flight')).toBe(409);
+    expect(status('upstream')).toBe(502);
+    expect(status('oversize')).toBe(502);
   });
 });

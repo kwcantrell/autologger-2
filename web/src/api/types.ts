@@ -633,6 +633,16 @@ export interface AudioUploadCompleted {
   segment_id: string;
 }
 
+/** How a finalize call left the recording's merge (media-worker D6). */
+export type RecordingFinalizeMerge = 'queued' | 'not-needed' | 'already-queued' | 'waiting';
+
+/** `200` of `POST /api/sessions/:id/audio/recordings/:ordinal/finalize` (media-worker D6;
+ * `audioFinalizeResponseSchema`). */
+export interface RecordingFinalizeResponse {
+  ok: true;
+  merge: RecordingFinalizeMerge;
+}
+
 export interface AudioSegmentsResponse {
   segments: AudioSegment[];
   has_audio: boolean;

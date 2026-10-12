@@ -250,6 +250,8 @@ export function SessionWorkspace({ sessionId, ytImportPending }: Props) {
   const audioRecorderRef = useRef<AudioRecorderHandle>(null);
   const audioPlayerRef = useRef<AudioPlayerHandle>(null);
   const [isUploadingAudio, setIsUploadingAudio] = useState(false);
+  // media-worker D10: the recorder's recovery scan holds Record; the control says so.
+  const [recordRecovering, setRecordRecovering] = useState(false);
 
   const handleAudioRecord = useCallback(() => {
     audioRecorderRef.current?.toggle();
@@ -448,7 +450,10 @@ export function SessionWorkspace({ sessionId, ytImportPending }: Props) {
               <AudioRecorder
                 ref={audioRecorderRef}
                 sessionId={sessionId}
-                onPhaseChange={(phase) => setIsUploadingAudio(phase === 'uploading')}
+                onPhaseChange={(phase) => {
+                  setIsUploadingAudio(phase === 'uploading');
+                  setRecordRecovering(phase === 'scanning');
+                }}
               />
               <AudioPlayer
                 ref={audioPlayerRef}
@@ -536,6 +541,7 @@ export function SessionWorkspace({ sessionId, ytImportPending }: Props) {
                     onAudioRecord={handleAudioRecord}
                     onAudioPlay={handleAudioPlay}
                     ytImportPending={ytImportPending}
+                    recordRecovering={recordRecovering}
                     isPlaying={isPlaying}
                     onOpenShortcuts={() => setShowShortcuts(true)}
                     liveDock={liveDock}

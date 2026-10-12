@@ -23,6 +23,7 @@ import type {
   LeaseDirectory,
   ProviderCredentialStore,
 } from '@autologger/ports';
+import type { MediaBlobStore } from '@autologger/ports/media';
 import type { SessionFrameBus, SessionHubRegistryFacade } from '@autologger/session-core';
 
 import type { ProviderKeyCipher } from './auth/providerKeyCrypto';
@@ -56,6 +57,9 @@ export interface Ports extends BasePorts {
   providerKeys: ProviderKeyCipher;
   /** The provider connection test on the frozen constant hosts (byo-ai-providers D5). */
   providerTester: ProviderTester;
+  /** The blob store's media surface (media-worker D3, D8, D12): the worker's `media/`, the trash,
+   * free space and upload staging. The same store as `audio`. */
+  mediaBlobs: MediaBlobStore;
 }
 
 /** The per-request env object. Callers MUST pass a fresh env per request and

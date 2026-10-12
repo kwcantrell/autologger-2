@@ -22,6 +22,7 @@ import { adminRouter } from './routers/admin';
 import { aiRouter } from './routers/ai';
 import { aiV2Router } from './routers/aiV2';
 import { audioRouter } from './routers/audio';
+import { audioUploadsRouter } from './routers/audioUploads';
 import { authRouter } from './routers/auth';
 import { companionRouter } from './routers/companion';
 import { companionDevicesRouter } from './routers/companionDevices';
@@ -269,6 +270,8 @@ export function wireApp(
   app.route('/', logImportRouter);
   app.route('/', eventsRouter);
   app.route('/', audioRouter);
+  // media-worker D12: the resumable upload routes, beside the segment routes.
+  app.route('/', audioUploadsRouter);
   app.route('/', companionRouter);
   app.route('/', companionDevicesRouter);
   // byo-ai-providers D4: the signed-in user's own provider credentials.

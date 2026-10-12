@@ -125,6 +125,13 @@ export class SessionCore {
     return this.sql;
   }
 
+  /** The transaction's own handle, for bookkeeping statements that are not session content and so
+   * never advance the revision (media-worker D2: media job enqueues and the finalize marker), like
+   * the core's own `*Uncounted` statements. */
+  get uncountedDb(): SessionSql {
+    return this.rawDb;
+  }
+
   private get rawDb(): SessionSql {
     if (this.raw === null) {
       throw new Error('the root session core has no SQL handle; use a transaction or a snapshot');

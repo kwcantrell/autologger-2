@@ -26,6 +26,8 @@ interface Props {
   onAudioRecord: () => void;
   onAudioPlay: () => void;
   ytImportPending?: boolean;
+  /** The recorder is still scanning for unsent audio; Record is held (media-worker D10). */
+  recordRecovering?: boolean;
   isPlaying: boolean;
   onOpenShortcuts: () => void;
   /** Rolling or audio-recording — replace scrubber with category buttons. */
@@ -65,6 +67,7 @@ export function MaximizeLogStrip({
   onAudioRecord,
   onAudioPlay,
   ytImportPending,
+  recordRecovering,
   isPlaying,
   onOpenShortcuts,
   liveDock,
@@ -207,6 +210,7 @@ export function MaximizeLogStrip({
         onAudioRecord={onAudioRecord}
         onAudioPlay={onAudioPlay}
         ytImportPending={controlsLocked || ytImportPending}
+        recordRecovering={recordRecovering}
         isPlaying={isPlaying}
         compact
       />

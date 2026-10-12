@@ -3,13 +3,10 @@
 // lives in the session hub. Upload streams to the blob store then records
 // metadata; download streams back with HTTP range support (audio scrubbing).
 
-import { audioSegmentWaveformBodySchema } from '@autologger/contract';
+import { stat } from 'node:fs/promises';
+import { audioFinalizeBodySchema, audioSegmentWaveformBodySchema } from '@autologger/contract';
 import type { BlobRange } from '@autologger/ports';
-import {
-  type AudioSegmentMeta,
-  type SessionHubFacade,
-  systemCaller,
-} from '@autologger/session-core';
+import type { AudioSegmentMeta, SessionHubFacade } from '@autologger/session-core';
 import { InvalidRangeError } from '@autologger/storage';
 import type { Context } from 'hono';
 import { Hono } from 'hono';
@@ -18,17 +15,12 @@ import { isCompressibleResponseType } from '../compressibleTypes';
 import { ApiError } from '../httpError';
 import { getSessionHub, parseOptionalMarkedAt, requireSession } from './_helpers';
 
-/** An undo step's hub (session-content-policies D7, owner decision P1): a request whose later step
- * failed, or was refused after a revoke, removes only what it wrote itself (the segment it just
- * created, or the snapshot its regenerate replaced) as the reviewed system task `session-undo`, so
- * the undo cannot itself be refused. */
-async function undoHub(c: Context<AppEnv>, sessionId: string): Promise<SessionHubFacade> {
-  return (await c.env.ports.sessions.get(sessionId)).as(systemCaller('session-undo'));
-}
-
 export const audioRouter = new Hono<AppEnv>();
 
-function segmentApiDict(sessionId: string, m: AudioSegmentMeta): Record<string, unknown> {
+/** The audio segment dict (api-contract-freeze; media-worker D16 adds `duration_ms`,
+ * `media_status` and `seams`, 12 keys in `AUDIO_SEGMENT_DICT_KEYS`' order). `media_error` stays
+ * server-side. */
+export function segmentApiDict(sessionId: string, m: AudioSegmentMeta): Record<string, unknown> {
   return {
     id: m.id,
     ordinal: m.ordinal,
@@ -39,7 +31,64 @@ function segmentApiDict(sessionId: string, m: AudioSegmentMeta): Record<string, 
     url: `/api/sessions/${sessionId}/audio/segments/${m.id}`,
     waveform_peaks: m.waveform_peaks,
     waveform_db_floor: m.waveform_db_floor,
+    duration_ms: m.duration_ms ?? null,
+    media_status: m.media_status ?? null,
+    seams: m.seams ?? null,
   };
+}
+
+/** A recording ordinal query value: a digit string that is a safe integer (≥ 1 is checked by the
+ * store), else null (treated as absent, session-tables D5, A11). */
+export function parseRecordingOrdinalQuery(raw: string | undefined): number | null {
+  const n = raw !== undefined && /^\d+$/.test(raw) ? Number(raw) : null;
+  return n !== null && Number.isSafeInteger(n) ? n : null;
+}
+
+/** Stores one live chunk's bytes as a segment (media-worker D18), shared by the segment POST and
+ * the parts upload's segment mode. A window the session already holds answers its holder and
+ * writes nothing. Otherwise `put` writes the bytes under the planned key FIRST, then the row (with
+ * its seam and ingest job) commits, so a listed row always has its blob (coordinator decision
+ * 2026-10-12; a generation never meets a row without bytes). If the row does not commit, or a
+ * concurrent upload of the window won, the just-written blob is deleted (no row names it). */
+export async function storeLiveSegment(
+  c: Context<AppEnv>,
+  sessionId: string,
+  input: {
+    mimeType: string;
+    startedAtUtc: string | null;
+    endedAtUtc: string | null;
+    recordingOrdinal: number | null;
+    bytes: number;
+  },
+  put: (key: string, mimeType: string) => Promise<void>,
+): Promise<AudioSegmentMeta> {
+  const hub = await getSessionHub(c, sessionId);
+  const ro = input.recordingOrdinal;
+  if (ro !== null && ro >= 1 && input.startedAtUtc !== null) {
+    const held = await hub.heldAudioWindow(ro, input.startedAtUtc);
+    if (held !== null) return held;
+  }
+  const mime = input.mimeType || 'audio/webm';
+  const plan = await hub.planAudioSegment(mime);
+  await put(plan.r2Key, mime);
+  let seg: Awaited<ReturnType<SessionHubFacade['addAudioSegment']>>;
+  try {
+    seg = await (await getSessionHub(c, sessionId)).addAudioSegment({
+      sessionId,
+      mimeType: mime,
+      startedAtUtc: input.startedAtUtc,
+      endedAtUtc: input.endedAtUtc,
+      recordingOrdinal: ro,
+      inputBytes: input.bytes,
+      segmentId: plan.segmentId,
+      r2Key: plan.r2Key,
+    });
+  } catch (e) {
+    await c.env.ports.audio.delete(plan.r2Key).catch(() => {});
+    throw e;
+  }
+  if (seg.existing) await c.env.ports.audio.delete(plan.r2Key).catch(() => {});
+  return seg;
 }
 
 /** What an audio segment is stored/served as when the caller's content-type is
@@ -207,40 +256,75 @@ audioRouter.post('/api/sessions/:sessionId/audio/segments', async (c) => {
   const mime = normalizeAudioMimeType(c.req.header('content-type'));
   const started = parseOptionalMarkedAt(c.req.query('started_at_utc'));
   const ended = parseOptionalMarkedAt(c.req.query('ended_at_utc'));
-  const roRaw = c.req.query('recording_ordinal');
   // A digit string too large for a safe integer is treated as absent, as a non-digit one is, so it
   // never reaches the session table's bigint out of range (session-tables D5, A11).
-  const roNum = roRaw !== undefined && /^\d+$/.test(roRaw) ? Number(roRaw) : null;
-  const recordingOrdinal = roNum !== null && Number.isSafeInteger(roNum) ? roNum : null;
+  const recordingOrdinal = parseRecordingOrdinalQuery(c.req.query('recording_ordinal'));
 
-  const seg = await (await getSessionHub(c, sessionId)).addAudioSegment({
+  // media-worker D18: a replayed window answers its holder's dict (the chunk, or the merged
+  // segment that absorbed it) with the same status, and stores nothing.
+  const seg = await storeLiveSegment(
+    c,
     sessionId,
-    mimeType: mime,
-    startedAtUtc: started,
-    endedAtUtc: ended,
-    recordingOrdinal,
-  });
-  try {
-    await c.env.ports.audio.put(seg.r2_key, payload, { contentType: seg.mime_type });
-  } catch (e) {
-    // Roll back the dangling metadata row if the bytes never landed.
-    await (await undoHub(c, sessionId)).deleteAudioSegment(seg.id);
-    throw e;
-  }
+    {
+      mimeType: mime,
+      startedAtUtc: started,
+      endedAtUtc: ended,
+      recordingOrdinal,
+      bytes: payload.byteLength,
+    },
+    (key, contentType) => c.env.ports.audio.put(key, payload, { contentType }),
+  );
   return c.json(segmentApiDict(sessionId, seg));
 });
+
+/** `POST …/audio/recordings/:recordingOrdinal/finalize` (media-worker D6): the client's windows of
+ * a finished recording; the merge is enqueued once every window is held. No lease check, no
+ * segment row written. */
+audioRouter.post(
+  '/api/sessions/:sessionId/audio/recordings/:recordingOrdinal/finalize',
+  async (c) => {
+    const sessionId = c.req.param('sessionId');
+    // Access first, so a caller without it gets the same 404 whatever the path (show-grants D15).
+    await requireSession(c, sessionId);
+    const raw = c.req.param('recordingOrdinal');
+    const ordinal = /^\d+$/.test(raw) ? Number(raw) : Number.NaN;
+    if (!Number.isSafeInteger(ordinal) || ordinal < 1) {
+      throw new ApiError(400, 'recordingOrdinal must be a positive integer.');
+    }
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      throw new ApiError(400, 'The body must be JSON: { chunks: [started_at_utc, …] }.');
+    }
+    const parsed = audioFinalizeBodySchema.safeParse(body);
+    if (!parsed.success) {
+      throw new ApiError(400, 'chunks must list 1 to 1000 started_at_utc timestamps.');
+    }
+    const windows: string[] = [];
+    for (const w of parsed.data.chunks) {
+      const key = parseOptionalMarkedAt(w);
+      if (key === null)
+        throw new ApiError(400, 'chunks must list 1 to 1000 started_at_utc timestamps.');
+      windows.push(key);
+    }
+    const merge = await (await getSessionHub(c, sessionId)).finalizeRecording(ordinal, windows);
+    return c.json({ ok: true, merge });
+  },
+);
 
 audioRouter.post('/api/sessions/:sessionId/audio/segments/sync-from-disk', async (c) => {
   const sessionId = c.req.param('sessionId');
   await requireSession(c, sessionId);
   const prefix = `audio/${sessionId}/`;
-  const known: Array<{ r2_key: string; ordinal: number }> = [];
+  const known: Array<{ r2_key: string; ordinal: number; bytes: number }> = [];
   let cursor: string | undefined;
   do {
     const listed = await c.env.ports.audio.list({ prefix, cursor });
     for (const obj of listed.objects) {
       const m = /\/(\d{4})_/.exec(obj.key);
-      if (m) known.push({ r2_key: obj.key, ordinal: Number(m[1]) });
+      if (m)
+        known.push({ r2_key: obj.key, ordinal: Number(m[1]), bytes: await blobBytes(c, obj.key) });
     }
     cursor = listed.truncated ? listed.cursor : undefined;
   } while (cursor);
@@ -332,6 +416,15 @@ audioRouter.put('/api/sessions/:sessionId/audio/segments/:segmentId/waveform', a
   if (!ok) throw new ApiError(404, 'Audio segment not found.');
   return c.json({ ok: true });
 });
+
+/** A stored blob's size (an ingest job's lane, media-worker D2); 0 when it cannot be read. */
+async function blobBytes(c: Context<AppEnv>, key: string): Promise<number> {
+  try {
+    return (await stat(c.env.ports.audio.resolveKeyPath(key))).size;
+  } catch {
+    return 0;
+  }
+}
 
 /** Parse a single `bytes=start-end` range into BlobStore's range form. */
 function parseRange(header: string): BlobRange | null {
