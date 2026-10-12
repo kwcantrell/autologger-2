@@ -785,6 +785,8 @@ environments" ("Dev, stage and prod compared"). No other README section is touch
   `openspec validate media-worker --strict`.
 - [x] V.0 Dev-only chunk length for V.2: `web/src/pages/index/utils/devChunkMs.ts` reads `localStorage['autologger.dev.chunkMs']` (15 s .. 10 min) only when `NODE_ENV === 'development'`; the recorder's default `chunkMs` uses it.
   Evidence: red `npx vitest run src/pages/index/utils/devChunkMs.test.ts` -> `Cannot find module './devChunkMs'`; green -> with the recorder components `Test Files 77 passed`, `Tests 891 passed`; `tsc --noEmit` exit 0.
+- [x] A.11 Safari finished-chunks-only (owner decision 2026-10-12: no Safari available for spike 0.2): `SAFARI_PERSIST_MODE = 'finished-only'`; Safari records without a timeslice and persists each chunk when it completes (crash loss up to one chunk, as before this change). Switch to `slices` once `~/media-worker-safari-spike/www` passes on Safari.
+  Evidence: red `npx vitest run src/pages/index/components/AudioRecorder.chunks.test.tsx -t "Safari records"` -> `expected 5000 to be undefined`; green after the constant -> full web `Test Files 162 passed`, `Tests 2177 passed`; `tsc --noEmit` exit 0.
 - [ ] V.2 End to end on dev: record 3 cadences with `chunkMs` lowered in a dev-only seam → stop
   → `finalize` with the three windows → worker merges → one segment with `duration_ms`, peaks
   and three `seams`, the three chunk blobs under `.trash/<today>/`, the timeline showing three

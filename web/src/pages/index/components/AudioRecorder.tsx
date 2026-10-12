@@ -70,11 +70,12 @@ const CHUNK_MS = 10 * 60_000;
  */
 export const PERSIST_SLICE_MS = 5_000;
 /**
- * Safari's persistence mode (design D10): `slices` until the owner's Safari check of spike 0.2
- * shows its concatenated slices fail to decode; then `finished-only` (no timeslice, the chunk is
- * persisted when it completes).
+ * Safari's persistence mode (design D10): `finished-only` (no timeslice; the chunk is persisted
+ * when it completes, so a crash loses at most the chunk in progress, as before this change).
+ * Spike 0.2 could not be run on Safari (owner has no Safari, 2026-10-12); switch to `slices` once
+ * Safari's concatenated MP4 slices are shown to decode (`~/media-worker-safari-spike/www`).
  */
-export const SAFARI_PERSIST_MODE: 'slices' | 'finished-only' = 'slices';
+export const SAFARI_PERSIST_MODE: 'slices' | 'finished-only' = 'finished-only';
 const SCAN_PENDING_MESSAGE = 'Checking this browser for unsent recordings; try again in a moment.';
 
 type Phase =

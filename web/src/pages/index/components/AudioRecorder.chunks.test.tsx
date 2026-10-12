@@ -1410,6 +1410,22 @@ describe('media-worker A.5: persistence, locks, timers, finalize, wake lock, hid
     expect(m.sliceLog.map((e) => e.bytes)).toEqual([3, 4]);
   });
 
+  it('Safari records without a timeslice (finished chunks only until Safari is verified)', async () => {
+    const ua = Object.getOwnPropertyDescriptor(navigator, 'userAgent');
+    Object.defineProperty(navigator, 'userAgent', {
+      configurable: true,
+      value:
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15',
+    });
+    try {
+      await startRecording();
+      expect(FakeMediaRecorder.instances[0].timeslice).toBeUndefined();
+    } finally {
+      if (ua) Object.defineProperty(navigator, 'userAgent', ua);
+      else delete (navigator as unknown as { userAgent?: string }).userAgent;
+    }
+  });
+
   it('holds the take lock from start until the last chunk is persisted', async () => {
     const reg = new FakeLockRegistry();
     Object.defineProperty(navigator, 'locks', { configurable: true, value: reg.tab() });
