@@ -124,6 +124,32 @@ These live in the forge, not the repo, so the template can't apply them:
   use the victim's key against its saved host, bounded by the test limit and the run features'
   approval; development mode (`NODE_ENV` exactly `development` or `test`) lifts the address rules
   for local model servers and must never be set on a shared host.
+- **AI turns on users' keys, in the API process** (ai-sdk-agent-harness, ADR
+  [0028](decisions/0028-ai-sdk-agent-harness.md)). AI chat, topic and event generation run
+  `streamText` from the AI SDK in the API process on the caller's own language-model key, or the
+  operator's `claude` CLI for the accounts on `CLAUDE_CLI_EMAILS` only (the bootstrap owner is not
+  implicitly listed; anyone else gets `403` on choosing it).
+  **Prompt injection** through a transcript, topic or chat history is limited to the turn's tools
+  (`get_transcript_words`, `list_topics`, `create_topic`, `create_event`, per turn kind), which act
+  on the caller's own session through the existing validated bodies; the model drives no process
+  with shell, file or network access. Calls are capped (16 per step softly; 32 per chat turn and 300
+  per generation, past which the turn ends), run one at a time, and are refused once the turn ends.
+  **The key leaves the server only in the request header to its own provider:** every model request
+  goes through a guarded fetch that allows only the credential's origin and API path, pins the
+  vetted address, follows no redirect, and caps requests and bytes per turn; the SDK is never left
+  to fall back to `globalThis.fetch`, environment keys or the Vercel gateway (a repo test).
+  **Scrubbed errors:** an AI SDK error carries the whole prompt and the provider's body, so every
+  one becomes `upstream-failed`, none leaves `ai-runtime` (only a property-free `SdkTurnFailure`),
+  the SDK's own error output is silenced, a tool failure reaches the model as a fixed string, and
+  the global error log prints an SDK error as its class name only. No process-level handler is
+  added, because Next.js's own handlers already keep the API alive.
+  **Residuals:** there is no deployment-wide ceiling on concurrent AI turns or their spend (owner
+  deferred); each turn is bounded by its steps, token budget, timeout and byte caps, but many turns
+  share the API's memory and CPU. A turn's tools can still write wrong but valid topics or events
+  to the caller's own session. A provider sees the transcript and history it is sent (OpenAI with
+  `store: false`). An OpenAI-compatible server whose template opens `<think>` in the prompt leaks
+  its reasoning as text unless its reasoning parser is enabled. A CLI turn spends the operator's
+  quota, so keep `CLAUDE_CLI_EMAILS` short.
 - PUBLIC keeps `CONNECT` on every database and `TEMP` on `postgres`, so `autologger_app` can
   connect to databases where it has no grants and create session-local temp tables. Revoking
   them from PUBLIC would change what GoTrue (`supabase_auth_admin`) gets; slice 6 revisits it.

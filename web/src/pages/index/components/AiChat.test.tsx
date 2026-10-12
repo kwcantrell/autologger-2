@@ -4,7 +4,7 @@ import { useRef, useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { topicsQueryKey } from '../../../api/hooks/useTopics';
 import { renderStrict } from '../../../test/renderStrict';
-import { AiChat, type ChatMessage, parseSseFrames } from './AiChat';
+import { AiChat, buildChatHistory, type ChatMessage, parseSseFrames } from './AiChat';
 
 // --- AiChat (ai-topics-chat, task 4.2; design D9; spec "AI tab and subtab
 // arrangement" + "Ephemeral chat history") ---
@@ -340,5 +340,172 @@ describe('AiChat — error rendering', () => {
 
     const errorEl = await screen.findByTestId('ai-chat-error');
     expect(errorEl.textContent).toContain('An AI chat turn is already in progress.');
+  });
+});
+
+// --- ai-sdk-agent-harness task 8.2 (design D6, D8; ai-topics-chat "AI tab and subtab
+// arrangement", "Chat request contract") ---
+
+const NOT_CONFIGURED = 'Add a language model in Settings → Advanced to use the assistant.';
+const SAVED_LLM = {
+  kind: 'llm',
+  provider: 'anthropic',
+  base_url: null,
+  model: 'claude-sonnet-4-5',
+  key_last4: '1234',
+  updated_at: '2026-10-12T10:00:00.000Z',
+};
+
+function jsonResponse(body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { 'content-type': 'application/json' },
+  });
+}
+
+/** Routes the chat POST to `chat()` and the providers read to `providers`. */
+function routeFetch(chat: () => unknown, providers: () => unknown) {
+  const chatBodies: Record<string, unknown>[] = [];
+  vi.mocked(fetch).mockImplementation((async (url: string, init?: RequestInit) => {
+    if (String(url).endsWith('/me/providers')) return jsonResponse(providers());
+    if (String(url).endsWith('/ai/chat')) {
+      chatBodies.push(JSON.parse(String(init?.body)));
+      return chat();
+    }
+    throw new Error(`unexpected fetch ${url}`);
+  }) as unknown as typeof fetch);
+  return chatBodies;
+}
+
+describe('AiChat — not configured points to Settings → Advanced (ai-sdk-agent-harness D8)', () => {
+  it('reads the new copy and names no server setting', async () => {
+    routeFetch(
+      () => fakeJsonErrorResponse(503, NOT_CONFIGURED),
+      () => ({ llm: null, stt: null, run_features_allowed: true, claude_cli_allowed: false }),
+    );
+    renderHarness();
+    await sendViaUi('hello?');
+    const state = await screen.findByTestId('ai-chat-not-configured');
+    expect(state.textContent).toContain(NOT_CONFIGURED);
+    expect(state.textContent).not.toMatch(/CLAUDE_CLI_PATH|operator|deployment|reload/i);
+  });
+
+  it('saving a language model clears the state without a reload', async () => {
+    let llm: unknown = null;
+    routeFetch(
+      () => fakeJsonErrorResponse(503, NOT_CONFIGURED),
+      () => ({ llm, stt: null, run_features_allowed: true, claude_cli_allowed: false }),
+    );
+    const { qc } = renderHarness();
+    await sendViaUi('hello?');
+    await screen.findByTestId('ai-chat-not-configured');
+    // Settings › Advanced saves a language model; its save invalidates the providers query.
+    await waitFor(() => expect(qc.getQueryData(['providers'])).toBeTruthy());
+    llm = SAVED_LLM;
+    await qc.invalidateQueries({ queryKey: ['providers'] });
+    await waitFor(() => expect(screen.queryByTestId('ai-chat-not-configured')).toBeNull());
+    expect(screen.getByPlaceholderText(/message the ai assistant/i)).toBeTruthy();
+  });
+
+  it('a latch while a language model is already saved does not clear itself', async () => {
+    routeFetch(
+      () => fakeJsonErrorResponse(503, NOT_CONFIGURED),
+      () => ({ llm: SAVED_LLM, stt: null, run_features_allowed: true, claude_cli_allowed: false }),
+    );
+    const { qc } = renderHarness();
+    await sendViaUi('hello?');
+    await screen.findByTestId('ai-chat-not-configured');
+    await waitFor(() => expect(qc.getQueryData(['providers'])).toBeTruthy());
+    await qc.invalidateQueries({ queryKey: ['providers'] });
+    expect(screen.getByTestId('ai-chat-not-configured')).toBeTruthy();
+  });
+});
+
+describe('AiChat — history (ai-sdk-agent-harness D6)', () => {
+  it('posts the earlier user and assistant messages, excluding error rows and tool chips', async () => {
+    let turn = 0;
+    const bodies = routeFetch(
+      () => {
+        turn += 1;
+        if (turn === 1)
+          return fakeFetchResponse([
+            sseFrame('tool', { name: 'list_topics' }),
+            sseFrame('delta', { text: 'First reply' }),
+            sseFrame('done', { claude_session_id: null }),
+          ]);
+        if (turn === 2)
+          return fakeFetchResponse([sseFrame('error', { detail: 'upstream-failed' })]);
+        return fakeFetchResponse([sseFrame('done', { claude_session_id: null })]);
+      },
+      () => ({ llm: null, stt: null, run_features_allowed: true, claude_cli_allowed: false }),
+    );
+    renderHarness();
+    await sendViaUi('first turn');
+    await screen.findByText('First reply');
+    await screen.findByRole('button', { name: /send/i });
+    await sendViaUi('second turn');
+    await screen.findByTestId('ai-chat-error');
+    await screen.findByRole('button', { name: /send/i });
+    await sendViaUi('third turn');
+    await waitFor(() => expect(bodies).toHaveLength(3));
+
+    expect(bodies[0]?.history).toBeUndefined();
+    expect(bodies[1]?.history).toEqual([
+      { role: 'user', text: 'first turn' },
+      { role: 'assistant', text: 'First reply' },
+    ]);
+    expect(bodies[2]?.history).toEqual([
+      { role: 'user', text: 'first turn' },
+      { role: 'assistant', text: 'First reply' },
+      { role: 'user', text: 'second turn' },
+    ]);
+    // A null done id is never echoed.
+    expect(bodies[2]?.claude_session_id).toBeUndefined();
+    expect(bodies[2]?.message).toBe('third turn');
+  });
+});
+
+describe('buildChatHistory — trimmed to the bounds from the oldest end (D6)', () => {
+  const user = (i: number, text = `u${i}`): ChatMessage => ({ id: `u${i}`, role: 'user', text });
+  const bot = (i: number, text = `a${i}`): ChatMessage => ({
+    id: `a${i}`,
+    role: 'assistant',
+    text,
+  });
+
+  it('keeps at most the 40 newest entries, starting on a user entry', () => {
+    const messages: ChatMessage[] = [];
+    for (let i = 0; i < 25; i += 1) messages.push(user(i), bot(i));
+    const history = buildChatHistory(messages);
+    expect(history.length).toBeLessThanOrEqual(40);
+    expect(history[0]).toEqual({ role: 'user', text: 'u5' });
+    expect(history.at(-1)).toEqual({ role: 'assistant', text: 'a24' });
+    // An odd cut drops the orphaned assistant entry at the old end.
+    const odd = buildChatHistory([bot(0), ...messages.slice(1)]);
+    expect(odd[0]?.role).toBe('user');
+  });
+
+  it('keeps at most 64 000 characters in total, dropping the oldest entries', () => {
+    const big = 'x'.repeat(8000);
+    const messages: ChatMessage[] = [];
+    for (let i = 0; i < 10; i += 1) messages.push(user(i, big), bot(i, big));
+    const history = buildChatHistory(messages);
+    expect(history.reduce((n, e) => n + e.text.length, 0)).toBeLessThanOrEqual(64_000);
+    expect(history).toHaveLength(8);
+    expect(history[0]?.role).toBe('user');
+  });
+
+  it('trims each entry, skips blank ones and cuts an entry to 8000 characters', () => {
+    const history = buildChatHistory([
+      user(0, '  hello  '),
+      bot(0, '   '),
+      user(1, 'y'.repeat(9000)),
+      { id: 't', role: 'tool', name: 'create_topic' },
+      { id: 'e', role: 'error', detail: 'nope' },
+    ]);
+    expect(history).toEqual([
+      { role: 'user', text: 'hello' },
+      { role: 'user', text: 'y'.repeat(8000) },
+    ]);
   });
 });

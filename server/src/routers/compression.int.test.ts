@@ -25,6 +25,7 @@ import { stableSessionCwd } from '@autologger/ai-runtime/aiChatRunner';
 import { afterEach, describe, expect, it } from 'vitest';
 import { app, env, envWith } from '../test/harness';
 import { seededSession } from '../test/helpers';
+import { CLI_TEST_EMAILS, chooseClaudeCliForAll } from '../test/llmRoutes';
 
 const GZIP = { 'accept-encoding': 'gzip' };
 const J = { 'content-type': 'application/json' };
@@ -364,11 +365,17 @@ describe('API compression (app-level /api/* compress middleware)', () => {
     // shared app: the middleware pair only wraps routes wireApp mounted.
     const session = (await seededSession()).sessionId;
     sseSessionIds.push(session);
+    // ai-sdk-agent-harness D9 category 1: the caller is listed and chose the Claude CLI.
+    await chooseClaudeCliForAll();
 
     const res = await app.request(
       `/api/sessions/${session}/ai/chat`,
       { method: 'POST', headers: { ...J, ...GZIP }, body: JSON.stringify({ message: 'hi' }) },
-      envWith({ CLAUDE_CLI_PATH: FIXTURE_CLI, HOST: '127.0.0.1' }),
+      envWith({
+        CLAUDE_CLI_PATH: FIXTURE_CLI,
+        CLAUDE_CLI_EMAILS: CLI_TEST_EMAILS,
+        HOST: '127.0.0.1',
+      }),
     );
     expect(res.status).toBe(200);
     expect(res.headers.get('content-type')).toMatch(/text\/event-stream/);

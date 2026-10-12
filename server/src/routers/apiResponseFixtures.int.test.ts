@@ -1495,4 +1495,32 @@ describe('provider credentials', () => {
       await new Promise((r) => fake.close(r));
     }
   });
+  // ai-sdk-agent-harness D2: the keyless claude-cli save, by an allowlisted caller.
+  it('PUT of the claude-cli provider matches the captured fixture (key_last4 null)', async () => {
+    const cookie = await loginCookie(
+      await seedUser({ email: 'cli-dev@example.com', sub: 'sub-cli-dev' }),
+    );
+    const saved = await app.request(
+      '/api/me/providers/llm',
+      {
+        method: 'PUT',
+        headers: { ...JSON_HEADERS, Cookie: cookie },
+        body: JSON.stringify({ provider: 'claude-cli' }),
+      },
+      envWith({
+        PROVIDER_DEV_MODE: false,
+        CLAUDE_CLI_PATH: '/fake/claude',
+        CLAUDE_CLI_EMAILS: 'cli-dev@example.com',
+      }),
+    );
+    const body = await expectCapturedResponse(
+      {
+        name: 'providerSaveClaudeCli',
+        endpoint: 'PUT /api/me/providers/:kind',
+        format: 'json',
+      },
+      saved,
+    );
+    expect(body).toMatchObject({ provider: 'claude-cli', model: 'claude-cli', key_last4: null });
+  });
 });

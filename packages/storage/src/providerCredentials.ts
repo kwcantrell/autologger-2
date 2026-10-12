@@ -7,7 +7,9 @@
 import type {
   CatalogDb,
   CatalogRoot,
+  ClaudeCliProvider,
   Clock,
+  KeyedProviderCredentialRow,
   ProviderCredentialFields,
   ProviderCredentialRow,
   ProviderCredentialStore,
@@ -21,11 +23,16 @@ export const PROVIDER_TEST_LIMIT = 5;
  * user in `catalog.provider_test_windows`, across kinds and across deleted credentials. */
 export const PROVIDER_TEST_WINDOW_MS = 60_000;
 
+/** The keyless `claude-cli` row's fixed model (ai-sdk-agent-harness D2). */
+const CLAUDE_CLI_MODEL: ClaudeCliProvider = 'claude-cli';
+
 const iso = (ms: number) => new Date(ms).toISOString();
 
 const COLUMNS = `kind, provider, base_url, base_origin, model, key_nonce, key_ciphertext, key_tag,
   key_version, key_last4, created_at_utc, updated_at_utc`;
 
+/** A row as read. The catalog check makes the five key columns all null (the `claude-cli` row) or
+ * all set, so `key_ciphertext` alone decides. */
 function toRow(r: Record<string, unknown>): ProviderCredentialRow {
   const bytes = (v: unknown) => new Uint8Array(v as Uint8Array);
   return {
@@ -34,16 +41,25 @@ function toRow(r: Record<string, unknown>): ProviderCredentialRow {
     base_url: r.base_url === null ? null : String(r.base_url),
     base_origin: r.base_origin === null ? null : String(r.base_origin),
     model: String(r.model),
-    key: {
-      nonce: bytes(r.key_nonce),
-      ciphertext: bytes(r.key_ciphertext),
-      tag: bytes(r.key_tag),
-      version: Number(r.key_version),
-      last4: String(r.key_last4),
-    },
+    key:
+      r.key_ciphertext === null
+        ? null
+        : {
+            nonce: bytes(r.key_nonce),
+            ciphertext: bytes(r.key_ciphertext),
+            tag: bytes(r.key_tag),
+            version: Number(r.key_version),
+            last4: String(r.key_last4),
+          },
     created_at_utc: String(r.created_at_utc),
     updated_at_utc: String(r.updated_at_utc),
   };
+}
+
+function toKeyedRow(r: Record<string, unknown>): KeyedProviderCredentialRow {
+  const row = toRow(r);
+  if (row.key === null) throw new Error('provider credential row has no key');
+  return { ...row, key: row.key };
 }
 
 const buf = (b: Uint8Array) => Buffer.from(b.buffer, b.byteOffset, b.byteLength);
@@ -79,7 +95,7 @@ export class PostgresProviderCredentialStore implements ProviderCredentialStore 
     userId: string,
     kind: ProviderKind,
     fields: ProviderCredentialFields & { key: StoredProviderKey },
-  ): Promise<ProviderCredentialRow> {
+  ): Promise<KeyedProviderCredentialRow> {
     const now = iso(this.clock.now());
     const k = fields.key;
     const r = await this.db.first<Record<string, unknown>>(
@@ -109,6 +125,33 @@ export class PostgresProviderCredentialStore implements ProviderCredentialStore 
       now,
     );
     if (r === null) throw new Error('provider credential upsert returned no row');
+    return toKeyedRow(r);
+  }
+
+  async putKeyless(
+    userId: string,
+    kind: 'llm',
+    provider: ClaudeCliProvider,
+  ): Promise<ProviderCredentialRow> {
+    const now = iso(this.clock.now());
+    const r = await this.db.first<Record<string, unknown>>(
+      `INSERT INTO user_provider_credentials
+         (user_id, kind, provider, base_url, base_origin, model, key_nonce, key_ciphertext,
+          key_tag, key_version, key_last4, created_at_utc, updated_at_utc)
+       VALUES (?, ?, ?, NULL, NULL, ?, NULL, NULL, NULL, NULL, NULL, ?, ?)
+       ON CONFLICT (user_id, kind) DO UPDATE SET
+         provider = excluded.provider, base_url = NULL, base_origin = NULL,
+         model = excluded.model, key_nonce = NULL, key_ciphertext = NULL, key_tag = NULL,
+         key_version = NULL, key_last4 = NULL, updated_at_utc = excluded.updated_at_utc
+       RETURNING ${COLUMNS}`,
+      userId,
+      kind,
+      provider,
+      CLAUDE_CLI_MODEL,
+      now,
+      now,
+    );
+    if (r === null) throw new Error('provider credential upsert returned no row');
     return toRow(r);
   }
 
@@ -116,11 +159,13 @@ export class PostgresProviderCredentialStore implements ProviderCredentialStore 
     userId: string,
     kind: ProviderKind,
     fields: ProviderCredentialFields,
-  ): Promise<ProviderCredentialRow | null> {
+  ): Promise<KeyedProviderCredentialRow | null> {
+    // `key_ciphertext IS NOT NULL`: a keyless (`claude-cli`) row has no key to keep.
     const r = await this.db.first<Record<string, unknown>>(
       `UPDATE user_provider_credentials
           SET base_url = ?, model = ?, updated_at_utc = ?
         WHERE user_id = ? AND kind = ? AND provider = ? AND base_origin IS NOT DISTINCT FROM ?
+          AND key_ciphertext IS NOT NULL
        RETURNING ${COLUMNS}`,
       fields.base_url,
       fields.model,
@@ -130,7 +175,7 @@ export class PostgresProviderCredentialStore implements ProviderCredentialStore 
       fields.provider,
       fields.base_origin,
     );
-    return r === null ? null : toRow(r);
+    return r === null ? null : toKeyedRow(r);
   }
 
   async delete(userId: string, kind: ProviderKind): Promise<boolean> {

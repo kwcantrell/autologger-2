@@ -202,12 +202,43 @@ export type DeleteVersionQuery = z.infer<typeof deleteVersionQuerySchema>;
 // `message` is 1–8000 chars AFTER trimming (whitespace-only ⇒ invalid); the
 // trimmed value is what the turn runner delivers to the CLI via stdin.
 // `claude_session_id`, when present, is a non-empty string (ownership is checked
-// against the per-session issued-id set in the turn runner — Phase 3).
+// against the per-session issued-id set in the turn runner — Phase 3). `null` is
+// accepted and means absent, so a client that echoes an AI SDK turn's `done` value
+// verbatim never gets 422 (ai-sdk-agent-harness D6).
+// `history` (ai-sdk-agent-harness D6): the earlier conversation for the AI SDK
+// route, at most 40 user/assistant entries, each 1-8000 characters after trimming,
+// at most 64 000 characters in total. The CLI route ignores it.
+export const CHAT_HISTORY_MAX_ENTRIES = 40;
+export const CHAT_HISTORY_MAX_CHARS = 64_000;
+export const chatHistoryEntrySchema = z.object({
+  role: z.enum(['user', 'assistant']),
+  text: z.string().trim().min(1).max(8000),
+});
 export const chatRequestSchema = z.object({
   message: z.string().trim().min(1).max(8000),
-  claude_session_id: z.string().min(1).optional(),
+  claude_session_id: z
+    .string()
+    .min(1)
+    .nullish()
+    .transform((v) => v ?? undefined),
+  history: z
+    .array(chatHistoryEntrySchema)
+    .max(CHAT_HISTORY_MAX_ENTRIES)
+    .refine(
+      (h) => h.reduce((n, e) => n + e.text.length, 0) <= CHAT_HISTORY_MAX_CHARS,
+      `history must hold at most ${CHAT_HISTORY_MAX_CHARS} characters in total`,
+    )
+    .optional(),
 });
 export type ChatRequest = z.infer<typeof chatRequestSchema>;
+export type ChatHistoryEntry = z.infer<typeof chatHistoryEntrySchema>;
+
+// The chat stream's terminal `done` payload (ai-sdk-agent-harness D6): the CLI
+// session id on a Claude CLI turn, null on an AI SDK turn.
+export const chatDoneEventSchema = z.strictObject({
+  claude_session_id: z.string().min(1).nullable(),
+});
+export type ChatDoneEvent = z.infer<typeof chatDoneEventSchema>;
 
 // -- ai-v2-dashboards: the design-turn request body ---------------------------
 // Deliberately mirrors chatRequestSchema's shape: `message` is 1-8000 chars
@@ -333,6 +364,9 @@ export const providerKindSchema = z.enum(['llm', 'stt']);
 export const LLM_FIXED_HOST_PROVIDERS = ['anthropic', 'openai', 'google'] as const;
 export const LLM_PROVIDERS = ['openai-compatible', ...LLM_FIXED_HOST_PROVIDERS] as const;
 export type LlmProvider = (typeof LLM_PROVIDERS)[number];
+/** The keyless `llm` provider: the operator's Claude CLI, for allowlisted accounts only
+ * (ai-sdk-agent-harness D2). Its stored model is the fixed value of the same name. */
+export const CLAUDE_CLI_PROVIDER = 'claude-cli' as const;
 export type ProviderKindWire = z.infer<typeof providerKindSchema>;
 
 export const PROVIDER_BASE_URL_MAX = 2048;
@@ -406,14 +440,20 @@ export function providerPutBodySchema(kind: ProviderKindWire, mode: { production
       model: providerModelSchema,
       api_key: providerApiKeySchema.optional(),
     }),
+    // The operator's Claude CLI (ai-sdk-agent-harness D2): exactly `{provider}`; any `api_key`,
+    // `base_url` or `model`, null included, is refused. The route checks the allowlist.
+    // The three fields are typed as always-absent, so every variant reads them alike.
+    z.strictObject({
+      provider: z.literal(CLAUDE_CLI_PROVIDER),
+      base_url: z.never().optional(),
+      model: z.never().optional(),
+      api_key: z.never().optional(),
+    }),
   ]);
 }
-export type ProviderPutBody = {
-  provider: string;
-  base_url?: string | null;
-  model: string;
-  api_key?: string;
-};
+export type ProviderPutBody =
+  | { provider: string; base_url?: string | null; model: string; api_key?: string }
+  | { provider: typeof CLAUDE_CLI_PROVIDER };
 
 /** A stored credential on the wire. Never the key or its ciphertext; only its last four. */
 export const providerCredentialSchema = z.strictObject({
@@ -421,7 +461,8 @@ export const providerCredentialSchema = z.strictObject({
   provider: z.string().min(1),
   base_url: z.string().nullable(),
   model: z.string().min(1),
-  key_last4: z.string().min(1).max(4),
+  /** Null only for the keyless `claude-cli` provider (ai-sdk-agent-harness D2). */
+  key_last4: z.string().min(1).max(4).nullable(),
   updated_at: z.iso.datetime(),
 });
 export type ProviderCredentialWire = z.infer<typeof providerCredentialSchema>;
@@ -430,6 +471,8 @@ export const providersResponseSchema = z.strictObject({
   llm: providerCredentialSchema.nullable(),
   stt: providerCredentialSchema.nullable(),
   run_features_allowed: z.boolean(),
+  /** Whether the caller may use the Claude CLI now (ai-sdk-agent-harness D2). */
+  claude_cli_allowed: z.boolean(),
 });
 export type ProvidersResponse = z.infer<typeof providersResponseSchema>;
 
@@ -449,6 +492,8 @@ export const PROVIDER_TEST_DETAIL = {
   timeout: "The provider didn't answer in time.",
   unexpected: (status: number) => `The provider answered unexpectedly (HTTP ${status}).`,
   unreadable: "The saved key can't be read. Enter it again.",
+  /** A `claude-cli` credential whose caller can't use the Claude CLI now (ai-sdk-agent-harness). */
+  claudeCliUnavailable: "The Claude CLI isn't available to this account.",
 } as const;
 
 // -- teams-self-serve (design D4): the /api/teams family bodies ---------------

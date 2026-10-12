@@ -16,3 +16,10 @@ d85e050ab6a6ddf1a70d73436e94c1f57c966976:server/src/auth/providerTester.test.ts:
 c6b3c06ea407bc653cd7d46fbb14c3c795d51cff:server/src/bootProviderKeys.int.test.ts:generic-api-key:95
 c98d3a67a31d7f4a2f662824b761dd06fb898137:server/src/routers/apiResponseFixtures.int.test.ts:generic-api-key:1449
 c5e468d5be9e6f859edd07e4e745f275cdb38b90:server/src/routers/providers.int.test.ts:generic-api-key:348
+
+# ai-sdk-agent-harness: fake test keys ('sk-KEY-MARKER-1234' log-scrub marker, 'sk-test-0123456789-abcd' resolver fixture), ADR 0018
+1995d4a0196e602771b46428e7451fb6d0db5b35:server/src/routers/transcribe.int.test.ts:generic-api-key:2263
+1995d4a0196e602771b46428e7451fb6d0db5b35:server/src/routers/transcribe.int.test.ts:generic-api-key:2278
+2fb5704ef288c3a6f3c2d31509e802a7dd5b7f0d:server/src/routers/transcribe.int.test.ts:generic-api-key:2159
+8a4e3671680232f032e43fa6132f0d7285d967bc:server/src/routers/transcribe.int.test.ts:generic-api-key:2218
+d28b24c7e857e459ab3ef6cb62112e262ec9c7d0:server/src/auth/providerResolve.test.ts:generic-api-key:19

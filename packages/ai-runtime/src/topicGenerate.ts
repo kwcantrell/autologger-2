@@ -33,6 +33,7 @@ import type { Clock } from '@autologger/ports';
 import type { SessionCaller, SessionHubRegistryFacade } from '@autologger/session-core';
 import type { AiGenerationSnapshotWord } from './aiMcpServer';
 import { type DriveAiTurnResult, driveAiTurn } from './aiTurn';
+import type { SdkTurnSpec } from './sdkTurn';
 
 /** D5's fixed one-shot user message. A plain user message, not a system
  * prompt. */
@@ -69,7 +70,7 @@ export const TOPIC_GENERATE_SYSTEM_PROMPT =
 /** D3's narrowed allowlist for the one-shot: `list_topics` withheld. */
 const TOPIC_GENERATE_ALLOWED_TOOLS = ['get_transcript_words', 'create_topic'] as const;
 
-export interface GenerateTopicsTurnOptions {
+interface GenerateTopicsTurnCommon {
   /** Required (design D3, ruling E3) — forwarded to `driveAiTurn`, which
    * threads it into the kill ladder. Production callers (`routers/
    * transcribe.ts`) pass `c.env.ports.clock`; never a freshly constructed
@@ -79,12 +80,22 @@ export interface GenerateTopicsTurnOptions {
   registry: SessionHubRegistryFacade;
   /** The route's caller: the snapshot read and the turn's tool bodies run as it (D7). */
   caller: SessionCaller;
-  /** `CLAUDE_CLI_PATH`, already trimmed. */
-  cliPath: string;
   sessionId: string;
-  maxBudgetUsd: number;
   timeoutMs: number;
 }
+
+/** The runner (ai-sdk-agent-harness D3): the CLI with its path and budget, or an AI SDK turn
+ * (`sdk.kind` `'topics'`) on the caller's own credential. */
+export type GenerateTopicsTurnOptions = GenerateTopicsTurnCommon &
+  (
+    | {
+        /** `CLAUDE_CLI_PATH`, already trimmed. */
+        cliPath: string;
+        maxBudgetUsd: number;
+        sdk?: undefined;
+      }
+    | { sdk: SdkTurnSpec; cliPath?: undefined; maxBudgetUsd?: undefined }
+  );
 
 /**
  * Run the one-shot topic-generation CLI turn to completion and return its
@@ -114,15 +125,22 @@ export async function generateTopicsTurn(
       speaker: String(w.speaker ?? ''),
     }),
   );
+  const runner =
+    opts.sdk !== undefined
+      ? { sdk: opts.sdk }
+      : {
+          cliPath: opts.cliPath,
+          allowedTools: TOPIC_GENERATE_ALLOWED_TOOLS,
+          maxBudgetUsd: opts.maxBudgetUsd,
+        };
   return driveAiTurn({
+    ...runner,
     clock: opts.clock,
     registry: opts.registry,
     caller: opts.caller,
-    cliPath: opts.cliPath,
     sessionId: opts.sessionId,
     message: TOPIC_GENERATE_MESSAGE,
     systemPrompt: TOPIC_GENERATE_SYSTEM_PROMPT,
-    allowedTools: TOPIC_GENERATE_ALLOWED_TOOLS,
     // Explicit server-side registration mirroring the argv allowlist
     // (auto-generate-event-logs D7, task 3.4): the one-shot's MCP server now
     // also declines to REGISTER `list_topics`, so the withheld tool is denied
@@ -134,7 +152,6 @@ export async function generateTopicsTurn(
     // page-coverage gate counts. It carries ONLY words: no event-run fields,
     // and `create_event` registration stays keyed by the tool set above.
     mcpContext: { tools: TOPIC_GENERATE_ALLOWED_TOOLS, pagedWords },
-    maxBudgetUsd: opts.maxBudgetUsd,
     timeoutMs: opts.timeoutMs,
     emit: () => {},
     // No abortSignal — design D2: the one-shot always runs to completion.

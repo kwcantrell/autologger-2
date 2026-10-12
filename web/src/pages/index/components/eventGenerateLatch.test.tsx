@@ -20,8 +20,8 @@ import { EventLogSheet } from './EventLogSheet';
 //
 //  1. 503 latch (delta spec, MODIFIED "Honest capability gating"): latches per
 //     MOUNTED panel — persists across a session switch within the mount, cleared
-//     only by a remount (reload); reason names the missing integration and the
-//     reload remedy; manual-alternative empty-state copy appears.
+//     by a remount (reload) or a language model save (ai-sdk-agent-harness D8);
+//     reason names Settings → Advanced; manual-alternative empty-state copy appears.
 //  2. 409 (busy slot) renders the SERVER's detail verbatim, inline, retryable —
 //     never latched (spec "Busy slot is retryable, not latched").
 //  3. Success renders the created count inline (`role="status"`, single
@@ -231,6 +231,8 @@ function mockRoutes(
       calls.bodies.push(body);
       return generateImpl(body);
     }
+    // ai-sdk-agent-harness D9 category 3: a latched feed watches the caller's providers.
+    if (path === 'me/providers') return providersState;
     if (path.includes('/status')) {
       return { ...statusFixture(), show_id: opts.statusShowId ?? null };
     }
@@ -302,12 +304,16 @@ async function startGenerate(item = 'Generate All') {
   fireEvent.click(await screen.findByRole('menuitem', { name: item }));
 }
 
+let providersState: { llm: unknown; stt: unknown; run_features_allowed: boolean };
+
 beforeEach(() => {
   mockedApiFetch.mockReset();
+  providersState = { llm: null, stt: null, run_features_allowed: true };
 });
 
 describe('event feed — AUTO GENERATE 503 latch (honest capability gating)', () => {
-  it('latches on the first 503, persists across a session switch within the mount, clears only on remount', async () => {
+  // ai-sdk-agent-harness D9 category 3: a language model save also clears it (below).
+  it('latches on the first 503, persists across a session switch within the mount, clears on remount', async () => {
     const calls = mockRoutes(() => Promise.reject(new ApiError(503, 'Service Unavailable')));
     const { switchSession, unmount } = renderSheet(SESSION_A);
 
@@ -315,15 +321,17 @@ describe('event feed — AUTO GENERATE 503 latch (honest capability gating)', ()
 
     // Latched: still a real focusable button (no `disabled` attribute), marked
     // aria-disabled, described by the always-visible reason span naming the
-    // missing integration and the reload remedy.
+    // caller's language model in Settings → Advanced (ai-sdk-agent-harness D9 category 2).
     await waitFor(() => expect(generateButton().getAttribute('aria-disabled')).toBe('true'));
     const latched = generateButton();
     expect(latched.hasAttribute('disabled')).toBe(false);
     const reasonId = latched.getAttribute('aria-describedby');
     expect(reasonId).toBeTruthy();
     const reason = document.getElementById(reasonId as string);
-    expect(reason?.textContent).toMatch(/no integration configured/);
-    expect(reason?.textContent).toMatch(/[Rr]eload/);
+    expect(reason?.textContent).toMatch(
+      /Add a language model in Settings → Advanced to generate events\./,
+    );
+    expect(reason?.textContent).not.toMatch(/[Rr]eload|CLAUDE_CLI_PATH|server setting/);
     // The latch reason stays VISIBLE (sighted users see the outage too) —
     // only the at-rest no-instructions reason is sr-only.
     expect(reason?.classList.contains('sr-only')).toBe(false);
@@ -356,6 +364,35 @@ describe('event feed — AUTO GENERATE 503 latch (honest capability gating)', ()
     renderSheet(SESSION_A);
     const fresh = await screen.findByRole('button', { name: 'Auto generate' });
     expect(fresh.getAttribute('aria-disabled')).toBeNull();
+  });
+});
+
+// ai-sdk-agent-harness task 8.2 (design D8): saving a language model clears the latch.
+describe('event feed — a language model save clears the latch (ai-sdk-agent-harness D8)', () => {
+  it('clears without a reload, and a retry re-calls generate', async () => {
+    const calls = mockRoutes(() => Promise.reject(new ApiError(503, 'needs a model')));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    renderStrict(sheetFor(client, SESSION_A));
+    await startGenerate();
+    await waitFor(() => expect(generateButton().getAttribute('aria-disabled')).toBe('true'));
+    expect(document.body.textContent).not.toMatch(/[Rr]eload|no integration configured/);
+    await waitFor(() => expect(client.getQueryData(['providers'])).toBeTruthy());
+
+    providersState = {
+      ...providersState,
+      llm: {
+        kind: 'llm',
+        provider: 'openai',
+        base_url: null,
+        model: 'gpt-5.5',
+        key_last4: '1234',
+        updated_at: '2026-10-12T10:00:00.000Z',
+      },
+    };
+    await client.invalidateQueries({ queryKey: ['providers'] });
+    await waitFor(() => expect(generateButton().getAttribute('aria-disabled')).toBeNull());
+    await startGenerate();
+    await waitFor(() => expect(calls.count).toBe(2));
   });
 });
 

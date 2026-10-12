@@ -37,6 +37,7 @@ import {
 import type { Clock } from '@autologger/ports';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Bindings } from '../appEnv';
+import { answer, callTools, type FakeLlm, type FakeScript, startFakeLlm } from '../test/fakeLlm';
 import { app, defaultUser, env, envWith } from '../test/harness';
 import {
   catalogFor,
@@ -47,6 +48,7 @@ import {
   seedUser,
   testDb,
 } from '../test/helpers';
+import { CLI_TEST_EMAILS, chooseClaudeCliForAll, saveSdkCredential } from '../test/llmRoutes';
 import {
   failNextRunLeaseClaim,
   holdAsAnotherProcess,
@@ -194,6 +196,9 @@ function configuredEnv(
   return envWith(
     {
       CLAUDE_CLI_PATH: cliPath,
+      // ai-sdk-agent-harness D9 category 1: the callers are listed, and `generateReq` saves their
+      // `claude-cli` choice.
+      CLAUDE_CLI_EMAILS: CLI_TEST_EMAILS,
       HOST: '127.0.0.1',
       ...overrides,
     },
@@ -201,7 +206,12 @@ function configuredEnv(
   );
 }
 
-function generateReq(sessionId: string, envOverride: ReturnType<typeof envWith>, body?: unknown) {
+async function generateReq(
+  sessionId: string,
+  envOverride: ReturnType<typeof envWith>,
+  body?: unknown,
+) {
+  await chooseClaudeCliForAll();
   return app.request(
     `/api/sessions/${sessionId}/events/generate`,
     {
@@ -343,7 +353,9 @@ describe('events/generate — guard ladder', () => {
     await seedAnchoredTranscript(sessionId);
     const res = await generateReq(sessionId, envWith({ CLAUDE_CLI_PATH: '' }));
     expect(res.status).toBe(503);
-    expect(await detailOf(res)).toMatch(/CLAUDE_CLI_PATH/);
+    expect(await detailOf(res)).toBe(
+      'Add a language model in Settings → Advanced to generate events.',
+    );
     expect(neverSpawned(sessionId)).toBe(true);
   });
 
@@ -481,6 +493,8 @@ describe('events/generate — guard ladder', () => {
     // A generate run in flight is indistinguishable from any other holder at
     // the registry — the CHAT route's reworded shared detail must name event
     // generation so a user who pressed AUTO GENERATE understands the 409.
+    // ai-sdk-agent-harness D9 category 1: the caller chose the Claude CLI.
+    await chooseClaudeCliForAll();
     const slot = aiChatTurns.tryAcquire(sessionId);
     expect(slot.ok).toBe(true);
     try {
@@ -1214,6 +1228,8 @@ describe('regenerate after a revoke (session-content-policies P1)', () => {
     seededIds.push(m.sessionId);
     await seedAnchoredTranscript(m.sessionId);
     await seedAutoSlateEvent(m.sessionId);
+    // ai-sdk-agent-harness D9 category 1: the callers chose the Claude CLI.
+    await chooseClaudeCliForAll();
     const gate = sessionGate();
     try {
       await gate.registry.get(m.sessionId);
@@ -1350,7 +1366,9 @@ describe('events/generate — approved users only (run-status-and-sweeper D9)', 
     return { s: sessionId, cookie: await loginCookie(id) };
   }
 
-  function post(s: string, cookie: string, e: Bindings, body?: unknown) {
+  async function post(s: string, cookie: string, e: Bindings, body?: unknown) {
+    // ai-sdk-agent-harness D9 category 1: the caller chose the Claude CLI.
+    await chooseClaudeCliForAll();
     return app.request(
       `/api/sessions/${s}/events/generate`,
       {
@@ -1404,4 +1422,124 @@ describe('events/generate — approved users only (run-status-and-sweeper D9)', 
     expect(await detailOf(res)).toMatch(/transcript/i);
     expect(neverSpawned(s)).toBe(true);
   });
+});
+
+// ── ai-sdk-agent-harness task 7.2: events/generate on the caller's route (D1, D3) ──────────────
+describe('events/generate on the AI SDK route (ai-sdk-agent-harness task 7.2)', () => {
+  const ADD_LLM = 'Add a language model in Settings → Advanced to generate events.';
+  const fakes: FakeLlm[] = [];
+  afterEach(async () => {
+    await Promise.all(fakes.splice(0).map((f) => f.close()));
+  });
+  async function fakeProvider(script: FakeScript): Promise<FakeLlm> {
+    const f = await startFakeLlm(script);
+    fakes.push(f);
+    return f;
+  }
+  /** CLAUDE_CLI_PATH set and the caller listed: only the saved credential decides the route. */
+  const sdkEnv = (o: Record<string, unknown> = {}) => configuredEnv(NO_TOOL_CALLS_FIXTURE, o);
+  const req = (s: string, e: Bindings = sdkEnv(), body?: unknown) =>
+    app.request(
+      `/api/sessions/${s}/events/generate`,
+      {
+        method: 'POST',
+        ...(body === undefined
+          ? {}
+          : { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }),
+      },
+      e,
+    );
+  const slate = (message: string, session_time = '00:00:03:00') => ({
+    name: 'create_event',
+    args: { category: 'slate', message, session_time },
+  });
+  /** Read page 0, create two slate events, then answer. */
+  const success: FakeScript = (n) =>
+    n === 1
+      ? callTools(1, [{ name: 'get_transcript_words', args: { page: 0 } }])
+      : n === 2
+        ? callTools(2, [slate('SDK slate one'), slate('SDK slate two', '00:00:05:00')])
+        : answer('done');
+  const messages = async (s: string) => (await listEvents(s)).map((e) => e.message).sort();
+
+  it('with no route, the new 503 and no model request', async () => {
+    const llm = await fakeProvider(success);
+    const { sessionId } = await newSession();
+    await seedAnchoredTranscript(sessionId);
+    const res = await req(sessionId);
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ detail: ADD_LLM });
+    expect(llm.requests).toHaveLength(0);
+    expect(neverSpawned(sessionId)).toBe(true);
+  });
+
+  it('the fake model creates events through the tools, with the CLI path’s result shape', async () => {
+    const llm = await fakeProvider(success);
+    const { sessionId } = await newSession();
+    await seedAnchoredTranscript(sessionId);
+    await saveSdkCredential(llm.baseURL);
+    const res = await req(sessionId);
+    expect(res.status, await res.clone().text()).toBe(200);
+    expect(await res.json()).toEqual({ created: 2, cap_hit: false });
+    expect(await messages(sessionId)).toEqual(['SDK slate one', 'SDK slate two']);
+    const tools = ((llm.requests[0]?.tools ?? []) as Array<{ function: { name: string } }>).map(
+      (t) => t.function.name,
+    );
+    expect(tools.sort()).toEqual(['create_event', 'get_transcript_words']);
+    for (const e of await listEvents(sessionId)) {
+      expect(JSON.parse(String(e.metadata_json))).toMatchObject({ auto_generated: true });
+    }
+    expect(neverSpawned(sessionId)).toBe(true);
+  });
+
+  it('a regenerate deletes the prior auto-generated events exactly as on the CLI route', async () => {
+    const llm = await fakeProvider(success);
+    const { sessionId } = await newSession();
+    await seedAnchoredTranscript(sessionId);
+    await seedManualSlateEvent(sessionId);
+    await seedAutoSlateEvent(sessionId);
+    await saveSdkCredential(llm.baseURL);
+    const res = await req(sessionId, sdkEnv(), { regenerate: true });
+    expect(res.status, await res.clone().text()).toBe(200);
+    expect(await res.json()).toEqual({ created: 2, cap_hit: false, deleted: 1 });
+    expect(await messages(sessionId)).toEqual([
+      'Pre-existing slate',
+      'SDK slate one',
+      'SDK slate two',
+    ]);
+  });
+
+  for (const [name, script, cfg] of [
+    ['a provider error', () => ({ status: 401, body: '{"error":"no"}' }), {}],
+    [
+      'the step cap',
+      (n: number) =>
+        n === 2
+          ? callTools(2, [slate('Capped slate')])
+          : callTools(n, [{ name: 'get_transcript_words' }]),
+      { GENERATE_MAX_STEPS: '3' },
+    ],
+    [
+      'the token budget',
+      (n: number) =>
+        n === 2
+          ? callTools(2, [slate('Budget slate')])
+          : callTools(n, [{ name: 'get_transcript_words' }]),
+      { GENERATE_MAX_TOKENS: '40' },
+    ],
+  ] as Array<[string, FakeScript, Record<string, unknown>]>) {
+    it(`a regenerate stopped by ${name} answers the existing 502 and deletes nothing`, async () => {
+      const llm = await fakeProvider(script);
+      const { sessionId } = await newSession();
+      await seedAnchoredTranscript(sessionId);
+      await seedAutoSlateEvent(sessionId);
+      await saveSdkCredential(llm.baseURL);
+      const res = await req(sessionId, sdkEnv(cfg), { regenerate: true });
+      expect(res.status).toBe(502);
+      expect(await res.json()).toEqual({ detail: EVENT_GENERATE_FAILURE_DETAIL });
+      expect(await messages(sessionId)).toContain('Old generated slate');
+      if (name !== 'a provider error') expect(llm.requests).toHaveLength(3);
+      expect(aiChatTurns.isSessionInFlight(sessionId)).toBe(false);
+    });
+  }
 });

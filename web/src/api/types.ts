@@ -742,8 +742,15 @@ export interface CompanionDeviceCreatedResponse {
 // routes") ---
 
 export type ProviderKind = 'llm' | 'stt';
-/** `openai-compatible` (with a base URL) or a fixed-host provider for `llm`; `deepgram` for `stt`. */
-export type ProviderId = 'openai-compatible' | 'anthropic' | 'openai' | 'google' | 'deepgram';
+/** `openai-compatible` (with a base URL), a fixed-host provider, or the keyless `claude-cli`
+ * (allowlisted operators only; ai-sdk-agent-harness D2) for `llm`; `deepgram` for `stt`. */
+export type ProviderId =
+  | 'openai-compatible'
+  | 'anthropic'
+  | 'openai'
+  | 'google'
+  | 'claude-cli'
+  | 'deepgram';
 
 /** A saved credential: never the key, only its last four characters. */
 export interface ProviderCredential {
@@ -754,7 +761,8 @@ export interface ProviderCredential {
   /** Only `openai-compatible` has one. */
   base_url: string | null;
   model: string;
-  key_last4: string;
+  /** Null for the keyless `claude-cli` provider (ai-sdk-agent-harness D2). */
+  key_last4: string | null;
   updated_at: string;
 }
 
@@ -763,15 +771,20 @@ export interface ProvidersResponse {
   stt: ProviderCredential | null;
   /** Whether the caller may run transcription and AI features ("Run features are limited to approved users"). */
   run_features_allowed: boolean;
+  /** Whether the caller may choose the Claude CLI now (ai-sdk-agent-harness D2). */
+  claude_cli_allowed: boolean;
 }
 
-/** The `PUT /api/me/providers/:kind` body. `api_key` is omitted to keep the saved key. */
-export interface ProviderSaveBody {
-  provider: ProviderId;
-  base_url?: string | null;
-  model: string;
-  api_key?: string;
-}
+/** The `PUT /api/me/providers/:kind` body. `api_key` is omitted to keep the saved key. The keyless
+ * `claude-cli` body is exactly `{provider}` (ai-sdk-agent-harness D2). */
+export type ProviderSaveBody =
+  | {
+      provider: Exclude<ProviderId, 'claude-cli'>;
+      base_url?: string | null;
+      model: string;
+      api_key?: string;
+    }
+  | { provider: 'claude-cli' };
 
 /** A connection test result: one of the server's fixed strings. */
 export interface ProviderTestResponse {

@@ -68,6 +68,14 @@ import * as aiTurnModule from '@autologger/ai-runtime/aiTurn';
 import type { Clock } from '@autologger/ports';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Bindings } from '../appEnv';
+import {
+  answer,
+  callTools,
+  type FakeLlm,
+  type FakeScript,
+  sse,
+  startFakeLlm,
+} from '../test/fakeLlm';
 import { anonApp, app, defaultUser, env, envWith } from '../test/harness';
 import {
   loginCookie,
@@ -77,6 +85,13 @@ import {
   seedStudio,
   seedUser,
 } from '../test/helpers';
+import {
+  CLI_TEST_EMAILS,
+  chooseClaudeCli,
+  chooseClaudeCliForAll,
+  placesHolding,
+  saveSdkCredential,
+} from '../test/llmRoutes';
 import {
   failNextRunLeaseClaim,
   holdAsAnotherProcess,
@@ -200,7 +215,12 @@ function loopbackEnv(
   overrides: Record<string, unknown> = {},
   portOverrides: Partial<Bindings['ports']> = {},
 ) {
-  return envWith({ CLAUDE_CLI_PATH: CLI, HOST: '127.0.0.1', ...overrides }, portOverrides);
+  // ai-sdk-agent-harness D9 category 1: the callers are listed in CLAUDE_CLI_EMAILS, and `post`
+  // saves their `claude-cli` choice, the production path.
+  return envWith(
+    { CLAUDE_CLI_PATH: CLI, CLAUDE_CLI_EMAILS: CLI_TEST_EMAILS, HOST: '127.0.0.1', ...overrides },
+    portOverrides,
+  );
 }
 
 /** Same as `loopbackEnv`, but CLAUDE_CLI_PATH points at the real hermetic
@@ -212,13 +232,15 @@ function fixtureEnv(
   return loopbackEnv({ CLAUDE_CLI_PATH: FIXTURE_CLI, ...overrides }, portOverrides);
 }
 
-function post(
+async function post(
   sessionId: string,
   body: unknown,
   reqEnv = loopbackEnv(),
   headers: Record<string, string> = J,
   signal?: AbortSignal,
 ) {
+  // ai-sdk-agent-harness D9 category 1: every caller has chosen the Claude CLI.
+  await chooseClaudeCliForAll();
   return app.request(
     `/api/sessions/${sessionId}/ai/chat`,
     {
@@ -281,7 +303,9 @@ describe('ai/chat — configuration gate (503)', () => {
     const s = await seededSession();
     const res = await post(s, { message: 'hi' }, loopbackEnv({ CLAUDE_CLI_PATH: '' }));
     expect(res.status).toBe(503);
-    expect(((await res.json()) as { detail: string }).detail).toMatch(/not configured/i);
+    expect(((await res.json()) as { detail: string }).detail).toBe(
+      'Add a language model in Settings → Advanced to use the assistant.',
+    );
     expect(spawnSpy).not.toHaveBeenCalled();
     expect(neverSpawned(s)).toBe(true);
   });
@@ -290,7 +314,9 @@ describe('ai/chat — configuration gate (503)', () => {
     const s = await seededSession();
     const res = await post(s, { message: 'hi' }, loopbackEnv({ CLAUDE_CLI_PATH: '   ' }));
     expect(res.status).toBe(503);
-    expect(((await res.json()) as { detail: string }).detail).toMatch(/not configured/i);
+    expect(((await res.json()) as { detail: string }).detail).toBe(
+      'Add a language model in Settings → Advanced to use the assistant.',
+    );
     expect(spawnSpy).not.toHaveBeenCalled();
     expect(neverSpawned(s)).toBe(true);
   });
@@ -615,6 +641,7 @@ describe('ai/chat — resume binding per session and user, with the exact conver
       config: {
         ...b.bindings.config,
         CLAUDE_CLI_PATH: FIXTURE_CLI,
+        CLAUDE_CLI_EMAILS: CLI_TEST_EMAILS,
         HOST: '127.0.0.1',
         AI_CHAT_CLI_HOME: cliHome,
       },
@@ -1077,4 +1104,246 @@ describe('ai/chat — approved users only (run-status-and-sweeper D9)', () => {
     expect(await refused.json()).toEqual(FORBIDDEN);
     expect(neverSpawned(other.s)).toBe(true);
   });
+});
+
+// ── ai-sdk-agent-harness task 7.1: the caller's route (D1), the AI SDK route (D3, D6) ──────────
+
+const ADD_LLM_DETAIL = 'Add a language model in Settings → Advanced to use the assistant.';
+
+const fakes: FakeLlm[] = [];
+afterEach(async () => {
+  await Promise.all(fakes.splice(0).map((f) => f.close()));
+});
+async function fakeProvider(script: FakeScript): Promise<FakeLlm> {
+  const f = await startFakeLlm(script);
+  fakes.push(f);
+  return f;
+}
+
+/** Posts with no claude-cli save (SDK and no-route cases). CLAUDE_CLI_PATH stays set and every
+ * caller listed, so only the saved credential decides the route. */
+function postAs(
+  sessionId: string,
+  body: unknown,
+  reqEnv = fixtureEnv(),
+  headers: Record<string, string> = J,
+  signal?: AbortSignal,
+) {
+  return app.request(
+    `/api/sessions/${sessionId}/ai/chat`,
+    { method: 'POST', headers, body: JSON.stringify(body), signal },
+    reqEnv,
+  );
+}
+
+describe('ai/chat — no route: the Settings → Advanced 503 (ai-sdk-agent-harness D1, task 7.1)', () => {
+  it('a caller with no saved llm credential gets the 503 in development and production mode, CLI set and listed, with no spawn or model request', async () => {
+    const s = await seededSession();
+    for (const mode of [true, false]) {
+      const res = await postAs(s, { message: 'hi' }, fixtureEnv({ PROVIDER_DEV_MODE: mode }));
+      expect(res.status).toBe(503);
+      expect(await res.json()).toEqual({ detail: ADD_LLM_DETAIL });
+    }
+    expect(neverSpawned(s)).toBe(true);
+    expect(aiChatTurns.isSessionInFlight(s)).toBe(false);
+  });
+
+  it('a claude-cli caller removed from CLAUDE_CLI_EMAILS gets the 503 on the next turn, with no spawn', async () => {
+    const s = await seededSession();
+    await chooseClaudeCli((await defaultUser()).id);
+    const first = await postAs(s, { message: 'hi' }, fixtureEnv());
+    expect(first.status).toBe(200);
+    await first.text();
+    const turnsBefore = recordedArgv(s);
+    rmSync(join(stableSessionCwd(s), '.fixture-argv.json'));
+    const res = await postAs(
+      s,
+      { message: 'again' },
+      fixtureEnv({ CLAUDE_CLI_EMAILS: 'other@example.com' }),
+    );
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ detail: ADD_LLM_DETAIL });
+    expect(turnsBefore.length).toBeGreaterThan(0);
+    expect(neverSpawned(s)).toBe(true);
+  });
+});
+
+describe('ai/chat — the AI SDK route (ai-sdk-agent-harness D3, D6, task 7.1)', () => {
+  it('streams delta/tool/done with claude_session_id null for an allowlisted caller who chose another provider, ignoring a stale claude_session_id', async () => {
+    const llm = await fakeProvider((n) =>
+      n === 1 ? callTools(1, [{ name: 'list_topics' }]) : answer('Hello from the SDK'),
+    );
+    const s = await seededSession();
+    await saveSdkCredential(llm.baseURL);
+    const res = await postAs(s, { message: 'hi', claude_session_id: 'stale-cli-id' });
+    expect(res.status).toBe(200);
+    const events = parseSse(await res.text());
+    expect(events).toEqual([
+      { event: 'tool', data: { name: 'list_topics' } },
+      { event: 'delta', data: { text: 'Hello from the SDK' } },
+      { event: 'done', data: { claude_session_id: null } },
+    ]);
+    expect(llm.requests).toHaveLength(2);
+    expect(llm.meta[0]?.headers.authorization).toBe('Bearer sk-fake-provider-key');
+    expect(neverSpawned(s)).toBe(true);
+    // No resume binding for a null id, and the slot is free.
+    await vi.waitFor(() => expect(aiChatTurns.isSessionInFlight(s)).toBe(false));
+    expect(await env.ports.kv.get('ai-chat-resume:null')).toBeNull();
+  });
+
+  it('sends the history as user/assistant messages before the new message', async () => {
+    const llm = await fakeProvider(() => answer('ok'));
+    const s = await seededSession();
+    await saveSdkCredential(llm.baseURL);
+    const res = await postAs(s, {
+      message: 'second question',
+      history: [
+        { role: 'user', text: 'first question' },
+        { role: 'assistant', text: 'first answer' },
+      ],
+    });
+    expect(res.status).toBe(200);
+    await res.text();
+    const msgs = (llm.requests[0]?.messages ?? []) as Array<{ role: string; content: unknown }>;
+    expect(msgs.map((m) => m.role)).toEqual(['system', 'user', 'assistant', 'user']);
+    expect(msgs.slice(1).map((m) => JSON.stringify(m.content))).toEqual([
+      expect.stringContaining('first question'),
+      expect.stringContaining('first answer'),
+      expect.stringContaining('second question'),
+    ]);
+  });
+
+  it('a provider error gives one scrubbed error event', async () => {
+    const llm = await fakeProvider(() => ({
+      status: 401,
+      body: '{"error":{"message":"PROVIDER-BODY-MARKER"}}',
+    }));
+    const s = await seededSession();
+    await saveSdkCredential(llm.baseURL);
+    const res = await postAs(s, { message: 'PROMPT-MARKER hi' });
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(parseSse(text)).toEqual([{ event: 'error', data: { detail: 'upstream-failed' } }]);
+    expect(text).not.toMatch(/MARKER|sk-fake/);
+  });
+
+  it('a history violation gives 422 before any model request, and the 403 still comes first', async () => {
+    const llm = await fakeProvider(() => answer('never'));
+    const s = await seededSession();
+    await saveSdkCredential(llm.baseURL);
+    const history = Array.from({ length: 41 }, (_, i) => ({
+      role: i % 2 === 0 ? 'user' : 'assistant',
+      text: `entry ${i}`,
+    }));
+    const res = await postAs(s, { message: 'hi', history });
+    expect(res.status).toBe(422);
+    expect(llm.requests).toHaveLength(0);
+    expect(aiChatTurns.isSessionInFlight(s)).toBe(false);
+    // Not approved: 403 before the body.
+    const refused = await postAs(
+      s,
+      { message: 'hi', history },
+      fixtureEnv({ RUN_FEATURE_EMAILS: 'x@example.com' }),
+    );
+    expect(refused.status).toBe(403);
+    expect(llm.requests).toHaveLength(0);
+  });
+
+  it('a second turn while one is in flight on the SDK route is the session-busy 409', async () => {
+    const llm = await fakeProvider(() => ({ frames: [sse.text('slow')], hang: true }));
+    const s = await seededSession();
+    await saveSdkCredential(llm.baseURL);
+    const controller = new AbortController();
+    // The caller's cookie is sent explicitly, so the harness passes this very request to the app
+    // rather than a copy whose signal would follow it only through a weak reference (a mid-turn
+    // abort then reaches the route reliably).
+    const signedIn = { ...J, Cookie: (await defaultUser()).cookie };
+    const first = await postAs(s, { message: 'one' }, fixtureEnv(), signedIn, controller.signal);
+    expect(first.status).toBe(200);
+    const second = await postAs(s, { message: 'two' });
+    expect(second.status).toBe(409);
+    controller.abort();
+    await first.body?.cancel().catch(() => {});
+    await vi.waitFor(() => expect(aiChatTurns.isSessionInFlight(s)).toBe(false));
+  });
+});
+
+describe('ai/chat — nothing of an AI SDK turn survives it (ai-topics-chat; task 7.1)', () => {
+  const MSG = 'MSG-MARKER-5d1e';
+  const HIST = 'HIST-MARKER-8a2f';
+  const REPLY = 'REPLY-MARKER-c4b7';
+
+  it('the scan finds a marker the session does keep (non-vacuity)', async () => {
+    const s = await seededSession();
+    const res = await app.request(
+      `/api/sessions/${s}/topics`,
+      { method: 'POST', headers: J, body: JSON.stringify({ summary: 'KEPT-MARKER-0001' }) },
+      env,
+    );
+    expect(res.status).toBe(201);
+    expect(await placesHolding('KEPT-MARKER-0001')).not.toEqual([]);
+  });
+
+  const sixteen = Array.from({ length: 16 }, () => ({ name: 'list_topics' }));
+  const endings: Array<[string, FakeScript, Record<string, unknown>, boolean]> = [
+    [
+      'done',
+      (n) => (n === 1 ? callTools(1, [{ name: 'list_topics' }]) : answer(`answer ${REPLY}`)),
+      {},
+      false,
+    ],
+    ['an error', () => ({ status: 500, body: `{"error":"${REPLY}"}` }), {}, false],
+    [
+      'a breach',
+      (n) => ({ frames: [sse.text(`${REPLY} `), ...(callTools(n, sixteen).frames ?? [])] }),
+      {},
+      false,
+    ],
+    [
+      'a timeout',
+      () => ({ frames: [sse.text(REPLY)], hang: true }),
+      { AI_CHAT_TIMEOUT_SEC: '0.5' },
+      false,
+    ],
+    ['a client abort', () => ({ frames: [sse.text(REPLY)], hang: true }), {}, true],
+  ];
+  for (const [name, script, cfg, abort] of endings) {
+    it(`after ${name}, no catalog row or DATA_DIR file holds the message, history or reply`, {
+      timeout: 60_000,
+    }, async () => {
+      const llm = await fakeProvider(script);
+      const s = await seededSession();
+      await saveSdkCredential(llm.baseURL);
+      const controller = new AbortController();
+      const res = await postAs(
+        s,
+        {
+          message: `please ${MSG}`,
+          history: [
+            { role: 'user', text: `earlier ${HIST}` },
+            { role: 'assistant', text: `reply ${HIST}` },
+          ],
+        },
+        fixtureEnv(cfg),
+        // An explicit cookie: the app gets this very request, so the abort reaches the route
+        // (a harness copy's signal follows the original only through a weak reference).
+        { ...J, Cookie: (await defaultUser()).cookie },
+        abort ? controller.signal : undefined,
+      );
+      expect(res.status).toBe(200);
+      if (abort) {
+        await vi.waitFor(() => expect(llm.requests.length).toBeGreaterThan(0));
+        controller.abort();
+        // The client is gone: cancel the body rather than wait for the stream to end.
+        await res.body?.cancel().catch(() => {});
+      } else {
+        await res.text();
+      }
+      await vi.waitFor(() => expect(aiChatTurns.isSessionInFlight(s)).toBe(false), {
+        timeout: 20_000,
+      });
+      expect(llm.requests.length).toBeGreaterThan(0);
+      for (const marker of [MSG, HIST, REPLY]) expect(await placesHolding(marker)).toEqual([]);
+    });
+  }
 });

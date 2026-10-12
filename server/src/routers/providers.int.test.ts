@@ -164,6 +164,8 @@ describe('save, read, replace and delete (api-contract-freeze "Provider credenti
       llm: null,
       stt: cred,
       run_features_allowed: true,
+      // ai-sdk-agent-harness D9 category 5: GET adds claude_cli_allowed.
+      claude_cli_allowed: false,
     });
 
     const before = await stored(me.id, 'stt');
@@ -433,5 +435,156 @@ describe('the connection test (provider-credentials "The connection test reports
     const r = await req(me, 'POST', '/llm/test');
     expect(r.status).toBe(404);
     expect(await r.json()).toEqual(NOT_SET_UP);
+  });
+});
+
+// ai-sdk-agent-harness design D2 (api-contract-freeze "Provider credential routes", provider-credentials
+// "A user holds at most one credential per kind"): the keyless `claude-cli` provider, allowlisted
+// by CLAUDE_CLI_EMAILS while CLAUDE_CLI_PATH is set.
+describe('the claude-cli provider (ai-sdk-agent-harness D2)', () => {
+  const CLI_EMAIL = 'cli-dev@example.com';
+  const CLI_FORBIDDEN = { detail: 'The Claude CLI is limited to approved operator accounts.' };
+  const cliEnv = (
+    over: { path?: string; emails?: string; tester?: ProviderTester; dev?: boolean } = {},
+  ) =>
+    envWith(
+      {
+        PROVIDER_DEV_MODE: over.dev ?? false,
+        CLAUDE_CLI_PATH: over.path ?? '/fake/claude',
+        CLAUDE_CLI_EMAILS: over.emails ?? ` ${CLI_EMAIL.toUpperCase()} ,other@example.com`,
+      },
+      over.tester ? { providerTester: over.tester } : {},
+    );
+  const allowedOf = async (who: Caller, env: ReturnType<typeof cliEnv>) =>
+    providersResponseSchema.parse(await (await req(who, 'GET', '', undefined, env)).json())
+      .claude_cli_allowed;
+
+  it('an allowlisted caller saves it keyless, and GET reports claude_cli_allowed', async () => {
+    captureLogs();
+    const me = await caller(CLI_EMAIL);
+    const env = cliEnv();
+    expect(await allowedOf(me, env)).toBe(true);
+    const r = await req(me, 'PUT', '/llm', { provider: 'claude-cli' }, env);
+    expect(r.status).toBe(200);
+    const cred = providerCredentialSchema.parse(await r.json());
+    expect(cred).toMatchObject({
+      kind: 'llm',
+      provider: 'claude-cli',
+      base_url: null,
+      model: 'claude-cli',
+      key_last4: null,
+    });
+    expect(await stored(me.id, 'llm')).toEqual({
+      provider: 'claude-cli',
+      base_url: null,
+      base_origin: null,
+      model: 'claude-cli',
+      key_last4: null,
+      key_ciphertext: null,
+    });
+    expect(
+      providersResponseSchema.parse(await (await req(me, 'GET', '', undefined, env)).json()),
+    ).toEqual({ llm: cred, stt: null, run_features_allowed: false, claude_cli_allowed: true });
+    expect(logs.filter((l) => l.startsWith('provider credential'))).toEqual([
+      `provider credential saved user=${me.id} kind=llm`,
+    ]);
+  });
+
+  it('a caller who is not listed, the bootstrap owner, and anyone while CLAUDE_CLI_PATH is blank get 403 and nothing is stored', async () => {
+    const notListed = await caller('not-listed@example.com');
+    const owner = await caller('bootstrap-owner@example.com');
+    const listed = await caller(CLI_EMAIL);
+    // A prior credential is left unchanged by the refused save.
+    expect((await req(notListed, 'PUT', '/llm', openai(), cliEnv())).status).toBe(200);
+    const before = await stored(notListed.id, 'llm');
+    for (const [who, env] of [
+      [notListed, cliEnv()],
+      [owner, cliEnv()],
+      [listed, cliEnv({ path: '' })],
+      [listed, cliEnv({ path: '   ' })],
+    ] as const) {
+      const r = await req(who, 'PUT', '/llm', { provider: 'claude-cli' }, env);
+      expect(r.status).toBe(403);
+      expect(await r.json()).toEqual(CLI_FORBIDDEN);
+      expect(await allowedOf(who, env)).toBe(false);
+    }
+    expect(await stored(notListed.id, 'llm')).toEqual(before);
+    expect(await stored(owner.id, 'llm')).toBeNull();
+    expect(await stored(listed.id, 'llm')).toBeNull();
+    // The default harness has no CLAUDE_CLI_EMAILS at all.
+    expect(await allowedOf(listed, envFor())).toBe(false);
+  });
+
+  it('takes no key, base URL or model (422), and is not an stt provider', async () => {
+    const me = await caller(CLI_EMAIL);
+    for (const extra of [
+      { model: 'opus' },
+      { api_key: OPENAI_KEY },
+      { base_url: 'https://api.example.com/v1' },
+      { model: null },
+    ]) {
+      const r = await req(me, 'PUT', '/llm', { provider: 'claude-cli', ...extra }, cliEnv());
+      expect(r.status, JSON.stringify(extra)).toBe(422);
+    }
+    expect((await req(me, 'PUT', '/stt', { provider: 'claude-cli' }, cliEnv())).status).toBe(422);
+    expect(await stored(me.id, 'llm')).toBeNull();
+    expect(await stored(me.id, 'stt')).toBeNull();
+  });
+
+  it('switching from claude-cli to a key provider without a key gets 422 and changes nothing; with a key it saves', async () => {
+    const me = await caller(CLI_EMAIL);
+    const env = cliEnv();
+    expect((await req(me, 'PUT', '/llm', { provider: 'claude-cli' }, env)).status).toBe(200);
+    const before = await stored(me.id, 'llm');
+    for (const body of [
+      { provider: 'anthropic', model: 'claude-sonnet-4-5' },
+      { provider: 'openai', model: 'gpt-5.5' },
+      compat('https://api.example.com/v1', { api_key: undefined }),
+    ]) {
+      const r = await req(me, 'PUT', '/llm', body, env);
+      expect(r.status, JSON.stringify(body)).toBe(422);
+      expect(JSON.stringify(await r.json())).toContain('api_key');
+      expect(await stored(me.id, 'llm')).toEqual(before);
+    }
+    const r = await req(
+      me,
+      'PUT',
+      '/llm',
+      { provider: 'anthropic', model: 'claude-sonnet-4-5', api_key: OPENAI_KEY },
+      env,
+    );
+    expect(r.status).toBe(200);
+    expect(providerCredentialSchema.parse(await r.json()).key_last4).toBe('6789');
+  });
+
+  it('the test answers Connected or unavailable with no outbound request, and counts toward the window', async () => {
+    const f = await fakeProviders();
+    const me = await caller(CLI_EMAIL);
+    const env = cliEnv({ tester: f.tester });
+    const removed = cliEnv({ tester: f.tester, emails: 'other@example.com' });
+    const blank = cliEnv({ tester: f.tester, path: '' });
+    expect((await req(me, 'PUT', '/llm', { provider: 'claude-cli' }, env)).status).toBe(200);
+    const test = async (e: ReturnType<typeof cliEnv>) => {
+      const r = await req(me, 'POST', '/llm/test', undefined, e);
+      return { status: r.status, body: await r.json() };
+    };
+    expect(await test(env)).toEqual({
+      status: 200,
+      body: { ok: true, detail: PROVIDER_TEST_DETAIL.connected },
+    });
+    const unavailable = {
+      status: 200,
+      body: { ok: false, detail: "The Claude CLI isn't available to this account." },
+    };
+    expect(await test(removed)).toEqual(unavailable);
+    expect(await test(blank)).toEqual(unavailable);
+    expect(await test(env)).toEqual({
+      status: 200,
+      body: { ok: true, detail: PROVIDER_TEST_DETAIL.connected },
+    });
+    expect((await test(removed)).status).toBe(200);
+    // The sixth test in the window is refused.
+    expect(await test(env)).toEqual({ status: 429, body: TOO_MANY });
+    expect(f.seen).toHaveLength(0);
   });
 });

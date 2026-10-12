@@ -681,6 +681,25 @@ const generationTranscriptToolShape = {
     ),
 };
 
+/** A tool body's result: text content, `isError` for a tool error the model sees (never thrown). */
+export interface ToolSinkResult {
+  content: Array<{ type: 'text'; text: string }>;
+  isError?: true;
+}
+
+/** The one method a tool builder calls (ai-sdk-agent-harness design D3): `server.tool(name,
+ * description, shape, handler)`. The MCP server satisfies it as itself; the AI SDK turn
+ * (`sdkTools.ts`) passes a collector that turns each registration into an AI SDK tool. So the
+ * builders, their bodies and the MCP tests are shared and unchanged. */
+export interface ToolSink {
+  tool<Shape extends z.ZodRawShape>(
+    name: AiMcpToolName,
+    description: string,
+    shape: Shape,
+    handler: (args: z.output<z.ZodObject<Shape>>) => Promise<ToolSinkResult>,
+  ): void;
+}
+
 /** Everything a tool builder may bind into its handlers. `generation` is the
  * EVENT run's snapshot (undefined on chat turns AND on the topic one-shot),
  * and `createdEvents` the registration's per-run counter — both consumed by
@@ -711,7 +730,7 @@ interface ToolBuildContext {
  * `ctx.generation` (the run snapshot) for the category allowlist, frame rate,
  * run id, and cap.
  */
-const TOOL_BUILDERS: Record<AiMcpToolName, (server: McpServer, ctx: ToolBuildContext) => void> = {
+const TOOL_BUILDERS: Record<AiMcpToolName, (server: ToolSink, ctx: ToolBuildContext) => void> = {
   get_transcript_words: (
     server,
     { registry, sessionId, caller, generation, pagedWords, pageState },
@@ -934,15 +953,15 @@ const TOOL_BUILDERS: Record<AiMcpToolName, (server: McpServer, ctx: ToolBuildCon
   },
 };
 
-function buildSessionMcpServer(
+/** Register the turn's tool set (D6) on a sink: the MCP server per request, or the AI SDK turn's
+ * collector (ai-sdk-agent-harness D3). No context ⇒ the pinned default three chat tools —
+ * byte-identical to the pre-context behavior. The Set guards against a duplicate name in a
+ * caller-supplied set (McpServer.tool throws on re-registration). */
+function registerTurnTools(
+  sink: ToolSink,
   registry: SessionHubRegistryFacade,
   reg: TurnRegistration,
-): McpServer {
-  const server = new McpServer({ name: MCP_SERVER_NAME, version: '0.1.0' });
-  // Register ONLY the turn's tool set (D6). No context ⇒ the pinned default
-  // three chat tools — byte-identical to the pre-context behavior. The Set
-  // guards against a duplicate name in a caller-supplied set (McpServer.tool
-  // throws on re-registration).
+): void {
   const ctx: ToolBuildContext = {
     registry,
     sessionId: reg.sessionId,
@@ -952,10 +971,100 @@ function buildSessionMcpServer(
     pagedWords: reg.context?.pagedWords,
     pageState: reg.pageState,
   };
-  for (const name of new Set(reg.context?.tools ?? DEFAULT_TURN_TOOLS)) {
-    TOOL_BUILDERS[name](server, ctx);
+  for (const name of turnToolNames(reg)) {
+    TOOL_BUILDERS[name](sink, ctx);
   }
+}
+
+/** The turn's tool names, deduplicated, in registration order. */
+function turnToolNames(reg: TurnRegistration): AiMcpToolName[] {
+  return [...new Set(reg.context?.tools ?? DEFAULT_TURN_TOOLS)];
+}
+
+function buildSessionMcpServer(
+  registry: SessionHubRegistryFacade,
+  reg: TurnRegistration,
+): McpServer {
+  const server = new McpServer({ name: MCP_SERVER_NAME, version: '0.1.0' });
+  registerTurnTools(server, registry, reg);
   return server;
+}
+
+/** A fresh per-turn registration: one created-events counter (task 3.2) and one paged-transcript
+ * memo + coverage counter (D1/D6) PER REGISTRATION. The snapshot is the event run's words when
+ * present, else the topic one-shot's `pagedWords`; neither ⇒ no snapshot, no memoization, no
+ * coverage claim. */
+function newTurnRegistration(
+  sessionId: string,
+  caller: SessionCaller,
+  context: AiMcpTurnContext | undefined,
+): TurnRegistration {
+  return {
+    sessionId,
+    caller,
+    context,
+    createdEvents: { count: 0, reserved: 0 },
+    pageState: {
+      words: context?.generation?.words ?? context?.pagedWords,
+      pages: null,
+      served: new Set<number>(),
+    },
+  };
+}
+
+/** The page coverage of a registration. Forces the pagination if nothing else has (a run that
+ * created topics without ever calling the tool must report 0-of-N, not 0-of-0). */
+function registrationCoverage(reg: TurnRegistration): AiMcpPageCoverage {
+  return {
+    totalPages: snapshotPages(reg.pageState).length,
+    servedPages: reg.pageState.served.size,
+  };
+}
+
+/** An AI SDK turn's registration (ai-sdk-agent-harness design D3, A23): the same per-turn object
+ * as an MCP turn (session, caller, tool set, generation snapshot, created-events counter, page
+ * state), with no listener, URL or token. The session comes from the registration, never from a
+ * tool argument. */
+export interface SdkTurnRegistration {
+  readonly sessionId: string;
+  /** The turn's tool names, deduplicated (the default three chat tools without a context). */
+  readonly tools: readonly AiMcpToolName[];
+  /** Register the turn's tool set on `sink` (the AI SDK collector, `sdkTools.ts`). */
+  registerTools(sink: ToolSink): void;
+  /** As `AiMcpTurn#createdEvents`. */
+  createdEvents(): number;
+  /** As `AiMcpTurn#pageCoverage`. */
+  pageCoverage(): AiMcpPageCoverage;
+  /** Whether `dispose()` has run. */
+  readonly disposed: boolean;
+  /** Release the registration (idempotent). Tool calls after it are refused by the SDK tool
+   * wrapper, which checks the turn is live. */
+  dispose(): void;
+}
+
+/** Register an AI SDK turn without the MCP listener (design D3): `registerTurn` needs the started
+ * listener and mints a bearer token, neither of which an in-process turn uses. */
+export function registerSdkTurn(
+  registry: SessionHubRegistryFacade,
+  sessionId: string,
+  caller: SessionCaller,
+  context?: AiMcpTurnContext,
+): SdkTurnRegistration {
+  const reg = newTurnRegistration(sessionId, caller, context);
+  let disposed = false;
+  return {
+    sessionId,
+    tools: turnToolNames(reg),
+    registerTools: (sink: ToolSink): void => registerTurnTools(sink, registry, reg),
+    createdEvents: (): number => reg.createdEvents.count,
+    pageCoverage: (): AiMcpPageCoverage => registrationCoverage(reg),
+    get disposed(): boolean {
+      return disposed;
+    },
+    dispose: (): void => {
+      disposed = true;
+    },
+  };
 }
 
 /**
@@ -1022,32 +1131,18 @@ export class AiMcpListener {
   registerTurn(sessionId: string, caller: SessionCaller, context?: AiMcpTurnContext): AiMcpTurn {
     if (this.httpServer === null) throw new Error('AiMcpListener not started');
     const token = randomBytes(TOKEN_BYTES).toString('hex');
-    // One created-events counter PER REGISTRATION (task 3.2) — shared by the
-    // turn's per-request MCP servers, readable after the run via the returned
-    // `createdEvents()` (the generate route's `{created, cap_hit}` source).
-    const createdEvents: CreatedEventsCounter = { count: 0, reserved: 0 };
-    // One paged-transcript memo + coverage counter PER REGISTRATION (D1/D6),
-    // on the same terms. The snapshot is the event run's words when present,
-    // else the topic one-shot's `pagedWords`; neither ⇒ no snapshot, no
-    // memoization, no coverage claim.
-    const pageState: TurnPageState = {
-      words: context?.generation?.words ?? context?.pagedWords,
-      pages: null,
-      served: new Set<number>(),
-    };
-    this.turns.set(token, { sessionId, caller, context, createdEvents, pageState });
+    // One created-events counter and one paged-transcript state PER REGISTRATION (task 3.2,
+    // D1/D6) — shared by the turn's per-request MCP servers, readable after the run via the
+    // returned `createdEvents()` / `pageCoverage()`.
+    const reg = newTurnRegistration(sessionId, caller, context);
+    this.turns.set(token, reg);
     const url = `http://${LOOPBACK}:${this.port}${MCP_PATH}`;
     let disposed = false;
     return {
       url,
       token,
-      createdEvents: (): number => createdEvents.count,
-      // Forces the pagination if nothing else has (a run that created topics
-      // without ever calling the tool must report 0-of-N, not 0-of-0).
-      pageCoverage: (): AiMcpPageCoverage => ({
-        totalPages: snapshotPages(pageState).length,
-        servedPages: pageState.served.size,
-      }),
+      createdEvents: (): number => reg.createdEvents.count,
+      pageCoverage: (): AiMcpPageCoverage => registrationCoverage(reg),
       dispose: (): void => {
         if (disposed) return;
         disposed = true;

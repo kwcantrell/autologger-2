@@ -84,7 +84,7 @@ describe('PostgresProviderCredentialStore (byo-ai-providers D1)', () => {
     expect(second.created_at_utc).toBe(t0);
     expect(second.updated_at_utc).toBe(new Date(clock.now()).toISOString());
     const got = await store.get('ua', 'llm');
-    expect(got && { model: got.model, key: bytes(got.key) }).toEqual({
+    expect(got && { model: got.model, key: bytes(got.key!) }).toEqual({
       model: 'gpt-y',
       key: bytes(key(2, '2222')),
     });
@@ -97,9 +97,9 @@ describe('PostgresProviderCredentialStore (byo-ai-providers D1)', () => {
     await store.put('ua', 'stt', { ...STT, key: key(2) });
     await store.put('ub', 'stt', { ...STT, key: key(3, 'bbbb') });
     expect((await store.list('ua')).map((r) => r.kind).sort()).toEqual(['llm', 'stt']);
-    expect((await store.list('ub')).map((r) => [r.kind, r.key.last4])).toEqual([['stt', 'bbbb']]);
+    expect((await store.list('ub')).map((r) => [r.kind, r.key!.last4])).toEqual([['stt', 'bbbb']]);
     expect(await store.get('ub', 'llm')).toBeNull();
-    expect((await store.get('ua', 'stt'))?.key.last4).toBe('abcd');
+    expect((await store.get('ua', 'stt'))?.key!.last4).toBe('abcd');
   });
 
   it('updateKeepingKey changes only provider, base URL, model and time, and keeps the key', async () => {
@@ -147,7 +147,7 @@ describe('PostgresProviderCredentialStore (byo-ai-providers D1)', () => {
     const fixed = { provider: 'anthropic', base_url: null, base_origin: null, model: 'claude-x' };
     expect(await store.updateKeepingKey('ua', 'llm', fixed)).toBeNull();
     const kept = await store.get('ua', 'llm');
-    expect(kept && { p: kept.provider, url: kept.base_url, last4: kept.key.last4 }).toEqual({
+    expect(kept && { p: kept.provider, url: kept.base_url, last4: kept.key!.last4 }).toEqual({
       p: 'openai-compatible',
       url: LLM.base_url,
       last4: '1111',
@@ -220,6 +220,78 @@ describe('PostgresProviderCredentialStore (byo-ai-providers D1)', () => {
       Array.from({ length: 8 }, (_, i) => (i % 2 ? store : other).takeTestSlot('ua')),
     );
     expect([...counts].sort((a, b) => Number(a) - Number(b))).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+  });
+
+  // ai-sdk-agent-harness design D2: the keyless `claude-cli` llm row.
+  it('putKeyless stores and replaces the llm row with no key, keeping its creation time (ai-sdk 2.2)', async () => {
+    const { store, clock, tick } = await env();
+    const t0 = new Date(clock.now()).toISOString();
+    const cli = {
+      kind: 'llm',
+      provider: 'claude-cli',
+      base_url: null,
+      base_origin: null,
+      model: 'claude-cli',
+      key: null,
+    };
+    expect(await store.putKeyless('ua', 'llm', 'claude-cli')).toEqual({
+      ...cli,
+      created_at_utc: t0,
+      updated_at_utc: t0,
+    });
+    // It replaces a keyed row, and a keyed put replaces it.
+    tick(1_000);
+    await store.put('ua', 'llm', { ...LLM, key: key(1, '1111') });
+    tick(1_000);
+    const replaced = await store.putKeyless('ua', 'llm', 'claude-cli');
+    expect(replaced).toEqual({
+      ...cli,
+      created_at_utc: t0,
+      updated_at_utc: new Date(clock.now()).toISOString(),
+    });
+    await store.put('ub', 'stt', { ...STT, key: key(2) });
+    const back = await store.put('ub', 'llm', { ...LLM, key: key(3, '3333') });
+    expect(back.key && bytes(back.key)).toEqual(bytes(key(3, '3333')));
+    expect((await store.list('ub')).map((r) => r.provider)).toEqual(['openai-compatible', 'deepgram']);
+  });
+
+  it('get and list return key null for the claude-cli row (ai-sdk 2.2)', async () => {
+    const { store } = await env();
+    await store.putKeyless('ua', 'llm', 'claude-cli');
+    await store.put('ua', 'stt', { ...STT, key: key(1, 'wxyz') });
+    const got = await store.get('ua', 'llm');
+    expect(got && { p: got.provider, m: got.model, url: got.base_url, key: got.key }).toEqual({
+      p: 'claude-cli',
+      m: 'claude-cli',
+      url: null,
+      key: null,
+    });
+    expect((await store.list('ua')).map((r) => [r.kind, r.provider, r.key?.last4 ?? null])).toEqual([
+      ['llm', 'claude-cli', null],
+      ['stt', 'deepgram', 'wxyz'],
+    ]);
+  });
+
+  it('updateKeepingKey never keeps a key across a switch from claude-cli, nor on the keyless row (ai-sdk 2.2)', async () => {
+    const { store } = await env();
+    await store.putKeyless('ua', 'llm', 'claude-cli');
+    const fixed = { provider: 'anthropic', base_url: null, base_origin: null, model: 'claude-x' };
+    for (const fields of [
+      fixed,
+      { ...fixed, provider: 'openai', model: 'gpt-x' },
+      { ...fixed, provider: 'google', model: 'gemini-x' },
+      LLM,
+      // Even naming the same provider: there is no key to keep.
+      { provider: 'claude-cli', base_url: null, base_origin: null, model: 'other' },
+    ]) {
+      expect(await store.updateKeepingKey('ua', 'llm', fields)).toBeNull();
+    }
+    const kept = await store.get('ua', 'llm');
+    expect(kept && { p: kept.provider, m: kept.model, key: kept.key }).toEqual({
+      p: 'claude-cli',
+      m: 'claude-cli',
+      key: null,
+    });
   });
 
   it('writeCheckIfAbsent keeps the first value written; readCheck returns it', async () => {

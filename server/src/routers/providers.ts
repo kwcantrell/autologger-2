@@ -13,8 +13,12 @@
 // - The connection test is rate-limited per user before any decryption or outbound request, and
 //   answers only the fixed PROVIDER_TEST_DETAIL strings.
 // - Save and delete write one audit line with the user id and kind, never the key.
+// - The keyless `llm` provider `claude-cli` (ai-sdk-agent-harness D2) is saved only by a caller
+//   `claudeCliAllowed` lets use the operator's Claude CLI now (else `403`, nothing stored). Its
+//   connection test makes no outbound request and still takes a slot in the window.
 
 import {
+  CLAUDE_CLI_PROVIDER,
   PROVIDER_TEST_DETAIL,
   type ProviderKindWire,
   providerKindSchema,
@@ -26,7 +30,7 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import type { AppEnv } from '../appEnv';
 import { normalizeBaseUrl, normalizeOrigin } from '../auth/providerOutbound';
-import { runFeatureAllowed } from '../env';
+import { claudeCliAllowed, runFeatureAllowed } from '../env';
 import { ApiError } from '../httpError';
 import { requireUser } from './_helpers';
 
@@ -36,6 +40,7 @@ const NUL_DETAIL = 'Text must not contain NUL characters.';
 const NOT_FOUND = 'Not found.';
 const NOT_SET_UP = 'Provider not set up.';
 const TOO_MANY = 'Too many connection tests. Try again in a minute.';
+const CLI_FORBIDDEN = 'The Claude CLI is limited to approved operator accounts.';
 
 function toWire(r: ProviderCredentialRow) {
   return {
@@ -43,7 +48,8 @@ function toWire(r: ProviderCredentialRow) {
     provider: r.provider,
     base_url: r.base_url,
     model: r.model,
-    key_last4: r.key.last4,
+    // Null only on the keyless `claude-cli` row (ai-sdk-agent-harness D2).
+    key_last4: r.key?.last4 ?? null,
     updated_at: r.updated_at_utc,
   };
 }
@@ -83,6 +89,7 @@ providersRouter.get('/api/me/providers', async (c) => {
     llm: of('llm'),
     stt: of('stt'),
     run_features_allowed: runFeatureAllowed(c.env.config, user),
+    claude_cli_allowed: claudeCliAllowed(c.env.config, user),
   });
 });
 
@@ -93,6 +100,13 @@ providersRouter.put('/api/me/providers/:kind', async (c) => {
   if (containsNul(raw)) throw new ApiError(400, NUL_DETAIL);
   const production = c.env.config.PROVIDER_DEV_MODE !== true;
   const body = providerPutBodySchema(kind, { production }).parse(raw);
+  if (body.provider === CLAUDE_CLI_PROVIDER) {
+    // Only `llm` accepts it (the `stt` schema refuses it above).
+    if (!claudeCliAllowed(c.env.config, user)) throw new ApiError(403, CLI_FORBIDDEN);
+    const cli = await c.env.ports.providerCredentials.putKeyless(user.id, 'llm', CLAUDE_CLI_PROVIDER);
+    console.info(`provider credential saved user=${user.id} kind=${kind}`);
+    return c.json(toWire(cli));
+  }
 
   const baseUrl =
     body.provider === 'openai-compatible' && body.base_url ? normalizeBaseUrl(body.base_url) : null;
@@ -139,6 +153,15 @@ providersRouter.post('/api/me/providers/:kind/test', async (c) => {
   const row = await store.get(user.id, kind);
   if (row === null) throw new ApiError(404, NOT_SET_UP);
   if ((await store.takeTestSlot(user.id)) > PROVIDER_TEST_LIMIT) throw new ApiError(429, TOO_MANY);
+  // The keyless `claude-cli` row (the catalog check allows no other): no outbound request; it
+  // answers whether this caller would get the Claude CLI now.
+  if (row.key === null) {
+    return c.json(
+      claudeCliAllowed(c.env.config, user)
+        ? { ok: true, detail: PROVIDER_TEST_DETAIL.connected }
+        : { ok: false, detail: PROVIDER_TEST_DETAIL.claudeCliUnavailable },
+    );
+  }
   const key = c.env.ports.providerKeys.decrypt(row.key, {
     userId: user.id,
     kind,

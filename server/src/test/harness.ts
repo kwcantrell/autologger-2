@@ -105,6 +105,13 @@ export async function resetTestEnv(): Promise<void> {
   current = { ...made, dir, blobDir, db, defaultUser: null };
 }
 
+/** The current test's DATA_DIR and BLOB_DIR (ai-sdk-agent-harness task 7.1: the "nothing
+ * survives" scans read them). */
+export function testDirs(): { dataDir: string; blobDir: string } {
+  if (!current) throw new Error('test env not initialized — is setup.int.ts registered?');
+  return { dataDir: current.dir, blobDir: current.blobDir };
+}
+
 /** The current test's database as the app role, for a second adapter over it (a second server
  * process, session-tables D12). */
 export function testDatabase(): ConnOptions {

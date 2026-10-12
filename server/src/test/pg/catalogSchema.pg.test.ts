@@ -468,11 +468,13 @@ const EXPECTED_SCHEMA: SchemaRecord = {
       'base_url text collate C',
       'base_origin text collate C',
       'model text collate C not null',
-      'key_nonce bytea not null',
-      'key_ciphertext bytea not null',
-      'key_tag bytea not null',
-      'key_version smallint not null',
-      'key_last4 text collate C not null',
+      // ai-sdk-agent-harness D2: nullable for the keyless `claude-cli` row; the claude_cli check
+      // below keeps every other row fully keyed.
+      'key_nonce bytea',
+      'key_ciphertext bytea',
+      'key_tag bytea',
+      'key_version smallint',
+      'key_last4 text collate C',
       'created_at_utc text collate C not null',
       'updated_at_utc text collate C not null',
     ],
@@ -507,6 +509,7 @@ const EXPECTED_SCHEMA: SchemaRecord = {
     "catalog.session_leases session_leases_kind_check CHECK ((kind = ANY (ARRAY['recording'::text, 'ai-turn'::text, 'transcript-generation'::text, 'youtube-import'::text])))",
     "catalog.session_overwrites session_overwrites_table_name_check CHECK ((table_name = ANY (ARRAY['session_events'::text, 'session_transcript_words'::text, 'session_topics'::text])))",
     'catalog.user_provider_credentials user_provider_credentials_base_url_check CHECK ((char_length(base_url) <= 2048))',
+    "catalog.user_provider_credentials user_provider_credentials_claude_cli_check CHECK ((((provider = 'claude-cli'::text) AND (kind = 'llm'::text) AND (base_url IS NULL) AND (key_nonce IS NULL) AND (key_ciphertext IS NULL) AND (key_tag IS NULL) AND (key_version IS NULL) AND (key_last4 IS NULL)) OR ((provider <> 'claude-cli'::text) AND (key_nonce IS NOT NULL) AND (key_ciphertext IS NOT NULL) AND (key_tag IS NOT NULL) AND (key_version IS NOT NULL) AND (key_last4 IS NOT NULL))))",
     'catalog.user_provider_credentials user_provider_credentials_key_last4_check CHECK (((char_length(key_last4) >= 1) AND (char_length(key_last4) <= 4)))',
     "catalog.user_provider_credentials user_provider_credentials_kind_check CHECK ((kind = ANY (ARRAY['llm'::text, 'stt'::text])))",
     'catalog.user_provider_credentials user_provider_credentials_model_check CHECK (((char_length(model) >= 1) AND (char_length(model) <= 200)))',
@@ -1407,5 +1410,60 @@ describe("the app role's password (design D4)", () => {
     const logs = spawnSync('docker', ['logs', testPg().container], { encoding: 'utf8' });
     expect(logs.status).toBe(0);
     expect(`${logs.stdout}${logs.stderr}`).not.toContain(pw);
+  });
+});
+
+describe('the claude-cli provider migration (ai-sdk-agent-harness D2)', () => {
+  it('relaxes the key columns, adds the claude_cli check, and changes no existing keyed row', async () => {
+    const CLAUDE_CLI_MIGRATION = '20261018000000_claude_cli_provider.sql';
+    const name = `t_cli_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    // The replay runs the role guards, which a parallel scratch role would trip (roleGuardLock.ts).
+    await holdRoleGuardLock(connect(connOptions('postgres', 'postgres')));
+    const root = connect(connOptions('postgres', 'postgres'));
+    await root.unsafe(`create database ${name} template template0`);
+    const sql = connect(connOptions('postgres', name));
+    const earlier = readdirSync(MIGRATIONS)
+      .filter((f) => f.endsWith('.sql') && f < CLAUDE_CLI_MIGRATION)
+      .sort();
+    expect(earlier.at(-1)).toBe('20261017000000_provider_test_windows.sql');
+    for (const f of earlier) {
+      const text = readFileSync(resolve(MIGRATIONS, f), 'utf8');
+      await sql.begin((tx) => tx.unsafe(text));
+    }
+    const t = '2026-10-18T00:00:00.000Z';
+    await sql.unsafe(`
+      insert into catalog.users (id, google_sub, email, created_at_utc)
+        values ('u', 'u-sub', 'u@example.com', '${t}');
+      insert into catalog.user_provider_credentials
+        (user_id, kind, provider, base_url, base_origin, model, key_nonce, key_ciphertext, key_tag,
+         key_version, key_last4, created_at_utc, updated_at_utc)
+        values
+        ('u', 'llm', 'openai-compatible', 'https://llm.example/v1', 'https://llm.example', 'm',
+         '\\x00', '\\x01', '\\x02', 1, 'abcd', '${t}', '${t}'),
+        ('u', 'stt', 'deepgram', null, null, 'nova-3', '\\x03', '\\x04', '\\x05', 1, 'wxyz',
+         '${t}', '${t}');`);
+    const rows = () =>
+      sql`select row_to_json(c) as r from catalog.user_provider_credentials c order by kind`;
+    const before = await rows();
+    const text = readFileSync(resolve(MIGRATIONS, CLAUDE_CLI_MIGRATION), 'utf8');
+    await sql.begin((tx) => tx.unsafe(text));
+    const after = await rows();
+    expect(after.map((r) => r.r)).toEqual(before.map((r) => r.r));
+    expect(after).toHaveLength(2);
+    const nullable = await sql`select column_name::text as c, is_nullable::text as n
+        from information_schema.columns
+       where table_schema = 'catalog' and table_name = 'user_provider_credentials'
+         and column_name like 'key\\_%' order by column_name`;
+    expect(nullable.map((r) => `${r.c}:${r.n}`)).toEqual([
+      'key_ciphertext:YES',
+      'key_last4:YES',
+      'key_nonce:YES',
+      'key_tag:YES',
+      'key_version:YES',
+    ]);
+    const checks = await sql`select conname::text as n from pg_constraint
+       where conrelid = 'catalog.user_provider_credentials'::regclass
+         and conname = 'user_provider_credentials_claude_cli_check'`;
+    expect(checks).toHaveLength(1);
   });
 });

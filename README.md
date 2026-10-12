@@ -145,14 +145,15 @@ refactor of this one.
   `SHEETS_LOG_IMPORT_ENABLED=1`, in which case it downloads a public Google Sheets workbook
   and imports its log rows into the show's sessions as events — see "Google Sheets log
   import" below.
-  `POST …/topics/generate` returns the same frozen `503 {detail}` unless `CLAUDE_CLI_PATH`
-  is set (the AI chat's gate), in which case it runs a single, non-conversational `claude`
-  CLI turn against the session's transcript and returns `200 {topics}` — a crash-safe
-  replace-all of the session's topics — see "AI chat (Claude CLI)" below.
-  `POST …/events/generate` shares that `CLAUDE_CLI_PATH` gate: configured, it runs a single
-  orchestrator CLI turn that appends transcript-derived log events per user-authored
-  per-button instructions and returns `200 {created, cap_hit}` — see "Event auto-generation
-  (AUTO GENERATE)" below. `transcribe.csv`
+  `POST …/topics/generate` runs on the caller's language model route (the AI chat's gate):
+  with none it answers `503 {"detail": "Add a language model in Settings → Advanced to
+  generate topics."}`; otherwise it runs a single, non-conversational turn (AI SDK or Claude
+  CLI) against the session's transcript and returns `200 {topics}` — a crash-safe
+  replace-all of the session's topics — see "AI chat (AI SDK or Claude CLI)" below.
+  `POST …/events/generate` shares that gate (its `503` detail ends "…to generate events."):
+  it runs a single orchestrator turn that appends transcript-derived log events per
+  user-authored per-button instructions and returns `200 {created, cap_hit}` — see "Event
+  auto-generation (AUTO GENERATE)" below. `transcribe.csv`
   remains unconditional `503 {detail}` (no external integration wired up). Manual
   transcript-word/topic CRUD still works.
 
@@ -260,17 +261,76 @@ import by a creator with a speech-to-text key, over sessions without transcripts
 transcript generation billed to that key. Only enable this on a box you operate and are prepared to have
 make Google requests on your behalf.
 
-### AI chat (Claude CLI)
+### AI chat (AI SDK or Claude CLI)
 
 `POST /api/sessions/:sessionId/ai/chat` turns a session's transcript into topics
-conversationally. A chat panel in the session workspace drives the operator's local `claude`
-CLI, which reads the session's transcript and creates topics through a locked-down,
-session-scoped toolset.
+conversationally. A chat panel in the session workspace runs a model that reads the session's
+transcript and creates topics through a locked-down, session-scoped toolset.
+
+**The caller's language model route** (ai-sdk-agent-harness). Chat, topic generation and event
+generation run on the signed-in caller's own `llm` choice from Settings → Advanced, resolved on
+every request:
+
+- **AI SDK** — a saved OpenAI-compatible, Anthropic, OpenAI or Google credential. The server runs
+  the turn in process with the Vercel AI SDK (`ai` and the four `@ai-sdk/*` providers, pinned
+  exactly) on the caller's decrypted key. The model can only call the turn's tools
+  (`get_transcript_words`, `list_topics`, `create_topic` for chat; `get_transcript_words` with
+  `create_topic` or `create_event` for generation); nothing it drives can run commands or read
+  files.
+- **Claude CLI** — the provider "Claude CLI (operator)" (`{provider: "claude-cli"}`, no key, base
+  URL or model), offered only to the accounts on `CLAUDE_CLI_EMAILS` (comma-separated, matched
+  trimmed and ASCII case-insensitive; the bootstrap owner is **not** implicitly listed) while
+  `CLAUDE_CLI_PATH` is set. Anyone else saving it gets
+  `403 {"detail": "The Claude CLI is limited to approved operator accounts."}`;
+  `GET /api/me/providers` reports `claude_cli_allowed` for the caller. A caller removed from the
+  list loses the CLI on the next turn.
+- **None** — no saved `llm` credential (in every mode; there is no operator fallback), a
+  `claude-cli` choice that is no longer allowed, or a key that no longer decrypts. Chat answers
+  `503 {"detail": "Add a language model in Settings → Advanced to use the assistant."}`, topic
+  generation `…to generate topics."` and event generation `…to generate events."`, with nothing
+  run. `CLAUDE_CLI_PATH` alone enables nothing.
+
+**Egress on the AI SDK route.** Each turn sends the transcript, topics (or the event
+instructions) and the chat history to the caller's own provider, on the caller's key and bill.
+Every model request goes through the server's guarded fetch: the key goes only to the
+credential's fixed host (`api.anthropic.com`, `api.openai.com`,
+`generativelanguage.googleapis.com`) or saved OpenAI-compatible origin, on the provider's path;
+DNS is pinned and, in production, private, loopback and link-local addresses are refused per
+connection; redirects are never followed; a 120 s wait for response headers; and per turn at most
+60 requests, 4 MB per request body, 48 MB of request bodies, and response bytes of steps × output
+tokens per step × 400 (12.8 MB for chat, 256 MB for generation at the defaults). OpenAI requests
+carry `store: false`, so OpenAI does not retain the prompt. Provider errors are classified to the
+fixed `upstream-failed` and never logged or forwarded (they carry the whole prompt).
+
+**Spend bounds on the AI SDK route** (the user pays their own provider): a step cap
+(`AI_CHAT_MAX_STEPS`, default `8`, valid 1–50; `GENERATE_MAX_STEPS`, default `40`, valid 1–100), a per-turn token budget
+(`AI_CHAT_MAX_TOKENS`, default `400000`; `GENERATE_MAX_TOKENS`, default `3000000`; a provider that
+reports no usage is counted at request plus response bytes ÷ 4), output tokens per step (`4000`
+for chat; `GENERATE_MAX_OUTPUT_TOKENS`, default `16000`, for generation, and a generation whose
+first request is answered `400` restarts once at `4000`, logged as `(output-cap fallback 4000)`),
+the response-byte cap above, `2` retries per request, 16 tool calls per step (more get a tool error) and 32 (chat) or 300
+(generation) per turn (more end the turn), one tool body at a time, and the route's existing
+timeout. A chat turn stopped by the step cap or budget ends `done` with the text so far; a
+generation run stopped that way fails with its `502`, leaving prior topics or events untouched.
+There is no deployment-wide ceiling across sessions.
+
+**OpenAI-compatible servers: enable the reasoning parser.** Servers that inline reasoning as
+`<think>…</think>` in the content have it stripped (it is never relayed), but a server whose chat
+template opens `<think>` inside the prompt emits only the closing tag, and its reasoning would
+pass through as reply text. Enable the server's reasoning parser (for example SGLang's
+`--reasoning-parser qwen3`), so reasoning arrives in its own field.
+
+**Chat history.** On the AI SDK route the client re-sends the conversation as `history`
+(`[{role: "user" | "assistant", text}]`, at most 40 entries, each 1–8000 characters after
+trimming, 64 000 in total; a violation is `422` before any model request), which reaches the
+model as real roles before the new message. The AI SDK route ignores `claude_session_id`, and its
+`done` carries `claude_session_id: null`; `claude_session_id: null` in a request means absent.
+Nothing of an AI SDK turn is stored on the server.
 
 **Topic generation (`…/topics/generate`), the one-shot sibling.** The "Generate topics"
-button is a separate, **non-conversational** consumer of the same CLI/MCP machinery: gated on
-the same `CLAUDE_CLI_PATH` (unset/blank keeps the endpoint's frozen `503`, byte-for-byte
-unchanged for unconfigured deployments) and the same
+button is a separate, **non-conversational** consumer of the same turn machinery (AI SDK or
+CLI, with the same tool bodies): gated on the same caller route (none answers the "…to generate
+topics." `503`) and the same
 per-session single-flight as
 the chat — a generate and a chat turn on the same session are mutually exclusive, since both
 spend the operator's Anthropic budget on that session. Unlike the chat — whose toolset has no
@@ -307,15 +367,15 @@ degradation, not data loss, and it is not enforced by a new error status. The AI
 remains the conversational path; `transcribe.csv` keeps its own, unrelated, unconditional
 `503`.
 
-Gated by `CLAUDE_CLI_PATH` (see `server/.env.example`): unset/blank/whitespace-only keeps
-the endpoint's frozen `503 {detail}` and leaves unconfigured deployments byte-for-byte
-unchanged. When set, the endpoint spawns `claude -p --output-format stream-json` per turn
-and responds `200 Content-Type: text/event-stream`, relaying the CLI's reply as SSE events:
+Gated by the caller's route (above; see `server/.env.example`). On the Claude CLI route the
+endpoint spawns `claude -p --output-format stream-json` per turn; on either route it responds
+`200 Content-Type: text/event-stream`, relaying the reply as SSE events:
 `delta {text}` (assistant text fragments only — model reasoning/thinking is never relayed),
 `tool {name}` (an MCP tool invocation, short name only — one of `get_transcript_words`,
 `list_topics`, `create_topic`), and exactly one terminal event per server-completed
-stream — `done {claude_session_id}` (echo this back as `claude_session_id` on the next turn
-to resume the conversation) or `error {detail}`, where `detail` is one of a fixed,
+stream — `done {claude_session_id}` (on the CLI route, echo this back as `claude_session_id`
+on the next turn to resume the conversation; on the AI SDK route it is `null`) or
+`error {detail}`, where `detail` is one of a fixed,
 secret-free set (`upstream-failed`, `not-logged-in`, `timeout`, `internal-error`) — never
 raw CLI stdout/stderr, environment values, credentials, or device-login URLs. The event
 vocabulary is additive-open: new event types or payload fields may appear without a further
@@ -332,9 +392,10 @@ process's disk — gets the existing `422` before anything is spawned. Whether s
 different containers share one CLI home (and so can resume each other's chats) is a deployment
 topology decision, not something this endpoint arranges.
 
-**Egress and spend disclosure.** Enabling this feature sends the session's transcript and
-topic content to Anthropic, over the operator's own `claude login` credentials — every chat
-turn is a real, billed Anthropic API call against the operator's account/quota. Spend is
+**Egress and spend disclosure (Claude CLI route).** The AI SDK route's egress and bounds are
+described above. On the CLI route, a turn sends the session's transcript and topic content to
+Anthropic, over the operator's own `claude login` credentials — every chat turn is a real,
+billed Anthropic API call against the operator's account/quota. Spend is
 bounded three ways: only approved users can start a turn (see "Run features" above), at most
 one turn is in flight per autologger session (a second concurrent request for the same session
 gets `409`, spawning nothing), and a per-turn CLI cost ceiling (`AI_CHAT_MAX_BUDGET_USD`, default
@@ -342,7 +403,7 @@ gets `409`, spawning nothing), and a per-turn CLI cost ceiling (`AI_CHAT_MAX_BUD
 `AI_PROVIDER` (default `claude_cli`, today the only accepted value; any other value refuses boot)
 selects the operator's development CLI, which runs without ceilings.
 `AI_CHAT_MAX_CONCURRENT` is ignored: the process-wide limit is gone. A deployment-wide ceiling,
-counting live run leases under a per-kind advisory lock, returns with the providers change. A turn
+counting live run leases under a per-kind advisory lock, is deferred to a later change. A turn
 that runs long is killed after `AI_CHAT_TIMEOUT_SEC` (default `300` seconds) — the
 guaranteed backstop; a client disconnect (Stop button or closed tab) also kills the
 subprocess but is best-effort only.
@@ -405,12 +466,13 @@ shapes — the boolean plus the `auto_instruction` fields on the full show seria
 `categories[*]` and their `dropdown_options[*]` — are authorized by the `auto-event-generation`
 delta.
 
-The feed tab's AUTO GENERATE button starts one **synchronous** run: gated on the same
-`CLAUDE_CLI_PATH` as the AI chat (unset/blank keeps the endpoint's frozen `503`) and the same
-per-session single-flight. The server snapshots the session's frame rate, transcript, and
+The feed tab's AUTO GENERATE button starts one **synchronous** run: gated on the same caller
+route as the AI chat (none answers
+`503 {"detail": "Add a language model in Settings → Advanced to generate events."}`) and the
+same per-session single-flight. The server snapshots the session's frame rate, transcript, and
 instruction-bearing categories at run start (mid-run edits affect the next run, not this
-one), then drives a **single orchestrator CLI turn** through the same locked-down one-shot
-machinery as `topics/generate` — no built-in tools, strict per-turn MCP config, loopback +
+one), then drives a **single orchestrator turn** (AI SDK or CLI) through the same locked-down
+one-shot machinery as `topics/generate` — no built-in tools, strict per-turn MCP config, loopback +
 bearer, and **no abort signal**, so a run always completes server-side regardless of the
 initiating client's connection. The prompt enumerates every instruction-bearing button and
 option (instruction text rendered as clearly-delimited untrusted data that cannot alter the
@@ -450,14 +512,16 @@ in the feed. Timecodes are transcript-derived, never the run-time clock: the sto
 existing timecode↔wall anchor pairs, so a generated event at timecode T sorts between the
 manual events that bracket T even across recording pauses.
 
-**Statuses.** `503 {detail}` unconfigured (nothing spawned); `400 {detail}`
+**Statuses.** `503 {detail}` with no caller route (nothing run); `400 {detail}`
 pre-spawn when the session has no transcript words, no words with session-time anchors, no
 instruction-bearing button, or the instructions exceed the aggregate pre-spawn bound
 (`EVENT_GENERATE_MAX_INSTRUCTION_BYTES`, default `24576` total instruction bytes /
 `EVENT_GENERATE_MAX_INSTRUCTION_ENTRIES`, default `50` instruction-bearing entries);
 `403 {detail}` for a user who is not approved; `409 {detail}` when the session's shared AI
 slot is held; `200 {created,
-cap_hit}` on success; `502 {detail}` for a CLI-turn failure after spawn — a fixed opaque
+cap_hit}` on success; `502 {detail}` for a turn failure after the turn started (on the AI SDK
+route, also a run stopped by the step cap or token budget — never followed by a regenerate
+delete) — a fixed opaque
 detail carrying no raw subprocess output, with events inserted before the failure remaining
 persisted (and reported nowhere in the error body). **The shared AI-slot `409` busy details
 are reworded** (authorized by the same delta) to name event generation among the possible
@@ -467,9 +531,11 @@ the ceiling). The shared slot is also held as the
 session's `ai-turn` run lease, so a turn running in another server process gets the same
 session-busy `409` (see "Run leases" below).
 
-**Egress and spend disclosure.** Like `topics/generate`, a run is a real, billed Anthropic
-API call over the operator's own `claude login` credentials — the transcript and the
-configured instructions are sent to Anthropic. Its workload is likewise far past what the chat
+**Egress and spend disclosure.** On the AI SDK route a run sends the transcript and the
+configured instructions to the caller's own provider under the bounds in "AI chat" above. On
+the CLI route, like `topics/generate`, a run is a real, billed Anthropic API call over the
+operator's own `claude login` credentials — the transcript and the configured instructions are
+sent to Anthropic. Its workload is likewise far past what the chat
 ceilings are sized for (full transcript at generation density, a sweep per instruction, a
 `create_event` round trip per hit), so it gets its own ceilings — separately tunable from the
 topic-generation knobs, but defaulted to the same values, since topic generation pages that
@@ -478,7 +544,9 @@ same full transcript at generation density:
 `--max-budget-usd`) and `EVENT_GENERATE_TIMEOUT_SEC` (default `600`, the server-side
 timeout backstop) — see `server/.env.example`. Concurrency exposure is bounded together
 with the other paid AI features by the shared per-session slot and the approved users; there is
-no limit across sessions on `AI_PROVIDER=claude_cli`.
+no limit across sessions on `AI_PROVIDER=claude_cli`. The budget and timeout knobs above apply
+to the CLI route; the AI SDK route uses `GENERATE_MAX_STEPS` / `GENERATE_MAX_TOKENS` /
+`GENERATE_MAX_OUTPUT_TOKENS` and the same timeout.
 
 ### AI v2 dashboards
 
@@ -550,8 +618,8 @@ As with the AI chat, no agent-authored markup is ever rendered anywhere in this 
 dashboard is validated against the same whole-config schema a user's own PUT is held to before it
 is ever shown.
 
-`restart_supported` is unaffected by this feature (still `false`); the `CLAUDE_CLI_PATH` gate
-on `…/topics/generate` and `…/events/generate` (see "AI chat (Claude CLI)" and "Event
+`restart_supported` is unaffected by this feature (still `false`); the caller-route gate
+on `…/topics/generate` and `…/events/generate` (see "AI chat (AI SDK or Claude CLI)" and "Event
 auto-generation" above) and `transcribe.csv`'s unconditional
 `503` are all unaffected by `AI_V2_ENABLED`; `…/youtube-import` is likewise unaffected by
 `AI_V2_ENABLED` — it has its own `yt-dlp` configuration gate (see "YouTube audio import"
@@ -933,24 +1001,24 @@ Content-coding is transport applied above the frozen representation: the decoded
 | `GET\|POST /api/sessions/{id}/events` (GET adds `has_auto_generated`, whole-session; POST silently strips the reserved `auto_generated`/`auto_generate_run_id` metadata keys from client input) · `PUT\|DELETE …/events/{eid}` (optional `version`/`overwrite`; a stale version is **409** `{detail: "Version conflict.", current}`; see "Row versions" below) | `routers/events.py` |
 | `GET …/status` (`events_stream_revision` is the session revision, advanced by every session write; see "Row versions" below) · `POST …/transport/start\|stop` · `GET …/show-categories` | `routers/events.py` |
 | `…/audio-recording-lease` (claim/heartbeat/release) · `GET …/ws` | `routers/events.py` |
-| `POST …/events/generate` → **503** unconfigured · **403** not an approved user · **409** concurrent-turn · **400** no-transcript/no-anchors/no-instructions/over-instruction-bound/malformed-body/`regenerate`+`selection` combo/selection-matches-no-instructions · **200** `{created, cap_hit}` configured success, plus `deleted` when `regenerate:true` (append-only; regenerate deletes the prior `auto_generated` snapshot only after a successful run creates ≥1 event — zero-created success and `502` leave prior rows intact, `deleted` reflects the post-success removal) · **502** CLI-turn-failure (already-inserted events persist) (see "Event auto-generation" above) | `routers/events.ts` (new, auto-generate-event-logs + event-generate-menu) |
+| `POST …/events/generate` → **503** `{"detail":"Add a language model in Settings → Advanced to generate events."}` no caller route · **403** not an approved user · **409** concurrent-turn · **400** no-transcript/no-anchors/no-instructions/over-instruction-bound/malformed-body/`regenerate`+`selection` combo/selection-matches-no-instructions · **200** `{created, cap_hit}` configured success, plus `deleted` when `regenerate:true` (append-only; regenerate deletes the prior `auto_generated` snapshot only after a successful run creates ≥1 event — zero-created success and `502` leave prior rows intact, `deleted` reflects the post-success removal) · **502** turn failure, or on the AI SDK route a run stopped by the step cap or token budget (already-inserted events persist; no regenerate delete) (see "Event auto-generation" above) | `routers/events.ts` (new, auto-generate-event-logs + event-generate-menu) |
 | `GET\|POST …/audio/segments` · `POST …/segments/sync-from-disk` · range `GET …/segments/{id}` · `PUT …/waveform` | `routers/audio.py` |
 | `GET\|POST\|PATCH\|DELETE …/transcript-words` · `…/topics` (`PATCH`/`DELETE …/{id}` take an optional `version`/`overwrite`; a stale version is **409**; see "Row versions" below) | `routers/transcribe.py` |
 | `GET /api/transcript-generation/status` → **200** `{in_flight:false}` idle · **200** busy fields for the earliest-started live run in the deployment (`session_id`, `session_title`, `started_at`; the ids are null for a session the caller can't access) | `routers/transcribe.py` |
 | `…/transcript-words/generate` → **503** unconfigured · **403** not an approved user · **200** `{words}` configured (see "Transcript generation" above) | `routers/transcribe.py` |
-| `POST …/topics/generate` → **503** unconfigured · **403** not an approved user · **409** concurrent-turn · **400** no-transcript · **200** `{topics}` configured success (crash-safe replace-all) · **502** CLI-turn-failure/zero-topics (prior topics unchanged) (see "AI chat (Claude CLI)" below) | `routers/transcribe.py` |
+| `POST …/topics/generate` → **503** `{"detail":"Add a language model in Settings → Advanced to generate topics."}` no caller route · **403** not an approved user · **409** concurrent-turn · **400** no-transcript · **200** `{topics}` configured success (crash-safe replace-all) · **502** turn failure/zero-topics, or on the AI SDK route a run stopped by the step cap or token budget (prior topics unchanged) (see "AI chat (AI SDK or Claude CLI)" below) | `routers/transcribe.py` |
 | `…/transcribe.csv` → **503** | (unavailable) |
 | `POST …/local-audio-import` → **400** missing/invalid `duration_s`/empty body/missing Content-Type · **404** session · **409** rolling · **413** oversize body · **200** `{ok: true}` success (local file attach+anchor; requires `duration_s`; optional `X-Audio-Seam-Parts`; not YouTube) | `routers/sessions.py` |
 | `POST /api/shows/:showId/log-import` → **404** show/no show access · **503** unconfigured · **400** bad body · **200** `{ job_id }` configured success (public Sheets log import job; see "Google Sheets log import" above) | — |
 | `GET /api/log-import/:jobId` → **404** unknown/not-creator · **200** `{ status, lines, error }` | — |
 | `POST …/youtube-import` → **503** unconfigured · **403** not an approved user · **400** bad/non-allowlisted url · **409** concurrent-session · **200** `{ok: true}` configured success · **502** download/extract/bound/container/blob-write failure (see "YouTube audio import" above) | `routers/sessions.py` |
-| `POST …/ai/chat` → **503** unconfigured · **403** not an approved user · **200** `text/event-stream` configured (see "AI chat" below) | `routers/ai.ts` (new, ai-topics-chat) |
+| `POST …/ai/chat` `{message, claude_session_id?: string \| null, history?: [{role: "user"\|"assistant", text}]}` (`history` ≤ 40 entries, 1–8000 chars each, 64 000 total) → **503** `{"detail":"Add a language model in Settings → Advanced to use the assistant."}` no caller route · **403** not an approved user · **422** invalid body (including `history`, before any model request) or a foreign/stale `claude_session_id` on the CLI route · **409** concurrent-turn · **200** `text/event-stream` `delta`/`tool`/`done {claude_session_id}` (a string on the CLI route, `null` on the AI SDK route, which ignores the request's `claude_session_id`)/`error {detail}` (see "AI chat" below) | `routers/ai.ts` (new, ai-topics-chat) |
 | `POST …/ai/v2/design` → **503** unconfigured/credentials · **403** not an approved user · **200** `text/event-stream` configured (SSE: `delta`\|`question`\|`dashboard`\|`done`\|`error`) · `POST …/ai/v2/answer` → answer round trip, **200** `{ok:true}` (see "AI v2 dashboards" below) | `routers/aiV2.ts` (new, ai-v2-dashboards) |
 | `GET\|PUT\|DELETE …/ai/v2/dashboard` → dashboard persistence: **200** `{config}` (GET: `{config:null}` if none) \| `{ok:true}` (DELETE), **422** invalid/bounds-exceeded, **400** malformed | `routers/aiV2.ts` (new, ai-v2-dashboards) |
 | `GET …/export.csv` · `…/export.jsonl` | `routers/exports.py` / `export.py` |
 | `/api/companion/presence\|state\|log\|transport\|command\|categories\|commands/*` → auth is a session cookie or `Authorization: Bearer <Companion device token>` (the device token is honoured only under `/api/companion/*`; an unknown, revoked or expired token, a disabled user or the retired `API_TOKEN` gets **401** `{"detail":"Login required."}`); the call runs as the device's user (or the cookie user) and picks that user's own freshest presence; `POST …/presence` from a device is **403** `{"detail":"Presence is posted by the AutoLogger browser app, not by a Companion device."}` | `routers/companion.py` |
 | `GET /api/companion-devices` → **200** `{devices:[{id, name, created_at, last_used_at, expired}]}` (the caller's devices, newest first; `last_used_at` may be null; `expired` past 90 idle days) · `POST /api/companion-devices {name}` → **201** `{id, name, created_at, token}` (the `ald_…` token appears only here; only its sha256 is stored) · **422** invalid name (trimmed, 1–80 characters) · **400** NUL · **409** `{"detail":"You already have 10 Companion devices; revoke one first."}` · `DELETE /api/companion-devices/{id}` → **204** no body · **404** `{"detail":"Companion device not found."}` for an unknown id or another user's. Cookie only: **401** without a session, and a device Bearer never authenticates them | `routers/companionDevices.ts` (new, companion-devices) |
-| `GET /api/me/providers` → **200** `{llm, stt, run_features_allowed}` (each credential `{kind, provider, base_url, model, key_last4, updated_at}` or `null`; never the key) · `PUT /api/me/providers/{llm\|stt}` `{provider, base_url?, model, api_key?}` → **200** the credential (`llm` provider `openai-compatible` with `base_url`, or `anthropic`\|`openai`\|`google`; `stt` provider `deepgram`; `api_key` required for a first save or a new provider or base URL host, else kept) · **422** invalid body · **400** NUL · `DELETE /api/me/providers/{kind}` → **204** · **404** `{"detail":"Provider not set up."}` · `POST /api/me/providers/{kind}/test` → **200** `{ok, detail}` (fixed result strings) · **404** not set up · **429** `{"detail":"Too many connection tests. Try again in a minute."}` (5 per minute per user). Unknown kind → **404** `{"detail":"Not found."}`. Cookie only: **401** without a session | `routers/providers.ts` (new, byo-ai-providers) |
+| `GET /api/me/providers` → **200** `{llm, stt, run_features_allowed, claude_cli_allowed}` (each credential `{kind, provider, base_url, model, key_last4, updated_at}` or `null`; never the key; `key_last4` is `null` and `model` `"claude-cli"` for the keyless `claude-cli` row; `claude_cli_allowed` is true when the caller is on `CLAUDE_CLI_EMAILS` and `CLAUDE_CLI_PATH` is set) · `PUT /api/me/providers/{llm\|stt}` `{provider, base_url?, model, api_key?}` → **200** the credential (`llm` provider `openai-compatible` with `base_url`, or `anthropic`\|`openai`\|`google`, or exactly `{provider: "claude-cli"}` with no key, base URL or model; `stt` provider `deepgram`; `api_key` required for a first save or a new provider or base URL host, else kept) · **403** `{"detail":"The Claude CLI is limited to approved operator accounts."}` a `claude-cli` save by a caller for whom `claude_cli_allowed` is false (nothing stored) · **422** invalid body · **400** NUL · `DELETE /api/me/providers/{kind}` → **204** · **404** `{"detail":"Provider not set up."}` · `POST /api/me/providers/{kind}/test` → **200** `{ok, detail}` (fixed result strings; for the `claude-cli` row `Connected.` or `The Claude CLI isn't available to this account.`, with no outbound request) · **404** not set up · **429** `{"detail":"Too many connection tests. Try again in a minute."}` (5 per minute per user). Unknown kind → **404** `{"detail":"Not found."}`. Cookie only: **401** without a session | `routers/providers.ts` (new, byo-ai-providers) |
 | `/api/admin/users` · `/api/admin/studios` · `…/users/{id}/memberships\|disable\|enable` | `routers/admin.py` |
 | `POST /api/teams` · `GET\|PATCH\|DELETE /api/teams/{id}` | `routers/teams.ts` (new, teams-self-serve) |
 | `POST …/invites` · `DELETE …/invites/{email}` · `POST …/members/{userId}/role` · `DELETE …/members/{userId}` · `POST …/leave` · `POST …/owner` (transfer ownership, owner only: **200** `{ok: true}`) | `routers/teams.ts` (new, teams-self-serve; owner-bootstrap) |
@@ -1125,6 +1193,10 @@ only: nothing reads `server/.env`. The stacks take values from OpenBao
 | `FRAME_BUS_SECRET` | *(required)* | Signs every session frame bus message (HMAC-SHA256, at least 32 characters, server-only; set in OpenBao). `main.ts` refuses to boot without it. Rotate it by restarting every process together. |
 | `BOOTSTRAP_OWNER_EMAIL` | *(required)* | The bootstrap owner's email. A sign-in whose verified Google email matches it (trimmed, ASCII case-insensitive) becomes owner of every team with no owner. The server refuses to boot when it is blank or non-ASCII, and logs it masked (domain plus a short hash). |
 | `RUN_FEATURE_EMAILS` | *(empty = the bootstrap owner only)* | Comma-separated emails of users approved for the run features (AI chat, AI v2 design, topic and event generation, YouTube import, transcript generation); the bootstrap owner is always approved. Others get `403`. A non-ASCII entry refuses boot. See "Run features: approved users only". |
+| `CLAUDE_CLI_EMAILS` | *(empty = nobody)* | Comma-separated emails that may choose "Claude CLI (operator)" as their language model (with `CLAUDE_CLI_PATH` set); matched trimmed, ASCII case-insensitive; the bootstrap owner is not implicitly listed. Set per stack in OpenBao. See "AI chat (AI SDK or Claude CLI)". |
+| `AI_CHAT_MAX_STEPS` / `AI_CHAT_MAX_TOKENS` | `8` / `400000` | AI SDK chat turn: model steps (1–50) and the per-turn token budget. |
+| `GENERATE_MAX_STEPS` / `GENERATE_MAX_TOKENS` | `40` / `3000000` | AI SDK topic and event generation: model steps (1–100) and the per-turn token budget. |
+| `GENERATE_MAX_OUTPUT_TOKENS` | `16000` | AI SDK topic and event generation: output tokens per model step (1000–128000; out of range uses the default). Chat's is fixed at `4000`. A first request answered `400` restarts once at `4000`. The turn's response-byte cap is steps × this × 400 (256 MB at the defaults). |
 | `AI_PROVIDER` | `claude_cli` | The AI provider; `claude_cli` is the only accepted value, and any other refuses boot. It runs with no limit on runs across sessions. `AI_CHAT_MAX_CONCURRENT` is ignored (the process-wide limit is gone). |
 
 **Config-gated feature keys** (each endpoint returns a frozen `503` until its key/binary is
@@ -1132,7 +1204,8 @@ present — see the linked sections above): transcript generation runs on each u
 from Settings → Advanced (`DEEPGRAM_API_KEY` + `DEEPGRAM_MODEL` are only the development-mode
 fallback), and `PROVIDER_KEYS_SECRET` (required) encrypts those keys; `YTDLP_PATH` (or a `yt-dlp` on `PATH`) for YouTube import,
 `SHEETS_LOG_IMPORT_ENABLED` for the Google Sheets log import, and
-`CLAUDE_CLI_PATH` for AI chat / topics / event generation / v2 dashboards.
+`CLAUDE_CLI_PATH` for v2 dashboards and for the Claude CLI route of AI chat, topics and event
+generation (which otherwise run on each caller's language model from Settings → Advanced).
 
 **Typical public HTTPS-behind-a-proxy setup:** `HOST=127.0.0.1` (Node reachable only via the
 proxy), `PUBLIC_BASE_URL=https://your.domain`, `TRUST_PROXY=1`, and a

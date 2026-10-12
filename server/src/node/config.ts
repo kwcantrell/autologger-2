@@ -217,6 +217,13 @@ export function createBindings(
       // byo-ai-providers D3: production mode unless NODE_ENV is exactly development or test.
       PROVIDER_DEV_MODE: procEnv.NODE_ENV === 'development' || procEnv.NODE_ENV === 'test',
       CLAUDE_CLI_PATH: procEnv.CLAUDE_CLI_PATH || '',
+      // ai-sdk-agent-harness D1, D3: the CLI allowlist and the AI SDK turn bounds.
+      CLAUDE_CLI_EMAILS: procEnv.CLAUDE_CLI_EMAILS || '',
+      AI_CHAT_MAX_STEPS: procEnv.AI_CHAT_MAX_STEPS || '',
+      AI_CHAT_MAX_TOKENS: procEnv.AI_CHAT_MAX_TOKENS || '',
+      GENERATE_MAX_STEPS: procEnv.GENERATE_MAX_STEPS || '',
+      GENERATE_MAX_TOKENS: procEnv.GENERATE_MAX_TOKENS || '',
+      GENERATE_MAX_OUTPUT_TOKENS: procEnv.GENERATE_MAX_OUTPUT_TOKENS || '',
       AI_CHAT_TIMEOUT_SEC: procEnv.AI_CHAT_TIMEOUT_SEC || '',
       AI_PROVIDER: aiProvider,
       AI_CHAT_MAX_BUDGET_USD: procEnv.AI_CHAT_MAX_BUDGET_USD || '',
