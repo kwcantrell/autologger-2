@@ -16,7 +16,7 @@
 // Consumed by scripts/merge-session-audio.ts and (transcript generation) the
 // transcribe router; not part of the HTTP surface itself.
 
-import { mkdir, rm } from 'node:fs/promises';
+import { mkdir, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   ALL_FORMATS,
@@ -57,7 +57,22 @@ export interface MergedGroup {
 
 export interface SkippedSegment {
   path: string;
+  /** `missing`: no file at the path (a listed row without bytes; transcript generation fails the
+   * run on it, media-worker D9). `unreadable`: present but unparseable, trackless or outside the
+   * supported families (skipped, the reconciliation posture). */
+  kind: 'missing' | 'unreadable';
   reason: string;
+}
+
+/** True when `path` names no file (`ENOENT`/`ENOTDIR`); other stat errors are left to the probe. */
+async function isMissingPath(path: string): Promise<boolean> {
+  try {
+    await stat(path);
+    return false;
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    return code === 'ENOENT' || code === 'ENOTDIR';
+  }
 }
 
 export interface MergeAudioSegmentsResult {
@@ -142,21 +157,29 @@ async function probeSegment(
   path: string,
   skipped: SkippedSegment[],
 ): Promise<ProbedSegment | null> {
+  if (await isMissingPath(path)) {
+    skipped.push({ path, kind: 'missing', reason: 'blob missing from the blob store' });
+    return null;
+  }
   const input = new Input({ formats: ALL_FORMATS, source: new FilePathSource(path) });
   try {
     const track = await input.getPrimaryAudioTrack();
     if (!track) {
-      skipped.push({ path, reason: 'no audio track found' });
+      skipped.push({ path, kind: 'unreadable', reason: 'no audio track found' });
       return null;
     }
     const config = await track.getDecoderConfig();
     if (!config || !track.codec) {
-      skipped.push({ path, reason: 'unsupported or unknown codec' });
+      skipped.push({ path, kind: 'unreadable', reason: 'unsupported or unknown codec' });
       return null;
     }
     const family = classifyFamily(track.codec);
     if (!family) {
-      skipped.push({ path, reason: `unsupported codec family (${track.codec})` });
+      skipped.push({
+        path,
+        kind: 'unreadable',
+        reason: `unsupported codec family (${track.codec})`,
+      });
       return null;
     }
     const isFlac = family === 'flac';
@@ -169,7 +192,11 @@ async function probeSegment(
       totalSamples: isFlac ? flacTotalSamples(config) : null,
     };
   } catch (err) {
-    skipped.push({ path, reason: err instanceof Error ? err.message : String(err) });
+    skipped.push({
+      path,
+      kind: 'unreadable',
+      reason: err instanceof Error ? err.message : String(err),
+    });
     return null;
   } finally {
     input.dispose();
@@ -263,13 +290,18 @@ async function mergeGroup(
           if (packets !== packetsBefore) throw err;
           skipped.push({
             path: seg.path,
+            kind: 'unreadable',
             reason: err instanceof Error ? err.message : String(err),
           });
           continue;
         }
         if (packets === packetsBefore) {
           // e.g. mediabunny 1.50.8 misreads the FLAC "rate in kHz" frame-header code (12, 64 kHz)
-          skipped.push({ path: seg.path, reason: 'no audio packets could be read' });
+          skipped.push({
+            path: seg.path,
+            kind: 'unreadable',
+            reason: 'no audio packets could be read',
+          });
           continue;
         }
         segments.push({
@@ -361,6 +393,7 @@ export async function mergeAudioSegments(
       if (run.length === 1) {
         skipped.push({
           path: run[0].path,
+          kind: 'unreadable',
           reason: err instanceof Error ? err.message : String(err),
         });
         continue;
@@ -375,7 +408,11 @@ export async function mergeAudioSegments(
           if (group) groups.push(group);
           skipped.push(...oneSkipped);
         } catch (e) {
-          skipped.push({ path: seg.path, reason: e instanceof Error ? e.message : String(e) });
+          skipped.push({
+            path: seg.path,
+            kind: 'unreadable',
+            reason: e instanceof Error ? e.message : String(e),
+          });
         }
       }
     }

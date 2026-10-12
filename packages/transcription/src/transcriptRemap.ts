@@ -122,6 +122,51 @@ export interface SegmentAnchorInfo {
    * indistinguishable from `startedAtUtc: null` to every current caller.
    * Real callers (`generateTranscript.ts`) always set it explicitly. */
   startedAtUtc?: string | null;
+  /** media-worker D9: a merged segment's seams (one per original chunk) in media order — each
+   * chunk's offset in the merged file and its own `started_at_utc`. `null`/absent for a segment
+   * that was never merged, which remaps exactly as before. */
+  seams?: readonly SegmentSeam[] | null;
+}
+
+/** One original chunk inside a merged segment (media-worker D9). */
+export interface SegmentSeam {
+  /** Offset of the chunk's first sample in the merged file, seconds. */
+  offsetSec: number;
+  startedAtUtc: string | null;
+}
+
+/** The anchor-resolution key of seam `i` of the segment at `path`. Not a real path: the NUL byte
+ * cannot occur in one, so it never collides with a `SegmentOffset.path`. */
+function seamKey(path: string, i: number): string {
+  return `${path}\u0000seam:${i}`;
+}
+
+function hasSeams(info: SegmentAnchorInfo): info is SegmentAnchorInfo & {
+  seams: readonly SegmentSeam[];
+} {
+  return Array.isArray(info.seams) && info.seams.length > 0;
+}
+
+/** media-worker D9: each seam of a merged segment takes part in anchor resolution as the chunk it
+ * was (same ordinal and recording ordinal, its own `started_at_utc`), in media order, so its
+ * anchor is derived exactly as the chunk's would be. Segments without seams pass through. */
+function expandSeams(segmentInfo: SegmentAnchorInfo[]): SegmentAnchorInfo[] {
+  const out: SegmentAnchorInfo[] = [];
+  for (const info of segmentInfo) {
+    if (!hasSeams(info)) {
+      out.push(info);
+      continue;
+    }
+    info.seams.forEach((seam, i) => {
+      out.push({
+        path: seamKey(info.path, i),
+        ordinal: info.ordinal,
+        recordingOrdinal: info.recordingOrdinal,
+        startedAtUtc: seam.startedAtUtc,
+      });
+    });
+  }
+  return out;
 }
 
 export interface GroupWords {
@@ -186,7 +231,7 @@ export function remapTranscriptWords(
   anchors: RecordingStartAnchor[],
   sessionFrameRate: number,
 ): RemappedTranscriptWord[] {
-  const anchorSecondsByPath = resolveAnchors(segmentInfo, anchors);
+  const anchorSecondsByPath = resolveAnchors(expandSeams(segmentInfo), anchors);
   const infoByPath = new Map(segmentInfo.map((s) => [s.path, s]));
 
   interface Placed {
@@ -262,7 +307,7 @@ export function remapTranscriptEnrichment(
   segmentInfo: SegmentAnchorInfo[],
   anchors: RecordingStartAnchor[],
 ): { paragraphs: RemappedParagraph[]; sentiment: RemappedSentimentSegment[] } {
-  const anchorSecondsByPath = resolveAnchors(segmentInfo, anchors);
+  const anchorSecondsByPath = resolveAnchors(expandSeams(segmentInfo), anchors);
   const infoByPath = new Map(segmentInfo.map((s) => [s.path, s]));
 
   interface PlacedParagraph {
@@ -441,13 +486,28 @@ function resolveGroupInterval(
 ): { startSec: number | null; endSec: number | null; info: SegmentAnchorInfo | null } {
   const seg = segmentForOffset(segs, startT);
   const info = seg ? (infoByPath.get(seg.path) ?? null) : null;
-  const anchorSeconds = info ? (anchorSecondsByPath.get(info.path) ?? null) : null;
-  if (anchorSeconds === null || !seg) {
+  if (!seg || !info) return { startSec: null, endSec: null, info };
+  // Within the segment, the owning unit is the whole segment, or for a merged segment the last
+  // seam starting at/before `startT` (media-worker D9); `endT` stays on the same unit.
+  let unitKey = info.path;
+  let unitStart = seg.offsetSeconds;
+  if (hasSeams(info)) {
+    const within = startT - seg.offsetSeconds;
+    let k = 0;
+    for (let i = 0; i < info.seams.length; i += 1) {
+      if (info.seams[i].offsetSec <= within + 1e-6) k = i;
+      else break;
+    }
+    unitKey = seamKey(info.path, k);
+    unitStart = seg.offsetSeconds + info.seams[k].offsetSec;
+  }
+  const anchorSeconds = anchorSecondsByPath.get(unitKey) ?? null;
+  if (anchorSeconds === null) {
     return { startSec: null, endSec: null, info };
   }
   return {
-    startSec: anchorSeconds + (startT - seg.offsetSeconds),
-    endSec: anchorSeconds + (endT - seg.offsetSeconds),
+    startSec: anchorSeconds + (startT - unitStart),
+    endSec: anchorSeconds + (endT - unitStart),
     info,
   };
 }

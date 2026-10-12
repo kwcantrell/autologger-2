@@ -5,6 +5,7 @@ import { mkdtemp, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { BlobStore } from '@autologger/ports';
 import {
+  type AudioSegmentMeta,
   holdRunLease,
   type RunLeaseHold,
   type SessionHubFacade,
@@ -15,7 +16,7 @@ import { mergeAudioSegments } from './audioMerge';
 import type { TranscribeGroupResult } from './deepgram';
 import { DeepgramUpstreamError, transcribeGroup } from './deepgram';
 import { generationInFlightDetail, transcriptGenerationLock } from './transcriptGenerationLock';
-import type { EnrichmentGroup, SegmentAnchorInfo } from './transcriptRemap';
+import type { EnrichmentGroup, SegmentAnchorInfo, SegmentSeam } from './transcriptRemap';
 import {
   recordingStartAnchors,
   remapTranscriptEnrichment,
@@ -38,6 +39,12 @@ export const ALL_UNREADABLE_DETAIL =
 export const NO_SPEECH_DETAIL =
   "DeepGram detected no speech in this session's audio; the existing transcript was left unchanged.";
 export const UPSTREAM_FAILURE_DETAIL = 'DeepGram transcription failed or timed out.';
+/** media-worker D9: a listed segment without bytes fails the run (502) instead of being skipped. */
+export const MISSING_BLOB_DETAIL_PREFIX = "This session's audio is being replaced or restored";
+
+function missingBlobDetail(segmentIds: readonly string[]): string {
+  return `${MISSING_BLOB_DETAIL_PREFIX}: segment ${segmentIds.join(', ')} has no audio file; try again shortly.`;
+}
 
 export class TranscriptGenerateError extends Error {
   constructor(
@@ -48,7 +55,8 @@ export class TranscriptGenerateError extends Error {
       | 'unreadable'
       | 'no_speech'
       | 'upstream'
-      | 'oversize',
+      | 'oversize'
+      | 'missing_blob',
     message: string,
     /** in_flight only: the session whose identifiers `message` names (always the requested one). */
     readonly holderSessionId?: string,
@@ -105,6 +113,21 @@ async function inFlightError(
   return new TranscriptGenerateError('in_flight', detail, deps.sessionId);
 }
 
+/** The dict-shaped seam a merged segment's metadata carries (media-worker D16). */
+interface SegmentMetaSeam {
+  offset_ms: number;
+  started_at_utc: string | null;
+}
+
+/** `AudioSegmentMeta.seams` (media-worker B.2) as the remap's seconds-based seams; `null` when the
+ * segment was never merged. Read structurally so a metadata row without the field is a segment
+ * without seams. */
+function segmentSeams(s: AudioSegmentMeta): SegmentSeam[] | null {
+  const seams = (s as AudioSegmentMeta & { seams?: readonly SegmentMetaSeam[] | null }).seams;
+  if (!Array.isArray(seams) || seams.length === 0) return null;
+  return seams.map((x) => ({ offsetSec: x.offset_ms / 1000, startedAtUtc: x.started_at_utc }));
+}
+
 /** Run DeepGram transcription and atomically replace session words. */
 export async function generateTranscriptWords(
   deps: GenerateTranscriptDeps,
@@ -149,7 +172,14 @@ export async function generateTranscriptWords(
     scratchDir = await mkdtemp(join(blobStore.scratchRoot(), `${deps.sessionId}-`));
     const inputPaths = segments.map((s) => blobStore.resolveKeyPath(s.r2_key));
 
-    const { groups } = await mergeAudioSegments(inputPaths, scratchDir);
+    const { groups, skipped } = await mergeAudioSegments(inputPaths, scratchDir);
+    // media-worker D9: once the worker swaps rows in one transaction, a listed row without bytes
+    // is a restore in progress or a bug; skipping it would leave a silent hole in the transcript.
+    const missingPaths = new Set(skipped.filter((x) => x.kind === 'missing').map((x) => x.path));
+    if (missingPaths.size > 0) {
+      const ids = segments.filter((_, i) => missingPaths.has(inputPaths[i])).map((s) => s.id);
+      throw new TranscriptGenerateError('missing_blob', missingBlobDetail(ids));
+    }
     if (groups.length === 0) {
       throw new TranscriptGenerateError('unreadable', ALL_UNREADABLE_DETAIL);
     }
@@ -205,6 +235,8 @@ export async function generateTranscriptWords(
       // consumes it as of task 3.2 to compute each member's anchor as
       // `A + max(0, (startedAtUtc - eventWallTimeUtc) / 1000)`.
       startedAtUtc: s.started_at_utc,
+      // media-worker D9: a merged segment's seams, so each chunk's words keep their own anchor.
+      seams: segmentSeams(s),
     }));
     // The anchors read, the remap and the replace are one hub transaction (async-session-hub
     // design D7, S9), so the words are remapped against the anchors the replace commits with. A

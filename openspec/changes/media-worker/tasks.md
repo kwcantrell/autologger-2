@@ -427,6 +427,29 @@ environments" ("Dev, stage and prod compared"). No other README section is touch
   The new error code `missing_blob` needs `server/src/routers/transcribe.ts` `mapGenerateError`
   to map it to `502` (today unknown codes map to `400`; file not in D's ownership). `seams` are
   read structurally from `AudioSegmentMeta` as `{offset_ms, started_at_utc}[]` until B.2 types it.
+- [x] D.6 Follow-up (coordinator, 2026-10-12). **Ownership extension, recorded for the
+  consistency read:** D also owns `web/src/pages/index/components/AudioPlayer.tsx` (+ tests) and
+  `web/src/shared/utils/waveformMerge.ts` (+ tests). Test first: `AudioPlayer.seams.test.tsx`
+  (a seek into the third seam of a merged segment lands at that seam's media time; playback runs
+  through the seams on one element without a reload or `src` change, the playhead following each
+  seam's wall-clock position so the rollover gap is never played twice; a plain segment
+  unchanged) and `runner.parts.test.ts`/`uploads.test.ts` additions (the importer remembers the
+  session it created for a parts upload for 30 days; after the 24 h upload memory expired, a
+  re-run resumes with a fresh upload into that session only while it has no segments; a matching
+  session it did not create, or one with audio, is still skipped). Then `AudioPlayer.tsx` (seek
+  by `target.offsetSec + clipMediaOffsetSec(clip)`, playhead by `timelineSecAtMediaPosition`),
+  `audioClips.ts` (`timelineSecAtMediaPosition`), `uploads.ts` (`createIdbImportSessionMemory`,
+  `find/remember/forgetImportSession`), `runner.ts`. `waveformMerge.ts` needed no change
+  (`seamClipPeaks` re-keys seam clips before the merge).
+  Evidence: red `cd web && npx vitest run src/pages/index/components/AudioPlayer.seams.test.tsx`
+  → `2 failed | 1 passed` (`expected 15.420000000000002 to be close to 75.42`; `expected 45 to be
+  close to 45.03`); `runner.parts.test.ts` → `2 failed | 10 passed`; `uploads.test.ts` →
+  `createIdbImportSessionMemory is not a function`. Green: `npx vitest run src/pages/index/
+  components/AudioPlayer src/shared/utils …` → `17 passed (297 tests)`; `npx vitest run
+  src/pages/index/batchImport/ src/api/uploads.test.ts` → `Test Files 5 passed, Tests 66 passed`;
+  full `npx vitest run` → `4 failed | 2085 passed`, the 4 being the two B.3 fixture checks, the
+  B.4 upload sites in `apiResponseShapes.repo.test.ts`, and A's `noBrowserDialogs` hit in
+  `chunkUploadQueue.ts`; biome clean, tsc clean for D's files.
 - [ ] D.5 Suites: `cd web && npx vitest run`, `cd packages/transcription && npx vitest run`,
   `npm run typecheck`.
 
