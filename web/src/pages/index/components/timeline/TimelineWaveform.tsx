@@ -25,10 +25,15 @@ const WAVEFORM_PROGRESS =
   'timelineWaveformProgress [fill:var(--tx-wave-progress)] stroke-none [transition:fill_var(--tx-dur)_var(--tx-ease)] motion-reduce:transition-none';
 const WAVEFORM_DECODING_LABEL =
   'absolute inset-0 flex items-center justify-center pointer-events-none z-[2] text-[2rem] font-medium tracking-[0.06em] uppercase text-[rgba(229,238,252,0.42)] animate-wf-label-pulse motion-reduce:animate-none motion-reduce:opacity-85';
+// Same slot as the decoding label, quieter: static, smaller, dimmer.
+const WAVEFORM_UNAVAILABLE_LABEL =
+  'absolute inset-0 flex items-center justify-center pointer-events-none z-[2] text-[1rem] font-medium tracking-[0.06em] uppercase text-[rgba(229,238,252,0.28)]';
 
 interface Props {
   mergedPeaks: Float32Array | null;
   isDecoding?: boolean;
+  /** Decoding finished and at least one segment has no peaks (failed or skipped). */
+  unavailable?: boolean;
   activeSec: number;
   totalSec: number;
   clips: AudioClipLite[];
@@ -52,7 +57,14 @@ function WaveformDefs({ progRect }: { progRect: WaveformProgressRect | null }) {
   );
 }
 
-export function TimelineWaveform({ mergedPeaks, isDecoding, activeSec, totalSec, clips }: Props) {
+export function TimelineWaveform({
+  mergedPeaks,
+  isDecoding,
+  unavailable,
+  activeSec,
+  totalSec,
+  clips,
+}: Props) {
   const { w, pathD } = useMemo(() => waveformSvgSpec(mergedPeaks), [mergedPeaks]);
   const progRect = useMemo(() => {
     if (!mergedPeaks || mergedPeaks.length === 0) return null;
@@ -64,9 +76,14 @@ export function TimelineWaveform({ mergedPeaks, isDecoding, activeSec, totalSec,
     return (
       <div className={WAVEFORMS} id="timeline-waveforms" aria-hidden={true}>
         <div className={WAVEFORM_FULL} aria-hidden={true} />
-        {clips.length > 0 && (
+        {clips.length > 0 && isDecoding && (
           <div className={WAVEFORM_DECODING_LABEL} aria-hidden={true}>
             Generating waveform…
+          </div>
+        )}
+        {clips.length > 0 && !isDecoding && unavailable && (
+          <div className={WAVEFORM_UNAVAILABLE_LABEL} aria-hidden={true}>
+            Waveform unavailable
           </div>
         )}
       </div>

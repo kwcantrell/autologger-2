@@ -243,6 +243,7 @@ interface Props {
   totalSec: number;
   mergedPeaks: Float32Array | null;
   isWaveformDecoding?: boolean;
+  waveformUnavailable?: boolean;
   audioPlaybackSec: number | null;
   onSeekAudio: (sec: number) => void;
   /**
@@ -266,6 +267,7 @@ export function Timeline({
   totalSec,
   mergedPeaks,
   isWaveformDecoding,
+  waveformUnavailable,
   audioPlaybackSec,
   onSeekAudio,
   stripOnly,
@@ -929,6 +931,7 @@ export function Timeline({
                               <TimelineWaveform
                                 mergedPeaks={mergedPeaks}
                                 isDecoding={isWaveformDecoding ?? false}
+                                unavailable={waveformUnavailable ?? false}
                                 activeSec={activeSec}
                                 totalSec={totalSec}
                                 clips={audioClips}

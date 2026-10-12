@@ -26,6 +26,54 @@ export function computeDbPeaks01(
   return peaks;
 }
 
+/**
+ * Largest segment file (bytes) we download and decodeAudioData in the browser. Decoding costs about
+ * duration x sampleRate x channels x 4 bytes of PCM (a 1.3 GB WAV is several GB), so bigger files
+ * are skipped and shown as "Waveform unavailable" until the server backfills peaks.
+ * The size comes from the response `Content-Length`, checked before the body is read; if it is
+ * absent the body is streamed and cancelled as soon as the cap is passed.
+ */
+export const WAVEFORM_DECODE_MAX_BYTES = 200 * 1024 * 1024;
+
+export class WaveformTooLargeError extends Error {
+  constructor(bytes: number) {
+    super(
+      `Waveform decode skipped: file is over the ${WAVEFORM_DECODE_MAX_BYTES} byte cap (${bytes})`,
+    );
+    this.name = 'WaveformTooLargeError';
+  }
+}
+
+async function readBodyWithinCap(res: Response): Promise<ArrayBuffer> {
+  const declared = Number(res.headers.get('content-length'));
+  if (Number.isFinite(declared) && declared > WAVEFORM_DECODE_MAX_BYTES) {
+    await res.body?.cancel().catch(() => undefined);
+    throw new WaveformTooLargeError(declared);
+  }
+  if (Number.isFinite(declared) && declared > 0) return res.arrayBuffer();
+  const reader = res.body?.getReader();
+  if (!reader) return res.arrayBuffer();
+  const parts: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > WAVEFORM_DECODE_MAX_BYTES) {
+      await reader.cancel().catch(() => undefined);
+      throw new WaveformTooLargeError(total);
+    }
+    parts.push(value);
+  }
+  const out = new Uint8Array(total);
+  let off = 0;
+  for (const part of parts) {
+    out.set(part, off);
+    off += part.byteLength;
+  }
+  return out.buffer;
+}
+
 export async function fetchAndDecodeWaveformPeaks(
   url: string,
   audioContext: AudioContext,
@@ -34,7 +82,7 @@ export async function fetchAndDecodeWaveformPeaks(
   const { bucketCount = 800, dbFloor = -48, signal } = opts;
   const res = await fetch(url, { credentials: 'include', mode: 'cors', signal });
   if (!res.ok) throw new Error(`Waveform fetch ${res.status}`);
-  const ab = await res.arrayBuffer();
+  const ab = await readBodyWithinCap(res);
   return decodeWaveformPeaksFromArrayBuffer(ab, audioContext, { bucketCount, dbFloor });
 }
 
