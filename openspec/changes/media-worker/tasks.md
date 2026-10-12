@@ -615,6 +615,19 @@ environments" ("Dev, stage and prod compared"). No other README section is touch
   drain-failure test now uses 404, and banner tests that meant "failed" use a permanent status);
   `cd web && npx vitest run` `Test Files 161 passed (161)`, `Tests 2172 passed (2172)`, no
   unhandled errors; `npx tsc --noEmit -p .` clean; biome clean on the touched files.
+- [x] A.10 No self-contention on a chunk's own lock (owner's VM: the rescue banner flashed at every
+  rollover). `own()` started `holdChunk` without awaiting, so the rollover's immediate pump took the
+  per-attempt `withChunkLock` path, lost to this tab's own pending hold, and set "Another tab is
+  uploading this chunk." Now each record tracks its pending hold (`holding`); an attempt awaits it
+  first and, when another tab refused the hold, asks once more before treating the chunk as
+  contended. Contention is logged (`report(…, 'lock contention')`) and is not a failure: no
+  `lastError`, so the banner's `hasFailed` stays false (unchanged); it is retried on the backoff
+  through the ambiguous path. `withChunkLock` remains only where no hold was attempted.
+  Evidence: red `npx vitest run src/pages/index/utils/chunkUploadQueue.test.ts` `Tests 2 failed |
+  72 passed (74)` (immediate pump after enqueue did not upload; a genuinely contended chunk was not
+  logged and carried a `lastError`); green `Tests 74 passed (74)`; queue + recorder + banner + locks
+  `Tests 172 passed (172)`; `cd web && npx vitest run` `Test Files 162 passed (162)`, `Tests 2176
+  passed (2176)`, no unhandled errors; `npx tsc --noEmit -p .` clean; biome clean.
 - [ ] A.7 Suites: `cd web && npx vitest run`, `npm run typecheck -w web`, `npm run lint -w web`;
   manual checklist in dev on Chromium and Firefox (and Safari if available): kill the tab at
   2.5 cadences → reload → recovered chunks upload → finalize → one merged segment appears with

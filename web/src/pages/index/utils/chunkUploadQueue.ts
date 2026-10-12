@@ -226,6 +226,10 @@ interface InternalChunk extends QueuedChunk {
   seq: number;
   /** Releases the chunk lock this queue holds while it owns the chunk (A.8). */
   releaseLock: (() => void) | null;
+  /** The chunk-lock hold `own()` started and has not settled yet (A.10). */
+  holding: Promise<void> | null;
+  /** A hold was attempted and another tab held the lock. */
+  holdRefused: boolean;
   /** A recovered partial chunk whose end is measured from its bytes before its first upload. */
   measure: ChunkManifest | null;
 }
@@ -375,14 +379,34 @@ export function createChunkUploadQueue(deps: ChunkUploadQueueDeps) {
     if (locks?.mode !== 'locks' || !record.storeId) return;
     const p = locks.holdChunk(record.storeId).then((release) => {
       if (!release) {
-        record.ambiguous = true;
+        record.holdRefused = true;
         return;
       }
       if (chunks.includes(record)) record.releaseLock = release;
       else release();
     });
+    record.holding = p;
     owning.add(p);
-    void p.finally(() => owning.delete(p));
+    void p.finally(() => {
+      owning.delete(p);
+      if (record.holding === p) record.holding = null;
+    });
+  }
+
+  /**
+   * Before an attempt (A.10): wait for this queue's own pending hold — the rollover pumps right
+   * after the enqueue — and, when another tab held the lock, ask once more. False: another tab
+   * still owns the chunk.
+   */
+  async function ensureOwned(head: InternalChunk): Promise<boolean> {
+    if (head.holding) await head.holding;
+    if (!head.holdRefused || !head.storeId || !deps.locks) return true;
+    const release = await deps.locks.holdChunk(head.storeId);
+    if (!release) return false;
+    head.holdRefused = false;
+    if (chunks.includes(head)) head.releaseLock = release;
+    else release();
+    return true;
   }
 
   function disown(record: InternalChunk): void {
@@ -446,6 +470,8 @@ export function createChunkUploadQueue(deps: ChunkUploadQueueDeps) {
       seq,
       measure: null,
       releaseLock: null,
+      holding: null,
+      holdRefused: false,
     };
     record.measure = flags.measure ?? null;
     chunks.push(record);
@@ -548,6 +574,7 @@ export function createChunkUploadQueue(deps: ChunkUploadQueueDeps) {
   /** One attempt for `head` under its chunk lock. */
   async function attempt(head: InternalChunk): Promise<Step> {
     head.retryOnce = false;
+    if (!(await ensureOwned(head))) return contended(head);
     if (head.ambiguous) {
       const result = await resolveAmbiguous(head);
       if (result === 'confirmed') {
@@ -651,13 +678,21 @@ export function createChunkUploadQueue(deps: ChunkUploadQueueDeps) {
       return onFailure(head, outcome.status, outcome.message);
     };
 
-    // The queue already holds this chunk's lock for its whole stay (locks are not re-entrant).
+    // The queue already holds this chunk's lock for its whole stay (locks are not re-entrant);
+    // a per-attempt lock only where no hold was attempted (a chunk without a store entry).
     if (!deps.locks || head.releaseLock) return run();
     const locked = await deps.locks.withChunkLock(head.storeId ?? head.key, run);
     if (locked.acquired) return locked.value;
-    // Another tab is uploading this chunk: check the segments list later instead.
+    return contended(head);
+  }
+
+  /**
+   * Another tab owns this chunk: check the segments list later instead. Not a failure, so no
+   * `lastError` (the rescue surface does not show it); logged in development builds (A.10).
+   */
+  function contended(head: InternalChunk): Step {
+    report(head, 'lock contention', undefined, 'another tab holds this chunk');
     head.ambiguous = true;
-    head.lastError = 'Another tab is uploading this chunk.';
     scheduleRetry(head);
     return 'stop';
   }

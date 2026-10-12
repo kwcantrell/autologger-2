@@ -1773,3 +1773,84 @@ describe('A.9: dev diagnostics on a failed attempt', () => {
     for (const l of lines) expect(l).not.toMatch(/Blob|\[object/);
   });
 });
+
+describe('A.10: the queue never contends with its own pending chunk-lock hold', () => {
+  const START = Date.parse('2026-10-12T10:00:00.000Z');
+  async function stored(s: ChunkStore) {
+    const h = await s.openChunk({
+      userId: 'u',
+      sessionId: 'sess-1',
+      recordingOrdinal: 1,
+      chunkIndex: 0,
+      startedAtUtc: new Date(START).toISOString(),
+      mimeType: 'audio/webm',
+    });
+    await s.append(h, new Blob([new Uint8Array(3)]));
+    await s.finalize(h, new Date(START + 1).toISOString());
+    return h;
+  }
+  const input = (id: string): ChunkInput => ({
+    sessionId: 'sess-1',
+    recordingOrdinal: 1,
+    chunkIndex: 0,
+    startedAtUtc: new Date(START).toISOString(),
+    endedAtUtc: new Date(START + 1).toISOString(),
+    mimeType: 'audio/webm',
+    storeId: id,
+    userId: 'u',
+    bytes: 3,
+  });
+
+  it('enqueue + immediate pump (the rollover) uploads on the first pump with no error shown', async () => {
+    const s = createChunkStore({ backends: [() => createMemoryBackend()] });
+    const reg = new FakeLockRegistry();
+    const h = await stored(s);
+    const upload = vi.fn(async (c: ChunkInput) => okFor(c));
+    const debug = vi.fn();
+    const q = createChunkUploadQueue({
+      upload,
+      listSegments: vi.fn(async () => []),
+      clock: { now: () => 0 },
+      store: s,
+      locks: createRecorderLocks({ locks: reg.tab(), now: () => 0 }),
+      debug,
+    });
+    const errors: Array<string | null> = [];
+    q.subscribe((snap) => {
+      for (const c of snap.chunks) errors.push(c.lastError);
+    });
+    q.enqueue(input(h.id));
+    await q.pump(); // no whenOwned(): the hold is still pending here
+    expect(upload).toHaveBeenCalledTimes(1);
+    expect(errors.every((e) => e === null)).toBe(true);
+    expect(q.getSnapshot().chunks).toEqual([]);
+    expect(debug).not.toHaveBeenCalled();
+    expect(reg.heldNames()).toEqual([]);
+  });
+
+  it('a lock genuinely held by another tab takes the ambiguous path, is logged, and is not shown as failed', async () => {
+    const s = createChunkStore({ backends: [() => createMemoryBackend()] });
+    const reg = new FakeLockRegistry();
+    const h = await stored(s);
+    const otherTab = createRecorderLocks({ locks: reg.tab(), now: () => 0 });
+    const release = await otherTab.holdChunk(h.id);
+    const upload = vi.fn(async (c: ChunkInput) => okFor(c));
+    const debug = vi.fn();
+    const q = createChunkUploadQueue({
+      upload,
+      listSegments: vi.fn(async () => []),
+      clock: { now: () => 0 },
+      store: s,
+      locks: createRecorderLocks({ locks: reg.tab(), now: () => 0 }),
+      debug,
+    });
+    q.enqueue(input(h.id));
+    await q.pump();
+    expect(upload).not.toHaveBeenCalled();
+    expect(debug.mock.calls.map(([m]) => String(m)).join('\n')).toMatch(/lock contention/);
+    const [c] = q.getSnapshot().chunks;
+    expect(c.lastError).toBeNull(); // contention is not a failure (A.10)
+    expect(c.nextAttemptAt).not.toBeNull();
+    release?.();
+  });
+});
