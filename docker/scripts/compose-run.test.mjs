@@ -872,7 +872,7 @@ describe('provider keys secret (byo-ai-providers D2)', () => {
 
 // ai-sdk-agent-harness: the CLI allowlist and the AI SDK turn limits come from the OpenBao secret.
 describe('AI SDK harness keys (ai-sdk-agent-harness)', () => {
-  const AI_KEYS = { CLAUDE_CLI_EMAILS: 'owner@example.com, b@example.com', AI_CHAT_MAX_STEPS: '8', AI_CHAT_MAX_TOKENS: '400000', GENERATE_MAX_STEPS: '40', GENERATE_MAX_TOKENS: '3000000' };
+  const AI_KEYS = { CLAUDE_CLI_EMAILS: 'owner@example.com, b@example.com', AI_CHAT_MAX_STEPS: '8', AI_CHAT_MAX_TOKENS: '400000', GENERATE_MAX_STEPS: '40', GENERATE_MAX_TOKENS: '3000000', GENERATE_MAX_OUTPUT_TOKENS: '16000' };
   it('are accepted from the OpenBao secret in every stack', () => {
     for (const env of ['dev', 'stage', 'prod']) {
       const got = validateSecrets(kv(Object.entries(AI_KEYS)), allowedNames(env));

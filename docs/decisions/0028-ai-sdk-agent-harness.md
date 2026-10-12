@@ -38,7 +38,9 @@ facts shaped the choice:
   pinned DNS lookup and, in production mode, the blocked address ranges; forces
   `redirect: "manual"` (Node would carry `x-api-key` across origins); waits at most 120 s for
   headers; and caps a turn at 60 requests, 4 MB per request body, 48 MB of request bodies and
-  64 MB of response bytes. Nothing from a request or response is logged.
+  steps × output tokens per step × 400 response bytes (12.8 MB chat, 256 MB generation at the
+  defaults; amendment 2026-10-12, replacing a fixed 64 MB). Nothing from a request or response is
+  logged.
 - **The Claude CLI is kept for an allowlist.** A user picks "Claude CLI (operator)" in Settings,
   stored as a keyless `claude-cli` `llm` row. It runs only while `CLAUDE_CLI_PATH` is set and the
   caller is on `CLAUDE_CLI_EMAILS` (an OpenBao key). The bootstrap owner is not implicitly listed,

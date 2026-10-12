@@ -297,15 +297,18 @@ credential's fixed host (`api.anthropic.com`, `api.openai.com`,
 `generativelanguage.googleapis.com`) or saved OpenAI-compatible origin, on the provider's path;
 DNS is pinned and, in production, private, loopback and link-local addresses are refused per
 connection; redirects are never followed; a 120 s wait for response headers; and per turn at most
-60 requests, 4 MB per request body, 48 MB of request bodies and 64 MB of responses. OpenAI requests
+60 requests, 4 MB per request body, 48 MB of request bodies, and response bytes of steps × output
+tokens per step × 400 (12.8 MB for chat, 256 MB for generation at the defaults). OpenAI requests
 carry `store: false`, so OpenAI does not retain the prompt. Provider errors are classified to the
 fixed `upstream-failed` and never logged or forwarded (they carry the whole prompt).
 
 **Spend bounds on the AI SDK route** (the user pays their own provider): a step cap
-(`AI_CHAT_MAX_STEPS`, default `8`; `GENERATE_MAX_STEPS`, default `40`), a per-turn token budget
+(`AI_CHAT_MAX_STEPS`, default `8`, valid 1–50; `GENERATE_MAX_STEPS`, default `40`, valid 1–100), a per-turn token budget
 (`AI_CHAT_MAX_TOKENS`, default `400000`; `GENERATE_MAX_TOKENS`, default `3000000`; a provider that
-reports no usage is counted at request plus response bytes ÷ 4), `4000` output tokens per step, `2`
-retries per request, 16 tool calls per step (more get a tool error) and 32 (chat) or 300
+reports no usage is counted at request plus response bytes ÷ 4), output tokens per step (`4000`
+for chat; `GENERATE_MAX_OUTPUT_TOKENS`, default `16000`, for generation, and a generation whose
+first request is answered `400` restarts once at `4000`, logged as `(output-cap fallback 4000)`),
+the response-byte cap above, `2` retries per request, 16 tool calls per step (more get a tool error) and 32 (chat) or 300
 (generation) per turn (more end the turn), one tool body at a time, and the route's existing
 timeout. A chat turn stopped by the step cap or budget ends `done` with the text so far; a
 generation run stopped that way fails with its `502`, leaving prior topics or events untouched.
@@ -542,8 +545,8 @@ same full transcript at generation density:
 timeout backstop) — see `server/.env.example`. Concurrency exposure is bounded together
 with the other paid AI features by the shared per-session slot and the approved users; there is
 no limit across sessions on `AI_PROVIDER=claude_cli`. The budget and timeout knobs above apply
-to the CLI route; the AI SDK route uses `GENERATE_MAX_STEPS` / `GENERATE_MAX_TOKENS` and the same
-timeout.
+to the CLI route; the AI SDK route uses `GENERATE_MAX_STEPS` / `GENERATE_MAX_TOKENS` /
+`GENERATE_MAX_OUTPUT_TOKENS` and the same timeout.
 
 ### AI v2 dashboards
 
@@ -1191,8 +1194,9 @@ only: nothing reads `server/.env`. The stacks take values from OpenBao
 | `BOOTSTRAP_OWNER_EMAIL` | *(required)* | The bootstrap owner's email. A sign-in whose verified Google email matches it (trimmed, ASCII case-insensitive) becomes owner of every team with no owner. The server refuses to boot when it is blank or non-ASCII, and logs it masked (domain plus a short hash). |
 | `RUN_FEATURE_EMAILS` | *(empty = the bootstrap owner only)* | Comma-separated emails of users approved for the run features (AI chat, AI v2 design, topic and event generation, YouTube import, transcript generation); the bootstrap owner is always approved. Others get `403`. A non-ASCII entry refuses boot. See "Run features: approved users only". |
 | `CLAUDE_CLI_EMAILS` | *(empty = nobody)* | Comma-separated emails that may choose "Claude CLI (operator)" as their language model (with `CLAUDE_CLI_PATH` set); matched trimmed, ASCII case-insensitive; the bootstrap owner is not implicitly listed. Set per stack in OpenBao. See "AI chat (AI SDK or Claude CLI)". |
-| `AI_CHAT_MAX_STEPS` / `AI_CHAT_MAX_TOKENS` | `8` / `400000` | AI SDK chat turn: model steps and the per-turn token budget. |
-| `GENERATE_MAX_STEPS` / `GENERATE_MAX_TOKENS` | `40` / `3000000` | AI SDK topic and event generation: model steps and the per-turn token budget. |
+| `AI_CHAT_MAX_STEPS` / `AI_CHAT_MAX_TOKENS` | `8` / `400000` | AI SDK chat turn: model steps (1–50) and the per-turn token budget. |
+| `GENERATE_MAX_STEPS` / `GENERATE_MAX_TOKENS` | `40` / `3000000` | AI SDK topic and event generation: model steps (1–100) and the per-turn token budget. |
+| `GENERATE_MAX_OUTPUT_TOKENS` | `16000` | AI SDK topic and event generation: output tokens per model step (1000–128000; out of range uses the default). Chat's is fixed at `4000`. A first request answered `400` restarts once at `4000`. The turn's response-byte cap is steps × this × 400 (256 MB at the defaults). |
 | `AI_PROVIDER` | `claude_cli` | The AI provider; `claude_cli` is the only accepted value, and any other refuses boot. It runs with no limit on runs across sessions. `AI_CHAT_MAX_CONCURRENT` is ignored (the process-wide limit is gone). |
 
 **Config-gated feature keys** (each endpoint returns a frozen `503` until its key/binary is

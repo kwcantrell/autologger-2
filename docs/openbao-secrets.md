@@ -150,8 +150,12 @@ Other rules:
 - **The AI SDK turn limits are optional** (ai-sdk-agent-harness). `AI_CHAT_MAX_STEPS` and
   `AI_CHAT_MAX_TOKENS` (defaults 8 and 400000) cap one chat turn's model steps and tokens;
   `GENERATE_MAX_STEPS` and `GENERATE_MAX_TOKENS` (defaults 40 and 3000000) cap one topic or event
-  generation. Each is a positive integer; anything else falls back to the default. The caller's
-  own provider key pays, so these are per-turn caps, not a deployment-wide ceiling.
+  generation, and `GENERATE_MAX_OUTPUT_TOKENS` (default 16000) its output tokens per model step
+  (chat's stays 4000). Each is a positive integer, and `AI_CHAT_MAX_STEPS` must be 1–50,
+  `GENERATE_MAX_STEPS` 1–100 and `GENERATE_MAX_OUTPUT_TOKENS` 1000–128000; anything else falls
+  back to the default. A turn's response bytes are capped at steps × output tokens × 400, from
+  these validated values. The caller's own provider key pays, so these are per-turn caps, not a
+  deployment-wide ceiling.
 - **Never reuse prod secrets in dev or stage.** Use separate, low-limit keys and separate OAuth
   clients.
 - **Ports are set in OpenBao.** `DEV_PORT=9000 make dev-up` does not override them, because the

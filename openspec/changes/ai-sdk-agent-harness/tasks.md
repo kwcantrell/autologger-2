@@ -381,9 +381,11 @@ The integration tests point SDK routes at a local fake provider through a dev-mo
   finding nothing.
 - [ ] 9.6 Run `GITHUB_BASE_REF=supabase-migration scripts/check-change.sh --stage hook`, then the
   consistency read, then CI green on the PR.
-- [ ] 9.7 Allowlist `GENERATE_MAX_OUTPUT_TOKENS` (amendment 2026-10-12): test first in
+- [x] 9.7 Allowlist `GENERATE_MAX_OUTPUT_TOKENS` (amendment 2026-10-12): test first in
   `docker/scripts/compose-run.test.mjs`, then `docker/secrets-env.yaml`, `server/.env.example`,
   `docker/.env.example`, `docs/openbao-secrets.md`, and the README AI bounds (generation output
   per step, and the derived response cap). Verified by `node --test
   docker/scripts/compose-run.test.mjs` green, and `grep -c GENERATE_MAX_OUTPUT_TOKENS` ≥ 1 in each
   file.
+  - Evidence: red, `GENERATE_MAX_OUTPUT_TOKENS: '16000'` joins the 9.1 key set in `docker/scripts/compose-run.test.mjs` (a test created earlier in this change, extended to the amended allowlist): `node --test --test-name-pattern="AI SDK harness" docker/scripts/compose-run.test.mjs` -> `✖ are accepted from the OpenBao secret in every stack`, `✖ a dev run passes them to compose` (`refusing the OpenBao secret: GENERATE_MAX_OUTPUT_TOKENS [not-allowed]`), `ℹ tests 2`, `ℹ fail 2` (log `sdk-9.7-red.log`). Green, `node --test docker/scripts/compose-run.test.mjs` -> `ℹ tests 80`, `ℹ pass 80`, `ℹ fail 0`; `sh docker/scripts/check-envs.sh dev|stage|prod` -> `check-envs: ok` for each; `grep -c GENERATE_MAX_OUTPUT_TOKENS` -> `docker/secrets-env.yaml 1`, `server/.env.example 2`, `docker/.env.example 1`, `docs/openbao-secrets.md 2`, `README.md 3` (log `sdk-9.7-green.log`).
+  - Evidence: `docker/secrets-env.yaml` gains the null passthrough beside the other limits; `server/.env.example` sets `GENERATE_MAX_OUTPUT_TOKENS=16000` and its comment gives every limit's range, the fixed chat 4000, the one restart at 4000 and the derived response cap; `docker/.env.example` comments it out with the defaults and ranges; `docs/openbao-secrets.md`'s limits rule names it, the ranges and the derived cap. README: the egress paragraph's "64 MB of responses" becomes steps × output tokens per step × 400 (12.8 MB chat, 256 MB generation), the spend bounds name the generation output cap, the fallback and the step ranges, and the configuration table gains a `GENERATE_MAX_OUTPUT_TOKENS` row (ranges added to the two step rows). Also corrected, as a stale fact: ADR 0028's guarded-fetch caps no longer say 64 MB.
