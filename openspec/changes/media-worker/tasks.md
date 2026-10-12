@@ -1,0 +1,367 @@
+# Tasks
+
+*file:line anchors are orientation only; locate code by content before editing.*
+
+**Commands**
+- Gates: `scripts/check-change.sh --stage hook` (while stacked on #107 add
+  `--base supabase-11a-legacy-import`, see 0.4). Full: `scripts/check-change.sh`.
+- Unit (per workspace): `cd <ws> && npx vitest run --project unit <file>`; pg:
+  `cd server && npx vitest run --project pg <file>` (docker); worker: `cd media-worker && npx vitest run`.
+- Web: `cd web && npx vitest run <file>`; typecheck `npm run typecheck`; lint `npm run lint`.
+- Compose checks: `docker/scripts/check-envs.sh dev|stage|prod`, `node --test docker/scripts/*.test.mjs`.
+- Every ticked task carries `Evidence:` with the command and an excerpt (red first, then green).
+
+**Workstreams and file ownership.** Five agents can work in parallel after §0. A file belongs to
+exactly one workstream; a change to another workstream's file is a message to its owner, not an
+edit. Shared seams are named at the hand-offs: S.1 → B and W (port interfaces), B.3 → A (the
+window-normalisation fixture) and → D.1 (the regenerated segment fixtures the conformance test
+reads), B.4 → D.3 (the upload route shapes), D.3 → A.3 (`uploads.ts`'s segment mode, which the
+queue's `413` fallback calls; A.3 fakes it until D.3 lands). README sections are owned per task:
+B owns "Endpoints", "Storage map" (the directory layout: `media/`, `.trash/`, `.tmp/upload-*`),
+"Waveform peaks backfill", "Convert WAV blobs to FLAC" and the new "Media jobs" runbook; W owns
+"Container deployment" ("Topology", "Build, push, and pin images", "Volumes": mounts and
+ownership posture only, pointing at the Storage map for the layout) and "Local container
+environments" ("Dev, stage and prod compared"). No other README section is touched.
+
+| WS | Owner of |
+| --- | --- |
+| S schema + storage | `supabase/migrations/20261018000000_media_jobs.sql`, `docker/supabase/{migrate.sh,test_migrate.sh}`, `packages/storage/src/{mediaJobs,mediaUploads,audioSeams,mediaLimits}.ts`, `packages/storage/src/blobStore.ts`, `packages/storage/src/{mediaJobs,mediaUploads,audioSeams}.pg.test.ts`, `packages/storage/src/blobStore.test.ts`, `packages/ports/src/media.ts` (new port interfaces), `server/src/test/pg/{mediaJobs,mediaRole,mediaUploads,mediaSchema,audioSeams}.pg.test.ts`, `server/src/test/pg/{catalogSchema,catalogPolicies,catalogRoles}.pg.test.ts` |
+| B API + session-core | `packages/contract/src/schemas.ts` (+ tests), `server/src/routers/audio.ts`, `server/src/routers/audioUploads.ts` (new), `server/src/mediaApply.ts` (new), `server/src/startupPurge.ts`, `server/src/main.ts`, `server/src/node/config.ts`, `packages/session-core/src/{audioStore,SessionHub,audioSegmentMeta}.ts`, `server/scripts/enqueueMediaJobs.ts`, `fixtures/api-responses/**`, server unit/int tests for these, README sections "Endpoints", "Storage map", "Waveform peaks backfill", "Convert WAV blobs to FLAC", new "Media jobs" runbook (and no other README section) |
+| W worker + infra | `media-worker/**`, `docker/media-worker.Dockerfile`, `docker-bake.hcl`, `compose.yaml`, `docker/compose.dev.yaml`, `docker/compose.stage.yaml`, `docker/supabase-db.yaml` (db joins `media`), `docker/scripts/{compose-run.mjs,compose-run.test.mjs,check-envs.sh,test_check_envs.sh,supabase-keys.mjs,supabase-keys.test.mjs,compose-env.sh}`, `Makefile`, root `package.json` workspaces/scripts, `.github/dependabot.yml` (docker ecosystem), `server/scripts/blobSegmentRows.ts` (pin equality only), `docker/scripts/test_media_image.sh` (new), `server/src/test/ffmpegPin.repo.test.ts` (new), `docs/openbao-secrets.md`, `docs/security.md`, README sections "Topology", "Build, push, and pin images", "Volumes", "Dev, stage and prod compared" (and no other README section), the package-architecture repo test's app list |
+| A web recorder | `web/src/pages/index/utils/chunkStore/**` (new), `web/src/pages/index/utils/{chunkUploadQueue,uploadBackoff,chunkLeaveWarning,recorderLocks,micReacquire,wakeLock}.ts`, `web/src/pages/index/components/{AudioRecorder,ChunkRescueBanner,HiddenTabWarning}.tsx`, `web/src/shared/utils/workerInterval.ts`, the sign-out hook's chunk-wipe call site (`web/src/api/hooks/useAuth*.ts`, one call), their tests, `web/src/test/fakes/{opfs,idb,locks,wakeLock}.ts` (new) |
+| D web consumers + transcription | `web/src/api/types.ts` (+ conformance tests), `web/src/api/uploads.ts` (new parts client), `web/src/pages/index/batchImport/**`, `web/src/shared/utils/audioClips.ts`, `web/src/pages/index/hooks/{useAudioClips,useWaveforms}.ts`, `web/src/pages/index/components/timeline/**`, `packages/transcription/src/{transcriptRemap,generateTranscript,audioMerge}.ts` (+ tests) |
+
+## 0. Spikes and branch hygiene (before parallel work)
+
+- [ ] 0.1 Spike (W): build `docker/media-worker.Dockerfile` for `linux/amd64,linux/arm64` with node
+  copied onto the pinned `linuxserver/ffmpeg` base (D13); in each variant run `node --version`,
+  `ffmpeg -version`, and decode `packages/transcription/fixtures/audio/seg1.webm` to `pcm_f32le`
+  through `pipe:0` with `-f matroska -protocol_whitelist pipe -xerror` as uid 10001. On an
+  existing dev `dev-blobs` volume record the modes of `audio/` and its files (D4). Then the
+  cross-uid sequence (D3, A13): the worker (10001) writes `media/<job>/out.webm`; the API (1000)
+  opens it `O_NOFOLLOW`, `fstat`s, copies to `.tmp/put-*`, renames into `audio/`, removes
+  `media/<job>/`; then the same with `out.webm` replaced by a symlink to another blob (must
+  fail). Also `getent hosts example.com` inside the worker (must fail). Record results in design
+  D13/D4/D3 (A11, A13). If node does not run there, switch D13 to the static-ffmpeg fallback
+  before W.5.
+- [ ] 0.2 Spike (A): on Chromium, Firefox and Safari (where available) record with
+  `mr.start(5000)`, append the slices, compare the bytes with a no-timeslice recording of the same
+  length-class (decodable, same codec, duration within one slice), decode a truncated prefix, and
+  record Safari's MP4 atom order (`moov` before or after `mdat`, D4). Record results in design
+  D10/D4 (A10). If Safari's slices are not concatenable, D10's Safari branch is
+  finished-chunks-only (owner informed).
+- [ ] 0.3 Spike (A): `createSyncAccessHandle` in a dedicated Worker, an IndexedDB `Blob` write,
+  `navigator.locks.request(name, {ifAvailable: true})` across two tabs, and
+  `navigator.wakeLock.request('screen')` on the same three browsers; `navigator.storage.estimate()`
+  and `persist()` outcomes. Record in D10/D17 (A12).
+- [ ] 0.4 Branch: while #107 is open, run gates with `--base supabase-11a-legacy-import`. After
+  #107 merges, rebase `media-worker` onto `supabase-migration` so the branch carries only this
+  change directory (the first commit must be the approved artifacts; re-verify `artifacts-first`),
+  and reconcile the `transcript-generation` "Segment grouping" delta with #107's archived text.
+
+## S. Schema and storage
+
+- [ ] S.1 Test first: `server/src/test/pg/mediaSchema.pg.test.ts` (tables `media_jobs` with
+  `input_bytes` and the `result_json` length check, `media_uploads`, `session_audio_seams` with
+  its primary key, each with the D2/D7/D12 columns and the live-job unique partial index; the three
+  new segment columns; RLS enabled; `catalog_system` all; `catalog_user` can insert/select
+  `media_jobs` only for accessible sessions and cannot update; `media_uploads` user policy by
+  access and creator; `session_audio_seams` user policy like the session tables); extend
+  `catalogSchema.pg.test.ts` (`TABLES`, `KEY_COLUMN`) and `catalogPolicies.pg.test.ts` (policy
+  count). Then write `supabase/migrations/20261018000000_media_jobs.sql` (header per the
+  convention, rollback note). Also publish the TypeScript shapes `MediaJob`, `MediaUpload`,
+  `MediaJobResult`, `AudioSeam` and the port interfaces `MediaJobsPort`, `MediaUploadsPort`,
+  `AudioSeamsPort` in `packages/ports/src/media.ts` (**hand-off to B and W**; freeze the names in
+  the first commit).
+- [ ] S.2 Test first: `server/src/test/pg/mediaRole.pg.test.ts` (role `autologger_media` exists
+  `NOLOGIN` after the migrations alone and `LOGIN` after the runner's password phase, with the D1
+  attributes; member of no role; `catalogRoles.pg.test.ts`'s
+  membership rule still holds; as `autologger_media`: select `media_jobs` ok, update of the eight
+  allowed columns ok, update of `kind`/`session_id`/`target`/`applied_at_ms` refused `42501`,
+  insert/delete refused, select `session_audio_segments` and `session_audio_seams` ok, update
+  refused, any other table refused, `set role catalog_system` refused; the guard trigger: `queued
+  → running` ok when the lease is free or expired and refused when held, `running → done` ok as
+  the holder and refused as another holder, `queued → applied` refused, a 300 KiB `result_json`
+  refused by the check); `docker/supabase/test_migrate.sh` case for `MEDIA_DB_PASSWORD` (set,
+  missing, malformed, never printed). Then the role, the grants, the trigger and the check in
+  the migration and the password phase in `migrate.sh`.
+- [ ] S.3 Test first: `packages/storage/src/mediaJobs.pg.test.ts` (enqueue coalesces on the live
+  unique index and records `input_bytes`; claim with two concurrent claimers hands out each job
+  once; the lane filter `input_bytes <= max`; ordering by `run_after_ms` then creation; renew,
+  finish and fail are fenced on `locked_by` and `status = 'running'` (a takeover makes them affect
+  0 rows); fail with backoff `run_after_ms` and `failed` after `max_attempts`; requeue of expired
+  `running`; delete of old terminal rows; `hasRecentTerminalMerge(session, ordinal, 24 h)`).
+  Then `packages/storage/src/mediaJobs.ts` (API-side statements as `catalog_system`, plus the
+  worker-side claim/renew/finish statements the worker imports from the same module).
+- [ ] S.4 Test first: `packages/storage/src/mediaUploads.pg.test.ts` (create with the part hash
+  list, record part, status, complete marks, expire sweep, per-user open count and staged bytes).
+  Then `packages/storage/src/mediaUploads.ts`.
+- [ ] S.5 Test first: `packages/storage/src/audioSeams.pg.test.ts` (insert a window with its
+  segment and `source_key`; `findWindow(session, ordinal, started_at)` returns the holding segment
+  id and offset; `repoint(windows → merged segment, offsets)`; `windowsOf(session, ordinal)`;
+  `23505` on a duplicate window). Then `packages/storage/src/audioSeams.ts`.
+- [ ] S.6 Test first: `packages/storage/src/blobStore.test.ts` additions (`ensureMediaDir` creates
+  `media/` mode 1777; `adoptCopy(mediaRelPath, key)` opens `O_NOFOLLOW`, refuses a symlink, a
+  directory, a FIFO and a file over the cap by the handle's `fstat`, copies into `.tmp/put-*`,
+  fsyncs, renames, is idempotent when the key already exists, and removes the job directory
+  containing a foreign-uid file (test with a second uid where available, else a mode-only
+  check); `trash(key)` moves to `.trash/<date>/<key>`; `sweepTrash(7 d)` and
+  `purgeTrashOldestFirst(bytes)`; `freeBytes()` by `statfs`; `openStaging(id, size)` preallocates
+  `.tmp/upload-<id>`, `writePart` at offset while hashing, `rehashParts(id, partSize)`,
+  `adoptStaging` renames; `list()` ignores `.trash` and `media`). Then `blobStore.ts`.
+
+## B. API, apply loop, session-core
+
+- [ ] B.1 Test first: `packages/contract/src/schemas.test.ts` for `audioUploadCreateBodySchema`
+  (`content_type`, `size_bytes` 1..1500 MiB, `part_sha256` list length and 64-hex entries),
+  `audioFinalizeBodySchema` (`chunks` 1..1000 timestamps) and `audioSegmentDictSchema` (the 12
+  keys; `duration_ms`, `media_status`, `seams` nullable). Then `schemas.ts`.
+- [ ] B.2 Test first: `packages/session-core/src/audioStore.test.ts`: `audioRowToMeta` carries
+  `durationMs`, `mediaStatus`, `mediaError`, `seams` (joined from the seams port);
+  `addAudioSegment` with a `recording_ordinal` first consults `findWindow` and returns the existing
+  segment (chunk or merged) without writing, else writes the row with `media_status = 'pending'`,
+  its seam row and an `ingest` job (with `input_bytes`) in the same transaction, and maps `23505`
+  on the seam key to the existing-segment answer; `addImportedAudioSegment` and sync-from-disk
+  enqueue per inserted row; `segmentsOfRecording(ordinal)`, `windowsHeld(ordinal)`. Then
+  `audioStore.ts`, `SessionHub.ts` (`applyIngestResult`, `applyMergeResult` as system caller
+  `media-apply` with the D7 input check, the run-lease deferral, the seam repoint, trashing by
+  re-read `r2_key`s, revision bump and `audio.changed`; add `media-apply` and `media-reconcile` to
+  the system-caller allowlist test).
+- [ ] B.3 Test first: `server/src/routers/audio.test.ts` additions: `segmentApiDict` has 12 keys;
+  the segment POST replays answer with the existing dict and store nothing (live chunk, merged
+  seam, concurrent duplicate), and uploads without `recording_ordinal` are unchanged (pin
+  `parseOptionalMarkedAt` normalisation as the window key; **hand-off to A**); `POST
+  …/recordings/:recordingOrdinal/finalize` → `400` bad ordinal or bad `chunks`, `404` session,
+  `200 {ok, merge}` with `not-needed` for one segment, `waiting` when a listed window is missing,
+  `queued` then `already-queued`; a straggler's POST enqueues the waiting merge; regenerate
+  `fixtures/api-responses/audioSegment{Create,sList}.json` (`npm run fixtures:capture -w server`)
+  and the fixture int test. Then the routes.
+- [ ] B.4 Test first: `server/src/routers/audioUploads.test.ts` (D12: create `201` with
+  `part_size = 32 MiB`, `413` over 1500 MiB, `400` bad hash list, `429` third open upload or
+  over 3 GiB staged, `507` below the free-disk floor (fake `freeBytes`); PUT part sizes, offsets,
+  re-send, per-part hash mismatch `400` and not recorded, `404` after expiry/complete, `413` over
+  part size, `507` low disk; GET status lists `received`; complete `409 {missing_parts}`, `400`
+  on a re-hash mismatch aborts, import mode: `409` rolling with the post-put re-check, `200 {ok,
+  segment_id}` anchors one take and appends seam parts; segment mode: one segment with the
+  window, idempotent on replay, no anchor; DELETE `204`) and `audioUploads.int.test.ts` (the
+  inventory walk: create → every part → complete on a real session answers `200 {ok, segment_id}`;
+  the README endpoint rows are covered by the existing README inventory test, extended, or by a
+  new `server/src/routers/readmeEndpoints.repo.test.ts` if none exists). Then
+  `server/src/routers/audioUploads.ts`, mounted beside the audio router; README "Endpoints" rows
+  for the five upload routes (finalize's row is B.3; **hand-off to D**: the route shapes are
+  frozen here).
+- [ ] B.5 Test first: `server/src/mediaApply.test.ts` (fake ports: a `done` ingest job updates
+  peaks/duration/status and marks `applied`; a FLAC result copies the blob by handle, swaps
+  key/mime and trashes the WAV; an ingest whose target row is gone → `cancelled`; a `done`
+  merge job with matching inputs copies the merged file under the job-derived key, inserts one
+  row `done` with the merge's peaks and `duration_ms` and enqueues no ingest job for it, repoints
+  seams, deletes inputs, trashes the blobs named by the re-read rows (a result
+  naming other keys changes nothing else), broadcasts once, marks `applied`; mismatched inputs →
+  `cancelled`, the worker directory removed, new merge enqueued; a held `transcript-generation`
+  or `youtube-import` lease leaves the job `done` and untouched; a result with a bad key, bad
+  peaks, a symlink or an oversize file is refused and the job marked `failed` `invalid-result`; a
+  `failed` job sets `media_status 'failed'`/`media_error`; the loop is idempotent across a crash
+  between the copy and the commit). Then `server/src/mediaApply.ts`, wired in `main.ts` with
+  the 10 s timer and the `media_jobs_done` listener; `startupPurge.ts` gains the merge reconcile
+  (D6: 30 min, only `media_status is not null` recordings, none with a terminal merge younger
+  than 24 h), `sweepTrash` with the low-disk purge and transition logs, upload expiry, old-job
+  deletion and the `pg_notification_queue_usage()` warning; `config.ts` calls `ensureMediaDir`.
+- [ ] B.6 Test first: `server/src/test/enqueueMediaJobs.test.ts` (selects rows with null peaks,
+  null duration or WAV mime; `--merge` selects multi-chunk recordings, legacy `NULL` status
+  included, and is the only path that does; emits guarded `INSERT … ON CONFLICT DO NOTHING` SQL;
+  never prints values). Then `server/scripts/enqueueMediaJobs.ts`; README: "Storage map"
+  (`media/`, `.trash/<date>/`, `.tmp/upload-*`), "Media jobs" runbook (enqueue, watch the queue,
+  failed jobs, trash restore, low-disk mode) and a pointer from the two legacy script sections.
+- [ ] B.7 Suites: `cd server && npx vitest run --project unit`, `--project integration`,
+  `--project pg`; `npm run typecheck`.
+
+## W. Worker and infra
+
+- [ ] W.1 Test first: `media-worker/src/ffmpeg.test.ts` (the sniffer maps EBML/OggS/ftyp/RIFF
+  WAVE/fLaC/MP3 sync/ID3 to the forced demuxer and refuses anything else; the MP4 atom scan tells
+  `moov`-first from `moov`-last; argv assembly has `-nostdin`, `-xerror`, `-protocol_whitelist
+  pipe`, `-f <forced>`, `-i pipe:0`, no shell, and for a `moov`-last MP4 only `-protocol_whitelist
+  file -f mov -i file:<path>`; the input is opened `O_NOFOLLOW` and refused when a symlink, not a
+  regular file, or outside `/blobs/audio` and `/blobs/.trash`; an HLS playlist and an ffconcat
+  file are refused by the sniff; timeout kills with `SIGKILL`; stderr classification to the D2
+  codes) and `media-worker/src/peaks.test.ts` (streaming f32 pipe → `DbPeaksAccumulator`, bucket
+  rule, duration from frames). Then `src/ffmpeg.ts`, `src/sniff.ts`, `src/peaks.ts`. Scaffold the
+  workspace (`package.json`, `tsconfig`, vitest config, root `package.json` scripts, the
+  package-architecture repo test's app list).
+- [ ] W.2 Test first: `media-worker/src/jobs/ingest.test.ts` and `ingest.ffmpeg.test.ts`
+  (generated WAV fixtures from `server/src/test/waveformFixtures.ts` pattern: s16 WAV → FLAC
+  written under `media/<job>/`, verify by md5/count/STREAMINFO; f32 WAV → no FLAC; WebM/FLAC
+  fixtures → duration and peaks; a junk file → `decode-failed`; a truncated Opus stream →
+  `decode-failed` under `-xerror`; an unreadable file → `missing-blob`; `low-disk` requeue when
+  `freeBytes < 2 × input_bytes` (fake `statfs`); an MP4 fixture carrying a `dref` external data
+  reference (`packages/transcription/fixtures/audio/seg-aac-dref.m4a`, new) decodes only its own
+  samples and opens no other file (the referenced path is a sentinel whose absence of reads is
+  asserted); results never contain paths outside `media/<job>/`). Then `src/jobs/ingest.ts`, `src/verify.ts` (port `#107`'s
+  `verifyPair`/`pcmDigest` logic; do not import `server/scripts`).
+- [ ] W.3 Test first: `media-worker/src/jobs/merge.test.ts` and `merge.ffmpeg.test.ts` (two Opus
+  WebM chunks → one WebM with `merged_samples` exactly `Σ raw + pre_skip₂`, seams `offset_ms`
+  equal the inputs' cumulative durations with `source_key`s, peaks over the merged file; Ogg +
+  WebM Opus → WebM; two AAC m4a → MP4 verified with `-ignore_editlist 1` on both sides, exact;
+  FLAC → FLAC; PCM WAVs → FLAC; mixed Opus+AAC → `mixed-codecs` without output; a `skipped`
+  input or two groups → failure without output; a corrupt second chunk → `decode-failed`; a
+  merged input with seams plus a later chunk → seams concatenated; a late chunk whose window
+  lies between two seams → rebuilt from the originals under `.trash/` (fixture copies), or
+  `interleaved-input` when an original is missing; `low-disk` requeue when `freeBytes <
+  2 × input_bytes`). Then `src/jobs/merge.ts` using `mergeAudioSegments`/`probeSegment` from
+  `@autologger/transcription`.
+- [ ] W.4 Test first: `media-worker/src/main.test.ts` (fake db: two lanes with the 64 MiB
+  filter; below `MEDIA_MIN_FREE_BYTES` (fake `statfs`) no `merge` job and no job with
+  `input_bytes × 2 > free` is claimed, and claiming resumes when space returns; claim → run →
+  finish; renew every 60 s during a long job; finish/fail fenced (a 0-row
+  update drops the result and logs); a thrown job → backoff and `queued`; `max_attempts` →
+  `failed`; LISTEN wake-up; heartbeat file touched each loop; SIGTERM finishes the current jobs
+  within the lock window or releases them). Then `src/main.ts`, `src/db.ts` (statements from
+  `packages/storage/src/mediaJobs.ts`).
+- [ ] W.5 Test first: `server/src/test/ffmpegPin.repo.test.ts` (reads `ARG FFMPEG_IMAGE=` from
+  `docker/media-worker.Dockerfile` and asserts it equals `blobSegmentRows.ts`'s `FFMPEG_IMAGE`
+  and carries a `# reviewed YYYY-MM-DD` comment; red while the Dockerfile has no ARG) and
+  `docker/scripts/test_media_image.sh` (builds the native image, lists its filesystem: `ffmpeg`
+  and `node` present; no `server/src`, `web`, `claude`, `yt-dlp`, `deno`, `.env` other than
+  `.env.example`; the entrypoint's uid is 10001; skips without docker). Then
+  `docker/media-worker.Dockerfile` per 0.1 with `ARG FFMPEG_IMAGE=… # reviewed 2026-10-11`,
+  `.dockerignore` coverage, `docker-bake.hcl` target `media-worker` in group `default`;
+  `.github/dependabot.yml` gains the `docker` ecosystem for `/docker`; `make prod-build` loads
+  it; a `docker run --rm --network none … node -e` smoke in the README build section. Evidence:
+  both tests green, the bake `--print`, and `docker image inspect` showing both platforms after a
+  push to a scratch tag (or the local-load manifest).
+- [ ] W.6 Test first: `docker/scripts/compose-run.test.mjs` (`MEDIA_DB_PASSWORD` scope per env,
+  format, `MEDIA_TAG` required and not `latest` in prod, stage pull list `web api media-worker`,
+  `STAGE_MEDIA_IMAGE` derived and refused as a secret, `checkStageResolved` covers the third
+  image); `supabase-keys.test.mjs` (`MEDIA_DB_PASSWORD` generated, kept, never printed);
+  `docker/scripts/test_check_envs.sh` (a third member of `media`, `media-worker` on another
+  network, `db` missing `media`, a published worker port, a root, app-uid or writable worker, a
+  worker mounting `/data`, the password in another service, the dev service set without
+  `media-worker`, a worker environment with any name beyond the five `PG*` literals and
+  `BLOB_DIR`: each caught). Then the compose files (service in dev, stage, prod with the D4
+  posture; network `media` with the D1 subnets; `db` joins `media`), `compose-run.mjs`,
+  `supabase-keys.mjs`, `check-envs.sh`, `compose-env.sh`, `Makefile` (`STAGE_UP_STEPS` pull
+  list). Evidence: `check-envs.sh dev|stage|prod` clean; `make dev-up` shows the worker healthy
+  and `docker exec` into it finds no `APP_DB_PASSWORD`, `POSTGRES_PASSWORD`, `FRAME_BUS_SECRET` or
+  `PROVIDER_KEYS_SECRET`, and `getent hosts example.com` fails.
+- [ ] W.7 Docs: README "Topology" diagram and text (fourth service, `media` network, the
+  permissions posture, the copy-by-handle adopt), "Build, push, and pin images" (`MEDIA_TAG`, the
+  ffmpeg pin and its review date), "Volumes" (the worker's mount and the ownership posture only;
+  the `media/`, `.trash/` and staging layout and low-disk mode are B.6's "Storage map" and "Media
+  jobs" text, linked from here), "Dev, stage and prod compared"; `docs/openbao-secrets.md`
+  (`MEDIA_DB_PASSWORD` must exist before the
+  migration runs, `MEDIA_TAG`); `docs/security.md` (untrusted media row: pipe-fed ffmpeg, forced
+  demuxer, `-xerror`, handle-checked copy, column grants and the guard trigger; residuals: a
+  decoder exploit's read of every blob, the worker login's `LISTEN`/`NOTIFY` on the frame bus
+  and its monitoring). Evidence: files; no test.
+
+## A. Web recorder: persistence, locks, retry, finalize, microphone, wake lock
+
+- [ ] A.1 Test first: `web/src/pages/index/utils/chunkStore/chunkStore.test.ts` with fakes
+  `web/src/test/fakes/{opfs,idb}.ts` (open/append/finalize/read round-trips bytes; manifest
+  fields including `userId`, `bytes`, `sliceLog`, `pendingFinalize` windows; per-user directories:
+  `list(userId)` returns only that user's chunks, `wipe(userId)` removes only theirs; finalized
+  and partial chunks listed with metadata; `remove`; backend selection OPFS → IDB → memory; quota
+  short → memory with one warning; 30-day orphan cleanup; Safari copy flag). Then
+  `chunkStore/{index,opfsBackend,opfsWorker,idbBackend,memoryBackend}.ts`.
+- [ ] A.2 Test first: `web/src/pages/index/utils/recorderLocks.test.ts` with
+  `web/src/test/fakes/locks.ts` (take lock held for the take, chunk lock per attempt, `scan`
+  skips held chunk and take locks with `ifAvailable`, the heartbeat-lease fallback when
+  `navigator.locks` is absent: fresh lease skipped, 30 s-stale lease recovered). Then
+  `recorderLocks.ts`.
+- [ ] A.3 Test first: `web/src/pages/index/utils/uploadBackoff.test.ts` (schedule 2 s → 5 min
+  cap, jitter bounds, reset) and `chunkUploadQueue.test.ts` additions (a scheduler tick pumps a
+  due transient chunk without a rollover; `offline` suspends and does not count attempts;
+  `online` pumps now; `401`/`403` → `blocked`, not auto-retried; `413` → re-sent through the
+  parts client in segment mode (fake) and confirmed; Retry re-attempts `blocked` and `permanent`
+  once; recovered chunks enqueue in capture order, start `ambiguous`, dedupe by
+  `(recording_ordinal, started_at_utc)` with the server's normalisation (fixture from B.3) and
+  treat the server's existing-segment answer as confirmed; a partial chunk's `ended_at_utc` is
+  start plus the measured duration (probe, else slice-log rate), not the manifest time; the scan
+  skips locked chunks; `pendingFinalize` → `POST …/finalize` with the window list after the last
+  chunk of an ordinal confirms, once, `waiting` counted as done, and a failed finalize call
+  retried on the backoff until it succeeds or the remainder is discarded; removal from the store on
+  confirm/dedupe/discard; the banner's fallback deps are gone and the queue is created with real
+  deps by a provider). Then `chunkUploadQueue.ts` (store-backed chunks, `nextAttemptAt`,
+  `blocked`, the parts fallback), `uploadBackoff.ts`, `workerInterval.ts` (a one-shot or tick
+  helper if needed).
+- [ ] A.4 Test first: `web/src/pages/index/utils/micReacquire.test.ts` (track `ended` → persist
+  the open chunk, `getUserMedia` with the previous `deviceId`, then default, retried on the
+  backoff up to 60 s; success → next chunk index on the new stream, same take; failure for 60 s →
+  finalize with the reason; `devicechange` with a live track → log only; a rollover boundary with
+  no live track waits) and `wakeLock.test.ts` with `web/src/test/fakes/wakeLock.ts` (held while
+  recording, released on stop, re-requested on `visibilitychange` to visible, absence logged
+  once). Then `micReacquire.ts`, `wakeLock.ts`.
+- [ ] A.5 Test first: `AudioRecorder.chunks.test.tsx` additions (`mr.start(5000)`; each
+  `dataavailable` appended to the store; the take lock held from start to finalize; rollover and
+  heartbeat use `createWorkerInterval`; `pagehide` calls `requestData()` and the beacon; no
+  waveform decode/PUT after upload; `navigator.storage.persist()` requested at start; Record
+  disabled until the recovery scan resolves and a recording that starts with recovered chunks of
+  ordinal 3 queued uses ordinal 4; the unexpected-stop path goes through `micReacquire`; the
+  wake lock is held while recording; hidden → visible shows the `HiddenTabWarning` with the
+  interval and clears on the next user action). Then `AudioRecorder.tsx`,
+  `HiddenTabWarning.tsx`.
+- [ ] A.6 Test first: `ChunkRescueBanner.test.tsx` additions (recovered group header with count
+  and minutes, Safari 7-day note when applicable; Upload all; `blocked` row text names sign-in;
+  Retry on a `permanent` row attempts once; partial chunk labelled; Discard confirms with the
+  amount) and the sign-out hook test (unsent chunks → a confirm naming them; confirmed → the
+  user's storage wiped; none → silent). Then `ChunkRescueBanner.tsx`, `chunkLeaveWarning.ts`
+  (unchanged semantics: armed while the queue is non-empty; recovered chunks count), the sign-out
+  call site.
+- [ ] A.7 Suites: `cd web && npx vitest run`, `npm run typecheck -w web`, `npm run lint -w web`;
+  manual checklist in dev on Chromium and Firefox (and Safari if available): kill the tab at
+  2.5 cadences → reload → recovered chunks upload → finalize → one merged segment appears with
+  seams and a waveform; open a second tab mid-take → nothing offered to recover; sign out in
+  another tab mid-take → `blocked` → sign in → Retry drains; unplug the microphone mid-take →
+  recording continues on the default input; hide the tab for a minute → the warning on return.
+
+## D. Web consumers, parts upload, transcription seams
+
+- [ ] D.1 Test first: `web/src/api/types.conformance.test.ts` (12 segment keys) and
+  `web/src/pages/index/hooks/useAudioClips.durationProbe.test.tsx` (uses `duration_ms` when
+  present, probes only when null); `audioClips.*.test.ts` (a merged segment with three seams lays
+  out as three clips with the segment's URL, media offsets `offset_ms`, positions from each
+  seam's `started_at_utc` identical to the pre-merge chunk layout fixture; eighteen seams over
+  three hours place the last clip at its wall-clock position; chunk layout unchanged for `null`;
+  a feed-row seek into a seam clip resolves to the same media position as the chunk did). Then
+  `types.ts`, `useAudioClips.ts`, `audioClips.ts`.
+- [ ] D.2 Test first: `useWaveforms.test.tsx` (no decode while `media_status === 'pending'`;
+  decodes for `null`; a `'failed'` segment is marked unavailable without a decode attempt; server
+  peaks arriving clear the placeholder; a merged segment's peaks are drawn across its seam clips
+  by media offset) and `TimelineWaveform.test.tsx` ("Finalizing recording…" when an interval has
+  ≥ 2 segments with a pending one; "Generating waveform…" while pending single; "Waveform
+  unavailable" for a `'failed'` segment). Then the hook and the timeline components.
+- [ ] D.3 Test first: `web/src/api/uploads.test.ts` (create with per-part sha256 computed with
+  `crypto.subtle` over each 32 MiB slice and never a whole-file buffer → PUT parts in order with
+  the exact sizes and offsets → complete in import mode with `duration_s` and the seam header,
+  or in segment mode with the window (used by A.3); a failed part retries with backoff and
+  re-GETs status to skip received parts; `upload_id` remembered in IndexedDB by the group's
+  identity for 24 h and found from another tab; `429`/`507` surface as a per-group message) and
+  `batchImport/*.test.ts` (files over 40 MiB and stitched WAVs over 40 MiB take the parts path;
+  smaller files call `local-audio-import` unchanged; progress lines per part). Then
+  `web/src/api/uploads.ts`, the batch-import call sites.
+- [ ] D.4 Test first: `packages/transcription/src/transcriptRemap.test.ts` (a merged segment with
+  seams places each seam's words at that seam's wall-clock-derived anchor plus the in-seam
+  offset, equal to the pre-merge placement on the same fixture; no seams → identical output to
+  today; paragraphs/sentiment through the same path), `generateTranscript.test.ts` (`seams`
+  threaded from `AudioSegmentMeta`; a listed segment whose blob is missing fails with `502`
+  naming it instead of being skipped, while an unparseable blob is still skipped) and
+  `audioMerge.test.ts` (a missing path is reported distinctly from an unparseable one). Then
+  `transcriptRemap.ts`, `generateTranscript.ts`, `audioMerge.ts`.
+- [ ] D.5 Suites: `cd web && npx vitest run`, `cd packages/transcription && npx vitest run`,
+  `npm run typecheck`.
+
+## V. Verify (after all workstreams)
+
+- [ ] V.1 `scripts/check-change.sh` green (tests, typecheck, audit, openspec, tests-with-code);
+  `openspec validate media-worker --strict`.
+- [ ] V.2 End to end on dev: record 3 cadences with `chunkMs` lowered in a dev-only seam → stop
+  → `finalize` with the three windows → worker merges → one segment with `duration_ms`, peaks
+  and three `seams`, the three chunk blobs under `.trash/<today>/`, the timeline showing three
+  seam clips; re-post chunk 2's bytes → the merged segment's dict, no new blob; generate a
+  transcript and compare word positions with a run made before the merge (same fixture audio) →
+  equal within 1 ms; import a 120 MB WAV through the parts flow on dev with the router's body
+  limit lowered to 50 MB for the test → `200`, then the worker converts it to FLAC and the WAV
+  lands in `.trash`; fill the dev blob volume past the floor → uploads answer `507`, the sweep
+  purges trash, the log shows the transition.
+- [ ] V.3 Tier 2 consistency read (`consistency-read` skill) over the whole branch; `panel.md`
+  re-panel section for any scope change; the design-owned constants confirmed by the owner.
