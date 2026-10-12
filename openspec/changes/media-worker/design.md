@@ -768,7 +768,13 @@ a route, a status, a response shape or the worker's privileges.
   a status by the backfill is still never auto-merged), and a merge that failed `mixed-codecs` or
   `interleaved-input` records its input set (`session_meta` `media_merge_blocked:<ordinal>`); the
   reconcile skips that recording for as long as its segments are exactly that set, beyond the 24 h
-  hold-off (open finding in `panel.md`: the approved scenario says 24 h).
+  hold-off. Owner decision 2026-10-12: keep the block; the media-processing scenario is amended.
+- **D3 apply wake-up** (B.5): the API only polls every 10 s; the worker's `media_jobs_done`
+  notification is sent but not listened to (no `postgres` client in the server). Owner decision
+  2026-10-12: polling only; the requirement text is amended.
+- **Constants** (owner confirmation 2026-10-12): 5 s slices, 10 min chunks, 32 MiB parts, 40 MiB
+  parts threshold, 2 s -> 5 min backoff, 30 min reconcile, 7-day trash, 2 open uploads and 3 GiB
+  staged per user, 10 GiB free-disk floor.
   `enqueueMediaJobs.ts --merge` leaves out recordings with a row lacking `started_at_utc`.
 - **D7 merge timestamps** (D.8): `mergeAudioSegments` writes every packet at the running end of
   what it wrote, advanced by the packet's exact duration (Opus TOC, FLAC block size, else the

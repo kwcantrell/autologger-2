@@ -149,7 +149,9 @@ windows once its last chunk is confirmed; the server SHALL enqueue the merge onl
 listed window is held (as a segment row or a seam) and otherwise wait for the stragglers. The
 server SHALL also enqueue a merge for any recording with two or more segments whose
 `media_status` is not null, whose newest `ended_at_utc` is older than 30 minutes, that has no
-live merge job and no terminal merge job younger than 24 hours; recordings whose rows have a null
+live merge job and no terminal merge job younger than 24 hours, and that is not blocked by a merge
+that failed `mixed-codecs` or `interleaved-input` while its segment set is unchanged (a segment
+added or removed lifts the block); recordings whose rows have a null
 `media_status` (chunked before this capability) are never merged unless an operator enqueues
 them. The worker SHALL order the inputs by `started_at_utc`, probe their bytes, refuse the merge
 unless the probe yields exactly one group with no skipped input (`mixed-codecs` or
@@ -215,8 +217,13 @@ inputs include the earlier merged file, with its seams carried over.
   listed
 
 #### Scenario: A failed merge is not retried every tick
-- **WHEN** a recording's merge job failed `mixed-codecs` an hour ago
+- **WHEN** a recording's merge job failed `decode-failed` an hour ago
 - **THEN** the reconcile skips it until 24 hours after that failure
+
+#### Scenario: A merge that cannot succeed is not retried at all
+- **WHEN** a recording's merge job failed `mixed-codecs` or `interleaved-input`
+- **THEN** the reconcile skips it for as long as its segment set is unchanged, however old the
+  failure, and a segment added to or removed from the recording lifts the block
 
 #### Scenario: A late recovered chunk re-merges
 - **WHEN** a recovered chunk of an already-merged recording uploads and the recording is finalized
@@ -237,7 +244,8 @@ inputs include the earlier merged file, with its seams carried over.
 
 ### Requirement: The API applies worker results
 Only the API process SHALL turn a `done` job into catalog changes, through the session hub as the
-system caller `media-apply`, polling every 10 s and on a payload-free notification. Before applying
+system caller `media-apply`, polling every 10 s (the worker's `media_jobs_done` notification is not
+listened to; owner decision 2026-10-12). Before applying
 it SHALL validate the result: peaks are 8..4096 numbers in [0, 1], `duration_ms` is a positive
 integer, every blob key is `media/<job id>/<name>` with a single plain name, a merge's input ids
 match the current segments, and an ingest's target row still exists (else the job is

@@ -812,12 +812,13 @@ environments" ("Dev, stage and prod compared"). No other README section is touch
   limit lowered to 50 MB for the test → `200`, then the worker converts it to FLAC and the WAV
   lands in `.trash`; fill the dev blob volume past the floor → uploads answer `507`, the sweep
   purges trash, the log shows the transition.
-- [ ] V.3 Tier 2 consistency read (`consistency-read` skill) over the whole branch; `panel.md`
+- [x] V.3 Tier 2 consistency read (`consistency-read` skill) over the whole branch; `panel.md`
   re-panel section for any scope change; the design-owned constants confirmed by the owner.
   Evidence (2026-10-12): `git diff 138649f3..HEAD` read against proposal, design D1-D20, tasks,
   the nine spec deltas, ADR 0029 and the code; `panel.md` "Consistency read 2026-10-12" (scope
   change: no; two open findings for the owner); stale text fixed in design ("Edits after
   approval"), live-recording-chunks, media-processing, ADR 0029 and README "Media jobs";
-  `npx openspec validate media-worker --strict` -> `Change 'media-worker' is valid`. **Open:** the
-  owner's confirmation of the design-owned constants (design "Still open") and of the two open
-  findings.
+  `npx openspec validate media-worker --strict` -> `Change 'media-worker' is valid`. Owner
+  2026-10-12: constants confirmed; both findings resolved (merge block kept, polling only; spec
+  amended, design notes, `panel.md` ticked); `check-change.sh --only panel` -> `47 finding(s), no
+  open criticals`.
