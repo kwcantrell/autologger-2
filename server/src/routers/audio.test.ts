@@ -65,6 +65,7 @@ describe('normalizeAudioMimeType', () => {
     'audio/mpeg', // BatchImportModal mp3 files
     'audio/wav', // BatchImportModal wav files / yt-dlp wav / DeepGram pcm
     'audio/aiff', // audioStore's mime<->ext table
+    'audio/flac', // converted WAV blobs (follow-up C) / batch-import .flac
   ])('passes %s through verbatim', (mime) => {
     expect(normalizeAudioMimeType(mime)).toBe(mime);
   });

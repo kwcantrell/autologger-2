@@ -174,6 +174,7 @@ describe('fetchYoutubeAudio — success', () => {
     ['ogg', 'audio/ogg'],
     ['wav', 'audio/wav'],
     ['m4a', 'audio/mp4'],
+    ['flac', 'audio/flac'],
   ])('maps a produced .%s file to contentType %s', async (ext, contentType) => {
     const tempDir = makeTempDir();
     const binaryPath = makeBinary(tempDir);

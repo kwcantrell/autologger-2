@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
 import { audioRowToMeta } from '@autologger/session-core/audioStore';
+import { describe, expect, it } from 'vitest';
 import { type BoundCore, boundCore } from './boundCore';
 
 describe('audioRowToMeta', () => {
@@ -85,8 +85,10 @@ describe('AudioStore mime↔ext over a real core (D12 pins)', () => {
       ['audio/aif', 'aiff'],
       ['audio/mp4', 'm4a'],
       ['audio/x-m4a', 'm4a'],
+      ['audio/flac', 'flac'], // follow-up C: lossless storage of PCM blobs
+      ['audio/x-flac', 'flac'],
       ['', 'webm'], // empty mime falls back to audio/webm
-      ['audio/flac', 'webm'], // unknown mime falls back to webm
+      ['audio/x-unknown', 'webm'], // unknown mime falls back to webm
     ];
     for (const [mime, ext] of cases) {
       const seg = await add(audio, mime);
@@ -105,18 +107,39 @@ describe('AudioStore mime↔ext over a real core (D12 pins)', () => {
       { r2_key: `audio/sess/0002_${id()}.ogg`, ordinal: 2 },
       { r2_key: `audio/sess/0003_${id()}.wav`, ordinal: 3 },
       { r2_key: `audio/sess/0004_${id()}.m4a`, ordinal: 4 },
+      { r2_key: `audio/sess/0005_${id()}.flac`, ordinal: 5 },
     ];
-    expect(await audio.run((s) => s.audio.syncAudioFromBlobs(keys))).toEqual({ inserted: 4 });
+    expect(await audio.run((s) => s.audio.syncAudioFromBlobs(keys))).toEqual({ inserted: 5 });
     expect((await audio.read((s) => s.audio.listAudioSegments())).map((s) => s.mime_type)).toEqual([
       'audio/webm',
       'audio/ogg',
       'audio/wav',
       'audio/mp4',
+      'audio/flac',
     ]);
   });
 
+  it('syncAudioFromBlobs skips a sibling file of an existing segment (same id, other extension)', async () => {
+    // A WAV converted to FLAC keeps its stem: until the cleanup removes the WAV, both files sit
+    // under the session prefix and only one is referenced. Neither may become a second row.
+    const audio = await store();
+    const segId = crypto.randomUUID();
+    await audio.run((s) =>
+      s.audio.syncAudioFromBlobs([{ r2_key: `audio/sess/0001_${segId}.flac`, ordinal: 1 }]),
+    );
+    const out = await audio.run((s) =>
+      s.audio.syncAudioFromBlobs([
+        { r2_key: `audio/sess/0001_${segId}.wav`, ordinal: 1 },
+        { r2_key: `audio/sess/0001_${segId}.flac`, ordinal: 1 },
+      ]),
+    );
+    expect(out).toEqual({ inserted: 0 });
+    const segs = await audio.read((s) => s.audio.listAudioSegments());
+    expect(segs.map((s) => s.r2_key)).toEqual([`audio/sess/0001_${segId}.flac`]);
+  });
+
   it('round-trips a canonical mime: segment key ext → blob-scan backfill recovers the same mime', async () => {
-    for (const mime of ['audio/webm', 'audio/ogg', 'audio/wav', 'audio/mp4']) {
+    for (const mime of ['audio/webm', 'audio/ogg', 'audio/wav', 'audio/mp4', 'audio/flac']) {
       const writer = await store();
       const seg = await add(writer, mime);
       const reader = await store(); // fresh DB: simulate metadata loss + blob rescan

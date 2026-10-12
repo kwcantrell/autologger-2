@@ -56,6 +56,8 @@ const AUDIO_FORMATS = [
   { ext: 'mp3', tokens: ['mp3', 'mpeg'], mime: 'audio/mpeg' },
   { ext: 'aiff', tokens: ['aif'], mime: 'audio/aiff' },
   { ext: 'm4a', tokens: ['mp4', 'm4a'], mime: 'audio/mp4' },
+  // supabase-11a-legacy-import follow-up C: PCM blobs are stored losslessly as FLAC.
+  { ext: 'flac', tokens: ['flac'], mime: 'audio/flac' },
 ] as const;
 const FALLBACK_FORMAT = { ext: 'webm', mime: 'audio/webm' } as const;
 
@@ -168,7 +170,9 @@ export class AudioStore {
     return r.changes > 0;
   }
 
-  /** Reconcile metadata against the blob keys the router layer found under the session prefix. */
+  /** Reconcile metadata against the blob keys the router layer found under the session prefix.
+   * The segment id comes from the file name, so a key whose id already has a row is a sibling of
+   * that segment (a WAV and the FLAC it was converted to, before the cleanup) and is skipped. */
   async syncAudioFromBlobs(known: Array<{ r2_key: string; ordinal: number }>): Promise<{
     inserted: number;
   }> {
@@ -181,9 +185,15 @@ export class AudioStore {
         k.r2_key,
       );
       if (exists !== null) continue;
-      const m = /\/(\d{4})_([0-9a-f-]{36})\.(webm|ogg|wav|m4a|mp3|aiff)$/i.exec(k.r2_key);
+      const m = /\/(\d{4})_([0-9a-f-]{36})\.(webm|ogg|wav|m4a|mp3|aiff|flac)$/i.exec(k.r2_key);
       if (m === null) continue;
       const segId = m[2];
+      const sameId = await this.core.first(
+        'SELECT 1 AS x FROM session_audio_segments WHERE session_id = ? AND id = ?',
+        this.core.sessionId,
+        segId,
+      );
+      if (sameId !== null) continue;
       const mime = mimeForExt(m[3].toLowerCase());
       await this.core.db.run(
         `INSERT INTO session_audio_segments

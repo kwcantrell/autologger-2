@@ -214,3 +214,22 @@ The rehearsal on 2026-10-11 used `server/data` with `--studio ymhs` against a th
   ```
 - The legacy files are never written, so the old server can be started again on its own
   `DATA_DIR` at any point.
+
+## 5. After the import (optional): waveforms and FLAC
+
+Both are offline operator steps on the stack's host, safe to re-run, documented in the README.
+
+1. **Waveform peaks** ("Waveform peaks backfill"): the imported WAVs and MP3s have no stored peaks
+   and are too large for the browser to compute them; `server/scripts/backfillWaveforms.ts` fills them.
+2. **Store the WAVs as FLAC** ("Convert WAV blobs to FLAC"): `server/scripts/convertWavToFlac.ts`
+   writes a verified, bit-identical FLAC next to each 16/24-bit PCM WAV (22 WAVs, 22.7 GB of the 41.7 GB
+   legacy audio) and SQL that repoints the rows; after checking playback and transcription, its
+   `--cleanup --delete` removes the WAVs nothing references any more. Order: convert, apply the
+   SQL, check, `pg_dump`, clean up. Peaks are unaffected, so the two steps can run in either order.
+   The 4 legacy WAVs in 32-bit float (3.86 GB) are reported `skipped` and stay WAV: FLAC is
+   integer-only.
+
+Rollback after the cleanup: the WAVs are gone, so restore a dump taken after the FLAC SQL was
+applied (or keep the WAVs until you are sure). The rollback listing in step 4 compares the
+manifest's keys (WAVs) with the database; the FLACs are not in the manifest, so delete
+`audio/<sid>/<stem>.flac` files the restored database does not reference the same way.

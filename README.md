@@ -1626,6 +1626,72 @@ a machine that has it, run step 2 there with `--blob-dir` pointing at the copy, 
 the target host: the updates are keyed by `(session_id, id)` only. The app needs no restart; an open
 session shows the waveform after a reload.
 
+### Convert WAV blobs to FLAC
+
+Imported 16- and 24-bit PCM WAVs (the legacy data has 22 of them, 22.7 GB) take about a third of the space,
+or less, as FLAC, with exactly the same samples. The app plays, draws and transcribes FLAC like
+any segment (`audio/flac`; transcription concatenates FLAC by frame copy).
+`server/scripts/convertWavToFlac.ts` writes a FLAC next to each WAV and SQL that points the row at
+it; a separate cleanup removes the WAVs once nothing references them.
+
+- **Lossless, checked.** ffmpeg (same pinned image and `--ffmpeg` choice as the waveform backfill)
+  encodes at `-compression_level 8` with the WAV's rate, channels and bit depth. A FLAC is only
+  accepted when both files decode to the same raw PCM (MD5 and length, in the WAV's sample format)
+  and its STREAMINFO has the WAV's parameters and sample count; otherwise it is deleted and the
+  segment reported `failed`. Only integer 16/24-bit PCM is converted (probed from the header);
+  anything else is `skipped` and stays as it is. **32-bit float WAVs** (4 in the legacy data,
+  3.86 GB) are reported `skipped … float PCM: FLAC is integer-only, kept as WAV`: FLAC holds only
+  integers, so a float WAV cannot become FLAC without rounding its samples. They keep working as
+  WAV; nothing to do. The summary line gives the size of everything skipped.
+- **Nothing is lost.** The convert step never touches a WAV. The FLAC is written to
+  `BLOB_DIR/.flac-tmp`, gets the WAV's mode (and owner when run as root, so the app's uid 1000 keeps
+  its access) and is linked into place as `audio/<sid>/<stem>.flac`, never over an existing file;
+  the temp dir is removed afterwards. An existing FLAC is verified and reused, or reported and left
+  alone. Each `UPDATE` sets `r2_key` and `mime_type = 'audio/flac'` only while the row still has the
+  WAV key (one transaction, `ON_ERROR_STOP`), so a re-run or stale file changes nothing. Waveform
+  peaks stay (same PCM).
+- **Disk.** The FLACs need space while the WAVs still exist (about a third of the WAVs' size). Each
+  file is only started when the filesystem keeps `--min-free-gb` (default 2) free after reserving the
+  WAV's size; otherwise it is `failed` with the numbers. On a tight disk convert in batches with
+  `--limit N` (the first N rows), apply, clean up, export again.
+- **Report and exit.** One line per segment: `ok`/`reused` (sizes, ratio, format, duration, PCM
+  MD5), `failed`, `missing`, `invalid`, `skipped`. Exit `0` all converted, `1` otherwise (the SQL
+  still holds the converted ones), `2` usage. `--jobs N` as for the backfill (each job runs three
+  ffmpeg at a time: encode, then both decodes).
+- **Cleanup** (`--cleanup`) reads a fresh export of every referenced key
+  (`--print-referenced-query`). It lists a WAV only when its `.flac` sibling is a regular file and
+  referenced and the WAV is not referenced; symlinks are ignored. Dry run by default; `--delete`
+  re-verifies each pair and unlinks the WAV. Sync-from-disk skips a file whose segment id already
+  has a row, so a leftover WAV never becomes a second segment.
+
+**Dev (on the VM, from the repo checkout; `sudo` because the volume is root-only and so the FLACs
+get uid 1000).**
+
+```bash
+DB=autologger-dev-db-1
+BLOBS=/var/lib/docker/volumes/autologger-dev_dev-blobs/_data
+W=$(mktemp -d)
+# 1. export the WAV rows
+docker exec -i "$DB" psql -X -U postgres -c "$(npx tsx server/scripts/convertWavToFlac.ts --print-query)" > "$W/wavs.csv"
+# 2. convert and verify (pulls the pinned ffmpeg image on first use); add --limit N on a tight disk
+sudo env "PATH=$PATH" npx tsx server/scripts/convertWavToFlac.ts \
+    --blob-dir "$BLOBS" --segments "$W/wavs.csv" --out "$W/flac.sql" --jobs 4
+# 3. apply
+docker exec -i "$DB" psql -X -U postgres -v ON_ERROR_STOP=1 < "$W/flac.sql"
+# 4. check: open a converted session, play and seek; regenerate its transcript
+docker exec -i "$DB" psql -X -U postgres -Atc \
+    "select mime_type, count(*) from catalog.session_audio_segments group by 1 order by 1"
+# 5. clean up: dry run, then --delete
+docker exec -i "$DB" psql -X -U postgres -c "$(npx tsx server/scripts/convertWavToFlac.ts --print-referenced-query)" > "$W/referenced.csv"
+sudo env "PATH=$PATH" npx tsx server/scripts/convertWavToFlac.ts --cleanup --blob-dir "$BLOBS" --referenced "$W/referenced.csv"
+sudo env "PATH=$PATH" npx tsx server/scripts/convertWavToFlac.ts --cleanup --blob-dir "$BLOBS" --referenced "$W/referenced.csv" --delete
+```
+
+**Stage and prod.** The same steps with that stack's `DB` and `BLOBS` (as for the backfill), and a
+`pg_dump -Fc` (README "Backup") after step 3 and before step 5: a dump from before the conversion
+references WAVs that the cleanup deletes. Export `referenced.csv` right before the cleanup, never
+reuse an old one. The app needs no restart.
+
 ### Backup
 
 This section describes prod, which runs `main` (catalog and session content in SQLite files)
