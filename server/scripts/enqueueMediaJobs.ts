@@ -11,7 +11,8 @@
 //   `backfillWaveforms.ts` and `convertWavToFlac.ts`, which stay as offline tools);
 // - `--merge`: one `merge` job per recording with two or more segments, rows with a NULL
 //   `media_status` included. This is the only path that merges a recording chunked before the
-//   media worker (owner answer 1); the server's reconcile never does.
+//   media worker (owner answer 1); the server's reconcile never does. A recording with a row that
+//   has no `started_at_utc` is left out (no window to order or seam it by; the worker refuses it).
 //
 // The output is set-based SQL for psql (`-v ON_ERROR_STOP=1`): one transaction of
 // `INSERT … SELECT … ON CONFLICT DO NOTHING` on the live-job index, so a re-run, or a job a segment
@@ -52,7 +53,7 @@ select gen_random_uuid()::text, 'merge', s.session_id, s.recording_ordinal::text
   from catalog.session_audio_segments s
  where s.recording_ordinal is not null
  group by s.session_id, s.recording_ordinal
-having count(*) >= 2
+having count(*) >= 2 and bool_and(s.started_at_utc is not null)
 ${ON_CONFLICT};`,
     ];
   }

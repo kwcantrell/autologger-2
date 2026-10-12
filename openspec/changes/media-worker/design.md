@@ -252,7 +252,7 @@ duration, D7). The worker decodes the blob once to `pcm_f32le` through a pipe, c
 feeding `DbPeaksAccumulator` with `segmentWaveformDecodeBucketCount(dur, dur)` buckets (the same
 math and constants as the browser, pinned by `#107`), and reports `duration_ms = round(frames /
 rate × 1000)`, codec, rate and channels. For a WAV whose header is 16- or 24-bit integer PCM it
-also encodes `media/<job>/converted.flac` (`-c:a flac -compression_level 8`, `#107`'s arguments)
+also encodes `media/<job>/converted-a<attempt>.flac` (per-attempt name, W.8) (`-c:a flac -compression_level 8`, `#107`'s arguments)
 and verifies it (`#107` `verifyPair`: STREAMINFO parameters equal, decoded-PCM md5 and byte count
 equal, sample count equal). The apply step writes peaks, `duration_ms`, `media_status = 'done'`,
 and for a verified FLAC swaps `r2_key`/`mime_type` and trashes the WAV (D8). A job that fails for
@@ -303,8 +303,13 @@ trim), AAC/MP4 also with `-ignore_editlist 1` (priming kept on both sides), and 
 Σ untrimmed(input_i)`. Packet copy keeps every packet, so the totals must match whatever the
 containers' trim metadata says. Seam offsets follow the same unit: input *i* starts at
 `Σ_{j<i} untrimmed_j + skip_i − skip_merged` samples in the played merged stream (`skip` = the
-Opus pre-skip of that file, 0 for FLAC/PCM; for AAC `skip_merged` is the merged file's
-untrimmed-minus-played count), and a merged input's own seams are shifted by its start. Peaks and
+Opus pre-skip of that file; for AAC each file's edit-list priming, measured as its decode with
+`-ignore_editlist 1` minus its played decode, for every input and for the merged file alike,
+since packet copy keeps each input's priming; 0 for FLAC/PCM), and a merged input's own seams are
+shifted by its start. **Edit after approval (W.8, 2026-10-12, for the consistency read):** the W.3
+text used `skip_i = 0` for AAC and the merged file's untrimmed-minus-played count (which also
+holds its end trim) as `skip_merged`, so every AAC seam after the first was early by one priming
+(about 23 ms at 44.1 kHz). Peaks and
 `duration_ms` come from the merged decode (D5 math).
 **Edit after approval (W.3, 2026-10-12, for the consistency read):** the approved rule was
 `Σ raw(input_i) + Σ_{i>1} pre_skip_i` for Opus (raw = the trimmed standalone decode) and the raw

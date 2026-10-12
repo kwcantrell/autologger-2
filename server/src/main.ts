@@ -222,7 +222,12 @@ for (const sig of ['SIGINT', 'SIGTERM'] as const) {
     // close() ends the frame bus's listener and publisher and the catalog connections
     // (catalog-on-postgres D2, session-frame-bus D1); the failsafe above still
     // bounds it, and a transaction it cuts short rolls back on the server.
-    void Promise.all([serverClosed, frontendClosed])
+    // media-worker (B.9): a pass in flight finishes before the hubs and the database close, so it
+    // never sees a closing registry (its job would otherwise stay `done` for the next start).
+    const applyIdle = mediaApply.idle().catch((err) => {
+      console.error('media apply pass failed during shutdown', err);
+    });
+    void Promise.all([serverClosed, frontendClosed, applyIdle])
       .then(() => close())
       .catch((err) => console.error('catalog close() rejected during shutdown', err))
       .finally(() => process.exit());

@@ -353,3 +353,27 @@ describe('merge results (D7)', () => {
     expect(await list(sid)).toHaveLength(3);
   });
 });
+
+// Implementation panel (B.9): a transient error never cancels a job; worker error text is mapped.
+describe('apply failures (B.9)', () => {
+  it('a session lookup that fails transiently leaves the job done; a missing session cancels it', async () => {
+    const { SessionNotFoundError } = await import('@autologger/storage');
+    const { sessionId: sid } = await seededSession();
+    await upload(sid, {});
+    const [job] = await jobsOf(sid);
+    await finish(job?.id as string, { duration_ms: 5, peaks: PEAKS, flac: null });
+    const flaky = {
+      ...deps(),
+      sessions: { get: async () => Promise.reject(new Error('ECONNRESET')) } as never,
+    };
+    const out = await applyMediaJobsOnce(flaky);
+    expect(out.error).toBe(1);
+    expect((await jobsOf(sid))[0]?.status).toBe('done');
+    const gone = {
+      ...deps(),
+      sessions: { get: async () => Promise.reject(new SessionNotFoundError('gone')) } as never,
+    };
+    expect((await applyMediaJobsOnce(gone)).cancelled).toBe(1);
+    expect((await jobsOf(sid))[0]?.status).toBe('cancelled');
+  });
+});

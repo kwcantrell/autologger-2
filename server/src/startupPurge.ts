@@ -16,7 +16,9 @@ import type {
   MediaUploadsPort,
 } from '@autologger/ports/media';
 import {
+  mergeBlockedMetaKey,
   mergedSegmentId,
+  mergeInputSetValue,
   type SessionHubRegistryFacade,
   systemCaller,
 } from '@autologger/session-core';
@@ -309,6 +311,21 @@ export async function reconcileMergesOnce(deps: MergeReconcileDeps): Promise<num
     const ordinal = Number(r.recording_ordinal);
     try {
       if (await jobs.liveJob(db, 'merge', sessionId, String(ordinal))) continue;
+      // B.9: a merge that failed for good (mixed-codecs, interleaved-input) on exactly these
+      // segments is not retried, however old the failure; a new or removed segment lifts it.
+      const ids = await db.all<{ id: string }>(
+        'SELECT id FROM session_audio_segments WHERE session_id = ? AND recording_ordinal = ?',
+        sessionId,
+        ordinal,
+      );
+      const [blocked] = await db.all<{ value: string }>(
+        'SELECT value FROM session_meta WHERE session_id = ? AND key = ?',
+        sessionId,
+        mergeBlockedMetaKey(ordinal),
+      );
+      if (blocked && String(blocked.value) === mergeInputSetValue(ids.map((r) => String(r.id)))) {
+        continue;
+      }
       if (await jobs.hasRecentTerminalMerge(db, sessionId, ordinal, now - MEDIA_MERGE_HOLDOFF_MS)) {
         continue;
       }

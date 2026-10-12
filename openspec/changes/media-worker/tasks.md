@@ -156,6 +156,19 @@ environments" ("Dev, stage and prod compared"). No other README section is touch
   `Failed Tests 14`, `TypeError: s.ensureMediaDir is not a function`; green `Tests 31 passed
   (31)`; full `npx vitest run` in packages/storage `Tests 229 passed (229)`. Foreign uid: mode-only
   check (no second uid as non-root); spike 0.1 covers the cross-uid sequence.
+- [x] S.7 Implementation panel fixes. (1) Blob modes: `put`, `adoptCopy`, `adoptStaging` (staged
+  0600) and `trash` now leave 0644 files in 0755 directories whatever the umask, so the worker
+  (uid 10001) can read parts uploads and trashed originals. (2) The guard trigger bounds a
+  worker's values against the database clock: `locked_until_ms` ≤ now + 15 min, a changed
+  `run_after_ms` ≤ now + 2 h, an attempt refunded only by a live lease's holder (`attempts > 0`);
+  `media_jobs_error_code` checks `error` against the D2 codes (edited in place: unreleased).
+  Evidence: red `cd packages/storage && npx vitest run --project unit src/blobStore.test.ts` ->
+  `2 failed | 31 passed`, `audio/s1/put.webm: expected 384 to be 420` and the `docker run --user
+  10001:10001 … cat` read failing; green `Tests 33 passed (33)`. Red `cd server && npx vitest run
+  --project pg src/test/pg/mediaRole.pg.test.ts` -> `2 failed | 9 passed`, `expected 'ok' to be
+  '42501'`, `expected 'ok' to be '23514'`; green (with mediaSchema, catalogSchema,
+  catalogPolicies, catalogRoles, importLegacy) `Tests 107 passed (107)`; packages/storage `Tests
+  231 passed (231)`; `test_migrate: 55 passed, 0 failed`; media-worker `Tests 109 passed (109)`.
 
 ## B. API, apply loop, session-core
 
@@ -163,7 +176,7 @@ environments" ("Dev, stage and prod compared"). No other README section is touch
   (`content_type`, `size_bytes` 1..1500 MiB, `part_sha256` list length and 64-hex entries),
   `audioFinalizeBodySchema` (`chunks` 1..1000 timestamps) and `audioSegmentDictSchema` (the 12
   keys; `duration_ms`, `media_status`, `seams` nullable). Then `schemas.ts`.
-  Evidence (2026-10-12): red `cd packages/contract && npx vitest run src/schemas.media.test.ts`
+  Evidence: (2026-10-12) red `cd packages/contract && npx vitest run src/schemas.media.test.ts`
   → `Tests 9 failed (9)`; green after `schemas.ts` → `Tests 9 passed`; full `npx vitest run` →
   `Tests 149 passed (149)`. Tests live in `schemas.media.test.ts`. Also `audioFinalizeResponseSchema`
   / `AudioFinalizeResponse` (`{ok: true, merge}`) for A's finalize call (hand-off), and
@@ -179,7 +192,7 @@ environments" ("Dev, stage and prod compared"). No other README section is touch
   `media-apply` with the D7 input check, the run-lease deferral, the seam repoint, trashing by
   re-read `r2_key`s, revision bump and `audio.changed`; add `media-apply` and `media-reconcile` to
   the system-caller allowlist test).
-  Evidence (2026-10-12): red `cd packages/session-core && npx vitest run src/audioStore.test.ts` →
+  Evidence: (2026-10-12) red `cd packages/session-core && npx vitest run src/audioStore.test.ts` →
   `Tests 10 failed (10)`; green → `10 passed`; `npx vitest run` → `Tests 65 passed (65)`; hub over
   Postgres `cd server && npx vitest run --project integration src/test/session/audioMedia.int.test.ts`
   → `Tests 14 passed (14)` (seam + ingest job in one transaction, replay and a two-hub `23505` race
@@ -200,7 +213,7 @@ environments" ("Dev, stage and prod compared"). No other README section is touch
   `queued` then `already-queued`; a straggler's POST enqueues the waiting merge; regenerate
   `fixtures/api-responses/audioSegment{Create,sList}.json` (`npm run fixtures:capture -w server`)
   and the fixture int test. Then the routes.
-  Evidence (2026-10-12): red `cd server && npx vitest run --project unit src/routers/audio.test.ts`
+  Evidence: (2026-10-12) red `cd server && npx vitest run --project unit src/routers/audio.test.ts`
   → `2 failed | 35 passed` (`segmentApiDict` not exported / 9 keys); green `37 passed`; routes
   `npx vitest run --project integration src/routers/audio.media.int.test.ts` → `Tests 8 passed`.
   Window fixture for A: `fixtures/audioWindowNormalisation.json` (outside `api-responses/`, which
@@ -226,7 +239,7 @@ environments" ("Dev, stage and prod compared"). No other README section is touch
   `server/src/routers/audioUploads.ts`, mounted beside the audio router; README "Endpoints" rows
   for the five upload routes (finalize's row is B.3; **hand-off to D**: the route shapes are
   frozen here).
-  Evidence (2026-10-12): red `npx vitest run --project integration
+  Evidence: (2026-10-12) red `npx vitest run --project integration
   src/routers/audioUploads.int.test.ts` → `Tests 15 failed (15)` (routes absent); green `15 passed`;
   unit `audioUploads.test.ts` `3 passed`; README rows guarded by the new
   `server/src/routers/readmeEndpoints.repo.test.ts` (red `6 failed`, green `6 passed`). Mounted in
@@ -251,7 +264,7 @@ environments" ("Dev, stage and prod compared"). No other README section is touch
   (D6: 30 min, only `media_status is not null` recordings, none with a terminal merge younger
   than 24 h), `sweepTrash` with the low-disk purge and transition logs, upload expiry, old-job
   deletion and the `pg_notification_queue_usage()` warning; `config.ts` calls `ensureMediaDir`.
-  Evidence (2026-10-12): `mediaApply.ts` was written before its tests (no red run recorded);
+  Evidence: (2026-10-12) `mediaApply.ts` was written before its tests (no red run recorded);
   `npx vitest run --project unit src/mediaApply.test.ts` → `6 passed`; `--project integration
   src/mediaApply.int.test.ts` → `10 passed` (ingest, FLAC copy + trash, cancelled target, invalid
   key/peaks/symlink → `invalid-result` and segment `failed`, worker failure, merge swap, crash
@@ -267,18 +280,17 @@ environments" ("Dev, stage and prod compared"). No other README section is touch
   never prints values). Then `server/scripts/enqueueMediaJobs.ts`; README: "Storage map"
   (`media/`, `.trash/<date>/`, `.tmp/upload-*`), "Media jobs" runbook (enqueue, watch the queue,
   failed jobs, trash restore, low-disk mode) and a pointer from the two legacy script sections.
-  Evidence (2026-10-12): red `npx vitest run --project unit src/test/enqueueMediaJobs.test.ts` →
+  Evidence: (2026-10-12) red `npx vitest run --project unit src/test/enqueueMediaJobs.test.ts` →
   `Cannot find module '../../scripts/enqueueMediaJobs'`; green `4 passed`; over Postgres
   `src/test/enqueueMediaJobs.int.test.ts` → `1 passed`. Set-based SQL (no values printed), jobs in
   the big lane (`input_bytes` = 1500 MiB). README: "Storage map", new "Media jobs" (under
   "Container deployment"), pointers in the two legacy sections, and the "Endpoints" rows.
-- [ ] B.7 Suites: `cd server && npx vitest run --project unit`, `--project integration`,
+- [x] B.7 Suites: `cd server && npx vitest run --project unit`, `--project integration`,
   `--project pg`; `npm run typecheck`.
-  Evidence (2026-10-12, after the ordering change below): unit `Tests 601 passed | 5 skipped`;
-  integration `Test Files 105 passed, Tests 1450 passed (1450)` (incl.
-  `sessionHub.interleave.int.test.ts` unchanged); session-core `65 passed`; contract `149 passed`.
-  No B pg tests (S owns them). `npm run typecheck`: only `web/src/api/types.conformance.test.ts`
-  (D), which still imports the removed `audioSegment*.json`.
+  Evidence: (2026-10-12, after B.9) unit `Tests 603 passed | 5 skipped`; integration `Test Files
+  105 passed, Tests 1456 passed` (incl. `sessionHub.interleave.int.test.ts` unchanged); pg `Test
+  Files 19 passed | 1 skipped, Tests 157 passed | 1 skipped`; session-core `65 passed`; contract
+  `149 passed`; `npm run typecheck` clean.
 - [x] B.8 Design note (coordinator decision 2026-10-12; closes panel C minor 7): **the blob is
   written before its row on every create path**: segment POST and the upload's segment mode
   (`storeLiveSegment`: held window → answer, no write; else `planAudioSegment` → put/adopt under the
@@ -296,6 +308,29 @@ environments" ("Dev, stage and prod compared"). No other README section is touch
   `Tests 3 failed (3)` (a row named the key when the blob was written); green `3 passed`;
   `startupPurge.media.int.test.ts` (orphan case added) `4 passed`.
 
+- [x] B.9 Implementation panel fixes (2026-10-12). (1) **Major, security:** the merge apply
+  checks the result's seams in its transaction: the window set must equal exactly the inputs' held
+  windows plus the `started_at_utc` of seamless input rows (an input row without a window fails it),
+  offsets lie in `[0, duration_ms]` and strictly increase in window order, and `ended_at_utc` /
+  `source_key` come from the seam or input rows, never the result; otherwise `invalid-result`.
+  (2) **Major, integrity:** `mediaApply` cancels only on `SessionNotFoundError` (or an invalid
+  session id); any other lookup error propagates and the job stays `done`; `main.ts` stops the loop
+  and awaits an in-flight pass (`idle()`) before closing. (3) Minor: a failed job's `error` reaches
+  `media_error` only as a fixed code, else `internal` (`mediaErrorCodeOf`). (4) Minor:
+  `enqueueMediaJobs.ts --merge` leaves out recordings with a row lacking `started_at_utc`.
+  (5) Minor: a merge that failed `mixed-codecs`/`interleaved-input` records its input set in
+  `session_meta` (`media_merge_blocked:<ordinal>`, written by the apply loop's failed-job pass), and
+  the reconcile skips the recording while its segments are exactly that set, however old the
+  failure and after the job row is swept; a new or removed segment lifts it.
+  Evidence: red `npx vitest run --project integration src/test/session/audioMedia.int.test.ts` →
+  `3 failed | 14 passed` (forged window, offsets, DB-sourced seams); green `17 passed`.
+  `src/mediaApply.int.test.ts` red `1 failed` (transient lookup cancelled the job), green
+  `11 passed`; unit `src/mediaApply.test.ts` red `1 failed` (`mediaErrorCodeOf`), then `1 failed`
+  (shutdown order), green `8 passed`. `src/test/enqueueMediaJobs.int.test.ts` red `expected ['1',
+  '3'] to deeply equal ['1']`, green `1 passed`. `src/startupPurge.media.int.test.ts` red `1 failed`
+  (deterministic block), green `6 passed`. Suites: unit `603 passed | 5 skipped`; integration
+  `Test Files 105 passed, Tests 1456 passed`; pg `157 passed | 1 skipped`; session-core `65
+  passed`; `npm run typecheck` clean.
 ## W. Worker and infra
 
 - [x] W.1 Test first: `media-worker/src/ffmpeg.test.ts` (the sniffer maps EBML/OggS/ftyp/RIFF
@@ -430,6 +465,22 @@ environments" ("Dev, stage and prod compared"). No other README section is touch
   "Configuration", `docker/.env.example`, `docker/scripts/make-guards.sh` `prod-tags` (legacy),
   `docs/supabase.md` role table.
 
+- [x] W.8 Implementation panel fixes (coordinator, 2026-10-12). (a) MAJOR: a lost lease no longer
+  deletes the re-claimer's output: each attempt writes `converted-a<attempt>.flac` /
+  `merged-a<attempt>.<ext>` with its mergeAudioSegments scratch in `media/<job>/a<attempt>.tmp/`;
+  `makeJobDir` never removes (mkdir, EEXIST ok, 0777); every cleanup (failure, release, lost
+  lease, shutdown) is `removeAttemptFiles(job, attempt)` and leaves the shared directory to the
+  API's sweep. (b) AAC seam offsets use each input's priming (`-ignore_editlist 1` decode minus
+  played) and the merged file's, design D7 amended. (c) `db.ts` keeps a NULL `started_at_utc` as
+  null; a merge whose rows include one fails `interleaved-input`, final (its inputs cannot be put
+  in wall-clock order; rows untouched).
+  Evidence: red `cd media-worker && npx vitest run` -> `Tests 13 failed | 96 passed (109)`, e.g.
+  `× a lost lease never deletes the re-claimer’s output (interleaving across an expired lease)`
+  (`ENOENT … media/jx`: the shared directory was removed), `× AAC inputs with encoder priming`
+  (`expected 514 to be 557`: seam 2 early by 43 ms), `× a NULL started_at_utc stays null`,
+  `× a legacy row with started_at_utc NULL … interleaved-input`, `× attemptName …`; green `Test
+  Files 9 passed, Tests 109 passed`; `npx tsc --noEmit` rc 0; biome clean.
+
 ## A. Web recorder: persistence, locks, retry, finalize, microphone, wake lock
 
 - [x] A.1 Test first: `web/src/pages/index/utils/chunkStore/chunkStore.test.ts` with fakes
@@ -523,6 +574,32 @@ environments" ("Dev, stage and prod compared"). No other README section is touch
   `AccountSection.test.tsx` `Tests 8 passed (8)`. No `useAuth*` hook exists and `api/` may not
   import `pages/`, so the guard is `useChunkSignOutGuard` in `chunkLeaveWarning.ts`, called once
   from `settings/AccountSection.tsx`'s sign-out link.
+- [x] A.8 Implementation panel fixes (review of workstream A, 2026-10-12), test-first:
+  (1) the chunk store never throws on an unknown handle and the recorder's onstop never rejects
+  (a refused slice keeps it and later ones in memory, a refused finalize uploads an in-memory copy;
+  a duplicate onstop is ignored); (2) the queue holds a chunk's Web Lock for its whole stay
+  (`holdChunk`; recovery holds it too) and the take lock is released only after that, and bytes
+  that vanished are checked against the segments list before being parked; (3) every OPFS call
+  times out (10 s) and marks the worker dead, so the chunk degrades to memory; (4) degrading keeps
+  the persisted prefix on disk and only puts new slices in memory; (5) unmount during a mic
+  re-acquisition ends the take, so no recorder starts afterwards; (6) `chunkSettled` is chained,
+  so finalize lists every window and follows every enqueue; (7) the queue uploads, the banner
+  shows and sign-out counts/discards only the signed-in user's chunks; (8) a 401/403 on the dedupe
+  lookup is `blocked`; (9) Record waits at most 10 s for the profile and scan, and a failed profile
+  allows recording; (10) the 413 fallback resumes one remembered parts upload per chunk and maps
+  `PartsUploadError` to statuses (non-resumable = terminal 400); (11) a probe timeout disposes the
+  backend (terminates the worker).
+  Evidence: red: `npx vitest run src/pages/index/utils/chunkStore/chunkStore.test.ts`
+  `Tests 5 failed | 29 passed (34)`; `…/chunkUploadQueue.test.ts` `Tests 10 failed` (`q.whenOwned
+  is not a function`, `'queued' to be 'blocked'`, `uploadChunkViaParts is not a function`);
+  `…/recorderLocks.test.ts` `Tests 2 failed | 10 passed (12)`;
+  `…/AudioRecorder.chunks.test.tsx` `Tests 7 failed | 50 passed (57)`, `Errors 3 errors` (the
+  unhandled `chunkStore: unknown handle`), plus the finalize-order case `expected 1 to be greater
+  than 2`; `ChunkRescueBanner.test.tsx` + `chunkLeaveWarning.test.tsx` `Tests 2 failed | 29
+  passed (31)`. Green: store `34 passed`, queue `71 passed`, locks `12 passed`, recorder `57
+  passed`, banner + sign-out `31 passed`; `cd web && npx vitest run` `Test Files 160 passed
+  (160)`, `Tests 2162 passed (2162)`, no unhandled errors; `npx tsc --noEmit -p .` no errors;
+  `npx biome check --error-on-warnings` clean on A's files.
 - [ ] A.7 Suites: `cd web && npx vitest run`, `npm run typecheck -w web`, `npm run lint -w web`;
   manual checklist in dev on Chromium and Firefox (and Safari if available): kill the tab at
   2.5 cadences → reload → recovered chunks upload → finalize → one merged segment appears with

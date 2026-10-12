@@ -322,6 +322,8 @@ export interface SessionHubFacade {
   applyMediaMerge: (jobId: string, a: MergeApply) => Promise<MediaMergeApplyOutcome>;
   /** A failed job's segment: `media_status = 'failed'` with the code (media-worker D5). */
   markMediaFailed: (segmentId: string, error: string) => Promise<boolean>;
+  /** Records the recording's current segment set as one its merge cannot handle (B.9). */
+  blockMerge: (recordingOrdinal: number) => Promise<void>;
   deleteAudioSegment: (segmentId: string) => Promise<void>;
   getAudioSegmentKey: (segmentId: string) => Promise<{ r2_key: string; mime_type: string } | null>;
   setAudioSegmentWaveform: (input: { segmentId: string; peaks: number[] }) => Promise<boolean>;
@@ -1362,6 +1364,9 @@ export class SessionHubView implements SessionHubFacade {
   }
   markMediaFailed(segmentId: string, error: string) {
     return this.inTxn((s) => s.audio.markMediaFailed(segmentId, error));
+  }
+  blockMerge(recordingOrdinal: number) {
+    return this.inTxn((s) => s.audio.blockMerge(recordingOrdinal));
   }
   private async staleSafe<T>(p: Promise<T>): Promise<T | { kind: 'stale' }> {
     try {

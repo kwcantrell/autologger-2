@@ -12,12 +12,12 @@ async function legacyRow(
   sid: string,
   id: string,
   ro: number | null,
-  over: { peaks?: boolean; duration?: boolean; mime?: string } = {},
+  over: { peaks?: boolean; duration?: boolean; mime?: string; started?: string | null } = {},
 ) {
   await sys().run(
     `INSERT INTO session_audio_segments (session_id, id, ordinal, mime_type, r2_key, recording_ordinal,
-       created_at_utc, waveform_peaks_json, duration_ms)
-     VALUES (?, ?, 1, ?, ?, ?, '2026-01-01T00:00:00Z', ?, ?)`,
+       created_at_utc, waveform_peaks_json, duration_ms, started_at_utc)
+     VALUES (?, ?, 1, ?, ?, ?, '2026-01-01T00:00:00Z', ?, ?, ?)`,
     sid,
     id,
     over.mime ?? 'audio/webm',
@@ -25,6 +25,7 @@ async function legacyRow(
     ro,
     over.peaks ? '[0,0,0,0,0,0,0,0]' : null,
     over.duration ? 1000 : null,
+    over.started === undefined ? `2026-01-01T00:00:0${id.length % 10}Z` : over.started,
   );
 }
 
@@ -45,6 +46,9 @@ describe('enqueueMediaJobs over Postgres', () => {
     await legacyRow(sid, 'b-needs-duration', 1, { peaks: true });
     await legacyRow(sid, 'c-wav', null, { peaks: true, duration: true, mime: 'audio/wav' });
     await legacyRow(sid, 'd-complete', 2, { peaks: true, duration: true });
+    // A recording with a row that has no window cannot be merged (the worker refuses it too).
+    await legacyRow(sid, 'e-no-window', 3, { peaks: true, duration: true, started: null });
+    await legacyRow(sid, 'f-window', 3, { peaks: true, duration: true });
     await run(false);
     await run(false);
     expect((await jobs(sid)).map((j) => `${j.kind}:${j.target}`)).toEqual([

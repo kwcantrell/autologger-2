@@ -128,3 +128,27 @@ describe('startMediaApply (D3)', () => {
     expect(calls).toBe(2);
   });
 });
+
+describe('mediaErrorCodeOf (B.9)', () => {
+  it('keeps a fixed code and maps anything else to internal', async () => {
+    const { mediaErrorCodeOf } = await import('./mediaApply');
+    expect(mediaErrorCodeOf('decode-failed')).toBe('decode-failed');
+    for (const bad of [null, '', '/blobs/audio/x', 'DECODE-FAILED', '<script>']) {
+      expect(mediaErrorCodeOf(bad)).toBe('internal');
+    }
+  });
+});
+
+describe('main.ts shutdown (B.9)', () => {
+  it('stops the apply loop and awaits an in-flight pass before closing the hubs and the database', async () => {
+    const { readFileSync } = await import('node:fs');
+    const src = readFileSync(new URL('./main.ts', import.meta.url), 'utf8');
+    const handler = src.slice(src.indexOf("for (const sig of ['SIGINT', 'SIGTERM']"));
+    const stop = handler.indexOf('mediaApply.stop()');
+    const idle = handler.indexOf('mediaApply.idle()');
+    const close = handler.indexOf('close()', idle);
+    expect(stop).toBeGreaterThan(-1);
+    expect(idle).toBeGreaterThan(stop);
+    expect(close).toBeGreaterThan(idle);
+  });
+});

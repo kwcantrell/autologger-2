@@ -30,14 +30,15 @@ import type {
   MediaSql,
 } from '@autologger/ports/media';
 import {
+  DETERMINISTIC_MERGE_ERRORS,
   mergedSegmentId,
   type SessionHubFacade,
   type SessionHubRegistryFacade,
   segmentBlobKey,
   systemCaller,
 } from '@autologger/session-core';
-import { MediaAdoptError } from '@autologger/storage';
-import { mediaJobFromRow } from '@autologger/storage/mediaJobs';
+import { MediaAdoptError, SessionNotFoundError } from '@autologger/storage';
+import { MEDIA_ERROR_CODES, mediaJobFromRow } from '@autologger/storage/mediaJobs';
 import { MEDIA_ADOPT_MAX_BYTES } from '@autologger/storage/mediaLimits';
 
 /** The worker's uid (media-worker D4): the owner every adopted file must have. */
@@ -177,11 +178,16 @@ function log(deps: MediaApplyDeps, msg: string, err?: unknown): void {
   (deps.log ?? ((m: string, e?: unknown) => console.error(m, e ?? '')))(msg, err);
 }
 
+/** The session's hub as `media-apply`; null only when the session no longer exists (the job is
+ * then cancelled). Any other error (a database blip, shutdown) propagates, so the job stays `done`
+ * for the next pass (implementation panel B.9). */
 async function hubFor(deps: MediaApplyDeps, sessionId: string): Promise<SessionHubFacade | null> {
   try {
     return (await deps.sessions.get(sessionId)).as(systemCaller('media-apply'));
-  } catch {
-    return null;
+  } catch (err) {
+    if (err instanceof SessionNotFoundError) return null;
+    if (err instanceof Error && err.message.startsWith('Invalid session id')) return null;
+    throw err;
   }
 }
 
@@ -303,6 +309,14 @@ export async function applyMergeJob(deps: MediaApplyDeps, job: MediaJob): Promis
   return out.kind === 'invalid' ? 'failed' : out.kind;
 }
 
+/** A worker-written `error` as a fixed code: anything else is `internal` (B.9), so no worker text
+ * ever reaches a segment row. */
+export function mediaErrorCodeOf(error: string | null): MediaErrorCode {
+  return MEDIA_ERROR_CODES.includes(error as MediaErrorCode)
+    ? (error as MediaErrorCode)
+    : 'internal';
+}
+
 /** Sets the segment of each failed ingest job `failed` once (D5) and clears the job's directory;
  * `applied_at_ms` marks a failed job as reflected. */
 export async function applyFailedJobs(deps: MediaApplyDeps, limit = 50): Promise<number> {
@@ -314,9 +328,16 @@ export async function applyFailedJobs(deps: MediaApplyDeps, limit = 50): Promise
   let n = 0;
   for (const job of rows.map(mediaJobFromRow)) {
     try {
+      if (job.kind === 'merge' && DETERMINISTIC_MERGE_ERRORS.includes(job.error ?? '')) {
+        // B.9: the same inputs would fail again; the reconcile skips them until the set changes.
+        const ordinal = Number(job.target);
+        const hub = await hubFor(deps, job.sessionId);
+        if (hub && Number.isSafeInteger(ordinal) && ordinal >= 1) await hub.blockMerge(ordinal);
+      }
       if (job.kind === 'ingest') {
         const hub = await hubFor(deps, job.sessionId);
-        await hub?.markMediaFailed(job.target, job.error ?? 'internal');
+        // The worker writes `error`; only a fixed code reaches the segment (B.9).
+        await hub?.markMediaFailed(job.target, mediaErrorCodeOf(job.error));
       }
       await deps.blobs.removeMediaJobDir(job.id).catch(() => {});
       await deps.db.run(

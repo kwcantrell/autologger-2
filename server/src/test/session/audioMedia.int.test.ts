@@ -336,4 +336,75 @@ describe('apply (D3, D5, D7) as media-apply', () => {
       media_error: 'decode-failed',
     });
   });
+
+  // Implementation panel (B.9, security): the result's seams are checked against the database.
+  it('a result inventing a future window is refused: no seam for it, so a later real chunk is stored', async () => {
+    const sid = await createSessionRow();
+    const { hub, segs, mergeId } = await threeChunks(sid);
+    const a = mergeApply(sid, mergeId, segs);
+    const forged = {
+      ...a,
+      seams: [
+        ...a.seams,
+        { offsetMs: 1_500_000, startedAtUtc: at(30), endedAtUtc: at(40), sourceKey: 'x' },
+      ],
+    };
+    expect(await (await apply(sid)).applyMediaMerge(mergeId, forged)).toEqual({ kind: 'invalid' });
+    expect((await seams(sid)).map((x) => x.started_at_utc)).toEqual([at(0), at(10), at(20)]);
+    expect((await hub.addAudioSegment(chunk(sid, 30))).existing).toBe(false);
+  });
+
+  it('offsets outside [0, duration] or out of window order are refused', async () => {
+    for (const bad of [
+      (o: number[]) => [o[0], o[1], 1_800_001],
+      (o: number[]) => [o[0], o[2], o[1]],
+      (o: number[]) => [o[0], o[1], o[1]],
+    ]) {
+      const sid = await createSessionRow();
+      const { segs, mergeId } = await threeChunks(sid);
+      const a = mergeApply(sid, mergeId, segs);
+      const offs = bad(a.seams.map((x) => x.offsetMs)) as number[];
+      const out = await (await apply(sid)).applyMediaMerge(mergeId, {
+        ...a,
+        seams: a.seams.map((x, i) => ({ ...x, offsetMs: offs[i] as number })),
+      });
+      expect(out).toEqual({ kind: 'invalid' });
+    }
+  });
+
+  it('seam source keys and ends come from the rows, never the result; a seamless input row gets its own', async () => {
+    const sid = await createSessionRow();
+    const { segs, mergeId } = await threeChunks(sid);
+    // The second chunk predates seams (a legacy row): its window comes from the row itself.
+    await sys().run(
+      'DELETE FROM session_audio_seams WHERE session_id = ? AND segment_id = ?',
+      sid,
+      segs[1]?.id as string,
+    );
+    const a = mergeApply(sid, mergeId, segs);
+    const out = await (await apply(sid)).applyMediaMerge(mergeId, {
+      ...a,
+      seams: a.seams.map((x) => ({
+        ...x,
+        sourceKey: 'audio/elsewhere/forged.webm',
+        endedAtUtc: null,
+      })),
+    });
+    expect(out.kind).toBe('applied');
+    const rows = await sys().all<{
+      started_at_utc: string;
+      ended_at_utc: string | null;
+      source_key: string;
+    }>(
+      'SELECT started_at_utc, ended_at_utc, source_key FROM session_audio_seams WHERE session_id = ? ORDER BY started_at_utc',
+      sid,
+    );
+    expect(rows).toEqual(
+      segs.map((s, i) => ({
+        started_at_utc: at(i * 10),
+        ended_at_utc: at(i * 10 + 10),
+        source_key: s.r2_key,
+      })),
+    );
+  });
 });

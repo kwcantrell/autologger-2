@@ -97,6 +97,63 @@ describe('reconcileMergesOnce (D6)', () => {
   });
 });
 
+/** The apply loop's failed-job pass, which records a deterministic merge failure. */
+async function reflectFailures() {
+  const { applyFailedJobs } = await import('./mediaApply');
+  await applyFailedJobs({
+    db: env.ports.catalog.bindSystem('media-apply') as never,
+    jobs: mediaJobs,
+    sessions: env.ports.sessions,
+    blobs: env.ports.mediaBlobs,
+    clock: env.ports.clock,
+    log: () => {},
+  });
+}
+
+describe('reconcile and deterministic merge failures (B.9)', () => {
+  it('mixed-codecs or interleaved-input blocks the same inputs for good; a new chunk lifts it', async () => {
+    for (const code of ['mixed-codecs', 'interleaved-input']) {
+      const { sessionId: sid } = await seededSession();
+      await chunk(sid, 1, 0);
+      await chunk(sid, 1, 10);
+      await run();
+      await sys().run(
+        "UPDATE media_jobs SET status = 'failed', error = ?, updated_at_ms = ? WHERE session_id = ? AND kind = 'merge'",
+        code,
+        NOW,
+        sid,
+      );
+      await reflectFailures();
+      await run(NOW + 30 * 24 * 3_600_000);
+      // Even once the terminal row is swept away, the block holds for this input set.
+      await sys().run("DELETE FROM media_jobs WHERE session_id = ? AND kind = 'merge'", sid);
+      await run(NOW + 31 * 24 * 3_600_000);
+      expect(await merges(sid), code).toEqual([]);
+      await chunk(sid, 1, 20);
+      await run(NOW + 32 * 24 * 3_600_000);
+      expect(
+        (await merges(sid)).map((m) => m.status),
+        code,
+      ).toEqual(['queued']);
+    }
+  });
+
+  it('a non-deterministic failure (verify-mismatch) is retried after 24 h', async () => {
+    const { sessionId: sid } = await seededSession();
+    await chunk(sid, 1, 0);
+    await chunk(sid, 1, 10);
+    await run();
+    await sys().run(
+      "UPDATE media_jobs SET status = 'failed', error = 'verify-mismatch', updated_at_ms = ? WHERE session_id = ? AND kind = 'merge'",
+      NOW,
+      sid,
+    );
+    await reflectFailures();
+    await run(NOW + 25 * 3_600_000);
+    expect((await merges(sid)).map((m) => m.status)).toEqual(['failed', 'queued']);
+  });
+});
+
 describe('trashOrphanBlobsOnce (blob-before-row crash residue)', () => {
   it('trashes an hour-old blob no row names; keeps named, fresh and pending-merge blobs', async () => {
     const { mkdirSync, utimesSync, writeFileSync, existsSync } = await import('node:fs');

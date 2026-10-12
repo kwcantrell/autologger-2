@@ -36,6 +36,21 @@ export function finalizeMetaKey(recordingOrdinal: number): string {
   return `media_finalize:${recordingOrdinal}`;
 }
 
+/** The session_meta key recording the input set a recording's merge failed on for good
+ * (`mixed-codecs`, `interleaved-input`): the reconcile skips that recording while its segments are
+ * still exactly that set (implementation panel B.9). */
+export function mergeBlockedMetaKey(recordingOrdinal: number): string {
+  return `media_merge_blocked:${recordingOrdinal}`;
+}
+
+/** The merge failure codes that repeat for the same inputs (B.9). */
+export const DETERMINISTIC_MERGE_ERRORS: readonly string[] = ['mixed-codecs', 'interleaved-input'];
+
+/** The marker value for a set of segment ids: sorted, comma-joined. */
+export function mergeInputSetValue(ids: readonly string[]): string {
+  return [...ids].sort().join(',');
+}
+
 /** The segment dict's `seams` (D16): null for a segment with no seam or with only its own window at
  * offset 0 (a plain chunk), else every seam in media order. */
 export function dictSeams(seams: readonly AudioSeam[]): AudioSegmentSeam[] | null {
@@ -578,6 +593,15 @@ export class AudioStore {
     return { replacedKey: a.flac && old !== a.flac.key ? old : null };
   }
 
+  /** Records that the recording's merge failed deterministically on its current segments (B.9). */
+  async blockMerge(recordingOrdinal: number): Promise<void> {
+    const ids = (await this.segmentsOfRecording(recordingOrdinal)).map((x) => x.id);
+    await this.core.metaSetUncounted(
+      mergeBlockedMetaKey(recordingOrdinal),
+      mergeInputSetValue(ids),
+    );
+  }
+
   /** A failed job's segment (media-worker D5): `failed` with the classified code. False when the
    * row is gone. */
   async markMediaFailed(segmentId: string, error: string): Promise<boolean> {
@@ -615,11 +639,49 @@ export class AudioStore {
       this.core.sessionId,
       a.recordingOrdinal,
     );
+    // The result's windows must be exactly the inputs' windows: every seam held by an input, plus
+    // the `started_at_utc` of an input row with no seam (rows that predate seams). Each window's
+    // `ended_at_utc` and `source_key` come from the database, never the result; offsets lie in
+    // [0, duration] and strictly increase in window order (implementation panel B.9: a forged
+    // window would make D18 answer a later real chunk as already stored).
     const inputSet = new Set(ids);
-    const resultWindows = new Set(a.seams.map((x) => x.startedAtUtc));
+    const expected = new Map<
+      string,
+      { endedAtUtc: string | null; sourceKey: string; held: boolean }
+    >();
     for (const w of existing) {
-      if (inputSet.has(w.segmentId) && !resultWindows.has(w.startedAtUtc))
+      if (inputSet.has(w.segmentId)) {
+        expected.set(w.startedAtUtc, {
+          endedAtUtc: w.endedAtUtc,
+          sourceKey: w.sourceKey,
+          held: true,
+        });
+      }
+    }
+    const seamed = new Set(
+      existing.filter((w) => inputSet.has(w.segmentId)).map((w) => w.segmentId),
+    );
+    for (const seg of inputs) {
+      if (seamed.has(seg.id)) continue;
+      if (seg.started_at_utc === null) return { kind: 'invalid' };
+      if (!expected.has(seg.started_at_utc)) {
+        expected.set(seg.started_at_utc, {
+          endedAtUtc: seg.ended_at_utc,
+          sourceKey: seg.r2_key,
+          held: false,
+        });
+      }
+    }
+    const given = new Map(a.seams.map((x) => [x.startedAtUtc, x.offsetMs]));
+    if (given.size !== a.seams.length || given.size !== expected.size) return { kind: 'invalid' };
+    for (const w of expected.keys()) if (!given.has(w)) return { kind: 'invalid' };
+    const ordered = [...given.entries()].sort((x, y) => x[0].localeCompare(y[0]));
+    let prev = -1;
+    for (const [, off] of ordered) {
+      if (!Number.isSafeInteger(off) || off < 0 || off > a.durationMs || off <= prev) {
         return { kind: 'invalid' };
+      }
+      prev = off;
     }
     await this.core.db.run(
       `INSERT INTO session_audio_segments
@@ -639,25 +701,27 @@ export class AudioStore {
       PEAKS_DB_FLOOR,
       a.durationMs,
     );
-    const held = new Set(existing.map((w) => w.startedAtUtc));
-    const repoint = a.seams.filter((x) => held.has(x.startedAtUtc));
+    // Repoint the held windows before the inputs are deleted (deleting a segment cascades its seams).
     await media.seams.repoint(
       this.core.db,
       this.core.sessionId,
       a.recordingOrdinal,
       a.mergedId,
-      repoint.map((x) => ({ startedAtUtc: x.startedAtUtc, offsetMs: x.offsetMs })),
+      ordered
+        .filter(([w]) => expected.get(w)?.held)
+        .map(([w, off]) => ({ startedAtUtc: w, offsetMs: off })),
     );
-    for (const x of a.seams) {
-      if (held.has(x.startedAtUtc)) continue;
+    for (const [w, off] of ordered) {
+      const e = expected.get(w);
+      if (!e || e.held) continue;
       await media.seams.insert(this.core.db, {
         sessionId: this.core.sessionId,
         recordingOrdinal: a.recordingOrdinal,
-        startedAtUtc: x.startedAtUtc,
-        endedAtUtc: x.endedAtUtc,
+        startedAtUtc: w,
+        endedAtUtc: e.endedAtUtc,
         segmentId: a.mergedId,
-        offsetMs: x.offsetMs,
-        sourceKey: x.sourceKey,
+        offsetMs: off,
+        sourceKey: e.sourceKey,
       });
     }
     for (const id of ids) {
