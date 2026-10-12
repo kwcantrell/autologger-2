@@ -54,10 +54,10 @@ Each was tested in this worktree at `3d145c41` unless marked *spike*.
 | A7 | No queue exists | `grep -rn "SKIP LOCKED" server packages` | no match |
 | A8 | Prod stack subnets in use | `grep -n "subnet" compose.yaml docker/compose.stage.yaml docker/compose.dev.yaml` | prod 10,11,12,15,16,17; stage 20,21,22,25,27,28; dev 30,31,34,35,36 (`172.28.N.0/24`) |
 | A9 | The web never imports `packages/` | `grep -rn "@autologger/" web/src --include=*.ts --include=*.tsx -l` | no match (web-package-boundary) |
-| A10 | *spike* Timeslice blobs concatenate to the same bytes as a no-timeslice file (Chromium, Firefox; Safari separately) | tasks 0.2 | pending |
-| A11 | *spike* Node runs on the pinned `linuxserver/ffmpeg` base (glibc, libstdc++ present) for amd64 and arm64 | tasks 0.1 | pending |
-| A12 | *spike* `createSyncAccessHandle` in a dedicated worker works on current Chrome, Firefox and Safari; IndexedDB `Blob` storage works where OPFS does not; `navigator.locks` and `navigator.wakeLock` are available on all three | tasks 0.3 | pending |
-| A13 | *spike* The API (uid 1000) can open a worker-written file (uid 10001) under sticky `media/` with `O_NOFOLLOW`, `fstat` it, copy it and remove the worker's directory; `getent hosts example.com` fails inside the worker | tasks 0.1 | pending |
+| A10 | *spike* Timeslice blobs concatenate to the same bytes as a no-timeslice file (Chromium, Firefox; Safari separately) | tasks 0.2 | 2026-10-12: **holds at the decoded-stream level, not byte level**. Headless Chromium 156 (WebM/Opus) and Firefox 157 (Ogg/Opus, Firefox's default) `mr.start(5000)` slices appended over 25 s decode with the pinned ffmpeg (`-xerror`, `pipe:0`) and `decodeAudioData` to the same codec, rate and sample count as a parallel no-timeslice recorder on the same stream (Chromium 1198080 = 1198080, Firefox 1218560 = 1218560); bytes differ (Chromium's no-timeslice file carries SeekHead/Cues/Duration and sized clusters, the concatenation unknown-size clusters; Ogg serials differ). Safari unverified (Playwright WebKit on Linux has no `MediaRecorder`); see D10 note |
+| A11 | *spike* Node runs on the pinned `linuxserver/ffmpeg` base (glibc, libstdc++ present) for amd64 and arm64 | tasks 0.1 | holds (spike 0.1, 2026-10-12): the base is Ubuntu 26.04.1, glibc 2.43; `ldd /usr/local/bin/node` has 0 `not found`; node `v22.23.3` (`arm64`, and `x64` under QEMU) as uid 10001 |
+| A12 | *spike* `createSyncAccessHandle` in a dedicated worker works on current Chrome, Firefox and Safari; IndexedDB `Blob` storage works where OPFS does not; `navigator.locks` and `navigator.wakeLock` are available on all three | tasks 0.3 | 2026-10-12: holds on Chromium 156, Firefox 157 and WebKit 27.2 (Playwright, Linux; proxy, Safari unverified) with a persistent profile: worker `createSyncAccessHandle` write/append/flush/read round-trips 105000 bytes, IndexedDB `Blob` parts round-trip, `locks.request(…, {ifAvailable: true})` from a second tab gets `null` while the first holds it, `wakeLock` exists everywhere. **Not** where OPFS fails: in an ephemeral WebKit context `getDirectory()` throws `UnknownError` *and* the IndexedDB `Blob` put fails, so both backends fail together (memory fallback). See D10/D17 notes |
+| A13 | *spike* The API (uid 1000) can open a worker-written file (uid 10001) under sticky `media/` with `O_NOFOLLOW`, `fstat` it, copy it and remove the worker's directory; `getent hosts example.com` fails inside the worker | tasks 0.1 | holds with one change (spike 0.1, 2026-10-12): the API cannot remove a worker-made `media/<job>/` left at mode 0755 (`EACCES`); the worker must `chmod` it 0777 (D4). Then adopt + remove succeed, a symlinked `out.webm` fails `ELOOP`, and `getent hosts example.com` returns 2 |
 | A14 | No segment undo exists (`deleteAudioSegment` only serves import rollback) | `grep -rn "deleteAudioSegment" server/src packages/session-core/src \| grep -v test` | `audio.ts` put rollback and `sessions.ts` import rollback only |
 | A15 | `LISTEN`/`NOTIFY` cannot be revoked per role | PostgreSQL 17 `NOTIFY`/`LISTEN` reference: no privilege is checked; `docs/security.md` "NOTIFY forgery" already records that any database login can `pg_notify` | accepted risk, monitored (D20) |
 
@@ -158,6 +158,18 @@ job row's status guards the transaction).
   open (swap in a symlink, replace or grow the file) changes what was checked, and no worker-owned
   inode ever reaches `audio/`. Cost: one copy of up to 1.5 GiB per big job, accepted. Spike 0.1
   (A13) proves the open/copy/remove sequence across the two uids.
+  **Spike 0.1 (2026-10-12)**: emulated volume `media-worker-spike-blobs`; worker
+  `media-worker-spike:{arm64,amd64}` (uid 10001, hardened flags), API `node:22-bookworm-slim` pin
+  (uid 1000) running `open(O_RDONLY|O_NOFOLLOW)`, `fstat` (regular file, uid 10001, ≤ 1650 MiB),
+  64 KiB copy to `.tmp/put-<uuid>`, `fsync`, `rename` to `audio/s1/<n>_m.webm`, `rm -r media/<job>`.
+  Job dir 0755 (worker umask 022): copy and rename OK, `rm media/job1 FAIL EACCES` (removing
+  `out.webm` needs write on the worker-owned job dir; the sticky bit on `media/` only covers its
+  own entries). Job dir 0777: `copied 2778 bytes -> audio/s1/3_m.webm owner 1000`, `rm media/job2
+  OK` (same on the amd64 worker). `out.webm` replaced by `ln -s /blobs/audio/s1/1_b.webm`: `open
+  FAIL ELOOP`. Extra case: `media/job4` itself a symlink to `audio/s1/` opens an API-owned blob
+  (`O_NOFOLLOW` covers only the last component); only the handle's owner check (`uid 1000` →
+  `REJECT`) stops it, so that check is load-bearing; the API also `lstat`s `media/<job>` (a real
+  directory owned by 10001) before the open.
 - Result validation: peaks are 8..4096 numbers in [0, 1]; `duration_ms` is a positive integer; the
   blob key is `media/<job id>/<name>` with `<name>` a single plain path component; a merge's input
   ids must equal the current segment set (D7); an `ingest` whose target row no longer exists is
@@ -183,6 +195,17 @@ job row's status guards the transaction).
   creates are mode 0644, readable by the API. Blobs the import copied with mode 0600 are
   unreadable to the worker: the job fails `missing-blob` with a README note (`chmod -R a+rX
   audio/`). Spike 0.1 confirms the modes on an existing volume.
+  **Spike 0.1 (2026-10-12)**, on an emulated volume (the dev `dev-blobs` volume lives on the
+  `autologger-dev` VM, which the spike did not touch): `BlobStore.put` as uid 1000, umask `22`,
+  gives `. .tmp audio audio/s1` = `755 1000:1000`, blobs `644 1000:1000`; `media` after
+  `mkdir` + `chmod 0o1777` (mkdir's mode is masked by the umask, so the API must `chmod`) =
+  `1777 1000:1000`. As 10001: `touch audio/s1/x`, `rm audio/s1/1_b.webm`, `touch .tmp/x` and `mv
+  media m2` all `Permission denied`; worker output `out.webm` = `644 10001`. **Change**: the
+  worker creates `media/<job>/` and then `chmod`s it to `0777` (not sticky), otherwise the API
+  cannot remove it (D3 note). `read_only`, `cap_drop ALL`, `no-new-privileges`, `--init`, `tmpfs
+  /tmp` (64 MiB): node writes `/tmp`, ffmpeg decodes, `touch /x` → `Read-only file system`, on
+  both architectures. On an `internal: true` network: `getent hosts example.com` rc `2`, node
+  `dns.lookup` `EAI_AGAIN`, resolver `127.0.0.11`; `getent hosts db` (service alias) still resolves.
 - **ffmpeg never opens a path** (panel B): the worker opens each input itself (`O_RDONLY |
   O_NOFOLLOW`, `fstat` regular file, under `/blobs/audio/` or `/blobs/.trash/`), sniffs the
   container from the first bytes (Matroska/WebM EBML, `OggS`, MP4 `ftyp`, RIFF `WAVE`, `fLaC`, MP3
@@ -204,6 +227,18 @@ job row's status guards the transaction).
 - `docs/security.md` gains a row for untrusted media: the controls above, and the residuals: a
   decoder exploit yields a read of every blob and a bounded write to `media_jobs`; the worker
   login can `LISTEN` on the frame-bus channel and flood `pg_notify` (D20).
+
+**Spike 0.2/0.3 (2026-10-12).** Atom order: headless Chromium 156 asked for `audio/mp4` writes
+fragmented MP4 (Opus) with `moov` **before** the fragments, both no-timeslice (`ftyp, moov, moof,
+mdat`) and timeslice (slice 0 = `ftyp, moov`; later slices `moof, mdat` pairs), so it demuxes from
+`pipe:0` with `-f mov`; Chromium/Firefox defaults are WebM and Ogg, never MP4. Safari's layout is
+**unverified** (Playwright WebKit on Linux exposes no `MediaRecorder`); the `file:` exception
+stays until the owner's Safari check reports `moov` after `mdat`. Classification: with `-xerror`
+a WebM or Ogg prefix cut at a slice boundary or mid-slice exits 0 (WebM logs "File ended
+prematurely" at level error, so stderr content alone must not mean failure); an MP4 cut
+mid-fragment exits 183 ("corrupt input packet") after decoding the earlier fragments, while an MP4
+cut at a slice boundary exits 0. A partial chunk is therefore trimmed to its last whole slice (D10
+note) before upload. Scripts and outputs: `/tmp/claude-1000/-home-spark-spark-infra/6240e2d2-a7e0-415a-bc19-67c2995ccb4b/scratchpad/spike-browser/` (`drive.mjs`, `www/`, `out/`).
 
 ### D5. On-ingest processing for every new segment
 
@@ -398,6 +433,41 @@ Safari evicts all script-writable storage of a site not used for 7 days (ITP), s
 Safari is only promised within 7 days; the rescue copy says so on Safari. Cleanup: removal on
 confirm/discard; stored chunks older than 30 days are deleted at scan with a console warning.
 
+**Spike 0.2/0.3 (2026-10-12).** Headless Chromium 156, Firefox 157, WebKit 27.2 (Playwright on
+Linux aarch64; WebKit is a proxy, **Safari unverified**), fake microphone, 25 s, a timeslice
+recorder and a no-timeslice recorder on the same stream.
+- Concatenation: slice 0 starts with the container header (EBML `1a45dfa3` / `OggS` with BOS),
+  later slices are continuations (Chromium `43c3…` mid-cluster, Firefox `OggS` pages). The
+  appended slices decode (pinned ffmpeg `-xerror -f matroska|ogg -i pipe:0`, and
+  `decodeAudioData`) to the same codec, 48 kHz mono, and the **same sample count** as the
+  no-timeslice file (24.96 s Chromium, 25.387 s Firefox). The bytes are **not** equal: "the
+  appended bytes equal the no-timeslice file" above is superseded by "decode to the same stream".
+  Chromium's no-timeslice WebM now carries SeekHead/Cues/Duration; the concatenation has none
+  (live-style unknown-size clusters), so ffprobe and the media element report no duration for it.
+- Firefox records **Ogg/Opus** by default (`audio/ogg; codecs=opus`, no WebM unless asked), and
+  its final slice arrives after `stop()`; the store must accept `ogg` (D4's allowlist has it)
+  and take the MIME type from the first blob's `.type` (as the recorder already does).
+- Prefix: the first 3 slices decode with ffmpeg and `decodeAudioData` (Chromium 15.06 s, Firefox
+  14.793 s, Chromium-MP4 15.1 s). A prefix cut mid-slice decodes for WebM/Ogg but fails `-xerror`
+  for MP4, so recovery trims a partial chunk to `sum(sliceLog.bytes)` (the last fully appended
+  slice) and the duration probe uses that prefix.
+- Duration probe: the media element gives `Infinity` for Chromium's concatenated WebM (finite for
+  Firefox Ogg and Chromium MP4), so on Chromium the slice-log fallback (or `decodeAudioData` of
+  the prefix) is the normal path, not the exception.
+- Persistence (0.3): worker `createSyncAccessHandle` write/append/flush/read and IndexedDB `Blob`
+  parts round-trip on all three with a persistent profile. In an ephemeral WebKit context (the
+  proxy for Safari Private Browsing) `navigator.storage.getDirectory()` throws `UnknownError`
+  and the IndexedDB `Blob` put fails too, so backend selection must **probe with a real write**
+  (not feature-detect) and fall through to memory with the one warning. `locks.request(name,
+  {ifAvailable: true})` in a second tab of the same profile gets `null` while the first tab holds
+  the lock (all three), so the cross-tab rule works as designed. `estimate()`: Chromium quota
+  ≈10 GiB, Firefox 10 GiB, WebKit 1000 MiB; `persist()`: Chromium `false` (no engagement),
+  WebKit `false`, Firefox did not settle in 5 s (prompt pending in headless), so the recorder
+  must not await `persist()` before `start()`.
+- Safari branch: undecided until the owner's Safari check (tasks 0.2 Evidence); until then the
+  Safari path stays "appends", and switches to finished-chunks-only if Safari's concatenated
+  slices fail `decodeAudioData` or ffmpeg.
+
 ### D11. Timed retry, classification, finalize, throttle-proof timers
 
 - Backoff: `delay = min(300 s, 2 s × 2^(attempt−1)) × U(0.5, 1.5)` per chunk, persisted as
@@ -469,7 +539,15 @@ with `/usr/local/bin/node` copied from `node`, the worker's `src/**`, the worksp
 imports and their production dependencies, `USER 10001`, `ENTRYPOINT ["node", …]` (the image's
 own `ENTRYPOINT`/`CMD` overridden). Spike 0.1 verifies node runs there on both architectures; the
 recorded fallback is a static ffmpeg per architecture pinned by sha256 onto the node image, the
-`yt-dlp`/`deno` pattern. `docker-bake.hcl` adds target `media-worker` (`platforms` from
+`yt-dlp`/`deno` pattern. **Spike 0.1 (2026-10-12)**: the DRAFT
+`docker/media-worker.Dockerfile` (`COPY --from=node /usr/local/bin/node`, `USER 10001:10001`,
+`ENTRYPOINT ["node"]`) builds with `docker buildx build --builder default --platform
+linux/{arm64,amd64}` (amd64 via QEMU). Each, run `--user 10001:10001 --read-only --tmpfs /tmp
+--cap-drop ALL --security-opt no-new-privileges:true --network none --init`: `node --version` →
+`v22.23.3`; `ffmpeg -version` → `ffmpeg version 9.0`; `ffmpeg -nostdin -hide_banner -loglevel
+error -xerror -protocol_whitelist pipe -f matroska -i pipe:0 -f f32le -acodec pcm_f32le pipe:1 <
+seg1.webm | wc -c` → `115200`, rc 0 (pipefail). Node runs on the base, so the static-ffmpeg
+fallback is not needed. Image sizes before app code: arm64 583 MB, amd64 920 MB. `docker-bake.hcl` adds target `media-worker` (`platforms` from
 `_common`, tag `${REGISTRY}/autologger-media-worker:${GIT_SHA}`) to group `default`, so
 `prod-push` and `stage-push` build and push it unchanged. Dev builds it locally
 (`autologger-dev-media-worker:local`); stage `${STAGE_MEDIA_IMAGE:-autologger-stage-media-worker:local}`;
@@ -543,6 +621,12 @@ browsers may throttle a hidden tab, keep this tab visible") and logs the hidden 
 and end to the console; the warning clears on the next user action. Mobile Safari suspends a
 hidden page's capture regardless; the warning says so there. Neither mechanism affects the
 timers, which already run on worker intervals (D11).
+
+**Spike 0.2/0.3 (2026-10-12).** `navigator.wakeLock` exists in Chromium 156, Firefox 157 and WebKit
+27.2 (proxy). Headless `request('screen')`: Chromium `NotAllowedError: Wake Lock permission
+request denied`, WebKit `NotAllowedError: Permission was denied`, Firefox **granted**. Refusal is
+therefore a normal outcome and the "logged once, never an error" rule stands; a granted lock in
+a visible headed tab is expected but unverified here (Safari: owner check).
 
 ### D18. The segment POST is idempotent per recording window (panel A, panel C blockers)
 

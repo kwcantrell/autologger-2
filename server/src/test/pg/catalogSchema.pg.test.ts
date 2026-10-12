@@ -60,6 +60,10 @@ const TABLES = [
   'wiki_revisions',
   // show-wiki-ai D1: the AI's pending and resolved wiki suggestions.
   'wiki_suggestions',
+  // media-worker D2, D12, D7: the media queue, resumable uploads and recording seams.
+  'media_jobs',
+  'media_uploads',
+  'session_audio_seams',
 ];
 // companion-devices D1: the tables with no catalog_user policy and no catalog_user privilege.
 // byo-ai-providers D1: plus the two provider tables.
@@ -95,6 +99,9 @@ const KEY_COLUMN: Record<string, string> = {
   wiki_aliases: 'page_id',
   wiki_revisions: 'page_id',
   wiki_suggestions: 'id',
+  media_jobs: 'id',
+  media_uploads: 'id',
+  session_audio_seams: 'session_id',
 };
 const MIGRATIONS = resolve(import.meta.dirname, '../../../../supabase/migrations');
 const MIGRATION = resolve(MIGRATIONS, '20261001000000_catalog_schema.sql');
@@ -331,6 +338,10 @@ const EXPECTED_SCHEMA: SchemaRecord = {
       'waveform_peaks_json text collate C',
       'waveform_db_floor double precision',
       'created_at_utc text collate C not null',
+      // media-worker D5: the server-side duration and processing state.
+      'duration_ms bigint',
+      'media_status text collate C',
+      'media_error text collate C',
     ],
     primaryKey: ['session_id', 'id'],
     foreignKeys: ['FOREIGN KEY (session_id) REFERENCES catalog.sessions(id)'],
@@ -623,11 +634,88 @@ const EXPECTED_SCHEMA: SchemaRecord = {
     'catalog.users UNIQUE (google_sub)',
     'catalog.wiki_pages UNIQUE (id, show_id)',
   ],
+  // media-worker D2: the durable job queue.
+  media_jobs: {
+    columns: [
+      'id text collate C not null',
+      'kind text collate C not null',
+      'session_id text collate C not null',
+      'target text collate C not null',
+      "status text collate C not null default 'queued'::text",
+      'attempts integer not null default 0',
+      'max_attempts integer not null default 5',
+      'input_bytes bigint not null',
+      'run_after_ms bigint not null',
+      'locked_by text collate C',
+      'locked_until_ms bigint',
+      'result_json text collate C',
+      'error text collate C',
+      'created_at_ms bigint not null',
+      'updated_at_ms bigint not null',
+      'applied_at_ms bigint',
+    ],
+    primaryKey: ['id'],
+    foreignKeys: ['FOREIGN KEY (session_id) REFERENCES catalog.sessions(id)'],
+  },
+  // media-worker D12: resumable parts uploads.
+  media_uploads: {
+    columns: [
+      'id text collate C not null',
+      'session_id text collate C not null',
+      'created_by_user_id text collate C not null',
+      'content_type text collate C not null',
+      'size_bytes bigint not null',
+      'part_size bigint not null',
+      'parts_total integer not null',
+      'part_sha256_json text collate C not null',
+      "received_json text collate C not null default '[]'::text",
+      "status text collate C not null default 'open'::text",
+      'expires_at_ms bigint not null',
+      'created_at_ms bigint not null',
+    ],
+    primaryKey: ['id'],
+    foreignKeys: [
+      'FOREIGN KEY (created_by_user_id) REFERENCES catalog.users(id) ON DELETE CASCADE',
+      'FOREIGN KEY (session_id) REFERENCES catalog.sessions(id)',
+    ],
+  },
+  // media-worker D7, D18: one row per accepted chunk window.
+  session_audio_seams: {
+    columns: [
+      'session_id text collate C not null',
+      'recording_ordinal bigint not null',
+      'started_at_utc text collate C not null',
+      'ended_at_utc text collate C',
+      'segment_id text collate C not null',
+      'offset_ms bigint not null default 0',
+      'source_key text collate C not null',
+    ],
+    primaryKey: ['session_id', 'recording_ordinal', 'started_at_utc'],
+    foreignKeys: [
+      'FOREIGN KEY (session_id, segment_id) REFERENCES catalog.session_audio_segments(session_id, id) ON DELETE CASCADE',
+      'FOREIGN KEY (session_id) REFERENCES catalog.sessions(id)',
+    ],
+  },
+  $unique: ['catalog.companion_devices UNIQUE (token_hash)', 'catalog.users UNIQUE (google_sub)'],
   // owner-bootstrap D1: the role check and at most one owner per team.
   $checks: [
     'catalog.companion_devices companion_devices_name_check CHECK (((char_length(name) >= 1) AND (char_length(name) <= 80)))',
     'catalog.companion_presence companion_presence_client_id_check CHECK (((char_length(client_id) >= 1) AND (char_length(client_id) <= 256)))',
+    // media-worker D2, D12, D5, D7.
+    'catalog.media_jobs media_jobs_input_bytes_check CHECK ((input_bytes >= 0))',
+    "catalog.media_jobs media_jobs_kind_check CHECK ((kind = ANY (ARRAY['ingest'::text, 'merge'::text])))",
+    'catalog.media_jobs media_jobs_result_json_size CHECK ((octet_length(result_json) <= 262144))',
+    "catalog.media_jobs media_jobs_status_check CHECK ((status = ANY (ARRAY['queued'::text, 'running'::text, 'done'::text, 'applied'::text, 'failed'::text, 'cancelled'::text])))",
+    'catalog.media_uploads media_uploads_content_type_check CHECK (((char_length(content_type) >= 1) AND (char_length(content_type) <= 255)))',
+    'catalog.media_uploads media_uploads_part_size_check CHECK ((part_size > 0))',
+    'catalog.media_uploads media_uploads_parts_total_check CHECK (((parts_total >= 1) AND (parts_total <= 10000)))',
+    'catalog.media_uploads media_uploads_size_bytes_check CHECK ((size_bytes > 0))',
+    "catalog.media_uploads media_uploads_status_check CHECK ((status = ANY (ARRAY['open'::text, 'complete'::text])))",
     'catalog.provider_key_check provider_key_check_id_check CHECK ((id = 1))',
+    'catalog.session_audio_seams session_audio_seams_offset_ms_check CHECK ((offset_ms >= 0))',
+    'catalog.session_audio_segments session_audio_segments_duration_ms_check CHECK ((duration_ms >= 0))',
+    'catalog.session_audio_segments session_audio_segments_media_error_check CHECK ((char_length(media_error) <= 64))',
+    "catalog.session_audio_segments session_audio_segments_media_status_check CHECK ((media_status = ANY (ARRAY['pending'::text, 'done'::text, 'failed'::text])))",
     "catalog.session_leases session_leases_client_check CHECK (((holder_client_id <> ''::text) AND (length(holder_client_id) <= 256)))",
     "catalog.session_leases session_leases_kind_check CHECK ((kind = ANY (ARRAY['recording'::text, 'ai-turn'::text, 'transcript-generation'::text, 'youtube-import'::text])))",
     "catalog.session_overwrites session_overwrites_table_name_check CHECK ((table_name = ANY (ARRAY['session_events'::text, 'session_transcript_words'::text, 'session_topics'::text])))",
@@ -657,8 +745,15 @@ const EXPECTED_SCHEMA: SchemaRecord = {
   $indexes: [
     'CREATE INDEX idx_companion_devices_user ON catalog.companion_devices USING btree (user_id)',
     'CREATE INDEX idx_companion_presence_user ON catalog.companion_presence USING btree (user_id, updated_at_ms)',
+    // media-worker D2, D12, D7.
+    "CREATE INDEX idx_media_jobs_due ON catalog.media_jobs USING btree (run_after_ms, created_at_ms) WHERE (status = 'queued'::text)",
+    "CREATE UNIQUE INDEX idx_media_jobs_live ON catalog.media_jobs USING btree (kind, session_id, target) WHERE (status = ANY (ARRAY['queued'::text, 'running'::text, 'done'::text]))",
+    'CREATE INDEX idx_media_jobs_status ON catalog.media_jobs USING btree (status, updated_at_ms)',
+    'CREATE INDEX idx_media_uploads_expiry ON catalog.media_uploads USING btree (expires_at_ms)',
+    'CREATE INDEX idx_media_uploads_user ON catalog.media_uploads USING btree (created_by_user_id, status)',
     'CREATE INDEX idx_session_audio_ordinal ON catalog.session_audio_segments USING btree (session_id, ordinal)',
     'CREATE INDEX idx_session_audio_r2_key ON catalog.session_audio_segments USING btree (session_id, r2_key)',
+    'CREATE INDEX idx_session_audio_seams_segment ON catalog.session_audio_seams USING btree (session_id, segment_id)',
     // catalog-search D3: the search indexes.
     // catalog-search D11: the phrase trigram indexes.
     'CREATE INDEX idx_session_chunks_phrase_trgm ON catalog.session_transcript_chunks USING gin (catalog.search_phrase_norm(text) gin_trgm_ops)',
@@ -859,6 +954,14 @@ describe('the app role (design D3)', () => {
                 created_at_utc)
               values ('ws', 'sh', 'se', 'r', 'wp', 1, 'session', 'W', '', '[]', '', 'pending', 'u',
                 'U', ${t})`;
+    // media-worker D2, D12, D7.
+    await sql`insert into media_jobs (id, kind, session_id, target, input_bytes, run_after_ms,
+                created_at_ms, updated_at_ms) values ('j', 'ingest', 'se', 'a', 1, 1, 1, 1)`;
+    await sql`insert into media_uploads (id, session_id, created_by_user_id, content_type,
+                size_bytes, part_size, parts_total, part_sha256_json, expires_at_ms, created_at_ms)
+              values ('up', 'se', 'u', 'audio/wav', 1, 1, 1, '[]', 1, 1)`;
+    await sql`insert into session_audio_seams (session_id, recording_ordinal, started_at_utc,
+                segment_id, source_key) values ('se', 1, ${t}, 'a', 'k')`;
     for (const table of TABLES) {
       const n = await sql.unsafe(`select count(*)::int as n from ${table}`);
       expect(n[0]?.n, table).toBeGreaterThan(0);
@@ -997,10 +1100,13 @@ describe('row-level security on every catalog table (catalog-roles D1, D2; catal
       // session-content-policies D1: so does each session table's.
       const session = SESSION_TABLES.includes(t.relname);
       // show-wiki D1: so do wiki_pages and wiki_aliases.
+      // media-worker D7, D12: so do the seams and the uploads.
       expect(byName[`${t.relname}_user_all`] !== undefined, t.relname).toBe(
         t.relname === 'user_prefs' ||
           t.relname === 'show_grants' ||
           session ||
+          t.relname === 'session_audio_seams' ||
+          t.relname === 'media_uploads' ||
           t.relname === 'wiki_pages' ||
           t.relname === 'wiki_aliases',
       );
@@ -1092,10 +1198,16 @@ describe('row-level security on every catalog table (catalog-roles D1, D2; catal
         ]);
       }
       if (session) {
-        expect(policies.map((p) => p.policyname).sort(), t.relname).toEqual([
-          `${t.relname}_system_all`,
-          `${t.relname}_user_all`,
-        ]);
+        // media-worker D1: the worker role reads the segments through its own select policy.
+        expect(policies.map((p) => p.policyname).sort(), t.relname).toEqual(
+          t.relname === 'session_audio_segments'
+            ? [
+                'session_audio_segments_media_select',
+                'session_audio_segments_system_all',
+                'session_audio_segments_user_all',
+              ]
+            : [`${t.relname}_system_all`, `${t.relname}_user_all`],
+        );
         expect(byName[`${t.relname}_user_all`], t.relname).toEqual(['catalog_user']);
         for (const priv of ['select', 'insert', 'update', 'delete']) {
           const r =

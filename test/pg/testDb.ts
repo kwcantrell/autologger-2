@@ -11,6 +11,8 @@ export interface TestPg {
   port: number;
   superPassword: string;
   appPassword: string;
+  /** `autologger_media`'s password (media-worker D1). */
+  mediaPassword: string;
   /** The container's id, for `docker logs` checks. */
   container: string;
 }
@@ -42,15 +44,25 @@ export interface TestDatabase {
   system: ConnOptions;
   /** As `postgres`, the migrations user (not a superuser). */
   admin: ConnOptions;
+  /** As `autologger_media`, the media worker's role (media-worker D1). */
+  media: ConnOptions;
 }
 
 export function testPg() {
   return inject('pg');
 }
 
-export function connOptions(user: 'postgres' | 'autologger_app', database: string): ConnOptions {
+export function connOptions(
+  user: 'postgres' | 'autologger_app' | 'autologger_media',
+  database: string,
+): ConnOptions {
   const pg = testPg();
-  const password = user === 'postgres' ? pg.superPassword : pg.appPassword;
+  const password =
+    user === 'postgres'
+      ? pg.superPassword
+      : user === 'autologger_media'
+        ? pg.mediaPassword
+        : pg.appPassword;
   return { host: pg.host, port: pg.port, user, password, database };
 }
 
@@ -74,5 +86,6 @@ export async function createTestDatabase(): Promise<TestDatabase> {
       connection: { options: '-c role=catalog_system' },
     },
     admin: connOptions('postgres', name),
+    media: connOptions('autologger_media', name),
   };
 }

@@ -51,10 +51,12 @@ describe('startTestPostgres', () => {
     const pg = await startTestPostgres(deps(docker));
     expect(pg.port).toBe(40001);
     expect(pg.superPassword).not.toBe(pg.appPassword);
+    expect(pg.mediaPassword).not.toBe(pg.appPassword);
     for (const c of calls) {
       for (const a of c.args) {
         expect(a).not.toContain(pg.superPassword);
         expect(a).not.toContain(pg.appPassword);
+        expect(a).not.toContain(pg.mediaPassword);
       }
     }
     const run = calls.find((c) => c.args[0] === 'run');
@@ -63,13 +65,18 @@ describe('startTestPostgres', () => {
     expect(ports).toEqual(['127.0.0.1::5432']);
     expect(run?.env?.POSTGRES_PASSWORD).toBe(pg.superPassword);
     expect(run?.env?.APP_DB_PASSWORD).toBe(pg.appPassword);
+    // media-worker D1: migrate.sh refuses to run without the worker role's password.
+    expect(run?.env?.MEDIA_DB_PASSWORD).toBe(pg.mediaPassword);
     // migrate.sh runs on both databases, with the app password passed by name only.
     const migrates = calls.filter((c) => c.args[0] === 'exec' && c.args.includes('/migrate.sh'));
     expect(migrates.map((c) => c.args.find((a) => a.startsWith('PGDATABASE=')))).toEqual([
       'PGDATABASE=postgres',
       'PGDATABASE=autologger_template',
     ]);
-    for (const m of migrates) expect(m.args).toContain('APP_DB_PASSWORD');
+    for (const m of migrates) {
+      expect(m.args).toContain('APP_DB_PASSWORD');
+      expect(m.args).toContain('MEDIA_DB_PASSWORD');
+    }
   });
 });
 

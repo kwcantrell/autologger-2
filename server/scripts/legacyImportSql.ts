@@ -453,6 +453,11 @@ export function importPreamble(header: string[]): string {
 const SESSION_CHILD_TABLES = [
   'session_overwrites',
   'session_leases',
+  // media-worker (20261019000000): derived media rows of a replaced session go with it. Imported
+  // segments get no seams or jobs, so `media_status` stays null (the legacy path, design D5).
+  'media_jobs',
+  'media_uploads',
+  'session_audio_seams',
   ...SESSION_TABLES.map((s) => s.target),
 ];
 

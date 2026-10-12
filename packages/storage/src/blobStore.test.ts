@@ -1,16 +1,29 @@
+import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  readFileSync,
   rmSync,
+  statfsSync,
+  statSync,
+  symlinkSync,
   utimesSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative, sep } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { BlobStore, InvalidRangeError, sweepStaleBlobPutTemps } from './blobStore';
+import {
+  BlobStore,
+  InvalidRangeError,
+  MediaAdoptError,
+  PartTooLargeError,
+  sweepStaleBlobPutTemps,
+} from './blobStore';
 
 // shared-blob-volume D3: records the temp path of every rename, so a test can see the name a put
 // chose. Delegates to the real rename.
@@ -283,5 +296,263 @@ describe('sweepStaleBlobPutTemps (shared-blob-volume D3)', () => {
   it('returns 0 for a missing directory', () => {
     base = mkdtempSync(join(tmpdir(), 'autologger-blob-'));
     expect(sweepStaleBlobPutTemps(join(base, 'nope'), NOW)).toBe(0);
+  });
+});
+
+// media-worker design D3, D8, D12 (task S.6): the sticky `media/` directory the worker writes, the
+// handle-based copy that adopts a worker's file, the trash and its sweeps, the free-space read and
+// the resumable upload's staging file. The root is BLOB_DIR; `.tmp` is the put temp directory.
+describe('BlobStore media additions (media-worker D3, D8, D12)', () => {
+  function layout(): { root: string; s: BlobStore } {
+    base = mkdtempSync(join(tmpdir(), 'autologger-blob-'));
+    const root = join(base, 'blobs');
+    mkdirSync(root);
+    return {
+      root,
+      s: new BlobStore(root, { putTmpDir: join(root, '.tmp'), scratchDir: join(base, 'scratch') }),
+    };
+  }
+  const sha = (b: Uint8Array | string) => createHash('sha256').update(b).digest('hex');
+  /** A worker's output file under media/<job>/. */
+  function workerFile(root: string, job: string, name: string, bytes: string | Uint8Array): string {
+    mkdirSync(join(root, 'media', job), { recursive: true });
+    const p = join(root, 'media', job, name);
+    writeFileSync(p, bytes, { mode: 0o644 });
+    return p;
+  }
+
+  it('ensureMediaDir creates media/ sticky and world-writable (1777), and repairs its mode', async () => {
+    const { root, s } = layout();
+    await s.ensureMediaDir();
+    expect(statSync(join(root, 'media')).mode & 0o7777).toBe(0o1777);
+    chmodSync(join(root, 'media'), 0o755);
+    await s.ensureMediaDir();
+    expect(statSync(join(root, 'media')).mode & 0o7777).toBe(0o1777);
+  });
+
+  describe('adoptCopy', () => {
+    it('copies the file through its own .tmp/put-* into the key, then removes the job directory', async () => {
+      const { root, s } = layout();
+      await s.ensureMediaDir();
+      const src = workerFile(root, 'job-1', 'out.webm', 'merged-bytes');
+      renamedFrom.length = 0;
+      expect(await s.adoptCopy('media/job-1/out.webm', 'audio/s1/3_m.webm')).toEqual({
+        copied: true,
+        bytes: 12,
+      });
+      expect(readFileSync(join(root, 'audio/s1/3_m.webm'), 'utf8')).toBe('merged-bytes');
+      // A new inode (never the worker's), written through a put temp file.
+      expect(renamedFrom.map((p) => relative(join(root, '.tmp'), p))).toEqual([
+        expect.stringMatching(/^put-[0-9a-f-]{36}$/),
+      ]);
+      expect(existsSync(src)).toBe(false);
+      expect(existsSync(join(root, 'media', 'job-1'))).toBe(false);
+      expect(readdirSync(join(root, '.tmp'))).toEqual([]);
+    });
+
+    it('is idempotent when the key already exists (a retried apply)', async () => {
+      const { root, s } = layout();
+      await s.put('audio/s1/3_m.webm', new TextEncoder().encode('first'));
+      workerFile(root, 'job-1', 'out.webm', 'second');
+      expect(await s.adoptCopy('media/job-1/out.webm', 'audio/s1/3_m.webm')).toEqual({
+        copied: false,
+        bytes: 5,
+      });
+      expect(readFileSync(join(root, 'audio/s1/3_m.webm'), 'utf8')).toBe('first');
+      expect(existsSync(join(root, 'media', 'job-1'))).toBe(false);
+    });
+
+    it('refuses a symlink, a directory, a FIFO and a file over the cap, copying nothing', async () => {
+      const { root, s } = layout();
+      await s.put('audio/s1/other.webm', new TextEncoder().encode('secret'));
+      mkdirSync(join(root, 'media', 'j'), { recursive: true });
+      symlinkSync(join(root, 'audio/s1/other.webm'), join(root, 'media', 'j', 'link.webm'));
+      mkdirSync(join(root, 'media', 'j', 'dir.webm'));
+      execFileSync('mkfifo', [join(root, 'media', 'j', 'fifo.webm')]);
+      writeFileSync(join(root, 'media', 'j', 'big.webm'), 'x'.repeat(11));
+      for (const name of ['link.webm', 'dir.webm', 'fifo.webm']) {
+        await expect(s.adoptCopy(`media/j/${name}`, `audio/s1/${name}`), name).rejects.toThrow(
+          MediaAdoptError,
+        );
+      }
+      await expect(
+        s.adoptCopy('media/j/big.webm', 'audio/s1/big.webm', { maxBytes: 10 }),
+      ).rejects.toThrow(MediaAdoptError);
+      expect(readdirSync(join(root, 'audio/s1'))).toEqual(['other.webm']);
+      expect(readdirSync(join(root, '.tmp'))).toEqual([]);
+      // A refusal leaves the job directory for the sweep.
+      expect(existsSync(join(root, 'media', 'j'))).toBe(true);
+    });
+
+    it('refuses a job directory that is a symlink, and source paths outside media/<job>/<name>', async () => {
+      const { root, s } = layout();
+      await s.put('audio/s1/a.webm', new TextEncoder().encode('secret'));
+      mkdirSync(join(root, 'media'), { recursive: true });
+      symlinkSync(join(root, 'audio/s1'), join(root, 'media', 'evil'));
+      await expect(s.adoptCopy('media/evil/a.webm', 'audio/s1/b.webm')).rejects.toThrow(
+        MediaAdoptError,
+      );
+      for (const bad of [
+        'media/../audio/s1/a.webm',
+        'audio/s1/a.webm',
+        'media/j/sub/x.webm',
+        'media/j/',
+        'media//x.webm',
+        'media/j/.hidden',
+        '/etc/passwd',
+      ]) {
+        await expect(s.adoptCopy(bad, 'audio/s1/c.webm'), bad).rejects.toThrow(MediaAdoptError);
+      }
+      expect(readdirSync(join(root, 'audio/s1')).sort()).toEqual(['a.webm']);
+    });
+
+    it('checks the owner uid by the handle when one is required', async () => {
+      const { root, s } = layout();
+      workerFile(root, 'j', 'out.flac', 'flac');
+      const mine = statSync(join(root, 'media/j/out.flac')).uid;
+      await expect(
+        s.adoptCopy('media/j/out.flac', 'audio/s1/x.flac', { ownerUid: mine + 1 }),
+      ).rejects.toThrow(MediaAdoptError);
+      expect(await s.adoptCopy('media/j/out.flac', 'audio/s1/x.flac', { ownerUid: mine })).toEqual({
+        copied: true,
+        bytes: 4,
+      });
+    });
+
+    it('removes a job directory whose files it cannot write (mode-only stand-in for a foreign uid)', async () => {
+      const { root, s } = layout();
+      await s.ensureMediaDir();
+      workerFile(root, 'j', 'out.webm', 'bytes');
+      writeFileSync(join(root, 'media/j/extra.log'), 'x', { mode: 0o444 });
+      chmodSync(join(root, 'media/j/out.webm'), 0o444);
+      await s.adoptCopy('media/j/out.webm', 'audio/s1/x.webm');
+      expect(existsSync(join(root, 'media', 'j'))).toBe(false);
+      await s.removeMediaJobDir('missing-job'); // no-op
+      await expect(s.removeMediaJobDir('../audio')).rejects.toThrow(MediaAdoptError);
+    });
+  });
+
+  describe('trash', () => {
+    const DAY = 24 * 60 * 60 * 1000;
+    const NOW = Date.UTC(2026, 9, 19, 12, 0, 0);
+
+    it('trash moves a blob to .trash/<yyyy-mm-dd>/<key>; a missing key is a no-op', async () => {
+      const { root, s } = layout();
+      await s.put('audio/s1/a.webm', new TextEncoder().encode('a'));
+      expect(await s.trash('audio/s1/a.webm', NOW)).toBe(true);
+      expect(existsSync(join(root, 'audio/s1/a.webm'))).toBe(false);
+      expect(readFileSync(join(root, '.trash/2026-10-19/audio/s1/a.webm'), 'utf8')).toBe('a');
+      expect(await s.trash('audio/s1/a.webm', NOW)).toBe(false);
+      await expect(s.trash('../x', NOW)).rejects.toThrow();
+    });
+
+    it('sweepTrash deletes day directories 7 days old or more and keeps younger ones', async () => {
+      const { root, s } = layout();
+      for (const [key, daysAgo] of [
+        ['audio/s1/d0.webm', 0],
+        ['audio/s1/d6.webm', 6],
+        ['audio/s1/d7.webm', 7],
+        ['audio/s1/d9.webm', 9],
+      ] as const) {
+        await s.put(key, new TextEncoder().encode('x'));
+        await s.trash(key, NOW - daysAgo * DAY);
+      }
+      mkdirSync(join(root, '.trash', 'not-a-day'));
+      expect(await s.sweepTrash(NOW, 7 * DAY)).toBe(2);
+      expect(readdirSync(join(root, '.trash')).sort()).toEqual([
+        '2026-10-13',
+        '2026-10-19',
+        'not-a-day',
+      ]);
+    });
+
+    it('purgeTrashOldestFirst frees at least the bytes asked, oldest day and file first', async () => {
+      const { root, s } = layout();
+      for (const [key, daysAgo, size] of [
+        ['audio/s1/new.webm', 1, 100],
+        ['audio/s1/old-a.webm', 3, 100],
+        ['audio/s1/old-b.webm', 3, 100],
+        ['audio/s1/mid.webm', 2, 100],
+      ] as const) {
+        await s.put(key, new Uint8Array(size));
+        await s.trash(key, NOW - daysAgo * DAY);
+      }
+      expect(await s.purgeTrashOldestFirst(150)).toBe(200);
+      expect(readdirSync(join(root, '.trash')).sort()).toEqual(['2026-10-17', '2026-10-18']);
+      expect(await s.purgeTrashOldestFirst(10_000)).toBe(200);
+      expect(readdirSync(join(root, '.trash'))).toEqual([]);
+      expect(await s.purgeTrashOldestFirst(1)).toBe(0);
+    });
+  });
+
+  it('freeBytes reads statfs of the root', async () => {
+    const { root, s } = layout();
+    const st = statfsSync(root);
+    const free = await s.freeBytes();
+    expect(free).toBeGreaterThan(0);
+    expect(Math.abs(free - st.bavail * st.bsize)).toBeLessThan(64 * 1024 * 1024);
+  });
+
+  describe('upload staging', () => {
+    it('preallocates .tmp/upload-<id>, writes parts at offsets while hashing, re-hashes, adopts by rename', async () => {
+      const { root, s } = layout();
+      const parts = ['aaaa', 'bbbb', 'cc'];
+      await s.openStaging('up-1', 10);
+      const p = join(root, '.tmp', 'upload-up-1');
+      expect(statSync(p).size).toBe(10);
+      // Out of order, one re-sent; a streamed body.
+      expect(await s.writePart('up-1', 8, new TextEncoder().encode(parts[2]))).toEqual({
+        bytes: 2,
+        sha256: sha('cc'),
+      });
+      async function* stream() {
+        yield new TextEncoder().encode('aa');
+        yield new TextEncoder().encode('aa');
+      }
+      expect(await s.writePart('up-1', 0, stream())).toEqual({ bytes: 4, sha256: sha('aaaa') });
+      await s.writePart('up-1', 4, new TextEncoder().encode('XXXX'));
+      await s.writePart('up-1', 4, new TextEncoder().encode('bbbb'));
+      expect(await s.rehashParts('up-1', 4)).toEqual({
+        size: 10,
+        sha256: parts.map((x) => sha(x)),
+      });
+      renamedFrom.length = 0;
+      await s.adoptStaging('up-1', 'audio/s1/import.wav');
+      expect(renamedFrom).toEqual([p]);
+      expect(readFileSync(join(root, 'audio/s1/import.wav'), 'utf8')).toBe('aaaabbbbcc');
+      expect(existsSync(p)).toBe(false);
+    });
+
+    it('a part over its limit is refused without growing the file; removeStaging deletes it', async () => {
+      const { root, s } = layout();
+      await s.openStaging('up-2', 6);
+      await expect(
+        s.writePart('up-2', 4, new TextEncoder().encode('xyz'), { maxBytes: 2 }),
+      ).rejects.toThrow(PartTooLargeError);
+      expect(statSync(join(root, '.tmp', 'upload-up-2')).size).toBe(6);
+      // Re-opening keeps what was written (a resumed upload).
+      await s.writePart('up-2', 0, new TextEncoder().encode('ab'));
+      await s.openStaging('up-2', 6);
+      expect(
+        readFileSync(join(root, '.tmp', 'upload-up-2'))
+          .subarray(0, 2)
+          .toString(),
+      ).toBe('ab');
+      await s.removeStaging('up-2');
+      expect(existsSync(join(root, '.tmp', 'upload-up-2'))).toBe(false);
+      await s.removeStaging('up-2');
+      await expect(s.openStaging('../x', 1)).rejects.toThrow();
+      await expect(s.writePart('missing', 0, new Uint8Array(1))).rejects.toThrow();
+    });
+  });
+
+  it('list() ignores .trash, .tmp and media at the root', async () => {
+    const { root, s } = layout();
+    await s.put('audio/s1/a.webm', new TextEncoder().encode('a'));
+    await s.put('audio/s1/b.webm', new TextEncoder().encode('b'));
+    await s.trash('audio/s1/b.webm', Date.now());
+    workerFile(root, 'j', 'out.webm', 'w');
+    await s.openStaging('u', 1);
+    expect((await s.list({ prefix: '' })).objects.map((o) => o.key)).toEqual(['audio/s1/a.webm']);
   });
 });

@@ -33,7 +33,7 @@ environments" ("Dev, stage and prod compared"). No other README section is touch
 
 ## 0. Spikes and branch hygiene (before parallel work)
 
-- [ ] 0.1 Spike (W): build `docker/media-worker.Dockerfile` for `linux/amd64,linux/arm64` with node
+- [x] 0.1 Spike (W): build `docker/media-worker.Dockerfile` for `linux/amd64,linux/arm64` with node
   copied onto the pinned `linuxserver/ffmpeg` base (D13); in each variant run `node --version`,
   `ffmpeg -version`, and decode `packages/transcription/fixtures/audio/seg1.webm` to `pcm_f32le`
   through `pipe:0` with `-f matroska -protocol_whitelist pipe -xerror` as uid 10001. On an
@@ -44,16 +44,38 @@ environments" ("Dev, stage and prod compared"). No other README section is touch
   fail). Also `getent hosts example.com` inside the worker (must fail). Record results in design
   D13/D4/D3 (A11, A13). If node does not run there, switch D13 to the static-ffmpeg fallback
   before W.5.
-- [ ] 0.2 Spike (A): on Chromium, Firefox and Safari (where available) record with
+  Evidence: spike 0.1 (2026-10-12), design A11/A13 and the D13/D4/D3 notes: node v22.23.3 and
+  ffmpeg 9.0 run on the pinned base on arm64 and amd64 (QEMU); seg1.webm decodes to 115200 bytes
+  of f32le as uid 10001; adopt-by-copy works once the worker `chmod`s `media/<job>/` 0777 (0755
+  gives `EACCES` on removal, D4 changed); symlinked `out.webm` fails `ELOOP`; `getent hosts
+  example.com` rc 2 on an internal network.
+- [x] 0.2 Spike (A): on Chromium, Firefox and Safari (where available) record with
   `mr.start(5000)`, append the slices, compare the bytes with a no-timeslice recording of the same
   length-class (decodable, same codec, duration within one slice), decode a truncated prefix, and
   record Safari's MP4 atom order (`moov` before or after `mdat`, D4). Record results in design
   D10/D4 (A10). If Safari's slices are not concatenable, D10's Safari branch is
   finished-chunks-only (owner informed).
-- [ ] 0.3 Spike (A): `createSyncAccessHandle` in a dedicated Worker, an IndexedDB `Blob` write,
+  Evidence: spike 0.2 (2026-10-12), design A10 and the D10/D4 notes; Playwright 1.64 headless,
+  fake mic, 25 s, timeslice and no-timeslice recorders on one stream; pinned ffmpeg `-xerror -f
+  <demuxer> -i pipe:0 -f f32le`: Chromium 156 WebM concat 1198080 samples = no-timeslice 1198080,
+  Firefox 157 Ogg (its default) 1218560 = 1218560, bytes differ (container metadata/serials only);
+  first-3-slices prefix decodes (ffmpeg and `decodeAudioData`: 15.06 s / 14.793 s); Chromium
+  `audio/mp4` is fragmented with `moov` before `moof/mdat`; an MP4 cut mid-fragment exits 183.
+  **Pending owner check (Safari):** Playwright WebKit on Linux has no `MediaRecorder`, so Safari's
+  concatenation, decode and atom order are unverified; the D10 Safari branch is decided by the
+  owner's run of the spike `record.html` on a Mac.
+- [x] 0.3 Spike (A): `createSyncAccessHandle` in a dedicated Worker, an IndexedDB `Blob` write,
   `navigator.locks.request(name, {ifAvailable: true})` across two tabs, and
   `navigator.wakeLock.request('screen')` on the same three browsers; `navigator.storage.estimate()`
   and `persist()` outcomes. Record in D10/D17 (A12).
+  Evidence: spike 0.3 (2026-10-12), design A12 and the D10/D17 notes; Chromium 156, Firefox 157,
+  WebKit 27.2 (proxy): worker `createSyncAccessHandle` round-trip 105000 bytes `bytesMatch: true`,
+  IndexedDB `Blob` round-trip `match: true` (persistent profile, all three); second tab
+  `ifAvailable` gets `null` (`contended: true`, all three); `wakeLock.request('screen')` denied
+  headless on Chromium/WebKit (`NotAllowedError`), granted on Firefox; `persist()` false/false,
+  Firefox unsettled after 5 s; ephemeral WebKit: `getDirectory()` `UnknownError` and IndexedDB
+  `Blob` put fails. **Pending owner check (Safari):** the same `storage.html` in Safari, normal and
+  Private window.
 - [ ] 0.4 Branch: while #107 is open, run gates with `--base supabase-11a-legacy-import`. After
   #107 merges, rebase `media-worker` onto `supabase-migration` so the branch carries only this
   change directory (the first commit must be the approved artifacts; re-verify `artifacts-first`),
@@ -61,7 +83,7 @@ environments" ("Dev, stage and prod compared"). No other README section is touch
 
 ## S. Schema and storage
 
-- [ ] S.1 Test first: `server/src/test/pg/mediaSchema.pg.test.ts` (tables `media_jobs` with
+- [x] S.1 Test first: `server/src/test/pg/mediaSchema.pg.test.ts` (tables `media_jobs` with
   `input_bytes` and the `result_json` length check, `media_uploads`, `session_audio_seams` with
   its primary key, each with the D2/D7/D12 columns and the live-job unique partial index; the three
   new segment columns; RLS enabled; `catalog_system` all; `catalog_user` can insert/select
@@ -73,7 +95,12 @@ environments" ("Dev, stage and prod compared"). No other README section is touch
   `MediaJobResult`, `AudioSeam` and the port interfaces `MediaJobsPort`, `MediaUploadsPort`,
   `AudioSeamsPort` in `packages/ports/src/media.ts` (**hand-off to B and W**; freeze the names in
   the first commit).
-- [ ] S.2 Test first: `server/src/test/pg/mediaRole.pg.test.ts` (role `autologger_media` exists
+  Evidence: red `cd server && npx vitest run --project pg src/test/pg/mediaSchema.pg.test.ts` ->
+  `Tests 8 failed (8)`, `relation "session_audio_seams" does not exist` (42P01); `catalogPolicies`
+  red `expected [...] to have a length of 37 but got 41`; green (with `catalogSchema`,
+  `catalogPolicies`) `Tests 70 passed (70)`. Ports in `packages/ports/src/media.ts` (imported as
+  `@autologger/ports/media`; the barrel stays runtime-free), plus `MediaBlobStore` for S.6.
+- [x] S.2 Test first: `server/src/test/pg/mediaRole.pg.test.ts` (role `autologger_media` exists
   `NOLOGIN` after the migrations alone and `LOGIN` after the runner's password phase, with the D1
   attributes; member of no role; `catalogRoles.pg.test.ts`'s
   membership rule still holds; as `autologger_media`: select `media_jobs` ok, update of the eight
@@ -85,7 +112,16 @@ environments" ("Dev, stage and prod compared"). No other README section is touch
   refused by the check); `docker/supabase/test_migrate.sh` case for `MEDIA_DB_PASSWORD` (set,
   missing, malformed, never printed). Then the role, the grants, the trigger and the check in
   the migration and the password phase in `migrate.sh`.
-- [ ] S.3 Test first: `packages/storage/src/mediaJobs.pg.test.ts` (enqueue coalesces on the live
+  Evidence: red `npx vitest run --project pg src/test/pg/mediaRole.pg.test.ts` -> `Tests 8 failed
+  | 1 passed (9)`, `password authentication failed for user "autologger_media"`; red `sh
+  docker/supabase/test_migrate.sh` -> `FAIL MEDIA_DB_PASSWORD refused before connecting: unset`,
+  `test_migrate: 41 passed, 14 failed`; green `test_migrate: 55 passed, 0 failed` and (with
+  `catalogSchema`, `catalogRoles`, `catalogPolicies`, `mediaSchema`) `Tests 96 passed (96)`. The
+  test harness (`test/pg/globalSetup.ts`, `testDb.ts`) now passes `MEDIA_DB_PASSWORD`. The
+  trigger cannot authenticate a worker id (one shared role): it refuses any transition that
+  changes `locked_by` outside a claim of a free or expired lease; identity is the statements'
+  `locked_by = <id>` fence (S.3). A release may give the claim's attempt back.
+- [x] S.3 Test first: `packages/storage/src/mediaJobs.pg.test.ts` (enqueue coalesces on the live
   unique index and records `input_bytes`; claim with two concurrent claimers hands out each job
   once; the lane filter `input_bytes <= max`; ordering by `run_after_ms` then creation; renew,
   finish and fail are fenced on `locked_by` and `status = 'running'` (a takeover makes them affect
@@ -93,14 +129,21 @@ environments" ("Dev, stage and prod compared"). No other README section is touch
   `running`; delete of old terminal rows; `hasRecentTerminalMerge(session, ordinal, 24 h)`).
   Then `packages/storage/src/mediaJobs.ts` (API-side statements as `catalog_system`, plus the
   worker-side claim/renew/finish statements the worker imports from the same module).
-- [ ] S.4 Test first: `packages/storage/src/mediaUploads.pg.test.ts` (create with the part hash
+  Evidence: red `cd packages/storage && npx vitest run --project pg src/mediaJobs.pg.test.ts` ->
+  `Cannot find module './mediaJobs'`; green `Tests 14 passed (14)` (worker statements run as
+  `autologger_media` through `postgresMediaSql`).
+- [x] S.4 Test first: `packages/storage/src/mediaUploads.pg.test.ts` (create with the part hash
   list, record part, status, complete marks, expire sweep, per-user open count and staged bytes).
   Then `packages/storage/src/mediaUploads.ts`.
-- [ ] S.5 Test first: `packages/storage/src/audioSeams.pg.test.ts` (insert a window with its
+  Evidence: red `npx vitest run --project pg src/mediaUploads.pg.test.ts` -> `Cannot find module
+  './mediaUploads'`; green `Tests 7 passed (7)`.
+- [x] S.5 Test first: `packages/storage/src/audioSeams.pg.test.ts` (insert a window with its
   segment and `source_key`; `findWindow(session, ordinal, started_at)` returns the holding segment
   id and offset; `repoint(windows → merged segment, offsets)`; `windowsOf(session, ordinal)`;
   `23505` on a duplicate window). Then `packages/storage/src/audioSeams.ts`.
-- [ ] S.6 Test first: `packages/storage/src/blobStore.test.ts` additions (`ensureMediaDir` creates
+  Evidence: red `npx vitest run --project pg src/audioSeams.pg.test.ts` -> `Cannot find module
+  './audioSeams'`; green `Tests 3 passed (3)`.
+- [x] S.6 Test first: `packages/storage/src/blobStore.test.ts` additions (`ensureMediaDir` creates
   `media/` mode 1777; `adoptCopy(mediaRelPath, key)` opens `O_NOFOLLOW`, refuses a symlink, a
   directory, a FIFO and a file over the cap by the handle's `fstat`, copies into `.tmp/put-*`,
   fsyncs, renames, is idempotent when the key already exists, and removes the job directory
@@ -109,6 +152,10 @@ environments" ("Dev, stage and prod compared"). No other README section is touch
   `purgeTrashOldestFirst(bytes)`; `freeBytes()` by `statfs`; `openStaging(id, size)` preallocates
   `.tmp/upload-<id>`, `writePart` at offset while hashing, `rehashParts(id, partSize)`,
   `adoptStaging` renames; `list()` ignores `.trash` and `media`). Then `blobStore.ts`.
+  Evidence: red `cd packages/storage && npx vitest run --project unit src/blobStore.test.ts` ->
+  `Failed Tests 14`, `TypeError: s.ensureMediaDir is not a function`; green `Tests 31 passed
+  (31)`; full `npx vitest run` in packages/storage `Tests 229 passed (229)`. Foreign uid: mode-only
+  check (no second uid as non-root); spike 0.1 covers the cross-uid sequence.
 
 ## B. API, apply loop, session-core
 
@@ -324,12 +371,28 @@ environments" ("Dev, stage and prod compared"). No other README section is touch
   three hours place the last clip at its wall-clock position; chunk layout unchanged for `null`;
   a feed-row seek into a seam clip resolves to the same media position as the chunk did). Then
   `types.ts`, `useAudioClips.ts`, `audioClips.ts`.
-- [ ] D.2 Test first: `useWaveforms.test.tsx` (no decode while `media_status === 'pending'`;
+  Evidence (2026-10-12, open until B.3): red `cd web && npx vitest run
+  src/shared/utils/audioClips.seams.test.ts` → `Tests 9 failed`; `useAudioClips.durationProbe` →
+  `2 failed | 1 passed`; `npx tsc --noEmit` → `types.conformance.test.ts(363,7): error TS2353 …
+  'duration_ms' does not exist in type 'AudioSegment'`. Green after `types.ts`, `audioClips.ts`
+  (seam expansion, `clipMediaPositionSec`), `useAudioClips.ts`: `npx vitest run src/shared/utils/
+  src/pages/index/hooks` → all passed (seams `9 passed`, durationProbe `3 passed`); tsc clean for
+  these files. **Still red until B.3 regenerates `fixtures/api-responses/audioSegment{Create,sList}.json`**:
+  `types.conformance.test.ts` "the captured upload body has exactly the 12 segment keys" and
+  "every captured list row …" (re-run after B.3; then tick). The three fields are optional in
+  `AudioSegment` so other workstreams' hand-built segment literals keep compiling.
+- [x] D.2 Test first: `useWaveforms.test.tsx` (no decode while `media_status === 'pending'`;
   decodes for `null`; a `'failed'` segment is marked unavailable without a decode attempt; server
   peaks arriving clear the placeholder; a merged segment's peaks are drawn across its seam clips
   by media offset) and `TimelineWaveform.test.tsx` ("Finalizing recording…" when an interval has
   ≥ 2 segments with a pending one; "Generating waveform…" while pending single; "Waveform
   unavailable" for a `'failed'` segment). Then the hook and the timeline components.
+  Evidence (2026-10-12): red `cd web && npx vitest run src/pages/index/hooks/useWaveforms.test.tsx`
+  → `Tests 4 failed | 3 passed`; `…/timeline/TimelineWaveform.test.tsx` → `4 failed | 3 passed`.
+  Green after `useWaveforms.ts` (pending skipped, failed marked without decode, one decode per
+  segment, `seamClipPeaks`) and `TimelineWaveform.tsx` (labels from the clips' `mediaStatus`/
+  `finalizing`): `npx vitest run src/pages/index/components/timeline/ src/pages/index/hooks
+  src/shared/utils` → `Test Files 20 passed`, `Tests 316 passed`.
 - [ ] D.3 Test first: `web/src/api/uploads.test.ts` (create with per-part sha256 computed with
   `crypto.subtle` over each 32 MiB slice and never a whole-file buffer → PUT parts in order with
   the exact sizes and offsets → complete in import mode with `duration_s` and the seam header,
@@ -339,7 +402,16 @@ environments" ("Dev, stage and prod compared"). No other README section is touch
   `batchImport/*.test.ts` (files over 40 MiB and stitched WAVs over 40 MiB take the parts path;
   smaller files call `local-audio-import` unchanged; progress lines per part). Then
   `web/src/api/uploads.ts`, the batch-import call sites.
-- [ ] D.4 Test first: `packages/transcription/src/transcriptRemap.test.ts` (a merged segment with
+  Evidence (2026-10-12, open until B.4): red `cd web && npx vitest run src/api/uploads.test.ts` →
+  `Cannot find module './uploads'`; `src/pages/index/batchImport/runner.parts.test.ts` →
+  `6 failed`. Green after `uploads.ts` and `runner.ts`: `uploads.test.ts` `15 passed`,
+  `npx vitest run src/pages/index/batchImport/` → `Test Files 4 passed, Tests 45 passed`. Written
+  against the D12 route shapes with a fake server; **re-run both against B.4's routes**. Also
+  open: `src/apiResponseShapes.repo.test.ts` flags the five `uploads.ts` sites until B.4
+  captures upload fixtures (create/status/complete → conformance assignments in
+  `types.conformance.test.ts`) and the guard's owner records exemptions for the `204` PUT part
+  and DELETE sites.
+- [x] D.4 Test first: `packages/transcription/src/transcriptRemap.test.ts` (a merged segment with
   seams places each seam's words at that seam's wall-clock-derived anchor plus the in-seam
   offset, equal to the pre-merge placement on the same fixture; no seams → identical output to
   today; paragraphs/sentiment through the same path), `generateTranscript.test.ts` (`seams`
@@ -347,6 +419,14 @@ environments" ("Dev, stage and prod compared"). No other README section is touch
   naming it instead of being skipped, while an unparseable blob is still skipped) and
   `audioMerge.test.ts` (a missing path is reported distinctly from an unparseable one). Then
   `transcriptRemap.ts`, `generateTranscript.ts`, `audioMerge.ts`.
+  Evidence (2026-10-12): red `cd packages/transcription && npx vitest run src/audioMerge.test.ts`
+  → `2 failed | 15 passed` (`kind` undefined); `src/transcriptRemap.test.ts` → `5 failed | 31
+  passed`; `src/generateTranscript.test.ts` → `2 failed | 1 passed` (`expected 100.4 to be close
+  to 100.45`; missing blob not a `TranscriptGenerateError`). Green: `npm run test -w
+  packages/transcription` → `Test Files 10 passed, Tests 95 passed`; `npx tsc --noEmit` rc 0.
+  The new error code `missing_blob` needs `server/src/routers/transcribe.ts` `mapGenerateError`
+  to map it to `502` (today unknown codes map to `400`; file not in D's ownership). `seams` are
+  read structurally from `AudioSegmentMeta` as `{offset_ms, started_at_utc}[]` until B.2 types it.
 - [ ] D.5 Suites: `cd web && npx vitest run`, `cd packages/transcription && npx vitest run`,
   `npm run typecheck`.
 
