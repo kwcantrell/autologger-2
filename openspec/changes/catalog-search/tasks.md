@@ -22,11 +22,17 @@
 
 ## 1. Baselines
 
-- [ ] 1.1 On the base, run the unit suites (server, packages, web) and typecheck, and record the counts. Then list the existing tests D10 may touch with `grep -rln "session_transcript_paragraphs\|'/teams'\|isRouterKnownPathname\|isTeamsRoutePathname\|has_function_privilege\|confirmSwitch" --include=*.test.ts --include=*.test.tsx server/src packages web/src`, and classify each hit as D10 category 1, 2, 3 or unchanged. Verified by the recorded counts and the classified list.
+- [x] 1.1 On the base, run the unit suites (server, packages, web) and typecheck, and record the counts. Then list the existing tests D10 may touch with `grep -rln "session_transcript_paragraphs\|'/teams'\|isRouterKnownPathname\|isTeamsRoutePathname\|has_function_privilege\|confirmSwitch" --include=*.test.ts --include=*.test.tsx server/src packages web/src`, and classify each hit as D10 category 1, 2, 3 or unchanged. Verified by the recorded counts and the classified list.
+  - Evidence: base `fe54d8b8`. `cd server && npx vitest run --project unit` -> `Tests  482 passed | 5 skipped (487)`; `npx vitest run` in ports -> `Tests  1 passed (1)`, contract -> `Tests  139 passed (139)`, transcription -> `Tests  71 passed (71)`, catalog -> `Tests  51 passed (51)`, ai-runtime -> `Tests  260 passed (260)`, session-core -> `Tests  55 passed (55)`, media-import -> `Tests  31 passed | 2 skipped (33)`, log-import -> `Tests  41 passed (41)`, domain -> `Tests  50 passed (50)`; `cd packages/storage && npx vitest run --project unit` -> `Tests  68 passed (68)`; `cd web && npx vitest run` -> `Tests  1939 passed (1939)`; `npm run typecheck` -> exit 0, 0 `error TS` (log `cs-1.1-baseline.log`).
+  - Evidence: the grep matches 16 files (log `cs-1.1-grep.log`).
+    - Category 1: `test/pg/catalogSchema.pg.test.ts`, `test/pg/catalogPolicies.pg.test.ts`, `test/pg/catalogPolicyHelpers.pg.test.ts`, `test/pg/catalogRoles.pg.test.ts`, `test/session/isolation.int.test.ts`.
+    - Category 2: `routers/staticServing.int.test.ts`, `shared/utils/loginReturnPath.test.ts`, `shared/utils/loginReturnStash.test.ts`, `pages/index/AppShell.test.tsx`.
+    - Category 3: `pages/index/components/TopBar.test.tsx`.
+    - Unchanged: `test/session/unknownSession.int.test.ts` (lists the nine content tables; chunks need not be there), `test/session/sessionCore.int.test.ts` (paragraph and sentiment tables only), `pages/index/RootGate.test.tsx`, `pages/index/departureWatcher.test.tsx`, `shared/components/ui/button.test.tsx`, `pages/index/useLoginReturnConsume.test.tsx` (each uses `/teams` as an existing route).
 
 ## 2. Migration: extensions, grants, config, search columns, chunks
 
-- [ ] 2.1 Test first: write `server/src/test/pg/catalogSearch.pg.test.ts`, covering:
+- [x] 2.1 Test first: write `server/src/test/pg/catalogSearch.pg.test.ts`, covering:
   - `search_norm` folds `'Ångström CAFÉ Straße'` to `angstrom cafe strasse` and is immutable (`provolatile = 'i'`);
   - `catalog.search_english` matches `cafe divorce` against "Café … Divorced";
   - the five generated columns and their GIN indexes, plus the three trigram indexes, exist;
@@ -34,9 +40,10 @@
   - "Ordinary writes still succeed": an owner, as `catalog_user`, updates a session's title and notes, a topic, an event, a show and a studio;
   - "New functions are not public": `has_function_privilege` for `public`, `catalog_user` and `catalog_system` on every new function;
   - `USAGE` on `extensions` for both roles.
+  - Evidence: red, before the migration: `cd server && npx vitest run --project pg src/test/pg/catalogSearch.pg.test.ts` -> `Tests  17 failed | 1 passed (18)`: `× search_norm folds accents…`, `× catalog.search_english stems…`, `× has the five generated search columns…`, `× New functions are not public…`, `× both catalog roles have USAGE on schema extensions…` and the rest with `function catalog.search_norm(unknown) does not exist` / `relation "catalog.session_transcript_chunks" does not exist` (log `cs-2.1-red.log`). The one pass is "Ordinary writes still succeed", which holds before the migration by design: it guards against the migration's `42501` on writes (panel critical 1). Green after 2.3: the same file -> `Test Files  1 passed (1)`, `Tests  18 passed (18)` (log `cs-2.1-green.log`). It also checks the trigram opclasses live in `extensions`, the definer functions' owner and pinned `search_path`, `search`'s `pg_trgm.word_similarity_threshold=0.4`, and `USAGE` on `extensions` in both the template and the `postgres` database.
 
   Red before the migration. Verified by the red run, then green once 2.3 lands.
-- [ ] 2.2 Test first: in the same file, test chunks, covering:
+- [x] 2.2 Test first: in the same file, test chunks, covering:
   - a 90-word bulk replace gives 3 chunks with the right text, `start_sec`, `end_sec` and `speaker`;
   - a one-word update rebuilds only its chunk (the other rows' `xmin` is unchanged);
   - a manual insert appends into the last chunk;
@@ -46,9 +53,10 @@
   - a `catalog_user` insert, update or delete fails with `42501`;
   - "Concurrent edits in one block": two connections update different words of one bucket and both commit, with both words in the chunk;
   - a 30k-word bulk replace stays under 2 s.
+  - Evidence: red, before the migration (same file and run as 2.1): every chunk case `×` with `relation "catalog.session_transcript_chunks" does not exist` (log `cs-2.2-red.log`). Green after 2.3 -> `Tests  18 passed (18)` (log `cs-2.2-green.log`), covering: 90-word bulk replace -> buckets `[0, 1, 2]` equal to the rule (an empty word 0 and an untimed word 80 included); word 45 `cat`->`dog` changes only bucket 1's `xmin`; a manual insert at ordinal 90 ends bucket 2 with `w89 appended`; deleting ordinals >= 80 leaves `[0, 1]`; an all-empty block has no row, an all-untimed one a null start; RLS counts owner 2, granted 2, ungranted 0, outsider 0; `catalog_user` insert, update and delete -> `42501`, chunks unchanged; a `catalog_user` word edit rebuilds through the definer trigger; two READ COMMITTED transactions editing words 5 and 6 of one block both commit and the chunk reads `alpha beta`; a 30,000-word bulk replace gives 750 chunks in under 2 s.
 
   Red before the migration. Verified by the red run, then green once 2.3 lands.
-- [ ] 2.3 Write `supabase/migrations/20261019000000_catalog_search.sql` as design D2–D5 describe:
+- [x] 2.3 Write `supabase/migrations/20261019000000_catalog_search.sql` as design D2–D5 describe:
   - `create schema if not exists extensions`, the extensions, and `USAGE` grants;
   - `catalog.search_english` and `search_norm`;
   - the generated columns and indexes;
@@ -57,15 +65,19 @@
   - the definer function `catalog.search`;
   - `revoke all … from public` on every new function, plus the grants in D2;
   - the backfill.
+  - Evidence: `supabase/migrations/20261019000000_catalog_search.sql` added. `catalogSearch.pg.test.ts` green (log `cs-2.1-green.log`); the runner's checks on the file: the migrate.sh transaction-control and meta-command greps match nothing, no `concurrently`; `sh docker/supabase/test_migrate.sh` -> `test_migrate: 35 passed, 0 failed` (log `cs-2.3-migrate.log`); the full server pg project, whose global setup applies every migration with migrate.sh to `postgres` and the template -> `Test Files  15 passed | 1 skipped (16)`, `Tests  142 passed | 1 skipped (143)` (log `cs-2-pg-all.log`). 3.1 is still to come. A probe of `catalog.search` on the policy fixture (not committed) returned grouped results: titles only for the ungranted member, a `notes` match with snippet for the granted member, `christna` -> the show "Christina Ramos Live", `cafe` -> `[Café]` highlighted at word 35 with `sec` 0.5, a forged-sentinel event highlighted only on the real hit, a stop-words-only query and a null user both empty without error. Full server integration suite, run once locally -> `Tests  3 failed | 1388 passed (1391)` (log `cs-2-int-all.log`): the known `companionDevices.int` "14 concurrent creates" flake, and two raw-row pins in `test/session/eventStore.int.test.ts` (`:439`, `:570`) that now also receive `search_tsv`. That file is outside D10 category 1, so it is unchanged and open: an artifact decision for the owner. `packages/storage` pg suite -> `Tests  1 failed | 122 passed (123)`: the "8 contending read-modify-write transactions" retry test on its own scratch table `t`, which passed on two reruns (log `cs-2-storage-pg.log`).
 
   It follows the runner rules: no transaction-control lines at column 0, and plpgsql bodies indented. Verified by 2.1, 2.2 and 3.1 going green and by `sh docker/supabase/test_migrate.sh` passing.
-- [ ] 2.4 Backfill test: seed words on the template database before the migration, then assert the migrated chunks equal the rule's output. Verified by the pg test passing.
-- [ ] 2.5 Update the schema inventories (D10 category 1): `catalogSchema.pg.test.ts` (including the per-table policy conditionals), `catalogPolicies.pg.test.ts` (including the policy count, 37 → 38), `catalogPolicyHelpers.pg.test.ts`, `catalogRoles.pg.test.ts` and `isolation.int.test.ts`. Verified by those files passing, and by `git diff` showing only D10 category 1 edits.
-- [ ] 2.6 Document in `docs/supabase.md`:
+- [x] 2.4 Backfill test: seed words on the template database before the migration, then assert the migrated chunks equal the rule's output. Verified by the pg test passing.
+  - Evidence: `catalogSearch.pg.test.ts` "The backfill matches the rule" replays the migrations up to `20261018000000` on a `template0` database, seeds 130 words for session `a` (empty words, untimed words, an ordinal gap from 100 to 137), 30 empty words for `b` and none for `c`, runs the new migration, and finds the chunks equal to the rule computed in TypeScript (only `a`'s, 5 buckets). Red before 2.3 (`ENOENT … 20261019000000_catalog_search.sql`, log `cs-2.1-red.log`); green, log `cs-2.1-green.log`.
+- [x] 2.5 Update the schema inventories (D10 category 1): `catalogSchema.pg.test.ts` (including the per-table policy conditionals), `catalogPolicies.pg.test.ts` (including the policy count, 37 → 38), `catalogPolicyHelpers.pg.test.ts`, `catalogRoles.pg.test.ts` and `isolation.int.test.ts`. Verified by those files passing, and by `git diff` showing only D10 category 1 edits.
+  - Evidence: red after the migration: `cd server && npx vitest run --project pg` over the four pg inventories plus `catalogSearch` -> `× no catalog_user policy is the constant true, and there are 37`, `× matches the recorded catalog schema`, `× has exactly the catalog tables, in schema catalog`, `× every catalog table has row-level security and a policy for each catalog role`, `Tests  4 failed | 102 passed (106)` (log `cs-2.5-red.log`). Green after the edits: `Test Files  5 passed (5)`, `Tests  106 passed (106)` (log `cs-2.5-green.log`); `npx vitest run --project integration src/test/session/isolation.int.test.ts` -> `Tests  1 passed (1)` (log `cs-2.5-green-int.log`). `git diff` of the five files shows additions only, plus the count 37 -> 38 and its test title: `catalogSchema` gains `session_transcript_chunks` in `TABLES`, `KEY_COLUMN` and the recorded schema, the three generated columns, the eight `idx_*` search indexes, one chunk row in the catalog_system write test, and a chunks policy conditional (system policy plus one select policy; select privilege only); `catalogRoles` gains the four functions in its inventory; `isolation.int` gains `session_transcript_chunks: 'bucket'`. `catalogPolicyHelpers.pg.test.ts` needed no change: it lists only the policy helpers, and the new functions' grants are asserted in `catalogSearch.pg.test.ts`.
+- [x] 2.6 Document in `docs/supabase.md`:
   - the `extensions` schema and grants;
   - the `search_english` configuration;
   - `search_norm`;
   - the rewrite-and-reindex step for an image upgrade.
+  - Evidence: `docs/supabase.md` gains "Search extensions (catalog-search)": the `extensions` schema and the `USAGE` grants (and why), `catalog.search_english`, `catalog.search_norm`, the chunks table and `catalog.search` in brief, and "After a Postgres image upgrade" with the update-and-reindex statements (`git diff docs/supabase.md`).
 
   Verified by the diff.
 

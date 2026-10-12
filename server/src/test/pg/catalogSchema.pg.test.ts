@@ -52,6 +52,8 @@ const TABLES = [
   'provider_key_check',
   // byo-ai-providers 2.4: the per-user connection-test window.
   'provider_test_windows',
+  // catalog-search D4: the transcript in blocks of 40 words, kept in sync by the database.
+  'session_transcript_chunks',
 ];
 // companion-devices D1: the tables with no catalog_user policy and no catalog_user privilege.
 // byo-ai-providers D1: plus the two provider tables.
@@ -82,6 +84,7 @@ const KEY_COLUMN: Record<string, string> = {
   user_provider_credentials: 'user_id',
   provider_key_check: 'check_value',
   provider_test_windows: 'user_id',
+  session_transcript_chunks: 'session_id',
 };
 const MIGRATIONS = resolve(import.meta.dirname, '../../../../supabase/migrations');
 const MIGRATION = resolve(MIGRATIONS, '20261001000000_catalog_schema.sql');
@@ -239,6 +242,9 @@ const EXPECTED_SCHEMA: SchemaRecord = {
       'roll_started_at_utc text collate C',
       // session-row-versions D1.
       'revision bigint not null default 0',
+      // catalog-search D3: the generated search columns.
+      'search_meta tsvector',
+      'search_notes tsvector',
     ],
     primaryKey: ['id'],
     foreignKeys: ['FOREIGN KEY (show_id) REFERENCES catalog.shows(id)'],
@@ -285,6 +291,8 @@ const EXPECTED_SCHEMA: SchemaRecord = {
       'message text collate C not null',
       "metadata_json text collate C not null default '{}'::text",
       'version bigint not null default 1',
+      // catalog-search D3.
+      'search_tsv tsvector',
     ],
     primaryKey: ['session_id', 'id'],
     foreignKeys: ['FOREIGN KEY (session_id) REFERENCES catalog.sessions(id)'],
@@ -344,6 +352,8 @@ const EXPECTED_SCHEMA: SchemaRecord = {
       'ordinal bigint not null',
       'created_at_utc text collate C not null',
       'version bigint not null default 1',
+      // catalog-search D3.
+      'search_tsv tsvector',
     ],
     primaryKey: ['session_id', 'id'],
     foreignKeys: ['FOREIGN KEY (session_id) REFERENCES catalog.sessions(id)'],
@@ -499,6 +509,20 @@ const EXPECTED_SCHEMA: SchemaRecord = {
     primaryKey: ['id'],
     foreignKeys: [],
   },
+  // catalog-search D4: one row per non-empty 40-word block of a session's transcript.
+  session_transcript_chunks: {
+    columns: [
+      'session_id text collate C not null',
+      'bucket bigint not null',
+      'start_sec double precision',
+      'end_sec double precision',
+      "speaker text collate C not null default ''::text",
+      'text text collate C not null',
+      'search_tsv tsvector',
+    ],
+    primaryKey: ['session_id', 'bucket'],
+    foreignKeys: ['FOREIGN KEY (session_id) REFERENCES catalog.sessions(id)'],
+  },
   $unique: ['catalog.companion_devices UNIQUE (token_hash)', 'catalog.users UNIQUE (google_sub)'],
   // owner-bootstrap D1: the role check and at most one owner per team.
   $checks: [
@@ -522,15 +546,24 @@ const EXPECTED_SCHEMA: SchemaRecord = {
     'CREATE INDEX idx_companion_presence_user ON catalog.companion_presence USING btree (user_id, updated_at_ms)',
     'CREATE INDEX idx_session_audio_ordinal ON catalog.session_audio_segments USING btree (session_id, ordinal)',
     'CREATE INDEX idx_session_audio_r2_key ON catalog.session_audio_segments USING btree (session_id, r2_key)',
+    // catalog-search D3: the search indexes.
+    'CREATE INDEX idx_session_chunks_search ON catalog.session_transcript_chunks USING gin (search_tsv)',
     'CREATE INDEX idx_session_dashboards_created ON catalog.session_dashboards USING btree (session_id, created_at_utc)',
+    'CREATE INDEX idx_session_events_search ON catalog.session_events USING gin (search_tsv)',
     'CREATE INDEX idx_session_events_wall ON catalog.session_events USING btree (session_id, wall_time_utc, id)',
     'CREATE INDEX idx_session_paragraphs_ordinal ON catalog.session_transcript_paragraphs USING btree (session_id, ordinal)',
     'CREATE INDEX idx_session_sentiment_ordinal ON catalog.session_transcript_sentiment USING btree (session_id, ordinal)',
     'CREATE INDEX idx_session_topics_ordinal ON catalog.session_topics USING btree (session_id, ordinal)',
+    'CREATE INDEX idx_session_topics_search ON catalog.session_topics USING gin (search_tsv)',
     'CREATE INDEX idx_session_words_ordinal ON catalog.session_transcript_words USING btree (session_id, ordinal)',
+    'CREATE INDEX idx_sessions_search_meta ON catalog.sessions USING gin (search_meta)',
+    'CREATE INDEX idx_sessions_search_notes ON catalog.sessions USING gin (search_notes)',
     'CREATE INDEX idx_sessions_show ON catalog.sessions USING btree (show_id)',
+    'CREATE INDEX idx_sessions_title_trgm ON catalog.sessions USING gin (catalog.search_norm(title) gin_trgm_ops)',
     'CREATE INDEX idx_show_grants_show ON catalog.show_grants USING btree (show_id)',
+    'CREATE INDEX idx_shows_name_trgm ON catalog.shows USING gin (catalog.search_norm(name) gin_trgm_ops)',
     'CREATE INDEX idx_shows_studio ON catalog.shows USING btree (studio_id)',
+    'CREATE INDEX idx_studio_definitions_name_trgm ON catalog.studio_definitions USING gin (catalog.search_norm(display_name) gin_trgm_ops)',
     "CREATE UNIQUE INDEX idx_user_studio_memberships_one_owner ON catalog.user_studio_memberships USING btree (studio_id) WHERE (role = 'owner'::text)",
     'CREATE INDEX idx_user_studio_memberships_studio ON catalog.user_studio_memberships USING btree (studio_id)',
     'CREATE INDEX idx_users_email ON catalog.users USING btree (email)',
@@ -684,6 +717,8 @@ describe('the app role (design D3)', () => {
               values ('u', 'stt', 'deepgram', 'nova-3', '\\x00', '\\x01', '\\x02', 1, 'abcd', ${t}, ${t})`;
     await sql`insert into provider_key_check (id, check_value, created_at_utc) values (1, 'c', ${t})`;
     await sql`insert into provider_test_windows (user_id, window_start_ms, test_count) values ('u', 1, 1)`;
+    // catalog-search D4: a chunk row in a bucket no word of `se` falls in, so no rebuild touches it.
+    await sql`insert into session_transcript_chunks (session_id, bucket, text) values ('se', 9, 't')`;
     for (const table of TABLES) {
       const n = await sql.unsafe(`select count(*)::int as n from ${table}`);
       expect(n[0]?.n, table).toBeGreaterThan(0);
@@ -863,6 +898,22 @@ describe('row-level security on every catalog table (catalog-roles D1, D2; catal
           const r =
             await sql`select has_table_privilege('catalog_user', 'catalog.session_leases', ${priv}) as p`;
           expect(r[0]?.p, `session_leases ${priv}`).toBe(true);
+        }
+      }
+      // catalog-search D4: chunks have the system policy and one user select policy, and
+      // catalog_user holds the select privilege only.
+      if (t.relname === 'session_transcript_chunks') {
+        const cmds = await sql`select policyname, cmd, roles::text[] as roles from pg_policies
+                               where schemaname = 'catalog' and tablename = 'session_transcript_chunks'
+                               order by policyname`;
+        expect(cmds.map((p) => [p.policyname, p.cmd, p.roles])).toEqual([
+          ['session_transcript_chunks_system_all', 'ALL', ['catalog_system']],
+          ['session_transcript_chunks_user_select', 'SELECT', ['catalog_user']],
+        ]);
+        for (const priv of ['select', 'insert', 'update', 'delete']) {
+          const r =
+            await sql`select has_table_privilege('catalog_user', 'catalog.session_transcript_chunks', ${priv}) as p`;
+          expect(r[0]?.p, `session_transcript_chunks ${priv}`).toBe(priv === 'select');
         }
       }
       if (session) {

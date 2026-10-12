@@ -145,6 +145,12 @@ describe('catalog.app_user_id() and the per-transaction role (catalog-roles D1, 
         'catalog.co_members(text)',
         'catalog.studio_exists(text)',
         'catalog.show_exists(text)',
+        // catalog-search D2: the normaliser, the search, and the chunk refresh and trigger
+        // functions (their grants: catalogSearch.pg.test.ts).
+        'catalog.search_norm(text)',
+        'catalog.search(text,text,text,integer)',
+        'catalog.refresh_transcript_chunks(text,bigint[])',
+        'catalog.sync_transcript_chunks()',
       ]),
     );
     for (const { f } of fns) {
