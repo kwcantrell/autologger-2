@@ -639,10 +639,22 @@ DATA_DIR/
                         boot, per process)
   blobs/                Legacy audio from before BLOB_DIR: no longer read; move it into
                         BLOB_DIR (see "Moving audio into BLOB_DIR"). A boot warning counts it
-BLOB_DIR/               Shared by every server process of a stack (its own volume)
-  audio/…               Audio bytes (r2_key-shaped relative paths)
+BLOB_DIR/               Shared by every server process of a stack and the media worker (its
+                        own volume; the worker mounts it too, see "Volumes")
+  audio/…               Audio bytes (r2_key-shaped relative paths); owned by the API's uid,
+                        mode 0755: the worker reads, never writes
   .tmp/                 Atomic-put staging, put-<uuid> (outside audio/, so listings never see
                         partials); put- files older than 24 h are swept at boot
+  .tmp/upload-<id>      A resumable upload's staging file (sparse, preallocated, API-owned,
+                        mode 0600); renamed into audio/ on completion, deleted with the upload
+                        24 h after its last part or on DELETE
+  media/                Mode 1777 (created by the API at boot): the worker's output, one
+  media/<job id>/…      directory per job (mode 0777, worker-owned files); the API copies a
+                        result out by handle and removes the directory; leftovers of finished
+                        or vanished jobs are removed by the 10-minute sweep
+  .trash/<yyyy-mm-dd>/… Blobs replaced by a merge or a FLAC conversion, under their r2_key
+                        path, kept 7 days (less in low-disk mode); never listed or re-adopted
+                        by sync-from-disk. Restore: README "Media jobs"
 ```
 
 ### Invariants (spec)
@@ -1005,7 +1017,13 @@ Content-coding is transport applied above the frozen representation: the decoded
 | `GET …/status` (`events_stream_revision` is the session revision, advanced by every session write; see "Row versions" below) · `POST …/transport/start\|stop` · `GET …/show-categories` | `routers/events.py` |
 | `…/audio-recording-lease` (claim/heartbeat/release) · `GET …/ws` | `routers/events.py` |
 | `POST …/events/generate` → **503** `{"detail":"Add a language model in Settings → Advanced to generate events."}` no caller route · **403** not an approved user · **409** concurrent-turn · **400** no-transcript/no-anchors/no-instructions/over-instruction-bound/malformed-body/`regenerate`+`selection` combo/selection-matches-no-instructions · **200** `{created, cap_hit}` configured success, plus `deleted` when `regenerate:true` (append-only; regenerate deletes the prior `auto_generated` snapshot only after a successful run creates ≥1 event — zero-created success and `502` leave prior rows intact, `deleted` reflects the post-success removal) · **502** turn failure, or on the AI SDK route a run stopped by the step cap or token budget (already-inserted events persist; no regenerate delete) (see "Event auto-generation" above) | `routers/events.ts` (new, auto-generate-event-logs + event-generate-menu) |
-| `GET\|POST …/audio/segments` · `POST …/segments/sync-from-disk` · range `GET …/segments/{id}` · `PUT …/waveform` | `routers/audio.py` |
+| `GET\|POST …/audio/segments` · `POST …/segments/sync-from-disk` · range `GET …/segments/{id}` · `PUT …/waveform` (the segment dict has 12 keys: the nine frozen ones plus `duration_ms` (null while unknown), `media_status` (`pending`\|`done`\|`failed`, null for rows that predate server-side processing) and `seams` (null, or a merged segment's `[{offset_ms, started_at_utc, ended_at_utc}]` in media order); a `POST` with a `recording_ordinal` and a `started_at_utc` whose window the session already holds, as a chunk or a seam of a merged segment, answers **200** with that segment's dict and stores nothing; `audio.changed` also fires when a worker result is applied) | `routers/audio.py` |
+| `POST …/audio/recordings/{recordingOrdinal}/finalize` `{chunks: [started_at_utc, …]}` (1–1000 windows) → **400** `{detail}` bad ordinal or bad `chunks` · **404** session · **200** `{ok: true, merge: "queued"\|"not-needed"\|"already-queued"\|"waiting"}` (`waiting` while a listed window is not yet held; the straggler's upload then enqueues the merge; no lease check, no segment row changed; see "Media jobs" below) | `routers/audio.ts` (new, media-worker) |
+| `POST …/audio/uploads` `{content_type, size_bytes, part_sha256}` → **201** `{upload_id, part_size, parts_total, expires_at_utc}` (`part_size` 32 MiB; `part_sha256` exactly `ceil(size_bytes / part_size)` lowercase hex sha256s) · **400** blank `content_type` or bad hash list · **413** over 1500 MiB · **429** two uploads already open or over 3 GiB staged per user · **507** blob volume below its free-disk floor | `routers/audioUploads.ts` (new, media-worker) |
+| `PUT …/audio/uploads/{uploadId}/parts/{n}` (raw bytes, `n` 1-based; every part `part_size` but the last, the remainder) → **204** stored (a part may be re-sent) · **400** wrong size, bad `n`, or a sha256 other than the declared one (not recorded) · **404** unknown, expired, aborted or completed upload · **413** over `part_size` · **507** low disk | `routers/audioUploads.ts` (new, media-worker) |
+| `GET …/audio/uploads/{uploadId}` → **200** `{upload_id, status, size_bytes, part_size, parts_total, received, expires_at_utc}` (`received` the sorted part numbers stored) · **404** unknown or expired | `routers/audioUploads.ts` (new, media-worker) |
+| `POST …/audio/uploads/{uploadId}/complete` → import mode (`?duration_s=` and optional `X-Audio-Seam-Parts`, exactly `local-audio-import`'s rules and anchoring) or segment mode (`?recording_ordinal=&started_at_utc=&ended_at_utc=`, exactly the segment `POST`, window idempotency included, no anchor) → **200** `{ok: true, segment_id}` · **400** `duration_s`/seam header as `local-audio-import`, or a size or re-hash mismatch (the upload is aborted) · **404** unknown, expired or completed · **409** `{detail, missing_parts}` while a part is missing, or `{detail}` while the session is recording (import mode, checked before attach and again after the file is placed) | `routers/audioUploads.ts` (new, media-worker) |
+| `DELETE …/audio/uploads/{uploadId}` → **204** staging removed · **404** unknown | `routers/audioUploads.ts` (new, media-worker) |
 | `GET\|POST\|PATCH\|DELETE …/transcript-words` · `…/topics` (`PATCH`/`DELETE …/{id}` take an optional `version`/`overwrite`; a stale version is **409**; see "Row versions" below) | `routers/transcribe.py` |
 | `GET /api/transcript-generation/status` → **200** `{in_flight:false}` idle · **200** busy fields for the earliest-started live run in the deployment (`session_id`, `session_title`, `started_at`; the ids are null for a session the caller can't access) | `routers/transcribe.py` |
 | `…/transcript-words/generate` → **503** unconfigured · **403** not an approved user · **200** `{words}` configured (see "Transcript generation" above) | `routers/transcribe.py` |
@@ -1290,6 +1308,11 @@ behind a small internal router (OpenSpec change `containerize-split-images`; spe
    no API code, no SQLite, no binaries                 api (server API-only, :8787, single replica)
                                                         volumes: /data (DATA_DIR), /blobs
                                                                  (BLOB_DIR), /home/node
+                                                                   │ shared blob volume
+                                                                   ▼ (/blobs)
+ db (Postgres) ◄── network `media` 172.28.18.0/24 (internal) ── media-worker (uid 10001,
+                   members: db + media-worker only                read-only, no caps,
+                                                                  ffmpeg + node, no port)
 ```
 
 - **`web`** runs Next's standalone server (`output: 'standalone'`); **`api`** is the unchanged
@@ -1317,12 +1340,33 @@ behind a small internal router (OpenSpec change `containerize-split-images`; spe
   it.
 - **Caddy admin API** listens on `127.0.0.1:2019` *inside* the router container and exists only
   for its healthcheck; it is unreachable from either compose network.
+- **`media-worker`** (OpenSpec change `media-worker`, ADR 0029) is the fourth service: it probes,
+  peaks, converts (WAV → FLAC) and merges audio with a digest-pinned `ffmpeg`. It joins only the
+  `media` network (internal, host-isolated, pinned subnet; its only other member is `db`) and
+  connects as the `autologger_media` role with `MEDIA_DB_PASSWORD`, so it can reach nothing but
+  Postgres and can touch only `catalog.media_jobs` (column-limited `UPDATE`, a guard trigger)
+  and read the segment and seam rows. Its environment is the five `PG*` literals plus
+  `BLOB_DIR`; it holds no app secret. It runs as uid `10001` (not the api's `node`, 1000) with a
+  read-only root, a 64 MiB `/tmp` tmpfs, every capability dropped, `no-new-privileges`, `init`,
+  2 CPUs, 1 GiB and 128 pids, and its healthcheck is a `node` check of a heartbeat file the loop
+  touches (no network).
+- **Permissions posture.** The worker mounts the same blob volume as `api`. Unix permissions,
+  not a second mount, narrow what it can write: `audio/` and `.tmp/` belong to `node` (mode
+  0755), so it can read blobs but not create, replace or delete them; `api` creates `media/`
+  sticky and world-writable (1777) at boot, and the worker writes only its own
+  `media/<job>/` (which it `chmod`s 0777 so `api` can remove it) and its result row.
+- **Copy-by-handle adopt.** The worker computes, the api applies: `api` opens a worker output
+  with `O_NOFOLLOW`, checks the open handle (regular file, size cap, owner uid 10001, and an
+  `lstat` of the job directory), copies it into its own `.tmp/put-*` file, fsyncs and renames
+  that into `audio/`, and only then removes `media/<job>/`. No worker-owned inode ever lands in
+  `audio/`, and a swapped symlink or a grown file after the open changes nothing.
 
 ### Build, push, and pin images
 
-Images are named `ghcr.io/kwcantrell/autologger-web` and `…/autologger-api`, tagged with a git
-SHA (never `latest`), in a **private** GHCR namespace. `docker-bake.hcl` builds both targets
-for `linux/amd64` and `linux/arm64`.
+Images are named `ghcr.io/kwcantrell/autologger-web`, `…/autologger-api` and
+`…/autologger-media-worker`, tagged with a git SHA (never `latest`), in a **private** GHCR
+namespace. `docker-bake.hcl` builds all three targets (its `default` group) for `linux/amd64`
+and `linux/arm64`; the worker image comes from `docker/media-worker.Dockerfile`.
 
 ```bash
 # One-time on the build host: a docker-container builder + QEMU/binfmt for the non-native arch
@@ -1334,7 +1378,7 @@ docker buildx inspect --builder autologger-multi --bootstrap
 # Log in to GHCR with a PAT that has write:packages (classic PAT; keep it out of shell history).
 docker login ghcr.io -u <github-user>
 
-# Build + push both images, both architectures. The tag is what compose will pin.
+# Build + push the three images, both architectures. The tag is what compose will pin.
 # (-f is required: bare `bake` auto-loads compose.yaml first and fails on its required variables.)
 GIT_SHA=$(git rev-parse --short=12 HEAD) docker buildx bake -f docker-bake.hcl --builder autologger-multi --push
 ```
@@ -1347,9 +1391,28 @@ GIT_SHA=$(git rev-parse --short=12 HEAD) docker buildx bake -f docker-bake.hcl -
   anonymous pull of the private images must be refused.
 - `docker compose build` builds the images for the *native* architecture only (local runs); it
   does not push.
-- **Pin the tags** in the compose `.env` (`WEB_TAG=<sha>`, `API_TAG=<sha>`). The compose
-  interpolation (`${WEB_TAG:?…}`) refuses an *unset* tag but does **not** reject the literal
-  value `latest`; the operator must not use it.
+- **Pin the tags** in the OpenBao `prod` secret (`WEB_TAG=<sha>`, `API_TAG=<sha>`,
+  `MEDIA_TAG=<sha>`; all three normally the same 12-character SHA). The compose interpolation
+  (`${MEDIA_TAG:?…}`) refuses an *unset* tag, and `make prod-up`/`prod-check` (the `prod-tags`
+  step) also refuse an empty tag or `latest`.
+- **The ffmpeg pin.** The worker's `ffmpeg` is the pinned `linuxserver/ffmpeg` image, named
+  once as `ARG FFMPEG_IMAGE=…@sha256:…` in `docker/media-worker.Dockerfile` with a `# reviewed
+  2026-10-11` comment next to it; `server/scripts/blobSegmentRows.ts`'s `FFMPEG_IMAGE` (the
+  operator scripts') is held equal to it by `server/src/test/ffmpegPin.repo.test.ts`.
+  Dependabot's `docker` ecosystem proposes digest bumps; a bump is a tier 1 change: update the
+  ARG, the review date and `blobSegmentRows.ts` together, then rebuild and re-run
+  `sh docker/scripts/test_media_image.sh`. Node is copied onto that base from the same pinned
+  `node:22-bookworm-slim` as `docker/Dockerfile`.
+- **Smoke-test the worker image** after `make prod-build` (native arch, tag `:local`), with no
+  network and the worker's runtime flags:
+
+  ```bash
+  img=ghcr.io/kwcantrell/autologger-media-worker:local
+  docker run --rm --network none --user 10001:10001 --read-only --tmpfs /tmp --cap-drop ALL \
+    --security-opt no-new-privileges:true --entrypoint node "$img" -e 'console.log(process.version)'
+  docker run --rm --network none --user 10001:10001 --read-only --cap-drop ALL \
+    --entrypoint ffmpeg "$img" -hide_banner -version
+  ```
 - **Build-time egress:** the Docker build downloads from Docker Hub (base images, Caddy),
   the npm registry (`npm ci`, the pinned `@anthropic-ai/claude-code`), and GitHub releases
   (the pinned `yt-dlp` and `deno` binaries).
@@ -1363,7 +1426,8 @@ GIT_SHA=$(git rev-parse --short=12 HEAD) docker buildx bake -f docker-bake.hcl -
   the server's production dependencies (including `next`, which the server requires lazily for
   the bridge and which the API-only mode never loads), the pinned `claude` CLI and Agent SDK
   platform binaries, and `yt-dlp` + `deno` in `/opt/ytdlp`. It carries no `ffmpeg` (the server
-  selects a single `bestaudio` format and never merges).
+  selects a single `bestaudio` format and never merges); `ffmpeg` lives only in the
+  `media-worker` image.
 
 ### Configuration
 
@@ -1374,7 +1438,7 @@ hand-typed `docker compose up` fails on purpose. Nothing reads `server/.env`.
 
 | OpenBao `prod` key | Required | Why |
 |-----|----------|-----|
-| `WEB_TAG`, `API_TAG` | yes | Git-SHA image tags (see above). Compose refuses to start without them. |
+| `WEB_TAG`, `API_TAG`, `MEDIA_TAG` | yes | Git-SHA image tags (see above; `MEDIA_TAG` is the media worker's). Compose refuses to start without them. |
 | `PUBLIC_BASE_URL` | yes | The public HTTPS origin (e.g. `https://autologger.nrvo.ai`). Builds the OAuth redirect `${PUBLIC_BASE_URL}/auth/google/callback`. |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | yes | Google sign-in, the only way in for people; the server refuses to boot without them. |
 | `BOOTSTRAP_OWNER_EMAIL` | yes | The bootstrap owner; their first sign-in claims every ownerless team. Compose and the server refuse to start without it. |
@@ -1414,6 +1478,15 @@ The image fetches nothing else at runtime; the Claude CLI auto-updater is disabl
 
 All three are owned by uid 1000 (`node`); a fresh named volume inherits that from the image. State
 survives `docker compose up -d` recreation onto a new image tag.
+
+**The media worker's mount.** `media-worker` mounts `autologger_autologger-blobs` at `/blobs`
+and no other volume (no `/data`, no home). It runs as uid 10001, so the ownership above is what
+confines it: it can read `audio/` (and `.trash/`), and write only under `media/`, which `api`
+creates at boot owned by uid 1000 with mode 1777; `audio/` and `.tmp/` stay 0755 `node`. A blob
+copied in with mode 0600 is unreadable to the worker and its job fails `missing-blob`; restore
+group/other read with `chmod -R a+rX audio/` inside the volume. The layout of `media/`,
+`.trash/<date>/` and the upload staging files, and low-disk mode, are in
+[Storage map](#storage-map) and [Media jobs](#media-jobs).
 
 **Auto-updater on a pre-existing home volume.** The image bakes `~/.claude/settings.json`
 with `{"env":{"DISABLE_AUTOUPDATER":"1"}}`, but a volume that already has content shadows the
@@ -1573,6 +1646,10 @@ Then start `api` again and play an old and a new segment.
 
 ### Waveform peaks backfill
 
+New segments get their peaks from the media worker. For existing rows prefer
+`enqueueMediaJobs.ts` (README "Media jobs"): it queues the same work for the worker. This script
+stays for offline use (no worker, or blobs copied to another machine).
+
 The timeline waveform of a segment comes from `waveform_peaks_json`. When it is NULL the browser
 fetches and decodes the whole file and stores the result, which never succeeds for large files
 (imported WAVs of a GB and more, hundreds of MP3s). `server/scripts/backfillWaveforms.ts` computes
@@ -1627,6 +1704,10 @@ the target host: the updates are keyed by `(session_id, id)` only. The app needs
 session shows the waveform after a reload.
 
 ### Convert WAV blobs to FLAC
+
+The media worker converts every new 16/24-bit WAV on ingest, and `enqueueMediaJobs.ts` (README
+"Media jobs") queues existing WAV rows for it, with the WAV moved to the trash instead of deleted.
+This script stays for offline conversion.
 
 Imported 16- and 24-bit PCM WAVs (the legacy data has 22 of them, 22.7 GB) take about a third of the space,
 or less, as FLAC, with exactly the same samples. The app plays, draws and transcribes FLAC like
@@ -1691,6 +1772,54 @@ sudo env "PATH=$PATH" npx tsx server/scripts/convertWavToFlac.ts --cleanup --blo
 `pg_dump -Fc` (README "Backup") after step 3 and before step 5: a dump from before the conversion
 references WAVs that the cleanup deletes. Export `referenced.csv` right before the cleanup, never
 reuse an old one. The app needs no restart.
+
+### Media jobs
+
+The media worker (a fourth container, see "Topology") decodes every new segment once (exact
+`duration_ms`, waveform peaks, a verified FLAC for a 16/24-bit WAV) and merges a finished
+recording's chunks into one segment by packet copy. Work is the table `catalog.media_jobs`
+(`ingest` per segment, `merge` per recording); the worker claims jobs, writes its output under
+`BLOB_DIR/media/<job id>/` and marks the job `done`; the API applies the result every 10 s (status
+`applied`) and trashes what it replaced. A merge waits while the session's transcript generation
+or YouTube import runs. Recordings are merged after the client's finalize, or by the reconcile 30
+minutes after their last chunk (never one that failed or was cancelled in the last 24 h, and never
+one recorded before the media worker).
+
+- **Enqueue existing rows** (legacy imports, rows without peaks or duration, WAVs):
+  ```bash
+  npx tsx server/scripts/enqueueMediaJobs.ts > "$W/ingest.sql"          # ingest jobs
+  npx tsx server/scripts/enqueueMediaJobs.ts --merge > "$W/merge.sql"   # merge every multi-chunk recording, legacy ones included
+  docker exec -i "$DB" psql -X -U postgres -v ON_ERROR_STOP=1 < "$W/ingest.sql"
+  ```
+  Set-based SQL, no ids or keys printed; re-running adds nothing (`ON CONFLICT DO NOTHING` on the
+  one-live-job index). These jobs run in the worker's big lane, so live chunks are never delayed.
+  `--merge` is the only way a recording chunked before the media worker is merged.
+- **Watch the queue:**
+  ```bash
+  docker exec -i "$DB" psql -X -U postgres -Atc \
+    "select kind, status, count(*) from catalog.media_jobs group by 1, 2 order by 1, 2"
+  ```
+- **Failed jobs** keep `status = 'failed'` with a code in `error` (`decode-failed`, `mixed-codecs`,
+  `verify-mismatch`, `interleaved-input`, `missing-blob`, `timeout`, `low-disk`, `internal`,
+  `invalid-result`, `inputs-changed`); a failed ingest marks its segment `media_status = 'failed'`
+  (the timeline shows "Waveform unavailable"); a failed merge leaves the chunks as they were.
+  `missing-blob` on an imported blob copied with mode 0600 means the worker cannot read it:
+  `sudo chmod -R a+rX "$BLOBS/audio"`, then re-enqueue. To retry, delete the failed row
+  (`delete from catalog.media_jobs where id = '…'`) and run the enqueue again. Terminal jobs older
+  than 7 days are deleted by the API's sweep.
+- **Trash restore:** a replaced blob sits at `BLOB_DIR/.trash/<yyyy-mm-dd>/<r2_key>` for 7 days.
+  To restore a chunk after a bad merge, move the files back to their `audio/<session>/…` path
+  (`sudo mv "$BLOBS/.trash/<day>/audio/<sid>/<file>" "$BLOBS/audio/<sid>/"`) and run
+  `POST /api/sessions/<sid>/audio/segments/sync-from-disk`; delete the merged row first if you want
+  the chunks back as separate segments. The chunks of a merged recording are held twice for a week
+  (prod has 80 GB).
+- **Low-disk mode:** when the blob volume has less than 10 GiB free, the 10-minute sweep purges the
+  trash oldest-first until it has (the grace period shortens, live audio is never touched), uploads
+  answer `507`, and the worker claims no merge and no job needing twice its input size. The API
+  logs one line entering and one leaving the mode.
+- **Uploads** (`…/audio/uploads`, large imports in 32 MiB parts) stage under
+  `BLOB_DIR/.tmp/upload-<id>`, at most 2 open and 3 GiB per user; they expire 24 h after their
+  last part and the sweep removes them.
 
 ### Backup
 
@@ -2029,7 +2158,10 @@ existing configuration.
 | AI v2 | works on the login, no key | needs `AI_V2_API_KEY` | needs `AI_V2_API_KEY` |
 | Companion | yes (dev only) | no (test the scoped token with `curl`) | your own install |
 | Source | read-only bind mounts (hot reload) | baked into images | baked into images |
+| Media worker | `autologger-dev-media-worker:local`, built locally (no source binds: `make dev-build` after a worker change), on the `dev-blobs` volume | `autologger-stage-media-worker:local`, or `ghcr.io/kwcantrell/autologger-media-worker:<STAGE_IMAGE_TAG>` (pulled with `web` and `api`) | `ghcr.io/kwcantrell/autologger-media-worker:<MEDIA_TAG>` |
+| Worker password | `MEDIA_DB_PASSWORD` in OpenBao `dev` (worker and `migrate` only) | in OpenBao `stage` | in OpenBao `prod` |
 | Subnets | 172.28.30.0/24 | 172.28.20.0/24, 172.28.21.0/24 | 172.28.10.0/24, 172.28.11.0/24 |
+| `media` network (db + media-worker, internal) | 172.28.37.0/24 | 172.28.29.0/24 | 172.28.18.0/24 |
 | Cookies | n/a | `COOKIE_SECURE=0` (`1` with an https `STAGE_PUBLIC_BASE_URL`), `SESSION_COOKIE=autologger_stage_sid` | secure |
 
 Docker's default address pools include `172.28.0.0/16`; the subnets above are pinned, so

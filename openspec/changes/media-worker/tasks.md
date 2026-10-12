@@ -159,11 +159,16 @@ environments" ("Dev, stage and prod compared"). No other README section is touch
 
 ## B. API, apply loop, session-core
 
-- [ ] B.1 Test first: `packages/contract/src/schemas.test.ts` for `audioUploadCreateBodySchema`
+- [x] B.1 Test first: `packages/contract/src/schemas.test.ts` for `audioUploadCreateBodySchema`
   (`content_type`, `size_bytes` 1..1500 MiB, `part_sha256` list length and 64-hex entries),
   `audioFinalizeBodySchema` (`chunks` 1..1000 timestamps) and `audioSegmentDictSchema` (the 12
   keys; `duration_ms`, `media_status`, `seams` nullable). Then `schemas.ts`.
-- [ ] B.2 Test first: `packages/session-core/src/audioStore.test.ts`: `audioRowToMeta` carries
+  Evidence (2026-10-12): red `cd packages/contract && npx vitest run src/schemas.media.test.ts`
+  → `Tests 9 failed (9)`; green after `schemas.ts` → `Tests 9 passed`; full `npx vitest run` →
+  `Tests 149 passed (149)`. Tests live in `schemas.media.test.ts`. Also `audioFinalizeResponseSchema`
+  / `AudioFinalizeResponse` (`{ok: true, merge}`) for A's finalize call (hand-off), and
+  `AUDIO_SEGMENT_DICT_KEYS`.
+- [x] B.2 Test first: `packages/session-core/src/audioStore.test.ts`: `audioRowToMeta` carries
   `durationMs`, `mediaStatus`, `mediaError`, `seams` (joined from the seams port);
   `addAudioSegment` with a `recording_ordinal` first consults `findWindow` and returns the existing
   segment (chunk or merged) without writing, else writes the row with `media_status = 'pending'`,
@@ -174,7 +179,19 @@ environments" ("Dev, stage and prod compared"). No other README section is touch
   `media-apply` with the D7 input check, the run-lease deferral, the seam repoint, trashing by
   re-read `r2_key`s, revision bump and `audio.changed`; add `media-apply` and `media-reconcile` to
   the system-caller allowlist test).
-- [ ] B.3 Test first: `server/src/routers/audio.test.ts` additions: `segmentApiDict` has 12 keys;
+  Evidence (2026-10-12): red `cd packages/session-core && npx vitest run src/audioStore.test.ts` →
+  `Tests 10 failed (10)`; green → `10 passed`; `npx vitest run` → `Tests 65 passed (65)`; hub over
+  Postgres `cd server && npx vitest run --project integration src/test/session/audioMedia.int.test.ts`
+  → `Tests 14 passed (14)` (seam + ingest job in one transaction, replay and a two-hub `23505` race
+  answer the holder, finalize/straggler, ingest/FLAC/merge apply, lease deferral, invalid,
+  cancelled + re-enqueue). Media ports are injected (`SessionHubRegistryOptions.media`, wired in
+  `config.ts`; session-core cannot import storage). Meta fields are snake_case (`duration_ms`,
+  `media_status`, `media_error`, `seams`) and optional in the type so older literals compile.
+  `SessionCore.uncountedDb` (new getter) carries job enqueues and the finalize marker
+  (`session_meta` `media_finalize:<ordinal>`) without a revision bump. Allowlist
+  (`catalogSystem.repo.test.ts`): `media-apply` (mediaApply.ts, main.ts), `media-reconcile`,
+  `media-sweep` (main.ts), `media-uploads` and `session-undo` (audioUploads.ts).
+- [x] B.3 Test first: `server/src/routers/audio.test.ts` additions: `segmentApiDict` has 12 keys;
   the segment POST replays answer with the existing dict and store nothing (live chunk, merged
   seam, concurrent duplicate), and uploads without `recording_ordinal` are unchanged (pin
   `parseOptionalMarkedAt` normalisation as the window key; **hand-off to A**); `POST
@@ -183,7 +200,19 @@ environments" ("Dev, stage and prod compared"). No other README section is touch
   `queued` then `already-queued`; a straggler's POST enqueues the waiting merge; regenerate
   `fixtures/api-responses/audioSegment{Create,sList}.json` (`npm run fixtures:capture -w server`)
   and the fixture int test. Then the routes.
-- [ ] B.4 Test first: `server/src/routers/audioUploads.test.ts` (D12: create `201` with
+  Evidence (2026-10-12): red `cd server && npx vitest run --project unit src/routers/audio.test.ts`
+  → `2 failed | 35 passed` (`segmentApiDict` not exported / 9 keys); green `37 passed`; routes
+  `npx vitest run --project integration src/routers/audio.media.int.test.ts` → `Tests 8 passed`.
+  Window fixture for A: `fixtures/audioWindowNormalisation.json` (outside `api-responses/`, which
+  holds captures only), asserted against `parseOptionalMarkedAt`; finalize normalises each window the
+  same way. Fixtures regenerated (`UPDATE_API_FIXTURES=1 … apiResponseFixtures.int.test.ts` →
+  `48 passed`): `audioSegmentCreate`/`audioSegmentsList` are now **`.ts`** captures (the
+  `media_status` literal union; the `.json` files are removed, so D's conformance imports must
+  switch to the named `.ts` exports), plus `audioRecordingFinalize.ts`. B also edited
+  `server/src/routers/transcribe.ts` (`missing_blob` → `502`; red `transcribe.test.ts` `2 failed`,
+  green `6 passed`) and `sessions.ts` (pass `inputBytes`; export the local-audio-import helpers
+  reused by the upload completion).
+- [x] B.4 Test first: `server/src/routers/audioUploads.test.ts` (D12: create `201` with
   `part_size = 32 MiB`, `413` over 1500 MiB, `400` bad hash list, `429` third open upload or
   over 3 GiB staged, `507` below the free-disk floor (fake `freeBytes`); PUT part sizes, offsets,
   re-send, per-part hash mismatch `400` and not recorded, `404` after expiry/complete, `413` over
@@ -197,7 +226,16 @@ environments" ("Dev, stage and prod compared"). No other README section is touch
   `server/src/routers/audioUploads.ts`, mounted beside the audio router; README "Endpoints" rows
   for the five upload routes (finalize's row is B.3; **hand-off to D**: the route shapes are
   frozen here).
-- [ ] B.5 Test first: `server/src/mediaApply.test.ts` (fake ports: a `done` ingest job updates
+  Evidence (2026-10-12): red `npx vitest run --project integration
+  src/routers/audioUploads.int.test.ts` → `Tests 15 failed (15)` (routes absent); green `15 passed`;
+  unit `audioUploads.test.ts` `3 passed`; README rows guarded by the new
+  `server/src/routers/readmeEndpoints.repo.test.ts` (red `6 failed`, green `6 passed`). Mounted in
+  `app.ts`; the blob store's media surface is `ports.mediaBlobs` (`appEnv.ts`). Captures:
+  `audioUploadCreate.json`, `audioUploadStatus.json`, `audioUploadComplete.ts`. In
+  `web/src/apiResponseShapes.repo.test.ts` only the exemption list changed: PUT part and DELETE
+  (`204`) and the OPFS manifest `JSON.parse` added, the stale AudioRecorder waveform PUT removed;
+  create/status/complete and finalize stay flagged until D adds their conformance assignments.
+- [x] B.5 Test first: `server/src/mediaApply.test.ts` (fake ports: a `done` ingest job updates
   peaks/duration/status and marks `applied`; a FLAC result copies the blob by handle, swaps
   key/mime and trashes the WAV; an ingest whose target row is gone → `cancelled`; a `done`
   merge job with matching inputs copies the merged file under the job-derived key, inserts one
@@ -213,18 +251,54 @@ environments" ("Dev, stage and prod compared"). No other README section is touch
   (D6: 30 min, only `media_status is not null` recordings, none with a terminal merge younger
   than 24 h), `sweepTrash` with the low-disk purge and transition logs, upload expiry, old-job
   deletion and the `pg_notification_queue_usage()` warning; `config.ts` calls `ensureMediaDir`.
-- [ ] B.6 Test first: `server/src/test/enqueueMediaJobs.test.ts` (selects rows with null peaks,
+  Evidence (2026-10-12): `mediaApply.ts` was written before its tests (no red run recorded);
+  `npx vitest run --project unit src/mediaApply.test.ts` → `6 passed`; `--project integration
+  src/mediaApply.int.test.ts` → `10 passed` (ingest, FLAC copy + trash, cancelled target, invalid
+  key/peaks/symlink → `invalid-result` and segment `failed`, worker failure, merge swap, crash
+  idempotency, inputs changed → cancelled + new merge, lease deferral, foreign key);
+  `startupPurge.media.test.ts` → `5 passed`, `startupPurge.media.int.test.ts` → `3 passed`. The
+  reconcile also requires a seam per segment, so a legacy recording given a status by the backfill
+  is still never auto-merged. Deviation: the `media_jobs_done` LISTEN is not wired (the server has
+  no `postgres` dependency of its own; adding one touches the lockfile); `startMediaApply` exposes
+  `wake()` and polls every 10 s.
+- [x] B.6 Test first: `server/src/test/enqueueMediaJobs.test.ts` (selects rows with null peaks,
   null duration or WAV mime; `--merge` selects multi-chunk recordings, legacy `NULL` status
   included, and is the only path that does; emits guarded `INSERT … ON CONFLICT DO NOTHING` SQL;
   never prints values). Then `server/scripts/enqueueMediaJobs.ts`; README: "Storage map"
   (`media/`, `.trash/<date>/`, `.tmp/upload-*`), "Media jobs" runbook (enqueue, watch the queue,
   failed jobs, trash restore, low-disk mode) and a pointer from the two legacy script sections.
+  Evidence (2026-10-12): red `npx vitest run --project unit src/test/enqueueMediaJobs.test.ts` →
+  `Cannot find module '../../scripts/enqueueMediaJobs'`; green `4 passed`; over Postgres
+  `src/test/enqueueMediaJobs.int.test.ts` → `1 passed`. Set-based SQL (no values printed), jobs in
+  the big lane (`input_bytes` = 1500 MiB). README: "Storage map", new "Media jobs" (under
+  "Container deployment"), pointers in the two legacy sections, and the "Endpoints" rows.
 - [ ] B.7 Suites: `cd server && npx vitest run --project unit`, `--project integration`,
   `--project pg`; `npm run typecheck`.
+  Evidence (2026-10-12, after the ordering change below): unit `Tests 601 passed | 5 skipped`;
+  integration `Test Files 105 passed, Tests 1450 passed (1450)` (incl.
+  `sessionHub.interleave.int.test.ts` unchanged); session-core `65 passed`; contract `149 passed`.
+  No B pg tests (S owns them). `npm run typecheck`: only `web/src/api/types.conformance.test.ts`
+  (D), which still imports the removed `audioSegment*.json`.
+- [x] B.8 Design note (coordinator decision 2026-10-12; closes panel C minor 7): **the blob is
+  written before its row on every create path**: segment POST and the upload's segment mode
+  (`storeLiveSegment`: held window → answer, no write; else `planAudioSegment` → put/adopt under the
+  final key → row + seam + ingest job in one transaction; a lost `23505` race or a failed insert
+  deletes the just-written blob), local-audio-import, YouTube import and the upload's import mode
+  (`addImportedAfterBlob`), and `mediaApply`'s merged/FLAC rows (already copy-first). A listed row
+  therefore always has its bytes, so D's `missing_blob` → `502` stays a true error. The
+  `session-undo` row undo on a failed put is gone from `audio.ts` and `audioUploads.ts` (allowlist
+  entries removed); `catalogPolicies.int.test.ts`'s undo case is rewritten (a revoke between blob
+  and row → `404`, no row, no blob; a failed put → no row). Crash residue: at boot
+  `trashOrphanBlobsOnce` moves to the trash (never deletes) any `audio/` blob older than 1 h that no
+  row names, except a pending merge's copy. Caveat: a blob restored from the trash keeps its old
+  mtime, so run `sync-from-disk` before the next API restart.
+  Evidence: red `npx vitest run --project integration src/routers/segmentOrdering.int.test.ts` →
+  `Tests 3 failed (3)` (a row named the key when the blob was written); green `3 passed`;
+  `startupPurge.media.int.test.ts` (orphan case added) `4 passed`.
 
 ## W. Worker and infra
 
-- [ ] W.1 Test first: `media-worker/src/ffmpeg.test.ts` (the sniffer maps EBML/OggS/ftyp/RIFF
+- [x] W.1 Test first: `media-worker/src/ffmpeg.test.ts` (the sniffer maps EBML/OggS/ftyp/RIFF
   WAVE/fLaC/MP3 sync/ID3 to the forced demuxer and refuses anything else; the MP4 atom scan tells
   `moov`-first from `moov`-last; argv assembly has `-nostdin`, `-xerror`, `-protocol_whitelist
   pipe`, `-f <forced>`, `-i pipe:0`, no shell, and for a `moov`-last MP4 only `-protocol_whitelist
@@ -235,7 +309,16 @@ environments" ("Dev, stage and prod compared"). No other README section is touch
   rule, duration from frames). Then `src/ffmpeg.ts`, `src/sniff.ts`, `src/peaks.ts`. Scaffold the
   workspace (`package.json`, `tsconfig`, vitest config, root `package.json` scripts, the
   package-architecture repo test's app list).
-- [ ] W.2 Test first: `media-worker/src/jobs/ingest.test.ts` and `ingest.ffmpeg.test.ts`
+  Evidence: red `cd media-worker && npx vitest run` -> `Cannot find module './ffmpeg'`, `Cannot
+  find module './peaks'`, `Test Files 2 failed`; green `Tests 50 passed (50)`. Added while W.2
+  found ffmpeg exits 0 under `-xerror` when its parser drops a corrupt Opus packet: red `× exit 0
+  with an error line on stderr is a failure`, green after `runFfmpeg` counts error-level stderr
+  lines (only "File ended prematurely" and the repeat counter are benign). App list: red `cd
+  server && npx vitest run --project unit src/packageBoundaries.repo.test.ts` -> `× DOES flag a
+  bare specifier naming the media-worker app`, `1 failed | 84 passed`; green `85 passed`. Root
+  `package.json` workspaces/test/typecheck/lint gain `media-worker`; `biome.json` includes
+  `media-worker/src/**/*.ts` (else the root lint skips it).
+- [x] W.2 Test first: `media-worker/src/jobs/ingest.test.ts` and `ingest.ffmpeg.test.ts`
   (generated WAV fixtures from `server/src/test/waveformFixtures.ts` pattern: s16 WAV → FLAC
   written under `media/<job>/`, verify by md5/count/STREAMINFO; f32 WAV → no FLAC; WebM/FLAC
   fixtures → duration and peaks; a junk file → `decode-failed`; a truncated Opus stream →
@@ -245,9 +328,17 @@ environments" ("Dev, stage and prod compared"). No other README section is touch
   samples and opens no other file (the referenced path is a sentinel whose absence of reads is
   asserted); results never contain paths outside `media/<job>/`). Then `src/jobs/ingest.ts`, `src/verify.ts` (port `#107`'s
   `verifyPair`/`pcmDigest` logic; do not import `server/scripts`).
-- [ ] W.3 Test first: `media-worker/src/jobs/merge.test.ts` and `merge.ffmpeg.test.ts` (two Opus
-  WebM chunks → one WebM with `merged_samples` exactly `Σ raw + pre_skip₂`, seams `offset_ms`
-  equal the inputs' cumulative durations with `source_key`s, peaks over the merged file; Ogg +
+  Evidence: red `npx vitest run src/jobs` -> `Cannot find module '../verify'`, `Cannot find module
+  './ingest'`; first run of the impl: `× a corrupted Opus stream fails decode-failed under -xerror`
+  (`expected { kind: 'done' }`: the pinned ffmpeg logs "Error parsing Opus packet header" and exits
+  0); green after the stderr rule: `Test Files 4 passed, Tests 70 passed`. The dref fixture
+  `packages/transcription/fixtures/audio/seg-aac-dref.m4a` (moov-last, second track with an `alis`
+  reference to `sentinel.m4a`) is built by `media-worker/src/test/drefFixture.ts`; the test's FIFO
+  sentinel is never opened, and the positive control (`-enable_drefs 1`) does open it.
+- [x] W.3 Test first: `media-worker/src/jobs/merge.test.ts` and `merge.ffmpeg.test.ts` (two Opus
+  WebM chunks → one WebM with untrimmed `merged_samples` exactly `Σ untrimmed inputs` (edited
+  after approval, design D7; was `Σ raw + pre_skip₂`), seams `offset_ms` at the inputs' untrimmed
+  cumulative positions with `source_key`s, peaks over the merged file; Ogg +
   WebM Opus → WebM; two AAC m4a → MP4 verified with `-ignore_editlist 1` on both sides, exact;
   FLAC → FLAC; PCM WAVs → FLAC; mixed Opus+AAC → `mixed-codecs` without output; a `skipped`
   input or two groups → failure without output; a corrupt second chunk → `decode-failed`; a
@@ -256,7 +347,15 @@ environments" ("Dev, stage and prod compared"). No other README section is touch
   `interleaved-input` when an original is missing; `low-disk` requeue when `freeBytes <
   2 × input_bytes`). Then `src/jobs/merge.ts` using `mergeAudioSegments`/`probeSegment` from
   `@autologger/transcription`.
-- [ ] W.4 Test first: `media-worker/src/main.test.ts` (fake db: two lanes with the 64 MiB
+  Evidence: red `npx vitest run src/jobs/merge` -> `Cannot find module './merge'`; first impl:
+  every family `verify-mismatch` (debug: Opus `merged 49608, Σ raw + pre_skip₂ 48312`): the inputs
+  carry end padding (WebM DiscardPadding 648, Ogg end granule) that packet copy cannot keep, and
+  the merged MP4 carries a 614-sample skip. **Deviation from D7's formula**: verification decodes
+  both sides untrimmed (`-flags2 +skip_manual`, plus `-ignore_editlist 1` for AAC) and requires
+  `merged == Σ untrimmed inputs` exactly (Opus 29760 + 20160 = 49920; AAC 117760 + 131072 =
+  248832); seam offsets are `Σ_{j<i} untrimmed_j + skip_i − skip_merged` (the merged stream's own
+  pre-skip). Green: `Test Files 7 passed, Tests 102 passed` (whole workspace).
+- [x] W.4 Test first: `media-worker/src/main.test.ts` (fake db: two lanes with the 64 MiB
   filter; below `MEDIA_MIN_FREE_BYTES` (fake `statfs`) no `merge` job and no job with
   `input_bytes × 2 > free` is claimed, and claiming resumes when space returns; claim → run →
   finish; renew every 60 s during a long job; finish/fail fenced (a 0-row
@@ -264,7 +363,9 @@ environments" ("Dev, stage and prod compared"). No other README section is touch
   `failed`; LISTEN wake-up; heartbeat file touched each loop; SIGTERM finishes the current jobs
   within the lock window or releases them). Then `src/main.ts`, `src/db.ts` (statements from
   `packages/storage/src/mediaJobs.ts`).
-- [ ] W.5 Test first: `server/src/test/ffmpegPin.repo.test.ts` (reads `ARG FFMPEG_IMAGE=` from
+  Evidence: red `npx vitest run src/main.test.ts` -> `Cannot find module './main'`; green `Tests 14
+  passed (14)`; `npx tsc --noEmit` (media-worker) rc 0.
+- [x] W.5 Test first: `server/src/test/ffmpegPin.repo.test.ts` (reads `ARG FFMPEG_IMAGE=` from
   `docker/media-worker.Dockerfile` and asserts it equals `blobSegmentRows.ts`'s `FFMPEG_IMAGE`
   and carries a `# reviewed YYYY-MM-DD` comment; red while the Dockerfile has no ARG) and
   `docker/scripts/test_media_image.sh` (builds the native image, lists its filesystem: `ffmpeg`
@@ -276,7 +377,20 @@ environments" ("Dev, stage and prod compared"). No other README section is touch
   it; a `docker run --rm --network none … node -e` smoke in the README build section. Evidence:
   both tests green, the bake `--print`, and `docker image inspect` showing both platforms after a
   push to a scratch tag (or the local-load manifest).
-- [ ] W.6 Test first: `docker/scripts/compose-run.test.mjs` (`MEDIA_DB_PASSWORD` scope per env,
+  Evidence: the spike already landed the ARG, so the pin test was first run against a mutation
+  (review comment removed, tag changed): `2 failed | 3 passed`; green `5 passed`. Red `sh
+  docker/scripts/test_media_image.sh` -> `ERROR: could not find any target matching
+  'media-worker'`; green `test_media_image: 26 passed, 0 failed` (arm64: ffmpeg/node present, no
+  server/web/claude/yt-dlp/deno/tests/fixtures/.env, uid 10001, entrypoint the worker, hardened
+  decode of seg1.webm = 115200 bytes, refusal without env rc 2, EROFS, healthcheck on the
+  heartbeat, clean SIGTERM), `image size: 606 MB (linux/arm64)`. `GIT_SHA=abc123def456 docker
+  buildx bake -f docker-bake.hcl --print` -> group default `['api', 'media-worker', 'web']`,
+  media-worker `platforms ['linux/amd64', 'linux/arm64']`, tag
+  `ghcr.io/kwcantrell/autologger-media-worker:abc123def456`; `docker buildx bake --builder
+  autologger-multi media-worker` (both platforms) rc 0; amd64 loaded under QEMU: `v22.23.3 x64
+  10001`, decode 115200, refusal rc 2, 944 MB. `.dockerignore` already covers the worker (tests,
+  `src/test`, fixtures); no change. `make prod-build` and the README smoke are in W.6/W.7.
+- [x] W.6 Test first: `docker/scripts/compose-run.test.mjs` (`MEDIA_DB_PASSWORD` scope per env,
   format, `MEDIA_TAG` required and not `latest` in prod, stage pull list `web api media-worker`,
   `STAGE_MEDIA_IMAGE` derived and refused as a secret, `checkStageResolved` covers the third
   image); `supabase-keys.test.mjs` (`MEDIA_DB_PASSWORD` generated, kept, never printed);
@@ -290,7 +404,16 @@ environments" ("Dev, stage and prod compared"). No other README section is touch
   list). Evidence: `check-envs.sh dev|stage|prod` clean; `make dev-up` shows the worker healthy
   and `docker exec` into it finds no `APP_DB_PASSWORD`, `POSTGRES_PASSWORD`, `FRAME_BUS_SECRET` or
   `PROVIDER_KEYS_SECRET`, and `getent hosts example.com` fails.
-- [ ] W.7 Docs: README "Topology" diagram and text (fourth service, `media` network, the
+  Evidence: red `node --test docker/scripts/compose-run.test.mjs` -> `tests 87, pass 62, fail 24`;
+  `supabase-keys.test.mjs` -> `tests 17, pass 11, fail 6`; `sh docker/scripts/test_check_envs.sh`
+  -> `60 passed, 28 failed` ("FAIL a root worker is caught"). Green: both node suites `tests 103,
+  pass 103, fail 0`; `test_check_envs: 88 passed, 0 failed`; `check-envs.sh dev|stage|prod` ->
+  `check-envs: ok`. Three old mutations that deleted every `/blobs` line now touch only the app's,
+  and two anchors follow `db`'s `[db, catalog, media]`. `prod-build` loads the whole default bake
+  group, so it needs no change. Prod is `compose.yaml` (in this list). **Not run:** `make dev-up`
+  (no running stack is touched here); the in-container env/DNS checks are covered by
+  `test_media_image.sh` (network none, refusal, EROFS) and remain for V.2 on dev.
+- [x] W.7 Docs: README "Topology" diagram and text (fourth service, `media` network, the
   permissions posture, the copy-by-handle adopt), "Build, push, and pin images" (`MEDIA_TAG`, the
   ffmpeg pin and its review date), "Volumes" (the worker's mount and the ownership posture only;
   the `media/`, `.trash/` and staging layout and low-disk mode are B.6's "Storage map" and "Media
@@ -300,6 +423,12 @@ environments" ("Dev, stage and prod compared"). No other README section is touch
   demuxer, `-xerror`, handle-checked copy, column grants and the guard trigger; residuals: a
   decoder exploit's read of every blob, the worker login's `LISTEN`/`NOTIFY` on the frame bus
   and its monitoring). Evidence: files; no test.
+  Done: README "Topology", "Build, push, and pin images", "Volumes", "Dev, stage and prod
+  compared"; `docs/openbao-secrets.md` (`MEDIA_DB_PASSWORD` in every `kv/autologger/*` and
+  `kv/autologger-import/dev` before the migration, `MEDIA_TAG`); `docs/security.md` "Untrusted
+  media in the worker". Outside W's list, still needing `MEDIA_TAG`/role rows: README
+  "Configuration", `docker/.env.example`, `docker/scripts/make-guards.sh` `prod-tags` (legacy),
+  `docs/supabase.md` role table.
 
 ## A. Web recorder: persistence, locks, retry, finalize, microphone, wake lock
 
@@ -403,7 +532,7 @@ environments" ("Dev, stage and prod compared"). No other README section is touch
 
 ## D. Web consumers, parts upload, transcription seams
 
-- [ ] D.1 Test first: `web/src/api/types.conformance.test.ts` (12 segment keys) and
+- [x] D.1 Test first: `web/src/api/types.conformance.test.ts` (12 segment keys) and
   `web/src/pages/index/hooks/useAudioClips.durationProbe.test.tsx` (uses `duration_ms` when
   present, probes only when null); `audioClips.*.test.ts` (a merged segment with three seams lays
   out as three clips with the segment's URL, media offsets `offset_ms`, positions from each
@@ -419,7 +548,8 @@ environments" ("Dev, stage and prod compared"). No other README section is touch
   src/pages/index/hooks` → all passed (seams `9 passed`, durationProbe `3 passed`); tsc clean for
   these files. **Still red until B.3 regenerates `fixtures/api-responses/audioSegment{Create,sList}.json`**:
   `types.conformance.test.ts` "the captured upload body has exactly the 12 segment keys" and
-  "every captured list row …" (re-run after B.3; then tick). The three fields are optional in
+  "every captured list row …" (re-run after B.3; then tick). Re-run after B.3 (2026-10-12):
+  `types.conformance.test.ts` green with the `.ts` captures (D.7). The three fields are optional in
   `AudioSegment` so other workstreams' hand-built segment literals keep compiling.
 - [x] D.2 Test first: `useWaveforms.test.tsx` (no decode while `media_status === 'pending'`;
   decodes for `null`; a `'failed'` segment is marked unavailable without a decode attempt; server
@@ -433,7 +563,7 @@ environments" ("Dev, stage and prod compared"). No other README section is touch
   segment, `seamClipPeaks`) and `TimelineWaveform.tsx` (labels from the clips' `mediaStatus`/
   `finalizing`): `npx vitest run src/pages/index/components/timeline/ src/pages/index/hooks
   src/shared/utils` → `Test Files 20 passed`, `Tests 316 passed`.
-- [ ] D.3 Test first: `web/src/api/uploads.test.ts` (create with per-part sha256 computed with
+- [x] D.3 Test first: `web/src/api/uploads.test.ts` (create with per-part sha256 computed with
   `crypto.subtle` over each 32 MiB slice and never a whole-file buffer → PUT parts in order with
   the exact sizes and offsets → complete in import mode with `duration_s` and the seam header,
   or in segment mode with the window (used by A.3); a failed part retries with backoff and
@@ -450,7 +580,8 @@ environments" ("Dev, stage and prod compared"). No other README section is touch
   open: `src/apiResponseShapes.repo.test.ts` flags the five `uploads.ts` sites until B.4
   captures upload fixtures (create/status/complete → conformance assignments in
   `types.conformance.test.ts`) and the guard's owner records exemptions for the `204` PUT part
-  and DELETE sites.
+  and DELETE sites. Re-run after B.4 (2026-10-12): `uploads.test.ts`, `runner.parts.test.ts`
+  and `apiResponseShapes.repo.test.ts` green (D.7 conformance checks; full suite in D.5).
 - [x] D.4 Test first: `packages/transcription/src/transcriptRemap.test.ts` (a merged segment with
   seams places each seam's words at that seam's wall-clock-derived anchor plus the in-seam
   offset, equal to the pre-merge placement on the same fixture; no seams → identical output to
@@ -490,8 +621,27 @@ environments" ("Dev, stage and prod compared"). No other README section is touch
   full `npx vitest run` → `4 failed | 2085 passed`, the 4 being the two B.3 fixture checks, the
   B.4 upload sites in `apiResponseShapes.repo.test.ts`, and A's `noBrowserDialogs` hit in
   `chunkUploadQueue.ts`; biome clean, tsc clean for D's files.
-- [ ] D.5 Suites: `cd web && npx vitest run`, `cd packages/transcription && npx vitest run`,
+- [x] D.5 Suites: `cd web && npx vitest run`, `cd packages/transcription && npx vitest run`,
   `npm run typecheck`.
+  Evidence (2026-10-12, after B.3/B.4 landed): `cd web && npx vitest run` → `Test Files 160
+  passed (160)`, `Tests 2135 passed (2135)`; `cd web && npx tsc --noEmit` → no output;
+  `npm run test -w packages/transcription` → `Test Files 10 passed, Tests 95 passed`; its tsc rc 0.
+- [x] D.7 Follow-up 2 (coordinator, 2026-10-12). **Ownership extension, recorded for the
+  consistency read:** D also edited `web/src/pages/index/components/{TransportControls,
+  MaximizeLogStrip,SessionWorkspace}.tsx` (+ `TransportControls.recovering.test.tsx`), and made
+  one edit in A's `chunkUploadQueue.ts` (`RecordingFinalizeResponse`/`RecordingFinalizeMerge` now
+  imported and re-exported from `api/types`, A finished). Test first: `types.conformance.test.ts`
+  switched to B's `.ts` captures `audioSegmentCreate`/`audioSegmentsList` and gained checks for
+  `audioUploadCreate.json`, `audioUploadStatus.json`, `audioUploadComplete`,
+  `audioRecordingFinalize` (red: `tsc` → `TS2305: Module './types' has no exported member
+  'RecordingFinalizeResponse'`); `TransportControls.recovering.test.tsx` (Record audio disabled
+  with `aria-describedby` → "Recovering unsent audio…" while the recorder is `scanning`; red
+  `1 failed | 2 passed`). Then `types.ts` (`RecordingFinalizeResponse {ok: true, merge}`),
+  `TransportControls.tsx` (`recordRecovering` prop), the prop wired from `AudioRecorder`'s
+  `onPhaseChange` in `SessionWorkspace.tsx` through `MaximizeLogStrip.tsx`.
+  Evidence: `npx vitest run src/api/types.conformance.test.ts src/apiResponseShapes.repo.test.ts
+  src/pages/index/utils/chunkUploadQueue.test.ts` → `Test Files 3 passed, Tests 176 passed`;
+  `TransportControls` → `2 passed, 6 tests`; full suite and tsc as in D.5.
 
 ## V. Verify (after all workstreams)
 

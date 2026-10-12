@@ -218,8 +218,12 @@ job row's status guards the transaction).
   -protocol_whitelist file -i file:<path>` with the default `use_absolute_path 0`, so the mov
   demuxer cannot follow external data references; spike 0.2 records which layout Safari's
   MediaRecorder writes. `-xerror` makes any decode error fatal, so a corrupt stream never decodes
-  to silence and then passes a sample count. Stderr is captured and discarded after
-  classification; 30 min wall-clock limit; `SIGKILL` on overrun; outputs under `media/<job>/`,
+  to silence and then passes a sample count. **Edit after approval (W.2, 2026-10-12, for the
+  consistency read):** `-xerror` is not enough: the pinned ffmpeg's Opus parser drops a corrupt
+  packet ("Error parsing Opus packet header") and still exits 0. A run therefore also fails on any
+  error-level stderr line (`-loglevel error`) except "File ended prematurely" (a live WebM cut at a
+  slice boundary) and ffmpeg's "Last message repeated N times" counter. Stderr is captured and
+  discarded after classification; 30 min wall-clock limit; `SIGKILL` on overrun; outputs under `media/<job>/`,
   never `/tmp` (sizes up to 1.5 GiB).
 - The `media` network is `internal`, so the container has no route and no resolver beyond
   Docker's embedded DNS for service names; spike 0.1 checks that an external name does not
@@ -292,12 +296,25 @@ recorder; it would mean two clients). It concatenates with `mergeAudioSegments` 
 copy: Opus→WebM, AAC→MP4, PCM→FLAC via the FLAC family rules, FLAC→FLAC; never re-encoded). The
 merge fails (`mixed-codecs` or `decode-failed`) unless `mergeAudioSegments` returns exactly one
 group and no skipped input (panel C). It then verifies with ffmpeg (`-xerror`, so a decode error
-fails the job instead of passing as silence): the merged file's decoded sample count must
-**equal** the count expected from the inputs' headers, with no tolerance: for Opus, `Σ raw(input_i)
-+ Σ_{i>1} pre_skip_i` (each standalone decode drops its own OpusHead pre-skip; the merged stream
-drops only the first); for AAC, both sides are decoded with `-ignore_editlist 1`, so the 2112
-priming samples per file are trimmed on neither side and the counts sum exactly; for FLAC and PCM
-the raw counts sum. Peaks and `duration_ms` come from the merged decode (D5 math).
+fails the job instead of passing as silence, plus the D4 stderr rule): the merged file decoded
+**untrimmed** must hold exactly the inputs' untrimmed samples, with no tolerance: every side is
+decoded with `-flags2 +skip_manual` (no Opus pre-skip, no WebM DiscardPadding or Ogg end-granule
+trim), AAC/MP4 also with `-ignore_editlist 1` (priming kept on both sides), and `merged ==
+Σ untrimmed(input_i)`. Packet copy keeps every packet, so the totals must match whatever the
+containers' trim metadata says. Seam offsets follow the same unit: input *i* starts at
+`Σ_{j<i} untrimmed_j + skip_i − skip_merged` samples in the played merged stream (`skip` = the
+Opus pre-skip of that file, 0 for FLAC/PCM; for AAC `skip_merged` is the merged file's
+untrimmed-minus-played count), and a merged input's own seams are shifted by its start. Peaks and
+`duration_ms` come from the merged decode (D5 math).
+**Edit after approval (W.3, 2026-10-12, for the consistency read):** the approved rule was
+`Σ raw(input_i) + Σ_{i>1} pre_skip_i` for Opus (raw = the trimmed standalone decode) and the raw
+sum with `-ignore_editlist 1` for AAC. It is not exact: browser chunks carry end padding (WebM
+DiscardPadding 648 samples, the Ogg end granule) that packet copy cannot keep, and the merged MP4
+carries a 614-sample skip that `-ignore_editlist` does not remove (fixtures: Opus merged 49608 vs
+48312 expected; untrimmed 29760 + 20160 = 49920 = merged; AAC 117760 + 131072 = 248832 = merged).
+The untrimmed rule above is what `media-worker/src/jobs/merge.ts` implements; the padding from
+non-final chunks (about 13.5 ms of codec padding per seam) is played, like the accepted rollover
+gaps.
 
 **Late and interleaved inputs** (panel C): the merge orders inputs by `started_at_utc`. If an
 input's window falls *between* two seams of an earlier merged input, appending would reorder
