@@ -318,7 +318,6 @@ The integration tests point SDK routes at a local fake provider through a dev-mo
   - the CLI allowlist;
   - error scrubbing;
   - the OpenCode alternative and why it was dropped (panel.md).
-
   Update `docs/security.md` with the threat model: prompt injection limited to the turn's tools,
   the key only in provider request headers, scrubbed errors, and no deployment-wide ceiling.
   Verified by the ADR having the same sections as ADR 0027, and by `grep -n "0028"
