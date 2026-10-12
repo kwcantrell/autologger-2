@@ -445,6 +445,7 @@ describe('addEvent over a real core', () => {
         message: 'hi',
         metadata_json: '{}',
         version: 1,
+        search_tsv: "'hi':1",
       });
     });
 
@@ -576,6 +577,7 @@ describe('addEvent over a real core', () => {
         message: 'generated',
         metadata_json: '{"auto_generated":true}',
         version: 1,
+        search_tsv: "'generat':1",
       });
     });
 

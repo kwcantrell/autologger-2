@@ -194,6 +194,7 @@ An existing test may change only in these categories. Anything else is a stop.
    - `catalogPolicyHelpers.pg.test.ts`;
    - `catalogRoles.pg.test.ts`, for the function-execute inventory;
    - `server/src/test/session/isolation.int.test.ts`.
+   - `server/src/test/session/eventStore.int.test.ts`: its two raw `SELECT *` event-row pins gain the generated `search_tsv` value (owner-approved widening, 2026-10-12).
 
    Existing entries are otherwise unchanged.
 2. **Route inventories gain `/search`.** In `loginReturnPath.test.ts`, `loginReturnStash.test.ts`, `AppShell.test.tsx` and `staticServing.int.test.ts`, only a route count or an assertion that `/search` is not a route may change.
