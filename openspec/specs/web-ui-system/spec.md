@@ -611,9 +611,23 @@ approved users on this server." The user can still save and test keys.
   - one-line help naming what the provider powers.
 
 **Fields.**
-- **Language model:** Provider (OpenAI-compatible, Anthropic, OpenAI or Google), Base URL (shown
-  only for OpenAI-compatible), Model, API key.
+- **Language model:** Provider (OpenAI-compatible, Anthropic, OpenAI or Google, plus "Claude CLI
+  (operator)" as described below), Base URL (shown only for OpenAI-compatible), Model, API key.
 - **Speech to text:** Provider (DeepGram, the only choice), Model, API key.
+
+**The Claude CLI option.**
+- "Claude CLI (operator)" SHALL be offered in the Language model provider list only when
+  `GET /api/me/providers` reports `claude_cli_allowed: true`. It SHALL also be shown, as the
+  current choice, when the saved language model's provider is `claude-cli`, so the user can see
+  and replace or remove it.
+- With it selected, Base URL, Model and API key SHALL be hidden, and the help line SHALL read
+  "Runs on this server's Claude CLI login. Available only to operator accounts."
+- Saving it SHALL send `{provider: "claude-cli"}` with no key, base URL or model. Save SHALL be
+  enabled for it without any typed field.
+- When it is saved, the badge reads "Connected", and **Test connection** and **Remove** are
+  offered as for any saved credential.
+- Switching from a saved Claude CLI to any other provider SHALL require a key, under the rules
+  below.
 
 **The API key is write-only.**
 - With no saved credential, the key is a password input.
@@ -626,12 +640,12 @@ approved users on this server." The user can still save and test keys.
 **Saving.**
 - Each panel SHALL have its own save bar, following "Honest save model in Settings".
 - Save SHALL be disabled until the panel's fields are valid:
-  - a model is required;
+  - a model is required, except for the Claude CLI;
   - a base URL is required for an OpenAI-compatible language model;
-  - a key is required when none is saved;
+  - a key is required when none is saved, except for the Claude CLI;
   - a key is required when the language model's provider, or its OpenAI-compatible base URL
-    host, changes. The key row then shows the password input with the help "A new provider or
-    host needs its key entered again."
+    host, changes to a provider other than the Claude CLI. The key row then shows the password
+    input with the help "A new provider or host needs its key entered again."
 
 **Testing.**
 - Each panel with a saved credential SHALL offer **Test connection**. It shows a busy state while
@@ -676,3 +690,17 @@ change nothing else.
 #### Scenario: A member manages their own providers
 - **WHEN** a plain member of a team, with no grants, opens Settings
 - **THEN** the Advanced section is enabled and shows only that member's credentials
+
+#### Scenario: A user who is not allowlisted doesn't see the Claude CLI
+- **WHEN** a user whose providers response has `claude_cli_allowed: false` and no saved
+  `claude-cli` credential opens the Language model provider list
+- **THEN** the list offers OpenAI-compatible, Anthropic, OpenAI and Google, and no "Claude CLI
+  (operator)"
+
+#### Scenario: Choosing and saving the Claude CLI sends no key
+- **WHEN** a user whose providers response has `claude_cli_allowed: true` picks "Claude CLI
+  (operator)" and saves
+- **THEN** Base URL, Model and API key are hidden, the help line reads "Runs on this server's
+  Claude CLI login. Available only to operator accounts.", the request body is
+  `{provider: "claude-cli"}` with no key, and after the save the badge reads "Connected" and Test
+  connection is offered

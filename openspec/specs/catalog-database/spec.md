@@ -836,12 +836,24 @@ with `COLLATE "C"`.
 - `base_origin`, nullable, the normalized origin of `base_url`, checked to be null exactly when
   `base_url` is null;
 - `model`, non-null, checked to 1 to 200 characters;
-- `key_nonce`, `key_ciphertext` and `key_tag`, non-null `bytea`;
-- `key_version`, a non-null `smallint`;
-- `key_last4`, non-null, checked to 1 to 4 characters;
+- `key_nonce`, `key_ciphertext` and `key_tag`, `bytea`;
+- `key_version`, a `smallint`;
+- `key_last4`, checked to 1 to 4 characters when present;
 - `created_at_utc` and `updated_at_utc`, non-null ISO-8601 text.
 
 The API key in plaintext SHALL NOT be stored in any column.
+
+**Keyless `claude-cli` rows.** The migration `20261018000000_claude_cli_provider.sql` SHALL:
+- drop `not null` from `key_nonce`, `key_ciphertext`, `key_tag`, `key_version` and `key_last4`;
+- add the check constraint `user_provider_credentials_claude_cli_check`, under which:
+  - when `provider = 'claude-cli'`: all five of those columns are null, `kind = 'llm'` and
+    `base_url` is null;
+  - for every other provider: **each** of the five columns is non-null, so a keyed row can never
+    be partly null (which the dropped `not null` constraints used to guarantee).
+
+It SHALL leave `model` non-null; a `claude-cli` row stores the fixed model `claude-cli`. Every
+existing row already satisfies the constraint and is unchanged. Rolling it back requires deleting
+the `claude-cli` rows first, then restoring `not null` and dropping the constraint.
 
 The migration `20261017000000_provider_test_windows.sql` SHALL drop the two connection-test
 window columns the first migration added to `user_provider_credentials`, and SHALL create
@@ -883,3 +895,28 @@ re-enter them.
 #### Scenario: A deleted user takes their credentials
 - **WHEN** a user with an `llm` and an `stt` credential is deleted
 - **THEN** both rows are gone
+
+#### Scenario: A keyless Claude CLI row is accepted
+- **WHEN** `catalog_system` inserts an `llm` row with provider `claude-cli`, model `claude-cli`, a
+  null `base_url` and all five key columns null
+- **THEN** the insert succeeds
+
+#### Scenario: A keyless row for another provider is refused
+- **WHEN** `catalog_system` inserts an `llm` row with provider `anthropic` and null key columns
+- **THEN** the insert fails with a check violation (`23514`)
+
+#### Scenario: A keyed row with one key column null is refused
+- **WHEN** `catalog_system` inserts an `llm` row with provider `anthropic` whose nonce,
+  ciphertext, tag and key version are set but whose `key_last4` is null (or any other single key
+  column null)
+- **THEN** the insert fails with a check violation (`23514`)
+
+#### Scenario: A Claude CLI row with a key is refused
+- **WHEN** `catalog_system` inserts a `claude-cli` row with a nonce, ciphertext, tag, key version
+  and last four characters, or a `claude-cli` row of kind `stt`, or one with a base URL
+- **THEN** the insert fails with a check violation (`23514`)
+
+#### Scenario: Existing rows survive the migration
+- **WHEN** the migration `20261018000000_claude_cli_provider.sql` runs on a catalog that holds
+  `llm` and `stt` rows with keys
+- **THEN** it succeeds and every row is unchanged

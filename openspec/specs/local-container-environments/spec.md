@@ -159,6 +159,15 @@ The following SHALL be settable through the OpenBao `dev` KV secret:
 - `AI_V2_ENABLED`
 - `AI_V2_API_KEY`
 - `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`
+- `CLAUDE_CLI_EMAILS`
+- `AI_CHAT_MAX_STEPS`, `AI_CHAT_MAX_TOKENS`, `GENERATE_MAX_STEPS`, `GENERATE_MAX_OUTPUT_TOKENS` and `GENERATE_MAX_TOKENS`
+
+`CLAUDE_CLI_EMAILS`, `AI_CHAT_MAX_STEPS`, `AI_CHAT_MAX_TOKENS`, `GENERATE_MAX_STEPS`, `GENERATE_MAX_OUTPUT_TOKENS` and
+`GENERATE_MAX_TOKENS` SHALL be listed in the shared allowlist file, so every stack's app container
+can receive them from its own OpenBao KV secret; the step and token variables must be listed
+because the allowlist refuses a whole secret that holds an unlisted key. The env examples and the
+OpenBao documentation SHALL name all six, `CLAUDE_CLI_EMAILS` with no value, and no email address
+SHALL appear in any committed file.
 
 `API_TOKEN` is no longer read by the server (ADR 0021 slice 9d). `docker/secrets-env.yaml` SHALL
 keep allowing it, commented as ignored, until every OpenBao secret has dropped it, because the
@@ -188,8 +197,10 @@ Sign-in is required, as in every stack:
   - the dev environment is up;
   - the host `~/.claude/.credentials.json` holds a Claude login;
   - the OpenBao `dev` KV secret sets `DEEPGRAM_API_KEY`, `SHEETS_LOG_IMPORT_ENABLED=1`,
-    and `AI_V2_ENABLED=1`, and no `AI_V2_API_KEY`;
-  - a signed-in member of the session's team makes the calls
+    `AI_V2_ENABLED=1` and a `CLAUDE_CLI_EMAILS` that lists the caller, and no `AI_V2_API_KEY`;
+  - a signed-in member of the session's team, who has saved the `claude-cli` language model
+    provider in Settings → Advanced, makes the calls (a caller with no saved `llm` credential gets
+    the AI features' not-configured `503` in dev too: there is no development-mode CLI fallback)
 - **THEN** none of these is answered with its "not configured" or credentials-refusal `503`:
   - AI chat;
   - `topics/generate`;
@@ -198,6 +209,12 @@ Sign-in is required, as in every stack:
   - YouTube import;
   - Sheets log import;
   - transcript generation.
+
+#### Scenario: The AI allowlist and cap variables pass through
+- **WHEN** a stack's OpenBao KV secret holds `CLAUDE_CLI_EMAILS`, `AI_CHAT_MAX_STEPS`,
+  `AI_CHAT_MAX_TOKENS`, `GENERATE_MAX_STEPS`, `GENERATE_MAX_OUTPUT_TOKENS` and `GENERATE_MAX_TOKENS`
+- **THEN** the secret is accepted, not refused as holding an unlisted key, and the app container
+  receives all six variables
 
 #### Scenario: Optional sign-in
 - **WHEN** the OpenBao `dev` KV secret sets a Google OAuth client whose redirect URI is
@@ -330,7 +347,8 @@ documentation SHALL state the accepted residuals of the credentials mount:
 
 #### Scenario: Login is shared, not repeated
 - **WHEN** the host `~/.claude/.credentials.json` holds a Claude login and dev starts
-- **THEN** an AI chat turn succeeds without any login step inside the container
+- **THEN** an AI chat turn by a caller on `CLAUDE_CLI_EMAILS` who has saved the `claude-cli`
+  provider runs on the Claude CLI and succeeds without any login step inside the container
 - **AND** nothing is written under the host `~/.claude` other than that file
 
 #### Scenario: Unnamed OpenBao secrets stay out of the container
