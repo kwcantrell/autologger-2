@@ -6,7 +6,7 @@
   - `catalog.db`, built by the deleted SQLite catalog migrations;
   - `sessions/<id>.db`, one file per session;
   - `blobs/audio/<sid>/<NNNN>_<segment id>.<ext>`.
-- **Target:** schema `catalog`, from `supabase/migrations` up to `20261017000000`. The nine
+- **Target:** schema `catalog`, from `supabase/migrations` up to `20261018000000` (`20261018000000_claude_cli_provider.sql` only relaxes `user_provider_credentials`, which the import never writes). The nine
   session tables are keyed `(session_id, id)` (7b-1). `version` and `sessions.revision` come
   from 7c-1. The leases (8a/8b), the Companion tables (9d) and the provider tables come later;
   only the leases and the overwrite records reference sessions.
