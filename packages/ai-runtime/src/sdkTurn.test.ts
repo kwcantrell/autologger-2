@@ -3,6 +3,8 @@
 // model built by the real `@ai-sdk/openai-compatible` factory on the test's own `fetch`, and the
 // real tool builders on a fake session registry, through `driveAiTurn`'s SDK strategy.
 
+import http from 'node:http';
+import type { AddressInfo } from 'node:net';
 import type { Clock } from '@autologger/ports';
 import { type SessionHubRegistryFacade, userCaller } from '@autologger/session-core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -963,4 +965,133 @@ describe('the factory table (D3, task 6.4)', () => {
       expect(llm.requests).toHaveLength(0);
     });
   }
+});
+
+describe('Anthropic prompt caching and the cache-aware budget (D3, A41, task 6.5)', () => {
+  // A fake Anthropic Messages stream: every step calls `get_transcript_words`, reporting the
+  // given usage, so only the step cap or the budget ends the loop.
+  async function fakeAnthropic(usage: Record<string, number>) {
+    const bodies: Array<Record<string, unknown>> = [];
+    const ev = (t: string, d: Record<string, unknown>) =>
+      `event: ${t}\ndata: ${JSON.stringify({ type: t, ...d })}\n\n`;
+    const server = http.createServer((q, r) => {
+      let b = '';
+      q.on('data', (c) => {
+        b += c;
+      });
+      q.on('end', () => {
+        bodies.push(JSON.parse(b) as Record<string, unknown>);
+        const n = bodies.length;
+        r.writeHead(200, { 'content-type': 'text/event-stream' });
+        r.write(
+          ev('message_start', {
+            message: {
+              id: `m${n}`,
+              type: 'message',
+              role: 'assistant',
+              model: 'claude-test',
+              content: [],
+              stop_reason: null,
+              usage: { ...usage, output_tokens: 1 },
+            },
+          }),
+        );
+        r.write(
+          ev('content_block_start', {
+            index: 0,
+            content_block: {
+              type: 'tool_use',
+              id: `toolu_${n}`,
+              name: 'get_transcript_words',
+              input: {},
+            },
+          }),
+        );
+        r.write(
+          ev('content_block_delta', {
+            index: 0,
+            delta: { type: 'input_json_delta', partial_json: '{}' },
+          }),
+        );
+        r.write(ev('content_block_stop', { index: 0 }));
+        r.write(
+          ev('message_delta', { delta: { stop_reason: 'tool_use' }, usage: { output_tokens: 5 } }),
+        );
+        r.end(ev('message_stop', {}));
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+    const port = (server.address() as AddressInfo).port;
+    closers.push(() => new Promise<void>((resolve) => server.close(() => resolve())));
+    return { baseURL: `http://127.0.0.1:${port}/v1`, bodies };
+  }
+  const closers: Array<() => Promise<void>> = [];
+  afterEach(async () => {
+    await Promise.all(closers.splice(0).map((c) => c()));
+  });
+  const anthropicDeps = (baseURL: string, llm: FakeLlm): SdkTurnDeps =>
+    depsFor(llm, { provider: 'anthropic', baseURL, model: 'claude-test' }).deps;
+
+  it('Anthropic requests carry the top-level cache_control {type: ephemeral}', async () => {
+    const fake = await fakeAnthropic({ input_tokens: 50 });
+    const llm = await llmWith(() => answer('unused'));
+    await run(llm, { deps: anthropicDeps(fake.baseURL, llm), maxSteps: 1 });
+    expect(fake.bodies.length).toBeGreaterThanOrEqual(1);
+    expect(fake.bodies[0]?.cache_control).toEqual({ type: 'ephemeral' });
+  });
+
+  it('the other providers’ requests carry no cache_control', async () => {
+    const compat = await llmWith(() => answer('ok'));
+    await run(compat);
+    expect(JSON.stringify(compat.requests[0])).not.toContain('cache_control');
+    const oai = await llmWith(() => ({ status: 400, body: '{"error":{"message":"no"}}' }));
+    await run(oai, { deps: depsFor(oai, { provider: 'openai', model: 'gpt-test' }).deps });
+    expect(JSON.stringify(oai.requests[0])).not.toContain('cache_control');
+    const seen: string[] = [];
+    const google: SdkTurnDeps = {
+      ...depsFor(compat).deps,
+      provider: 'google',
+      baseURL: 'https://generativelanguage.googleapis.com/v1beta',
+      model: 'gemini-test',
+      fetch: async (_u, init) => {
+        seen.push(String(init?.body ?? ''));
+        return new Response('{"error":{"message":"stub"}}', {
+          status: 400,
+          headers: { 'content-type': 'application/json' },
+        });
+      },
+    };
+    await run(compat, { deps: google });
+    expect(seen.length).toBeGreaterThanOrEqual(1);
+    expect(seen[0]).not.toMatch(/cache_?control|cachedContent/i);
+  });
+
+  it('large cache reads do not fire the budget, while the same total as uncached input does', async () => {
+    // Per step: 9 255 total tokens. Cached: 50 uncached + 200 written + 9 000 read + 5 output, so
+    // 255 billable; uncached: all 9 255 billable. Budget 2 000, step cap 5.
+    const cached = await fakeAnthropic({
+      input_tokens: 50,
+      cache_creation_input_tokens: 200,
+      cache_read_input_tokens: 9000,
+    });
+    const llm = await llmWith(() => answer('unused'));
+    const a = await run(llm, {
+      kind: 'topics',
+      deps: anthropicDeps(cached.baseURL, llm),
+      maxSteps: 5,
+      maxTotalTokens: 2000,
+    });
+    expect(a.res).toMatchObject({ ok: false, ending: 'capped' });
+    expect(cached.bodies).toHaveLength(5);
+
+    const uncached = await fakeAnthropic({ input_tokens: 9250 });
+    const b = await run(llm, {
+      kind: 'topics',
+      deps: anthropicDeps(uncached.baseURL, llm),
+      maxSteps: 5,
+      maxTotalTokens: 2000,
+    });
+    expect(b.res).toMatchObject({ ok: false, ending: 'capped' });
+    expect(uncached.bodies).toHaveLength(1);
+  });
 });

@@ -133,7 +133,7 @@ const isNonEmptyString = (v: unknown): v is string => typeof v === 'string' && v
 /** The model and provider options for `deps` (D3 table). Throws `SdkTurnFailure` on bad deps. */
 export function buildSdkModel(deps: SdkTurnDeps): {
   model: LanguageModel;
-  providerOptions: Record<string, Record<string, boolean>> | undefined;
+  providerOptions: Record<string, Record<string, boolean | { type: 'ephemeral' }>> | undefined;
 } {
   if (
     deps === null ||
@@ -158,7 +158,11 @@ export function buildSdkModel(deps: SdkTurnDeps): {
   try {
     switch (deps.provider) {
       case 'anthropic':
-        return { model: createAnthropic(common)(deps.model), providerOptions: undefined };
+        // Automatic prompt caching (A41): each step re-reads the earlier context from cache.
+        return {
+          model: createAnthropic(common)(deps.model),
+          providerOptions: { anthropic: { cacheControl: { type: 'ephemeral' } } },
+        };
       case 'google':
         return { model: createGoogleGenerativeAI(common)(deps.model), providerOptions: undefined };
       case 'openai':
@@ -273,7 +277,7 @@ export async function runSdkTurn(o: RunSdkTurnOptions): Promise<SdkTurnResult> {
       if (hit) stepCapFired = true;
       return hit;
     };
-    /** The per-turn token budget (D3): reported usage, or (request + response bytes) ÷ 4 for a
+    /** The per-turn token budget (D3): reported usage less cache reads, or (request + response bytes) ÷ 4 for a
      * step whose provider reports none (A26), so the budget never silently turns off. */
     const tokenBudget: StopCondition<typeof tools> = ({ steps: done }) => {
       const log = deps.byteLog();
@@ -281,7 +285,12 @@ export async function runSdkTurn(o: RunSdkTurnOptions): Promise<SdkTurnResult> {
       done.forEach((s, i) => {
         const reported = s.usage?.totalTokens;
         if (typeof reported === 'number' && Number.isFinite(reported)) {
-          total += reported;
+          // Billable tokens (A41): cache reads don't count toward rate limits and cost a
+          // fraction of input; uncached input, cache writes and output do count.
+          const cacheRead = s.usage?.inputTokenDetails?.cacheReadTokens;
+          total +=
+            reported -
+            (typeof cacheRead === 'number' && Number.isFinite(cacheRead) ? cacheRead : 0);
           return;
         }
         const from = stepMarks[i] ?? 0;
