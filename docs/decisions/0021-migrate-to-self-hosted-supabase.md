@@ -278,6 +278,15 @@ Slice order:
        source whose `_migrations` set differs (a file below 0005 lacks the 0004 admin backfill and
        the 0005 `title_suffix` backfill), and must copy every column explicitly, so Postgres's
        `title_suffix` default `'date'` never replaces a backfilled `'episode'`;
+       **Amended by slice 11a (2026-10-11):** the disposable `server/data` copy (ADR 0022) holds
+       0001-0005 plus `0006_supabase_identity.sql` (applied 2026-08-17). That file is in no
+       branch of this repo; it isn't the indexes-only 0006 above. Its only visible effect is on
+       `users`: `google_sub` became `supabase_user_id`, and `email_norm` was added with its index.
+       The import never reads `users` (slice 5a), and it checks that the four tables it does read
+       (`studio_definitions`, `shows`, `app_settings`, `sessions`) have exactly the 0005 columns.
+       So the import accepts exactly {0001, …, 0005, 0006_supabase_identity} and refuses any other
+       set. A source with only 0001-0005 is refused too, until a real prod file shows it exists;
+       accepting it is a one-line change to `EXPECTED_LEGACY_MIGRATIONS`;
      - the Postgres-versus-SQLite parity test became a recorded expectation of the catalog
        schema (full foreign keys and index definitions, seed shows), captured while parity still
        passed; a schema migration updates it in the same change;
@@ -1202,6 +1211,11 @@ Slice order:
     playback is confirmed.
 11. The import script, parity check, cutover runbook and rollback plan. It must not import users,
     memberships, prefs, invites or login sessions (slice 5a above).
+    - 11a `supabase-11a-legacy-import` (2026-10-11, not yet reviewed): the tool emits a single
+      `psql` transaction per team, carrying values only as `COPY` data, a read-only parity file
+      (per-table counts and content hashes) and the audio manifest. The runbook is
+      `docs/legacy-import.md`. It was rehearsed on `server/data` for the `ymhs` team (274
+      sessions) against a throwaway Postgres: parity OK.
 
 ## Evidence
 

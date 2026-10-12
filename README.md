@@ -1734,6 +1734,32 @@ connects; a forged `X-Forwarded-For` is not adopted; and a **Google sign-in thro
 origin** (the first place the callback and the `Secure` session cookie can be proven). Users
 who have not signed in yet are `PENDING`; re-run the membership bootstrap after they do.
 
+### Importing legacy data (ADR 0021 slice 11)
+
+The pre-Supabase SQLite files (`catalog.db`, `sessions/<id>.db`) are not read by the server. One
+team at a time moves into Postgres with `server/scripts/importLegacy.ts`. It runs on the host
+(the `api` image ships no `server/scripts`), reads the files read-only, and emits:
+- one SQL transaction for `psql` as `postgres`, fed non-interactively, never pasted
+  (`docker exec -i <stack>-db-1 psql -X -U postgres < import.sql`);
+- a parity check that compares every table's row count and content hash, and changes nothing;
+- the list of audio files the team references (with sizes, and optionally sha256), for an
+  additive `rsync --files-from` into the blob volume.
+
+```bash
+npx tsx server/scripts/importLegacy.ts <DATA_DIR> --studio <team id> --out import.sql \
+  --parity parity.sql --manifest manifest.txt --blob-sizes sizes.txt [--sha256 sha256.txt] \
+  [--replace | --replace-live] [--allow-signed-in-users]
+```
+
+It imports the team, its shows, its `studio_config` and every session with all its rows. It
+never imports users, memberships, prefs, invites or KV: the bootstrap owner claims the imported
+team at sign-in. It refuses a source whose `_migrations` isn't exactly `0001`-`0006`, and, at
+apply time, a team, show or session id that already exists, unless `--replace` is passed
+(which still refuses a team with live data: app-created sessions, memberships, grants, leases,
+…; `--replace-live` deletes those too).
+[docs/legacy-import.md](docs/legacy-import.md) is the rehearse, parity, cutover and rollback
+runbook.
+
 ### Membership bootstrap (re-runnable)
 
 `server/scripts/bootstrapMemberships.example.ts` is a **template**: copy it, and write a
