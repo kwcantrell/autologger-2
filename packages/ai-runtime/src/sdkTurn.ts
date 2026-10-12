@@ -147,11 +147,28 @@ export class SdkTurnFailure extends Error {
   }
 }
 
-/** The suffix a route appends to its failure line: ` (status=N)`, ` (breach=name)`, or nothing. */
-export function sdkFailureSuffix(failure: SdkTurnFailure | undefined): string {
+/** The suffix a route appends to its failure line: ` (status=N)`, ` (breach=name)`, else for an
+ * AI SDK ending ` (ending=…, steps=N, last=…)`, or nothing (a CLI turn). */
+export function sdkFailureSuffix(
+  failure: SdkTurnFailure | undefined,
+  ending?: SdkTurnEnding,
+  summary?: SdkTurnSummary,
+): string {
   if (failure?.status !== undefined) return ` (status=${failure.status})`;
   if (failure?.breach !== undefined) return ` (breach=${failure.breach})`;
+  // No status or breach (a capped or incomplete generation, a status-less provider error, an
+  // abort): the ending and the step records' shape, still content-free.
+  if (ending !== undefined && summary !== undefined) {
+    return ` (ending=${ending}, steps=${summary.steps}, last=${summary.lastFinish})`;
+  }
   return '';
+}
+
+/** A turn's content-free step summary (D5 diagnostic): how many steps finished, and the last
+ * one's finish reason (`'none'` before any step finished). */
+export interface SdkTurnSummary {
+  steps: number;
+  lastFinish: string;
 }
 
 /** The upstream HTTP status of an AI SDK error: an `APICallError`'s, or a `RetryError`'s last
@@ -285,6 +302,8 @@ export type SdkTurnResult = (
   toolsDrained: () => Promise<void>;
   /** A provider or breach ending's content-free diagnostic (D5); absent otherwise. */
   failure?: SdkTurnFailure;
+  /** The step count and last finish reason (D5 diagnostic). */
+  summary: SdkTurnSummary;
 };
 
 type RelayOutcome =
@@ -434,7 +453,9 @@ export async function runSdkTurn(o: RunSdkTurnOptions): Promise<SdkTurnResult> {
       emit: o.emit,
       abortSignal: o.abortSignal,
     });
+    const last = steps.at(-1);
     const base = {
+      summary: { steps: steps.length, lastFinish: last === undefined ? 'none' : last.finishReason },
       createdEvents: registration.createdEvents(),
       pageCoverage: registration.pageCoverage(),
       toolsDrained: () => guard.drained(),

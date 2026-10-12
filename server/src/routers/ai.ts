@@ -214,9 +214,9 @@ aiRouter.post('/api/sessions/:sessionId/ai/chat', async (c) => {
       // resume binding (D6).
       // A failed AI SDK turn's content-free diagnostic (D5): the classification plus the upstream
       // status or the cap reached, never a message, body, header, prompt or key.
-      if (!outcome.ok && outcome.failure !== undefined) {
+      if (!outcome.ok && outcome.ending !== undefined) {
         console.warn(
-          `[ai-chat] session=${sessionId}: turn failed — ${outcome.detail}${sdkFailureSuffix(outcome.failure)}`,
+          `[ai-chat] session=${sessionId}: turn failed — ${outcome.detail}${sdkFailureSuffix(outcome.failure, outcome.ending, outcome.summary)}`,
         );
       }
       if (outcome.ok && outcome.claudeSessionId !== null) {

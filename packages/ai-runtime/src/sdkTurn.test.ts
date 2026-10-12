@@ -1222,3 +1222,62 @@ describe('a content-free failure diagnostic (D5, task 6.6)', () => {
     expect(res.failure).toMatchObject({ kind: 'internal' });
   });
 });
+
+describe('the ending summary for failures with no status or breach (D5 diagnostic, task 6.6 correction)', () => {
+  it('sdkFailureSuffix names the ending, the step count and the last finish reason', () => {
+    const summary = { steps: 3, lastFinish: 'tool-calls' };
+    expect(sdkFailureSuffix(undefined, 'capped', summary)).toBe(
+      ' (ending=capped, steps=3, last=tool-calls)',
+    );
+    expect(
+      sdkFailureSuffix(new SdkTurnFailure('provider'), 'error', { steps: 0, lastFinish: 'none' }),
+    ).toBe(' (ending=error, steps=0, last=none)');
+    // A status or a breach name stays the whole suffix; a CLI turn (no ending) gets none.
+    expect(
+      sdkFailureSuffix(new SdkTurnFailure('provider', { status: 429 }), 'error', summary),
+    ).toBe(' (status=429)');
+    expect(
+      sdkFailureSuffix(new SdkTurnFailure('breach', { breach: 'tool-calls' }), 'breach', summary),
+    ).toBe(' (breach=tool-calls)');
+    expect(sdkFailureSuffix(undefined, undefined, undefined)).toBe('');
+  });
+
+  it('a capped, an incomplete and a status-less error turn report their summary, content-free', {
+    timeout: 30_000,
+  }, async () => {
+    const capped = await run(
+      await llmWith((n) => callTools(n, [{ name: 'get_transcript_words' }])),
+      {
+        kind: 'topics',
+        maxSteps: 3,
+      },
+    );
+    expect(capped.res).toMatchObject({
+      ok: false,
+      ending: 'capped',
+      summary: { steps: 3, lastFinish: 'tool-calls' },
+    });
+    const incomplete = await run(
+      await llmWith(() => ({
+        frames: [sse.text('PART-MARKER'), sse.finish('length', { prompt: 1, completion: 1 })],
+      })),
+      { kind: 'topics' },
+    );
+    expect(incomplete.res).toMatchObject({
+      ok: false,
+      ending: 'incomplete',
+      summary: { steps: 1, lastFinish: 'length' },
+    });
+    const reset = await run(await llmWith(() => ({ reset: true })), { kind: 'topics' });
+    expect(reset.res).toMatchObject({
+      ok: false,
+      ending: 'error',
+      summary: { steps: 0, lastFinish: 'none' },
+    });
+    expect(Object.keys(reset.res.failure ?? {})).toEqual(['kind']);
+    for (const r of [capped.res, incomplete.res, reset.res]) {
+      expect(Object.keys(r.summary ?? {}).sort()).toEqual(['lastFinish', 'steps']);
+      expect(JSON.stringify(r.summary)).not.toMatch(/MARKER/);
+    }
+  });
+});

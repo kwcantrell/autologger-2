@@ -16,7 +16,14 @@ import { LeaseStore } from '@autologger/session-core/leaseStore';
 import { TRANSCRIPTION_FIXTURES_DIR, transcriptGenerationLock } from '@autologger/transcription';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Bindings } from '../appEnv';
-import { answer, callTools, type FakeLlm, type FakeScript, startFakeLlm } from '../test/fakeLlm';
+import {
+  answer,
+  callTools,
+  type FakeLlm,
+  type FakeScript,
+  sse,
+  startFakeLlm,
+} from '../test/fakeLlm';
 import { app, env, envWith } from '../test/harness';
 import {
   catalogFor,
@@ -2164,6 +2171,57 @@ describe('topics/generate on the AI SDK route (ai-sdk-agent-harness task 7.2)', 
       const failure = lines.filter((l) => l.startsWith('[topics/generate]'));
       expect(failure).toHaveLength(1);
       expect(failure[0]?.endsWith(suffix)).toBe(true);
+      expect(lines.join('\n')).not.toMatch(/MARKER/);
+    }
+    for (const sp of spies) sp.mockRestore();
+  });
+
+  it('a capped, an incomplete or a status-less failure logs its ending, step count and last finish, with no content', {
+    timeout: 60_000,
+  }, async () => {
+    const lines: string[] = [];
+    const grab = (...a: unknown[]) => {
+      lines.push(a.map((x) => (typeof x === 'string' ? x : JSON.stringify(x))).join(' '));
+    };
+    const spies = [
+      vi.spyOn(console, 'warn').mockImplementation(grab),
+      vi.spyOn(console, 'error').mockImplementation(grab),
+      vi.spyOn(console, 'log').mockImplementation(grab),
+    ];
+    for (const [script, cfg, suffix] of [
+      [
+        (n: number) => callTools(n, [{ name: 'get_transcript_words' }]),
+        { GENERATE_MAX_STEPS: '3' },
+        'AI turn failed (upstream-failed) (ending=capped, steps=3, last=tool-calls)',
+      ],
+      [
+        () => ({
+          frames: [sse.text('REPLY-MARKER'), sse.finish('length', { prompt: 1, completion: 1 })],
+        }),
+        {},
+        'AI turn failed (upstream-failed) (ending=incomplete, steps=1, last=length)',
+      ],
+      [
+        () => ({ reset: true }),
+        {},
+        'AI turn failed (upstream-failed) (ending=error, steps=0, last=none)',
+      ],
+    ] as Array<[FakeScript, Record<string, unknown>, string]>) {
+      lines.length = 0;
+      const llm = await fakeProvider(script);
+      const { s, prior } = await seeded();
+      await (await harnessHub(s)).insertTranscriptWord({
+        session_time: '00:00:02',
+        speaker: 'Host',
+        word: 'TRANSCRIPT-MARKER',
+      });
+      await saveSdkCredential(llm.baseURL, { apiKey: 'sk-KEY-MARKER-1234' });
+      const res = await req(s, sdkEnv(cfg));
+      expect(res.status).toBe(502);
+      expect(await topicsOf(s)).toEqual(prior);
+      const failure = lines.filter((l) => l.startsWith('[topics/generate]'));
+      expect(failure).toHaveLength(1);
+      expect(failure[0]?.endsWith(suffix), failure[0]).toBe(true);
       expect(lines.join('\n')).not.toMatch(/MARKER/);
     }
     for (const sp of spies) sp.mockRestore();

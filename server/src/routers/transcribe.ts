@@ -366,10 +366,11 @@ transcribeRouter.post('/api/sessions/:sessionId/topics/generate', async (c) => {
     console.warn(
       `[topics/generate] session=${sessionId}: generation failed — ` +
         (!outcome.ok
-          ? `CLI turn failed (${outcome.detail})${sdkFailureSuffix(outcome.failure)}`
+          ? `AI turn failed (${outcome.detail})` +
+            sdkFailureSuffix(outcome.failure, outcome.ending, outcome.summary)
           : newIds.length === 0
-            ? 'CLI turn succeeded but created 0 topics'
-            : `CLI turn created ${newIds.length} topic(s) after reading only ` +
+            ? 'AI turn succeeded but created 0 topics'
+            : `AI turn created ${newIds.length} topic(s) after reading only ` +
               `${outcome.pageCoverage.servedPages} of ${outcome.pageCoverage.totalPages} ` +
               'transcript page(s)'),
     );

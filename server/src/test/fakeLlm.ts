@@ -21,6 +21,8 @@ export interface FakeReply {
   drop?: boolean;
   /** Write the frames, then never end the response. */
   hang?: boolean;
+  /** Destroy the socket before any response: a connection failure with no HTTP status. */
+  reset?: boolean;
 }
 
 export type FakeScript = (n: number, body: Record<string, unknown>) => FakeReply;
@@ -59,6 +61,10 @@ export async function startFakeLlm(script: FakeScript): Promise<FakeLlm> {
       requests.push(body);
       meta.push({ path: req.url ?? '', headers: req.headers });
       const reply = script(requests.length, body);
+      if (reply.reset) {
+        res.socket?.destroy();
+        return;
+      }
       const status = reply.status ?? 200;
       if (status !== 200) {
         res.writeHead(status, { 'content-type': 'application/json', ...reply.headers });

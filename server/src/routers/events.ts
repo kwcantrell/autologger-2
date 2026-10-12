@@ -643,8 +643,8 @@ eventsRouter.post('/api/sessions/:sessionId/events/generate', async (c) => {
     // prior auto rows persist alongside any partial new rows the failed run
     // inserted, exactly like the existing append-failure semantics.
     console.warn(
-      `[events/generate] session=${sessionId}: generation failed — CLI turn failed (${outcome.detail})` +
-        sdkFailureSuffix(outcome.failure),
+      `[events/generate] session=${sessionId}: generation failed — AI turn failed (${outcome.detail})` +
+        sdkFailureSuffix(outcome.failure, outcome.ending, outcome.summary),
     );
     throw new ApiError(502, EVENT_GENERATE_FAILURE_DETAIL);
   } finally {

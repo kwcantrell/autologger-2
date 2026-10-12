@@ -1254,7 +1254,11 @@ describe('ai/chat — the AI SDK route (ai-sdk-agent-harness D3, D6, task 7.1)',
     const s = await seededSession();
     await saveSdkCredential(llm.baseURL);
     const controller = new AbortController();
-    const first = await postAs(s, { message: 'one' }, fixtureEnv(), J, controller.signal);
+    // The caller's cookie is sent explicitly, so the harness passes this very request to the app
+    // rather than a copy whose signal would follow it only through a weak reference (a mid-turn
+    // abort then reaches the route reliably).
+    const signedIn = { ...J, Cookie: (await defaultUser()).cookie };
+    const first = await postAs(s, { message: 'one' }, fixtureEnv(), signedIn, controller.signal);
     expect(first.status).toBe(200);
     const second = await postAs(s, { message: 'two' });
     expect(second.status).toBe(409);
@@ -1321,7 +1325,9 @@ describe('ai/chat — nothing of an AI SDK turn survives it (ai-topics-chat; tas
           ],
         },
         fixtureEnv(cfg),
-        J,
+        // An explicit cookie: the app gets this very request, so the abort reaches the route
+        // (a harness copy's signal follows the original only through a weak reference).
+        { ...J, Cookie: (await defaultUser()).cookie },
         abort ? controller.signal : undefined,
       );
       expect(res.status).toBe(200);

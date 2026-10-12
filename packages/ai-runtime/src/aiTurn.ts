@@ -41,7 +41,13 @@ import {
   type AiMcpTurnContext,
   getAiMcpListener,
 } from './aiMcpServer';
-import { runSdkTurn, type SdkTurnEnding, SdkTurnFailure, type SdkTurnSpec } from './sdkTurn';
+import {
+  runSdkTurn,
+  type SdkTurnEnding,
+  SdkTurnFailure,
+  type SdkTurnSpec,
+  type SdkTurnSummary,
+} from './sdkTurn';
 
 /** What a turn reports when its registration never carried a transcript word
  * snapshot — and what a turn that failed BEFORE registering reports: no
@@ -148,6 +154,8 @@ type WithTurnBookkeeping<T> = T & {
   /** AI SDK turns only (D5 diagnostic): a failed turn's kind plus status or breach name, which
    * the route appends to its failure line (`sdkFailureSuffix`). */
   failure?: SdkTurnFailure;
+  /** AI SDK turns only (D5 diagnostic): the step count and last finish reason. */
+  summary?: SdkTurnSummary;
 };
 export type DriveAiTurnResult =
   | WithTurnBookkeeping<Extract<AiChatTurnOutcome, { ok: true }>>
