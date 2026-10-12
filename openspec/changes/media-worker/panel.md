@@ -41,3 +41,22 @@ No findings beyond those above: no new scope was added except the owner's own ad
 Lock and the hidden-tab warning, D17) and the seam-based timeline layout the integrity lens
 required; nothing conflicts with the frozen contract that the api-contract-freeze delta does not
 authorize.
+
+## Implementation panel 2026-10-12
+Reviewers: worker/apply security, merge/apply data integrity, browser recording reliability · Code: `supabase-11a-legacy-import...afac1f24`
+
+- [x] [major] A compromised worker could add seams with future windows through `result_json`; later real chunk POSTs were answered `existing` (D18) and the client dropped its only copy. `source_key` and `offset_ms` were taken from the result. Resolved: `applyMerge` accepts only the exact held windows of the inputs plus seamless input starts, bounded and strictly increasing offsets, and DB-sourced `ended_at_utc`/`source_key`; else `invalid-result` (B.9).
+- [x] [major] Parts-uploaded files reached `audio/` as 0600, so the worker could not read any import or 413-fallback chunk. Resolved: every blob write path leaves 0644 files and 0755 dirs; cross-uid docker test (S.7).
+- [x] [major] `mediaApply` cancelled a job on any hub-open error (DB blip, shutdown), stalling merges 24 h and leaving ingest segments pending forever. Resolved: cancel only when the session is gone; shutdown awaits the in-flight pass (B.9).
+- [x] [major] A worker that lost its lease deleted the shared `media/<job>/`, wiping the re-claimer's output. Resolved: per-attempt file and scratch names; cleanup touches only the attempt's files (W.8).
+- [x] [major] A throw in the recorder's onstop (unknown store handle, failed append) lost the chunk and left Stop stuck. Resolved: the store never throws, slices fall back to memory, duplicate onstop ignored (A.8).
+- [x] [major] A chunk waiting in backoff in one tab was recoverable by another, giving two owners. Resolved: the queue holds the chunk's Web Lock for as long as it owns it; vanished bytes are checked against the server (A.8).
+- [x] [major] OPFS worker calls had no timeout, so a hung worker stalled recording and held Record in `scanning`. Resolved: 10 s per-call timeout, backend marked dead, memory fallback, bounded scan (A.8).
+- [x] [major] Falling back to memory deleted the disk copy even when reading it failed. Resolved: persisted bytes stay on disk; only new slices go to memory (A.8).
+- [x] [major] Unmounting during microphone re-acquisition could start a recorder with no UI. Resolved: unmount ends the take (A.8).
+- [x] [minor] Guard trigger did not bound lease/schedule values or error text. Resolved: bounded on the DB clock, refunds only by the live holder, error limited to D2 codes (S.7).
+- [x] [minor] Worker-written `job.error` copied into `media_error`. Resolved: mapped to fixed codes (B.9).
+- [x] [minor] AAC seam offsets ignored per-input priming (~43 ms). Resolved: measured priming subtracted; D7 amended (W.8).
+- [x] [minor] Legacy rows with NULL `started_at_utc` became window "null". Resolved: worker fails `interleaved-input`; `--merge` excludes them (W.8, B.9).
+- [x] [minor] Deterministic merge failures were retried daily forever. Resolved: blocked until the recording's segments change (B.9).
+- [x] [minor] Recorder minors: finalize missed a window after a late rollover, sign-out and banner were not per user, 401/403 on dedupe retried silently, Record waited on the profile forever, `PartsUploadError` retried endlessly and opened new uploads, the probe leaked its worker. Resolved: all fixed with tests (A.8).
