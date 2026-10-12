@@ -14,7 +14,7 @@ Panel: tier 2, three lenses (browser crash-safety, security and infrastructure, 
 integrity) recorded in `panel.md` on 2026-10-11; every critical and major finding is resolved in
 design D1-D4, D6-D13, D16-D20. The consistency read follows implementation.
 
-Approved-by:
+Approved-by: Kalen 2026-10-11
 
 ADR 0029.
 
