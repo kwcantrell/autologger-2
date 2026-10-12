@@ -146,31 +146,37 @@
 
 ## 5. Web
 
-- [ ] 5.1 Add the shadcn `command` component with `cmdk` pinned exactly. Verified by `shadcnHygiene.repo.test.ts` and `package.json`.
-- [ ] 5.2 Test first: add the `useSearch` hook and the `searchKeys` factory, with tests for:
+- [x] 5.1 Add the shadcn `command` component with `cmdk` pinned exactly. Verified by `shadcnHygiene.repo.test.ts` and `package.json`.
+  - Evidence: `npx shadcn@latest add command` (declined the `dialog.tsx` overwrite; its generated `import { cn } from "cn"` rewritten to `@/shared/lib/utils` and the added `cn` dependency uninstalled), then `npm install --save-exact cmdk@1.1.1` (published 2025-03-14). `web/package.json` -> `"cmdk": "1.1.1"`; `npm ls cmdk` -> `cmdk@1.1.1`; `npx vitest run src/shadcnHygiene.repo.test.ts src/shared/components/ui/primitives.smoke.test.tsx` -> `Tests  45 passed (45)` (log `cs-5.1-green.log`).
+- [x] 5.2 Test first: add the `useSearch` hook and the `searchKeys` factory, with tests for:
   - no fetch for `q` under 2 characters;
   - `retry: false`;
   - the AbortSignal is passed.
+  - Evidence: red: `npx vitest run src/api/hooks/useSearch.test.tsx` -> `Failed to resolve import "./useSearch"`, `Tests  no tests` (log `cs-5.2-red.log`). Green: with `src/queryKeyFactories.repo.test.ts` -> `Test Files  2 passed (2)`, `Tests  11 passed (11)`: no fetch under 2 characters, trimmed `q` with empty filters omitted, the AbortSignal passed and aborted when superseded, one call on a 503 (`retry: false`) (log `cs-5.2-green.log`).
 
   Verified by `queryKeyFactories.repo.test.ts` and the hook tests.
-- [ ] 5.3 Test first: write `SearchSnippet.test.tsx`: sentinels render as `<mark>`, and `<img onerror>` text renders literally with no `img` element. Then implement. Verified by the tests.
-- [ ] 5.4 Test first: extract TopBar's switch logic into `useSwitchActive`. Existing TopBar tests keep their assertions (D10 category 3), and new tests cover a show switch across studios, which sends `{active_studio_id, active_show_id}` in one PUT through `confirmSwitch`. Verified by the TopBar and hook tests.
-- [ ] 5.5 Test first: write `SearchPalette.test.tsx`, covering:
+- [x] 5.3 Test first: write `SearchSnippet.test.tsx`: sentinels render as `<mark>`, and `<img onerror>` text renders literally with no `img` element. Then implement. Verified by the tests.
+  - Evidence: red: `npx vitest run src/pages/index/components/search/SearchSnippet.test.tsx` -> `Failed to resolve import "./SearchSnippet"`, `Tests  no tests` (log `cs-5.3-red.log`). Green: `Tests  4 passed (4)`: sentinel runs render as `<mark>`, and `<img src=x onerror=…>` / `<b>` render as literal text with no `img` or `b` element (log `cs-5.3-green.log`).
+- [x] 5.4 Test first: extract TopBar's switch logic into `useSwitchActive`. Existing TopBar tests keep their assertions (D10 category 3), and new tests cover a show switch across studios, which sends `{active_studio_id, active_show_id}` in one PUT through `confirmSwitch`. Verified by the TopBar and hook tests.
+  - Evidence: red: `npx vitest run src/pages/index/hooks/useSwitchActive.test.tsx` -> `Failed to resolve import "./useSwitchActive"`, `Tests  no tests` (log `cs-5.4-red.log`). Green: with `TopBar.test.tsx` -> `Test Files  2 passed (2)`, `Tests  27 passed (27)`; a show in another studio sends `{active_studio_id: "team-north", active_show_id: "show-north"}` in one PUT through `confirmSwitch` (log `cs-5.4-green.log`). `TopBar.test.tsx` needed no change at all (`git diff --stat` empty for it).
+- [x] 5.5 Test first: write `SearchPalette.test.tsx`, covering:
   - Cmd/Ctrl-K opens it, except while typing in a field or while another dialog or sheet is open;
   - the top-bar button opens it, and its tooltip names the shortcut;
   - the 200 ms debounce and grouped results;
   - navigation: a session goes to `/sessions/<id>`, a transcript moment to `?t=`, a topic to `?topic=`, an event to `?event=`;
   - a show or studio result goes through `useSwitchActive`, then `/`;
   - "See all results" goes to `/search?q=`.
+  - Evidence: red: `npx vitest run src/pages/index/components/search/SearchPalette.test.tsx` -> `Failed to resolve import "./SearchPalette"`, `Tests  no tests` (log `cs-5.5-red.log`). Green: with `TopBar.test.tsx` and `AppShell.test.tsx` -> `Test Files  3 passed (3)`, `Tests  92 passed (92)` (log `cs-5.5-green.log`). The search hooks live in a palette body that mounts only while open, so the closed palette in the top bar adds no query observer.
 
   Then implement. Verified by the tests.
-- [ ] 5.6 Test first: write `SearchRoute.test.tsx`, covering:
+- [x] 5.6 Test first: write `SearchRoute.test.tsx`, covering:
   - URL-driven `q` and filters, with replace on edit;
   - limit 25;
   - loading, empty, timeout and busy states.
+  - Evidence: red: `npx vitest run src/pages/index/components/search/SearchRoute.test.tsx` -> `Failed to resolve import "./SearchRoute"`, `Tests  no tests`; `AppShell.test.tsx` with the new `/search` block -> `Tests  2 failed | 57 passed (59)` (log `cs-5.6-red.log`). Green: both files -> `Test Files  2 passed (2)`, `Tests  72 passed (72)` (log `cs-5.6-green.log`). `AppShell.test.tsx` diff is additions only (`51 0`): a `SearchRoute` probe mock and a new `describe`; no existing test changed.
 
   Then add it to `AppShell`, and add `/search` to `AppShell.test.tsx` (D10 category 2). Verified by the tests.
-- [ ] 5.7 Test first: write the moment deep-link tests in the session workspace, covering:
+- [x] 5.7 Test first: write the moment deep-link tests in the session workspace, covering:
   - `?t=754.2` waits for status and timeline, then moves the timeline once via `jumpTimelineToSec`, with no playback;
   - `?topic=` and `?event=` use the feed placement helpers and gates;
   - `?t=abc` and an unplaceable event give no seek;
@@ -179,6 +185,7 @@
   - precedence is `t`, then `topic`, then `event`;
   - a link to the already-open session applies without a remount;
   - the login-return stash keeps the query.
+  - Evidence: red: `npx vitest run src/pages/index/hooks/useMomentDeepLink.test.tsx` -> `Failed to resolve import "./useMomentDeepLink"`, `Tests  no tests`; `SessionWorkspace.momentDeepLink.test.tsx` before the wiring -> `Tests  3 failed (3)` (`expected [] to deeply equal [ [ 754.2 ] ]`) (log `cs-5.7-red.log`). Green: `MomentDeepLink.test.tsx` (moved beside the workspace) plus every `SessionWorkspace*` test -> `Test Files  6 passed (6)`, `Tests  60 passed (60)` (log `cs-5.7-green.log`). Full web suite `cd web && npx vitest run` -> `Test Files  152 passed (152)`, `Tests  2015 passed (2015)`; `npm run typecheck` -> exit 0 (log `cs-5.x-full.log`).
 
   Then implement. Verified by the tests.
 - [ ] 5.8 Check the UI with agent-browser on the dev stack (`localhost:8787`) at desktop and mobile widths:

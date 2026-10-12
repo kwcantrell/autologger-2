@@ -36,6 +36,7 @@ import { ChunkRescueBanner } from './ChunkRescueBanner';
 import { EventLogSheet } from './EventLogSheet';
 import { ExportFeed } from './ExportFeed';
 import { MaximizeLogStrip } from './MaximizeLogStrip';
+import { MomentDeepLink } from './MomentDeepLink';
 import { isTypingTarget, ShortcutsDialog } from './ShortcutsDialog';
 import { TopicsFeed } from './TopicsFeed';
 import { TranscribeFeed } from './TranscribeFeed';
@@ -436,6 +437,11 @@ export function SessionWorkspace({ sessionId, ytImportPending }: Props) {
             />
           )}
           <ShortcutsDialog open={showShortcuts} onClose={() => setShowShortcuts(false)} />
+          {/* `?t=` / `?topic=` / `?event=` (catalog-search D8): applied once the status and
+              timeline are ready, never while rolling, then removed with a replace. It watches the
+              URL's search string, so a moment in this already-open session applies without a
+              remount. Renders nothing. */}
+          <MomentDeepLink sessionId={sessionId} />
           {/* Headless audio components */}
           {sessionId && (
             <>

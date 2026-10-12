@@ -162,10 +162,9 @@ interface Props {
 // transcript is wholly anchorless, this returns `null` even for a row whose
 // `session_time` parses cleanly, per the spec requirement above.
 //
-// Not exported (quality fix wave, FIX 4): single-caller module helper, and
-// `export` had zero importers repo-wide — TopicsRow.test.tsx exercises it
-// only indirectly, through the rendered component.
-function topicsRowTimelineSec(
+// Exported for the `?topic=` moment deep link (catalog-search D8), which must place a topic
+// exactly where this row's jump would, gate included (`useMomentDeepLink`).
+export function topicsRowTimelineSec(
   row: SessionTopic,
   fps: number | null,
   transcriptAnchored: boolean,
