@@ -25,12 +25,24 @@ let _nextId = 1;
 /** Facade id → sonner id, for persistent toasts still on screen (insertion order = age). */
 const _persistent = new Map<number, SonnerId>();
 
+/** Development builds also log every toast, so one that auto-dismissed can still be read. */
+export function _devLogToast(
+  message: string,
+  isError: boolean,
+  nodeEnv: string | undefined = process.env.NODE_ENV,
+): void {
+  if (nodeEnv !== 'development') return;
+  if (isError) console.warn(`[toast:error] ${message}`);
+  else console.info(`[toast] ${message}`);
+}
+
 function push(
   message: string,
   isError: boolean,
   persistent: boolean,
   action?: ShowOpts['action'],
 ): number {
+  _devLogToast(message, isError);
   const id = _nextId++;
   const duration = persistent ? Number.POSITIVE_INFINITY : AUTO_DISMISS_MS;
   // A persistent toast the user swipes away must leave the map too, so hideToast() never
