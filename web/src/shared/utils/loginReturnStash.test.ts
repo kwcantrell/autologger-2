@@ -151,3 +151,26 @@ describe('consumeLoginReturnStash', () => {
     expect(navigateFn).toHaveBeenCalledTimes(1);
   });
 });
+
+// catalog-search D9: the search page is a deep link, so a signed-out visit returns to it.
+describe('the /search route (catalog-search)', () => {
+  it('stashes /search with its query string', () => {
+    setLocation('/search?q=budget');
+    stashLoginReturnPathIfDeepLink();
+    expect(sessionStorage.getItem(LOGIN_RETURN_STASH_KEY)).toBe('/search?q=budget');
+  });
+
+  it('does not stash /search/extra (not a router-known route)', () => {
+    setLocation('/search/extra?q=budget');
+    stashLoginReturnPathIfDeepLink();
+    expect(sessionStorage.getItem(LOGIN_RETURN_STASH_KEY)).toBeNull();
+  });
+
+  it('round-trips a stashed /search: replace-navigates to it and clears the stash', () => {
+    sessionStorage.setItem(LOGIN_RETURN_STASH_KEY, '/search?q=budget');
+    const navigateFn = vi.fn();
+    consumeLoginReturnStash(navigateFn);
+    expect(navigateFn).toHaveBeenCalledWith('/search?q=budget', { replace: true });
+    expect(sessionStorage.getItem(LOGIN_RETURN_STASH_KEY)).toBeNull();
+  });
+});

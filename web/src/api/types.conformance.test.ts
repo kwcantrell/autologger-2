@@ -72,6 +72,7 @@ import sessionCreate from '../../../fixtures/api-responses/sessionCreate.json';
 import { sessionDetail } from '../../../fixtures/api-responses/sessionDetail';
 import sessionStatus from '../../../fixtures/api-responses/sessionStatus.json';
 import { sessionsList } from '../../../fixtures/api-responses/sessionsList';
+import { search } from '../../../fixtures/api-responses/search';
 import { sessionsListNoAccess } from '../../../fixtures/api-responses/sessionsListNoAccess';
 import sessionUpdate from '../../../fixtures/api-responses/sessionUpdate.json';
 import { showCategories } from '../../../fixtures/api-responses/showCategories';
@@ -122,6 +123,8 @@ import type {
   LogEvent,
   ProfilePayload,
   ProfileShow,
+  SearchMoment,
+  SearchResponse,
   Session,
   SessionCreateResponse,
   SessionStatus,
@@ -814,6 +817,31 @@ describe('provider credentials — the responses `useProviders.ts` types (byo-ai
     const check: ProvidersResponse = providersList;
     const allowed: boolean = check.claude_cli_allowed;
     expect(allowed).toBe(false);
+  });
+});
+
+describe('catalog search — the response `GET /api/search` answers (catalog-search D5)', () => {
+  it('the capture is assignable to SearchResponse, with every group and moment kind', () => {
+    const check: SearchResponse = search;
+    expect(check.q).toBe('beacon');
+    expect(check.studios).toHaveLength(1);
+    expect(check.shows).toHaveLength(1);
+    const [session] = check.sessions;
+    const match: 'title' | 'notes' = session.match;
+    expect(match).toBe('title');
+    expect(session.snippet).toBeNull();
+    expect(check.moments.map((m) => m.kind).sort()).toEqual(['event', 'topic', 'transcript']);
+  });
+
+  it('a transcript moment carries sec as a number; topic and event moments carry null', () => {
+    const moments: SearchMoment[] = search.moments;
+    for (const m of moments) {
+      if (m.kind === 'transcript') expect(typeof m.sec).toBe('number');
+      else {
+        const sec: null = m.sec;
+        expect(sec).toBeNull();
+      }
+    }
   });
 });
 
