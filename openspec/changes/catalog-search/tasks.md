@@ -196,6 +196,46 @@
   Verified by screenshots noted in Evidence.
   - Evidence: `make dev-up` applied `20261019000000` on dev (808 chunks over 4 sessions), then agent-browser on `localhost:8787`. Palette: Ctrl-K, `pacing` -> Shows "The Something Podcast" and a TRANSCRIPT moment with `pacing` highlighted (`cs-5.8-palette2.png`). Choosing it opened `/sessions/eea6c73f-…` and dropped the parameter; a direct `?t=4323.49` open put the playhead at `01:12:03` with playback stopped (no `<audio>` playing) and the URL back to `/sessions/eea6c73f-…` (`cs-5.8-moment.png`). `/search?q=divorce` -> MOMENTS with `divorce`/`divorced` highlighted (`cs-5.8-searchpage.png`). Show hit across studios: `smthing podcst` -> "The Something Podcast"; choosing it switched the top bar to `Test Studio 2` / `The Something Podcast` and went to `/`; switched back the same way to `Youtube Studio` / `Autolog Test Show`. Mobile 390x844: `/search` and palette render without horizontal scroll (`scrollWidth` 390) (`cs-5.8-mobile-search.png`, `cs-5.8-mobile-palette.png`).
 
+## 7. Post-approval tuning (design D11)
+
+- [ ] 7.1 Test first: extend `catalogSearch.pg.test.ts` and `catalogSearchQuery.pg.test.ts` (D10 category 4), covering:
+  - `search_phrase_norm`: both normaliser scenarios, immutability, grants (none to public);
+  - the three phrase trigram indexes exist;
+  - "A shared fragment is not a typo" (`pacing` against "The Something Podcast" gives no show), while `christna`, `somthing` and `smthing podcst` still match;
+  - "A stop-word quote is found": the highlight on the original tokens, including text with `—` and `½` (word-position mapping);
+  - "Phrase matches whole words only";
+  - "A lone common word is not a phrase", and a 2-word phrase under 6 characters does nothing;
+  - access gating (an ungranted member gets nothing), hidden sessions and the per-session cap under the fallback;
+  - `%` and `_` in the query act as no wildcard;
+  - the candidate bound (a phrase matching more than 2,000 chunks still answers);
+  - `p_session` returns only that session's moments up to the limit, with empty other groups; a foreign, hidden or unknown session gives identical empty results;
+  - `moment_sessions` totals match the uncapped count and stop at 1000;
+  - a 4-argument call still resolves to the new function;
+  - the existing `idx_scan` test also covers the chunk phrase index and the `p_session` path.
+
+  Red first. Then write a new migration, `supabase/migrations/20261020000000_catalog_search_tuning.sql`, so the applied `20261019000000` stays unchanged on dev. It:
+  - adds `search_phrase_norm` (revoked from public; execute granted to `catalog_user` and `catalog_system`);
+  - adds the three phrase indexes;
+  - sets the threshold to 0.5;
+  - drops the 4-argument `catalog.search` and creates the 5-argument one with `p_session text default null`, then runs an explicit `revoke all … from public` and `grant execute … to catalog_user`.
+
+  Then update the D10 category 1 inventories for the new function and indexes. Verified by green pg runs and `sh docker/supabase/test_migrate.sh`.
+- [ ] 7.2 Test first (D10 category 4): update the contract tests and `search.int.test.ts` for `session_id` (passed through, masked like the other filters) and `moment_sessions` (strict schema), and the store's unit tests for the new parameter. Then implement in `packages/contract/src/schemas.ts`, `searchStore.ts` and `server/src/routers/search.ts`, recapture `fixtures/api-responses/search.ts`, update `web/src/api/types.ts`, and update the README endpoint row. Verified by the contract, int, fixture and conformance suites.
+- [ ] 7.3 Test first: write web tests, covering:
+  - `/search` groups moments under their session, 3 at first, with "Show N more in this session" when the total is larger, and expanding fetches `session_id=<id>&limit=25` and lists all of them in place (spec "Grouped moments expand");
+  - "Show N more" counts at most 25 for the session, and "Expanding a very busy session" reads "Showing 25 of 40 matches in this session" with a link to the session;
+  - transcript moment labels, in the palette and on the page (spec "A transcript moment's label"; the speaker left out when empty, the time left out when `sec` is null);
+  - the palette still shows a flat list.
+
+  Then implement. Verified by the web suite.
+- [ ] 7.4 Recheck on the dev stack with agent-browser:
+  - `why did he do that` finds the quote;
+  - `pacing` no longer lists the show;
+  - `/search?q=divorce` groups moments with "Show more" and expands;
+  - labels read `Speaker n · h:mm:ss`.
+
+  Then run `GITHUB_BASE_REF=supabase-migration scripts/check-change.sh --stage hook`, update ADR 0029 (the threshold, the phrase fallback and grouping), and append a consistency read to `panel.md`. Verified by screenshots, green gates and the ADR diff.
+
 ## 6. Docs, verification, PR
 
 - [x] 6.1 Write ADR `docs/decisions/0029-catalog-search.md`: lexical search in Postgres, vectors deferred, a definer search function, chunks in ordinal buckets, the 3 s budget and the 2-search cap instead of a limiter, and the unaccent rewrite-and-reindex step. Verified by the file existing and `scripts/check-change.sh --stage hook` passing.

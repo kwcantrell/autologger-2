@@ -14,9 +14,9 @@ with these changes only:
   cascade, so a content row for a session that does not exist is refused (`23503`);
 - every primary key SHALL lead with `session_id` (`(session_id, id)`; `session_meta`'s
   `(session_id, key)`), `session_transport` SHALL hold at most one row per session, keyed by
-  `session_id`, and every index SHALL lead with `session_id`, except the two search indexes below;
+  `session_id`, and every index SHALL lead with `session_id`, except the four search indexes below;
 - `session_audio_segments` SHALL have an index on `(session_id, r2_key)`;
-- `session_topics` and `session_events` SHALL have a stored generated `search_tsv` column (catalog-search), each with a GIN index on that column alone. These two indexes are the only content-table indexes that don't lead with `session_id`;
+- `session_topics` and `session_events` SHALL have a stored generated `search_tsv` column (catalog-search), each with a GIN index on that column alone, and a trigram GIN index on the phrase-normalised `summary` and `message` respectively. These four indexes are the only content-table indexes that don't lead with `session_id`;
 - `session_events`, `session_transcript_words` and `session_topics` SHALL have a non-null
   `version bigint` column with default 1 (ADR 0021 slice 7c-1); every statement that updates one
   of their rows SHALL set its version to the stored version plus one in that same statement.
@@ -44,7 +44,7 @@ give every existing row of the three versioned tables version 1.
 
 #### Scenario: Search columns are the only additions
 - **WHEN** the columns and indexes of `session_topics` and `session_events` are listed after the catalog-search migration
-- **THEN** each table has exactly one column more than before, `search_tsv`, and exactly one index more, a GIN index on it
+- **THEN** each table has exactly one column more than before, `search_tsv`, and exactly two indexes more: a GIN index on `search_tsv` and a trigram GIN index on the phrase-normalised text
 
 #### Scenario: A content row needs its session
 - **WHEN** `catalog_system` inserts an event row whose `session_id` names no session
@@ -99,10 +99,20 @@ give every existing row of the three versioned tables version 1.
   - `session_events.search_tsv` (message);
   - `session_transcript_chunks.search_tsv` (text).
 - **Trigram indexes:** the normalised session title, show name and studio display name SHALL each have a trigram GIN index.
+- **Phrase normaliser:** `catalog.search_phrase_norm(text)` SHALL return `search_norm` of its input with every whitespace run (tabs and newlines included) turned into one space, then characters other than letters, digits and spaces removed, then spaces collapsed and trimmed. It SHALL be immutable, and executable by `catalog_user` and `catalog_system` only.
+- **Phrase indexes:** the phrase-normalised text of transcript chunks, topic summaries and event messages SHALL each have a trigram GIN index.
 
 #### Scenario: The normaliser folds accents and case
 - **WHEN** `catalog.search_norm('Ångström CAFÉ Straße')` is evaluated
 - **THEN** it returns `angstrom cafe strasse`
+
+#### Scenario: The phrase normaliser drops punctuation
+- **WHEN** `catalog.search_phrase_norm('I''m like, Why did he   DO that?')` is evaluated
+- **THEN** it returns `im like why did he do that`
+
+#### Scenario: Whitespace separates words before punctuation is removed
+- **WHEN** `catalog.search_phrase_norm(E'tab\there — now')` is evaluated
+- **THEN** it returns `tab here now`
 
 #### Scenario: Ordinary writes still succeed
 - **WHEN** an owner, as `catalog_user`, updates a session's title and notes, a topic's summary, an event's message, a show's name and a studio's name

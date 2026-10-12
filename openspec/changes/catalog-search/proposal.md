@@ -6,7 +6,7 @@ Tier reason:
 - a migration adds two extensions, generated columns, a table and triggers (`supabase/migrations/**`);
 - the search queries read across studios, so they must keep the show-grant rules exactly.
 
-Approved-by: Kalen 2026-10-12
+Approved-by: Kalen 2026-10-12 (updated 2026-10-12)
 
 ## Why
 
@@ -30,12 +30,18 @@ Right now the only search is a client-side check of whether a session title cont
   - notes, transcripts, topics and events match only on shows the caller can access;
   - hidden (deleted) sessions never match.
 - **Transcript chunks.** A new table holds the transcript in blocks of 40 words. The database keeps it in sync whenever words are written, so every transcript can be searched whether or not Deepgram returned paragraphs. The wiki will later cite these chunks.
-- **API:** new `GET /api/search?q=&studio_id=&show_id=&limit=`. It searches all of the caller's studios by default and returns results grouped as studios, shows, sessions and moments, with highlighted snippets.
+- **API:** new `GET /api/search?q=&studio_id=&show_id=&session_id=&limit=`. It searches all of the caller's studios by default and returns results grouped as studios, shows, sessions and moments, with highlighted snippets.
 - **Web:**
   - a Cmd/Ctrl-K command palette showing the top hits;
   - a new `/search` results page and shell route;
   - session deep links that open at a moment: `/sessions/:id?t=<sec>`, `?topic=<id>` and `?event=<id>`;
   - clicking a show or studio hit switches to it, as the top-bar switcher does.
+
+**Tuning after the dev-stack check (owner, 2026-10-12; design D11):**
+- typo matching is stricter;
+- a query of only common words falls back to exact-phrase matching in transcripts, topics and events;
+- `/search` groups moments under their session, with "Show N more in this session" (a `session_id` filter and per-session totals in the API);
+- transcript moments are labelled with speaker and time.
 
 ## Non-goals
 

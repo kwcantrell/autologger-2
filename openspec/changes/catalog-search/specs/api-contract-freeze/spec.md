@@ -10,6 +10,7 @@
 | `q` | required; 2–200 characters after trimming whitespace |
 | `studio_id` | optional; narrows every group to that studio |
 | `show_id` | optional; narrows every group to that show |
+| `session_id` | optional; returns only that session's moments, with no per-session cap, and empty `studios`, `shows` and `sessions` |
 | `limit` | optional decimal integer 1–25, default 5; the maximum per group |
 
 Unknown parameters SHALL be ignored.
@@ -35,7 +36,8 @@ The `200` body SHALL be exactly:
                  "match": "title" | "notes", "snippet": string | null }],
   "moments":  [{ "session_id": string, "session_title": string, "show_id": string,
                  "kind": "transcript" | "topic" | "event", "id": string,
-                 "sec": number | null, "speaker": string, "snippet": string }] }
+                 "sec": number | null, "speaker": string, "snippet": string }],
+  "moment_sessions": [{ "session_id": string, "total": number }] }
 ```
 
 - `q` echoes the trimmed query.
@@ -44,12 +46,17 @@ The `200` body SHALL be exactly:
   - `<bucket>` (decimal) for `transcript`.
 - `speaker` is `""` when not applicable.
 - `sec` is a number only for `transcript` moments with timing; it is `null` for `topic` and `event`.
-- A `studio_id` or `show_id` the caller can't see SHALL give `200` with every group empty, the same as an id that doesn't exist.
+- `moment_sessions` has one entry for each session that appears in `moments`: the session's total number of matching moments, at most 1000.
+- A `studio_id`, `show_id` or `session_id` the caller can't see SHALL give `200` with every group empty, the same as an id that doesn't exist.
 - The endpoint SHALL set no cookies and SHALL make no writes.
 
 #### Scenario: Search answers grouped results
 - **WHEN** a logged-in member requests `GET /api/search?q=budget`
-- **THEN** the response is `200` with keys `q`, `studios`, `shows`, `sessions` and `moments`, each array holding at most 5 entries
+- **THEN** the response is `200` with keys `q`, `studios`, `shows`, `sessions`, `moments` and `moment_sessions`; `studios`, `shows`, `sessions` and `moments` each hold at most 5 entries
+
+#### Scenario: One session's moments
+- **WHEN** a logged-in member requests `GET /api/search?q=divorce&session_id=<id>&limit=25` for a session they can access with 12 matching moments
+- **THEN** the response is `200` with 12 `moments` from that session, `moment_sessions` `[{"session_id":"<id>","total":12}]`, and `studios`, `shows` and `sessions` empty
 
 #### Scenario: Anonymous search is refused
 - **WHEN** an anonymous client requests `GET /api/search?q=budget`

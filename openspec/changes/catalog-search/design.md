@@ -106,10 +106,10 @@ There are also trigram GIN indexes (`extensions.gin_trgm_ops`) on `search_norm(s
   - **Rebuilding in TypeScript.** Manual edits bypass it, and there would be two rules.
 
 ### D5. One definer function does the whole search
-`catalog.search(q text, p_studio text, p_show text, p_limit int) returns jsonb`:
+`catalog.search(q text, p_studio text, p_show text, p_limit int, p_session text) returns jsonb` (`p_session` added by D11):
 - `language plpgsql`, `stable`, `security definer`, owned by the migration owner;
 - `set search_path = pg_catalog, pg_temp`, with every catalog object schema-qualified, as the policy helpers do (`20261007000000_catalog_policies.sql:26,42,53`). Listing `pg_temp` last stops a caller's temp table from shadowing a catalog table inside the definer body (re-panel probe);
-- `set pg_trgm.word_similarity_threshold = 0.4`, so trigram matching can use the operator form;
+- `set pg_trgm.word_similarity_threshold = 0.5` (0.4 before the D11 tuning), so trigram matching can use the operator form;
 - reads the caller from `app_user_id()`; returns an empty result when it is null.
 
 **Why a definer function:**
@@ -136,9 +136,10 @@ There are also trigram GIN indexes (`extensions.gin_trgm_ops`) on `search_norm(s
    - Ties are broken by `started_at_utc` descending.
 4. **Moments.** Chunks, topics and events of sessions with `ui_hidden = 0` and `show_id ∈ Sh_access` that match `search_tsv @@ query`.
    - Ranked by `ts_rank_cd`, then `started_at_utc` descending.
-   - At most 3 per session, using `row_number() over (partition by session_id)`.
+   - At most 3 per session, using `row_number() over (partition by session_id)`, unless `p_session` is given (D11).
+   - If the full-text query is empty, the phrase fallback in D11 runs instead.
 - **Filters.** `p_studio` and `p_show` add equality predicates inside the same access sets, so an id outside them gives empty groups.
-- **Stop words.** If `query` is empty (`numnode(query) = 0`, for example only stop words), the full-text branches return nothing and the trigram name branches still run.
+- **Stop words.** If `query` is empty (`numnode(query) = 0`, for example only stop words), the full-text branches return nothing. The trigram name branches still run, and moments use the phrase fallback (D11).
 - **Time of a moment (`sec`).** Only transcript chunks carry one (`start_sec`). Topics and events return `null`; the web places them with its feed rules (D8). This avoids a second, ungated copy of the event placement rule.
 
 **Alternative:** a SECURITY INVOKER query under RLS. Simpler to reason about, but it can't use the indexes, and needs four statements, so four timeouts.
@@ -200,6 +201,54 @@ An existing test may change only in these categories. Anything else is a stop.
 2. **Route inventories gain `/search`.** In `loginReturnPath.test.ts`, `loginReturnStash.test.ts`, `AppShell.test.tsx` and `staticServing.int.test.ts`, only a route count or an assertion that `/search` is not a route may change.
 3. **TopBar switch extraction.** `TopBar` tests may change only their import or mock paths, to follow the extracted `useSwitchActive`. What they assert stays the same.
 
+4. **This change's own tests under D11.** Tests written earlier on this branch may change only where D11 changes the behaviour they pin:
+   - `catalogSearchQuery.pg.test.ts`: the stop-word cases that expect empty moments, now expected to use the fallback;
+   - `catalogSearch.pg.test.ts`: the threshold (0.4 → 0.5), the `catalog.search` signature and the function inventory;
+   - `packages/contract/src/schemas.search.test.ts`, `server/src/routers/search.int.test.ts` and `packages/catalog/src/searchStore.test.ts`: the new parameter and the new field;
+   - `fixtures/api-responses/search.ts`: recaptured;
+   - `SearchRoute.test.tsx` and `SearchPalette.test.tsx`: grouped moments and the new labels.
+
+### D11. Post-approval tuning (owner, 2026-10-12)
+After the dev-stack check (task 5.8), the owner asked for four behaviours to be tuned.
+
+1. **Stricter typo matching.** The trigram threshold rises from 0.4 to 0.5.
+   - Measured on dev, as `word_similarity` of the normalised strings:
+     - `pacing` against "The Something Podcast" scores 0.43, so it no longer matches;
+     - real typos still match: "smthing podcst" 0.53, "somthing" 0.58, "christna" 0.67 (A29).
+2. **Exact-phrase fallback for stop-word queries.**
+   - **New normaliser:** `catalog.search_phrase_norm(t)` is immutable. In order, it:
+     1. applies `search_norm(t)`;
+     2. turns every whitespace run (tabs and newlines included) into one space;
+     3. removes every character other than a letter, digit or space;
+     4. collapses spaces and trims.
+
+     So `'I said — why did he do that?'` becomes `i said why did he do that`, and `'tab\there'` becomes `tab here`.
+   - **New trigram indexes** (`extensions.gin_trgm_ops`) on `search_phrase_norm` of `session_transcript_chunks.text`, `session_topics.summary` and `session_events.message`. The two on topics and events are further content-table indexes that don't lead with `session_id`, and the "Session content tables" delta names them.
+   - **When it runs.** Only when `numnode(query) = 0` and the normalised phrase has at least 2 words and at least 6 characters. A lone common word such as `the` doesn't trigger it: on 250k chunks, `the` took 4.4 s against `why did he do that` at 42 ms (re-panel probe A31).
+   - **Matching is whole-word.** `' ' || search_phrase_norm(text) || ' ' LIKE '% ' || phrase || ' %'`, so `and the` doesn't match "the band then", and the trigram index still applies. `%` and `_` can't act as wildcards, because the normaliser removes them from both sides.
+   - **Bounded work.** For each source, the fallback reads at most 2,000 matching rows, using a `LIMIT` inside the candidate subquery so the bitmap recheck stops early. The access sets, hidden-session rule and per-session cap then apply as usual. Ranking is session `started_at_utc` descending, then ordinal. `moment_sessions` totals for a fallback search count within those candidates.
+   - **Unchanged groups.** Sessions, studios and shows are unaffected: titles already have trigram matching, and notes stay full-text only. A phrase split across two 40-word chunks is not found; that is accepted.
+   - **Snippet built by the function.** `ts_headline` needs a tsquery, which the fallback doesn't have.
+     - The original text, with forged sentinels stripped as in D8, is split on whitespace into tokens. Each token is folded on its own with `search_phrase_norm`, which yields zero, one or more folded words (`—` gives none; `3½kg` gives `3 1 2kg`).
+     - The function records which original token each folded word came from, finds the phrase's word sequence in the folded words, and puts the sentinels around the original tokens that cover it.
+     - It keeps up to 12 original tokens on each side.
+3. **Moments grouped by session, with "Show more".**
+   - **API.** `GET /api/search` gains an optional `session_id`, passed to `catalog.search` as `p_session text default null`. The default keeps 4-argument calls from a server that hasn't been upgraded yet working during a rollout or rollback.
+   - **The filter returns one session's moments only.**
+     - `studios`, `shows` and `sessions` come back empty.
+     - The per-session cap of 3 is lifted, so `moments` holds up to `limit`.
+     - A session the caller can't see, that is hidden, or that doesn't exist gives the same empty result.
+   - **Totals.** The response gains `moment_sessions: [{ "session_id": string, "total": number }]`. It gives the total number of matching moments for each session that appears in `moments`, counted under the same rules and capped at 1000. Only sessions that already passed the access sets and the hidden-session rule are counted, so a total can't leak anything.
+   - **Web.**
+     - `/search` groups moments under their session, three to a session at first.
+     - When `total` is larger than the number shown, it offers "Show N more in this session", where N is `min(total, 25) − shown`. Choosing it fetches `session_id=<id>&limit=25` and lists those moments in place.
+     - When `total` is greater than 25, the expanded group ends with "Showing 25 of <total> matches in this session" and a link that opens the session.
+     - The palette keeps the flat list and its cap.
+   - **Migration.** The new migration drops the 4-argument function and creates the 5-argument one with the default. It then runs `revoke all on function … from public` and `grant execute … to catalog_user` again explicitly, because a newly created function is executable by PUBLIC.
+4. **Clearer moment labels (web only).**
+   - A transcript moment reads `Speaker <n> · <h:mm:ss>`: "Speaker n" when the speaker is a bare number, the speaker's name otherwise, left out when empty; the time comes from `sec` and is left out when `sec` is null.
+   - Topic and event moments show their kind label only.
+
 ## Assumptions
 
 Each was tested on 2026-10-12. The DB probes ran in a transaction that was rolled back.
@@ -233,6 +282,10 @@ Each was tested on 2026-10-12. The DB probes ran in a transaction that was rolle
 | A26 | A definer function whose path omits `pg_temp` can be fooled by a caller's temp table (re-panel) | probe: definer `select … from sessions` with `search_path = pg_catalog, catalog`, then `create temp table sessions …` as `catalog_user` | `before\|005e2862-…`, then `after\|FAKE-FROM-TEMP`; the helpers use `pg_catalog, pg_temp` |
 | A27 | Only the operator form of trigram matching uses the GIN index (re-panel) | probe on 20k rows: `word_similarity(…) >= 0.4` vs `'christna' <% t` with the threshold GUC | `Seq Scan … Filter`, then `Bitmap Index Scan … (t %> 'christna')` |
 | A28 | `EXPLAIN` can't see inside a plpgsql function, and `auto_explain` can't be loaded by the test role (re-panel) | `explain select catalog.search(…)`; `load 'auto_explain'` | `Result`; `access to library "auto_explain" is not allowed` |
+| A29 | Threshold 0.5 drops `pacing` and keeps real typos | `select word_similarity(search_norm(q), search_norm(n))` for the pairs listed in D11 on dev | `pacing` 0.43, `smthing podcst` 0.53, `somthing` 0.58, `christna` 0.67, exact words 1.00 |
+| A30 | A stop-word-only query parses to an empty tsquery, which `numnode` detects | `select numnode(websearch_to_tsquery('catalog.search_english','why did he do that'))` | `0`, plus a NOTICE that the query contains only stop words |
+| A31 | Phrase-fallback cost depends on how common the phrase is (re-panel) | 250k synthetic 40-word chunks, trigram GIN on the phrase normaliser, the fallback inside plpgsql, rolled back | `the` 4397 ms; `and the` 1247 ms (`rows=71366`, `Rows Removed by Index Recheck: 64768`); `why did he do that` 42 ms; `Bitmap Index Scan … ~~ '%and the%'` |
+| A32 | Bare `LIKE` matches inside words (re-panel) | `select 'the band then' like '%and the%'` | `t` |
 | A25 | One PUT can switch both studio and show | `sed -n 130,140p server/src/routers/profile.ts` | accepted when the show belongs to `active_studio_id` |
 
 ## Risks / Trade-offs

@@ -65,7 +65,9 @@ Search SHALL fold case and accents. Full-text matching SHALL use English stemmin
 - `-word` exclusions;
 - `or`.
 
-Studio, show and session-title matching SHALL also accept close misspellings and partial names. A query that is only stop words SHALL still run name matching and SHALL NOT fail.
+Studio, show and session-title matching SHALL also accept close misspellings and partial names, but SHALL NOT match a name that merely shares letter fragments with the query.
+
+A query that is only stop words SHALL still run name matching and SHALL NOT fail. If its normalised phrase has at least 2 words and at least 6 characters, the search SHALL also return moments whose transcript, topic or event text contains that exact phrase as whole words. Matching ignores case, accents and punctuation. A phrase that spans two transcript passages need not be found, and only a bounded number of candidate rows is examined per source.
 
 #### Scenario: Stemming and accents
 - **WHEN** a transcript says "they were divorced at the café" and the user searches `divorce cafe`
@@ -75,6 +77,22 @@ Studio, show and session-title matching SHALL also accept close misspellings and
 - **WHEN** a show is named "Christina Ramos Live" and the user searches `christna`
 - **THEN** the show appears in `shows`
 
+#### Scenario: A shared fragment is not a typo
+- **WHEN** a show is named "The Something Podcast" and the user searches `pacing`
+- **THEN** the show does not appear in `shows`
+
+#### Scenario: A stop-word quote is found
+- **WHEN** a transcript passage says "I'm like, Why did he do that? I'm like" and the user searches `why did he do that`
+- **THEN** `moments` contains that passage, with "Why did he do that" between the highlight sentinels in its snippet
+
+#### Scenario: Phrase matches whole words only
+- **WHEN** one event message is "the band then left" and another is "and the crowd cheered", and the user searches `and the`
+- **THEN** `moments` contains the second event and not the first
+
+#### Scenario: A lone common word is not a phrase
+- **WHEN** the user searches `the`
+- **THEN** `moments` is empty, and name matching still runs
+
 #### Scenario: Exclusion
 - **WHEN** the user searches `budget -wedding` and one passage mentions both words while another mentions only "budget"
 - **THEN** only the second passage is returned
@@ -82,12 +100,18 @@ Studio, show and session-title matching SHALL also accept close misspellings and
 ### Requirement: Grouping, ranking and limits
 - **Size:** each group SHALL hold at most `limit` results (default 5, range 1–25).
 - **Ranking:** within a group, results SHALL be ranked by match strength, with newer sessions first on a tie.
-- **Variety:** at most 3 moments from one session SHALL appear in the `moments` group.
+- **Variety:** at most 3 moments from one session SHALL appear in the `moments` group, unless the search is filtered to that session.
+- **Totals:** for each session that appears in `moments`, the response SHALL give the total number of that session's moments matching the search under the same rules, capped at 1000.
+- **One session:** a search filtered to one session SHALL return only that session's moments, up to `limit`, and no studios, shows or sessions.
 - **Seek time:** each moment SHALL carry a `kind` (`transcript` | `topic` | `event`) and a `sec`. For a transcript passage, `sec` is the passage's start time in seconds, or null when no word in it has a timing. For topics and events, `sec` is always null; clients place them with their own timeline rules.
 
 #### Scenario: One long session can't fill the moments group
 - **WHEN** a single session has 10 matching passages and another session has 1, and `limit` is 5
 - **THEN** `moments` holds at most 3 entries from the first session and includes the second session's entry
+
+#### Scenario: Show more in one session
+- **WHEN** a session has 10 matching passages, the user searches with `limit` 25, and then repeats the search filtered to that session
+- **THEN** the first response shows 3 of its moments with a total of 10, and the filtered response holds all 10 and nothing in the other groups
 
 #### Scenario: Default limit
 - **WHEN** a query matches 12 shows and no `limit` is given
@@ -112,7 +136,7 @@ Studio, show and session-title matching SHALL also accept close misspellings and
 - **THEN** that word is not highlighted in the snippet
 
 ### Requirement: Filters and the timeout
-- **Filters:** search SHALL accept optional `studio_id` and `show_id` filters that narrow every group. A filter naming a studio or show the caller can't see SHALL produce empty groups, exactly as for an id that doesn't exist.
+- **Filters:** search SHALL accept optional `studio_id` and `show_id` filters that narrow every group, and an optional `session_id` filter that returns that session's moments only (see "One session"). A filter naming a studio, show or session the caller can't see (including a hidden session) SHALL produce empty groups, exactly as for an id that doesn't exist.
 - **Timeout:** the whole search SHALL use at most 3 seconds of database time. A search that runs longer SHALL be cancelled and reported as a timeout, not as a server error.
 - **Concurrency:** each server process SHALL run at most 2 searches at once. A search that can't start within 1 second SHALL be reported as busy, so search can never occupy all of the catalog's database connections.
 
@@ -136,7 +160,9 @@ Studio, show and session-title matching SHALL also accept close misspellings and
   - it SHALL offer "See all results", which opens `/search?q=<query>`.
 - **Results page:**
   - `/search` SHALL show every group with up to 25 results each, plus studio and show filters, loading, empty and error states;
+  - moments SHALL be grouped under their session, at most 3 to a session at first, with "Show N more in this session" when the session has more matches, where N counts only what one expansion can show (at most 25 in total for the session); choosing it SHALL show up to 25 of that session's matching moments in place, and when the session has more than 25 it SHALL say how many there are and link to the session;
   - the query and filters SHALL be kept in the URL.
+- **Moment labels:** a transcript moment SHALL show its speaker ("Speaker n" when the speaker is a bare number) and its start time when known; topic and event moments SHALL show their kind.
 - **Choosing a result:**
   - a session SHALL open `/sessions/<id>`;
   - a moment SHALL open its moment deep link;
@@ -153,6 +179,18 @@ Studio, show and session-title matching SHALL also accept close misspellings and
 #### Scenario: See all results
 - **WHEN** the user chooses "See all results" in the palette for query `budget`
 - **THEN** the app navigates to `/search?q=budget` and shows grouped results
+
+#### Scenario: Grouped moments expand
+- **WHEN** `/search?q=divorce` shows a session with 3 of its 12 matching moments, and the user chooses "Show 9 more in this session"
+- **THEN** that session's group lists all 12 matching moments, and the other sessions' groups are unchanged
+
+#### Scenario: Expanding a very busy session
+- **WHEN** a session has 40 matching moments and the user expands it on `/search`
+- **THEN** the offer reads "Show 22 more in this session", the group then lists 25 moments, and it ends with "Showing 25 of 40 matches in this session" and a link that opens the session
+
+#### Scenario: A transcript moment's label
+- **WHEN** a transcript moment has speaker `1` and `sec` 4323.49
+- **THEN** its label reads `Speaker 1 · 1:12:03`
 
 #### Scenario: Choosing a show switches to it
 - **WHEN** the user chooses a show result from a different studio
