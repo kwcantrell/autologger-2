@@ -72,7 +72,7 @@ conversion, but only as operator scripts. And prod's Cloudflare Tunnel caps a re
 
 ## What changes
 
-- **Schema** (`supabase/migrations/20261018000000_media_jobs.sql`): `catalog.media_jobs` (with
+- **Schema** (`supabase/migrations/20261019000000_media_jobs.sql`): `catalog.media_jobs` (with
   the worker-guard trigger and column-level grants), `catalog.media_uploads`,
   `catalog.session_audio_seams` (one row per accepted chunk window, the idempotency index and the
   seam map), three columns on `catalog.session_audio_segments` (`duration_ms`, `media_status`,
@@ -168,7 +168,7 @@ regenerated for the three new keys.
 
 ## Impact
 
-- Code: `media-worker/**` (new), `supabase/migrations/20261018000000_media_jobs.sql`,
+- Code: `media-worker/**` (new), `supabase/migrations/20261019000000_media_jobs.sql`,
   `docker/supabase/migrate.sh`, `docker/media-worker.Dockerfile`, `docker-bake.hcl`,
   `compose.yaml`, `docker/compose.dev.yaml`, `docker/compose.stage.yaml`,
   `docker/scripts/{compose-run.mjs,check-envs.sh,supabase-keys.mjs}`, `Makefile`,
