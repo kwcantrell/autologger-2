@@ -188,23 +188,26 @@
   - Evidence: red: `npx vitest run src/pages/index/hooks/useMomentDeepLink.test.tsx` -> `Failed to resolve import "./useMomentDeepLink"`, `Tests  no tests`; `SessionWorkspace.momentDeepLink.test.tsx` before the wiring -> `Tests  3 failed (3)` (`expected [] to deeply equal [ [ 754.2 ] ]`) (log `cs-5.7-red.log`). Green: `MomentDeepLink.test.tsx` (moved beside the workspace) plus every `SessionWorkspace*` test -> `Test Files  6 passed (6)`, `Tests  60 passed (60)` (log `cs-5.7-green.log`). Full web suite `cd web && npx vitest run` -> `Test Files  152 passed (152)`, `Tests  2015 passed (2015)`; `npm run typecheck` -> exit 0 (log `cs-5.x-full.log`).
 
   Then implement. Verified by the tests.
-- [ ] 5.8 Check the UI with agent-browser on the dev stack (`localhost:8787`) at desktop and mobile widths:
+- [x] 5.8 Check the UI with agent-browser on the dev stack (`localhost:8787`) at desktop and mobile widths:
   - the palette;
   - `/search`;
   - a transcript moment opening at its time without playing;
   - a show hit in another studio switching studio and show.
-
   Verified by screenshots noted in Evidence.
+  - Evidence: `make dev-up` applied `20261019000000` on dev (808 chunks over 4 sessions), then agent-browser on `localhost:8787`. Palette: Ctrl-K, `pacing` -> Shows "The Something Podcast" and a TRANSCRIPT moment with `pacing` highlighted (`cs-5.8-palette2.png`). Choosing it opened `/sessions/eea6c73f-…` and dropped the parameter; a direct `?t=4323.49` open put the playhead at `01:12:03` with playback stopped (no `<audio>` playing) and the URL back to `/sessions/eea6c73f-…` (`cs-5.8-moment.png`). `/search?q=divorce` -> MOMENTS with `divorce`/`divorced` highlighted (`cs-5.8-searchpage.png`). Show hit across studios: `smthing podcst` -> "The Something Podcast"; choosing it switched the top bar to `Test Studio 2` / `The Something Podcast` and went to `/`; switched back the same way to `Youtube Studio` / `Autolog Test Show`. Mobile 390x844: `/search` and palette render without horizontal scroll (`scrollWidth` 390) (`cs-5.8-mobile-search.png`, `cs-5.8-mobile-palette.png`).
 
 ## 6. Docs, verification, PR
 
-- [ ] 6.1 Write ADR `docs/decisions/0029-catalog-search.md`: lexical search in Postgres, vectors deferred, a definer search function, chunks in ordinal buckets, the 3 s budget and the 2-search cap instead of a limiter, and the unaccent rewrite-and-reindex step. Verified by the file existing and `scripts/check-change.sh --stage hook` passing.
-- [ ] 6.2 Run the dev-stack manual checks:
+- [x] 6.1 Write ADR `docs/decisions/0029-catalog-search.md`: lexical search in Postgres, vectors deferred, a definer search function, chunks in ordinal buckets, the 3 s budget and the 2-search cap instead of a limiter, and the unaccent rewrite-and-reindex step. Verified by the file existing and `scripts/check-change.sh --stage hook` passing.
+  - Evidence: `docs/decisions/0029-catalog-search.md` written (context, decision, alternatives, evidence, consequences incl. the unaccent rewrite-and-reindex step); `GITHUB_BASE_REF=supabase-migration scripts/check-change.sh --stage hook` -> every gate `PASS` (`openspec`, `change tier 2`, `risk-floor 7 high-risk path(s)`, `evidence`, `commands ran ['typecheck', 'test']`) (log `cs-6.1-hook.log`).
+- [x] 6.2 Run the dev-stack manual checks:
   - search a word spoken in session `eea6c73f-2995-4c16-83c9-77c18b1bed43`, and it opens at the right time;
   - a misspelled show name finds the show;
   - an ungranted member account matches on titles only;
   - run `EXPLAIN ANALYZE` on an owner-run copy of each branch query from `catalog.search`, and diff `pg_stat_user_indexes.idx_scan` around a real call, to show each group's index is used.
-
   Verified by the notes and plan excerpts in Evidence.
-- [ ] 6.3 Run `GITHUB_BASE_REF=supabase-migration scripts/check-change.sh --stage hook` and `openspec validate --all --strict`, then run the consistency read and append it to `panel.md`. Verified by green output.
+  - Evidence: spoken word and misspelled show: see 5.8 (`pacing` -> transcript moment opening at `01:12:03`; `smthing podcst` -> "The Something Podcast"). Ungranted member (dev has none, so the dev member `8391e6f7…` had its grant on `show-autolog-test` deleted inside a rolled-back transaction, calling `catalog.search` as `catalog_user`): `granted|3|0` moments for `divorce` -> `ungranted|0|0`; title search `ATS_youtube` -> `["title"]` with snippet `[null]` in both cases (log `cs-6.2-grant.log`). Index use: `pg_stat_user_indexes.idx_scan` diff around two real calls -> `idx_session_chunks_search|2`, the others `0` because dev's other tables are tiny (12 sessions, 133 events, 3 shows) and the planner seq-scans them (log `cs-6.2-idx.log`); owner-run copies of each branch with `enable_seqscan = off` -> `Bitmap Index Scan` on `idx_session_events_search`, `idx_session_topics_search`, `idx_sessions_search_meta`, `idx_sessions_search_notes`, `idx_shows_name_trgm` (`%>`) and `idx_studio_definitions_name_trgm` (`~~`) (log `cs-6.2-explain.log`); index use at 5,000 rows is pinned by task 3.1.
+
+- [x] 6.3 Run `GITHUB_BASE_REF=supabase-migration scripts/check-change.sh --stage hook` and `openspec validate --all --strict`, then run the consistency read and append it to `panel.md`. Verified by green output.
+  - Evidence: `GITHUB_BASE_REF=supabase-migration scripts/check-change.sh --stage hook` -> every gate `PASS` (log `cs-6.1-hook.log`); `openspec validate --all --strict` -> all valid; consistency read appended to `panel.md` ("Consistency read 2026-10-12 (before PR)": scope change no, no findings).
 - [ ] 6.4 When the owner asks, push the branch and open a PR to `supabase-migration`, then confirm CI is green. Verified by the PR checks.

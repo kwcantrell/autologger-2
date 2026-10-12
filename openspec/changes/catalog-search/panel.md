@@ -30,3 +30,14 @@ Scope: the panel resolutions (D2 config, D4 locks, D5 definer search function, D
 Edits since approval: design.md D10 category 1 (+ `eventStore.int.test.ts`, its two raw `SELECT *` event-row pins gain `search_tsv`), tasks.md 2.5 (same file named).
 Scope change: no. The widening is a test-change category, approved by the owner in chat (2026-10-12), as `ai-sdk-agent-harness`'s D9 category 8 was.
 - [x] [major] `eventStore.int.test.ts:439,570` compares raw `SELECT *` rows of `session_events` exactly, so the approved generated column breaks it, and D10 didn't allow the edit. Resolved: D10 category 1 widened (owner-approved), with the pins gaining only `search_tsv`; requirements, tasks and non-goals are otherwise unchanged and consistent.
+
+## Consistency read 2026-10-12 (before PR)
+Edits since approval (`fe54d8b8`): design.md D10 category 1 (`eventStore.int.test.ts`, the owner-approved widening, read above); tasks.md 2.5 names the same file; the rest is ticks and Evidence.
+Scope change: no.
+- Every requirement in the four spec deltas has a task and a test: catalog-search (3.1 query matrix, 4.2 route, 5.3–5.7 web), api-contract-freeze (4.1, 4.2, 4.4, 4.5), catalog-database (2.1, 2.2, 2.4, 2.5), and web-session-routing (4.5, 5.6, 5.7).
+- No task does anything the non-goals exclude: no vectors, no wiki, no limiter, no `ShortcutsDialog` edit (5.5 shows the shortcut in a tooltip instead).
+- Design and specs agree. Implementation notes that change no requirement:
+  - the fixture is `fixtures/api-responses/search.ts`, not `.json`, because the repo's capture rule needs a `.ts` module for string-literal unions (task 4.4 Evidence);
+  - `/search/extra` → 404 is pinned at the shell-segment predicate, because the dev bridge forwards every GET (task 4.5 Evidence);
+  - `ts_headline` may trim the start of a fragment, so markup can appear partly. The web renders it as text either way (task 3.1 Evidence; spec "Markup in a transcript is inert" holds, task 5.3).
+No findings.
