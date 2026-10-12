@@ -793,8 +793,9 @@ export interface ProviderTestResponse {
 }
 
 // -- Catalog search (catalog-search D5; api-contract-freeze "Search endpoint") ------------------
-// `GET /api/search?q=…[&studio_id][&show_id][&limit]`. Snippets carry U+E000/U+E001 around each
-// hit; the web renders them as `<mark>` text, never as HTML.
+// `GET /api/search?q=…[&studio_id][&show_id][&session_id][&limit]`. Snippets carry U+E000/U+E001
+// around each hit; the web renders them as `<mark>` text, never as HTML. `session_id` (D11) returns
+// that session's moments only, with the other groups empty.
 
 export interface SearchStudioHit {
   id: string;
@@ -838,10 +839,20 @@ export type SearchMoment =
   | (SearchMomentBase & { kind: 'transcript'; sec: number | null })
   | (SearchMomentBase & { kind: 'topic' | 'event'; sec: null });
 
+/** A session in `moments`, with its total matching moments, at most 1000 (D11). */
+export interface SearchMomentSession {
+  session_id: string;
+  total: number;
+}
+
 export interface SearchResponse {
   q: string;
   studios: SearchStudioHit[];
   shows: SearchShowHit[];
   sessions: SearchSessionHit[];
   moments: SearchMoment[];
+  /** The server always sends it (the strict contract schema requires it). Optional here only so
+   * the web's existing search test mocks, written before D11, still type-check; read it as
+   * `moment_sessions ?? []`. */
+  moment_sessions?: SearchMomentSession[];
 }

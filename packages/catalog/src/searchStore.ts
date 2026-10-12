@@ -22,6 +22,8 @@ export interface SearchParams {
   q: string;
   studioId?: string | null;
   showId?: string | null;
+  /** One session's moments only (design D11); other groups come back empty. */
+  sessionId?: string | null;
   /** 1–25; the function clamps. Default 5. */
   limit?: number;
 }
@@ -56,13 +58,20 @@ export interface SearchMomentHit {
   speaker: string;
   snippet: string;
 }
-/** What `catalog.search` returns (design D5): four groups, snippets with U+E000/U+E001 around hits. */
+/** A session's total matching moments, at most 1000 (design D11). */
+export interface SearchMomentSession {
+  session_id: string;
+  total: number;
+}
+/** What `catalog.search` returns (design D5, D11): four groups, snippets with U+E000/U+E001 around
+ * hits, and each moment session's total. */
 export interface CatalogSearchResult {
   q: string;
   studios: SearchStudioHit[];
   shows: SearchShowHit[];
   sessions: SearchSessionHit[];
   moments: SearchMomentHit[];
+  moment_sessions: SearchMomentSession[];
 }
 
 /** A counting semaphore with a bounded, first-come-first-served wait. */
@@ -119,7 +128,7 @@ export class SearchSlots {
 export const SEARCH_SLOTS = new SearchSlots(2, 1000);
 
 const STATEMENT_TIMEOUT = "SET LOCAL statement_timeout = '3s'";
-const SEARCH = 'select catalog.search(?::text, ?::text, ?::text, ?::int) as r';
+const SEARCH = 'select catalog.search(?::text, ?::text, ?::text, ?::int, ?::text) as r';
 
 export class SearchStore {
   constructor(
@@ -140,6 +149,7 @@ export class SearchStore {
           p.studioId ?? null,
           p.showId ?? null,
           p.limit ?? 5,
+          p.sessionId ?? null,
         );
         if (!row) throw new Error('catalog.search returned no row');
         return row.r;

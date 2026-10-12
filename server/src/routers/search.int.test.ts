@@ -236,7 +236,64 @@ describe('GET /api/search', () => {
         shows: [],
         sessions: [],
         moments: [],
+        moment_sessions: [],
       });
+    }
+  });
+
+  it("session_id returns only that session's moments, with totals and the other groups empty (catalog-search D11)", async () => {
+    const { sessionId } = await seedBeacon();
+    const open = searchResponseSchema.parse((await get('/api/search?q=beacon')).json);
+    expect(open.moment_sessions).toEqual([{ session_id: sessionId, total: 3 }]);
+    const { status, json } = await get(`/api/search?q=beacon&session_id=${sessionId}&limit=25`);
+    expect(status).toBe(200);
+    const body = searchResponseSchema.parse(json);
+    expect(body.studios).toEqual([]);
+    expect(body.shows).toEqual([]);
+    expect(body.sessions).toEqual([]);
+    expect(body.moments.map((m) => m.kind).sort()).toEqual(['event', 'topic', 'transcript']);
+    for (const m of body.moments) expect(m.session_id).toBe(sessionId);
+    expect(body.moment_sessions).toEqual([{ session_id: sessionId, total: 3 }]);
+  });
+
+  it('masks a foreign, hidden, unknown or empty session_id: identical empty results', async () => {
+    const { showId } = await seedBeacon();
+    const foreignStudio = await seedStudio({ name: 'Elsewhere' });
+    const foreignShow = await seedShow({ studioId: foreignStudio, name: 'Elsewhere Show' });
+    const sessionIn = (show: string, title: string) =>
+      catalogFor().sessions.createSessionIndex({
+        showId: show,
+        title,
+        frameRate: 24,
+        startOffsetFrames: 0,
+        episode: '',
+        notes: 'beacon notes',
+        startedAtUtc: NOW,
+        createdAtUtc: NOW,
+      });
+    const foreign = await sessionIn(foreignShow, 'Beacon foreign');
+    const hidden = await sessionIn(showId, 'Beacon hidden');
+    for (const id of [foreign, hidden]) {
+      await testDb().run(
+        `INSERT INTO session_topics (session_id, id, summary, ordinal, created_at_utc)
+         VALUES (?, 'topic-x', 'beacon topic', 0, ?)`,
+        id,
+        NOW,
+      );
+    }
+    await testDb().run('UPDATE sessions SET ui_hidden = 1 WHERE id = ?', hidden);
+    const empty = {
+      q: 'beacon',
+      studios: [],
+      shows: [],
+      sessions: [],
+      moments: [],
+      moment_sessions: [],
+    };
+    for (const id of [foreign, hidden, 'no-such-session', '']) {
+      const r = await get(`/api/search?q=beacon&session_id=${id}`);
+      expect(r.status, id).toBe(200);
+      expect(r.json, id).toEqual(empty);
     }
   });
 

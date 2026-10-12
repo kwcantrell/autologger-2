@@ -44,12 +44,16 @@ interface Result {
   shows: Hit[];
   sessions: Hit[];
   moments: Moment[];
+  /** catalog-search D11: each session in `moments` with its total matches, at most 1000. */
+  moment_sessions: { session_id: string; total: number }[];
 }
 
 interface SearchOpts {
   studio?: string | null;
   show?: string | null;
   limit?: number | null;
+  /** catalog-search D11 `p_session`; when absent the call has 4 arguments (the default). */
+  session?: string | null;
   /** Statements run as `catalog_user` in the same transaction, before the search. */
   before?: string[];
 }
@@ -66,9 +70,15 @@ async function search(
     await tx`select set_config('role', 'catalog_user', true),
                     set_config('app.user_id', ${uid ?? ''}, true)`;
     for (const stmt of opts.before ?? []) await tx.unsafe(stmt);
-    const [r] = await tx`
+    const limit = opts.limit === undefined ? 5 : opts.limit;
+    const [r] =
+      opts.session === undefined
+        ? await tx`
       select catalog.search(${q}::text, ${opts.studio ?? null}::text, ${opts.show ?? null}::text,
-                            ${opts.limit === undefined ? 5 : opts.limit}::int) as r`;
+                            ${limit}::int) as r`
+        : await tx`
+      select catalog.search(${q}::text, ${opts.studio ?? null}::text, ${opts.show ?? null}::text,
+                            ${limit}::int, ${opts.session}::text) as r`;
     return r?.r as Result;
   }) as Promise<Result>;
 }
@@ -290,7 +300,7 @@ describe('catalog.search: access (design D6)', () => {
       const unknownShow = await search(app, 'owner', q, { show: 'no-such-show' });
       const foreignStudio = await search(app, 'owner', q, { studio: U });
       const unknownStudio = await search(app, 'owner', q, { studio: 'no-such-studio' });
-      expect(foreignShow, q).toEqual({ q, ...EMPTY });
+      expect(foreignShow, q).toEqual({ q, ...EMPTY, moment_sessions: [] });
       for (const r of [unknownShow, foreignStudio, unknownStudio])
         expect(r, q).toEqual(foreignShow);
       // A team the caller does belong to, but with no matching show (team V is empty).
@@ -317,13 +327,17 @@ describe('catalog.search: access (design D6)', () => {
   });
 
   it('a null app.user_id returns empty groups', async () => {
-    expect(await search(app, null, 'beacon')).toEqual({ q: 'beacon', ...EMPTY });
+    expect(await search(app, null, 'beacon')).toEqual({
+      q: 'beacon',
+      ...EMPTY,
+      moment_sessions: [],
+    });
     const unset = await app.begin(async (tx) => {
       await tx`select set_config('role', 'catalog_user', true)`;
       const [r] = await tx`select catalog.search('kestrel', null, null, 5) as r`;
       return r?.r as Result;
     });
-    expect(unset).toEqual({ q: 'kestrel', ...EMPTY });
+    expect(unset).toEqual({ q: 'kestrel', ...EMPTY, moment_sessions: [] });
   });
 
   it("a temp table named sessions created by catalog_user doesn't change the results", async () => {
@@ -450,8 +464,11 @@ describe('catalog.search: ranking and query syntax', () => {
   it('a stop-words-only query still runs name matching and does not fail', async () => {
     const r = await search(app, 'owner', 'of the');
     expect(outline(r).shows).toEqual(['ob']);
-    // The transcript "out of the box thinking" is not a moment: the full-text query is empty.
-    expect(r.moments).toEqual([]);
+    // catalog-search D11: the full-text query is empty, so the phrase fallback finds the
+    // transcript "out of the box thinking".
+    expect(r.moments.map((m) => `${m.session_id}:${m.id}`)).toEqual(['ci:0']);
+    expect(r.moments[0]?.snippet).toBe(`out ${HL}of the${HR} box thinking`);
+    // A lone common word is not a phrase.
     expect(outline(await search(app, 'owner', 'the')).moments).toEqual([]);
   });
 
@@ -588,6 +605,9 @@ describe('catalog.search: index use (design D5)', () => {
                      1, 2, 0, ${NOW}
               from generate_series(1, 5000) g`;
     await show(sys, 'cr', T, 'Christina Ramos Live');
+    // catalog-search D11: one passage holding a stop-word phrase, for the phrase index.
+    await session(sys, 'ixq', 's1', { title: 'Quote' });
+    await say(sys, 'ixq', 'and then I asked why did he do that anyway');
     const admin = connect(db.admin);
     const [n] =
       await admin`select (select count(*) from catalog.session_transcript_chunks)::int as c,
@@ -607,6 +627,10 @@ describe('catalog.search: index use (design D5)', () => {
       'idx_session_chunks_search',
       'idx_sessions_search_meta',
       'idx_shows_name_trgm',
+      // catalog-search D11: the chunk phrase index (the fallback) and the chunks' primary key (the
+      // `p_session` path).
+      'idx_session_chunks_phrase_trgm',
+      'session_transcript_chunks_pkey',
     ];
     const scans = async () => {
       const rows = await admin`select indexrelname as name, idx_scan::int as n
@@ -620,6 +644,12 @@ describe('catalog.search: index use (design D5)', () => {
     const app = connect(db.app);
     const r = await search(app, 'owner', 'christna');
     expect(outline(r).shows).toEqual(['cr']);
+    const phrase = await search(app, 'owner', 'why did he do that');
+    expect(phrase.moments.map((m) => `${m.session_id}:${m.id}`)).toEqual(['ixq:0']);
+    // One session's moments, by a hash word of its only chunk.
+    const word = (await admin`select md5((77 * 40 + 1)::text) as w`)[0]?.w as string;
+    const one = await search(app, 'owner', word, { session: 'ixs77' });
+    expect(one.moments.map((m) => `${m.session_id}:${m.id}`)).toEqual(['ixs77:0']);
     await app`select pg_stat_force_next_flush()`;
     // The flush happens as the connection goes idle; give it a moment to land.
     let after = await scans();
@@ -628,5 +658,215 @@ describe('catalog.search: index use (design D5)', () => {
       after = await scans();
     }
     for (const x of INDEXES) expect(after[x], x).toBeGreaterThan(before[x] ?? 0);
+  });
+});
+
+// catalog-search design D11 (post-approval tuning): the 0.5 trigram threshold, the exact-phrase
+// fallback for stop-word queries (whole words, at least 2 words and 6 characters, at most 2,000
+// candidate rows per source, a snippet built on the original tokens), `p_session` and
+// `moment_sessions` (catalog-search "Query syntax and normalisation", "Grouping, ranking and
+// limits", "Filters and the timeout").
+describe('catalog.search: D11 tuning', () => {
+  let db: TestDatabase;
+  let app: postgres.Sql;
+  let sys: postgres.Sql;
+  const QUOTE = "I'm like, Why did he do that? I'm like";
+  beforeAll(async () => {
+    db = await createTestDatabase();
+    sys = connect(db.system);
+    await seedPolicyFixture(sys);
+    await show(sys, 'sp', T, 'The Something Podcast');
+    await show(sys, 'cr', T, 'Christina Ramos Live');
+    // The quote, in a newer session (q1) and an older one (q0, two passages: buckets 2 and 10);
+    // pm (below) starts at NOW, newest of all.
+    await session(sys, 'q1', 's1', { title: 'Quote new', started: '2026-10-05T00:00:00Z' });
+    await say(sys, 'q1', QUOTE, { sec: 7 });
+    await session(sys, 'q0', 's1', { title: 'Quote old', started: '2026-10-01T00:00:00Z' });
+    await say(sys, 'q0', `well ${QUOTE}`, { from: 400 });
+    await say(sys, 'q0', `so ${QUOTE}`, { from: 80 });
+    // Punctuation-only tokens and a token unaccent splits (`3½kg` folds to `3 12kg`).
+    await session(sys, 'pm', 's1', { title: 'Mapping' });
+    await say(sys, 'pm', 'I paid 3½kg and the — rest — and — why did he do that — fine');
+    // Whole words: events in their own session.
+    await session(sys, 'ww', 's1', { title: 'Whole words' });
+    await event(sys, 'ww', 'e1', 'the band then left');
+    await event(sys, 'ww', 'e2', 'and the crowd cheered');
+    // A topic with the phrase; a short phrase; a hidden session; another team's session.
+    await session(sys, 'tp', 's1', { title: 'Topics' });
+    await topic(sys, 'tp', 't1', 'Then: of all things, why should she?');
+    await say(sys, 'tp', 'it is to be or not');
+    await session(sys, 'hd', 's1', { title: 'Hidden', hidden: true });
+    await say(sys, 'hd', 'why should she');
+    await event(sys, 'hd', 'e1', 'why should she');
+    await session(sys, 'fu', 'su', { title: 'Foreign' });
+    await say(sys, 'fu', 'why should she');
+    // Five passages with the phrase in one session, for the per-session cap.
+    await session(sys, 'cp', 's1', { title: 'Cap', started: '2025-01-01T00:00:00Z' });
+    for (let b = 0; b < 5; b++) await say(sys, 'cp', 'by and by we were here', { from: b * 40 });
+    app = connect(db.app);
+  });
+
+  it('A shared fragment is not a typo: pacing gives no show; real typos still match', async () => {
+    expect(outline(await search(app, 'owner', 'pacing')).shows).toEqual([]);
+    for (const q of ['somthing', 'smthing podcst', 'something']) {
+      expect(outline(await search(app, 'owner', q)).shows, q).toEqual(['sp']);
+    }
+    expect(outline(await search(app, 'owner', 'christna')).shows).toEqual(['cr']);
+  });
+
+  it('A stop-word quote is found, highlighted on the original tokens; newer sessions first, then ordinal', async () => {
+    const r = await search(app, 'owner', 'why did he do that', { limit: 25 });
+    expect(r.moments.map((m) => `${m.session_id}:${m.kind}:${m.id}`)).toEqual([
+      'pm:transcript:0',
+      'q1:transcript:0',
+      'q0:transcript:2',
+      'q0:transcript:10',
+    ]);
+    expect(r.moments[1]).toMatchObject({ sec: 7, speaker: 'spk', session_title: 'Quote new' });
+    expect(r.moments[1]?.snippet).toBe(`I'm like, ${HL}Why did he do that?${HR} I'm like`);
+    expect(r.moments[2]?.snippet).toBe(`so I'm like, ${HL}Why did he do that?${HR} I'm like`);
+    // Case, accents and punctuation are ignored in the query too.
+    const loud = await search(app, 'owner', 'WHY, did he dö THAT?!', { limit: 25 });
+    expect(loud.moments.map((m) => `${m.session_id}:${m.id}`)).toEqual(
+      r.moments.map((m) => `${m.session_id}:${m.id}`),
+    );
+  });
+
+  it('the highlight maps through punctuation-only tokens and split tokens (— and ½)', async () => {
+    const r = await search(app, 'owner', 'and the', { show: 's1', limit: 25 });
+    const pm = r.moments.find((m) => m.session_id === 'pm');
+    expect(pm?.snippet).toBe(
+      `I paid 3½kg ${HL}and the${HR} — rest — and — why did he do that — fine`,
+    );
+    const across = await search(app, 'owner', 'and why did he', { limit: 25 });
+    expect(across.moments.map((m) => m.session_id)).toEqual(['pm']);
+    expect(across.moments[0]?.snippet).toBe(
+      `I paid 3½kg and the — rest — ${HL}and — why did he${HR} do that — fine`,
+    );
+  });
+
+  it('a long passage keeps 12 original tokens on each side of the highlight', async () => {
+    await session(sys, 'lg', 's1', { title: 'Long' });
+    const before = Array.from({ length: 20 }, (_, i) => `b${i}`);
+    const after = Array.from({ length: 20 }, (_, i) => `a${i}`);
+    await say(sys, 'lg', [...before, 'what', 'if', 'they', ...after].join(' '));
+    const r = await search(app, 'owner', 'what if they', { session: 'lg' });
+    expect(r.moments[0]?.snippet).toBe(
+      [...before.slice(8), `${HL}what`, 'if', `they${HR}`, ...after.slice(0, 12)].join(' '),
+    );
+  });
+
+  it('Phrase matches whole words only: and the finds "and the crowd", not "the band then"', async () => {
+    const r = await search(app, 'owner', 'and the', { limit: 25 });
+    const ww = r.moments.filter((m) => m.session_id === 'ww').map((m) => m.id);
+    expect(ww).toEqual(['e2']);
+    expect(r.moments.find((m) => m.id === 'e2')?.snippet).toBe(`${HL}and the${HR} crowd cheered`);
+  });
+
+  it('A lone common word is not a phrase, nor a 2-word phrase under 6 characters; name matching still runs', async () => {
+    const the = await search(app, 'owner', 'the');
+    expect(the.moments).toEqual([]);
+    expect(the.moment_sessions).toEqual([]);
+    expect(outline(the).shows).toContain('sp');
+    // "to be" (5 characters) and "it is" are in tp's transcript.
+    for (const q of ['to be', 'it is', 'TO, BE!']) {
+      expect((await search(app, 'owner', q)).moments, q).toEqual([]);
+    }
+    // At 2 words and 6 characters it runs: "of all" is in tp's topic.
+    expect(outline(await search(app, 'owner', 'of all')).moments).toEqual(['tp:topic']);
+  });
+
+  it('access under the fallback: ungranted and outsiders get nothing; hidden sessions never match; at most 3 per session', async () => {
+    const owner = await search(app, 'owner', 'why should she', { limit: 25 });
+    expect(outline(owner).moments).toEqual(['tp:topic']);
+    expect(owner.moments[0]?.snippet).toBe(`Then: of all things, ${HL}why should she?${HR}`);
+    expect(outline(await search(app, 'granted', 'why should she', { limit: 25 })).moments).toEqual([
+      'tp:topic',
+    ]);
+    expect(outline(await search(app, 'ungranted', 'why should she', { limit: 25 }))).toEqual(EMPTY);
+    // The outsider sees only their own team's session.
+    expect(outline(await search(app, 'outsider', 'why should she', { limit: 25 })).moments).toEqual(
+      ['fu:transcript'],
+    );
+    const cap = await search(app, 'owner', 'by and by', { limit: 25 });
+    expect(cap.moments.map((m) => `${m.session_id}:${m.id}`)).toEqual(['cp:0', 'cp:1', 'cp:2']);
+    expect(cap.moment_sessions).toEqual([{ session_id: 'cp', total: 5 }]);
+  });
+
+  it('% and _ in the query act as no wildcard', async () => {
+    // As wildcards, each would match "why did he do that" (in q0, q1 and pm).
+    for (const q of ['he % that', 'did % that', 'why % he', 'he __ that']) {
+      expect((await search(app, 'owner', q, { limit: 25 })).moments, q).toEqual([]);
+    }
+  });
+
+  it('p_session returns only that session, up to the limit, with the other groups empty', async () => {
+    // "Quote" matches session titles, and the quote is in q0 twice.
+    const all = await search(app, 'owner', 'quote', { limit: 25 });
+    expect(outline(all).sessions.length).toBeGreaterThan(0);
+    const q0 = await search(app, 'owner', 'why did he do that', { session: 'q0', limit: 25 });
+    expect(outline(q0)).toEqual({ ...EMPTY, moments: ['q0:transcript', 'q0:transcript'] });
+    expect(q0.moment_sessions).toEqual([{ session_id: 'q0', total: 2 }]);
+    const cp = await search(app, 'owner', 'by and by', { session: 'cp', limit: 25 });
+    expect(cp.moments.map((m) => m.id)).toEqual(['0', '1', '2', '3', '4']);
+    expect(cp.moment_sessions).toEqual([{ session_id: 'cp', total: 5 }]);
+    const two = await search(app, 'owner', 'by and by', { session: 'cp', limit: 2 });
+    expect(two.moments.map((m) => m.id)).toEqual(['0', '1']);
+    expect(two.moment_sessions).toEqual([{ session_id: 'cp', total: 5 }]);
+    // A name match doesn't leak into a filtered search.
+    const named = await search(app, 'owner', 'quote', { session: 'q1', limit: 25 });
+    expect(named).toEqual({ q: 'quote', ...EMPTY, moment_sessions: [] });
+  });
+
+  it('a foreign, hidden or unknown session gives identical empty results', async () => {
+    const empty = (q: string) => ({ q, ...EMPTY, moment_sessions: [] });
+    for (const q of ['why should she', 'why did he do that', 'foreign', 'hidden']) {
+      for (const session of ['fu', 'hd', 'no-such-session', '']) {
+        expect(await search(app, 'owner', q, { session, limit: 25 }), `${q} ${session}`).toEqual(
+          empty(q),
+        );
+      }
+      // The ungranted member can't reach a granted-only session either.
+      expect(await search(app, 'ungranted', q, { session: 'tp', limit: 25 }), q).toEqual(empty(q));
+    }
+  });
+
+  it('moment_sessions: the uncapped count per session in moments, at most 1000', async () => {
+    await session(sys, 'bg', 's1', { title: 'Big', started: '2026-11-01T00:00:00Z' });
+    await session(sys, 'sm', 's1', { title: 'Small', started: '2026-10-30T00:00:00Z' });
+    // One "word" per bucket holding the passage text: 1,200 matching chunks in bg, 10 in sm.
+    for (const [sid, n] of [
+      ['bg', 1200],
+      ['sm', 10],
+    ] as const) {
+      await sys`insert into session_transcript_words
+                  (session_id, id, word, start_sec, end_sec, ordinal, created_at_utc)
+                select ${sid}, 'w' || g, 'the narwhal swam', g, g + 1, g * 40, ${NOW}
+                from generate_series(0, ${n - 1}::int) g`;
+    }
+    const r = await search(app, 'owner', 'narwhal', { limit: 25 });
+    expect(r.moments.map((m) => m.session_id)).toEqual(['bg', 'bg', 'bg', 'sm', 'sm', 'sm']);
+    expect(r.moment_sessions).toEqual([
+      { session_id: 'bg', total: 1000 },
+      { session_id: 'sm', total: 10 },
+    ]);
+    const one = await search(app, 'owner', 'narwhal', { session: 'bg', limit: 25 });
+    expect(one.moments).toHaveLength(25);
+    expect(one.moment_sessions).toEqual([{ session_id: 'bg', total: 1000 }]);
+  });
+
+  it('the candidate bound: a phrase matching more than 2,000 chunks still answers, within its candidates', async () => {
+    await session(sys, 'bd', 's1', { title: 'Bound', started: '2027-01-01T00:00:00Z' });
+    await sys`insert into session_transcript_words
+                (session_id, id, word, start_sec, end_sec, ordinal, created_at_utc)
+              select 'bd', 'w' || g, 'over and over we go', g, g + 1, g * 40, ${NOW}
+              from generate_series(0, 2499) g`;
+    const t0 = performance.now();
+    const r = await search(app, 'owner', 'over and over', { limit: 25 });
+    expect(performance.now() - t0).toBeLessThan(3000);
+    expect(r.moments.map((m) => m.session_id)).toEqual(['bd', 'bd', 'bd']);
+    expect(r.moment_sessions).toEqual([{ session_id: 'bd', total: 1000 }]);
+    const one = await search(app, 'owner', 'over and over', { session: 'bd', limit: 25 });
+    expect(one.moments).toHaveLength(25);
   });
 });

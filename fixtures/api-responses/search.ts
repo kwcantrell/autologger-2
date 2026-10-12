@@ -79,6 +79,12 @@ const captured = {
       "studio_id": "search-studio",
       "started_at_utc": "####-##-##T##:##:##.###Z"
     }
+  ],
+  "moment_sessions": [
+    {
+      "total": 3,
+      "session_id": "########-####-####-####-############"
+    }
   ]
 } as const;
 

@@ -36,6 +36,24 @@ describe('searchQuerySchema', () => {
     }
   });
 
+  it('passes session_id through, an empty one included (catalog-search D11)', () => {
+    expect(searchQuerySchema.parse({ q: 'ab', session_id: 'se1', limit: '25' })).toEqual({
+      q: 'ab',
+      session_id: 'se1',
+      limit: 25,
+    });
+    expect(searchQuerySchema.parse({ q: 'ab', session_id: '' })).toEqual({
+      q: 'ab',
+      session_id: '',
+      limit: 5,
+    });
+    expect(searchQuerySchema.parse({ q: 'ab', studio_id: '' })).toEqual({
+      q: 'ab',
+      studio_id: '',
+      limit: 5,
+    });
+  });
+
   it('passes studio_id and show_id through, and ignores unknown parameters', () => {
     expect(
       searchQuerySchema.parse({ q: 'ab', studio_id: 'st1', show_id: 'sh1', page: '2', x: 'y' }),
@@ -92,6 +110,8 @@ const body = (over: Record<string, unknown> = {}) => ({
       snippet: 'budget',
     },
   ],
+  // catalog-search D11: each session in `moments` with its total matches.
+  moment_sessions: [{ session_id: 's1', total: 12 }],
   ...over,
 });
 const ok = (b: unknown) => searchResponseSchema.safeParse(b).success;
@@ -101,7 +121,9 @@ const session = (over: Record<string, unknown>) => ({ ...body().sessions[0], ...
 describe('searchResponseSchema', () => {
   it('takes the full shape, and empty groups', () => {
     expect(ok(body())).toBe(true);
-    expect(ok({ q: 'ab', studios: [], shows: [], sessions: [], moments: [] })).toBe(true);
+    expect(
+      ok({ q: 'ab', studios: [], shows: [], sessions: [], moments: [], moment_sessions: [] }),
+    ).toBe(true);
   });
 
   it('is strict: no extra or missing keys at any level', () => {
@@ -123,6 +145,17 @@ describe('searchResponseSchema', () => {
       expect(ok(body({ moments: [moment({ kind, sec: 1.5 })] })), kind).toBe(false);
     }
     expect(ok(body({ moments: [moment({ kind: 'word' })] }))).toBe(false);
+  });
+
+  it('requires moment_sessions, strict entries of session_id and a numeric total (D11)', () => {
+    const { moment_sessions: _ms, ...noTotals } = body();
+    expect(ok(noTotals)).toBe(false);
+    expect(ok(body({ moment_sessions: [{ session_id: 's1', total: 0 }] }))).toBe(true);
+    expect(ok(body({ moment_sessions: [{ session_id: 's1', total: 1000 }] }))).toBe(true);
+    expect(ok(body({ moment_sessions: [{ session_id: 's1' }] }))).toBe(false);
+    expect(ok(body({ moment_sessions: [{ session_id: 's1', total: '3' }] }))).toBe(false);
+    expect(ok(body({ moment_sessions: [{ session_id: 's1', total: 3, extra: 1 }] }))).toBe(false);
+    expect(ok(body({ moment_sessions: [{ total: 3 }] }))).toBe(false);
   });
 
   it('takes match title or notes, and snippet a string or null', () => {

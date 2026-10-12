@@ -148,7 +148,9 @@ describe('catalog.app_user_id() and the per-transaction role (catalog-roles D1, 
         // catalog-search D2: the normaliser, the search, and the chunk refresh and trigger
         // functions (their grants: catalogSearch.pg.test.ts).
         'catalog.search_norm(text)',
-        'catalog.search(text,text,text,integer)',
+        // catalog-search D11: the phrase normaliser, and the search gains `p_session`.
+        'catalog.search_phrase_norm(text)',
+        'catalog.search(text,text,text,integer,text)',
         'catalog.refresh_transcript_chunks(text,bigint[])',
         'catalog.sync_transcript_chunks()',
       ]),

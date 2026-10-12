@@ -28,6 +28,7 @@ const RESULT: CatalogSearchResult = {
   shows: [{ id: 's1', name: 'Budget Hour', studio_id: 'st' }],
   sessions: [],
   moments: [],
+  moment_sessions: [],
 };
 
 /** A fake CatalogDb: records every statement and whether it ran inside `tx`; `onSearch` answers
@@ -78,8 +79,8 @@ describe('SearchStore (catalog-search D7)', () => {
       {
         inTx: true,
         op: 'first',
-        sql: 'select catalog.search(?::text, ?::text, ?::text, ?::int) as r',
-        binds: ['budget', 'st', null, 25],
+        sql: 'select catalog.search(?::text, ?::text, ?::text, ?::int, ?::text) as r',
+        binds: ['budget', 'st', null, 25, null],
       },
     ]);
   });
@@ -87,7 +88,18 @@ describe('SearchStore (catalog-search D7)', () => {
   it('defaults the filters to null and the limit to 5', async () => {
     const { db, sent } = fakeDb();
     await new SearchStore(db, new SearchSlots()).search({ q: 'budget' });
-    expect(sent[1]?.binds).toEqual(['budget', null, null, 5]);
+    expect(sent[1]?.binds).toEqual(['budget', null, null, 5, null]);
+  });
+
+  it('passes sessionId as the fifth argument, an empty one unchanged (catalog-search D11)', async () => {
+    const { db, sent } = fakeDb();
+    const store = new SearchStore(db, new SearchSlots());
+    await store.search({ q: 'budget', sessionId: 'se1', limit: 25 });
+    await store.search({ q: 'budget', sessionId: '' });
+    expect(sent.filter((x) => x.op === 'first').map((x) => x.binds)).toEqual([
+      ['budget', null, null, 25, 'se1'],
+      ['budget', null, null, 5, ''],
+    ]);
   });
 
   it('maps 57014 (statement cancelled by the timeout) to SearchTimeoutError', async () => {
@@ -217,8 +229,8 @@ describe('catalog.search on the facade', () => {
     await expect(a.search({ q: 'budget' })).resolves.toEqual(RESULT);
     await expect(b.search({ q: 'budget', showId: 's1', limit: 3 })).resolves.toEqual(RESULT);
     expect(sent.filter((s) => s.op === 'first').map((s) => s.binds)).toEqual([
-      ['budget', null, null, 5],
-      ['budget', null, 's1', 3],
+      ['budget', null, null, 5, null],
+      ['budget', null, 's1', 3, null],
     ]);
     expect(SEARCH_SLOTS.size).toBe(2);
     expect(SEARCH_SLOTS.waitMs).toBe(1000);

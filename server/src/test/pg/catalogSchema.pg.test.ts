@@ -547,13 +547,17 @@ const EXPECTED_SCHEMA: SchemaRecord = {
     'CREATE INDEX idx_session_audio_ordinal ON catalog.session_audio_segments USING btree (session_id, ordinal)',
     'CREATE INDEX idx_session_audio_r2_key ON catalog.session_audio_segments USING btree (session_id, r2_key)',
     // catalog-search D3: the search indexes.
+    // catalog-search D11: the phrase trigram indexes.
+    'CREATE INDEX idx_session_chunks_phrase_trgm ON catalog.session_transcript_chunks USING gin (catalog.search_phrase_norm(text) gin_trgm_ops)',
     'CREATE INDEX idx_session_chunks_search ON catalog.session_transcript_chunks USING gin (search_tsv)',
     'CREATE INDEX idx_session_dashboards_created ON catalog.session_dashboards USING btree (session_id, created_at_utc)',
+    'CREATE INDEX idx_session_events_phrase_trgm ON catalog.session_events USING gin (catalog.search_phrase_norm(message) gin_trgm_ops)',
     'CREATE INDEX idx_session_events_search ON catalog.session_events USING gin (search_tsv)',
     'CREATE INDEX idx_session_events_wall ON catalog.session_events USING btree (session_id, wall_time_utc, id)',
     'CREATE INDEX idx_session_paragraphs_ordinal ON catalog.session_transcript_paragraphs USING btree (session_id, ordinal)',
     'CREATE INDEX idx_session_sentiment_ordinal ON catalog.session_transcript_sentiment USING btree (session_id, ordinal)',
     'CREATE INDEX idx_session_topics_ordinal ON catalog.session_topics USING btree (session_id, ordinal)',
+    'CREATE INDEX idx_session_topics_phrase_trgm ON catalog.session_topics USING gin (catalog.search_phrase_norm(summary) gin_trgm_ops)',
     'CREATE INDEX idx_session_topics_search ON catalog.session_topics USING gin (search_tsv)',
     'CREATE INDEX idx_session_words_ordinal ON catalog.session_transcript_words USING btree (session_id, ordinal)',
     'CREATE INDEX idx_sessions_search_meta ON catalog.sessions USING gin (search_meta)',

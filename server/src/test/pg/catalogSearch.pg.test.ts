@@ -132,7 +132,9 @@ async function chunks(sql: postgres.Sql, sid?: string): Promise<Chunk[]> {
 
 const NEW_FUNCTIONS = [
   'catalog.search_norm(text)',
-  'catalog.search(text,text,text,integer)',
+  // catalog-search D11: the phrase normaliser, and the search with `p_session`.
+  'catalog.search_phrase_norm(text)',
+  'catalog.search(text,text,text,integer,text)',
   'catalog.refresh_transcript_chunks(text,bigint[])',
   'catalog.sync_transcript_chunks()',
 ];
@@ -146,6 +148,47 @@ describe('search extensions, normaliser and indexes (catalog-search D2, D3)', ()
     const [p] = await sql`select provolatile from pg_proc
                           where oid = 'catalog.search_norm(text)'::regprocedure`;
     expect(p?.provolatile).toBe('i');
+  });
+
+  it('search_phrase_norm: the phrase normaliser drops punctuation, whitespace separates words first, and is immutable (D11)', async () => {
+    const db = await createTestDatabase();
+    const sql = connect(db.admin);
+    const [r] = await sql`
+      select catalog.search_phrase_norm('I''m like, Why did he   DO that?') as a,
+             catalog.search_phrase_norm(E'tab\there — now') as b,
+             catalog.search_phrase_norm(E'  Ångström\n\nCAFÉ  ') as c,
+             catalog.search_phrase_norm('50% of_the a\\b') as d,
+             catalog.search_phrase_norm('привет, 中文!') as e,
+             catalog.search_phrase_norm('—') as f`;
+    expect(r).toEqual({
+      a: 'im like why did he do that',
+      b: 'tab here now',
+      c: 'angstrom cafe',
+      d: '50 ofthe ab',
+      e: 'привет 中文',
+      f: '',
+    });
+    const [p] = await sql`select provolatile from pg_proc
+                          where oid = 'catalog.search_phrase_norm(text)'::regprocedure`;
+    expect(p?.provolatile).toBe('i');
+  });
+
+  it('a 4-argument call resolves to the 5-argument search, the only one (D11)', async () => {
+    const db = await createTestDatabase();
+    await seedPolicyFixture(connect(db.system));
+    const sql = connect(db.admin);
+    const fns = await sql`select oid::regprocedure::text as f, pronargdefaults as d from pg_proc
+                          where pronamespace = 'catalog'::regnamespace and proname = 'search'`;
+    expect(fns.map((r) => ({ ...r }))).toEqual([
+      { f: 'catalog.search(text,text,text,integer,text)', d: 1 },
+    ]);
+    const out = await asUser(
+      connect(db.app),
+      'owner',
+      `select catalog.search('anything', null, null, 5)`,
+      `select catalog.search('anything', null, null, 5, null)`,
+    );
+    expect(out).toEqual([{ count: 1 }, { count: 1 }]);
   });
 
   it('catalog.search_english stems and folds accents in vectors and queries', async () => {
@@ -206,7 +249,22 @@ describe('search extensions, normaliser and indexes (catalog-search D2, D3)', ()
         `${table}.${col} trigram`,
       ).toBe(true);
     }
-    expect(defs).toHaveLength(8);
+    // catalog-search D11: the phrase trigram indexes.
+    for (const [table, col] of [
+      ['session_transcript_chunks', 'text'],
+      ['session_topics', 'summary'],
+      ['session_events', 'message'],
+    ]) {
+      expect(
+        defs.some(
+          (d) =>
+            d.includes(`ON catalog.${table} USING gin (catalog.search_phrase_norm(${col})`) &&
+            d.includes('gin_trgm_ops'),
+        ),
+        `${table}.${col} phrase trigram`,
+      ).toBe(true);
+    }
+    expect(defs).toHaveLength(11);
     const ops = await sql`
       select distinct o.opcnamespace::regnamespace::text as ns from pg_index i
       join pg_class c on c.oid = i.indexrelid
@@ -252,7 +310,8 @@ describe('search extensions, normaliser and indexes (catalog-search D2, D3)', ()
     const can: Record<string, [boolean, boolean]> = {
       // [catalog_user, catalog_system]
       'catalog.search_norm(text)': [true, true],
-      'catalog.search(text,text,text,integer)': [true, false],
+      'catalog.search_phrase_norm(text)': [true, true],
+      'catalog.search(text,text,text,integer,text)': [true, false],
       'catalog.refresh_transcript_chunks(text,bigint[])': [false, false],
       'catalog.sync_transcript_chunks()': [false, false],
     };
@@ -269,7 +328,7 @@ describe('search extensions, normaliser and indexes (catalog-search D2, D3)', ()
   it('the definer functions pin search_path to pg_catalog, pg_temp; search sets the trigram threshold', async () => {
     const db = await createTestDatabase();
     const sql = connect(db.admin);
-    for (const f of NEW_FUNCTIONS.slice(1)) {
+    for (const f of NEW_FUNCTIONS.slice(2)) {
       const [r] = await sql`select p.prosecdef, p.proconfig, pg_get_userbyid(p.proowner) as owner
                             from pg_proc p where p.oid = ${f}::regprocedure`;
       expect(r?.prosecdef, f).toBe(true);
@@ -277,8 +336,8 @@ describe('search extensions, normaliser and indexes (catalog-search D2, D3)', ()
       expect(r?.proconfig, f).toEqual(expect.arrayContaining(['search_path=pg_catalog, pg_temp']));
     }
     const [s] = await sql`select proconfig, provolatile from pg_proc
-                          where oid = 'catalog.search(text,text,text,integer)'::regprocedure`;
-    expect(s?.proconfig).toEqual(expect.arrayContaining(['pg_trgm.word_similarity_threshold=0.4']));
+                          where oid = 'catalog.search(text,text,text,integer,text)'::regprocedure`;
+    expect(s?.proconfig).toEqual(expect.arrayContaining(['pg_trgm.word_similarity_threshold=0.5']));
     expect(s?.provolatile).toBe('s');
   });
 

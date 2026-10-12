@@ -124,6 +124,7 @@ import type {
   ProfilePayload,
   ProfileShow,
   SearchMoment,
+  SearchMomentSession,
   SearchResponse,
   Session,
   SessionCreateResponse,
@@ -831,6 +832,16 @@ describe('catalog search — the response `GET /api/search` answers (catalog-sea
     expect(match).toBe('title');
     expect(session.snippet).toBeNull();
     expect(check.moments.map((m) => m.kind).sort()).toEqual(['event', 'topic', 'transcript']);
+  });
+
+  it('moment_sessions gives each moment session its total (catalog-search D11)', () => {
+    const totals: SearchMomentSession[] = search.moment_sessions;
+    expect(totals).toHaveLength(1);
+    const total: number = totals[0].total;
+    expect(total).toBe(3);
+    expect(new Set(search.moments.map((m) => m.session_id))).toEqual(
+      new Set(totals.map((t) => t.session_id)),
+    );
   });
 
   it('a transcript moment carries sec as a number; topic and event moments carry null', () => {
