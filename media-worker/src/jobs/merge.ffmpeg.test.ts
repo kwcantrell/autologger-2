@@ -148,6 +148,42 @@ d('runMerge with ffmpeg', () => {
     expect(await readdir(join(tree.blobDir, JOB_DIR))).toEqual(['merged-a1.webm']);
   });
 
+  // media-worker D.8: Chrome MediaRecorder rollover chunks (no duration on the last block,
+  // millisecond block times) used to merge into a WebM whose timestamps repeat at each seam, and
+  // the strict decode (any error-level line fails) turned every real merge into decode-failed.
+  it('three Chrome rollover chunks → one WebM, verified exactly, seams at 2280 ms steps', async () => {
+    const keys = await Promise.all(
+      [1, 2, 3].map((n) => tree.copyFixture(`chrome-rollover-${n}.webm`, `cr_${n}.webm`)),
+    );
+    const r = resultOf(
+      await merge([
+        { id: 'a', key: keys[0], start: 0 },
+        { id: 'b', key: keys[1], start: 3 },
+        { id: 'c', key: keys[2], start: 6 },
+      ]),
+    );
+    const each = await frames(fx('chrome-rollover-1.webm'), false, true);
+    expect(each).toBe(38 * 2880);
+    expect(r.verify).toEqual({ merged_samples: 3 * each, expected_samples: 3 * each });
+    expect(await frames(join(tree.blobDir, r.key), false, true)).toBe(3 * each);
+    expect(r.seams.map((s) => s.offset_ms)).toEqual([0, 2280, 4560]);
+    expect(r.duration_ms).toBe(6840);
+  });
+
+  it('Chrome chunks with a real microphone clock’s block times (24-sample seam overlap before D.8) → done', async () => {
+    const keys = await Promise.all(
+      [1, 2, 3].map((n) => tree.copyFixture(`chrome-rollover-drift-${n}.webm`, `crd_${n}.webm`)),
+    );
+    const out = await merge([
+      { id: 'a', key: keys[0], start: 0 },
+      { id: 'b', key: keys[1], start: 3 },
+      { id: 'c', key: keys[2], start: 6 },
+    ]);
+    const r = resultOf(out);
+    expect(r.verify).toEqual({ merged_samples: 3 * 38 * 2880, expected_samples: 3 * 38 * 2880 });
+    expect(r.seams.map((s) => s.offset_ms)).toEqual([0, 2280, 4560]);
+  });
+
   it('Ogg + WebM Opus → WebM, exact', async () => {
     const a = await tree.copyFixture('seg5-opus.ogg', 'm2_a.ogg');
     const b = await tree.copyFixture('seg1.webm', 'm2_b.webm');

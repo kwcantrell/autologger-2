@@ -734,6 +734,37 @@ environments" ("Dev, stage and prod compared"). No other README section is touch
   Evidence: `npx vitest run src/api/types.conformance.test.ts src/apiResponseShapes.repo.test.ts
   src/pages/index/utils/chunkUploadQueue.test.ts` → `Test Files 3 passed, Tests 176 passed`;
   `TransportControls` → `2 passed, 6 tests`; full suite and tsc as in D.5.
+- [x] D.8 Bug (test VM, 2026-10-12): Chrome rollover chunks merged into a WebM with non-monotonic
+  timestamps at every seam (`non monotonically increasing dts … 973536 >= 973536`, `1926072 >=
+  1926048`), so the worker's strict decode failed every real merge `decode-failed`. Root cause
+  (confirmed with mediabunny on the real chunks, locally only): Chrome's WebM leaves the last block
+  without a duration (`packet.duration` 0), so the next input started at the previous input's last
+  packet time; its block times are also millisecond-rounded on a real clock (0.059/0.061 s), which
+  put the next chunk 24 samples before the decoded end. Fix in `audioMerge.ts` `mergeGroup`: every
+  packet is written at the running end of what was written, advanced by its exact duration (Opus:
+  TOC, `opusPacketSamples`; FLAC: block size; else the container's, else the previous packet's,
+  else an AAC frame), so timestamps are strictly increasing and `SegmentOffset`s equal the inputs'
+  untrimmed sample sums, the same sums `media-worker/src/jobs/merge.ts` computes seams from
+  (merge.ts unchanged). Fixtures (45 KB, synthetic, provenance in
+  `chrome-rollover.source.txt`): `chrome-rollover-{1,2,3}.webm` from headless Chromium 156 with a
+  fake test-tone microphone (stop/start on one stream), and `chrome-rollover-drift-{1,2,3}.webm`,
+  the same packets with a real clock's 59.6 ms block times. Test first:
+  `packages/transcription/src/audioMerge.chrome.test.ts` (strictly increasing timestamps, offsets
+  on the 60 ms grid, pinned-ffmpeg decode with `-xerror -loglevel error` gives empty stderr and
+  exactly 3 × 38 × 2880 samples, raw f32le and the worker's wav counting decode) and
+  `media-worker/src/jobs/merge.ffmpeg.test.ts` (the drift chunks merge `done`, verify exact,
+  seams `[0, 2280, 4560]`).
+  Evidence: red with the old `audioMerge.ts` (`git stash push` of that file): transcription
+  `npx vitest run src/audioMerge.chrome.test.ts` → `5 failed | 1 passed` (`expected 2.22 to be
+  greater than 2.22`; stderr `[f32le …] … non monotonically increasing dts … 106560 >= 106560`);
+  worker `npx vitest run src/jobs/merge.ffmpeg.test.ts -t Chrome` → `expected done, got
+  {"kind":"fail","error":"decode-failed"}`. Green: `npm run test -w packages/transcription` →
+  `Tests 101 passed`; `cd media-worker && npx vitest run` → `Test Files 9 passed, Tests 111
+  passed` (merge.ffmpeg `14 passed` against the pinned image); both tsc clean; server unit `603
+  passed | 5 skipped`. Local confirmation on the VM's real chunks (not committed): old →
+  `decode-failed`, fixed → `done`, `verify {merged_samples: 3337920, expected_samples: 3337920}`,
+  seams `[0, 20340, 40260, 60240]`; pinned-ffmpeg f32le decode of the merged file has no stderr
+  and 13351680 bytes = the inputs' sum.
 
 ## V. Verify (after all workstreams)
 
