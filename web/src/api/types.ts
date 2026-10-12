@@ -775,13 +775,16 @@ export interface ProvidersResponse {
   claude_cli_allowed: boolean;
 }
 
-/** The `PUT /api/me/providers/:kind` body. `api_key` is omitted to keep the saved key. */
-export interface ProviderSaveBody {
-  provider: ProviderId;
-  base_url?: string | null;
-  model: string;
-  api_key?: string;
-}
+/** The `PUT /api/me/providers/:kind` body. `api_key` is omitted to keep the saved key. The keyless
+ * `claude-cli` body is exactly `{provider}` (ai-sdk-agent-harness D2). */
+export type ProviderSaveBody =
+  | {
+      provider: Exclude<ProviderId, 'claude-cli'>;
+      base_url?: string | null;
+      model: string;
+      api_key?: string;
+    }
+  | { provider: 'claude-cli' };
 
 /** A connection test result: one of the server's fixed strings. */
 export interface ProviderTestResponse {

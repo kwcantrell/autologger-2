@@ -71,6 +71,14 @@ const LLM_PROVIDERS = [
   { value: 'google', label: 'Google', model: 'gemini-flash-latest', key: 'AIza…' },
 ] as const;
 
+/** The keyless operator choice (ai-sdk-agent-harness D2, D8): offered only to allowlisted accounts,
+ * or shown as the current choice when it is the saved one. The server stores its model as the
+ * provider id itself. */
+const CLAUDE_CLI = 'claude-cli';
+const CLAUDE_CLI_LABEL = 'Claude CLI (operator)';
+const CLAUDE_CLI_HELP =
+  "Runs on this server's Claude CLI login. Available only to operator accounts.";
+
 const APPROVAL_NOTE = 'Transcription and AI features are limited to approved users on this server.';
 
 function fromSaved(kind: Kind, c: ProviderCredential | null): ProviderDraft {
@@ -153,6 +161,10 @@ export function AdvancedSection() {
                   <ProviderPanel
                     kind={kind}
                     saved={data[kind]}
+                    offerClaudeCli={
+                      kind === 'llm' &&
+                      (data.claude_cli_allowed || data.llm?.provider === CLAUDE_CLI)
+                    }
                     value={value}
                     baseline={baseline}
                     onChange={(patch) =>
@@ -190,6 +202,7 @@ const COPY: Record<Kind, { title: string; description: string }> = {
 function ProviderPanel({
   kind,
   saved,
+  offerClaudeCli,
   value,
   baseline,
   onChange,
@@ -198,6 +211,7 @@ function ProviderPanel({
 }: {
   kind: Kind;
   saved: ProviderCredential | null;
+  offerClaudeCli: boolean;
   value: ProviderDraft;
   baseline: ProviderDraft;
   onChange: (patch: Partial<ProviderDraft>) => void;
@@ -214,6 +228,7 @@ function ProviderPanel({
   const [result, setResult] = useState<ProviderTestResponse | null>(null);
 
   const configured = saved !== null;
+  const cli = kind === 'llm' && value.provider === CLAUDE_CLI;
   const needsBaseUrl = kind === 'llm' && value.provider === 'openai-compatible';
   const llm = LLM_PROVIDERS.find((p) => p.value === value.provider);
   // A stored key is bound to its provider and host: a new one needs the key entered again.
@@ -222,12 +237,14 @@ function ProviderPanel({
     kind === 'llm' &&
     (value.provider !== saved.provider ||
       (needsBaseUrl && originOf(value.baseUrl) !== originOf(saved.base_url ?? '')));
-  const keyInput = !configured || replacing || destinationChanged;
+  const keyInput = !cli && (!configured || replacing || destinationChanged);
   const dirty = JSON.stringify(value) !== JSON.stringify(baseline);
+  // The Claude CLI takes no typed field: it runs on the server's own login.
   const valid =
-    value.model.trim() !== '' &&
-    (!needsBaseUrl || value.baseUrl.trim() !== '') &&
-    (!keyInput || value.newKey.trim() !== '');
+    cli ||
+    (value.model.trim() !== '' &&
+      (!needsBaseUrl || value.baseUrl.trim() !== '') &&
+      (!keyInput || value.newKey.trim() !== ''));
 
   function change(patch: Partial<ProviderDraft>) {
     setResult(null);
@@ -237,12 +254,14 @@ function ProviderPanel({
 
   async function handleSave() {
     setSaveError(null);
-    const body: ProviderSaveBody = {
-      provider: value.provider as ProviderSaveBody['provider'],
-      model: value.model.trim(),
-      ...(needsBaseUrl ? { base_url: value.baseUrl.trim() } : {}),
-      ...(value.newKey.trim() ? { api_key: value.newKey.trim() } : {}),
-    };
+    const body: ProviderSaveBody = cli
+      ? { provider: CLAUDE_CLI }
+      : {
+          provider: value.provider as Exclude<ProviderSaveBody['provider'], typeof CLAUDE_CLI>,
+          model: value.model.trim(),
+          ...(needsBaseUrl ? { base_url: value.baseUrl.trim() } : {}),
+          ...(value.newKey.trim() ? { api_key: value.newKey.trim() } : {}),
+        };
     try {
       const credential = await save.mutateAsync(body);
       save.reset();
@@ -256,8 +275,10 @@ function ProviderPanel({
 
   async function handleRemove() {
     const ok = await confirm({
-      title: 'Remove key',
-      message: `Remove your ${COPY[kind].title.toLowerCase()} key? Features that use it stop working until you add one again.`,
+      title: cli ? 'Remove Claude CLI' : 'Remove key',
+      message: cli
+        ? 'Stop using the Claude CLI as your language model? AI chat, topics and events stop working until you choose a model again.'
+        : `Remove your ${COPY[kind].title.toLowerCase()} key? Features that use it stop working until you add one again.`,
       confirmLabel: 'Remove',
       danger: true,
     });
@@ -285,6 +306,18 @@ function ProviderPanel({
     }
   }
 
+  const removeButton = (
+    <Button
+      variant="ghost"
+      size="sm"
+      disabled={remove.isPending}
+      onClick={() => void handleRemove()}
+    >
+      {remove.isPending && <Spinner data-icon="inline-start" aria-hidden="true" />}
+      Remove
+    </Button>
+  );
+
   return (
     <Card data-slot="settings-provider" data-kind={kind} aria-label={COPY[kind].title}>
       <CardHeader>
@@ -306,22 +339,39 @@ function ProviderPanel({
             label="Provider"
             htmlFor={id('provider')}
             description={
-              kind === 'llm'
-                ? 'Where AI chat, topics and events run, on your own account.'
-                : 'DeepGram for now. More providers are coming.'
+              cli
+                ? CLAUDE_CLI_HELP
+                : kind === 'llm'
+                  ? 'Where AI chat, topics and events run, on your own account.'
+                  : 'DeepGram for now. More providers are coming.'
             }
           >
-            <Select value={value.provider} onValueChange={(v) => change({ provider: v })}>
+            <Select
+              value={value.provider}
+              onValueChange={(v) =>
+                // The saved CLI row's model is its provider id: don't carry it to a real provider.
+                change(
+                  value.model === CLAUDE_CLI && v !== CLAUDE_CLI
+                    ? { provider: v, model: '' }
+                    : { provider: v },
+                )
+              }
+            >
               <SelectTrigger id={id('provider')} className="w-full">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
                 {kind === 'llm' ? (
-                  LLM_PROVIDERS.map((p) => (
-                    <SelectItem key={p.value} value={p.value}>
-                      {p.label}
-                    </SelectItem>
-                  ))
+                  <>
+                    {LLM_PROVIDERS.map((p) => (
+                      <SelectItem key={p.value} value={p.value}>
+                        {p.label}
+                      </SelectItem>
+                    ))}
+                    {offerClaudeCli && (
+                      <SelectItem value={CLAUDE_CLI}>{CLAUDE_CLI_LABEL}</SelectItem>
+                    )}
+                  </>
                 ) : (
                   <SelectItem value="deepgram">DeepGram</SelectItem>
                 )}
@@ -345,71 +395,69 @@ function ProviderPanel({
               />
             </SettingRow>
           )}
-          <SettingRow
-            label="Model"
-            htmlFor={id('model')}
-            description={
-              kind === 'llm'
-                ? `The model id, for example ${llm?.model ?? 'gpt-4o-mini'}.`
-                : 'nova-3 supports speaker labels.'
-            }
-          >
-            <Input
-              id={id('model')}
-              spellCheck={false}
-              placeholder={kind === 'llm' ? (llm?.model ?? 'gpt-4o-mini') : 'nova-3'}
-              value={value.model}
-              onChange={(e) => change({ model: e.target.value })}
-            />
-          </SettingRow>
-          <FieldSeparator />
-          <SettingRow
-            label="API key"
-            htmlFor={keyInput ? id('key') : undefined}
-            description={
-              destinationChanged
-                ? 'A new provider or host needs its key entered again.'
-                : keyInput
-                  ? 'Paste the key. It is encrypted when you save.'
-                  : `Key set, ending in ••${saved?.key_last4}.`
-            }
-          >
-            {keyInput ? (
-              <Input
-                id={id('key')}
-                type="password"
-                autoComplete="off"
-                spellCheck={false}
-                placeholder={kind === 'llm' ? (llm?.key ?? 'sk-…') : 'DeepGram API key'}
-                value={value.newKey}
-                onChange={(e) => change({ newKey: e.target.value })}
-              />
-            ) : (
-              <>
-                <Button variant="outline" size="sm" onClick={() => setReplacing(true)}>
-                  <KeyRoundIcon data-icon="inline-start" aria-hidden="true" />
-                  Replace
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  disabled={remove.isPending}
-                  onClick={() => void handleRemove()}
-                >
-                  {remove.isPending && <Spinner data-icon="inline-start" aria-hidden="true" />}
-                  Remove
-                </Button>
-              </>
-            )}
-          </SettingRow>
+          {!cli && (
+            <>
+              <SettingRow
+                label="Model"
+                htmlFor={id('model')}
+                description={
+                  kind === 'llm'
+                    ? `The model id, for example ${llm?.model ?? 'gpt-4o-mini'}.`
+                    : 'nova-3 supports speaker labels.'
+                }
+              >
+                <Input
+                  id={id('model')}
+                  spellCheck={false}
+                  placeholder={kind === 'llm' ? (llm?.model ?? 'gpt-4o-mini') : 'nova-3'}
+                  value={value.model}
+                  onChange={(e) => change({ model: e.target.value })}
+                />
+              </SettingRow>
+              <FieldSeparator />
+              <SettingRow
+                label="API key"
+                htmlFor={keyInput ? id('key') : undefined}
+                description={
+                  destinationChanged
+                    ? 'A new provider or host needs its key entered again.'
+                    : keyInput
+                      ? 'Paste the key. It is encrypted when you save.'
+                      : `Key set, ending in ••${saved?.key_last4}.`
+                }
+              >
+                {keyInput ? (
+                  <Input
+                    id={id('key')}
+                    type="password"
+                    autoComplete="off"
+                    spellCheck={false}
+                    placeholder={kind === 'llm' ? (llm?.key ?? 'sk-…') : 'DeepGram API key'}
+                    value={value.newKey}
+                    onChange={(e) => change({ newKey: e.target.value })}
+                  />
+                ) : (
+                  <>
+                    <Button variant="outline" size="sm" onClick={() => setReplacing(true)}>
+                      <KeyRoundIcon data-icon="inline-start" aria-hidden="true" />
+                      Replace
+                    </Button>
+                    {removeButton}
+                  </>
+                )}
+              </SettingRow>
+            </>
+          )}
           <SettingRow
             label="Connection"
             description={
               dirty
                 ? 'Save your changes first: the test checks the saved key and model.'
-                : kind === 'stt'
-                  ? 'Checks the saved key and model with a quarter second of silence.'
-                  : 'Checks the saved key and model without using any credit.'
+                : cli
+                  ? "Checks that this account can use the server's Claude CLI."
+                  : kind === 'stt'
+                    ? 'Checks the saved key and model with a quarter second of silence.'
+                    : 'Checks the saved key and model without using any credit.'
             }
           >
             <Button
@@ -425,6 +473,8 @@ function ProviderPanel({
               )}
               {test.isPending ? 'Testing…' : 'Test connection'}
             </Button>
+            {/* The keyless CLI row has no key row, so its Remove sits here (D8). */}
+            {cli && saved?.provider === CLAUDE_CLI && removeButton}
           </SettingRow>
           {result && (
             <Alert role="status" variant={result.ok ? 'default' : 'destructive'}>

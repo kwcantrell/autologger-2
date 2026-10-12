@@ -279,13 +279,15 @@ The integration tests point SDK routes at a local fake provider through a dev-mo
 
 ## 8. Web (design D8)
 
-- [ ] 8.1 Test first, in `AdvancedSection.test.tsx` (D9 category 7, plus new cases):
+- [x] 8.1 Test first, in `AdvancedSection.test.tsx` (D9 category 7, plus new cases):
   - the CLI option appears only when `claude_cli_allowed`, or when it is the saved choice;
   - selecting it hides Base URL, Model and API key and shows the help line;
   - saving sends `{provider:"claude-cli"}`;
   - the saved state shows Connected with no key row.
 
   Then the section. Green.
+  - Evidence: red, a new `describe` "Settings › Advanced — the Claude CLI option": `cd web && npx vitest run src/pages/index/components/settings/AdvancedSection.test.tsx` -> `× an allowlisted user is offered it after the four providers`, `× selecting it hides Base URL, Model and API key, shows the help line, and saves {provider} alone`, `× the saved state shows Connected with no key row, and offers Test connection and Remove`, `× a saved claude-cli user later removed from the list still sees it as the current choice`, `× switching from a saved Claude CLI to another provider needs a model and a key`, `Tests  5 failed | 11 passed (16)` (log `sdk-8.1-red.log`). Already passing, as expected: the not-allowlisted user is offered exactly the four providers. Green: the same file -> `Tests  16 passed (16)` (log `sdk-8.1-green.log`); `npm run typecheck` -> exit 0, 0 `error TS` (log `sdk-8.1-tc.log`).
+  - Evidence: `AdvancedSection.tsx` adds "Claude CLI (operator)" after the four providers when `claude_cli_allowed` or the saved `llm.provider` is `claude-cli`; with it selected the Model, separator and API key rows are not rendered, the Provider row's help reads "Runs on this server's Claude CLI login. Available only to operator accounts.", Save is valid with no typed field and sends `{provider: "claude-cli"}`, and a saved CLI row shows Connected with Test connection and Remove in the Connection row (its confirm names the CLI, not a key). Leaving a saved CLI for another provider clears the stored `claude-cli` model and asks for the key. `web/src/api/types.ts`: `ProviderSaveBody` becomes a union with the exact `{provider: 'claude-cli'}` body. D9 category 7: no existing case asserted the option count, so no existing assertion changed; the test's fake `PUT` gains a `claude-cli` branch returning the keyless row (`key_last4: null`, model `claude-cli`), as the server does.
 - [ ] 8.2 Test first, in `AiChat.test.tsx`, `generateLatch.test.tsx` and
   `eventGenerateLatch.test.tsx` (D9 categories 2 and 3):
   - the new not-configured copy points to Settings → Advanced;

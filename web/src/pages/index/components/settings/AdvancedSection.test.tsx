@@ -74,6 +74,17 @@ const SAVED_LLM: ProviderCredential = {
   updated_at: T,
 };
 
+const SAVED_CLI: ProviderCredential = {
+  kind: 'llm',
+  provider: 'claude-cli',
+  base_url: null,
+  model: 'claude-cli',
+  key_last4: null,
+  updated_at: T,
+};
+const CLI_LABEL = 'Claude CLI (operator)';
+const CLI_HELP = "Runs on this server's Claude CLI login. Available only to operator accounts.";
+
 let state: ProvidersResponse;
 let testResult: ProviderTestResponse;
 let saveError: ApiError | null;
@@ -98,14 +109,21 @@ function route() {
         if (saveError) throw saveError;
         const body = JSON.parse(String(opts?.body)) as ProviderSaveBody;
         const prev = state[kind];
-        const saved: ProviderCredential = {
-          kind,
-          provider: body.provider,
-          base_url: body.base_url ?? null,
-          model: body.model,
-          key_last4: body.api_key ? body.api_key.slice(-4) : (prev?.key_last4 ?? '????'),
-          updated_at: T,
-        };
+        // ai-sdk-agent-harness D2: the keyless claude-cli row stores the fixed model and no key.
+        const saved: ProviderCredential =
+          body.provider === 'claude-cli'
+            ? { ...SAVED_CLI, updated_at: T }
+            : {
+                kind,
+                provider: body.provider,
+                base_url: ('base_url' in body ? body.base_url : null) ?? null,
+                model: 'model' in body ? body.model : '',
+                key_last4:
+                  'api_key' in body && body.api_key
+                    ? body.api_key.slice(-4)
+                    : (prev?.key_last4 ?? '????'),
+                updated_at: T,
+              };
         state = { ...state, [kind]: saved };
         return saved;
       }
@@ -331,5 +349,106 @@ describe('Settings › Advanced (web-ui-system "Settings manages the user\'s AI 
       'Transcription and AI features are limited to approved users on this server.',
     );
     expect((within(card('llm')).getByLabelText('Model') as HTMLInputElement).disabled).toBe(false);
+  });
+});
+
+// ai-sdk-agent-harness task 8.1 (design D8; web-ui-system "Settings manages the user's AI
+// providers", "The Claude CLI option").
+describe('Settings › Advanced — the Claude CLI option (ai-sdk-agent-harness D8)', () => {
+  async function optionNames(): Promise<string[]> {
+    const trigger = within(card('llm')).getByLabelText('Provider');
+    act(() => {
+      trigger.focus();
+    });
+    fireEvent.keyDown(trigger, { key: 'ArrowDown' });
+    const list = await screen.findByRole('listbox');
+    const names = within(list)
+      .getAllByRole('option')
+      .map((o) => o.textContent ?? '');
+    fireEvent.keyDown(list, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('listbox')).toBeNull());
+    return names;
+  }
+
+  it('a user who is not allowlisted, with no saved claude-cli, is not offered it', async () => {
+    renderSection();
+    await waitFor(() => expect(card('llm')).not.toBeNull());
+    expect(await optionNames()).toEqual(['OpenAI-compatible', 'Anthropic', 'OpenAI', 'Google']);
+  });
+
+  it('an allowlisted user is offered it after the four providers', async () => {
+    state = { ...state, claude_cli_allowed: true };
+    renderSection();
+    await waitFor(() => expect(card('llm')).not.toBeNull());
+    expect(await optionNames()).toEqual([
+      'OpenAI-compatible',
+      'Anthropic',
+      'OpenAI',
+      'Google',
+      CLI_LABEL,
+    ]);
+  });
+
+  it('selecting it hides Base URL, Model and API key, shows the help line, and saves {provider} alone', async () => {
+    state = { ...state, claude_cli_allowed: true };
+    renderSection();
+    await waitFor(() => expect(card('llm')).not.toBeNull());
+    const llm = card('llm');
+    await choose(within(llm).getByLabelText('Provider'), CLI_LABEL);
+    expect(within(llm).queryByLabelText('Base URL')).toBeNull();
+    expect(within(llm).queryByLabelText('Model')).toBeNull();
+    expect(within(llm).queryByLabelText('API key')).toBeNull();
+    expect(within(llm).queryByText('API key')).toBeNull();
+    expect(within(llm).getByText(CLI_HELP)).not.toBeNull();
+    // Save is enabled with no typed field.
+    expect((saveIn('llm') as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(saveIn('llm'));
+    await waitFor(() => expect(calls('PUT', 'me/providers/llm')).toHaveLength(1));
+    expect(JSON.parse(String(calls('PUT')[0]?.[1]?.body))).toEqual({ provider: 'claude-cli' });
+    await waitFor(() => expect(within(card('llm')).getByText('Connected')).not.toBeNull());
+    expect(
+      (within(card('llm')).getByRole('button', { name: /Test connection/ }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(false);
+  });
+
+  it('the saved state shows Connected with no key row, and offers Test connection and Remove', async () => {
+    state = { ...state, llm: SAVED_CLI, claude_cli_allowed: true };
+    renderSection();
+    await waitFor(() => expect(within(card('llm')).getByText('Connected')).not.toBeNull());
+    const llm = card('llm');
+    expect(within(llm).queryByText('API key')).toBeNull();
+    expect(within(llm).queryByText(/Key set, ending in/)).toBeNull();
+    expect(llm.textContent).not.toContain('null');
+    expect(within(llm).getByText(CLI_HELP)).not.toBeNull();
+    expect(within(llm).getByRole('button', { name: /Test connection/ })).not.toBeNull();
+    fireEvent.click(within(llm).getByRole('button', { name: 'Remove' }));
+    const confirm = await screen.findByRole('alertdialog');
+    fireEvent.click(within(confirm).getByRole('button', { name: 'Remove' }));
+    await waitFor(() => expect(calls('DELETE', 'me/providers/llm')).toHaveLength(1));
+    await within(card('llm')).findByText('Not set up');
+  });
+
+  it('a saved claude-cli user later removed from the list still sees it as the current choice', async () => {
+    state = { ...state, llm: SAVED_CLI, claude_cli_allowed: false };
+    renderSection();
+    await waitFor(() => expect(within(card('llm')).getByText('Connected')).not.toBeNull());
+    expect(within(card('llm')).getByLabelText('Provider').textContent).toContain(CLI_LABEL);
+    expect(await optionNames()).toContain(CLI_LABEL);
+  });
+
+  it('switching from a saved Claude CLI to another provider needs a model and a key', async () => {
+    state = { ...state, llm: SAVED_CLI, claude_cli_allowed: true };
+    renderSection();
+    await waitFor(() => expect(within(card('llm')).getByText('Connected')).not.toBeNull());
+    const llm = card('llm');
+    await choose(within(llm).getByLabelText('Provider'), 'Anthropic');
+    const model = within(llm).getByLabelText('Model') as HTMLInputElement;
+    expect(model.value).toBe('');
+    await within(llm).findByText('A new provider or host needs its key entered again.');
+    typeInto(model, 'claude-sonnet-4-5');
+    expect((saveIn('llm') as HTMLButtonElement).disabled).toBe(true);
+    typeInto(within(llm).getByLabelText('API key'), 'sk-ant-test-1234');
+    expect((saveIn('llm') as HTMLButtonElement).disabled).toBe(false);
   });
 });
