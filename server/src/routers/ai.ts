@@ -32,8 +32,9 @@ import { chatRequestSchema } from '@autologger/contract';
 import { type Context, Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import type { AppEnv } from '../appEnv';
-import { aiChatConfigured, aiChatMaxBudgetUsd, aiChatTimeoutSec } from '../env';
+import { aiChatMaxBudgetUsd, aiChatSdkLimits, aiChatTimeoutSec } from '../env';
 import { ApiError } from '../httpError';
+import { callerLlmRoute, sdkTurnSpec } from './_aiRoute';
 import { claimAiLease } from './_aiSlot';
 import { requireRunFeature, requireSession, requireUser, sessionCaller } from './_helpers';
 
@@ -55,8 +56,8 @@ export const AI_CHAT_ALLOWED_TOOLS = [
   'create_topic',
 ] as const satisfies readonly AiMcpToolName[];
 
-const NOT_CONFIGURED_DETAIL =
-  'AI chat is not configured on this deployment. Set CLAUDE_CLI_PATH to the claude CLI to enable it.';
+// ai-sdk-agent-harness D1: the caller has no usable language model route.
+const NOT_CONFIGURED_DETAIL = 'Add a language model in Settings → Advanced to use the assistant.';
 const FOREIGN_CLAUDE_SESSION_ID_DETAIL =
   'claude_session_id was not issued for this session. Omit it to start a new conversation, or resume with the ' +
   "id from this session's most recent done event.";
@@ -119,9 +120,11 @@ aiRouter.post('/api/sessions/:sessionId/ai/chat', async (c) => {
   // masked as 404 before the config/single-flight state below can leak.
   await requireSession(c, sessionId);
 
-  // 3. Configuration gate — 503, before body parse and before any spawn
-  // (design D8).
-  if (!aiChatConfigured(c.env.config)) {
+  // 3. Configuration gate — 503, before body parse and before any spawn or model request: the
+  // caller's route (ai-sdk-agent-harness D1), resolved per request — the Claude CLI for an
+  // allowlisted caller who chose it, the AI SDK on the caller's own credential, or none.
+  const route = await callerLlmRoute(c);
+  if (route === null) {
     throw new ApiError(503, NOT_CONFIGURED_DETAIL);
   }
   // 3b. Approved users only (run-status-and-sweeper D9) — 403, before the body and any spawn.
@@ -139,8 +142,10 @@ aiRouter.post('/api/sessions/:sessionId/ai/chat', async (c) => {
   // enforces "non-empty string when present" — ownership is checked here,
   // against the kv binding this same handler writes on `done`.
   const userId = requireUser(c).id;
+  // The AI SDK route ignores `claude_session_id` and never checks its binding (D6): a stale id
+  // from an earlier CLI turn is harmless there.
   let resumeSessionId: string | undefined;
-  if (body.claude_session_id) {
+  if (route.kind === 'cli' && body.claude_session_id) {
     if (!(await resumeAccepted(c, body.claude_session_id, sessionId, userId))) {
       throw new ApiError(422, FOREIGN_CLAUDE_SESSION_ID_DETAIL);
     }
@@ -169,29 +174,44 @@ aiRouter.post('/api/sessions/:sessionId/ai/chat', async (c) => {
   // together this preserves the Phase 1 "slot release in finally" seam and
   // "no orphan process, ever" (spec "Subprocess lifecycle").
   return streamSSE(c, async (stream) => {
+    let outcome: Awaited<ReturnType<typeof driveAiTurn>> | undefined;
     try {
-      const outcome = await driveAiTurn({
+      const common = {
         clock: c.env.ports.clock,
         registry: c.env.ports.sessions,
         caller: sessionCaller(c),
-        cliPath: c.env.config.CLAUDE_CLI_PATH.trim(),
         sessionId,
         message: body.message,
         // Explicit tool surface (D7, task 3.4): argv allowlist AND server-side
         // MCP registration both name exactly the three chat tools — no
         // reliance on either omit-path default, so a growing registry can
         // never widen a chat turn.
-        allowedTools: AI_CHAT_ALLOWED_TOOLS,
         mcpContext: { tools: AI_CHAT_ALLOWED_TOOLS },
-        maxBudgetUsd: aiChatMaxBudgetUsd(c.env.config),
         timeoutMs: aiChatTimeoutSec(c.env.config) * 1000,
-        resumeSessionId,
-        emit: async (event) => {
+        emit: async (event: { event: string; data: Record<string, unknown> }) => {
           await stream.writeSSE({ event: event.event, data: JSON.stringify(event.data) });
         },
         abortSignal: c.req.raw.signal,
-      });
-      if (outcome.ok) {
+      };
+      outcome = await driveAiTurn(
+        route.kind === 'cli'
+          ? {
+              ...common,
+              cliPath: c.env.config.CLAUDE_CLI_PATH.trim(),
+              allowedTools: AI_CHAT_ALLOWED_TOOLS,
+              maxBudgetUsd: aiChatMaxBudgetUsd(c.env.config),
+              resumeSessionId,
+            }
+          : {
+              ...common,
+              // ai-sdk-agent-harness D3, D6: the caller's own credential through the guarded
+              // fetch, with the client's history as real roles.
+              sdk: sdkTurnSpec(c, route, 'chat', aiChatSdkLimits(c.env.config), body.history),
+            },
+      );
+      // Only a CLI turn issues a session id; an AI SDK turn's `done` carries null and records no
+      // resume binding (D6).
+      if (outcome.ok && outcome.claudeSessionId !== null) {
         // A write error is logged and does not fail the turn; the next resume then gets 422 (D3).
         try {
           await c.env.ports.kv.put(
@@ -206,6 +226,10 @@ aiRouter.post('/api/sessions/:sessionId/ai/chat', async (c) => {
         }
       }
     } finally {
+      // An AI SDK turn's tool bodies may still be running after an abort or a timeout: wait for
+      // them before freeing the slot and lease (D3 "Draining tool bodies"); the lease keeps
+      // renewing meanwhile.
+      await outcome?.toolsDrained?.();
       // Lease, then slot, before the stream closes (session-run-leases D4).
       await slot.release();
     }

@@ -104,6 +104,30 @@ export function claudeCliAllowed(env: Config, user: { email: string }): boolean 
     .some((e) => bootstrapEmailMatch(user.email, e) === true);
 }
 
+/** A positive integer from `raw`, else `fallback` (blank, non-numeric, non-integer, ≤ 0). */
+function positiveInt(raw: string | undefined, fallback: number): number {
+  const n = Number((raw || '').trim());
+  return Number.isInteger(n) && n > 0 ? n : fallback;
+}
+
+/** AI SDK chat turn limits (ai-sdk-agent-harness D3 "Limits"): steps (default 8) and the per-turn
+ * token budget (default 400 000). */
+export function aiChatSdkLimits(env: Config): { maxSteps: number; maxTotalTokens: number } {
+  return {
+    maxSteps: positiveInt(env.AI_CHAT_MAX_STEPS, 8),
+    maxTotalTokens: positiveInt(env.AI_CHAT_MAX_TOKENS, 400_000),
+  };
+}
+
+/** AI SDK generation turn limits (topics and events; D3 "Limits"): steps (default 40) and the
+ * per-turn token budget (default 3 000 000). */
+export function generateSdkLimits(env: Config): { maxSteps: number; maxTotalTokens: number } {
+  return {
+    maxSteps: positiveInt(env.GENERATE_MAX_STEPS, 40),
+    maxTotalTokens: positiveInt(env.GENERATE_MAX_TOKENS, 3_000_000),
+  };
+}
+
 export function sessionTtlDays(env: Config): number {
   const n = Number(env.SESSION_DAYS ?? '14');
   return Number.isFinite(n) && n > 0 ? n : 14.0;

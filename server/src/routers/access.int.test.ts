@@ -18,6 +18,7 @@ import { wireApp } from '../app';
 import type { AppEnv } from '../appEnv';
 import { anonApp, env, envWith } from '../test/harness';
 import { seedAccessMatrix, type TestCaller } from '../test/helpers';
+import { CLI_TEST_EMAILS, chooseClaudeCliForAll } from '../test/llmRoutes';
 import { liveLeaseOfAnotherProcess } from '../test/runLeases';
 
 const SESSION_NOT_FOUND = JSON.stringify({ detail: 'Session not found' });
@@ -146,8 +147,11 @@ describe('one concrete call per family is 200 for the granted member and the adm
 
   it('AI chat: a configured turn serves', async () => {
     const m = await seedAccessMatrix();
+    // ai-sdk-agent-harness D9 category 1: the callers are listed and chose the Claude CLI.
+    await chooseClaudeCliForAll();
     const on = envWith({
       CLAUDE_CLI_PATH: join(AI_RUNTIME_FIXTURES_DIR, 'fake-claude.mjs'),
+      CLAUDE_CLI_EMAILS: CLI_TEST_EMAILS,
       HOST: '127.0.0.1',
     });
     try {

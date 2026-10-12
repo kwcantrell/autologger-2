@@ -67,6 +67,7 @@ import {
   observeRunLeases,
   runLeaseRows,
 } from '../test/runLeases';
+import { CLI_TEST_EMAILS, chooseClaudeCliForAll } from '../test/llmRoutes';
 import { busProcess, closeBusProcesses } from '../test/session/busProcesses';
 import { harnessHub } from '../test/session/sessionRows';
 
@@ -270,7 +271,7 @@ describe('ai/v2/design — configuration gate (503)', () => {
     // different detail string than AI v2's, proving no shared config state.
     expect(chatRes.status).toBe(503);
     expect(((await chatRes.json()) as { detail: string }).detail).toMatch(
-      /AI chat is not configured/i,
+      /Add a language model in Settings → Advanced/,
     );
   });
 });
@@ -437,6 +438,8 @@ describe('ai/v2/design — turn slot (409), shared with the AI chat registry by 
       'request for the SAME session — genuine cross-route sharing — and frees once the chat turn completes',
     async () => {
       const s = (await seededSession()).sessionId;
+      // ai-sdk-agent-harness D9 category 1: the caller is listed and chose the Claude CLI.
+      await chooseClaudeCliForAll();
       // `FAKE_CLAUDE_MODE=hang` can't reach this path: `spawnAiChatTurn`'s own
       // minimal env whitelist (design D4) strips it along with everything else
       // non-essential (see ai.int.test.ts's header note) — the whitelist itself
@@ -455,7 +458,7 @@ describe('ai/v2/design — turn slot (409), shared with the AI chat registry by 
       const chatRes = await app.request(
         `/api/sessions/${s}/ai/chat`,
         { method: 'POST', headers: J, body: JSON.stringify({ message: 'hi' }) },
-        envWith({ CLAUDE_CLI_PATH: FIXTURE_CLI, HOST: '127.0.0.1' }),
+        envWith({ CLAUDE_CLI_PATH: FIXTURE_CLI, CLAUDE_CLI_EMAILS: CLI_TEST_EMAILS, HOST: '127.0.0.1' }),
       );
       expect(chatRes.status).toBe(200);
       try {
@@ -477,6 +480,8 @@ describe('ai/v2/design — turn slot (409), shared with the AI chat registry by 
       'direction — and frees once the design turn times out',
     async () => {
       const s = (await seededSession()).sessionId;
+      // ai-sdk-agent-harness D9 category 1: the caller is listed and chose the Claude CLI.
+      await chooseClaudeCliForAll();
       // The design-turn side CAN be held open deterministically (unlike the AI
       // chat side above): `hangingDesignQuery` never yields, so only the
       // runner's own timeout backstop ends it — no timing race required.
@@ -490,7 +495,7 @@ describe('ai/v2/design — turn slot (409), shared with the AI chat registry by 
         const chatRes = await app.request(
           `/api/sessions/${s}/ai/chat`,
           { method: 'POST', headers: J, body: JSON.stringify({ message: 'hi' }) },
-          envWith({ CLAUDE_CLI_PATH: FIXTURE_CLI, HOST: '127.0.0.1' }),
+          envWith({ CLAUDE_CLI_PATH: FIXTURE_CLI, CLAUDE_CLI_EMAILS: CLI_TEST_EMAILS, HOST: '127.0.0.1' }),
         );
         expect(chatRes.status).toBe(409);
         expect(((await chatRes.json()) as { detail: string }).detail).toMatch(
