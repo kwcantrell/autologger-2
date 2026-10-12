@@ -31,6 +31,9 @@ import {
   SdkTurnFailure,
   type SdkTurnKind,
   sdkFailureSuffix,
+  sdkFallbackSuffix,
+  sdkMaxOutputTokens,
+  sdkResponseByteCap,
 } from './sdkTurn';
 import {
   answer,
@@ -217,6 +220,7 @@ interface RunOpts {
   kind?: SdkTurnKind;
   maxSteps?: number;
   maxTotalTokens?: number;
+  maxOutputTokens?: number;
   history?: ReadonlyArray<{ role: 'user' | 'assistant'; text: string }>;
   message?: string;
   abortSignal?: AbortSignal;
@@ -256,7 +260,11 @@ async function run(llm: FakeLlm, o: RunOpts = {}) {
     sdk: {
       kind,
       deps: o.deps ?? depsFor(llm).deps,
-      limits: { maxSteps: o.maxSteps ?? 8, maxTotalTokens: o.maxTotalTokens ?? 400_000 },
+      limits: {
+        maxSteps: o.maxSteps ?? 8,
+        maxTotalTokens: o.maxTotalTokens ?? 400_000,
+        ...(o.maxOutputTokens === undefined ? {} : { maxOutputTokens: o.maxOutputTokens }),
+      },
       history: o.history,
     },
   });
@@ -1279,5 +1287,108 @@ describe('the ending summary for failures with no status or breach (D5 diagnosti
       expect(Object.keys(r.summary ?? {}).sort()).toEqual(['lastFinish', 'steps']);
       expect(JSON.stringify(r.summary)).not.toMatch(/MARKER/);
     }
+  });
+});
+
+describe('the output cap, its ranges and the smaller-model fallback (D3 Limits, D4, task 6.7)', () => {
+  const tokensOf = (llm: FakeLlm) => llm.requests.map((r) => r.max_tokens);
+  const refuseOver4000 =
+    (rest: FakeScript): FakeScript =>
+    (n, body) =>
+      Number(body.max_tokens) > 4000
+        ? { status: 400, body: '{"error":{"message":"max_tokens too large BODY-MARKER"}}' }
+        : rest(n, body);
+
+  it('generation sends GENERATE_MAX_OUTPUT_TOKENS (default 16 000); chat always sends 4000', async () => {
+    const gen = await llmWith(() => answer('x'));
+    await run(gen, { kind: 'topics' });
+    expect(tokensOf(gen)).toEqual([16_000]);
+    const tuned = await llmWith(() => answer('x'));
+    await run(tuned, { kind: 'events', maxOutputTokens: 9000 });
+    expect(tokensOf(tuned)).toEqual([9000]);
+    const chat = await llmWith(() => answer('x'));
+    await run(chat, { maxOutputTokens: 16_000 });
+    expect(tokensOf(chat)).toEqual([4000]);
+    expect(
+      sdkMaxOutputTokens('chat', { maxSteps: 8, maxTotalTokens: 1, maxOutputTokens: 9000 }),
+    ).toBe(4000);
+    expect(sdkMaxOutputTokens('topics', { maxSteps: 8, maxTotalTokens: 1 })).toBe(16_000);
+  });
+
+  it('the response-byte cap is steps × maxOutputTokens × 400 (12.8 MB chat, 256 MB generation)', () => {
+    expect(sdkResponseByteCap('chat', { maxSteps: 8, maxTotalTokens: 400_000 })).toBe(12_800_000);
+    expect(
+      sdkResponseByteCap('chat', { maxSteps: 8, maxTotalTokens: 400_000, maxOutputTokens: 16_000 }),
+    ).toBe(12_800_000);
+    expect(
+      sdkResponseByteCap('topics', {
+        maxSteps: 40,
+        maxTotalTokens: 3_000_000,
+        maxOutputTokens: 16_000,
+      }),
+    ).toBe(256_000_000);
+    expect(sdkResponseByteCap('events', { maxSteps: 40, maxTotalTokens: 3_000_000 })).toBe(
+      256_000_000,
+    );
+    expect(
+      sdkResponseByteCap('events', { maxSteps: 100, maxTotalTokens: 1, maxOutputTokens: 128_000 }),
+    ).toBe(5_120_000_000);
+  });
+
+  it('a generation turn whose first request gets 400 restarts once at 4000 and succeeds, with no tool run twice', async () => {
+    const llm = await llmWith(
+      refuseOver4000((n) =>
+        n === 2
+          ? callTools(1, [{ name: 'create_topic', args: { summary: 'once' } }])
+          : answer('ok'),
+      ),
+    );
+    const { res, hub, terminals } = await run(llm, { kind: 'topics' });
+    expect(res).toMatchObject({ ok: true, ending: 'natural', outputCapFallback: 4000 });
+    expect(tokensOf(llm)).toEqual([16_000, 4000, 4000]);
+    expect(hub.stats().insertsStarted).toBe(1);
+    expect(hub.topics).toHaveLength(1);
+    expect(terminals.map((e) => e.event)).toEqual(['done']);
+    expect(sdkFallbackSuffix(res)).toBe(' (output-cap fallback 4000)');
+    expect(JSON.stringify(res)).not.toMatch(/MARKER/);
+  });
+
+  it('a second 400 fails as usual, after exactly one restart', async () => {
+    const llm = await llmWith(() => ({ status: 400, body: '{"error":{"message":"no"}}' }));
+    const { res, terminals } = await run(llm, { kind: 'events' });
+    expect(res).toMatchObject({ ok: false, detail: 'upstream-failed', ending: 'error' });
+    expect(res.failure).toMatchObject({ kind: 'provider', status: 400 });
+    expect(res).toMatchObject({ outputCapFallback: 4000 });
+    expect(tokensOf(llm)).toEqual([16_000, 4000]);
+    expect(terminals).toHaveLength(1);
+  });
+
+  it('a 400 on a later request fails with no restart, and the tool that ran is not run again', async () => {
+    const llm = await llmWith((n) =>
+      n === 1
+        ? callTools(1, [{ name: 'create_topic', args: { summary: 'first' } }])
+        : { status: 400, body: '{"error":{"message":"no"}}' },
+    );
+    const { res, hub } = await run(llm, { kind: 'topics' });
+    expect(res).toMatchObject({ ok: false, ending: 'error' });
+    expect(res.failure).toMatchObject({ status: 400 });
+    expect((res as { outputCapFallback?: number }).outputCapFallback).toBeUndefined();
+    expect(sdkFallbackSuffix(res)).toBe('');
+    expect(tokensOf(llm)).toEqual([16_000, 16_000]);
+    expect(hub.stats().insertsStarted).toBe(1);
+  });
+
+  it('no restart at a cap of 4000 or less, nor for chat, nor for a status other than 400', {
+    timeout: 30_000,
+  }, async () => {
+    const small = await llmWith(() => ({ status: 400, body: '{}' }));
+    await run(small, { kind: 'topics', maxOutputTokens: 4000 });
+    expect(tokensOf(small)).toEqual([4000]);
+    const chat = await llmWith(() => ({ status: 400, body: '{}' }));
+    await run(chat);
+    expect(tokensOf(chat)).toEqual([4000]);
+    const unauthorized = await llmWith(() => ({ status: 401, body: '{}' }));
+    await run(unauthorized, { kind: 'topics' });
+    expect(tokensOf(unauthorized)).toEqual([16_000]);
   });
 });

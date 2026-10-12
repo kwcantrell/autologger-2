@@ -104,27 +104,42 @@ export function claudeCliAllowed(env: Config, user: { email: string }): boolean 
     .some((e) => bootstrapEmailMatch(user.email, e) === true);
 }
 
+/** An integer from `raw` within `[min, max]`, else `fallback` (blank, non-numeric, non-integer or
+ * out of range; ai-sdk-agent-harness D3 "Valid ranges"). */
+function intInRange(raw: string | undefined, min: number, max: number, fallback: number): number {
+  const text = (raw || '').trim();
+  if (!/^\d+$/.test(text)) return fallback;
+  const n = Number(text);
+  return Number.isSafeInteger(n) && n >= min && n <= max ? n : fallback;
+}
+
 /** A positive integer from `raw`, else `fallback` (blank, non-numeric, non-integer, ≤ 0). */
 function positiveInt(raw: string | undefined, fallback: number): number {
   const n = Number((raw || '').trim());
   return Number.isInteger(n) && n > 0 ? n : fallback;
 }
 
-/** AI SDK chat turn limits (ai-sdk-agent-harness D3 "Limits"): steps (default 8) and the per-turn
- * token budget (default 400 000). */
+/** AI SDK chat turn limits (ai-sdk-agent-harness D3 "Limits"): steps (default 8, valid 1–50) and
+ * the per-turn token budget (default 400 000). Chat's per-step output cap is fixed at 4000. */
 export function aiChatSdkLimits(env: Config): { maxSteps: number; maxTotalTokens: number } {
   return {
-    maxSteps: positiveInt(env.AI_CHAT_MAX_STEPS, 8),
+    maxSteps: intInRange(env.AI_CHAT_MAX_STEPS, 1, 50, 8),
     maxTotalTokens: positiveInt(env.AI_CHAT_MAX_TOKENS, 400_000),
   };
 }
 
-/** AI SDK generation turn limits (topics and events; D3 "Limits"): steps (default 40) and the
- * per-turn token budget (default 3 000 000). */
-export function generateSdkLimits(env: Config): { maxSteps: number; maxTotalTokens: number } {
+/** AI SDK generation turn limits (topics and events; D3 "Limits"): steps (default 40, valid
+ * 1–100), the per-turn token budget (default 3 000 000) and the per-step output cap
+ * `GENERATE_MAX_OUTPUT_TOKENS` (default 16 000, valid 1 000–128 000). */
+export function generateSdkLimits(env: Config): {
+  maxSteps: number;
+  maxTotalTokens: number;
+  maxOutputTokens: number;
+} {
   return {
-    maxSteps: positiveInt(env.GENERATE_MAX_STEPS, 40),
+    maxSteps: intInRange(env.GENERATE_MAX_STEPS, 1, 100, 40),
     maxTotalTokens: positiveInt(env.GENERATE_MAX_TOKENS, 3_000_000),
+    maxOutputTokens: intInRange(env.GENERATE_MAX_OUTPUT_TOKENS, 1000, 128_000, 16_000),
   };
 }
 

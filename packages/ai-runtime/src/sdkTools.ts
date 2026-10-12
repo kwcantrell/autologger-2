@@ -58,6 +58,11 @@ export class SdkToolGuard {
     return this.breach;
   }
 
+  /** How many tool calls the turn has made (each counted when it arrives, run or refused). */
+  get calls(): number {
+    return this.total;
+  }
+
   /** Whether calls may still run. */
   get isLive(): boolean {
     return this.live;

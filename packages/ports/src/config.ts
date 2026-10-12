@@ -36,11 +36,13 @@ export interface Config {
    * The bootstrap owner is not implicitly listed. */
   CLAUDE_CLI_EMAILS?: string;
   /** AI SDK turn bounds (ai-sdk-agent-harness D3): steps and the per-turn token budget for chat,
-   * and for topic and event generation. Absent or invalid gives the defaults. */
+   * and for topic and event generation, plus generation's per-step output cap. Absent, invalid or
+   * out of range gives the defaults. */
   AI_CHAT_MAX_STEPS?: string;
   AI_CHAT_MAX_TOKENS?: string;
   GENERATE_MAX_STEPS?: string;
   GENERATE_MAX_TOKENS?: string;
+  GENERATE_MAX_OUTPUT_TOKENS?: string;
   AI_CHAT_TIMEOUT_SEC: string;
   /** The AI provider (run-status-and-sweeper D1): `'claude_cli'` is the only one; `createBindings`
    * refuses any other `AI_PROVIDER` at boot. */

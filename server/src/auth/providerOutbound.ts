@@ -248,12 +248,12 @@ export const PROVIDER_HOSTS: ProviderHosts = Object.freeze({
 
 const MB = 1024 * 1024;
 
-/** The per-turn bounds (D4 step 3; derivation A11) and the header timeout (D4 step 2). */
+/** The fixed per-turn bounds (D4 step 3; derivation A11) and the header timeout (D4 step 2). The
+ * response-byte cap is each turn's own (`GuardedFetchOptions.responseTotalBytes`). */
 export const GUARDED_FETCH_CAPS = Object.freeze({
   requests: 60,
   requestBodyBytes: 4 * MB,
   requestBodyTotalBytes: 48 * MB,
-  responseTotalBytes: 64 * MB,
   headerTimeoutMs: 120_000,
 });
 
@@ -268,6 +268,9 @@ export interface GuardedFetchOptions {
   baseOrigin: string | null;
   /** Production mode: blocked addresses are refused per connection. */
   production: boolean;
+  /** This turn's response-byte cap (D4 step 3): `steps × maxOutputTokens × 400`, from validated
+   * limits. A non-positive or non-finite value admits no response bytes. */
+  responseTotalBytes: number;
   lookup?: LookupFn;
   /** Tests only: the fixed hosts. Production always uses `PROVIDER_HOSTS`. */
   hosts?: ProviderHosts;
@@ -365,6 +368,8 @@ export function guardedFetch(o: GuardedFetchOptions): GuardedFetch {
   const hosts = o.hosts ?? PROVIDER_HOSTS;
   const headerTimeoutMs = o.headerTimeoutMs ?? GUARDED_FETCH_CAPS.headerTimeoutMs;
   const isBlocked = o.isBlocked ?? isBlockedAddress;
+  const responseCap =
+    Number.isFinite(o.responseTotalBytes) && o.responseTotalBytes > 0 ? o.responseTotalBytes : 0;
   const log: Array<{ requestBytes: number; responseBytes: number }> = [];
   let requests = 0;
   let requestTotal = 0;
@@ -505,7 +510,7 @@ export function guardedFetch(o: GuardedFetchOptions): GuardedFetch {
               if (finished) return;
               responseTotal += c.length;
               entry.responseBytes += c.length;
-              if (responseTotal > GUARDED_FETCH_CAPS.responseTotalBytes) {
+              if (responseTotal > responseCap) {
                 breach ??= 'response-total';
                 stop(new OutboundFailure('cap'));
                 return;

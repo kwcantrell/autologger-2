@@ -1,11 +1,13 @@
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { sdkResponseByteCap } from '@autologger/ai-runtime/sdkTurn';
 import type { Config } from '@autologger/ports';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   adminMeta,
   adminTokenConfigured,
+  aiChatSdkLimits,
   bootstrapEmailMatch,
   bootstrapOwnerEmail,
   claudeCliAllowed,
@@ -15,6 +17,7 @@ import {
   eventGenerateMaxInstructionBytes,
   eventGenerateMaxInstructionEntries,
   eventGenerateTimeoutSec,
+  generateSdkLimits,
   maskBootstrapOwnerEmail,
   newUserAllTeamsEnabled,
   oauthConfigured,
@@ -384,5 +387,46 @@ describe('Claude CLI allowlist (ai-sdk-agent-harness D1, D2)', () => {
         }),
       ).toBe(false);
     }
+  });
+});
+
+describe('AI SDK turn limits and their ranges (ai-sdk-agent-harness D3 Limits, D4, task 6.7)', () => {
+  it('default to 8 steps / 400 000 for chat and 40 steps / 3 000 000 / 16 000 output for generation', () => {
+    expect(aiChatSdkLimits(E({}))).toEqual({ maxSteps: 8, maxTotalTokens: 400_000 });
+    expect(generateSdkLimits(E({}))).toEqual({
+      maxSteps: 40,
+      maxTotalTokens: 3_000_000,
+      maxOutputTokens: 16_000,
+    });
+  });
+
+  it('GENERATE_MAX_OUTPUT_TOKENS takes 1 000–128 000; blank, non-numeric and out-of-range fall back', () => {
+    const out = (v: string | undefined) =>
+      generateSdkLimits(E({ GENERATE_MAX_OUTPUT_TOKENS: v })).maxOutputTokens;
+    expect(out('1000')).toBe(1000);
+    expect(out(' 32000 ')).toBe(32_000);
+    expect(out('128000')).toBe(128_000);
+    for (const bad of [undefined, '', '  ', 'abc', '12.5', '999', '0', '-5', '128001', '1e9']) {
+      expect(out(bad)).toBe(16_000);
+    }
+  });
+
+  it('AI_CHAT_MAX_STEPS takes 1–50 and GENERATE_MAX_STEPS 1–100; outside them the default', () => {
+    const chat = (v: string) => aiChatSdkLimits(E({ AI_CHAT_MAX_STEPS: v })).maxSteps;
+    const gen = (v: string) => generateSdkLimits(E({ GENERATE_MAX_STEPS: v })).maxSteps;
+    expect([chat('1'), chat('50'), chat('51'), chat('0'), chat('x')]).toEqual([1, 50, 8, 8, 8]);
+    expect([gen('1'), gen('100'), gen('101'), gen('0'), gen('')]).toEqual([1, 100, 40, 40, 40]);
+  });
+
+  it('the response-byte cap is computed from the validated values only', () => {
+    expect(sdkResponseByteCap('chat', aiChatSdkLimits(E({})))).toBe(12_800_000);
+    expect(sdkResponseByteCap('topics', generateSdkLimits(E({})))).toBe(256_000_000);
+    const huge = E({ GENERATE_MAX_STEPS: '1000000', GENERATE_MAX_OUTPUT_TOKENS: '99999999' });
+    expect(sdkResponseByteCap('events', generateSdkLimits(huge))).toBe(256_000_000);
+    expect(sdkResponseByteCap('chat', aiChatSdkLimits(E({ AI_CHAT_MAX_STEPS: '5000' })))).toBe(
+      12_800_000,
+    );
+    const max = E({ GENERATE_MAX_STEPS: '100', GENERATE_MAX_OUTPUT_TOKENS: '128000' });
+    expect(sdkResponseByteCap('topics', generateSdkLimits(max))).toBe(5_120_000_000);
   });
 });

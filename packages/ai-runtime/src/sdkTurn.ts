@@ -92,15 +92,44 @@ export const SDK_TURN_TOOLS: Readonly<Record<SdkTurnKind, readonly AiMcpToolName
     events: ['get_transcript_words', 'create_event'],
   });
 
-/** Always sent: without it Anthropic requests 128 000 output tokens (A24). */
+/** Always sent: without it Anthropic requests 128 000 output tokens (A24). Chat's fixed per-step
+ * output cap, and the smaller-model fallback's (D3 "Limits"). */
 export const SDK_MAX_OUTPUT_TOKENS = 4000;
+/** Generation's default per-step output cap (`GENERATE_MAX_OUTPUT_TOKENS`, D3 "Limits", A42). */
+export const SDK_GENERATE_MAX_OUTPUT_TOKENS = 16_000;
+/** Streamed bytes allowed per output token in the response-byte cap (D4 step 3): ~200 bytes of
+ * SSE per token chunk, doubled for headroom. */
+export const SDK_RESPONSE_BYTES_PER_TOKEN = 400;
 /** AI SDK retries per request (A8: 3 requests for a `500`). */
 export const SDK_MAX_RETRIES = 2;
 
-/** `*_MAX_STEPS` and `*_MAX_TOKENS` (D3 "Limits"). */
+/** `*_MAX_STEPS`, `*_MAX_TOKENS` and `GENERATE_MAX_OUTPUT_TOKENS` (D3 "Limits"), validated by
+ * the server's config accessors. */
 export interface SdkTurnLimits {
   maxSteps: number;
   maxTotalTokens: number;
+  /** Generation's per-step output cap (default 16 000); chat ignores it (fixed 4000). */
+  maxOutputTokens?: number;
+}
+
+/** The per-step output cap a turn of `kind` sends: chat's fixed 4000, else the generation cap. */
+export function sdkMaxOutputTokens(kind: SdkTurnKind, limits: SdkTurnLimits): number {
+  if (kind === 'chat') return SDK_MAX_OUTPUT_TOKENS;
+  return limits.maxOutputTokens ?? SDK_GENERATE_MAX_OUTPUT_TOKENS;
+}
+
+/** The guarded fetch's response-byte cap for one turn (D4 step 3): `steps × maxOutputTokens ×
+ * 400` bytes (12.8 MB chat, 256 MB generation at the defaults). A counter, not a buffer. */
+export function sdkResponseByteCap(kind: SdkTurnKind, limits: SdkTurnLimits): number {
+  return limits.maxSteps * sdkMaxOutputTokens(kind, limits) * SDK_RESPONSE_BYTES_PER_TOKEN;
+}
+
+/** The log note a route appends when a generation turn restarted at the smaller output cap (D3
+ * "A smaller-model fallback"), or nothing. Content-free. */
+export function sdkFallbackSuffix(result: { outputCapFallback?: number }): string {
+  return result.outputCapFallback === undefined
+    ? ''
+    : ` (output-cap fallback ${result.outputCapFallback})`;
 }
 
 /** One prior chat message (D6), already bounded by the request schema. */
@@ -304,6 +333,9 @@ export type SdkTurnResult = (
   failure?: SdkTurnFailure;
   /** The step count and last finish reason (D5 diagnostic). */
   summary: SdkTurnSummary;
+  /** Set when a generation turn restarted at this smaller output cap after its first request got
+   * `400` (D3 "A smaller-model fallback"). */
+  outputCapFallback?: number;
 };
 
 type RelayOutcome =
@@ -321,6 +353,8 @@ export async function runSdkTurn(o: RunSdkTurnOptions): Promise<SdkTurnResult> {
   const { model, providerOptions } = buildSdkModel(o.spec.deps);
   const { deps, limits, kind } = o.spec;
   const generation = kind !== 'chat';
+  let maxOutputTokens = sdkMaxOutputTokens(kind, limits);
+  let outputCapFallback: number | undefined;
   const toolNames = SDK_TURN_TOOLS[kind];
   const registration: SdkTurnRegistration = registerSdkTurn(o.registry, o.sessionId, o.caller, {
     ...o.mcpContext,
@@ -377,46 +411,72 @@ export async function runSdkTurn(o: RunSdkTurnOptions): Promise<SdkTurnResult> {
     const runRelay = async (guardedEmit: (event: AiChatSseEvent) => Promise<void>) => {
       let errored = false;
       let status: number | undefined;
-      try {
-        const result = streamText({
-          model,
-          system: o.systemPrompt ?? AI_CHAT_SYSTEM_PROMPT_BRIEF,
-          messages: historyToMessages(kind === 'chat' ? o.spec.history : undefined, o.message),
-          tools,
-          stopWhen: [stopAtStepCap, tokenBudget],
-          maxOutputTokens: SDK_MAX_OUTPUT_TOKENS,
-          maxRetries: SDK_MAX_RETRIES,
-          abortSignal: internal.signal,
-          providerOptions,
-          prepareStep: ({ stepNumber }) => {
-            guard.setStep(stepNumber);
-            stepMarks[stepNumber] = deps.byteLog().length;
-            return undefined;
-          },
-          onStepEnd: (step) => {
-            steps.push({
-              toolCalls: step.toolCalls.length,
-              toolResults: step.toolResults.length,
-              finishReason: String(step.finishReason),
-            });
-          },
-          // A no-op: the SDK otherwise prints the provider body to stderr (A31). The error is
-          // classified from the stream instead.
-          onError: () => {},
-        });
-        // Never awaited; each gets a rejection handler, as it rejects after an abort or an error (A34).
-        result.steps.then(undefined, noop);
-        result.text.then(undefined, noop);
-        result.finishReason.then(undefined, noop);
-        result.totalUsage.then(undefined, noop);
-        ({ errored, status } = await relaySdkStream(result.fullStream, {
-          emit: guardedEmit,
-          toolNames: new Set(toolNames),
-          statusOf,
-        }));
-      } catch (thrown) {
-        errored = true;
-        status = statusOf(thrown);
+      for (;;) {
+        errored = false;
+        status = undefined;
+        try {
+          const result = streamText({
+            model,
+            system: o.systemPrompt ?? AI_CHAT_SYSTEM_PROMPT_BRIEF,
+            messages: historyToMessages(kind === 'chat' ? o.spec.history : undefined, o.message),
+            tools,
+            stopWhen: [stopAtStepCap, tokenBudget],
+            maxOutputTokens,
+            maxRetries: SDK_MAX_RETRIES,
+            abortSignal: internal.signal,
+            providerOptions,
+            prepareStep: ({ stepNumber }) => {
+              guard.setStep(stepNumber);
+              stepMarks[stepNumber] = deps.byteLog().length;
+              return undefined;
+            },
+            onStepEnd: (step) => {
+              steps.push({
+                toolCalls: step.toolCalls.length,
+                toolResults: step.toolResults.length,
+                finishReason: String(step.finishReason),
+              });
+            },
+            // A no-op: the SDK otherwise prints the provider body to stderr (A31). The error is
+            // classified from the stream instead.
+            onError: () => {},
+          });
+          // Never awaited; each gets a rejection handler, as it rejects after an abort or an error (A34).
+          result.steps.then(undefined, noop);
+          result.text.then(undefined, noop);
+          result.finishReason.then(undefined, noop);
+          result.totalUsage.then(undefined, noop);
+          ({ errored, status } = await relaySdkStream(result.fullStream, {
+            emit: guardedEmit,
+            toolNames: new Set(toolNames),
+            statusOf,
+          }));
+        } catch (thrown) {
+          errored = true;
+          status = statusOf(thrown);
+        }
+        // The smaller-model fallback (D3 "Limits"): a generation turn whose FIRST model request was
+        // answered 400 at a cap above 4000 starts again once at 4000. Nothing has run yet: no step
+        // finished, no tool was called, one request was sent, and no cap or abort fired.
+        if (
+          generation &&
+          outputCapFallback === undefined &&
+          maxOutputTokens > SDK_MAX_OUTPUT_TOKENS &&
+          errored &&
+          status === 400 &&
+          steps.length === 0 &&
+          guard.calls === 0 &&
+          deps.byteLog().length === 1 &&
+          deps.breach() === null &&
+          !guard.breached &&
+          !internal.signal.aborted
+        ) {
+          maxOutputTokens = SDK_MAX_OUTPUT_TOKENS;
+          outputCapFallback = SDK_MAX_OUTPUT_TOKENS;
+          stepMarks.length = 0;
+          continue;
+        }
+        break;
       }
       guard.end();
       ending = decideSdkEnding({
@@ -459,6 +519,7 @@ export async function runSdkTurn(o: RunSdkTurnOptions): Promise<SdkTurnResult> {
       createdEvents: registration.createdEvents(),
       pageCoverage: registration.pageCoverage(),
       toolsDrained: () => guard.drained(),
+      ...(outputCapFallback === undefined ? {} : { outputCapFallback }),
     };
     if (outcome.ok) return { ...base, ok: true, claudeSessionId: null, ending: outcome.ending };
     // `runOuterAiTurn`'s own timeout or abort outcome carries no ending of the relay's.

@@ -4,7 +4,12 @@
 // gets its injected `SdkTurnDeps` here: the credential, the server-computed `baseURL`, and the
 // guarded fetch (`fetch`, `byteLog`, `breach`) for this one turn.
 
-import type { SdkProvider, SdkTurnKind, SdkTurnSpec } from '@autologger/ai-runtime/sdkTurn';
+import {
+  type SdkProvider,
+  type SdkTurnKind,
+  type SdkTurnSpec,
+  sdkResponseByteCap,
+} from '@autologger/ai-runtime/sdkTurn';
 import type { Context } from 'hono';
 import type { AppEnv } from '../appEnv';
 import { guardedFetch, PROVIDER_HOSTS } from '../auth/providerOutbound';
@@ -46,6 +51,8 @@ export function sdkTurnSpec(
     baseUrl: route.baseUrl,
     baseOrigin: route.baseOrigin,
     production: c.env.config.PROVIDER_DEV_MODE !== true,
+    // D4 step 3: the turn's own response-byte cap, from its validated limits.
+    responseTotalBytes: sdkResponseByteCap(kind, limits),
   });
   return {
     kind,

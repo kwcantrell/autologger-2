@@ -2227,6 +2227,70 @@ describe('topics/generate on the AI SDK route (ai-sdk-agent-harness task 7.2)', 
     for (const sp of spies) sp.mockRestore();
   });
 
+  it('sends GENERATE_MAX_OUTPUT_TOKENS, and a first-request 400 restarts once at 4000 with the content-free note (task 6.7)', {
+    timeout: 60_000,
+  }, async () => {
+    const lines: string[] = [];
+    const grab = (...a: unknown[]) => {
+      lines.push(a.map((x) => (typeof x === 'string' ? x : JSON.stringify(x))).join(' '));
+    };
+    const spies = [
+      vi.spyOn(console, 'warn').mockImplementation(grab),
+      vi.spyOn(console, 'info').mockImplementation(grab),
+      vi.spyOn(console, 'error').mockImplementation(grab),
+      vi.spyOn(console, 'log').mockImplementation(grab),
+    ];
+    const tokens = (llm: FakeLlm) => llm.requests.map((r) => r.max_tokens);
+    // The configured cap reaches the request; an out-of-range value falls back to 16 000.
+    for (const [cfg, want] of [
+      [{ GENERATE_MAX_OUTPUT_TOKENS: '9000' }, 9000],
+      [{ GENERATE_MAX_OUTPUT_TOKENS: '500' }, 16_000],
+    ] as Array<[Record<string, unknown>, number]>) {
+      const llm = await fakeProvider(success);
+      const { s } = await seeded();
+      await saveSdkCredential(llm.baseURL);
+      expect((await req(s, sdkEnv(cfg))).status).toBe(200);
+      expect(tokens(llm)).toEqual([want, want, want]);
+    }
+    // A model that refuses the larger cap: one restart at 4000, which succeeds, noted in the log.
+    lines.length = 0;
+    const refusing: FakeScript = (n, body) =>
+      Number(body.max_tokens) > 4000
+        ? { status: 400, body: '{"error":{"message":"max_tokens BODY-MARKER"}}' }
+        : success(n - 1, body);
+    const llm = await fakeProvider(refusing);
+    const { s } = await seeded();
+    await saveSdkCredential(llm.baseURL, { apiKey: 'sk-KEY-MARKER-1234' });
+    const res = await req(s);
+    expect(res.status).toBe(200);
+    expect(tokens(llm)).toEqual([16_000, 4000, 4000, 4000]);
+    expect((await topicsOf(s)).map((t) => t.summary)).toEqual([
+      'Fresh SDK topic 0',
+      'Fresh SDK topic 1',
+    ]);
+    const ok = lines.filter((l) => l.startsWith('[topics/generate]'));
+    expect(ok).toHaveLength(1);
+    expect(ok[0]?.endsWith('AI turn succeeded (output-cap fallback 4000)'), ok[0]).toBe(true);
+    // A second 400 fails as usual; the line names the status and the restart.
+    lines.length = 0;
+    const always = await fakeProvider(() => ({ status: 400, body: '{"error":"BODY-MARKER"}' }));
+    const second = await seeded();
+    await saveSdkCredential(always.baseURL, { apiKey: 'sk-KEY-MARKER-1234' });
+    expect((await req(second.s)).status).toBe(502);
+    expect(tokens(always)).toEqual([16_000, 4000]);
+    expect(await topicsOf(second.s)).toEqual(second.prior);
+    const failed = lines.filter((l) => l.startsWith('[topics/generate]'));
+    expect(failed).toHaveLength(1);
+    expect(
+      failed[0]?.endsWith(
+        'AI turn failed (upstream-failed) (status=400) (output-cap fallback 4000)',
+      ),
+      failed[0],
+    ).toBe(true);
+    expect(lines.join('\n')).not.toMatch(/MARKER/);
+    for (const sp of spies) sp.mockRestore();
+  });
+
   it('a slow tool body still running at the route timeout finishes before the route removes the run’s new topics and frees the slot and lease', {
     timeout: 30_000,
   }, async () => {

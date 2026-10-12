@@ -9,7 +9,7 @@
 
 import { aiChatTurns } from '@autologger/ai-runtime/aiChatRegistry';
 import { allTranscriptPagesServed } from '@autologger/ai-runtime/aiMcpServer';
-import { sdkFailureSuffix } from '@autologger/ai-runtime/sdkTurn';
+import { sdkFailureSuffix, sdkFallbackSuffix } from '@autologger/ai-runtime/sdkTurn';
 import { generateTopicsTurn } from '@autologger/ai-runtime/topicGenerate';
 import {
   deleteVersionQuerySchema,
@@ -345,6 +345,13 @@ transcribeRouter.post('/api/sessions/:sessionId/topics/generate', async (c) => {
     const fullyRead = allTranscriptPagesServed(outcome.pageCoverage);
 
     if (outcome.ok && newIds.length >= 1 && fullyRead) {
+      // A run that restarted at the smaller output cap (D3 "A smaller-model fallback") is noted,
+      // content-free, so an operator can see the model rejected the larger cap.
+      if (outcome.outputCapFallback !== undefined) {
+        console.info(
+          `[topics/generate] session=${sessionId}: AI turn succeeded${sdkFallbackSuffix(outcome)}`,
+        );
+      }
       // Success: delete the pre-run topics, leaving only the fresh set.
       await hub.deleteTopics([...preRunIds]);
       return c.json({ topics: await hub.listTopics() });
@@ -367,12 +374,14 @@ transcribeRouter.post('/api/sessions/:sessionId/topics/generate', async (c) => {
       `[topics/generate] session=${sessionId}: generation failed — ` +
         (!outcome.ok
           ? `AI turn failed (${outcome.detail})` +
-            sdkFailureSuffix(outcome.failure, outcome.ending, outcome.summary)
+            sdkFailureSuffix(outcome.failure, outcome.ending, outcome.summary) +
+            sdkFallbackSuffix(outcome)
           : newIds.length === 0
             ? 'AI turn succeeded but created 0 topics'
             : `AI turn created ${newIds.length} topic(s) after reading only ` +
               `${outcome.pageCoverage.servedPages} of ${outcome.pageCoverage.totalPages} ` +
-              'transcript page(s)'),
+              'transcript page(s)') +
+        (outcome.ok ? sdkFallbackSuffix(outcome) : ''),
     );
     throw new ApiError(502, TOPIC_GENERATE_FAILURE_DETAIL);
   } finally {

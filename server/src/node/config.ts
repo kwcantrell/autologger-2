@@ -223,6 +223,7 @@ export function createBindings(
       AI_CHAT_MAX_TOKENS: procEnv.AI_CHAT_MAX_TOKENS || '',
       GENERATE_MAX_STEPS: procEnv.GENERATE_MAX_STEPS || '',
       GENERATE_MAX_TOKENS: procEnv.GENERATE_MAX_TOKENS || '',
+      GENERATE_MAX_OUTPUT_TOKENS: procEnv.GENERATE_MAX_OUTPUT_TOKENS || '',
       AI_CHAT_TIMEOUT_SEC: procEnv.AI_CHAT_TIMEOUT_SEC || '',
       AI_PROVIDER: aiProvider,
       AI_CHAT_MAX_BUDGET_USD: procEnv.AI_CHAT_MAX_BUDGET_USD || '',

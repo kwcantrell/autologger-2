@@ -98,6 +98,7 @@ function fixed(
     baseOrigin: null,
     production: false,
     hosts: hostsAt(origin),
+    responseTotalBytes: 12_800_000,
     ...over,
   });
 }
@@ -109,6 +110,7 @@ function compat(baseUrl: string, over: Partial<GuardedFetchOptions> = {}) {
     baseUrl,
     baseOrigin: new URL(baseUrl).origin,
     production: false,
+    responseTotalBytes: 12_800_000,
     ...over,
   });
 }
@@ -302,13 +304,13 @@ describe('header timeout (D4 step 2)', () => {
 });
 
 describe('per-turn caps (D4 step 3)', () => {
-  it('are 60 requests, 4 MB per body, 48 MB of bodies and 64 MB of responses', () => {
+  it('are 60 requests, 4 MB per body and 48 MB of bodies; the response cap is the turn’s own (no fixed 64 MB)', () => {
     expect(GUARDED_FETCH_CAPS).toMatchObject({
       requests: 60,
       requestBodyBytes: 4 * MB,
       requestBodyTotalBytes: 48 * MB,
-      responseTotalBytes: 64 * MB,
     });
+    expect(GUARDED_FETCH_CAPS).not.toHaveProperty('responseTotalBytes');
   });
 
   it('refuse the 61st request with no connection', async () => {
@@ -345,7 +347,7 @@ describe('per-turn caps (D4 step 3)', () => {
     expect(u.seen).toHaveLength(12);
   });
 
-  it('abort the response stream past 64 MB of responses in the turn', async () => {
+  it('abort the response stream past the turn’s response-byte cap (task 6.7: steps × maxOutputTokens × 400)', async () => {
     const chunk = Buffer.alloc(MB, 0x61);
     const u = await upstream((_s, res) => {
       res.writeHead(200, { 'content-type': 'text/event-stream' });
@@ -362,7 +364,8 @@ describe('per-turn caps (D4 step 3)', () => {
       };
       pump();
     });
-    const g = compat(`${u.origin}/v1`);
+    // A turn of 2 steps × 4000 tokens × 400 bytes: 3.2 MB.
+    const g = compat(`${u.origin}/v1`, { responseTotalBytes: 2 * 4000 * 400 });
     const r = await g.fetch(`${u.origin}/v1/chat/completions`, post());
     const reader = (r.body as ReadableStream<Uint8Array>).getReader();
     let got = 0;
@@ -376,7 +379,8 @@ describe('per-turn caps (D4 step 3)', () => {
     expect(err).toBeInstanceOf(OutboundFailure);
     expect((err as OutboundFailure).kind).toBe('cap');
     expect(g.breach()).toBe('response-total');
-    expect(got).toBeLessThanOrEqual(64 * MB);
+    expect(got).toBeLessThanOrEqual(3_200_000);
+    expect(got).toBeGreaterThan(2 * MB);
     // The next request in the same turn is refused without a connection.
     await refused(g.fetch(`${u.origin}/v1/chat/completions`, post()));
     expect(u.seen).toHaveLength(1);

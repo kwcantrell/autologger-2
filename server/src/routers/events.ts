@@ -17,7 +17,7 @@ import {
   EVENT_GENERATE_SYSTEM_PROMPT,
   type EventGenerateExistingEvent,
 } from '@autologger/ai-runtime/eventGeneratePrompt';
-import { sdkFailureSuffix } from '@autologger/ai-runtime/sdkTurn';
+import { sdkFailureSuffix, sdkFallbackSuffix } from '@autologger/ai-runtime/sdkTurn';
 import { showCategoriesApiShape } from '@autologger/catalog';
 import {
   audioRecordingLeaseBodySchema,
@@ -617,6 +617,13 @@ eventsRouter.post('/api/sessions/:sessionId/events/generate', async (c) => {
     await outcome.toolsDrained?.();
 
     if (outcome.ok) {
+      // A run that restarted at the smaller output cap (D3 "A smaller-model fallback") is noted,
+      // content-free.
+      if (outcome.outputCapFallback !== undefined) {
+        console.info(
+          `[events/generate] session=${sessionId}: AI turn succeeded${sdkFallbackSuffix(outcome)}`,
+        );
+      }
       // event-generate-hardening D2 (gate ruling E1) — delete-after-success:
       // destruction requires a replacement. A clean turn that created nothing
       // keeps the prior set and reports deleted:0. The delete goes through a
@@ -644,7 +651,8 @@ eventsRouter.post('/api/sessions/:sessionId/events/generate', async (c) => {
     // inserted, exactly like the existing append-failure semantics.
     console.warn(
       `[events/generate] session=${sessionId}: generation failed — AI turn failed (${outcome.detail})` +
-        sdkFailureSuffix(outcome.failure, outcome.ending, outcome.summary),
+        sdkFailureSuffix(outcome.failure, outcome.ending, outcome.summary) +
+        sdkFallbackSuffix(outcome),
     );
     throw new ApiError(502, EVENT_GENERATE_FAILURE_DETAIL);
   } finally {

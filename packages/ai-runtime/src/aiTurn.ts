@@ -156,6 +156,9 @@ type WithTurnBookkeeping<T> = T & {
   failure?: SdkTurnFailure;
   /** AI SDK turns only (D5 diagnostic): the step count and last finish reason. */
   summary?: SdkTurnSummary;
+  /** AI SDK generation turns only (D3 "A smaller-model fallback"): the smaller output cap the
+   * turn restarted at after its first request got `400`; the route notes it (`sdkFallbackSuffix`). */
+  outputCapFallback?: number;
 };
 export type DriveAiTurnResult =
   | WithTurnBookkeeping<Extract<AiChatTurnOutcome, { ok: true }>>
