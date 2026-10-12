@@ -346,8 +346,12 @@ history), `responseBody`, `responseHeaders` and a message that can repeat the pr
   number (when the error had one; for a `RetryError`, the last attempt's) or the breach name
   (`requests`, `request-bytes`, `request-total`, `response-bytes`, `tool-calls`). The routes'
   existing failure line appends exactly these, e.g. `… failed — upstream-failed (status=429)` or
-  `(breach=request-total)`. That makes a failure diagnosable without logging any message, body,
-  header, prompt or key.
+  `(breach=request-total)`. When neither applies (a capped, incomplete, timed-out or status-less
+  failure), the line instead appends the turn's ending, step count and last finish reason, e.g.
+  `(ending=incomplete, steps=7, last=length)`; a generation run restarted by the smaller-model
+  fallback adds `(output-cap fallback 4000)`. Chat gains the same failure line
+  (`[ai-chat] session=…: turn failed — <detail><suffix>`) (owner, 2026-10-12, consistency read).
+  That makes a failure diagnosable without logging any message, body, header, prompt or key.
 - **Never surfaced.** The error object is never logged, stringified, stored or forwarded. A repo
   test forbids passing an AI SDK error to `console.*` or the server logger in `ai-runtime` and the
   AI routes, and requires `onError` on every `streamText`. The no-op `onError` suppresses all of
