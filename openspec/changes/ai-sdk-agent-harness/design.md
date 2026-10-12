@@ -404,7 +404,7 @@ Zod stays the single repo copy: the SDK takes it as a peer, `^3.25.76 || ^4.1.8`
 has 4.6.5. This satisfies package-architecture "Runtime dependencies checked by nominal identity
 are never duplicated", checked by the existing duplicate test.
 
-Bumping a version is a reviewed change that runs the opt-in real test (task 9.1).
+Bumping a version is a reviewed change that runs the opt-in real test (task 9.3).
 
 There is no image or compose change. The secrets allowlist `docker/secrets-env.yaml` gains:
 - `CLAUDE_CLI_EMAILS`;
@@ -474,7 +474,7 @@ artifacts and ask the owner. New tests are always allowed.
    returned unchanged keeps passing for non-SDK errors; only SDK errors gain the new rule. The
    `ToolSink` seam (D3) is a typing change only, and the MCP tool tests stay unchanged.
 
-**New `Config` fields** (`CLAUDE_CLI_EMAILS`, the four step and token variables) are **optional**, so the
+**New `Config` fields** (`CLAUDE_CLI_EMAILS`, the four step and token variables, and `GENERATE_MAX_OUTPUT_TOKENS`) are **optional**, so the
 two complete `Config` literals (`upgradeDispatch.test.ts`, `aiV2.int.test.ts`) don't change.
 Absent means no allowlist and default caps.
 

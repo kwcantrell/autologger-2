@@ -127,7 +127,8 @@ Anything else is a stop: update the artifacts and ask the owner.
   - the 120 s header timeout fires only before headers arrive, and a slow stream after them is
     not cut;
   - the caps refuse past 60 requests, a 4 MB request body or 48 MB of request bodies per turn,
-    with a classified failure and no connection; past 64 MB of responses the stream is aborted;
+    with a classified failure and no connection; past 64 MB of responses (since 6.7, the turn's
+    derived response-byte cap) the stream is aborted;
   - per-step byte counts are reported for the usage estimate;
   - the body streams through unbuffered past 1 MB;
   - an abort closes the upstream socket;
