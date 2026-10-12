@@ -617,7 +617,7 @@ environments" ("Dev, stage and prod compared"). No other README section is touch
   three hours place the last clip at its wall-clock position; chunk layout unchanged for `null`;
   a feed-row seek into a seam clip resolves to the same media position as the chunk did). Then
   `types.ts`, `useAudioClips.ts`, `audioClips.ts`.
-  Evidence (2026-10-12, open until B.3): red `cd web && npx vitest run
+  Evidence: (2026-10-12, open until B.3) red `cd web && npx vitest run
   src/shared/utils/audioClips.seams.test.ts` → `Tests 9 failed`; `useAudioClips.durationProbe` →
   `2 failed | 1 passed`; `npx tsc --noEmit` → `types.conformance.test.ts(363,7): error TS2353 …
   'duration_ms' does not exist in type 'AudioSegment'`. Green after `types.ts`, `audioClips.ts`
@@ -634,7 +634,7 @@ environments" ("Dev, stage and prod compared"). No other README section is touch
   by media offset) and `TimelineWaveform.test.tsx` ("Finalizing recording…" when an interval has
   ≥ 2 segments with a pending one; "Generating waveform…" while pending single; "Waveform
   unavailable" for a `'failed'` segment). Then the hook and the timeline components.
-  Evidence (2026-10-12): red `cd web && npx vitest run src/pages/index/hooks/useWaveforms.test.tsx`
+  Evidence: (2026-10-12) red `cd web && npx vitest run src/pages/index/hooks/useWaveforms.test.tsx`
   → `Tests 4 failed | 3 passed`; `…/timeline/TimelineWaveform.test.tsx` → `4 failed | 3 passed`.
   Green after `useWaveforms.ts` (pending skipped, failed marked without decode, one decode per
   segment, `seamClipPeaks`) and `TimelineWaveform.tsx` (labels from the clips' `mediaStatus`/
@@ -649,7 +649,7 @@ environments" ("Dev, stage and prod compared"). No other README section is touch
   `batchImport/*.test.ts` (files over 40 MiB and stitched WAVs over 40 MiB take the parts path;
   smaller files call `local-audio-import` unchanged; progress lines per part). Then
   `web/src/api/uploads.ts`, the batch-import call sites.
-  Evidence (2026-10-12, open until B.4): red `cd web && npx vitest run src/api/uploads.test.ts` →
+  Evidence: (2026-10-12, open until B.4) red `cd web && npx vitest run src/api/uploads.test.ts` →
   `Cannot find module './uploads'`; `src/pages/index/batchImport/runner.parts.test.ts` →
   `6 failed`. Green after `uploads.ts` and `runner.ts`: `uploads.test.ts` `15 passed`,
   `npx vitest run src/pages/index/batchImport/` → `Test Files 4 passed, Tests 45 passed`. Written
@@ -667,7 +667,7 @@ environments" ("Dev, stage and prod compared"). No other README section is touch
   naming it instead of being skipped, while an unparseable blob is still skipped) and
   `audioMerge.test.ts` (a missing path is reported distinctly from an unparseable one). Then
   `transcriptRemap.ts`, `generateTranscript.ts`, `audioMerge.ts`.
-  Evidence (2026-10-12): red `cd packages/transcription && npx vitest run src/audioMerge.test.ts`
+  Evidence: (2026-10-12) red `cd packages/transcription && npx vitest run src/audioMerge.test.ts`
   → `2 failed | 15 passed` (`kind` undefined); `src/transcriptRemap.test.ts` → `5 failed | 31
   passed`; `src/generateTranscript.test.ts` → `2 failed | 1 passed` (`expected 100.4 to be close
   to 100.45`; missing blob not a `TranscriptGenerateError`). Green: `npm run test -w
@@ -700,7 +700,7 @@ environments" ("Dev, stage and prod compared"). No other README section is touch
   `chunkUploadQueue.ts`; biome clean, tsc clean for D's files.
 - [x] D.5 Suites: `cd web && npx vitest run`, `cd packages/transcription && npx vitest run`,
   `npm run typecheck`.
-  Evidence (2026-10-12, after B.3/B.4 landed): `cd web && npx vitest run` → `Test Files 160
+  Evidence: (2026-10-12, after B.3/B.4 landed) `cd web && npx vitest run` → `Test Files 160
   passed (160)`, `Tests 2135 passed (2135)`; `cd web && npx tsc --noEmit` → no output;
   `npm run test -w packages/transcription` → `Test Files 10 passed, Tests 95 passed`; its tsc rc 0.
 - [x] D.7 Follow-up 2 (coordinator, 2026-10-12). **Ownership extension, recorded for the
