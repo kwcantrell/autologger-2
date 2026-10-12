@@ -150,6 +150,33 @@ These live in the forge, not the repo, so the template can't apply them:
   `store: false`). An OpenAI-compatible server whose template opens `<think>` in the prompt leaks
   its reasoning as text unless its reasoning parser is enabled. A CLI turn spends the operator's
   quota, so keep `CLAUDE_CLI_EMAILS` short.
+- **Untrusted media in the worker** (media-worker D1-D4, D20, ADR
+  [0029](decisions/0029-media-worker.md)). Uploaded audio is attacker-shaped input to `ffmpeg`, so
+  decoding runs in its own `media-worker` container, never in the API. **ffmpeg never opens a
+  path:** the worker opens each input itself (`O_RDONLY | O_NOFOLLOW`, a regular file under
+  `/blobs/audio/` or `/blobs/.trash/`), sniffs the container from its first bytes, forces the
+  demuxer from an allowlist (Matroska/WebM, Ogg, MP4/MOV, WAV, FLAC, MP3) and streams the file on
+  stdin with `-protocol_whitelist pipe`, so no playlist, concat script or external reference is
+  followed (the one exception, an MP4 whose `moov` follows its data, is read by `file:` path with
+  `-f mov` forced and the demuxer's default `use_absolute_path 0`); `-xerror` makes any decode
+  error fatal, exit codes and sample counts are both checked, argv only (no shell), a 30 min
+  wall-clock limit with `SIGKILL`. **The container:** uid 10001, read-only root, every capability
+  dropped, `no-new-privileges`, 2 CPUs, 1 GiB, 128 pids, and the internal two-member `media`
+  network (no route, no external DNS). **The database role:** `autologger_media` holds only
+  `MEDIA_DB_PASSWORD`, may `UPDATE` eight columns of `catalog.media_jobs` and read the segment and
+  seam rows, and a guard trigger allows it only `queued → running` on a free or expired lease and
+  `running → queued | done | failed` by the holder, with `result_json` capped at 256 KiB. **The
+  worker writes no segment row and no file under `audio/`**: it writes `media/<job>/` and its
+  result row; the API validates the result and adopts the file by handle (`O_NOFOLLOW`, `fstat` of
+  the open handle for type, size and owner uid, an `lstat` of the job directory), copying it into
+  its own temporary file before the rename, and re-reads the rows to choose what to trash.
+  **Residuals:** a decoder exploit runs as uid 10001 and can read every blob on the volume (and the
+  trash), write under `media/` and make bounded, trigger-checked writes to `media_jobs` (a forged
+  result is validated, but can fail or delay jobs). The worker's login can `LISTEN` on the frame
+  bus channel and flood `pg_notify` like any database login (see "NOTIFY forgery" above): it cannot
+  forge a signed frame, and the flood is bounded by the role's connection limit (4) and statement
+  timeout; the API's sweep reads `pg_notification_queue_usage()` every minute and logs a warning
+  above 0.5, which is the monitoring for it.
 - PUBLIC keeps `CONNECT` on every database and `TEMP` on `postgres`, so `autologger_app` can
   connect to databases where it has no grants and create session-local temp tables. Revoking
   them from PUBLIC would change what GoTrue (`supabase_auth_admin`) gets; slice 6 revisits it.

@@ -34,13 +34,13 @@ RUN     = @[ -n "$(NODE)" ] || { echo "make: node (22.12 or newer) is not on PAT
           env -i PATH=/usr/local/bin:/usr/bin:/bin HOME="$(HOME)" TERM="$(TERM)" CONFIRM="$${CONFIRM-}" \
           STAGE_IMAGE_TAG="$${STAGE_IMAGE_TAG-}" STAGE_PUBLIC_BASE_URL="$${STAGE_PUBLIC_BASE_URL-}" DOCKER_CONFIG="$${DOCKER_CONFIG-}" \
           $(NODE) docker/scripts/compose-run.mjs
-# With a tag, stage-up pulls web/api and never builds; without one it builds :local as before.
+# With a tag, stage-up pulls web, api and media-worker and never builds; without one it builds :local as before.
 # drop-unused-supabase-services D5: every compose up and down passes --remove-orphans, so containers
 # of services the files no longer define (the retired Supabase services) are removed; volumes stay.
 ifeq ($(strip $(STAGE_IMAGE_TAG)),)
 STAGE_UP_STEPS = 'compose run --rm migrate' 'compose up -d --build --remove-orphans'
 else
-STAGE_UP_STEPS = 'compose pull web api' 'compose run --rm migrate' 'compose up -d --no-build --remove-orphans'
+STAGE_UP_STEPS = 'compose pull web api media-worker' 'compose run --rm migrate' 'compose up -d --no-build --remove-orphans'
 endif
 
 .PHONY: help check dev-check dev-build dev-up dev-down dev-restart dev-logs dev-shell dev-reset dev-migrate dev-psql \
@@ -113,10 +113,10 @@ stage-claude-login: ## Interactive Claude login inside the stage api container (
 stage-reset: ## DESTROY stage volumes, incl. Postgres and the audio blob volume (needs CONFIRM=yes)
 	$(RUN) stage reset 'compose down -v --remove-orphans'
 
-prod-build: ## Native-arch build of both images, tagged :local only (no SHA tag, no push)
+prod-build: ## Native-arch build of the three images (web, api, media-worker), tagged :local only (no SHA tag, no push)
 	@p=$$($(G) native-platform) && GIT_SHA=local docker buildx bake -f docker-bake.hcl --set "*.platform=$$p" --load
 
-prod-push: ## Clean main only: multi-arch bake + push, tagged with the 12-char HEAD SHA
+prod-push: ## Clean main only: multi-arch bake + push of web, api and media-worker, tagged with the 12-char HEAD SHA
 	@$(G) prod-git
 	@$(G) prod-builder "$(BUILDER)"
 	@GIT_SHA=$$(git rev-parse --short=12 HEAD) docker buildx bake -f docker-bake.hcl --builder "$(BUILDER)" --push

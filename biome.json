@@ -22,6 +22,7 @@
   "files": {
     "includes": [
       "companion/src/**/*.ts",
+      "media-worker/src/**/*.ts",
       "server/src/**/*.ts",
       "packages/**/*.ts",
       "test/**/*.ts"

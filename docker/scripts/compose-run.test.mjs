@@ -43,7 +43,7 @@ const PGPW = '0123456789abcdef0123456789abcdef'; // a valid POSTGRES_PASSWORD (s
 const SB_JS = 'j'.repeat(43);
 // byo-ai-providers D2: a valid 32-byte provider-keys secret.
 const PKS = Buffer.alloc(32, 5).toString('base64');
-const sbSecrets = () => [secret('POSTGRES_PASSWORD', PGPW), secret('SUPABASE_ROLES_PASSWORD', 'f'.repeat(32)), secret('APP_DB_PASSWORD', 'e'.repeat(32)), secret('JWT_SECRET', SB_JS)];
+const sbSecrets = () => [secret('POSTGRES_PASSWORD', PGPW), secret('SUPABASE_ROLES_PASSWORD', 'f'.repeat(32)), secret('APP_DB_PASSWORD', 'e'.repeat(32)), secret('MEDIA_DB_PASSWORD', 'd'.repeat(32)), secret('JWT_SECRET', SB_JS)];
 // drop-unused-supabase-services D3: the retired keys as the old generator wrote them.
 const retiredSecrets = () => [secret('ANON_KEY', 'aaa.bbb.ccc-anon-value'), secret('SERVICE_ROLE_KEY', 'aaa.bbb.ccc-service-value'), secret('SECRET_KEY_BASE', 's'.repeat(64)),
   secret('REALTIME_DB_ENC_KEY', 'r'.repeat(16)), secret('SUPABASE_PORT', '18790')];
@@ -514,7 +514,7 @@ describe('success path (D1 steps 5-6, H12)', () => {
     assert.match(env, /^TERM=xterm$/m);
     assert.ok(env.includes(`GOOGLE_CLIENT_ID=a'b"c$d\`e\nf`));
     const names = env.split('\n').filter((l) => /^[A-Za-z_][A-Za-z0-9_]*=/.test(l)).map((l) => l.split('=')[0]).sort();
-    assert.deepEqual(names, ['APP_DB_PASSWORD', 'AUTOLOGGER_STACK', 'BOOTSTRAP_OWNER_EMAIL', 'DEV_PORT', 'GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'HOME', 'JWT_SECRET', 'PATH', 'POSTGRES_PASSWORD', 'PROVIDER_KEYS_SECRET', 'PWD', 'SUPABASE_ROLES_PASSWORD', 'TERM']);
+    assert.deepEqual(names, ['APP_DB_PASSWORD', 'AUTOLOGGER_STACK', 'BOOTSTRAP_OWNER_EMAIL', 'DEV_PORT', 'GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'HOME', 'JWT_SECRET', 'MEDIA_DB_PASSWORD', 'PATH', 'POSTGRES_PASSWORD', 'PROVIDER_KEYS_SECRET', 'PWD', 'SUPABASE_ROLES_PASSWORD', 'TERM']);
     assert.match(env, new RegExp(`^POSTGRES_PASSWORD=${PGPW}$`, 'm'));
   });
   it('a failed revoke only warns; the token expires with its TTL', async () => {
@@ -601,7 +601,12 @@ describe('guard steps (resolved, urls, prod-tags, reset; H8)', () => {
     const { checkProdTags } = await import('./compose-run.mjs');
     assert.throws(() => checkProdTags(new Map([['WEB_TAG', 'aaaaaaaaaaaa'], ['API_TAG', 'latest']])), /API_TAG/);
     assert.throws(() => checkProdTags(new Map([['WEB_TAG', 'aaaaaaaaaaaa']])), /API_TAG/);
-    assert.doesNotThrow(() => checkProdTags(new Map([['WEB_TAG', 'aaaaaaaaaaaa'], ['API_TAG', 'aaaaaaaaaaaa']])));
+    // media-worker D15: the worker image is pinned like the other two.
+    const tags = [['WEB_TAG', 'aaaaaaaaaaaa'], ['API_TAG', 'aaaaaaaaaaaa']];
+    assert.throws(() => checkProdTags(new Map(tags)), /MEDIA_TAG/);
+    assert.throws(() => checkProdTags(new Map([...tags, ['MEDIA_TAG', '']])), /MEDIA_TAG/);
+    assert.throws(() => checkProdTags(new Map([...tags, ['MEDIA_TAG', 'latest']])), /MEDIA_TAG=latest/);
+    assert.doesNotThrow(() => checkProdTags(new Map([...tags, ['MEDIA_TAG', 'aaaaaaaaaaaa']])));
   });
   it('reset needs CONFIRM=yes before any request, and is refused for prod', async () => {
     writeCreds('dev');
@@ -912,7 +917,7 @@ describe('stage public mode (stage-public-https)', () => {
   it('STAGE_IMAGE_TAG must be a full 40-hex SHA (never prod-push\'s 12-char tag); it selects the ghcr images; https sets COOKIE_SECURE=1', async () => {
     const { parseStageOptions, stageComposeEnv } = await import('./compose-run.mjs');
     const local = parseStageOptions({});
-    assert.deepEqual(local.images, { web: 'autologger-stage-web:local', api: 'autologger-stage-api:local' });
+    assert.deepEqual(local.images, { web: 'autologger-stage-web:local', api: 'autologger-stage-api:local', media: 'autologger-stage-media-worker:local' });
     assert.equal(local.cookieSecure, '0');
     assert.deepEqual(stageComposeEnv(local), {});
     for (const bad of ['latest', 'stage', 'A'.repeat(40), 'a'.repeat(12), 'a'.repeat(13), 'a'.repeat(41), `${'a'.repeat(40)} `, '-x']) {
@@ -924,6 +929,7 @@ describe('stage public mode (stage-public-https)', () => {
     assert.deepEqual(stageComposeEnv(pub), {
       STAGE_WEB_IMAGE: `ghcr.io/kwcantrell/autologger-web:${SHA}`,
       STAGE_API_IMAGE: `ghcr.io/kwcantrell/autologger-api:${SHA}`,
+      STAGE_MEDIA_IMAGE: `ghcr.io/kwcantrell/autologger-media-worker:${SHA}`,
       STAGE_PUBLIC_BASE_URL: 'https://stage.example.com',
       STAGE_COOKIE_SECURE: '1',
     });
@@ -1059,14 +1065,17 @@ describe('stage public mode (stage-public-https)', () => {
   });
   it('the resolved stage config must carry the expected images, origin and cookie posture', async () => {
     const { checkStageResolved, parseStageOptions } = await import('./compose-run.mjs');
-    const cfg = (web, api, url, cs) => ({ services: { router: { ports: [{ published: '8788' }] }, web: { image: web }, api: { image: api, environment: { PUBLIC_BASE_URL: url, COOKIE_SECURE: cs, TRUST_PROXY: '1' } } } });
+    const cfg = (web, api, url, cs, media = web.startsWith('ghcr') ? web.replace('autologger-web', 'autologger-media-worker') : 'autologger-stage-media-worker:local') => ({ services: { router: { ports: [{ published: '8788' }] }, web: { image: web }, api: { image: api, environment: { PUBLIC_BASE_URL: url, COOKIE_SECURE: cs, TRUST_PROXY: '1' } }, 'media-worker': { image: media } } });
     const local = parseStageOptions({});
     assert.doesNotThrow(() => checkStageResolved(cfg('autologger-stage-web:local', 'autologger-stage-api:local', 'http://localhost:8788', '0'), local));
+    // media-worker D15: the third image is checked too.
+    assert.throws(() => checkStageResolved(cfg('autologger-stage-web:local', 'autologger-stage-api:local', 'http://localhost:8788', '0', 'ghcr.io/kwcantrell/autologger-media-worker:latest'), local), /media-worker/);
     assert.throws(() => checkStageResolved(cfg('autologger-stage-web:local', 'autologger-stage-api:local', 'http://localhost:8788', '1'), local), /COOKIE_SECURE/);
     const pub = parseStageOptions({ STAGE_IMAGE_TAG: SHA, STAGE_PUBLIC_BASE_URL: 'https://stage.example.com' });
     const g = (n) => `ghcr.io/kwcantrell/autologger-${n}:${SHA}`;
     assert.doesNotThrow(() => checkStageResolved(cfg(g('web'), g('api'), 'https://stage.example.com', '1'), pub));
     assert.throws(() => checkStageResolved(cfg('autologger-stage-web:local', g('api'), 'https://stage.example.com', '1'), pub), /images/);
+    assert.throws(() => checkStageResolved(cfg(g('web'), g('api'), 'https://stage.example.com', '1', 'autologger-stage-media-worker:local'), pub), /media-worker/);
     assert.throws(() => checkStageResolved(cfg(g('web'), g('api'), 'http://localhost:8788', '1'), pub), /PUBLIC_BASE_URL/);
     assert.throws(() => checkStageResolved(cfg(g('web'), g('api'), 'https://stage.example.com', '0'), pub), /COOKIE_SECURE/);
     assert.throws(() => checkStageResolved(cfg('autologger-stage-web:local', 'autologger-stage-api:local', 'http://localhost:9999', '0'), local), /PUBLIC_BASE_URL/);
@@ -1116,15 +1125,16 @@ describe('stage public mode (stage-public-https)', () => {
     const auths = { 'ghcr.io': { auth: Buffer.from('u:tok').toString('base64') } };
     writeFileSync(join(dc, 'config.json'), JSON.stringify({ auths, cliPluginsExtraDirs: [evil], currentContext: 'evil' }));
     chmodSync(join(dc, 'config.json'), 0o600);
-    const r = await run(['stage', 'resolved', 'compose pull web api', 'compose up -d --no-build', 'urls'], {
+    const r = await run(['stage', 'resolved', 'compose pull web api media-worker', 'compose up -d --no-build', 'urls'], {
       env: { STAGE_IMAGE_TAG: HEAD, STAGE_PUBLIC_BASE_URL: 'https://stage.example.com', DOCKER_CONFIG: dc },
     });
     assert.equal(r.code, 0, r.out);
     assert.match(r.out, /stage: +https:\/\/stage\.example\.com +\(the HTTPS edge proxies to http:\/\/127\.0\.0\.1:18788\)/);
-    assert.match(log('argv'), /pull web api/);
+    assert.match(log('argv'), /pull web api media-worker/);
     const env = log('env');
     assert.match(env, new RegExp(`^STAGE_WEB_IMAGE=ghcr\\.io/kwcantrell/autologger-web:${HEAD}$`, 'm'));
     assert.match(env, new RegExp(`^STAGE_API_IMAGE=ghcr\\.io/kwcantrell/autologger-api:${HEAD}$`, 'm'));
+    assert.match(env, new RegExp(`^STAGE_MEDIA_IMAGE=ghcr\\.io/kwcantrell/autologger-media-worker:${HEAD}$`, 'm'));
     const childDc = /^DOCKER_CONFIG=(.*)$/m.exec(env)?.[1];
     assert.ok(childDc && childDc !== dc && /\/compose-run-docker-[^/]+$/.test(childDc), childDc);
     assert.equal(log('dockerls').trim(), 'config.json');
@@ -1143,7 +1153,7 @@ describe('stage public mode (stage-public-https)', () => {
     const r = await run(['stage', 'resolved', 'compose up -d --build', 'urls'], { env: { DOCKER_CONFIG: '/tmp' } });
     assert.equal(r.code, 0, r.out);
     assert.match(r.out, /stage: +http:\/\/localhost:18788/);
-    assert.doesNotMatch(log('env'), /^STAGE_(WEB_IMAGE|API_IMAGE|PUBLIC_BASE_URL|COOKIE_SECURE)=/m);
+    assert.doesNotMatch(log('env'), /^STAGE_(WEB_IMAGE|API_IMAGE|MEDIA_IMAGE|PUBLIC_BASE_URL|COOKIE_SECURE)=/m);
     assert.doesNotMatch(log('env'), /^DOCKER_(CONFIG|CONTEXT)=/m);
   });
   it('the temporary DOCKER_CONFIG is removed when a step fails and on SIGTERM', async () => {
@@ -1173,7 +1183,7 @@ describe('stage public mode (stage-public-https)', () => {
     assert.equal(existsSync(childDc), false, 'removed after SIGTERM');
   });
   it('the stage values cannot come from OpenBao', () => {
-    for (const k of ['STAGE_IMAGE_TAG', 'STAGE_WEB_IMAGE', 'STAGE_API_IMAGE', 'STAGE_PUBLIC_BASE_URL', 'STAGE_COOKIE_SECURE', 'DOCKER_CONFIG']) {
+    for (const k of ['STAGE_IMAGE_TAG', 'STAGE_WEB_IMAGE', 'STAGE_API_IMAGE', 'STAGE_MEDIA_IMAGE', 'STAGE_PUBLIC_BASE_URL', 'STAGE_COOKIE_SECURE', 'DOCKER_CONFIG']) {
       assert.throws(() => validateSecrets(kv([secret(k, 'x')]), allowedNames('stage')), /not-allowed/, k);
     }
   });
@@ -1196,6 +1206,60 @@ describe('Makefile compose steps remove orphans (drop-unused-supabase-services D
     const plan = (...s) => s.map((x) => ({ kind: 'compose', args: splitStep(x) }));
     const tagged = parseStageOptions({ STAGE_IMAGE_TAG: 'a'.repeat(40), STAGE_PUBLIC_BASE_URL: 'https://stage.example.com' });
     assert.ok(steps('up').includes("'compose up -d --no-build --remove-orphans'"));
-    assert.doesNotThrow(() => checkStagePlan(tagged, plan('compose pull web api', 'compose run --rm migrate', 'compose up -d --no-build --remove-orphans')));
+    assert.doesNotThrow(() => checkStagePlan(tagged, plan('compose pull web api media-worker', 'compose run --rm migrate', 'compose up -d --no-build --remove-orphans')));
+  });
+  it('the tagged stage up pulls web, api and media-worker (media-worker D15)', () => {
+    assert.match(make, /^STAGE_UP_STEPS = 'compose pull web api media-worker' 'compose run --rm migrate' 'compose up -d --no-build --remove-orphans'$/m);
+  });
+  it('prod-build loads the default bake group, so the media-worker image too (media-worker D13)', () => {
+    const line = make.split('\n').find((l) => l.startsWith('prod-build:'));
+    assert.match(line ?? '', /media-worker/);
+  });
+});
+
+// media-worker D1, D15: the worker's database password, its format and its two services.
+describe('MEDIA_DB_PASSWORD (media-worker D15)', () => {
+  const MPW = 'fedcba9876543210fedcba9876543210';
+  it('must be at least 32 lowercase hex characters; the value is never printed', () => {
+    for (const v of ['-e', 'A'.repeat(32), 'a'.repeat(31), `${MPW}\n${MPW}`, `${MPW} `]) {
+      let msg = '';
+      try { validateSecrets(kv([secret('MEDIA_DB_PASSWORD', v)]), new Set(['MEDIA_DB_PASSWORD'])); } catch (e) { msg = e.message; }
+      assert.match(msg, /MEDIA_DB_PASSWORD.*bad-format/, JSON.stringify(v));
+      if (v.length > 2) assert.ok(!msg.includes(v.trim()));
+    }
+  });
+  it('is an allowed name in every environment; MEDIA_TAG only in prod', () => {
+    for (const env of ['dev', 'stage', 'prod']) {
+      assert.equal(validateSecrets(kv([secret('MEDIA_DB_PASSWORD', MPW)]), allowedNames(env)).get('MEDIA_DB_PASSWORD'), MPW, env);
+    }
+    assert.equal(validateSecrets(kv([secret('MEDIA_TAG', 'aaaaaaaaaaaa')]), allowedNames('prod')).get('MEDIA_TAG'), 'aaaaaaaaaaaa');
+    for (const env of ['dev', 'stage']) {
+      assert.throws(() => validateSecrets(kv([secret('MEDIA_TAG', 'aaaaaaaaaaaa')]), allowedNames(env)), /MEDIA_TAG.*not-allowed/, env);
+    }
+  });
+  const base = (env) => {
+    const ports = env === 'dev'
+      ? { app: { ports: [{ host_ip: '127.0.0.1', published: '8787' }] }, companion: { ports: [{ host_ip: '127.0.0.1', published: '8000' }] } }
+      : { router: { ports: [{ host_ip: '127.0.0.1', published: env === 'prod' ? '8080' : '8788' }] } };
+    return { name: { dev: 'autologger-dev', stage: 'autologger-stage', prod: 'autologger' }[env], services: { ...ports, migrate: { environment: { MEDIA_DB_PASSWORD: MPW } }, 'media-worker': { environment: { PGPASSWORD: MPW } } } };
+  };
+  const secrets = new Map([['MEDIA_DB_PASSWORD', MPW]]);
+  const refusal = (env, svc) => {
+    const cfg = base(env);
+    cfg.services[svc] = { ...(cfg.services[svc] ?? {}), labels: { x: MPW } };
+    try { checkResolved(env, cfg, secrets); return ''; } catch (e) { return e.message; }
+  };
+  it('is allowed in media-worker and migrate in every environment', () => {
+    for (const env of ['dev', 'stage', 'prod']) {
+      assert.equal(refusal(env, 'media-worker'), '', env);
+      assert.equal(refusal(env, 'migrate'), '', env);
+    }
+  });
+  it('is refused in the app, auth and db, without printing it', () => {
+    for (const [env, svc] of [['dev', 'app'], ['stage', 'api'], ['prod', 'api'], ['prod', 'auth'], ['dev', 'db'], ['stage', 'web']]) {
+      const msg = refusal(env, svc);
+      assert.match(msg, new RegExp(`MEDIA_DB_PASSWORD value appears in ${svc}`), `${env} ${svc}`);
+      assert.ok(!msg.includes(MPW));
+    }
   });
 });

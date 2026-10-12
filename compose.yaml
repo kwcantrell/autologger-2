@@ -1,5 +1,6 @@
 # AutoLogger split deployment (containerize-split-images, design D7 / D11).
 #   Pangolin -> Newt (host) -> 127.0.0.1:${ROUTER_PORT} -> router -> web | api
+#   media-worker -> db only (the `media` network); it shares the blob volume with api
 #
 #   make prod-up     # runs docker/scripts/compose-run.mjs: secrets come from OpenBao (kv/autologger/prod)
 #
@@ -8,6 +9,8 @@
 #
 # Only `router` publishes a port, and only on host loopback. `web` (front) and `api` (back)
 # are on separate networks; only the router joins both, so web cannot reach api.
+# `media-worker` (media-worker D1, D4) joins only the internal `media` network, whose other member
+# is `db`; it runs read-only as uid 10001 with no capabilities and no published port.
 # `docker compose build` builds the images locally for the native architecture.
 
 name: autologger
@@ -121,6 +124,48 @@ services:
       start_period: 20s
     logging: *logging
 
+  # The media worker (media-worker D1, D4, D13, D15): decodes, merges and converts audio blobs in
+  # a sandbox and writes results only under /blobs/media/<job>/ and into catalog.media_jobs; the
+  # api applies them. It reaches nothing but Postgres (the two-member `media` network), as the
+  # autologger_media role. Its environment is exactly the five connection literals and BLOB_DIR
+  # (never the shared allowlist: it holds no app secret); every limit it applies is compiled in.
+  # uid 10001 is not the api's (node, 1000): audio/ and .tmp/ stay unwritable to it.
+  media-worker:
+    image: ghcr.io/kwcantrell/autologger-media-worker:${MEDIA_TAG:?set MEDIA_TAG in the OpenBao prod secret (a git-SHA tag, never latest)}
+    build:
+      context: .
+      dockerfile: docker/media-worker.Dockerfile
+      target: media-worker
+    restart: unless-stopped
+    init: true
+    user: "10001:10001"
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 128
+    cpus: 2
+    mem_limit: 1g
+    networks: [media]
+    environment:
+      PGHOST: db
+      PGPORT: "5432"
+      PGDATABASE: postgres
+      PGUSER: autologger_media
+      PGPASSWORD: ${MEDIA_DB_PASSWORD:?add MEDIA_DB_PASSWORD with docker/scripts/supabase-keys.mjs (see docs/openbao-secrets.md)}
+      BLOB_DIR: /blobs
+    volumes:
+      - autologger-blobs:/blobs
+    healthcheck:
+      # The worker loop touches this file at least every 10 s; no network tool is needed.
+      test: ["CMD", "node", "-e", "const s=require('fs').statSync('/tmp/media-worker.heartbeat');process.exit(Date.now()-s.mtimeMs<60000?0:1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging: *logging
+
 networks:
   # Pinned so the router's trusted_proxies (docker/Caddyfile) is stable. Keep the gateways in
   # sync with `trusted_proxies static ...` there.
@@ -168,6 +213,16 @@ networks:
     ipam:
       config:
         - subnet: 172.28.17.0/24
+  # The media network (media-worker D1): internal and host-isolated, with exactly two members, `db`
+  # and `media-worker`, so the worker reaches Postgres and nothing else.
+  media:
+    internal: true
+    driver_opts:
+      com.docker.network.bridge.gateway_mode_ipv4: isolated
+      com.docker.network.bridge.gateway_mode_ipv6: isolated
+    ipam:
+      config:
+        - subnet: 172.28.18.0/24
 
 volumes:
   autologger-data:
