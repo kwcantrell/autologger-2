@@ -869,4 +869,26 @@ describe('catalog.search: D11 tuning', () => {
     const one = await search(app, 'owner', 'over and over', { session: 'bd', limit: 25 });
     expect(one.moments).toHaveLength(25);
   });
+
+  it("the candidate bound applies after access: another team's or a hidden session's 2,500 matching chunks don't reduce the caller's results", async () => {
+    // Inserted first, so without filtering they would fill the 2,000 candidates.
+    await session(sys, 'fx', 'su', { title: 'Foreign many', started: '2027-02-01T00:00:00Z' });
+    await session(sys, 'hx', 's1', { title: 'Hidden many', started: '2027-02-01T00:00:00Z', hidden: true });
+    for (const sid of ['fx', 'hx']) {
+      await sys`insert into session_transcript_words
+                  (session_id, id, word, start_sec, end_sec, ordinal, created_at_utc)
+                select ${sid}, 'w' || g, 'were you there with them', g, g + 1, g * 40, ${NOW}
+                from generate_series(0, 2499) g`;
+    }
+    await session(sys, 'ox', 's1', { title: 'Own few', started: '2026-01-01T00:00:00Z' });
+    await say(sys, 'ox', 'so were you there or not');
+    await say(sys, 'ox', 'and were you there then', { from: 40 });
+    const r = await search(app, 'owner', 'were you there', { limit: 25 });
+    expect(r.moments.map((m) => `${m.session_id}:${m.id}`)).toEqual(['ox:0', 'ox:1']);
+    expect(r.moment_sessions).toEqual([{ session_id: 'ox', total: 2 }]);
+    // The other team still finds its own session (capped at 3), and no hidden one.
+    const u = await search(app, 'outsider', 'were you there', { limit: 25 });
+    expect(u.moments.map((m) => m.session_id)).toEqual(['fx', 'fx', 'fx']);
+    expect(u.moment_sessions).toEqual([{ session_id: 'fx', total: 1000 }]);
+  });
 });

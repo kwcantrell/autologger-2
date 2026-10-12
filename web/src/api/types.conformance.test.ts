@@ -844,6 +844,13 @@ describe('catalog search — the response `GET /api/search` answers (catalog-sea
     );
   });
 
+  it('moment_sessions is required on SearchResponse, as in the strict contract (catalog-search 7.5)', () => {
+    // Compiles only while the field is required: `{}` extends a Pick of an optional key.
+    type IsRequired<T, K extends keyof T> = Record<never, never> extends Pick<T, K> ? false : true;
+    const required: IsRequired<SearchResponse, 'moment_sessions'> = true;
+    expect(required).toBe(true);
+  });
+
   it('a transcript moment carries sec as a number; topic and event moments carry null', () => {
     const moments: SearchMoment[] = search.moments;
     for (const m of moments) {

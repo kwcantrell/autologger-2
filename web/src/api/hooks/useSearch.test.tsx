@@ -16,7 +16,14 @@ vi.mock('../client', async (importOriginal) => {
 
 const mockedApiFetch = vi.mocked(apiFetch);
 
-const EMPTY: SearchResponse = { q: 'budget', studios: [], shows: [], sessions: [], moments: [] };
+const EMPTY: SearchResponse = {
+  q: 'budget',
+  studios: [],
+  shows: [],
+  sessions: [],
+  moments: [],
+  moment_sessions: [],
+};
 
 function wrapperFor(client: QueryClient) {
   return ({ children }: { children: React.ReactNode }) => (

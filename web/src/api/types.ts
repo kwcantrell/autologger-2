@@ -851,8 +851,6 @@ export interface SearchResponse {
   shows: SearchShowHit[];
   sessions: SearchSessionHit[];
   moments: SearchMoment[];
-  /** The server always sends it (the strict contract schema requires it). Optional here only so
-   * the web's existing search test mocks, written before D11, still type-check; read it as
-   * `moment_sessions ?? []`. */
-  moment_sessions?: SearchMomentSession[];
+  /** Each session in `moments` with its total matches (D11); the strict contract requires it. */
+  moment_sessions: SearchMomentSession[];
 }

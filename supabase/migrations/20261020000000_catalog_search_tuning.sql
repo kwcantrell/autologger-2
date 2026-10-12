@@ -7,7 +7,8 @@
 --    spaces collapsed and trimmed), trigram GIN indexes on it for transcript chunks, topic summaries
 --    and event messages, and a fallback in `catalog.search` that runs only when the full-text query
 --    is empty and the normalised phrase has at least 2 words and 6 characters. It matches whole
---    words, reads at most 2,000 candidate rows per source, ranks by session start (newest first)
+--    words, reads at most 2,000 candidate rows per source (visible sessions on accessible shows,
+--    filtered before the cap), ranks by session start (newest first)
 --    then ordinal, and builds its snippet on the original tokens.
 -- 3. `p_session text default null`: one session's moments only (no per-session cap; the other
 --    groups empty), and `moment_sessions`, each listed session's total matches, at most 1000.
@@ -202,8 +203,9 @@ create or replace function catalog.search(q text, p_studio text, p_show text, p_
       -- Moments: transcript chunks, topics and events of visible sessions on accessible shows, at
       -- most 3 per session unless filtered to one session, with each listed session's total.
       -- Candidates come from the full-text indexes, or, for the phrase fallback, from the phrase
-      -- indexes with at most 2,000 rows per source. Each source has a branch for every session and
-      -- one for `p_session`, which reads that session's rows by primary key.
+      -- indexes with at most 2,000 rows per source, counted after the access set and the
+      -- hidden-session rule, so other teams' rows can't use them up. Each source has a branch for
+      -- every session and one for `p_session`, which reads that session's rows by primary key.
       if v_fts or v_phrase is not null then
         with h as (
           -- Full text, every session.
@@ -238,7 +240,7 @@ create or replace function catalog.search(q text, p_studio text, p_show text, p_
                  ts_rank_cd(e.search_tsv, v_tsq)
             from catalog.session_events e
            where v_fts and e.session_id = p_session and e.search_tsv @@ v_tsq
-          -- Phrase, every session: whole words, at most 2,000 candidates per source.
+          -- Phrase, every session: whole words, at most 2,000 accessible candidates per source.
           union all
           select * from (
             select c.session_id, 'transcript'::text, c.bucket::text, c.bucket, c.start_sec,
@@ -247,6 +249,9 @@ create or replace function catalog.search(q text, p_studio text, p_show text, p_
              where v_phrase is not null and p_session is null
                and catalog.search_phrase_norm(c.text) like v_pin
                and ' ' || catalog.search_phrase_norm(c.text) || ' ' like v_pword
+               and exists (select 1 from catalog.sessions s
+                            where s.id = c.session_id and s.ui_hidden = 0
+                              and s.show_id = any(v_access_shows))
              limit 2000) pc
           union all
           select * from (
@@ -256,6 +261,9 @@ create or replace function catalog.search(q text, p_studio text, p_show text, p_
              where v_phrase is not null and p_session is null
                and catalog.search_phrase_norm(t.summary) like v_pin
                and ' ' || catalog.search_phrase_norm(t.summary) || ' ' like v_pword
+               and exists (select 1 from catalog.sessions s
+                            where s.id = t.session_id and s.ui_hidden = 0
+                              and s.show_id = any(v_access_shows))
              limit 2000) pt
           union all
           select * from (
@@ -265,6 +273,9 @@ create or replace function catalog.search(q text, p_studio text, p_show text, p_
              where v_phrase is not null and p_session is null
                and catalog.search_phrase_norm(e.message) like v_pin
                and ' ' || catalog.search_phrase_norm(e.message) || ' ' like v_pword
+               and exists (select 1 from catalog.sessions s
+                            where s.id = e.session_id and s.ui_hidden = 0
+                              and s.show_id = any(v_access_shows))
              limit 2000) pe
           -- Phrase, one session.
           union all
@@ -274,6 +285,9 @@ create or replace function catalog.search(q text, p_studio text, p_show text, p_
               from catalog.session_transcript_chunks c
              where v_phrase is not null and c.session_id = p_session
                and ' ' || catalog.search_phrase_norm(c.text) || ' ' like v_pword
+               and exists (select 1 from catalog.sessions s
+                            where s.id = c.session_id and s.ui_hidden = 0
+                              and s.show_id = any(v_access_shows))
              limit 2000) sc
           union all
           select * from (
@@ -282,6 +296,9 @@ create or replace function catalog.search(q text, p_studio text, p_show text, p_
               from catalog.session_topics t
              where v_phrase is not null and t.session_id = p_session
                and ' ' || catalog.search_phrase_norm(t.summary) || ' ' like v_pword
+               and exists (select 1 from catalog.sessions s
+                            where s.id = t.session_id and s.ui_hidden = 0
+                              and s.show_id = any(v_access_shows))
              limit 2000) st
           union all
           select * from (
@@ -290,6 +307,9 @@ create or replace function catalog.search(q text, p_studio text, p_show text, p_
               from catalog.session_events e
              where v_phrase is not null and e.session_id = p_session
                and ' ' || catalog.search_phrase_norm(e.message) || ' ' like v_pword
+               and exists (select 1 from catalog.sessions s
+                            where s.id = e.session_id and s.ui_hidden = 0
+                              and s.show_id = any(v_access_shows))
              limit 2000) se
         ),
         j as (

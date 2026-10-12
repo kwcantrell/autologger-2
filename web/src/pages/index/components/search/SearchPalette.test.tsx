@@ -80,6 +80,10 @@ const RESULTS: SearchResponse = {
       snippet: `${OPEN}budget${CLOSE} vote`,
     },
   ],
+  moment_sessions: [
+    { session_id: 'sess-2', total: 2 },
+    { session_id: 'sess-3', total: 1 },
+  ],
 };
 
 function searchResult(q: string) {

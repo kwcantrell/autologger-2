@@ -99,6 +99,7 @@ const RESULTS: SearchResponse = {
       snippet: `the ${OPEN}budget${CLOSE} passed`,
     },
   ],
+  moment_sessions: [{ session_id: 'sess-2', total: 1 }],
 };
 
 type SearchState = Partial<{
@@ -225,7 +226,9 @@ describe('SearchRoute: states', () => {
   });
 
   it('empty', () => {
-    mockSearch({ data: { q: 'zzz', studios: [], shows: [], sessions: [], moments: [] } });
+    mockSearch({
+      data: { q: 'zzz', studios: [], shows: [], sessions: [], moments: [], moment_sessions: [] },
+    });
     renderRoute('/search?q=zzz');
     expect(screen.getByText(/no results/i)).toBeTruthy();
   });
