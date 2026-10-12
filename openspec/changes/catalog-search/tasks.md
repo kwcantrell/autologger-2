@@ -237,13 +237,13 @@
   - Evidence: red (log `cs-7.3-red.log`): `cd web && npx vitest run src/api/hooks/useSearch.test.tsx src/pages/index/components/search` -> `Test Files  3 failed | 1 passed (4)`, `Tests  11 failed | 38 passed (49)`: the `sessionId` key and `session_id` path, the grouped page (3 at first, "Show 9 more" / "Show 22 more in this session"), "Grouped moments expand" (`sessionId: 'sess-a', limit: 25` with `studioId: 'st-1'`, 12 listed in place, other groups unchanged), "Expanding a very busy session" (25 listed, `Showing 25 of 40 matches in this session`, link `/sessions/sess-c`), loading/error inside the group, a new query collapsing, and the labels on the page and in the palette. D10 category 4 edit: `SearchRoute.test.tsx` "a session opens /sessions/<id>, a moment its deep link" now clicks the moment by its snippet (`/passed/i`) instead of `/town hall/i`, because the session title moved to the group header. Then `useSearch` gains `sessionId` (key and `session_id`), `searchLinks.ts` gains `momentLabel`/`formatMomentTime`, the palette uses the label, and `SearchRoute` groups moments by session with an `ExpandedSession` that searches `session_id` with limit 25. Green (log `cs-7.3-green.log`): the same files -> `Test Files  4 passed (4)`, `Tests  49 passed (49)` (`Speaker 1 · 1:12:03`, `Ana · 0:12:34`, `0:00:05`, `Speaker 2`, `Topic`, `Event`; the palette keeps 3 flat options with totals 40 and 12 and never passes `sessionId`); full web suite `Test Files  152 passed (152)`, `Tests  2028 passed (2028)`; `npm run typecheck` -> exit 0.
 
   Then implement. Verified by the web suite.
-- [ ] 7.4 Recheck on the dev stack with agent-browser:
+- [x] 7.4 Recheck on the dev stack with agent-browser:
   - `why did he do that` finds the quote;
   - `pacing` no longer lists the show;
   - `/search?q=divorce` groups moments with "Show more" and expands;
   - labels read `Speaker n · h:mm:ss`.
-
   Then run `GITHUB_BASE_REF=supabase-migration scripts/check-change.sh --stage hook`, update ADR 0029 (the threshold, the phrase fallback and grouping), and append a consistency read to `panel.md`. Verified by screenshots, green gates and the ADR diff.
+  - Evidence: `sh docker/supabase/test_migrate.sh` -> `test_migrate: 35 passed, 0 failed`; `make dev-up` applied `20261020000000` on dev, then `vacuum analyze` on chunks, topics and events. agent-browser on `localhost:8787`: the palette `why did he do that` -> one moment `Speaker 1 · 1:12:03` with `Why did he do that?` highlighted (`cs-7.4-phrase.png`); `pacing` -> no show in the list, only the transcript moment; `/search?q=divorce` -> moments grouped under the session header, 3 shown, `Show 22 more in this session`; after expanding, 25 moments and `Showing 25 of 61 matches in this session` with an `Open session` link (`cs-7.4-grouped.png`, `cs-7.4-expanded.png`); 390x844 `scrollWidth` 390 (`cs-7.4-mobile.png`). ADR 0029 updated (threshold 0.5, phrase fallback, grouping and totals). Hook gates and consistency read: see below.
 
 ## 6. Docs, verification, PR
 

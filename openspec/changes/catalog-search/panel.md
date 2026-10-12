@@ -64,3 +64,14 @@ Edits since the D11 re-approval (`9677c833`):
 
 Scope change: no. Both decisions were the owner's in chat (2026-10-12); one tightens access and the other keeps the web type as strict as the contract.
 - [x] [major] The phrase fallback's 2,000-candidate cap applied before access filtering, so other teams' matching rows could use up a caller's candidates: a weak cross-team signal (found while implementing 7.1). Resolved: the owner chose to filter by access before the cap (D11.2, task 7.5).
+
+## Consistency read 2026-10-12 (after group 7)
+Edits since the D11 re-approval: the owner-approved follow-ups recorded above (the access set before the fallback cap; `moment_sessions` required on web), plus ticks and Evidence.
+Scope change: no.
+- Every D11 requirement and scenario has a test:
+  - the phrase normaliser scenarios, "A shared fragment is not a typo", "A stop-word quote is found", "Phrase matches whole words only", "A lone common word is not a phrase", "One session's moments" and "Show more in one session" (7.1, 7.2);
+  - "Grouped moments expand", "Expanding a very busy session" and "A transcript moment's label" (7.3);
+  - other teams' rows don't use up a caller's cap (7.5).
+- Web choices that change no requirement: a transcript moment with neither speaker nor time is labelled "Transcript", and labels are no longer uppercased (task 7.3 report).
+- No contradictions between design D11, the specs and the implementation.
+No findings.
