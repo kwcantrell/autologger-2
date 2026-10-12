@@ -16,9 +16,11 @@ start the capture with a short timeslice (design D10 owns the constant, 5 s) and
 delivered slice to the chunk's entry in local storage ("Finished chunks are persisted locally
 until the server confirms them"), so that the in-progress chunk's data is on disk within one
 slice and the recorder holds at most the slices not yet written in memory; the concatenated
-slices SHALL be the same bytes as a chunk recorded without a timeslice (a browser whose
-slices do not concatenate, if the spike finds one, records that chunk without a timeslice
-and persists it only when complete). The recorder SHALL NOT compute or upload waveform peaks
+slices SHALL decode to the same stream (codec, rate and sample count) as a chunk recorded
+without a timeslice (spike 0.2: the bytes differ only in container metadata). A browser whose
+slices are not shown to concatenate records each chunk without a timeslice and persists it
+only when complete: Safari, until its spike passes (owner decision 2026-10-12, design D10), so
+on Safari a crash loses at most the chunk in progress, as before this change. The recorder SHALL NOT compute or upload waveform peaks
 for its chunks: the server computes every new segment's peaks and duration
 (media-processing "Every new segment is probed, given peaks and normalised on ingest").
 
@@ -30,7 +32,7 @@ for its chunks: the server computes every new segment's peaks and duration
 
 #### Scenario: A crash mid-take loses only unpersisted chunks
 - **WHEN** the browser tab is killed two-and-a-half cadences into a recording with no
-  pending upload failures
+  pending upload failures, on a browser that records with timeslices
 - **THEN** the two chunks completed at the first two rollover boundaries are already
   persisted as segments on the server, and the in-progress chunk is in local storage up to
   its last delivered slice, so no more than one slice of audio is unpersisted

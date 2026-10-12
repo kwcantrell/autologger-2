@@ -141,7 +141,8 @@ created_at_ms bigint not null, updated_at_ms bigint not null, applied_at_ms bigi
 
 The worker writes nothing to a segment row and nothing under `BLOB_DIR/audio/`. Its outputs are
 files under `BLOB_DIR/media/<job id>/` and `result_json`. The API's single process runs
-`mediaApply` (every 10 s and on `media_jobs_done`): for each `done` job, in one `SessionHub`
+`mediaApply` (every 10 s; the `media_jobs_done` wake-up is not wired, see "Edits after
+approval"): for each `done` job, in one `SessionHub`
 transaction as system caller `media-apply`, it validates the result, **copies** the worker's file
 into a blob of its own, writes the rows, bumps the session revision, broadcasts `audio.changed`,
 and sets the job `applied`; any failure leaves the job `done` for the next tick (idempotent: the
@@ -173,7 +174,8 @@ job row's status guards the transaction).
 - Result validation: peaks are 8..4096 numbers in [0, 1]; `duration_ms` is a positive integer; the
   blob key is `media/<job id>/<name>` with `<name>` a single plain path component; a merge's input
   ids must equal the current segment set (D7); an `ingest` whose target row no longer exists is
-  `cancelled` (an upload row commits before its blob put; a deleted session leaves no target).
+  `cancelled` (a deleted session or segment leaves no target; since B.8 every blob is written
+  before its row). A merge's seams are validated strictly (B.9, see "Edits after approval").
 - **Deterministic output identity**: the merged segment's id is derived from the job id
   (`uuidv5(job id)`) and its key is `audio/<sid>/<ordinal>_<id>.<ext>`, so an apply retried after a
   crash between the blob put and the commit finds the blob already in place under the same key
@@ -417,7 +419,8 @@ both fail or quota is short, with one warning. The layout is per user:
 user's directory; sign-out first warns when that user has unsent chunks (the leave-warning copy)
 and then wipes the directory; another user's directory is never read or shown.
 
-The recorder calls `mr.start(PERSIST_SLICE_MS = 5000)` (owner answer 3: a crash loses about 5 s);
+The recorder calls `mr.start(PERSIST_SLICE_MS = 5000)` (owner answer 3: a crash loses about 5 s;
+Safari records without a timeslice, see the Safari branch below);
 each `dataavailable` blob is appended to the open chunk. Timeslice blobs after the first are
 continuations of one file, so the appended bytes equal the no-timeslice file (spike 0.2 pins this
 on Chromium and Firefox; for Safari the spike decides between appends and finished-chunks-only
@@ -486,9 +489,12 @@ recorder and a no-timeslice recorder on the same stream.
   ≈10 GiB, Firefox 10 GiB, WebKit 1000 MiB; `persist()`: Chromium `false` (no engagement),
   WebKit `false`, Firefox did not settle in 5 s (prompt pending in headless), so the recorder
   must not await `persist()` before `start()`.
-- Safari branch: undecided until the owner's Safari check (tasks 0.2 Evidence); until then the
-  Safari path stays "appends", and switches to finished-chunks-only if Safari's concatenated
-  slices fail `decodeAudioData` or ffmpeg.
+- Safari branch: **decided finished-chunks-only** (owner decision 2026-10-12, task A.11; edit after
+  approval): no Safari was available for spike 0.2, so Safari records each chunk without a
+  timeslice and persists it when it completes (`SAFARI_PERSIST_MODE = 'finished-only'` in
+  `AudioRecorder.tsx`; a crash loses at most the chunk in progress, as before this change).
+  It switches to `slices` once the owner's Safari run of the spike page shows the concatenated
+  slices decode with `decodeAudioData` and ffmpeg.
 
 ### D11. Timed retry, classification, finalize, throttle-proof timers
 
@@ -655,8 +661,9 @@ a visible headed tab is expected but unverified here (Safari: owner check).
 `POST …/audio/segments` with a `recording_ordinal` and `started_at_utc` first looks the window up
 in `session_audio_seams`; a hit answers as a successful upload with the dict of the segment the
 seam points at (the chunk itself, or the merged segment that absorbed it) and stores nothing. A
-miss inserts the row, its seam row (offset 0, `source_key` = its key) and the ingest job in one
-transaction; the unique primary key on `(session_id, recording_ordinal, started_at_utc)` makes a
+miss writes the blob first (B.8) and then inserts the row, its seam row (offset 0, `source_key` =
+its key) and the ingest job in one transaction (a lost race or a failed insert deletes the
+just-written blob); the unique primary key on `(session_id, recording_ordinal, started_at_utc)` makes a
 concurrent duplicate from two tabs fail with `23505`, which the route turns into the same
 "existing" answer. The client-side dedupe keeps using the normalised `started_at_utc` the server
 stores (pinned by a test on `parseOptionalMarkedAt`), so the recovered chunk, the lost-response
@@ -721,3 +728,74 @@ Still open: the design-owned constants (`UPLOAD_PART_BYTES = 32 MiB`,
 `IMPORT_PARTS_THRESHOLD_BYTES = 40 MiB`, `PERSIST_SLICE_MS = 5 s`, backoff cap 5 min, reconcile
 after 30 min, `MEDIA_MIN_FREE_BYTES = 10 GiB`, 2 open uploads and 3 GiB staged per user); object
 if any is wrong.
+
+## Edits after approval (consistency read 2026-10-12)
+
+Implementation changed or refined these decisions after the 2026-10-11 approval. The inline
+"Edit after approval" and "Spike" notes above (A10-A13, D3, D4, D5, D7, D10, D13, D17) stay
+where they are; this list adds what the code does that the text above did not say. None changes
+a route, a status, a response shape or the worker's privileges.
+
+- **D2 guard trigger** (S.2, S.7): besides the two transitions it allows `running → running` (a
+  renewal), keeps the holder on every `running` exit, lets a re-queue give the claim's attempt back
+  only under a live lease (the worker's `release`), and bounds the worker's values on the database
+  clock (`locked_until_ms` ≤ now + 15 min, a changed `run_after_ms` ≤ now + 2 h). The trigger
+  cannot tell workers apart (one role); identity is each statement's `locked_by = <id>` fence.
+  `media_jobs_error_code` checks `error` against the codes listed in D2 plus `inputs-changed`
+  (set by the API's apply, D7).
+- **D2/D3 wake-ups** (B.5 deviation): the worker `LISTEN`s on `media_jobs` and polls every 5 s as
+  designed, and still `NOTIFY`s `media_jobs_done`; the API does **not** listen (the server has no
+  `postgres` client of its own) and applies every 10 s. media-processing "The API applies worker
+  results" still says "and on a payload-free notification" (open finding in `panel.md`).
+- **D3 apply** (B.9): a merge's result seams must be exactly the inputs' held windows plus the
+  `started_at_utc` of seamless input rows, offsets in `[0, duration_ms]` and strictly increasing
+  in window order; `ended_at_utc` and `source_key` come from the database, never the result; else
+  `invalid-result`. The apply cancels a job only when its session is gone (`SessionNotFoundError`);
+  any other error leaves it `done`. A failed job's `error` reaches `media_error` only as a fixed
+  code (else `internal`). Shutdown awaits an in-flight pass.
+- **D3/D18 blob before row** (B.8): every create path (segment POST, the upload's segment and
+  import modes, local-audio-import, YouTube import, the apply's merged and FLAC rows) writes the
+  blob under its final key before the row, so a listed row always has its bytes. Crash residue
+  is handled at boot by `trashOrphanBlobsOnce` (D8 below).
+- **D4 modes** (S.7): `put`, `adoptCopy`, `adoptStaging` and `trash` leave 0644 files in 0755
+  directories whatever the umask, so the 0600 `missing-blob` case applies only to blobs written
+  before this change.
+- **D5/D7 per-attempt outputs** (W.8): each attempt writes `converted-a<n>.flac` /
+  `merged-a<n>.<ext>` and its scratch `a<n>.tmp/` in the shared `media/<job>/`; the worker never
+  removes the directory (the API removes it after apply or in the orphan sweep), so a worker that
+  lost its lease cannot delete the re-claimer's output.
+- **D6 reconcile** (B.5, B.9): it also requires a seam row per segment (so a legacy recording given
+  a status by the backfill is still never auto-merged), and a merge that failed `mixed-codecs` or
+  `interleaved-input` records its input set (`session_meta` `media_merge_blocked:<ordinal>`); the
+  reconcile skips that recording for as long as its segments are exactly that set, beyond the 24 h
+  hold-off (open finding in `panel.md`: the approved scenario says 24 h).
+  `enqueueMediaJobs.ts --merge` leaves out recordings with a row lacking `started_at_utc`.
+- **D7 merge timestamps** (D.8): `mergeAudioSegments` writes every packet at the running end of
+  what it wrote, advanced by the packet's exact duration (Opus TOC, FLAC block size, else the
+  container's), because Chrome's last block has no duration and its block times are rounded to
+  milliseconds; the timestamps are strictly increasing and each input's offset equals the earlier
+  inputs' untrimmed sample sum, the unit the worker's seams use. A merge whose rows include a
+  `NULL` `started_at_utc` fails `interleaved-input`, final (W.8).
+- **D8 orphan blobs** (B.8): at boot the API moves to the trash (never deletes) any `audio/` blob
+  older than 1 h that no row names, except a pending merge's copy. A blob restored from the trash
+  keeps its old mtime, so `sync-from-disk` must run before the next API restart (README "Media
+  jobs").
+- **D10 locks and storage** (A.8, A.10): the queue holds a chunk's Web Lock for its whole stay in
+  the queue (`holdChunk`, recovery included), not per attempt, and releases the take lock after
+  that; an attempt waits for the queue's own pending hold, and real contention is logged and
+  retried, not shown as a failure. Every OPFS call times out after 10 s (the backend is marked
+  dead and the chunk degrades to memory, keeping the persisted prefix on disk); backend choice is a
+  real write probe (3 s timeout).
+- **D11 stop and diagnostics** (A.9, V.0, dev toast log): at Stop only a terminal failure
+  (`blocked`, `permanent`) raises the error toast; a chunk still on its backoff keeps Record
+  blocked and the rescue surface reads as a neutral status with its actions. Development builds
+  (`NODE_ENV === 'development'` only) `console.warn` each failed attempt's class and HTTP status,
+  log every toast to the console (`Toast.tsx`), and read a chunk-length override from
+  `localStorage['autologger.dev.chunkMs']` (15 s..10 min, `devChunkMs.ts`, the "dev-only seam"
+  task V.2 names). Production builds are unchanged.
+- **D12 import memory** (D.6): besides the 24 h `upload_id` memory, the importer remembers for
+  30 days the session it created for a parts upload, so a re-run after the upload memory expired
+  resumes with a fresh upload into that session while it has no segments; a matching session it
+  did not create, or one with audio, is still skipped.
+- **D16 clip keys** (D.9): seam clips share their segment's id, so the timeline keys them by
+  `<segment id>@<media offset>`.

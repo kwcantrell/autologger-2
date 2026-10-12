@@ -68,7 +68,8 @@ The owner decided on 2026-10-11:
   are converted to verified FLAC. The browser stops decoding audio for waveforms except as a
   fallback for legacy rows.
 - **Finished chunks are persisted in the browser** (OPFS, IndexedDB fallback, per user, owned
-  through Web Locks) until the server confirms them, the in-progress chunk is appended every 5 s,
+  through Web Locks) until the server confirms them, the in-progress chunk is appended every 5 s
+  (Safari persists finished chunks only until its slices are verified, owner decision 2026-10-12),
   uploads retry on a timed backoff and on `online`, a reload resumes the upload from storage, and
   the segment upload is idempotent per recording window so a resume never stores audio twice.
 - **A lost microphone is re-acquired** and the take continues; the screen is kept awake while

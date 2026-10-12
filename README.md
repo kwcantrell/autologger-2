@@ -1782,8 +1782,11 @@ recording's chunks into one segment by packet copy. Work is the table `catalog.m
 `BLOB_DIR/media/<job id>/` and marks the job `done`; the API applies the result every 10 s (status
 `applied`) and trashes what it replaced. A merge waits while the session's transcript generation
 or YouTube import runs. Recordings are merged after the client's finalize, or by the reconcile 30
-minutes after their last chunk (never one that failed or was cancelled in the last 24 h, and never
-one recorded before the media worker).
+minutes after their last chunk (never one that failed or was cancelled in the last 24 h, never one
+whose merge failed `mixed-codecs` or `interleaved-input` while its segments are unchanged, and
+never one recorded before the media worker).
+Every blob is written before its row; at API start, an `audio/` blob older than an hour that no
+row names is moved to the trash (never deleted).
 
 - **Enqueue existing rows** (legacy imports, rows without peaks or duration, WAVs):
   ```bash
@@ -1803,15 +1806,17 @@ one recorded before the media worker).
   `verify-mismatch`, `interleaved-input`, `missing-blob`, `timeout`, `low-disk`, `internal`,
   `invalid-result`, `inputs-changed`); a failed ingest marks its segment `media_status = 'failed'`
   (the timeline shows "Waveform unavailable"); a failed merge leaves the chunks as they were.
-  `missing-blob` on an imported blob copied with mode 0600 means the worker cannot read it:
+  `missing-blob` on a blob written with mode 0600 before the media worker (every write path now
+  leaves 0644) means the worker cannot read it:
   `sudo chmod -R a+rX "$BLOBS/audio"`, then re-enqueue. To retry, delete the failed row
   (`delete from catalog.media_jobs where id = '…'`) and run the enqueue again. Terminal jobs older
   than 7 days are deleted by the API's sweep.
 - **Trash restore:** a replaced blob sits at `BLOB_DIR/.trash/<yyyy-mm-dd>/<r2_key>` for 7 days.
   To restore a chunk after a bad merge, move the files back to their `audio/<session>/…` path
   (`sudo mv "$BLOBS/.trash/<day>/audio/<sid>/<file>" "$BLOBS/audio/<sid>/"`) and run
-  `POST /api/sessions/<sid>/audio/segments/sync-from-disk`; delete the merged row first if you want
-  the chunks back as separate segments. The chunks of a merged recording are held twice for a week
+  `POST /api/sessions/<sid>/audio/segments/sync-from-disk` before the API next restarts (a
+  restored file keeps its old mtime, so the start-up orphan sweep would trash it again while no row
+  names it); delete the merged row first if you want the chunks back as separate segments. The chunks of a merged recording are held twice for a week
   (prod has 80 GB).
 - **Low-disk mode:** when the blob volume has less than 10 GiB free, the 10-minute sweep purges the
   trash oldest-first until it has (the grace period shortens, live audio is never touched), uploads

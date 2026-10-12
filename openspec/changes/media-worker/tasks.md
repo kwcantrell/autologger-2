@@ -463,7 +463,8 @@ environments" ("Dev, stage and prod compared"). No other README section is touch
   `kv/autologger-import/dev` before the migration, `MEDIA_TAG`); `docs/security.md` "Untrusted
   media in the worker". Outside W's list, still needing `MEDIA_TAG`/role rows: README
   "Configuration", `docker/.env.example`, `docker/scripts/make-guards.sh` `prod-tags` (legacy),
-  `docs/supabase.md` role table.
+  `docs/supabase.md` role table. (Consistency read 2026-10-12: all four now carry `MEDIA_TAG` /
+  the `autologger_media` row: `docker/.env.example:9`, `make-guards.sh:185`, `docs/supabase.md:53`.)
 
 - [x] W.8 Implementation panel fixes (coordinator, 2026-10-12). (a) MAJOR: a lost lease no longer
   deletes the re-claimer's output: each attempt writes `converted-a<attempt>.flac` /
@@ -628,6 +629,16 @@ environments" ("Dev, stage and prod compared"). No other README section is touch
   logged and carried a `lastError`); green `Tests 74 passed (74)`; queue + recorder + banner + locks
   `Tests 172 passed (172)`; `cd web && npx vitest run` `Test Files 162 passed (162)`, `Tests 2176
   passed (2176)`, no unhandled errors; `npx tsc --noEmit -p .` clean; biome clean.
+- [x] A.11 Safari finished-chunks-only (owner decision 2026-10-12: no Safari available for spike 0.2): `SAFARI_PERSIST_MODE = 'finished-only'`; Safari records without a timeslice and persists each chunk when it completes (crash loss up to one chunk, as before this change). Switch to `slices` once `~/media-worker-safari-spike/www` passes on Safari.
+  Evidence: red `npx vitest run src/pages/index/components/AudioRecorder.chunks.test.tsx -t "Safari records"` -> `expected 5000 to be undefined`; green after the constant -> full web `Test Files 162 passed`, `Tests 2177 passed`; `tsc --noEmit` exit 0.
+- [x] A.12 Development builds log every toast (`web/src/shared/components/Toast.tsx`
+  `_devLogToast`: `console.warn` for errors, `console.info` otherwise, only when `NODE_ENV ===
+  'development'`), so an auto-dismissed toast stays readable during V.2. **File outside A's
+  ownership list, recorded for the consistency read** (commit `6eddbf07`).
+  Evidence: (consistency read 2026-10-12; red not recorded, the test was written with the code)
+  `cd web && npx vitest run src/shared/components/Toast.test.tsx
+  src/pages/index/components/timeline/TimelineClips.test.tsx` -> `Test Files 2 passed (2)`,
+  `Tests 8 passed (8)` (incl. `logs every toast to the console in development only`).
 - [ ] A.7 Suites: `cd web && npx vitest run`, `npm run typecheck -w web`, `npm run lint -w web`;
   manual checklist in dev on Chromium and Firefox (and Safari if available): kill the tab at
   2.5 cadences → reload → recovered chunks upload → finalize → one merged segment appears with
@@ -779,14 +790,19 @@ environments" ("Dev, stage and prod compared"). No other README section is touch
   seams `[0, 20340, 40260, 60240]`; pinned-ffmpeg f32le decode of the merged file has no stderr
   and 13351680 bytes = the inputs' sum.
 
+- [x] D.9 Seam clips of a merged segment get unique React keys in
+  `web/src/pages/index/components/timeline/TimelineClips.tsx` (`<segment id>@<media offset>`;
+  they share the segment's id, D16). **File outside D's ownership list, recorded for the
+  consistency read** (commit `95f14c82`).
+  Evidence: (consistency read 2026-10-12; red not recorded) same run as A.12 -> `Tests 8 passed
+  (8)`, incl. `renders every seam clip of a merged segment without a duplicate-key warning`.
+
 ## V. Verify (after all workstreams)
 
 - [ ] V.1 `scripts/check-change.sh` green (tests, typecheck, audit, openspec, tests-with-code);
   `openspec validate media-worker --strict`.
 - [x] V.0 Dev-only chunk length for V.2: `web/src/pages/index/utils/devChunkMs.ts` reads `localStorage['autologger.dev.chunkMs']` (15 s .. 10 min) only when `NODE_ENV === 'development'`; the recorder's default `chunkMs` uses it.
   Evidence: red `npx vitest run src/pages/index/utils/devChunkMs.test.ts` -> `Cannot find module './devChunkMs'`; green -> with the recorder components `Test Files 77 passed`, `Tests 891 passed`; `tsc --noEmit` exit 0.
-- [x] A.11 Safari finished-chunks-only (owner decision 2026-10-12: no Safari available for spike 0.2): `SAFARI_PERSIST_MODE = 'finished-only'`; Safari records without a timeslice and persists each chunk when it completes (crash loss up to one chunk, as before this change). Switch to `slices` once `~/media-worker-safari-spike/www` passes on Safari.
-  Evidence: red `npx vitest run src/pages/index/components/AudioRecorder.chunks.test.tsx -t "Safari records"` -> `expected 5000 to be undefined`; green after the constant -> full web `Test Files 162 passed`, `Tests 2177 passed`; `tsc --noEmit` exit 0.
 - [ ] V.2 End to end on dev: record 3 cadences with `chunkMs` lowered in a dev-only seam → stop
   → `finalize` with the three windows → worker merges → one segment with `duration_ms`, peaks
   and three `seams`, the three chunk blobs under `.trash/<today>/`, the timeline showing three
@@ -798,3 +814,10 @@ environments" ("Dev, stage and prod compared"). No other README section is touch
   purges trash, the log shows the transition.
 - [ ] V.3 Tier 2 consistency read (`consistency-read` skill) over the whole branch; `panel.md`
   re-panel section for any scope change; the design-owned constants confirmed by the owner.
+  Evidence (2026-10-12): `git diff 138649f3..HEAD` read against proposal, design D1-D20, tasks,
+  the nine spec deltas, ADR 0029 and the code; `panel.md` "Consistency read 2026-10-12" (scope
+  change: no; two open findings for the owner); stale text fixed in design ("Edits after
+  approval"), live-recording-chunks, media-processing, ADR 0029 and README "Media jobs";
+  `npx openspec validate media-worker --strict` -> `Change 'media-worker' is valid`. **Open:** the
+  owner's confirmation of the design-owned constants (design "Still open") and of the two open
+  findings.

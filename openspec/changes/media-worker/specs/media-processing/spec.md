@@ -177,8 +177,9 @@ inputs include the earlier merged file, with its seams carried over.
 #### Scenario: Three chunks become one segment
 - **WHEN** a three-chunk Opus recording is finalized and the worker runs
 - **THEN** the session lists one segment for that `recording_ordinal`, a WebM whose `duration_ms`
-  is the three decoded lengths summed, with three seams whose offsets are the cumulative input
-  durations, and the three chunk rows are gone
+  is the merged file's decoded length (the three chunks' audio plus the codec padding the
+  non-final chunks carry, design D7), with three seams whose offsets are the inputs' cumulative
+  untrimmed lengths, and the three chunk rows are gone
 
 #### Scenario: Nothing is removed before the merge is live
 - **WHEN** the API process dies after the worker finished a merge but before the apply commits
@@ -186,8 +187,8 @@ inputs include the earlier merged file, with its seams carried over.
   completes the swap once
 
 #### Scenario: A verification mismatch keeps the chunks
-- **WHEN** the merged file decodes to a sample count other than the one expected from the inputs'
-  headers, or any input or the output raises a decode error
+- **WHEN** the merged file, decoded untrimmed, holds a sample count other than the sum of the
+  inputs' untrimmed counts, or any input or the output raises a decode error
 - **THEN** no row changes, the job retries and finally fails `verify-mismatch` or
   `decode-failed`, and the chunks remain playable segments
 
