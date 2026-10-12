@@ -312,7 +312,7 @@ The integration tests point SDK routes at a local fake provider through a dev-mo
   `docs/openbao-secrets.md`. Green.
   - Evidence: red, `node --test --test-name-pattern="AI SDK harness" docker/scripts/compose-run.test.mjs` -> `✖ are accepted from the OpenBao secret in every stack` and `✖ a dev run passes them to compose` (`refusing the OpenBao secret: AI_CHAT_MAX_STEPS AI_CHAT_MAX_TOKENS CLAUDE_CLI_EMAILS GENERATE_MAX_STEPS GENERATE_MAX_TOKENS [not-allowed]`), `ℹ tests 2`, `ℹ fail 2` (log `sdk-9.1-red.log`). Green, `node --test docker/scripts/compose-run.test.mjs` -> `ℹ tests 80`, `ℹ pass 80`, `ℹ fail 0`; `sh docker/scripts/check-envs.sh dev|stage|prod` -> `check-envs: ok` for each (log `sdk-9.1-green.log`).
   - Evidence: the five keys are null passthroughs in `docker/secrets-env.yaml` under one comment. `docker/.env.example` has an empty `CLAUDE_CLI_EMAILS=` with its comment (no address) and the four limits commented out with their defaults. `docs/openbao-secrets.md` gains a `CLAUDE_CLI_EMAILS` rule (optional, owner not implicit, empty means nobody, `403` for others, restart to apply, link to ADR 0028) and a limits rule (defaults, positive integers, per-turn caps paid by the caller's key).
-- [ ] 9.2 Write `docs/decisions/0028-ai-sdk-agent-harness.md`. It covers:
+- [x] 9.2 Write `docs/decisions/0028-ai-sdk-agent-harness.md`. It covers:
   - the in-process AI SDK harness;
   - the guarded fetch;
   - the CLI allowlist;
@@ -323,6 +323,8 @@ The integration tests point SDK routes at a local fake provider through a dev-mo
   the key only in provider request headers, scrubbed errors, and no deployment-wide ceiling.
   Verified by the ADR having the same sections as ADR 0027, and by `grep -n "0028"
   docs/security.md` matching.
+  - Evidence: `diff <(grep "^## " docs/decisions/0027-provider-keys-at-rest.md) <(grep "^## " docs/decisions/0028-ai-sdk-agent-harness.md)` -> no output (both `## Context`, `## Decision`, `## Consequences`, `## Evidence`); `grep -n "0028" docs/security.md` -> `128:  [0028](decisions/0028-ai-sdk-agent-harness.md)). AI chat, topic and event generation run` (log `sdk-9.2-green.log`). `docs/decisions/` has no ADR index (only `0000-adr-template.md` and the numbered ADRs), so nothing else lists 0028.
+  - Evidence: ADR 0028's Decision covers the in-process harness (factory models only, injected fetch and key), the guarded fetch (destinations, manual redirect, 120 s header timeout, request and byte caps), the CLI allowlist (keyless row, owner not implicit, `403`, no dev fallback), error scrubbing (`upstream-failed`, `SdkTurnFailure`, no-op `.catch` and `onError`, "Tool failed.", class-only global log, no process handler because of Next.js's handlers), the tool-call caps and serialization, and the alternatives, with OpenCode's drop cited to panel.md's two OpenCode panels. `docs/security.md` Known gaps gains the threat model: prompt injection limited to the turn's tools, the key only in the provider request header, scrubbed errors, and no deployment-wide ceiling as a residual.
 - [ ] 9.3 Run the opt-in real test `server/src/test/aiSdk.real.test.ts` with
   `REAL_LLM_ANTHROPIC_KEY`. It is skipped without the variable. It checks:
   - a chat turn calls `get_transcript_words` and answers;
