@@ -9,6 +9,8 @@ Tier reason:
 
 ADR 0021 slice 11 (11a: the tool, the parity check and the runbook).
 
+Approved-by: Kalen 2026-10-11
+
 ## Why
 
 Since slice 4e (catalog) and 7b-1 (session content), the server reads only Postgres. The
