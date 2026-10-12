@@ -90,7 +90,7 @@ describe('generic 500 logging of AI SDK errors (ai-sdk-agent-harness D5)', () =>
     const lines: string[] = [];
     const spy = vi.spyOn(console, 'error').mockImplementation((...a: unknown[]) => {
       lines.push(
-        a.map((x) => (typeof x === 'string' ? x : JSON.stringify(x) ?? String(x))).join(' '),
+        a.map((x) => (typeof x === 'string' ? x : (JSON.stringify(x) ?? String(x)))).join(' '),
       );
     });
     const stderr = vi.spyOn(process.stderr, 'write').mockImplementation((c: unknown) => {

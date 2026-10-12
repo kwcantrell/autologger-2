@@ -371,7 +371,11 @@ describe('API compression (app-level /api/* compress middleware)', () => {
     const res = await app.request(
       `/api/sessions/${session}/ai/chat`,
       { method: 'POST', headers: { ...J, ...GZIP }, body: JSON.stringify({ message: 'hi' }) },
-      envWith({ CLAUDE_CLI_PATH: FIXTURE_CLI, CLAUDE_CLI_EMAILS: CLI_TEST_EMAILS, HOST: '127.0.0.1' }),
+      envWith({
+        CLAUDE_CLI_PATH: FIXTURE_CLI,
+        CLAUDE_CLI_EMAILS: CLI_TEST_EMAILS,
+        HOST: '127.0.0.1',
+      }),
     );
     expect(res.status).toBe(200);
     expect(res.headers.get('content-type')).toMatch(/text\/event-stream/);

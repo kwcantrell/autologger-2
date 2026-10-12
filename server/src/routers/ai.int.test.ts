@@ -68,6 +68,14 @@ import * as aiTurnModule from '@autologger/ai-runtime/aiTurn';
 import type { Clock } from '@autologger/ports';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Bindings } from '../appEnv';
+import {
+  answer,
+  callTools,
+  type FakeLlm,
+  type FakeScript,
+  sse,
+  startFakeLlm,
+} from '../test/fakeLlm';
 import { anonApp, app, defaultUser, env, envWith } from '../test/harness';
 import {
   loginCookie,
@@ -78,19 +86,18 @@ import {
   seedUser,
 } from '../test/helpers';
 import {
-  failNextRunLeaseClaim,
-  holdAsAnotherProcess,
-  observeRunLeases,
-  runLeaseRows,
-} from '../test/runLeases';
-import { answer, callTools, type FakeLlm, type FakeScript, sse, startFakeLlm } from '../test/fakeLlm';
-import {
   CLI_TEST_EMAILS,
   chooseClaudeCli,
   chooseClaudeCliForAll,
   placesHolding,
   saveSdkCredential,
 } from '../test/llmRoutes';
+import {
+  failNextRunLeaseClaim,
+  holdAsAnotherProcess,
+  observeRunLeases,
+  runLeaseRows,
+} from '../test/runLeases';
 import { busProcess, closeBusProcesses } from '../test/session/busProcesses';
 import { __setAiLeaseRenewMsForTests } from './_aiSlot';
 import { AI_CHAT_ALLOWED_TOOLS } from './ai';
@@ -1149,7 +1156,11 @@ describe('ai/chat — no route: the Settings → Advanced 503 (ai-sdk-agent-harn
     await first.text();
     const turnsBefore = recordedArgv(s);
     rmSync(join(stableSessionCwd(s), '.fixture-argv.json'));
-    const res = await postAs(s, { message: 'again' }, fixtureEnv({ CLAUDE_CLI_EMAILS: 'other@example.com' }));
+    const res = await postAs(
+      s,
+      { message: 'again' },
+      fixtureEnv({ CLAUDE_CLI_EMAILS: 'other@example.com' }),
+    );
     expect(res.status).toBe(503);
     expect(await res.json()).toEqual({ detail: ADD_LLM_DETAIL });
     expect(turnsBefore.length).toBeGreaterThan(0);
@@ -1229,7 +1240,11 @@ describe('ai/chat — the AI SDK route (ai-sdk-agent-harness D3, D6, task 7.1)',
     expect(llm.requests).toHaveLength(0);
     expect(aiChatTurns.isSessionInFlight(s)).toBe(false);
     // Not approved: 403 before the body.
-    const refused = await postAs(s, { message: 'hi', history }, fixtureEnv({ RUN_FEATURE_EMAILS: 'x@example.com' }));
+    const refused = await postAs(
+      s,
+      { message: 'hi', history },
+      fixtureEnv({ RUN_FEATURE_EMAILS: 'x@example.com' }),
+    );
     expect(refused.status).toBe(403);
     expect(llm.requests).toHaveLength(0);
   });
@@ -1267,14 +1282,31 @@ describe('ai/chat — nothing of an AI SDK turn survives it (ai-topics-chat; tas
 
   const sixteen = Array.from({ length: 16 }, () => ({ name: 'list_topics' }));
   const endings: Array<[string, FakeScript, Record<string, unknown>, boolean]> = [
-    ['done', (n) => (n === 1 ? callTools(1, [{ name: 'list_topics' }]) : answer(`answer ${REPLY}`)), {}, false],
+    [
+      'done',
+      (n) => (n === 1 ? callTools(1, [{ name: 'list_topics' }]) : answer(`answer ${REPLY}`)),
+      {},
+      false,
+    ],
     ['an error', () => ({ status: 500, body: `{"error":"${REPLY}"}` }), {}, false],
-    ['a breach', (n) => ({ frames: [sse.text(`${REPLY} `), ...callTools(n, sixteen).frames!] }), {}, false],
-    ['a timeout', () => ({ frames: [sse.text(REPLY)], hang: true }), { AI_CHAT_TIMEOUT_SEC: '0.5' }, false],
+    [
+      'a breach',
+      (n) => ({ frames: [sse.text(`${REPLY} `), ...(callTools(n, sixteen).frames ?? [])] }),
+      {},
+      false,
+    ],
+    [
+      'a timeout',
+      () => ({ frames: [sse.text(REPLY)], hang: true }),
+      { AI_CHAT_TIMEOUT_SEC: '0.5' },
+      false,
+    ],
     ['a client abort', () => ({ frames: [sse.text(REPLY)], hang: true }), {}, true],
   ];
   for (const [name, script, cfg, abort] of endings) {
-    it(`after ${name}, no catalog row or DATA_DIR file holds the message, history or reply`, { timeout: 60_000 }, async () => {
+    it(`after ${name}, no catalog row or DATA_DIR file holds the message, history or reply`, {
+      timeout: 60_000,
+    }, async () => {
       const llm = await fakeProvider(script);
       const s = await seededSession();
       await saveSdkCredential(llm.baseURL);
@@ -1301,7 +1333,9 @@ describe('ai/chat — nothing of an AI SDK turn survives it (ai-topics-chat; tas
       } else {
         await res.text();
       }
-      await vi.waitFor(() => expect(aiChatTurns.isSessionInFlight(s)).toBe(false), { timeout: 20_000 });
+      await vi.waitFor(() => expect(aiChatTurns.isSessionInFlight(s)).toBe(false), {
+        timeout: 20_000,
+      });
       expect(llm.requests.length).toBeGreaterThan(0);
       for (const marker of [MSG, HIST, REPLY]) expect(await placesHolding(marker)).toEqual([]);
     });

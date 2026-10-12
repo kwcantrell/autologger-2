@@ -16,6 +16,7 @@ import { LeaseStore } from '@autologger/session-core/leaseStore';
 import { TRANSCRIPTION_FIXTURES_DIR, transcriptGenerationLock } from '@autologger/transcription';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Bindings } from '../appEnv';
+import { answer, callTools, type FakeLlm, type FakeScript, startFakeLlm } from '../test/fakeLlm';
 import { app, env, envWith } from '../test/harness';
 import {
   catalogFor,
@@ -29,6 +30,7 @@ import {
   seedUser,
   testDb,
 } from '../test/helpers';
+import { CLI_TEST_EMAILS, chooseClaudeCliForAll, saveSdkCredential } from '../test/llmRoutes';
 import {
   expiredLeaseOfAnotherProcess,
   failNextRunLeaseClaim,
@@ -38,8 +40,6 @@ import {
   runLeaseRows,
   runLeaseStartedAtMs,
 } from '../test/runLeases';
-import { answer, callTools, type FakeLlm, type FakeScript, startFakeLlm } from '../test/fakeLlm';
-import { CLI_TEST_EMAILS, chooseClaudeCliForAll, saveSdkCredential } from '../test/llmRoutes';
 import { busProcess, closeBusProcesses } from '../test/session/busProcesses';
 import { harnessHub } from '../test/session/sessionRows';
 
@@ -1769,7 +1769,11 @@ describe('topics/generate and transcript-words/generate — approved users only 
       const res = await topics(
         s,
         cookie,
-        envWith({ CLAUDE_CLI_PATH: TOPICS_CLI, CLAUDE_CLI_EMAILS: CLI_TEST_EMAILS, HOST: '127.0.0.1' }),
+        envWith({
+          CLAUDE_CLI_PATH: TOPICS_CLI,
+          CLAUDE_CLI_EMAILS: CLI_TEST_EMAILS,
+          HOST: '127.0.0.1',
+        }),
       );
       expect(res.status).toBe(403);
       expect(await res.json()).toEqual(FORBIDDEN);
@@ -2029,7 +2033,12 @@ describe('topics/generate on the AI SDK route (ai-sdk-agent-harness task 7.2)', 
     const hub = await harnessHub(s);
     await hub.insertTranscriptWord({ session_time: '00:00:01', speaker: 'Host', word: 'hello' });
     for (const summary of ['Old topic A', 'Old topic B']) {
-      await hub.insertTopic({ session_time: '00:00:00', duration_sec: 10, topic_level: 1, summary });
+      await hub.insertTopic({
+        session_time: '00:00:00',
+        duration_sec: 10,
+        topic_level: 1,
+        summary,
+      });
     }
     return { s, prior: await hub.listTopics() };
   }
@@ -2087,7 +2096,9 @@ describe('topics/generate on the AI SDK route (ai-sdk-agent-harness task 7.2)', 
   it('a run stopped by the step cap maps to the 502, prior topics unchanged and its new topics removed; GENERATE_MAX_STEPS applies', async () => {
     // Reads the page, creates a topic, then keeps calling tools until the cap.
     const llm = await fakeProvider((n) =>
-      n === 2 ? callTools(2, [create('Capped topic')]) : callTools(n, [{ name: 'get_transcript_words' }]),
+      n === 2
+        ? callTools(2, [create('Capped topic')])
+        : callTools(n, [{ name: 'get_transcript_words' }]),
     );
     const { s, prior } = await seeded();
     await saveSdkCredential(llm.baseURL);
@@ -2101,7 +2112,9 @@ describe('topics/generate on the AI SDK route (ai-sdk-agent-harness task 7.2)', 
   it('a run stopped by the token budget maps to the 502, prior topics unchanged; GENERATE_MAX_TOKENS applies', async () => {
     // 15 tokens a step (the fake's usage); a budget of 40 stops after the third step.
     const llm = await fakeProvider((n) =>
-      n === 2 ? callTools(2, [create('Budget topic')]) : callTools(n, [{ name: 'get_transcript_words' }]),
+      n === 2
+        ? callTools(2, [create('Budget topic')])
+        : callTools(n, [{ name: 'get_transcript_words' }]),
     );
     const { s, prior } = await seeded();
     await saveSdkCredential(llm.baseURL);
@@ -2111,7 +2124,9 @@ describe('topics/generate on the AI SDK route (ai-sdk-agent-harness task 7.2)', 
     expect(await topicsOf(s)).toEqual(prior);
   });
 
-  it('a slow tool body still running at the route timeout finishes before the route removes the run’s new topics and frees the slot and lease', { timeout: 30_000 }, async () => {
+  it('a slow tool body still running at the route timeout finishes before the route removes the run’s new topics and frees the slot and lease', {
+    timeout: 30_000,
+  }, async () => {
     const realInsert = SessionHubView.prototype.insertTopic;
     let bodyDone = false;
     vi.spyOn(SessionHubView.prototype, 'insertTopic').mockImplementation(async function (

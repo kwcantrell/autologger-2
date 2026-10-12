@@ -390,7 +390,8 @@ export function guardedFetch(o: GuardedFetchOptions): GuardedFetch {
     if (breach !== null) throw new OutboundFailure('cap');
     if (requests >= GUARDED_FETCH_CAPS.requests) capped('requests');
     if (body.length > GUARDED_FETCH_CAPS.requestBodyBytes) capped('request-body');
-    if (requestTotal + body.length > GUARDED_FETCH_CAPS.requestBodyTotalBytes) capped('request-total');
+    if (requestTotal + body.length > GUARDED_FETCH_CAPS.requestBodyTotalBytes)
+      capped('request-total');
     requests += 1;
     requestTotal += body.length;
     const entry = { requestBytes: body.length, responseBytes: 0 };

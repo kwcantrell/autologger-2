@@ -61,13 +61,13 @@ import {
   seedStudio,
   seedUser,
 } from '../test/helpers';
+import { CLI_TEST_EMAILS, chooseClaudeCliForAll } from '../test/llmRoutes';
 import {
   failNextRunLeaseClaim,
   holdAsAnotherProcess,
   observeRunLeases,
   runLeaseRows,
 } from '../test/runLeases';
-import { CLI_TEST_EMAILS, chooseClaudeCliForAll } from '../test/llmRoutes';
 import { busProcess, closeBusProcesses } from '../test/session/busProcesses';
 import { harnessHub } from '../test/session/sessionRows';
 
@@ -458,7 +458,11 @@ describe('ai/v2/design — turn slot (409), shared with the AI chat registry by 
       const chatRes = await app.request(
         `/api/sessions/${s}/ai/chat`,
         { method: 'POST', headers: J, body: JSON.stringify({ message: 'hi' }) },
-        envWith({ CLAUDE_CLI_PATH: FIXTURE_CLI, CLAUDE_CLI_EMAILS: CLI_TEST_EMAILS, HOST: '127.0.0.1' }),
+        envWith({
+          CLAUDE_CLI_PATH: FIXTURE_CLI,
+          CLAUDE_CLI_EMAILS: CLI_TEST_EMAILS,
+          HOST: '127.0.0.1',
+        }),
       );
       expect(chatRes.status).toBe(200);
       try {
@@ -495,7 +499,11 @@ describe('ai/v2/design — turn slot (409), shared with the AI chat registry by 
         const chatRes = await app.request(
           `/api/sessions/${s}/ai/chat`,
           { method: 'POST', headers: J, body: JSON.stringify({ message: 'hi' }) },
-          envWith({ CLAUDE_CLI_PATH: FIXTURE_CLI, CLAUDE_CLI_EMAILS: CLI_TEST_EMAILS, HOST: '127.0.0.1' }),
+          envWith({
+            CLAUDE_CLI_PATH: FIXTURE_CLI,
+            CLAUDE_CLI_EMAILS: CLI_TEST_EMAILS,
+            HOST: '127.0.0.1',
+          }),
         );
         expect(chatRes.status).toBe(409);
         expect(((await chatRes.json()) as { detail: string }).detail).toMatch(

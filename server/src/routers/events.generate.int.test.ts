@@ -37,6 +37,7 @@ import {
 import type { Clock } from '@autologger/ports';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Bindings } from '../appEnv';
+import { answer, callTools, type FakeLlm, type FakeScript, startFakeLlm } from '../test/fakeLlm';
 import { app, defaultUser, env, envWith } from '../test/harness';
 import {
   catalogFor,
@@ -47,14 +48,13 @@ import {
   seedUser,
   testDb,
 } from '../test/helpers';
+import { CLI_TEST_EMAILS, chooseClaudeCliForAll, saveSdkCredential } from '../test/llmRoutes';
 import {
   failNextRunLeaseClaim,
   holdAsAnotherProcess,
   observeRunLeases,
   runLeaseRows,
 } from '../test/runLeases';
-import { answer, callTools, type FakeLlm, type FakeScript, startFakeLlm } from '../test/fakeLlm';
-import { CLI_TEST_EMAILS, chooseClaudeCliForAll, saveSdkCredential } from '../test/llmRoutes';
 import { sessionGate, systemCall } from '../test/session/sessionGate';
 import { harnessHub, testRegistry } from '../test/session/sessionRows';
 import { slowStorage } from '../test/session/slowStorage';
@@ -1502,19 +1502,29 @@ describe('events/generate on the AI SDK route (ai-sdk-agent-harness task 7.2)', 
     const res = await req(sessionId, sdkEnv(), { regenerate: true });
     expect(res.status, await res.clone().text()).toBe(200);
     expect(await res.json()).toEqual({ created: 2, cap_hit: false, deleted: 1 });
-    expect(await messages(sessionId)).toEqual(['Pre-existing slate', 'SDK slate one', 'SDK slate two']);
+    expect(await messages(sessionId)).toEqual([
+      'Pre-existing slate',
+      'SDK slate one',
+      'SDK slate two',
+    ]);
   });
 
   for (const [name, script, cfg] of [
     ['a provider error', () => ({ status: 401, body: '{"error":"no"}' }), {}],
     [
       'the step cap',
-      (n: number) => (n === 2 ? callTools(2, [slate('Capped slate')]) : callTools(n, [{ name: 'get_transcript_words' }])),
+      (n: number) =>
+        n === 2
+          ? callTools(2, [slate('Capped slate')])
+          : callTools(n, [{ name: 'get_transcript_words' }]),
       { GENERATE_MAX_STEPS: '3' },
     ],
     [
       'the token budget',
-      (n: number) => (n === 2 ? callTools(2, [slate('Budget slate')]) : callTools(n, [{ name: 'get_transcript_words' }])),
+      (n: number) =>
+        n === 2
+          ? callTools(2, [slate('Budget slate')])
+          : callTools(n, [{ name: 'get_transcript_words' }]),
       { GENERATE_MAX_TOKENS: '40' },
     ],
   ] as Array<[string, FakeScript, Record<string, unknown>]>) {

@@ -39,7 +39,11 @@ function productionFiles(): string[] {
     for (const e of readdirSync(dir, { withFileTypes: true })) {
       const p = join(dir, e.name);
       if (e.isDirectory()) walk(p);
-      else if (/\.(ts|tsx|mts)$/.test(e.name) && !/\.test\.tsx?$/.test(e.name) && !e.name.endsWith('.d.ts'))
+      else if (
+        /\.(ts|tsx|mts)$/.test(e.name) &&
+        !/\.test\.tsx?$/.test(e.name) &&
+        !e.name.endsWith('.d.ts')
+      )
         out.push(p);
     }
   };
@@ -107,7 +111,8 @@ export function scan(fileName: string, text: string): string[] {
           if (c.name) sdkImports.add(c.name.text);
           const nb = c.namedBindings;
           if (nb && ts.isNamespaceImport(nb)) sdkImports.add(nb.name.text);
-          if (nb && ts.isNamedImports(nb)) for (const el of nb.elements) sdkImports.add(el.name.text);
+          if (nb && ts.isNamedImports(nb))
+            for (const el of nb.elements) sdkImports.add(el.name.text);
         }
       }
     }
@@ -118,7 +123,8 @@ export function scan(fileName: string, text: string): string[] {
   // Pass 2: error bindings in SDK files.
   const errorNames = new Set<string>();
   const visitErrors = (n: ts.Node) => {
-    if (ts.isCatchClause(n) && n.variableDeclaration) bindingNames(n.variableDeclaration.name, errorNames);
+    if (ts.isCatchClause(n) && n.variableDeclaration)
+      bindingNames(n.variableDeclaration.name, errorNames);
     if (
       ts.isCallExpression(n) &&
       ts.isPropertyAccessExpression(n.expression) &&
@@ -170,10 +176,7 @@ export function scan(fileName: string, text: string): string[] {
             ts.isPropertyAssignment(p) && ts.isIdentifier(p.name) && p.name.text === 'model',
         );
         const init = model?.initializer;
-        if (
-          init &&
-          (ts.isStringLiteralLike(init) || ts.isTemplateExpression(init))
-        )
+        if (init && (ts.isStringLiteralLike(init) || ts.isTemplateExpression(init)))
           out.push(`string-model: ${line(n)}`);
         if (name === 'streamText') {
           const hasOnError = opts?.properties.some(
@@ -221,13 +224,19 @@ describe('the scanner pins each rule', () => {
       'error-logged: 2',
     ]);
     expect(
-      v(`${sdk}streamText({ model: m, onError: ({ error }) => { process.stderr.write(String(error)); } });`),
+      v(
+        `${sdk}streamText({ model: m, onError: ({ error }) => { process.stderr.write(String(error)); } });`,
+      ),
     ).toEqual(['error-logged: 2']);
     expect(v(`${sdk}console.log(APICallError);`)).toEqual(['error-logged: 2']);
-    expect(v(`import * as AI from 'ai';\nconsole.info(AI.RetryError);`)).toEqual(['error-logged: 2']);
+    expect(v(`import * as AI from 'ai';\nconsole.info(AI.RetryError);`)).toEqual([
+      'error-logged: 2',
+    ]);
     // A file that does not use the SDK keeps its own diagnostics, and a property name is no reference.
     expect(v(`try { x(); } catch (e) { console.warn(String(e)); }`)).toEqual([]);
-    expect(v(`${sdk}try { x(); } catch (e) { console.warn('turn failed', { e: 1 }.e === 1); }`)).toEqual([]);
+    expect(
+      v(`${sdk}try { x(); } catch (e) { console.warn('turn failed', { e: 1 }.e === 1); }`),
+    ).toEqual([]);
   });
   it('4: streamText without onError', () => {
     expect(v('streamText({ model: m });')).toEqual(['streamText-without-onError: 1']);

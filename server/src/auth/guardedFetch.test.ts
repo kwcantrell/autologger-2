@@ -85,7 +85,12 @@ async function refused(p: Promise<unknown>): Promise<OutboundFailure> {
   return err as OutboundFailure;
 }
 
-function fixed(origin: string, provider: string, model: string, over: Partial<GuardedFetchOptions> = {}) {
+function fixed(
+  origin: string,
+  provider: string,
+  model: string,
+  over: Partial<GuardedFetchOptions> = {},
+) {
   return guardedFetch({
     provider,
     model,
@@ -193,9 +198,7 @@ describe('destination (D4 step 1)', () => {
     const g = compat(`${u.origin}/v1`);
     await refused(g.fetch(`${u.origin}/v1/chat/completions`, { method: 'GET' }));
     await refused(g.fetch(new Request(`${u.origin}/v1/chat/completions`, post()) as never));
-    await refused(
-      g.fetch(`http://user:pw@127.0.0.1:${u.port}/v1/chat/completions`, post()),
-    );
+    await refused(g.fetch(`http://user:pw@127.0.0.1:${u.port}/v1/chat/completions`, post()));
     expect(u.seen).toHaveLength(0);
   });
 });
@@ -432,7 +435,10 @@ describe('streaming, byte counts and abort (D4 step 4)', () => {
     });
     const g = compat(`${u.origin}/v1`);
     const ac = new AbortController();
-    const r = await g.fetch(`${u.origin}/v1/chat/completions`, post(undefined, { signal: ac.signal }));
+    const r = await g.fetch(
+      `${u.origin}/v1/chat/completions`,
+      post(undefined, { signal: ac.signal }),
+    );
     const reader = (r.body as ReadableStream<Uint8Array>).getReader();
     await reader.read();
     ac.abort();
@@ -442,7 +448,10 @@ describe('streaming, byte counts and abort (D4 step 4)', () => {
     const hang = await upstream(() => {});
     const g2 = compat(`${hang.origin}/v1`);
     const ac2 = new AbortController();
-    const p = g2.fetch(`${hang.origin}/v1/chat/completions`, post(undefined, { signal: ac2.signal }));
+    const p = g2.fetch(
+      `${hang.origin}/v1/chat/completions`,
+      post(undefined, { signal: ac2.signal }),
+    );
     await vi.waitFor(() => expect(hang.seen).toHaveLength(1));
     ac2.abort();
     const err = await p.then(
@@ -455,7 +464,10 @@ describe('streaming, byte counts and abort (D4 step 4)', () => {
     // An already-aborted signal opens no connection.
     const g3 = compat(`${hang.origin}/v1`);
     await expect(
-      g3.fetch(`${hang.origin}/v1/chat/completions`, post(undefined, { signal: AbortSignal.abort() })),
+      g3.fetch(
+        `${hang.origin}/v1/chat/completions`,
+        post(undefined, { signal: AbortSignal.abort() }),
+      ),
     ).rejects.toMatchObject({ name: 'AbortError' });
     expect(hang.seen).toHaveLength(1);
   });
@@ -463,7 +475,9 @@ describe('streaming, byte counts and abort (D4 step 4)', () => {
   it('captured stdout and stderr hold no key, header or body', async () => {
     const out: string[] = [];
     for (const m of ['log', 'info', 'warn', 'error', 'debug'] as const) {
-      vi.spyOn(console, m).mockImplementation((...a: unknown[]) => void out.push(a.map(String).join(' ')));
+      vi.spyOn(console, m).mockImplementation(
+        (...a: unknown[]) => void out.push(a.map(String).join(' ')),
+      );
     }
     const stdout = vi.spyOn(process.stdout, 'write').mockImplementation((c: unknown) => {
       out.push(String(c));
@@ -483,7 +497,12 @@ describe('streaming, byte counts and abort (D4 step 4)', () => {
       expect(r.status).toBe(500);
       await r.text();
       await refused(g.fetch(`${u.origin}/v2/chat/completions`, post()));
-      await refused(compat(`${u.origin}/v1`, { headerTimeoutMs: 1 }).fetch(`http://127.0.0.1:1/v1/chat/completions`, post()));
+      await refused(
+        compat(`${u.origin}/v1`, { headerTimeoutMs: 1 }).fetch(
+          `http://127.0.0.1:1/v1/chat/completions`,
+          post(),
+        ),
+      );
     } finally {
       stdout.mockRestore();
       stderr.mockRestore();
