@@ -22,11 +22,12 @@
 
 ## 1. Baselines
 
-- [ ] 1.1 On the base, run the unit suites (server, packages, web) and typecheck, and record the counts. Then list the existing tests D7 may touch with `grep -rln "toHaveLength(42)\|SDK_TURN_TOOLS\|AI_MCP_TOOL_NAMES\|each turn kind\|expectCapturedResponse\|FACTORY_MODULE\|SessionWikiButton\|lineDiff\|TOPIC_GENERATE_TIMEOUT_SEC" --include=*.test.ts --include=*.test.tsx server/src packages web/src`, and classify each hit as D7 category 1–6 or unchanged. Verified by the recorded counts and the classified list.
+- [x] 1.1 On the base, run the unit suites (server, packages, web) and typecheck, and record the counts. Then list the existing tests D7 may touch with `grep -rln "toHaveLength(42)\|SDK_TURN_TOOLS\|AI_MCP_TOOL_NAMES\|each turn kind\|expectCapturedResponse\|FACTORY_MODULE\|SessionWikiButton\|lineDiff\|TOPIC_GENERATE_TIMEOUT_SEC" --include=*.test.ts --include=*.test.tsx server/src packages web/src`, and classify each hit as D7 category 1–6 or unchanged. Verified by the recorded counts and the classified list.
+  Evidence: `swa-1.1-baseline.log`: server unit `482 passed | 5 skipped`; contract `204 passed`; catalog `61 passed`; ai-runtime `260 passed`; web `2149 passed (161 files)`; `typecheck rc=0`. `swa-1.1-d7-classified.log`: 10 hits — cat 1: catalogPolicies.pg; cat 2: sdkTurn; cat 3: apiResponseFixtures.int, queryKeyFactories.repo; cat 6: env, upgradeDispatch, aiV2.int (full env fixture); unchanged: transcribe.int, aiChatRunner, apiResponseShapes.repo.
 
 ## 2. Migration: the suggestions table
 
-- [ ] 2.1 Test first: write `server/src/test/pg/wikiSuggestions.pg.test.ts` (using `policyFixture` and `asUser`), covering:
+- [x] 2.1 Test first: write `server/src/test/pg/wikiSuggestions.pg.test.ts` (using `policyFixture` and `asUser`), covering:
   - the table, its columns, checks, partial unique indexes and composite foreign keys;
   - "Ungranted member reads no suggestions": owner and granted member see the show's rows, the ungranted member and outsider see none, for select, insert and update;
   - "Suggestions are never deleted by users": delete as `catalog_user` gives `42501`;
@@ -37,7 +38,9 @@
   - "Two pending suggestions for one page", and two pending new-page suggestions whose titles match ignoring case and accents: refused; a pending plus a superseded one is allowed;
   - the `page_id`/`base_revision` pairing, status, kind, length and resolved-field checks.
   Red before the migration. Verified by the red run, then green once 2.2 lands.
-- [ ] 2.2 Write `supabase/migrations/20261022000000_show_wiki_ai.sql` as design D1 describes: the table, keys, checks, indexes, the four policies, `revoke update, delete` and the column-level update grant. Update the schema inventories (D7 category 1). Verified by 2.1 green, the inventory pg tests green (`catalog_user` policy count 42 → 45), and `sh docker/supabase/test_migrate.sh` passing.
+  Evidence: `swa-2.1-red.log`: `relation "wiki_suggestions" does not exist` → `Test Files 1 failed`, `Tests 28 skipped`. `swa-2.1-green.log`: `cd server && npx vitest run --project pg src/test/pg/wikiSuggestions.pg.test.ts` → `Tests 28 passed (28)`.
+- [x] 2.2 Write `supabase/migrations/20261022000000_show_wiki_ai.sql` as design D1 describes: the table, keys, checks, indexes, the four policies, `revoke update, delete` and the column-level update grant. Update the schema inventories (D7 category 1). Verified by 2.1 green, the inventory pg tests green (`catalog_user` policy count 42 → 45), and `sh docker/supabase/test_migrate.sh` passing.
+  Evidence: `swa-2.2-inventory-red.log`: before the inventory updates, `there are 42` → `got 45` and three catalogSchema inventory failures (`Tests 4 failed | 109 passed`). `swa-2.2-green.log`: wikiSuggestions, catalogSchema, catalogPolicies (`there are 45`), catalogPolicyHelpers, catalogRoles, showWiki, wikiStore pg → `Test Files 7 passed (7)`, `Tests 172 passed (172)`; isolation.int `Tests 1 passed (1)`; `test_migrate: 35 passed, 0 failed`, `rc=0`. Inventories changed: catalogSchema (table, key column, columns, keys, checks, indexes, policy names, column update grant) and catalogPolicies (42 → 45); catalogPolicyHelpers, catalogRoles and isolation.int needed no change.
 
 ## 3. Store
 
