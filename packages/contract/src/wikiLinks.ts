@@ -14,6 +14,9 @@
 //   cite:<[A-Za-z0-9_-]{1,64}>@<\d+(\.\d{1,3})?>
 //   wiki:<[A-Za-z0-9_-]{1,64}>
 // The parser does not percent-decode, so `cite:S%31@1` is reported as written (and invalid).
+//
+// `citationsOf` (show-wiki-ai D4) reports every rendered citation with its rendered text,
+// including references to a `cite:` definition, for the AI proposal quote check.
 
 import { fromMarkdown } from 'mdast-util-from-markdown';
 
@@ -112,4 +115,71 @@ export function parseWikiLinks(body: string): WikiLinksResult {
   };
   visit(fromMarkdown(body) as MdNode);
   return { links, tooMany: links.length > WIKI_MAX_LINKS };
+}
+
+/** One rendered citation (show-wiki-ai design D4 step 4): what a reader sees as a `cite:` link. */
+export interface WikiCitation {
+  /** `link`: an inline, angle-bracket or autolinked `cite:` link; `reference`: a full, collapsed
+   * or shortcut reference whose definition is a `cite:` URL. */
+  source: 'link' | 'reference';
+  sessionId: string;
+  seconds: number;
+  /** The rendered text (the quote): the node's text content, with emphasis, code and escapes
+   * rendered as a reader sees them. */
+  text: string;
+  /** Start of the link or reference in the body. */
+  position: { line: number; column: number; offset: number };
+}
+
+/**
+ * Every rendered citation of a Markdown body, in document order. Unlike `parseWikiLinks`, which
+ * reports a reference definition by its label, this reports each reference that USES a `cite:`
+ * definition with the reference's own text, so `[any words][r]` + `[r]: cite:S1@120` is checked
+ * as "any words". Definitions match case-insensitively (the parser's normalised identifier) and
+ * the first one wins, as in CommonMark; a definition no reference uses renders nothing. URLs off
+ * the exact grammar are not citations (the link check refuses them).
+ */
+export function citationsOf(body: string): WikiCitation[] {
+  const tree = fromMarkdown(body) as MdNode;
+  const definitions = new Map<string, string>();
+  const collect = (node: MdNode): void => {
+    if (node.type === 'definition' && typeof node.identifier === 'string') {
+      if (!definitions.has(node.identifier)) definitions.set(node.identifier, node.url ?? '');
+    }
+    for (const child of node.children ?? []) collect(child);
+  };
+  collect(tree);
+
+  const out: WikiCitation[] = [];
+  const visit = (node: MdNode): void => {
+    let url: string | undefined;
+    let source: WikiCitation['source'] | undefined;
+    if (node.type === 'link') {
+      url = node.url;
+      source = 'link';
+    } else if (node.type === 'linkReference' && typeof node.identifier === 'string') {
+      url = definitions.get(node.identifier);
+      source = 'reference';
+    }
+    if (url !== undefined && source !== undefined) {
+      const target = classifyWikiUrl(url);
+      if (target?.kind === 'cite') {
+        const start = node.position?.start;
+        out.push({
+          source,
+          sessionId: target.sessionId,
+          seconds: target.seconds,
+          text: plainText(node),
+          position: {
+            line: start?.line ?? 0,
+            column: start?.column ?? 0,
+            offset: start?.offset ?? 0,
+          },
+        });
+      }
+    }
+    for (const child of node.children ?? []) visit(child);
+  };
+  visit(tree);
+  return out;
 }
