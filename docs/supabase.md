@@ -145,6 +145,51 @@ never runs migrations. Before listening it waits up to 30 s for the catalog to a
 each failure code once), then exits 1 so the supervisor retries. `make dev-up` and
 `make stage-up` run `migrate` before starting the app.
 
+## Search extensions (catalog-search)
+
+`supabase/migrations/20261019000000_catalog_search.sql` adds lexical search (ADR 0029):
+
+- **The `extensions` schema.** `pg_trgm` and `unaccent` are installed there, and the catalog
+  references them schema-qualified. The migration creates the schema if it is missing (the pg test
+  template has none; Supabase's `postgres` database has one). `catalog_user` and `catalog_system`
+  have `USAGE` on it: the index expressions on session titles, show names and studio names call
+  `extensions` functions as the writing role, so without the grant every write to those tables
+  fails with `42501`.
+- **`catalog.search_english`.** A copy of the `english` text-search configuration whose `word`,
+  `hword` and `hword_part` tokens go through `extensions.unaccent`, then `english_stem`. It folds
+  accents and case in both vectors and queries, and `ts_headline` on the original text still
+  highlights the accented word. Every search vector and query uses it: the generated columns
+  `sessions.search_meta` and `search_notes`, `session_topics.search_tsv`,
+  `session_events.search_tsv` and `session_transcript_chunks.search_tsv`, each with a GIN index.
+- **`catalog.search_norm(text)`.** Accents removed and lowercased, non-ASCII included
+  (`'Ångström CAFÉ Straße'` gives `angstrom cafe strasse`). It is immutable and is used only for
+  trigram name matching: the trigram GIN indexes on the normalised session title, show name and
+  studio display name. Both catalog roles may execute it.
+- **Transcript chunks.** `catalog.session_transcript_chunks` holds each session's transcript in
+  blocks of 40 word ordinals. Statement-level triggers on `session_transcript_words` keep it in
+  sync; `catalog_user` can only read it.
+- **`catalog.search(q, studio, show, limit)`.** The one SECURITY DEFINER function the search route
+  calls; only `catalog_user` may execute it.
+
+**After a Postgres image upgrade.** The unaccent rules ship with the image. If an upgrade changes
+them, the stored vectors, the trigram indexes and `search_norm` no longer agree with new input.
+Rewrite the generated columns and rebuild the search indexes, in a migration or with
+`make dev-psql`:
+
+```sql
+update catalog.sessions set title = title, episode = episode, notes = notes;
+update catalog.session_topics set summary = summary;
+update catalog.session_events set message = message;
+update catalog.session_transcript_chunks set text = text;  -- as postgres (catalog_user can't)
+reindex index catalog.idx_sessions_title_trgm;
+reindex index catalog.idx_shows_name_trgm;
+reindex index catalog.idx_studio_definitions_name_trgm;
+```
+
+A stored generated column is recomputed when a column it reads is updated, so the four `update`s
+rewrite every vector. The three trigram indexes hold `search_norm` output, which no column stores,
+so they need the `reindex`.
+
 ## Tests against Postgres
 
 The server's `pg` vitest project (`*.pg.test.ts`) and its `integration` project (`*.int.test.ts`,

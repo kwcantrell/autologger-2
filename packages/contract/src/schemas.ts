@@ -579,3 +579,75 @@ export const profileUpdateBodySchema = z.object({
   family_name: z.string().max(200).nullish(),
 });
 export type ProfileUpdateBody = z.infer<typeof profileUpdateBodySchema>;
+
+// -- catalog-search: GET /api/search (design D7; api-contract-freeze "Search endpoint") ---------
+// `q` is 2–200 characters after trimming, and the trimmed value is what is searched and echoed.
+// `limit` is a decimal integer 1–25 (default 5), the maximum per group. `studio_id` and `show_id`
+// narrow every group; an id the caller can't see gives empty groups, like an unknown one.
+// `session_id` (D11) returns that session's moments only, with no per-session cap, and empty
+// studios, shows and sessions; a session the caller can't see, hidden or unknown, gives the same
+// empty result. Unknown query parameters are ignored (a plain, non-strict object strips them).
+export const SEARCH_LIMIT_DEFAULT = 5;
+export const SEARCH_LIMIT_MAX = 25;
+export const SEARCH_TIMEOUT_DETAIL = 'Search timed out; try a more specific query.';
+export const SEARCH_BUSY_DETAIL = 'Search is busy; try again.';
+
+export const searchQuerySchema = z.object({
+  q: z.string().trim().min(2).max(200),
+  studio_id: z.string().optional(),
+  show_id: z.string().optional(),
+  session_id: z.string().optional(),
+  limit: z
+    .string()
+    .regex(/^(?:[1-9]|1[0-9]|2[0-5])$/)
+    .transform(Number)
+    .optional()
+    .transform((n) => n ?? SEARCH_LIMIT_DEFAULT),
+});
+export type SearchQuery = z.infer<typeof searchQuerySchema>;
+
+const searchMomentBase = {
+  session_id: z.string(),
+  session_title: z.string(),
+  show_id: z.string(),
+  id: z.string(),
+  speaker: z.string(),
+  snippet: z.string(),
+};
+
+/** The `200` body: four groups, each at most `limit` long. Snippets carry U+E000/U+E001 around
+ * hits; `sec` is a number only for a timed transcript moment, and null for topics and events.
+ * `moment_sessions` (D11) gives each session in `moments` its total matching moments, at most
+ * 1000. */
+export const searchResponseSchema = z.strictObject({
+  q: z.string(),
+  studios: z.array(z.strictObject({ id: z.string(), name: z.string() })),
+  shows: z.array(z.strictObject({ id: z.string(), name: z.string(), studio_id: z.string() })),
+  sessions: z.array(
+    z.strictObject({
+      id: z.string(),
+      title: z.string(),
+      episode: z.string(),
+      show_id: z.string(),
+      studio_id: z.string(),
+      started_at_utc: z.string(),
+      archived: z.boolean(),
+      match: z.enum(['title', 'notes']),
+      snippet: z.string().nullable(),
+    }),
+  ),
+  moments: z.array(
+    z.union([
+      z.strictObject({
+        ...searchMomentBase,
+        kind: z.literal('transcript'),
+        sec: z.number().nullable(),
+      }),
+      z.strictObject({ ...searchMomentBase, kind: z.enum(['topic', 'event']), sec: z.null() }),
+    ]),
+  ),
+  moment_sessions: z.array(
+    z.strictObject({ session_id: z.string(), total: z.number().int().min(0).max(1000) }),
+  ),
+});
+export type SearchResponseWire = z.infer<typeof searchResponseSchema>;

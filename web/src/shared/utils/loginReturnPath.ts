@@ -1,6 +1,7 @@
 // Post-login deep-link return-path validator (session-deep-links, design D6;
 // spec: web-login-experience, "Post-login deep-link return" validation
-// clause; extended with `/teams` by teams-self-serve, design D6).
+// clause; extended with `/teams` by teams-self-serve, design D6, and with
+// `/search` by catalog-search, design D9).
 //
 // Reject-by-default. A stashed value only ever came from this tab's own
 // sessionStorage (see the stash write/consume unit, task 6.2/6.3), but it is
@@ -23,6 +24,7 @@
 // skipped in favor of) the URL parse, so it must run before it too.
 const SESSIONS_ROUTE_RE = /^\/sessions\/([^/]+)$/;
 const TEAMS_ROUTE_PATHNAME = '/teams';
+const SEARCH_ROUTE_PATHNAME = '/search';
 // biome-ignore lint/suspicious/noControlCharactersInRegex: matching control chars is the point.
 const CONTROL_CHAR_RE = /[\x00-\x1f\x7f]/;
 
@@ -40,9 +42,15 @@ export function isTeamsRoutePathname(pathname: string): boolean {
   return pathname === TEAMS_ROUTE_PATHNAME;
 }
 
+/** True iff `pathname` matches the search-results route — exactly `/search` (catalog-search D9). */
+export function isSearchRoutePathname(pathname: string): boolean {
+  return pathname === SEARCH_ROUTE_PATHNAME;
+}
+
 /**
  * True iff `pathname` matches ANY router-known route — currently
- * `/sessions/:id` or `/teams` (teams-self-serve, design D6). Shared between
+ * `/sessions/:id`, `/teams` (teams-self-serve, design D6) or `/search`
+ * (catalog-search, design D9). Shared between
  * this validator (untrusted stash input, full URL-parse recipe below) and
  * the stash WRITE side (`loginReturnStash.ts`, which only ever inspects this
  * tab's own trusted `window.location.pathname`) so both sides agree on
@@ -51,14 +59,18 @@ export function isTeamsRoutePathname(pathname: string): boolean {
  * predicate — not its two consumers — when the router gains a new route.
  */
 export function isRouterKnownPathname(pathname: string): boolean {
-  return isSessionRoutePathname(pathname) || isTeamsRoutePathname(pathname);
+  return (
+    isSessionRoutePathname(pathname) ||
+    isTeamsRoutePathname(pathname) ||
+    isSearchRoutePathname(pathname)
+  );
 }
 
 /**
  * True iff `segments` is a shape Next's shell catch-all
  * (`app/(index)/[[...path]]/page.page.tsx`) should serve — `undefined`/`[]`
- * (the `/` route), `['sessions', <one non-empty segment>]`, or `['teams']`
- * (design D3, `nextjs-frontend-migration`).
+ * (the `/` route), `['sessions', <one non-empty segment>]`, `['teams']`
+ * (design D3, `nextjs-frontend-migration`), or `['search']` (catalog-search D9).
  *
  * **This predicate has a DIFFERENT DOMAIN from `isRouterKnownPathname` above
  * and the two SHALL NOT be merged (spec: web-session-routing).**
@@ -86,7 +98,7 @@ export function isRouterKnownPathname(pathname: string): boolean {
  */
 export function isShellSegments(segments: readonly string[] | undefined): boolean {
   if (segments === undefined || segments.length === 0) return true;
-  if (segments.length === 1) return segments[0] === 'teams';
+  if (segments.length === 1) return segments[0] === 'teams' || segments[0] === 'search';
   if (segments.length === 2) return segments[0] === 'sessions' && segments[1].length > 0;
   return false;
 }
@@ -94,8 +106,8 @@ export function isShellSegments(segments: readonly string[] | undefined): boolea
 /**
  * Validate an unknown value as a post-login return path.
  *
- * Accepts only same-origin, router-known paths (currently `/sessions/:id`
- * or `/teams`) with their query string preserved. Returns the validated
+ * Accepts only same-origin, router-known paths (currently `/sessions/:id`,
+ * `/teams` or `/search`) with their query string preserved. Returns the validated
  * `pathname + search` on success, `null` on any rejection — callers must
  * treat `null` as "discard the stash, stay on `/`" and never partially
  * trust a rejected value.
@@ -128,7 +140,8 @@ export function validateLoginReturnPath(value: unknown): string | null {
   if (url.origin !== window.location.origin) return null;
 
   // 4. The parsed pathname must match a router-known route: exactly
-  //    `/sessions/<single-non-empty-segment>` or exactly `/teams`.
+  //    `/sessions/<single-non-empty-segment>`, exactly `/teams` or exactly
+  //    `/search`.
   //    Percent-encoded separators (e.g. `%2F`) are never decoded back into
   //    `/` by `URL#pathname`, so they can't be used to smuggle extra
   //    segments past this check — they just fail to match and get rejected.

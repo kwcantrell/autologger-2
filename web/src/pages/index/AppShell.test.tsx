@@ -170,6 +170,19 @@ function chunkLoadError() {
   return err;
 }
 
+// The `/search` page (catalog-search task 5.6): this file pins only that the route mounts it in
+// place of the session route, with the shell's close-session path and Settings guard. The page
+// itself is SearchRoute.test.tsx's.
+const searchRouteProbe = vi.hoisted(() => ({
+  renders: [] as Array<{ onCloseSession: () => void; confirmSwitch?: unknown }>,
+}));
+vi.mock('./components/search/SearchRoute', () => ({
+  SearchRoute: (props: { onCloseSession: () => void; confirmSwitch?: unknown }) => {
+    searchRouteProbe.renders.push(props);
+    return <div data-testid="search-route" />;
+  },
+}));
+
 vi.mock('./components/settings/SettingsView', async () => {
   const { useEffect } = await import('react');
   const SettingsView = (props: {
@@ -1184,5 +1197,43 @@ describe('AppShell sidebar shortcut', () => {
       if (own) Object.defineProperty(window, 'localStorage', own);
       else delete (window as unknown as Record<string, unknown>).localStorage;
     }
+  });
+});
+
+// web-session-routing "Search route is a first-class app route" (catalog-search task 5.6): the
+// fourth wouter pattern, mirroring the shared route module's `/search`.
+describe('AppShell search route (catalog-search 5.6)', () => {
+  it('/search renders the search page with no session selected', () => {
+    const { memory } = renderShell('/search?q=budget');
+    expect(screen.getByTestId('search-route')).not.toBeNull();
+    expect(screen.queryByTestId('session-route')).toBeNull();
+    expect(memory.history).toEqual(['/search?q=budget']);
+    const props = searchRouteProbe.renders.at(-1);
+    expect(typeof props?.onCloseSession).toBe('function');
+    expect(typeof props?.confirmSwitch).toBe('function');
+  });
+
+  it('navigating to /search pushes an entry and leaves the session; browser Back returns', async () => {
+    window.history.replaceState(null, '', '/');
+    renderStrict(<AppShell />);
+    fireEvent.click(screen.getByTestId('rail-select-s1'));
+    expect(workspaceSessionId()).toBe('sess-1');
+
+    navigate('/search?q=budget');
+    await waitFor(() => expect(window.location.pathname).toBe('/search'));
+    expect(window.location.search).toBe('?q=budget');
+    expect(await screen.findByTestId('search-route')).not.toBeNull();
+    expect(screen.queryByTestId('session-route')).toBeNull();
+
+    window.history.back();
+    await waitFor(() => expect(window.location.pathname).toBe('/sessions/sess-1'));
+    await waitFor(() => expect(workspaceSessionId()).toBe('sess-1'));
+    expect(screen.queryByTestId('search-route')).toBeNull();
+  });
+
+  it('a path under /search is not the search route', () => {
+    renderShell('/search/x');
+    expect(screen.queryByTestId('search-route')).toBeNull();
+    expect(workspaceSessionId()).toBe('');
   });
 });

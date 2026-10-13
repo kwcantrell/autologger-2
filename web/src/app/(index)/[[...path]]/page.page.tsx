@@ -12,8 +12,9 @@ import { IndexIsland } from '../IndexIsland';
 // `/sessions/:id` (one non-empty raw segment; segments arrive still
 // percent-ENCODED, not decoded -- see `isShellSegments`'s doc comment for
 // why this validator is shape-only and never decodes-and-re-splits an
-// entry), `/teams` -- via `isShellSegments` (the shared route-definition
-// module's shell-set predicate, `web/src/shared/utils/loginReturnPath.ts`,
+// entry), `/teams`, `/search` (catalog-search) -- via `isShellSegments`
+// (the shared route-definition module's shell-set predicate,
+// `web/src/shared/utils/loginReturnPath.ts`,
 // task 2.2). Any other segment shape 404s. This retires the three-way
 // route-table lockstep mirror (`web-session-routing` delta): AppShell's
 // wouter route strings remain the one manually-synced mirror (they cannot

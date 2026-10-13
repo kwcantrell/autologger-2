@@ -12,6 +12,7 @@ import { LazyChunk } from './components/ChunkLoadBoundary';
 import { OnboardingPanel } from './components/OnboardingPanel';
 import { SessionRoute } from './components/SessionRoute';
 import { isTypingTarget } from './components/ShortcutsDialog';
+import { SearchRoute } from './components/search/SearchRoute';
 import {
   DEFAULT_SETTINGS_SECTION,
   SETTINGS_VIEW_SELECTOR,
@@ -112,6 +113,10 @@ export function AppShell() {
   // this is a plain boolean read off the URL, same idiom as onSessionRoute.
   // It renders the home view and opens Settings on Members (redesign-show-ignition D3).
   const [onTeamsRoute] = useRoute('/teams');
+  // Search route (catalog-search D9): the fourth wouter pattern, mirroring the shared route
+  // module's `/search`. It renders the results page in place of the session route; no session is
+  // selected there, so `activeSessionId` stays empty.
+  const [onSearchRoute] = useRoute('/search');
   const [showNewSession, setShowNewSession] = useState(false);
   const [showBatchImport, setShowBatchImport] = useState(false);
   // The Settings view's open state and section (redesign-show-ignition D3; web-ui-system "The
@@ -482,11 +487,18 @@ export function AppShell() {
                 workspace mount on it (task 4.2, design D5); the empty id renders
                 the dedicated home route component (design D10) — on `/` and, under
                 the Settings view, on `/teams`. */}
-            <SessionRoute
-              sessionId={activeSessionId}
-              ytImportPending={ytImportPending}
-              onNewSession={handleOpenNewSession}
-            />
+            {onSearchRoute ? (
+              <SearchRoute
+                onCloseSession={handleCloseSession}
+                confirmSwitch={confirmSettingsDiscard}
+              />
+            ) : (
+              <SessionRoute
+                sessionId={activeSessionId}
+                ytImportPending={ytImportPending}
+                onNewSession={handleOpenNewSession}
+              />
+            )}
           </main>
         </div>
       </SidebarProvider>

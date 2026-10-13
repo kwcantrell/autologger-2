@@ -242,3 +242,40 @@ describe('frontend bridge — IP allowlist covers page requests before the bridg
     expect(stub.handle).toHaveBeenCalledTimes(1);
   });
 });
+
+// catalog-search task 4.5 (api-contract-freeze "Search page HTML route"): `GET /search` reaches
+// the shell for anonymous and signed-in callers with no cookie set, and the query string carries
+// no server semantics. `/search/` is a trailing-slash path, refused by Hono before the bridge;
+// `/search/extra` reaches the bridge like any GET and is refused by the shell router's segment
+// shape (`isShellSegments(['search', 'extra'])` is false, pinned in web `loginReturnPath.test.ts`).
+describe('frontend bridge — the /search shell route (catalog-search)', () => {
+  const stub = createStubFrontend();
+  const app = wireApp(new Hono<AppEnv>(), upgradeStub, { frontend: stub });
+
+  afterEach(() => stub.handle.mockClear());
+
+  it.each([
+    '/search',
+    '/search?q=x',
+    '/search?q=budget&show_id=nope&limit=99',
+  ])('bridges anonymous GET %s with no Set-Cookie', async (path) => {
+    const res = await app.request(path, {}, envWithIO());
+    expect(stub.handle).toHaveBeenCalledTimes(1);
+    expect(res.headers.get('x-hono-already-sent')).toBe('true');
+    expect(res.headers.get('set-cookie')).toBeNull();
+  });
+
+  it('bridges a signed-in GET /search?q=x with no Set-Cookie', async () => {
+    const { cookie } = await defaultUser();
+    const res = await app.request('/search?q=x', { headers: { cookie } }, envWithIO());
+    expect(stub.handle).toHaveBeenCalledTimes(1);
+    expect(res.headers.get('set-cookie')).toBeNull();
+  });
+
+  it('GET /search/ 404s without invoking the bridge', async () => {
+    const { cookie } = await defaultUser();
+    const res = await app.request('/search/', { headers: { cookie } }, envWithIO());
+    expect(res.status).toBe(404);
+    expect(stub.handle).not.toHaveBeenCalled();
+  });
+});

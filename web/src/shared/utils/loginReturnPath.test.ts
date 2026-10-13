@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { isShellSegments, validateLoginReturnPath } from './loginReturnPath';
+import {
+  isRouterKnownPathname,
+  isSearchRoutePathname,
+  isShellSegments,
+  validateLoginReturnPath,
+} from './loginReturnPath';
 
 // The recipe (design D6 / spec web-login-experience) is order-sensitive:
 // syntactic rejects (string shape, `\`, control chars) run BEFORE the URL
@@ -331,5 +336,35 @@ describe('isShellSegments', () => {
     it("['sessions', 'abc', 'extra'] — three segments with a valid-looking prefix", () => {
       expect(isShellSegments(['sessions', 'abc', 'extra'])).toBe(false);
     });
+  });
+});
+
+// The search page route (catalog-search D9; web-session-routing "URL-addressed session state",
+// api-contract-freeze "Search page HTML route"): exactly `/search`, its query string preserved.
+// Paths below it, and `/search/`, are not routes.
+describe('the /search route (catalog-search)', () => {
+  it('is router-known as exactly /search', () => {
+    expect(isSearchRoutePathname('/search')).toBe(true);
+    expect(isRouterKnownPathname('/search')).toBe(true);
+    for (const p of ['/search/', '/search/extra', '/searches', '/Search', '/sessions/search/x']) {
+      expect(isSearchRoutePathname(p), p).toBe(false);
+      expect(isRouterKnownPathname(p), p).toBe(false);
+    }
+  });
+
+  it('is a valid return path, with its query string preserved', () => {
+    expect(validateLoginReturnPath('/search')).toBe('/search');
+    expect(validateLoginReturnPath('/search?q=budget&show_id=s1')).toBe(
+      '/search?q=budget&show_id=s1',
+    );
+    expect(validateLoginReturnPath('/search/extra?q=x')).toBeNull();
+    expect(validateLoginReturnPath('/search/')).toBeNull();
+  });
+
+  it("is a shell segment shape as ['search'] only", () => {
+    expect(isShellSegments(['search'])).toBe(true);
+    expect(isShellSegments(['search', 'extra'])).toBe(false);
+    expect(isShellSegments(['search', ''])).toBe(false);
+    expect(isShellSegments(['search', 'a', 'b'])).toBe(false);
   });
 });

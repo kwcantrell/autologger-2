@@ -30,6 +30,7 @@ import { exportsRouter } from './routers/exports';
 import { logImportRouter } from './routers/logImport';
 import { profileRouter } from './routers/profile';
 import { providersRouter } from './routers/providers';
+import { searchRouter } from './routers/search';
 import { sessionsRouter } from './routers/sessions';
 import { mountSessionWs } from './routers/sessionWs';
 import { showsRouter } from './routers/shows';
@@ -258,6 +259,7 @@ export function wireApp(
   app.route('/', authRouter);
   app.route('/', profileRouter);
   app.route('/', showsRouter);
+  app.route('/', searchRouter);
   app.route('/', teamsRouter);
   app.route('/', sessionsRouter);
   app.route('/', logImportRouter);

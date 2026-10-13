@@ -1524,3 +1524,63 @@ describe('provider credentials', () => {
     expect(body).toMatchObject({ provider: 'claude-cli', model: 'claude-cli', key_last4: null });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Catalog search (catalog-search task 4.4, design D5): one result with every group filled, so the
+// fixture carries a studio, a show, a session (`match` title, `snippet` null) and the three moment
+// kinds (`sec` a number for the transcript moment, null for the topic and the event). A `.ts`
+// fixture: `match` and `kind` are string-literal unions.
+// ---------------------------------------------------------------------------
+
+describe('catalog search', () => {
+  it('GET /api/search matches the captured fixture', async () => {
+    const at = '2026-10-12T10:00:00.000Z';
+    const studioId = await seedMemberStudio({ id: 'search-studio', name: 'Beacon Studio' });
+    const showId = await seedShow({ studioId, name: 'Beacon Show', code: 'BS' });
+    const sessionId = await catalogFor().sessions.createSessionIndex({
+      showId,
+      title: 'Beacon session',
+      frameRate: 24,
+      startOffsetFrames: 0,
+      episode: '007',
+      notes: 'notes about the beacon',
+      startedAtUtc: at,
+      createdAtUtc: at,
+    });
+    const db = testDb();
+    for (const [i, word] of ['we', 'lit', 'the', 'beacon', 'tonight'].entries()) {
+      await db.run(
+        `INSERT INTO session_transcript_words
+           (session_id, id, session_time, speaker, word, start_sec, end_sec, ordinal, created_at_utc)
+         VALUES (?, ?, '', 'Ann', ?, ?, ?, ?, ?)`,
+        sessionId,
+        `w${i}`,
+        word,
+        12 + i,
+        12.5 + i,
+        i,
+        at,
+      );
+    }
+    await db.run(
+      `INSERT INTO session_topics (session_id, id, summary, ordinal, created_at_utc)
+       VALUES (?, 'topic-1', 'Talk about the beacon', 0, ?)`,
+      sessionId,
+      at,
+    );
+    await db.run(
+      `INSERT INTO session_events (session_id, id, wall_time_utc, frame_rate, category, message)
+       VALUES (?, 'event-1', ?, 24, 'cam', 'beacon on camera')`,
+      sessionId,
+      at,
+    );
+    const res = await app.request('/api/search?q=beacon', {}, { ...env });
+    const body = await expectCapturedResponse(
+      { name: 'search', endpoint: 'GET /api/search', format: 'ts' },
+      res,
+    );
+    expect(body).toMatchObject({ q: 'beacon', studios: [{ name: 'Beacon Studio' }] });
+    const kinds = (body as { moments: { kind: string }[] }).moments.map((m) => m.kind).sort();
+    expect(kinds).toEqual(['event', 'topic', 'transcript']);
+  });
+});

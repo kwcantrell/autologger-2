@@ -12,6 +12,7 @@ import { Catalog, type CatalogFacade, UNBOUND_DB } from './catalog';
 export * from './authStore';
 export * from './catalog';
 export * from './profileAssembler';
+export * from './searchStore';
 export * from './sessionIndexStore';
 export * from './sessionTitleDerivation';
 export * from './showsStore';

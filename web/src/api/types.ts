@@ -791,3 +791,66 @@ export interface ProviderTestResponse {
   ok: boolean;
   detail: string;
 }
+
+// -- Catalog search (catalog-search D5; api-contract-freeze "Search endpoint") ------------------
+// `GET /api/search?q=…[&studio_id][&show_id][&session_id][&limit]`. Snippets carry U+E000/U+E001
+// around each hit; the web renders them as `<mark>` text, never as HTML. `session_id` (D11) returns
+// that session's moments only, with the other groups empty.
+
+export interface SearchStudioHit {
+  id: string;
+  name: string;
+}
+
+export interface SearchShowHit {
+  id: string;
+  name: string;
+  studio_id: string;
+}
+
+export interface SearchSessionHit {
+  id: string;
+  title: string;
+  episode: string;
+  show_id: string;
+  studio_id: string;
+  started_at_utc: string;
+  archived: boolean;
+  /** `notes` only for a caller with access to the show. */
+  match: 'title' | 'notes';
+  /** Null for a title match. */
+  snippet: string | null;
+}
+
+interface SearchMomentBase {
+  session_id: string;
+  session_title: string;
+  show_id: string;
+  /** The topic or event id, or the transcript chunk's bucket as a decimal string. */
+  id: string;
+  /** `""` when not applicable. */
+  speaker: string;
+  snippet: string;
+}
+
+/** A transcript moment carries its start in seconds when timed; topics and events never do (the
+ * web places them with its feed rules). */
+export type SearchMoment =
+  | (SearchMomentBase & { kind: 'transcript'; sec: number | null })
+  | (SearchMomentBase & { kind: 'topic' | 'event'; sec: null });
+
+/** A session in `moments`, with its total matching moments, at most 1000 (D11). */
+export interface SearchMomentSession {
+  session_id: string;
+  total: number;
+}
+
+export interface SearchResponse {
+  q: string;
+  studios: SearchStudioHit[];
+  shows: SearchShowHit[];
+  sessions: SearchSessionHit[];
+  moments: SearchMoment[];
+  /** Each session in `moments` with its total matches (D11); the strict contract requires it. */
+  moment_sessions: SearchMomentSession[];
+}

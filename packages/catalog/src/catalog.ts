@@ -7,6 +7,7 @@
 import type { CatalogDb, CatalogRoot } from '@autologger/ports';
 import { AuthStore, type AuthStoreFacade } from './authStore';
 import { ProfileAssembler, type ProfileAssemblerFacade } from './profileAssembler';
+import { type CatalogSearchResult, type SearchParams, SearchStore } from './searchStore';
 import { SessionIndexStore, type SessionIndexStoreFacade } from './sessionIndexStore';
 import { ShowsStore, type ShowsStoreFacade } from './showsStore';
 import { StudioRegistry, type StudioRegistryFacade } from './studioRegistry';
@@ -45,6 +46,10 @@ export interface CatalogFacade {
   /** `pg_notify(channel, payload)` under this catalog's binding; inside `tx`, on the transaction,
    * so it is delivered only if the transaction commits (session-frame-bus D5). */
   notify: (channel: string, payload: string) => Promise<void>;
+  /** One search under this catalog's binding, in its own catalog transaction with a 3 s statement
+   * budget, at most 2 per process (catalog-search D7). Rejects with `SearchTimeoutError` or
+   * `SearchBusyError`. */
+  search: (params: SearchParams) => Promise<CatalogSearchResult>;
 }
 
 /** A catalog call with neither a user nor a system binding: a programming error, refused before
@@ -74,12 +79,14 @@ export class Catalog implements CatalogFacade {
   /** Private (`#`), so the stores stay the only enumerable fields. */
   readonly #db: CatalogDb;
   readonly #root: CatalogRoot | undefined;
+  readonly #search: SearchStore;
 
   /** `root` hands out the bound handles `forUser`/`system` use; `studios` lets a derived Catalog
    * carry this one's registry snapshot. */
   constructor(db: CatalogDb, opts: { root?: CatalogRoot; studios?: StudioRegistry } = {}) {
     this.#db = db;
     this.#root = opts.root;
+    this.#search = new SearchStore(db);
     this.studios = opts.studios ?? new StudioRegistry(db);
     this.shows = new ShowsStore(db);
     this.auth = new AuthStore(db);
@@ -117,6 +124,11 @@ export class Catalog implements CatalogFacade {
   /** Session-frame-bus D5: an access-loss close is published inside the revoking transaction. */
   async notify(channel: string, payload: string): Promise<void> {
     await this.#db.all('SELECT pg_notify(?, ?)', channel, payload);
+  }
+
+  /** A method over a private store, so the stores stay the only enumerable members. */
+  search(params: SearchParams): Promise<CatalogSearchResult> {
+    return this.#search.search(params);
   }
 
   #derive(db: CatalogDb): Catalog {
