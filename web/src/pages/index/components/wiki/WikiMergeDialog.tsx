@@ -37,16 +37,20 @@ export function WikiMergeDialog({ page, open, onOpenChange }: Props) {
   const merge = useMergeWikiPage();
   const { confirm, confirmElement } = useConfirm();
   const [error, setError] = useState<string | null>(null);
+  // The picker steps aside while its confirmation is open, so the two never stack.
+  const [confirming, setConfirming] = useState(false);
 
   const targets = (list.data?.pages ?? []).filter((p) => p.id !== page.id && p.kind !== 'session');
 
   const choose = async (target: WikiPageListItem) => {
     setError(null);
+    setConfirming(true);
     const ok = await confirm({
       title: `Merge into “${target.title}”?`,
       message: `“${page.title}” is added to the end of “${target.title}”, its title and aliases become aliases there, and it then redirects to “${target.title}”. History keeps both pages.`,
       confirmLabel: 'Merge',
     });
+    setConfirming(false);
     if (!ok) return;
     merge.mutate(
       {
@@ -77,13 +81,19 @@ export function WikiMergeDialog({ page, open, onOpenChange }: Props) {
   return (
     <>
       <Dialog
-        open={open}
+        open={open && !confirming}
         onOpenChange={onOpenChange}
         title="Merge into…"
         description={`Choose the page that takes in “${page.title}”.`}
       >
         <Command className="rounded-ctl border border-v5-border bg-transparent text-si-fg">
-          <CommandInput placeholder="Filter pages…" aria-label="Filter pages" />
+          <CommandInput
+            placeholder="Filter pages…"
+            aria-label="Filter pages"
+            // The app's bare `input[type=text]` box would draw a second, taller field inside
+            // the command row; the row is the field.
+            className="h-9 rounded-none border-0 px-0 py-0 focus-visible:border-0"
+          />
           <CommandList className="max-h-[min(50vh,22rem)]">
             {list.isPending ? (
               <div role="status" className="flex items-center gap-2 p-3 text-sm text-si-muted">

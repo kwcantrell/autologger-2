@@ -71,7 +71,7 @@ export function WikiEditor({ draft, onChange, showAliases }: Props) {
                         onChange({ ...draft, aliases: draft.aliases.filter((x) => x !== a) })
                       }
                     >
-                      <XIcon aria-hidden="true" />
+                      <XIcon aria-hidden="true" className="size-3" />
                     </button>
                   </Badge>
                 </li>
@@ -102,7 +102,7 @@ export function WikiEditor({ draft, onChange, showAliases }: Props) {
       )}
 
       <Tabs defaultValue="write" className="gap-2">
-        <TabsList variant="line">
+        <TabsList variant="line" aria-label="Editor view">
           <TabsTrigger value="write">Write</TabsTrigger>
           <TabsTrigger value="preview">Preview</TabsTrigger>
         </TabsList>
@@ -115,8 +115,8 @@ export function WikiEditor({ draft, onChange, showAliases }: Props) {
             spellCheck
           />
           <p className="m-0 mt-1.5 text-xs text-si-dim">
-            Markdown. Link a page with <code className="font-mono">[name](wiki:page-id)</code>
-            and a moment with <code className="font-mono">[quote](cite:session-id@seconds)</code>.
+            Markdown. Link a page with <code className="font-mono">[name](wiki:page-id)</code> and a
+            moment with <code className="font-mono">[quote](cite:session-id@seconds)</code>.
           </p>
         </TabsContent>
         <TabsContent value="preview">

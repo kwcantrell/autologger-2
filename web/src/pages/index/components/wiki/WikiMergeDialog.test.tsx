@@ -102,4 +102,16 @@ describe('WikiMergeDialog', () => {
     await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
     expect(writesOf(calls)).toHaveLength(0);
   });
+
+  // Task 5.8 browser check: the confirmation drew over the still-open picker.
+  it('the picker steps aside while its confirmation is open, and comes back on Cancel', async () => {
+    renderDialog();
+    fireEvent.click(await screen.findByRole('option', { name: /Budget fights/ }));
+    const confirm = await screen.findByRole('alertdialog');
+    // By its text: a picker stacked behind the confirmation is aria-hidden there, not gone.
+    await waitFor(() => expect(screen.queryByText(/Choose the page that takes in/)).toBeNull());
+    fireEvent.click(within(confirm).getByRole('button', { name: 'Cancel' }));
+    expect(await screen.findByRole('dialog', { name: 'Merge into…' })).toBeTruthy();
+    expect(onOpenChange).not.toHaveBeenCalled();
+  });
 });

@@ -31,7 +31,13 @@ function isSplitKind(k: string): k is SplitKind {
 }
 
 export function WikiSplitDialog({ page, open, onOpenChange }: Props) {
-  const ids = { remaining: useId(), moved: useId(), title: useId(), aliases: useId() };
+  const ids = {
+    remaining: useId(),
+    moved: useId(),
+    kind: useId(),
+    title: useId(),
+    aliases: useId(),
+  };
   const [remaining, setRemaining] = useState(page.body_md);
   const [moved, setMoved] = useState('');
   const [kind, setKind] = useState<SplitKind>(isSplitKind(page.kind) ? page.kind : 'topic');
@@ -109,10 +115,13 @@ export function WikiSplitDialog({ page, open, onOpenChange }: Props) {
           />
         </div>
         <fieldset className="m-0 flex flex-col gap-1.5 border-0 p-0">
-          <legend className="mb-1.5 text-sm font-medium text-si-fg">New page kind</legend>
+          <legend id={ids.kind} className="mb-1.5 text-sm font-medium text-si-fg">
+            New page kind
+          </legend>
           <RadioGroup
             value={kind}
             onValueChange={(v) => isSplitKind(v) && setKind(v)}
+            aria-labelledby={ids.kind}
             className="flex flex-wrap gap-4"
           >
             {SPLIT_KINDS.map((k) => (

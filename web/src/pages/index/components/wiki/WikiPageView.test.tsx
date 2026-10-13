@@ -144,6 +144,18 @@ describe('WikiPageView: editing', () => {
     expect(screen.queryByRole('textbox', { name: 'Page text' })).toBeNull();
   });
 
+  // Task 5.8 browser check: the Write/Preview tablist had no name of its own, and the
+  // link-syntax hint ran "(wiki:page-id)and" together.
+  it('names the Write/Preview tabs and spaces the link-syntax hint', async () => {
+    serve(wikiPage());
+    renderView();
+    await openEditor();
+    expect(screen.getByRole('tablist', { name: 'Editor view' })).toBeTruthy();
+    expect(screen.getByText(/Link a page with/).textContent).toMatch(
+      /\(wiki:page-id\) and a moment/,
+    );
+  });
+
   it('Preview renders the draft as Markdown', async () => {
     serve(wikiPage());
     renderView();

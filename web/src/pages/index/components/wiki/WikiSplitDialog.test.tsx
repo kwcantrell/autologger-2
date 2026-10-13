@@ -42,6 +42,12 @@ describe('WikiSplitDialog', () => {
     expect(kinds).toEqual(['person', 'topic', 'bit']);
   });
 
+  // Task 5.8 browser check: the kind group was named after its options' labels.
+  it('names the kind group "New page kind"', () => {
+    renderDialog();
+    expect(screen.getByRole('radiogroup', { name: 'New page kind' })).toBeTruthy();
+  });
+
   it('starts with the whole body staying, and needs a title and text to move', () => {
     renderDialog();
     expect(box('Stays on this page').value).toBe('Keep\nMove me');

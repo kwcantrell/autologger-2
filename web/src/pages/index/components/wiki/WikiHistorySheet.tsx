@@ -92,9 +92,16 @@ function RevisionDiff({ revision, page }: { revision: WikiRevision; page: WikiPa
               // biome-ignore lint/suspicious/noArrayIndexKey: a diff line has no identity but its position
               key={i}
               data-diff={l.kind}
-              className={cn('px-2 whitespace-pre-wrap break-words', DIFF_LINE[l.kind])}
+              className={cn(
+                // Hanging indent: a wrapped line continues under its text, not under the mark.
+                'pr-2 pl-[1.75rem] -indent-[1.25rem] whitespace-pre-wrap break-words',
+                DIFF_LINE[l.kind],
+              )}
             >
-              <span aria-hidden="true" className="mr-2 inline-block w-3 select-none text-si-dim">
+              <span
+                aria-hidden="true"
+                className="mr-2 inline-block w-3 indent-0 select-none text-si-dim"
+              >
                 {DIFF_MARK[l.kind]}
               </span>
               {l.kind !== 'same' && <span className="sr-only">{DIFF_SR[l.kind]}</span>}
