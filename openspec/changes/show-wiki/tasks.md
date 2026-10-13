@@ -98,11 +98,11 @@
 
   Then implement `server/src/routers/wiki.ts` and mount it. Verified by the tests.
 - [ ] 4.3 Capture the fixtures (`fixtures/api-responses/wiki*.json`) in `apiResponseFixtures.int.test.ts` (D8 category 5), including the conflict branch. Add the README endpoint rows. Verified by `npm run fixtures:capture -w server` and the fixtures test.
-- [ ] 4.4 Test first: in `staticServing.int.test.ts` (D8 category 2), check that:
+- [x] 4.4 Test first: in `staticServing.int.test.ts` (D8 category 2), check that:
   - `GET /wiki` and `GET /wiki/abc` serve the shell with no `Set-Cookie`;
   - `/wiki/`, `/wiki/abc/` and `/wiki/abc/history` give 404.
-
   Then extend `loginReturnPath.ts` (`isWikiRoutePathname`, `isRouterKnownPathname`, `isShellSegments`), with its unit tests, covering "Nested wiki path stays 404" from the web-frontend-platform delta. Verified by the tests.
+  Evidence: `sw-4.4-red.log`: `loginReturnPath.test.ts` → `Tests 3 failed | 68 passed` (`isWikiRoutePathname is not a function`); staticServing int already `38 passed` (the server hands off generically, so its new cases pin behaviour). `sw-4.4-green.log`: loginReturnPath + loginReturnStash → `Tests 93 passed (93)`; `staticServing.int.test.ts` → `Tests 38 passed (38)` (`/wiki`, `/wiki/abc` shell with no `Set-Cookie`; `/wiki/`, `/wiki/abc/` 404; `/wiki/abc/history` is handed to the frontend, whose `isShellSegments` gives the 404, as `/search/extra` does). No existing assertion changed.
 
 ## 5. Web
 
