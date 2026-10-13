@@ -2,6 +2,7 @@
 // auth_identity_and_gate from src/autologger/web/app.py.
 
 import { createCatalog } from '@autologger/catalog';
+import { parseWikiLinks } from '@autologger/contract';
 import type { MiddlewareHandler } from 'hono';
 import { getCookie } from 'hono/cookie';
 import type { AppEnv } from '../appEnv';
@@ -15,7 +16,9 @@ export const authContext: MiddlewareHandler<AppEnv> = async (c, next) => {
   // catalog-roles D9: resolve the caller and load the registry as system:auth-resolve; routes get
   // a catalog bound to the signed-in user, or an unbound one (every statement refused) with no
   // user. Both carry the registry snapshot loaded here.
-  const sys = createCatalog(c.env.ports.catalog).system('auth-resolve');
+  const sys = createCatalog(c.env.ports.catalog, { wikiLinks: parseWikiLinks }).system(
+    'auth-resolve',
+  );
   await sys.init();
 
   // Both decisions use the percent-decoded path the router matched (gate-decoded-path D1): Hono

@@ -3,6 +3,7 @@ import { useCallback } from 'react';
 import { useProfile, useProfileMutation } from '../../../api/hooks/useProfile';
 import { sessionStatusKeys } from '../../../api/hooks/useSessionStatus';
 import { showAccessFrom } from '../../../api/hooks/useShowAccess';
+import { wikiKeys } from '../../../api/hooks/useWiki';
 import type { ProfileUpdateBody } from '../../../api/types';
 import { showToast } from '../utils/toast';
 
@@ -16,9 +17,10 @@ import { showToast } from '../utils/toast';
 //     outside the active studio (`server/src/routers/profile.ts`), so the show's own studio goes
 //     with it (the active one from the top bar, the hit's from a search result).
 // A switch that changes the studio follows the close-session path. Either then refetches the
-// session list, events, session status and show categories, as the modal's save did
-// (web-coordination-seam "The settings modal still refetches the session list"). A failure leaves
-// the cache — and so the shown selection — untouched and names the failure. With Settings open
+// session list, events, session status, show categories and wiki pages (show-wiki D7), as the
+// modal's save did (web-coordination-seam "The settings modal still refetches the session
+// list"). A failure leaves the cache — and so the shown selection — untouched and names the
+// failure. With Settings open
 // and holding unsaved edits, a switch first asks through the view's discard guard
 // (`confirmSwitch`); declining keeps the edits and the selection.
 
@@ -83,6 +85,7 @@ export function useSwitchActive({ onCloseSession, confirmSwitch }: Options): Use
       queryClient.invalidateQueries({ queryKey: ['events'] });
       queryClient.invalidateQueries({ queryKey: sessionStatusKeys.all() });
       queryClient.invalidateQueries({ queryKey: ['show-categories'] });
+      queryClient.invalidateQueries({ queryKey: wikiKeys.all() });
       return true;
     },
     [

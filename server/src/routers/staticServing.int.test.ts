@@ -279,3 +279,40 @@ describe('frontend bridge — the /search shell route (catalog-search)', () => {
     expect(stub.handle).not.toHaveBeenCalled();
   });
 });
+
+// show-wiki task 4.4 (api-contract-freeze "Wiki page HTML routes"): `GET /wiki` and
+// `GET /wiki/<id>` reach the shell for anonymous callers with no cookie set. `/wiki/` and
+// `/wiki/<id>/` are trailing-slash paths, refused by Hono before the bridge. `/wiki/abc/history`
+// reaches the bridge like any GET and is refused by the shell router's segment shape
+// (`isShellSegments(['wiki', 'abc', 'history'])` is false, pinned in web `loginReturnPath.test.ts`,
+// "Nested wiki path stays 404"); the stub frontend here cannot render that 404 itself.
+describe('frontend bridge — the /wiki shell routes (show-wiki)', () => {
+  const stub = createStubFrontend();
+  const app = wireApp(new Hono<AppEnv>(), upgradeStub, { frontend: stub });
+
+  afterEach(() => stub.handle.mockClear());
+
+  it.each([
+    '/wiki',
+    '/wiki/abc',
+    '/wiki?x=1',
+  ])('bridges anonymous GET %s with no Set-Cookie', async (path) => {
+    const res = await app.request(path, {}, envWithIO());
+    expect(stub.handle).toHaveBeenCalledTimes(1);
+    expect(res.headers.get('x-hono-already-sent')).toBe('true');
+    expect(res.headers.get('set-cookie')).toBeNull();
+  });
+
+  it.each(['/wiki/', '/wiki/abc/'])('GET %s 404s without invoking the bridge', async (path) => {
+    const { cookie } = await defaultUser();
+    const res = await app.request(path, { headers: { cookie } }, envWithIO());
+    expect(res.status).toBe(404);
+    expect(stub.handle).not.toHaveBeenCalled();
+  });
+
+  it('GET /wiki/abc/history is left to the shell router, which refuses the nested shape', async () => {
+    const res = await app.request('/wiki/abc/history', {}, envWithIO());
+    expect(stub.handle).toHaveBeenCalledTimes(1);
+    expect(res.headers.get('set-cookie')).toBeNull();
+  });
+});

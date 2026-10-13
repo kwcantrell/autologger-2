@@ -47,11 +47,17 @@ export function sessionHref(sessionId: string): string {
   return `/sessions/${encodeURIComponent(sessionId)}`;
 }
 
+/** A timed deep link into a session: `/sessions/<id>?t=<sec>` (show-wiki D7 "Moment links"; used by
+ * `momentHref` for transcript moments and by `WikiMarkdown` for `cite:` links). */
+export function secondsHref(sessionId: string, sec: number): string {
+  return `${sessionHref(sessionId)}?t=${sec}`;
+}
+
 /** A moment's deep link: `?t=` for a timed transcript passage, `?topic=` / `?event=` for a feed
  * row (placed by the workspace with the feed's own rules), the bare session otherwise. */
 export function momentHref(m: SearchMoment): string {
   const base = sessionHref(m.session_id);
-  if (m.kind === 'transcript') return m.sec == null ? base : `${base}?t=${m.sec}`;
+  if (m.kind === 'transcript') return m.sec == null ? base : secondsHref(m.session_id, m.sec);
   return `${base}?${m.kind}=${encodeURIComponent(m.id)}`;
 }
 

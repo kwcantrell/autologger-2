@@ -49,6 +49,7 @@ const SESSION_STATUS = ['session', 'status'].join('-');
 const AUDIO_SEGMENTS = ['audio', 'segments'].join('-');
 const STUDIO_SHOWS = ['studio', 'shows'].join('-');
 const SHOW = ['sh', 'ow'].join('');
+const WIKI_PAGES = ['wiki', 'Pages'].join('');
 
 /** file (relative to the scan root, posix separators) allowed to hold each literal. */
 const FACTORY_MODULE: Record<string, string> = {
@@ -56,6 +57,7 @@ const FACTORY_MODULE: Record<string, string> = {
   [AUDIO_SEGMENTS]: 'api/hooks/useAudio.ts',
   [STUDIO_SHOWS]: 'api/hooks/useShows.ts',
   [SHOW]: 'api/hooks/useShows.ts',
+  [WIKI_PAGES]: 'api/hooks/useWiki.ts',
 };
 
 function quotedPattern(literal: string): RegExp {

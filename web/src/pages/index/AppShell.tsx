@@ -21,6 +21,8 @@ import {
 } from './components/settings/sections';
 import { TopBar } from './components/TopBar';
 import { V6Rail } from './components/V6Rail';
+import { WikiPageView } from './components/wiki/WikiPageView';
+import { WikiRoute } from './components/wiki/WikiRoute';
 import { getTransportStatus, subscribeTransportStatus } from './coordination/transportStatus';
 import { navigate } from './navigation';
 import { useLoginReturnConsume } from './useLoginReturnConsume';
@@ -117,6 +119,10 @@ export function AppShell() {
   // module's `/search`. It renders the results page in place of the session route; no session is
   // selected there, so `activeSessionId` stays empty.
   const [onSearchRoute] = useRoute('/search');
+  // Wiki routes (show-wiki D7): the list and one page, mirroring the shared route module's
+  // `isWikiRoutePathname`. Like search, they render in place of the session route.
+  const [onWikiRoute] = useRoute('/wiki');
+  const [onWikiPageRoute, wikiPageParams] = useRoute('/wiki/:pageId');
   const [showNewSession, setShowNewSession] = useState(false);
   const [showBatchImport, setShowBatchImport] = useState(false);
   // The Settings view's open state and section (redesign-show-ignition D3; web-ui-system "The
@@ -492,6 +498,10 @@ export function AppShell() {
                 onCloseSession={handleCloseSession}
                 confirmSwitch={confirmSettingsDiscard}
               />
+            ) : onWikiRoute ? (
+              <WikiRoute />
+            ) : onWikiPageRoute && wikiPageParams?.pageId ? (
+              <WikiPageView pageId={wikiPageParams.pageId} />
             ) : (
               <SessionRoute
                 sessionId={activeSessionId}

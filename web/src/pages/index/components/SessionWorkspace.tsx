@@ -40,6 +40,7 @@ import { MomentDeepLink } from './MomentDeepLink';
 import { isTypingTarget, ShortcutsDialog } from './ShortcutsDialog';
 import { TopicsFeed } from './TopicsFeed';
 import { TranscribeFeed } from './TranscribeFeed';
+import { SessionWikiButton } from './wiki/SessionWikiButton';
 
 // Feed tab inventory — one source for the tablist buttons AND the tabpanel
 // wrappers below (code-health-tail 4.8). `label` doubles as each panel's
@@ -558,13 +559,21 @@ export function SessionWorkspace({ sessionId, ytImportPending }: Props) {
                     {/* Line tabs (redesign-show-ignition task 5.2; preview `.tabs`) on the sheet's
                         mx-4 edge, a short gap above the feed card. */}
                     <div className="relative z-0 mx-4 mb-3 max-md:mx-3 flex shrink-0 items-end pt-[0.3rem] max-md:overflow-x-auto max-md:overflow-y-hidden max-md:[-webkit-overflow-scrolling:touch] max-md:[scrollbar-width:none]">
-                      <TabsList variant="line" aria-label="Feed tabs">
+                      {/* `max-md:flex-none`: on phones the tabs keep their width and the row scrolls, so the
+                          wiki button after them sits at the row's end instead of over a tab. */}
+                      <TabsList variant="line" aria-label="Feed tabs" className="max-md:flex-none">
                         {FEED_TABS.map((tab) => (
                           <TabsTrigger key={tab.id} value={tab.id}>
                             {tab.label}
                           </TabsTrigger>
                         ))}
                       </TabsList>
+                      {/* The session's wiki page (show-wiki D7), at the end of the row. */}
+                      <SessionWikiButton
+                        sessionId={sessionId}
+                        showId={status?.show_id ?? null}
+                        title={status?.title ?? ''}
+                      />
                     </div>
                     {/* All six top-level panels stay mounted (hidden via the
                       `hidden` attribute) — memoized above, so mounted no longer

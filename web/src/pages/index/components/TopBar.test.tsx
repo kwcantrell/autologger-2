@@ -7,6 +7,7 @@ import type { ProfilePayload } from '../../../api/types';
 import { SidebarProvider } from '../../../shared/components/ui/sidebar';
 import { renderWithQueryClient } from '../../../test/renderWithQueryClient';
 import { publishTransportStatus } from '../coordination/transportStatus';
+import { setNavigationImplForTesting } from '../navigation';
 import { showToast } from '../utils/toast';
 import { TopBar } from './TopBar';
 
@@ -291,12 +292,12 @@ describe('TopBar: switching (task 3.2)', () => {
     expect(within(showTrigger()).getByText('Harbour Lights')).toBeTruthy();
   });
 
-  it('after a switch the four query keys are invalidated on the shared query client', async () => {
+  it('after a switch the five query keys are invalidated on the shared query client', async () => {
     apiFetchMock.mockResolvedValue(makeProfile({ active_studio_id: 'team-north' }));
     const { invalidate } = setup();
     openMenu(teamTrigger());
     fireEvent.click(await screen.findByRole('menuitemradio', { name: /northlight/i }));
-    await waitFor(() => expect(invalidate).toHaveBeenCalledTimes(4));
+    await waitFor(() => expect(invalidate).toHaveBeenCalledTimes(5));
     const keys = invalidate.mock.calls.map(([filters]) => filters?.queryKey);
     expect(keys).toEqual(
       expect.arrayContaining([
@@ -316,7 +317,7 @@ describe('TopBar: switching (task 3.2)', () => {
     await waitFor(() => expect(apiFetchMock).toHaveBeenCalledTimes(1));
     const body = JSON.parse(String(apiFetchMock.mock.calls[0][1]?.body));
     expect(body).toEqual({ active_studio_id: 'team-yt', active_show_id: 'show-late' });
-    await waitFor(() => expect(invalidate).toHaveBeenCalledTimes(4));
+    await waitFor(() => expect(invalidate).toHaveBeenCalledTimes(5));
     expect(onCloseSession).not.toHaveBeenCalled();
     await waitFor(() => expect(within(showTrigger()).getByText('Late Edition')).toBeTruthy());
   });
@@ -390,5 +391,29 @@ describe('TopBar: switching asks the Settings guard first', () => {
     openMenu(showTrigger());
     fireEvent.click(await screen.findByRole('menuitemradio', { name: 'Late Edition' }));
     await waitFor(() => expect(apiFetchMock).toHaveBeenCalledTimes(1));
+  });
+});
+
+// show-wiki task 5.4 (design D7; show-wiki "Wiki screens" entry points; D8 category 6): a "Wiki"
+// link next to the search button opens `/wiki`. It is named "Wiki" at every width; the visible
+// label is dropped below `md` so the bar keeps to one line at 390px.
+describe('TopBar: Wiki link (show-wiki 5.4)', () => {
+  afterEach(() => setNavigationImplForTesting(null));
+
+  it('links to /wiki with the name "Wiki", its label hidden below md', () => {
+    setup();
+    const bar = screen.getByRole('banner');
+    const link = within(bar).getByRole('link', { name: 'Wiki' });
+    expect(link.getAttribute('href')).toBe('/wiki');
+    const label = within(link).getByText('Wiki');
+    expect(label.className).toContain('max-md:hidden');
+  });
+
+  it('opens /wiki in place through the navigation funnel', () => {
+    const go = vi.fn();
+    setNavigationImplForTesting(go);
+    setup();
+    fireEvent.click(screen.getByRole('link', { name: 'Wiki' }), { button: 0 });
+    expect(go).toHaveBeenCalledWith('/wiki', undefined);
   });
 });

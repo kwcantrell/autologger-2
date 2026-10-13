@@ -1,4 +1,5 @@
 import { Catalog } from '@autologger/catalog';
+import { parseWikiLinks } from '@autologger/contract';
 import type { CatalogDb } from '@autologger/ports';
 import { hashCompanionDeviceToken, newCompanionDeviceToken } from '../auth/companionDeviceToken';
 import { createLoginSession } from '../auth/identity';
@@ -8,7 +9,10 @@ import { defaultUser, env } from './harness';
 /** A catalog for seeding, bound to the system task `test-seed` (catalog-roles D12; tests are
  * exempt from the system allowlist). */
 export function catalogFor(): Catalog {
-  return new Catalog(env.ports.catalog.bindSystem('test-seed'), { root: env.ports.catalog });
+  return new Catalog(env.ports.catalog.bindSystem('test-seed'), {
+    root: env.ports.catalog,
+    wikiLinks: parseWikiLinks,
+  });
 }
 
 /** The catalog adapter as a `system:test` handle, for a test's direct SQL (catalog-roles D12). */

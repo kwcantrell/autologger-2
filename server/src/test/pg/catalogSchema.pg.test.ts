@@ -54,6 +54,10 @@ const TABLES = [
   'provider_test_windows',
   // catalog-search D4: the transcript in blocks of 40 words, kept in sync by the database.
   'session_transcript_chunks',
+  // show-wiki D1, D2: the show wiki's pages, aliases and revisions.
+  'wiki_pages',
+  'wiki_aliases',
+  'wiki_revisions',
 ];
 // companion-devices D1: the tables with no catalog_user policy and no catalog_user privilege.
 // byo-ai-providers D1: plus the two provider tables.
@@ -85,6 +89,9 @@ const KEY_COLUMN: Record<string, string> = {
   provider_key_check: 'check_value',
   provider_test_windows: 'user_id',
   session_transcript_chunks: 'session_id',
+  wiki_pages: 'id',
+  wiki_aliases: 'page_id',
+  wiki_revisions: 'page_id',
 };
 const MIGRATIONS = resolve(import.meta.dirname, '../../../../supabase/migrations');
 const MIGRATION = resolve(MIGRATIONS, '20261001000000_catalog_schema.sql');
@@ -523,7 +530,66 @@ const EXPECTED_SCHEMA: SchemaRecord = {
     primaryKey: ['session_id', 'bucket'],
     foreignKeys: ['FOREIGN KEY (session_id) REFERENCES catalog.sessions(id)'],
   },
-  $unique: ['catalog.companion_devices UNIQUE (token_hash)', 'catalog.users UNIQUE (google_sub)'],
+  // show-wiki D1: one row per page; composite keys keep sessions, redirects and aliases in the show.
+  wiki_pages: {
+    columns: [
+      'id text collate C not null',
+      'show_id text collate C not null',
+      'kind text collate C not null',
+      'title text collate C not null',
+      'body_md text collate C not null',
+      'session_id text collate C',
+      'revision bigint not null',
+      'merged_into text collate C',
+      'deleted_at_utc text collate C',
+      'created_by text collate C not null',
+      'created_by_name text collate C not null',
+      'created_at_utc text collate C not null',
+      'updated_by text collate C not null',
+      'updated_by_name text collate C not null',
+      'updated_at_utc text collate C not null',
+    ],
+    primaryKey: ['id'],
+    foreignKeys: [
+      'FOREIGN KEY (merged_into, show_id) REFERENCES catalog.wiki_pages(id, show_id)',
+      'FOREIGN KEY (session_id, show_id) REFERENCES catalog.sessions(id, show_id)',
+      'FOREIGN KEY (show_id) REFERENCES catalog.shows(id)',
+    ],
+  },
+  // show-wiki D1: one row per alias of a live non-session page.
+  wiki_aliases: {
+    columns: [
+      'page_id text collate C not null',
+      'show_id text collate C not null',
+      'alias text collate C not null',
+    ],
+    primaryKey: ['page_id', 'alias'],
+    foreignKeys: ['FOREIGN KEY (page_id, show_id) REFERENCES catalog.wiki_pages(id, show_id)'],
+  },
+  // show-wiki D2: an append-only snapshot per page write.
+  wiki_revisions: {
+    columns: [
+      'page_id text collate C not null',
+      'revision bigint not null',
+      'title text collate C not null',
+      'kind text collate C not null',
+      'body_md text collate C not null',
+      'aliases_json jsonb not null',
+      'author_user_id text collate C not null',
+      'author_name text collate C not null',
+      'at_utc text collate C not null',
+      'note text collate C',
+    ],
+    primaryKey: ['page_id', 'revision'],
+    foreignKeys: ['FOREIGN KEY (page_id) REFERENCES catalog.wiki_pages(id)'],
+  },
+  // show-wiki D1: the composite-key targets.
+  $unique: [
+    'catalog.companion_devices UNIQUE (token_hash)',
+    'catalog.sessions UNIQUE (id, show_id)',
+    'catalog.users UNIQUE (google_sub)',
+    'catalog.wiki_pages UNIQUE (id, show_id)',
+  ],
   // owner-bootstrap D1: the role check and at most one owner per team.
   $checks: [
     'catalog.companion_devices companion_devices_name_check CHECK (((char_length(name) >= 1) AND (char_length(name) <= 80)))',
@@ -540,6 +606,12 @@ const EXPECTED_SCHEMA: SchemaRecord = {
     'catalog.user_provider_credentials user_provider_credentials_origin_check CHECK (((base_url IS NULL) = (base_origin IS NULL)))',
     'catalog.user_provider_credentials user_provider_credentials_provider_check CHECK (((char_length(provider) >= 1) AND (char_length(provider) <= 64)))',
     "catalog.user_studio_memberships user_studio_memberships_role_check CHECK ((role = ANY (ARRAY['owner'::text, 'admin'::text, 'member'::text])))",
+    // show-wiki D1: the kinds, the session coupling and the length limits.
+    'catalog.wiki_aliases wiki_aliases_alias_check CHECK (((char_length(btrim(alias)) >= 1) AND (char_length(btrim(alias)) <= 200)))',
+    'catalog.wiki_pages wiki_pages_body_md_check CHECK ((char_length(body_md) <= 100000))',
+    "catalog.wiki_pages wiki_pages_kind_check CHECK ((kind = ANY (ARRAY['person'::text, 'topic'::text, 'bit'::text, 'session'::text])))",
+    "catalog.wiki_pages wiki_pages_session_kind_check CHECK (((kind = 'session'::text) = (session_id IS NOT NULL)))",
+    'catalog.wiki_pages wiki_pages_title_check CHECK (((char_length(btrim(title)) >= 1) AND (char_length(btrim(title)) <= 200)))',
   ],
   $indexes: [
     'CREATE INDEX idx_companion_devices_user ON catalog.companion_devices USING btree (user_id)',
@@ -571,6 +643,11 @@ const EXPECTED_SCHEMA: SchemaRecord = {
     "CREATE UNIQUE INDEX idx_user_studio_memberships_one_owner ON catalog.user_studio_memberships USING btree (studio_id) WHERE (role = 'owner'::text)",
     'CREATE INDEX idx_user_studio_memberships_studio ON catalog.user_studio_memberships USING btree (studio_id)',
     'CREATE INDEX idx_users_email ON catalog.users USING btree (email)',
+    // show-wiki D1: live names are unique per show; the show listing.
+    'CREATE UNIQUE INDEX idx_wiki_aliases_name ON catalog.wiki_aliases USING btree (show_id, catalog.search_norm(alias))',
+    'CREATE UNIQUE INDEX idx_wiki_pages_live_session ON catalog.wiki_pages USING btree (show_id, session_id) WHERE ((session_id IS NOT NULL) AND (merged_into IS NULL) AND (deleted_at_utc IS NULL))',
+    "CREATE UNIQUE INDEX idx_wiki_pages_live_title ON catalog.wiki_pages USING btree (show_id, catalog.search_norm(title)) WHERE ((kind <> 'session'::text) AND (merged_into IS NULL) AND (deleted_at_utc IS NULL))",
+    'CREATE INDEX idx_wiki_pages_show ON catalog.wiki_pages USING btree (show_id)',
   ],
 };
 const EXPECTED_SHOWS: unknown[] = [
@@ -723,6 +800,14 @@ describe('the app role (design D3)', () => {
     await sql`insert into provider_test_windows (user_id, window_start_ms, test_count) values ('u', 1, 1)`;
     // catalog-search D4: a chunk row in a bucket no word of `se` falls in, so no rebuild touches it.
     await sql`insert into session_transcript_chunks (session_id, bucket, text) values ('se', 9, 't')`;
+    // show-wiki D1, D2: a session page with an alias and its first revision.
+    await sql`insert into wiki_pages (id, show_id, kind, title, body_md, session_id, revision,
+                created_by, created_by_name, created_at_utc, updated_by, updated_by_name,
+                updated_at_utc)
+              values ('wp', 'sh', 'session', 'W', '', 'se', 1, 'u', 'U', ${t}, 'u', 'U', ${t})`;
+    await sql`insert into wiki_aliases (page_id, show_id, alias) values ('wp', 'sh', 'a')`;
+    await sql`insert into wiki_revisions (page_id, revision, title, kind, body_md, aliases_json,
+                author_user_id, author_name, at_utc) values ('wp', 1, 'W', 'session', '', '[]', 'u', 'U', ${t})`;
     for (const table of TABLES) {
       const n = await sql.unsafe(`select count(*)::int as n from ${table}`);
       expect(n[0]?.n, table).toBeGreaterThan(0);
@@ -860,8 +945,13 @@ describe('row-level security on every catalog table (catalog-roles D1, D2; catal
       // show_grants (D2's naming).
       // session-content-policies D1: so does each session table's.
       const session = SESSION_TABLES.includes(t.relname);
+      // show-wiki D1: so do wiki_pages and wiki_aliases.
       expect(byName[`${t.relname}_user_all`] !== undefined, t.relname).toBe(
-        t.relname === 'user_prefs' || t.relname === 'show_grants' || session,
+        t.relname === 'user_prefs' ||
+          t.relname === 'show_grants' ||
+          session ||
+          t.relname === 'wiki_pages' ||
+          t.relname === 'wiki_aliases',
       );
       // session-content-policies D1 (inverting session-tables D1's 7b-1 rule): each session table
       // has exactly the system policy and the one `_user_all` content policy, and catalog_user

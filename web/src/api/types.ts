@@ -854,3 +854,116 @@ export interface SearchResponse {
   /** Each session in `moments` with its total matches (D11); the strict contract requires it. */
   moment_sessions: SearchMomentSession[];
 }
+
+// -- Show wiki (show-wiki D6; api-contract-freeze "Wiki page object" and the wiki endpoints) ---
+
+export type WikiKind = 'person' | 'topic' | 'bit' | 'session';
+
+/** The page object every page-returning wiki route answers, merged and deleted pages included. */
+export interface WikiPage {
+  id: string;
+  show_id: string;
+  kind: WikiKind;
+  title: string;
+  body_md: string;
+  aliases: string[];
+  session_id: string | null;
+  revision: number;
+  merged_into: string | null;
+  deleted: boolean;
+  created_at_utc: string;
+  created_by_name: string;
+  updated_at_utc: string;
+  updated_by_name: string;
+}
+
+/** `GET /api/shows/:showId/wiki/pages` — one row of the list. */
+export interface WikiPageListItem {
+  id: string;
+  kind: WikiKind;
+  title: string;
+  aliases: string[];
+  session_id: string | null;
+  revision: number;
+  updated_at_utc: string;
+  updated_by_name: string;
+}
+
+export interface WikiPageListResponse {
+  pages: WikiPageListItem[];
+  /** More than 2000 pages matched. */
+  truncated: boolean;
+}
+
+/** `GET /api/wiki/pages/:pageId/revisions` — one row, newest first. */
+export interface WikiRevisionListItem {
+  revision: number;
+  title: string;
+  kind: WikiKind;
+  author_name: string;
+  at_utc: string;
+  note: string;
+}
+
+export interface WikiRevisionListResponse {
+  revisions: WikiRevisionListItem[];
+  /** The `before` cursor for the next older page; `null` when there are none. */
+  next_before: number | null;
+}
+
+/** `GET /api/wiki/pages/:pageId/revisions/:rev`. */
+export interface WikiRevision extends WikiRevisionListItem {
+  body_md: string;
+  aliases: string[];
+}
+
+/** `POST /api/wiki/pages/:pageId/merge` — the target page after the merge. */
+export interface WikiMergeResponse {
+  page: WikiPage;
+}
+
+/** `POST /api/wiki/pages/:pageId/split` — the source page and the new one. */
+export interface WikiSplitResponse {
+  page: WikiPage;
+  new_page: WikiPage;
+}
+
+/** The wiki's `409 Version conflict.`: `current` is the stale page at its current revision. */
+export type WikiVersionConflict = VersionConflict<WikiPage>;
+
+export interface WikiPageCreateBody {
+  kind: WikiKind;
+  title: string;
+  body_md?: string;
+  aliases?: string[];
+  /** Required exactly when `kind` is `session`. */
+  session_id?: string;
+}
+
+export interface WikiPageUpdateBody {
+  expected_revision: number;
+  title?: string;
+  kind?: WikiKind;
+  body_md?: string;
+  /** Replaces the whole list. */
+  aliases?: string[];
+  /** Labels the new revision as a restore of this (older) revision. */
+  restored_from?: number;
+}
+
+export interface WikiMergeBody {
+  into_page_id: string;
+  expected_revision: number;
+  into_expected_revision: number;
+}
+
+export interface WikiSplitBody {
+  expected_revision: number;
+  remaining_body_md: string;
+  new_page: {
+    kind: Exclude<WikiKind, 'session'>;
+    title: string;
+    body_md: string;
+    aliases?: string[];
+  };
+}

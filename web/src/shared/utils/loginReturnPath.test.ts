@@ -3,6 +3,7 @@ import {
   isRouterKnownPathname,
   isSearchRoutePathname,
   isShellSegments,
+  isWikiRoutePathname,
   validateLoginReturnPath,
 } from './loginReturnPath';
 
@@ -366,5 +367,43 @@ describe('the /search route (catalog-search)', () => {
     expect(isShellSegments(['search', 'extra'])).toBe(false);
     expect(isShellSegments(['search', ''])).toBe(false);
     expect(isShellSegments(['search', 'a', 'b'])).toBe(false);
+  });
+});
+
+// The wiki routes (show-wiki D8 category 2; web-frontend-platform "Shell routing from the shared
+// route definition", api-contract-freeze "Wiki page HTML routes"): exactly `/wiki` and
+// `/wiki/<one non-empty segment>`. `/wiki/`, trailing slashes and deeper paths are not routes.
+describe('the /wiki routes (show-wiki)', () => {
+  it('is router-known as exactly /wiki and /wiki/<one segment>', () => {
+    for (const p of ['/wiki', '/wiki/abc', '/wiki/abc-123_def', '/wiki/a%2Fb']) {
+      expect(isWikiRoutePathname(p), p).toBe(true);
+      expect(isRouterKnownPathname(p), p).toBe(true);
+    }
+    for (const p of ['/wiki/', '/wiki/a/', '/wiki/a/b', '/wikix', '/Wiki', '/sessions/wiki/x']) {
+      expect(isWikiRoutePathname(p), p).toBe(false);
+      expect(isRouterKnownPathname(p), p).toBe(false);
+    }
+  });
+
+  it('is a valid return path, with its query string preserved', () => {
+    expect(validateLoginReturnPath('/wiki')).toBe('/wiki');
+    expect(validateLoginReturnPath('/wiki/abc?x=1')).toBe('/wiki/abc?x=1');
+    expect(validateLoginReturnPath('/wiki/')).toBeNull();
+    expect(validateLoginReturnPath('/wiki/abc/')).toBeNull();
+    expect(validateLoginReturnPath('/wiki/abc/history')).toBeNull();
+  });
+
+  it("is a shell segment shape as ['wiki'] or ['wiki', <non-empty>]", () => {
+    expect(isShellSegments(['wiki'])).toBe(true);
+    expect(isShellSegments(['wiki', 'abc'])).toBe(true);
+    // One raw segment carrying an encoded separator stays one entry, as for sessions.
+    expect(isShellSegments(['wiki', 'a%2Fb'])).toBe(true);
+    expect(isShellSegments(['wiki', ''])).toBe(false);
+  });
+
+  it('Nested wiki path stays 404: three list entries are not a shell shape', () => {
+    // `GET /wiki/a/b` and `GET /wiki/abc/history` reach the catch-all as three entries.
+    expect(isShellSegments(['wiki', 'a', 'b'])).toBe(false);
+    expect(isShellSegments(['wiki', 'abc', 'history'])).toBe(false);
   });
 });

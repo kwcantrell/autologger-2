@@ -3,6 +3,7 @@ import { act, renderHook } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { apiFetch } from '../../../api/client';
 import { sessionStatusKeys } from '../../../api/hooks/useSessionStatus';
+import { wikiKeys } from '../../../api/hooks/useWiki';
 import type { ProfilePayload } from '../../../api/types';
 import { showToast } from '../utils/toast';
 import { useSwitchActive } from './useSwitchActive';
@@ -119,6 +120,7 @@ describe('useSwitchActive', () => {
         ['events'],
         sessionStatusKeys.all(),
         ['show-categories'],
+        wikiKeys.all(),
       ]),
     );
   });
