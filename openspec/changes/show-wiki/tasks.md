@@ -27,7 +27,7 @@
 
 ## 2. Migration: wiki tables, policies, keys
 
-- [ ] 2.1 Test first: write `server/src/test/pg/showWiki.pg.test.ts` (using `policyFixture` and `asUser`), covering:
+- [x] 2.1 Test first: write `server/src/test/pg/showWiki.pg.test.ts` (using `policyFixture` and `asUser`), covering:
   - the three tables, their columns, checks, unique indexes and composite foreign keys exist, plus `sessions (id, show_id)`;
   - "Ungranted member reads no wiki rows": owner and granted member see a show's pages, aliases and revisions, while the ungranted member and outsider see none, for select, insert, update and delete;
   - "Revisions are append-only for users": update and delete as `catalog_user` give `42501`;
@@ -35,14 +35,14 @@
   - "Session page in the wrong show" and "Alias in the wrong show": each is refused by its foreign key, including for a user who can access both shows; the same holds for a `merged_into` that points at a page in another show;
   - live-title uniqueness ignores case and accents, and frees names on merge or delete; alias uniqueness per show;
   - `kind`/`session_id` coupling and length checks.
-
   Red before the migration. Verified by the red run, then green once 2.2 lands.
-- [ ] 2.2 Write `supabase/migrations/20261021000000_show_wiki.sql` as design D1–D2 describe:
+  Evidence: `sw-2.1-red.log`: `relation "wiki_pages" does not exist` → `Test Files 1 failed`, `Tests 25 skipped`. `sw-2.1-green.log`: `cd server && npx vitest run --project pg src/test/pg/showWiki.pg.test.ts` → `Tests 25 passed (25)`.
+- [x] 2.2 Write `supabase/migrations/20261021000000_show_wiki.sql` as design D1–D2 describe:
   - `unique (id, show_id)` on `catalog.sessions`;
   - the tables, keys and indexes;
   - RLS policies and revokes.
-
   Update the schema inventories (D8 category 1). Verified by 2.1 green, the inventory pg tests green, and `sh docker/supabase/test_migrate.sh` passing.
+  Evidence: `sw-2.2-green.log`: catalogSchema, catalogPolicies (count 38 → 42), catalogPolicyHelpers, catalogRoles → `Test Files 4 passed`, `Tests 88 passed (88)`; only catalogSchema and catalogPolicies needed additions (no new function, no session table). `sw-2.2-migrate.log`: `test_migrate: 35 passed, 0 failed` (runner fixtures only; the repo migration itself is applied by the pg global setup). `sw-2.2-pg-full.log`: whole pg project `Tests 202 passed | 1 skipped`.
 
 ## 3. Link parser and store
 
@@ -54,7 +54,6 @@
   - links inside code spans and fenced or indented code are ignored;
   - other schemes are ignored;
   - the 500-link count.
-
   Then implement `wikiLinks.ts`. Verified by the tests.
   Evidence: `sw-3.1-red.log`: `Cannot find module './wikiLinks'` → `Test Files 1 failed`. `sw-3.1-green.log`: `npx vitest run src/wikiLinks.test.ts` → `Tests 18 passed (18)`; contract suite `Tests 167 passed (167)` (baseline 149); `npm run typecheck` → `exit=0`; `npm ls mdast-util-from-markdown` → `mdast-util-from-markdown@2.0.2`.
 - [ ] 3.2 Test first: write `server/src/test/pg/wikiStore.pg.test.ts` for `catalog.wiki` against the policy fixture, covering:
