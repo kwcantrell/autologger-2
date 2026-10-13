@@ -90,7 +90,7 @@ This change builds the wiki that people edit: pages, revisions, aliases, merge a
   - `server/src/routers/wiki.ts` (new), mounted in `server/src/app.ts`;
   - `packages/contract/src/schemas.ts`;
   - the README endpoint table;
-  - `fixtures/api-responses/wiki*.json`.
+  - `fixtures/api-responses/wiki*.ts`.
 - **Web:**
   - `pages/index/components/wiki/*`, the `useWiki` hook and `wikiKeys`;
   - `AppShell.tsx`, `TopBar.tsx`, and the feed-tab row of `SessionWorkspace.tsx`;

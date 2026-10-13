@@ -93,7 +93,7 @@ The schema is listed in the catalog-database delta.
 
 ### D4. Citations and links: checked on the same parse that renders
 - **No citation table.** A citation is the session id, the time and the quote, as the grill decided, and a Markdown link already holds all three: `[quote](cite:<session>@<sec>)`. So there is no citation table, and nothing to rebuild when chunks change.
-- **The parser** is `packages/contract/src/wikiLinks.ts`, shared by server and web.
+- **The parser** is `packages/contract/src/wikiLinks.ts`, used by the server. The web can't import `packages/` (`webBoundaries.repo.test.ts`), so it renders with react-markdown and classifies URLs with `web/src/pages/index/components/wiki/wikiUrl.ts`, a copy of the contract's `classifyWikiUrl` that `wikiUrl.pinning.test.ts` checks against the contract (wording corrected 2026-10-13, after approval, to match task 5.3).
   - It parses the body with `mdast-util-from-markdown` 2.0.2, the CommonMark parser react-markdown uses through `remark-parse` 11, with no extensions. So the links it validates are exactly the links the page renders (panel: three reviewers showed a regex missed reference definitions, autolinks, angle-bracket destinations, titles, escapes, entities and upper-case schemes).
   - It walks the `link` and `definition` nodes (autolinks become `link` nodes) and returns each one's decoded URL, scheme, target, label (the link text, which `show-wiki-ai` will use as the quote) and position.
   - Code is skipped by construction, since code nodes contain no links.
@@ -113,7 +113,7 @@ The schema is listed in the catalog-database delta.
 ### D5. Safe rendering with react-markdown
 - **`react-markdown` 10.1.0** (peer `react >=18`; A9) renders to React elements, so the `dangerouslySetInnerHTML` ban holds.
   - `skipHtml` drops raw HTML. One known effect: a paragraph that begins an HTML block renders as nothing. That is acceptable for hostile input.
-  - The `urlTransform` returns the URL unchanged for `https:` and for URLs that `parseWikiLinks`' grammar accepts, and `''` for anything else.
+  - The `urlTransform` returns the URL unchanged for `https:` and for URLs that `parseWikiLinks`' grammar accepts (through the web's pinned `classifyWikiUrl`, D4), and `''` for anything else.
   - A custom `a` renderer:
     - renders a link with an empty `href` as plain text;
     - renders a valid `cite:` link as `<a href="/sessions/<id>?t=<sec>">`;
