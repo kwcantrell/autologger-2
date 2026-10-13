@@ -46,7 +46,7 @@
 
 - [x] 3.1 Refactor `packages/catalog/src/wikiStore.ts` so create and edit run through in-transaction steps (`createInTx`, `updateInTx`) that take an optional revision note, as design D2 describes. No behaviour change. Verified by `wikiStore.pg.test.ts` (31 tests) and `showWiki.pg.test.ts` passing unchanged, and the catalog unit suite.
   Evidence: `swa-3.1-green.log`: `createInTx`/`updateInTx` (optional note) with `createPage`/`updatePage` calling them; tests unchanged: wikiStore.pg `Tests 31 passed (31)`; showWiki.pg `Tests 25 passed (25)`; wiki.int `Tests 78 passed (78)`; catalog unit `Tests 61 passed (61)`; `typecheck rc=0`.
-- [ ] 3.2 Test first: write `server/src/test/pg/wikiSuggestionStore.pg.test.ts` for the suggestion methods on `catalog.wiki`, covering:
+- [x] 3.2 Test first: write `server/src/test/pg/wikiSuggestionStore.pg.test.ts` for the suggestion methods on `catalog.wiki`, covering:
   - `saveRun` stores pending rows with `created_by_name`, in proposal order; "A newer run supersedes the older suggestion" for a page target and for a new-page target matched ignoring case and accents; a run with a bad link stores nothing;
   - list by status and `page_id`, newest first, with `page.state`, `stale` and the 500 cap with `truncated`;
   - "Accept writes a revision authored by the reviewer" (note `accepted suggestion <id>`, `resolved_revision`), "Edit, then accept" (note `… (edited)`), a new-page accept (note `created from suggestion <id>`, a `session` kind gets the suggestion's session);
@@ -57,6 +57,7 @@
   - an ungranted member's accept and dismiss see no suggestion;
   - the read helpers: `checkLinks` gives the same answers as a manual save (a deleted or merged linked page is allowed, another show's session is not); `normalize` folds case, accents and `ß` like the unique index; `nameHolder` finds a live title or alias; `pendingFor` and the pending new-page list.
   Then implement `wikiSuggestionStore.ts`. Verified by the tests and the catalog unit suite.
+  Evidence: `swa-3.2-red.log`: before the store, `TypeError: owner(...).wiki.saveRun is not a function` → `Tests 26 failed (26)`. `swa-3.2-green.log`: `cd server && npx vitest run --project pg src/test/pg/wikiSuggestionStore.pg.test.ts` → `Tests 26 passed (26)`; wikiStore, showWiki, wikiSuggestions pg `Tests 84 passed (84)`; wiki.int `Tests 78 passed (78)`; catalog unit `Tests 61 passed (61)` (`catalog.test.ts` unchanged); server unit `482 passed | 5 skipped`; `typecheck rc=0`.
 
 ## 4. Contract and AI turn
 

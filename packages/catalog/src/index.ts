@@ -19,6 +19,7 @@ export * from './sessionTitleDerivation';
 export * from './showsStore';
 export * from './studioRegistry';
 export * from './wikiStore';
+export * from './wikiSuggestionStore';
 
 /**
  * Sanctioned non-composition-root construction path (design D3): `Catalog`

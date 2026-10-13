@@ -36,6 +36,8 @@
 //   `merged from <A id>`        the target page B
 //   `split to <new id>`         the source page of a split
 //   `split from <source id>`    revision 1 of the page a split created
+//   `accepted suggestion <id>` [` (edited)`] / `created from suggestion <id>`: an accepted AI
+//                               suggestion (wikiSuggestionStore.ts)
 // Names are snapshotted from the writer's own `users` row: given and family name joined by a
 // space, `""` when neither is set, never the email (design D1).
 
@@ -315,7 +317,7 @@ export class WikiStore implements WikiStoreFacade {
   ) {}
 
   /** The configured parser, or the fail-closed error. */
-  #parser(): WikiLinksParser {
+  protected parser(): WikiLinksParser {
     if (!this.wikiLinks) throw new Error('wiki link parser not configured');
     return this.wikiLinks;
   }
@@ -417,7 +419,7 @@ export class WikiStore implements WikiStoreFacade {
   // -- writes --------------------------------------------------------------------------------------
 
   async createPage(showId: string, input: WikiCreateInput): Promise<WikiPage> {
-    this.#parser();
+    this.parser();
     const id = crypto.randomUUID();
     return this.write((t) => this.createInTx(t, id, showId, input));
   }
@@ -425,7 +427,7 @@ export class WikiStore implements WikiStoreFacade {
   /** `null` when the page is missing or not accessible. An edit that changes nothing returns the
    * page unchanged and appends nothing. */
   async updatePage(id: string, input: WikiUpdateInput): Promise<WikiPage | null> {
-    if (input.bodyMd !== undefined) this.#parser();
+    if (input.bodyMd !== undefined) this.parser();
     return this.write((t) => this.updateInTx(t, id, input));
   }
 
@@ -439,7 +441,7 @@ export class WikiStore implements WikiStoreFacade {
     input: WikiCreateInput,
     note = 'created',
   ): Promise<WikiPage> {
-    const parse = this.#parser();
+    const parse = this.parser();
     const kind = input.kind;
     if (!WIKI_KINDS.includes(kind)) throw new WikiInvalidError('Unknown page kind.');
     const sessionId = input.sessionId ?? null;
@@ -452,7 +454,7 @@ export class WikiStore implements WikiStoreFacade {
     const body = input.bodyMd ?? '';
     const w = await WikiStore.writerOf(t);
     const aliases = await WikiStore.#normalise(t, title, input.aliases ?? []);
-    WikiStore.#checkLimits(title, body, aliases);
+    WikiStore.checkLimits(title, body, aliases);
     if (kind === 'session') {
       if (aliases.length > 0) throw new WikiInvalidError('A session page has no aliases.');
       await WikiStore.#checkSession(t, showId, sessionId as string, id);
@@ -491,7 +493,7 @@ export class WikiStore implements WikiStoreFacade {
     input: WikiUpdateInput,
     note?: string,
   ): Promise<WikiPage | null> {
-    const parse = input.bodyMd === undefined ? null : this.#parser();
+    const parse = input.bodyMd === undefined ? null : this.parser();
     const cur = await WikiStore.readIn(t, id);
     if (!cur) return null;
     WikiStore.#assertWritable(cur, input.expectedRevision);
@@ -516,7 +518,7 @@ export class WikiStore implements WikiStoreFacade {
     if (kind === 'session' && aliases.length > 0) {
       throw new WikiInvalidError('A session page has no aliases.');
     }
-    WikiStore.#checkLimits(title, body, aliases);
+    WikiStore.checkLimits(title, body, aliases);
     if (
       title === cur.title &&
       kind === cur.kind &&
@@ -609,7 +611,7 @@ export class WikiStore implements WikiStoreFacade {
     expectedRevision: number,
     intoExpectedRevision: number,
   ): Promise<WikiPage | null> {
-    const parse = this.#parser();
+    const parse = this.parser();
     if (id === intoId) throw new WikiInvalidError('A page cannot be merged into itself.');
     return this.write(async (t) => {
       const a = await WikiStore.readIn(t, id);
@@ -669,7 +671,7 @@ export class WikiStore implements WikiStoreFacade {
     id: string,
     input: WikiSplitInput,
   ): Promise<{ page: WikiPage; newPage: WikiPage } | null> {
-    const parse = this.#parser();
+    const parse = this.parser();
     const np = input.newPage;
     if (np.kind === 'session') throw new WikiInvalidError('A split cannot create a session page.');
     if (!WIKI_KINDS.includes(np.kind)) throw new WikiInvalidError('Unknown page kind.');
@@ -680,8 +682,8 @@ export class WikiStore implements WikiStoreFacade {
       if (!cur) return null;
       WikiStore.#assertWritable(cur, input.expectedRevision);
       const aliases = await WikiStore.#normalise(t, newTitle, np.aliases ?? []);
-      WikiStore.#checkLimits(newTitle, np.bodyMd, aliases);
-      WikiStore.#checkLimits(cur.title, input.remainingBodyMd, []);
+      WikiStore.checkLimits(newTitle, np.bodyMd, aliases);
+      WikiStore.checkLimits(cur.title, input.remainingBodyMd, []);
       const w = await WikiStore.writerOf(t);
       await WikiStore.#checkNames(t, cur.show_id, [newTitle, ...aliases], [newId]);
       await WikiStore.checkLinksIn(parse, t, cur.show_id, input.remainingBodyMd);
@@ -803,7 +805,7 @@ export class WikiStore implements WikiStoreFacade {
 
   /** The request limits of the show-wiki capability. The contract schema refuses these first; this
    * keeps the store from reaching a DB check (`23514`) with them. */
-  static #checkLimits(title: string, body: string, aliases: string[]): void {
+  protected static checkLimits(title: string, body: string, aliases: string[]): void {
     if (title.length < 1 || title.length > 200 || hasControl(title)) {
       throw new WikiInvalidError('A title is 1-200 characters of one line.');
     }
@@ -846,6 +848,18 @@ export class WikiStore implements WikiStoreFacade {
     names: string[],
     exclude: string[],
   ): Promise<void> {
+    const hit = await WikiStore.nameHolderIn(t, showId, names, exclude);
+    if (hit !== null) throw new WikiTitleTakenError(hit);
+  }
+
+  /** The id of the live non-session page of the show, other than `exclude`, holding one of
+   * `names` as its title or an alias; `null` when none does. */
+  protected static async nameHolderIn(
+    t: CatalogDb,
+    showId: string,
+    names: string[],
+    exclude: string[],
+  ): Promise<string | null> {
     const hit = await t.first<{ id: string }>(
       `with n as (select catalog.search_norm(v) as n from json_array_elements_text(?::text::json) v),
             x as (select v as id from json_array_elements_text(?::text::json) v)
@@ -863,7 +877,7 @@ export class WikiStore implements WikiStoreFacade {
       showId,
       showId,
     );
-    if (hit) throw new WikiTitleTakenError(hit.id);
+    return hit ? hit.id : null;
   }
 
   /** The session is a session of the show, and no other live page is its session page. */
