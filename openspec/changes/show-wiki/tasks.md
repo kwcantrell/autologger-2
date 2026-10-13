@@ -56,7 +56,7 @@
   - the 500-link count.
   Then implement `wikiLinks.ts`. Verified by the tests.
   Evidence: `sw-3.1-red.log`: `Cannot find module './wikiLinks'` → `Test Files 1 failed`. `sw-3.1-green.log`: `npx vitest run src/wikiLinks.test.ts` → `Tests 18 passed (18)`; contract suite `Tests 167 passed (167)` (baseline 149); `npm run typecheck` → `exit=0`; `npm ls mdast-util-from-markdown` → `mdast-util-from-markdown@2.0.2`.
-- [ ] 3.2 Test first: write `server/src/test/pg/wikiStore.pg.test.ts` for `catalog.wiki` against the policy fixture, covering:
+- [x] 3.2 Test first: write `server/src/test/pg/wikiStore.pg.test.ts` for `catalog.wiki` against the policy fixture, covering:
   - create with revision 1 and note `created`, with `*_by_name` snapshotted, and still shown after the author leaves the team;
   - edit with compare-and-set (a stale write changes nothing and raises `WikiConflictError` with the current page);
   - title/title, alias/alias and title/alias clashes each raise `WikiTitleTakenError` with `page_id`, found by the pre-check before any write;
@@ -75,8 +75,8 @@
   - the list sorts by normalised title;
   - the 2000 cap sets `truncated`;
   - `*_by_name` never holds an email.
-
   Then implement `packages/catalog/src/wikiStore.ts` and add it to the facade. Verified by the tests and the catalog unit suite.
+  Evidence: `sw-3.2-red.log`: `Cannot read properties of undefined (reading 'createPage')` → `Tests 29 failed (29)`. `sw-3.2-green.log`: `wikiStore.pg.test.ts` → `Tests 31 passed (31)` (incl. the no-parser refusal, D4 injection); `showWiki.pg` → `Tests 25 passed`; catalog unit `Tests 61 passed (61)` (`catalog.test.ts` gains `'wiki'`, D8 cat 7); server unit `Tests 482 passed | 5 skipped`, `packageBoundaries.repo.test.ts` unchanged → `84 passed`; typecheck exit 0; `npm ci --dry-run` up to date. Gap noted: the concurrent-create test runs two creates with `Promise.all` over 3 rounds but does not force interleaving, and the single re-run after a stray `23505` has no deterministic test.
 
 ## 4. API
 
