@@ -22,7 +22,8 @@
 
 ## 1. Baselines
 
-- [ ] 1.1 On the base, run the unit suites (server, packages, web) and typecheck, and record the counts. Then list the existing tests D8 may touch with `grep -rln "toHaveLength(38)\|'/search'\|isRouterKnownPathname\|isShellSegments\|momentHref\|useSwitchActive\|has_function_privilege\|expectCapturedResponse\|FACTORY_MODULE\|SearchPalette\|FEED_TABS" --include=*.test.ts --include=*.test.tsx server/src packages web/src`, and classify each hit as D8 category 1–6 or unchanged. Verified by the recorded counts and the classified list.
+- [x] 1.1 On the base, run the unit suites (server, packages, web) and typecheck, and record the counts. Then list the existing tests D8 may touch with `grep -rln "toHaveLength(38)\|'/search'\|isRouterKnownPathname\|isShellSegments\|momentHref\|useSwitchActive\|has_function_privilege\|expectCapturedResponse\|FACTORY_MODULE\|SearchPalette\|FEED_TABS" --include=*.test.ts --include=*.test.tsx server/src packages web/src`, and classify each hit as D8 category 1–6 or unchanged. Verified by the recorded counts and the classified list.
+  Evidence: `sw-1.1-baseline.log`: server unit `482 passed | 5 skipped`; contract `149 passed`; catalog `61 passed`; web `2028 passed (152 files)`; `typecheck rc=0`. `sw-1.1-d8-classified.log`: 13 hits — cat 1: catalogPolicies, catalogPolicyHelpers, catalogRoles; cat 2: staticServing, AppShell, loginReturnPath; cat 4: useSwitchActive; cat 5: apiResponseFixtures, queryKeyFactories; unchanged: catalogSearch.pg, SearchPalette, SearchRoute, apiResponseShapes.repo.
 
 ## 2. Migration: wiki tables, policies, keys
 
@@ -45,7 +46,7 @@
 
 ## 3. Link parser and store
 
-- [ ] 3.1 Add `mdast-util-from-markdown` 2.0.2, pinned exactly, to `packages/contract`. Test first: write `packages/contract/src/wikiLinks.test.ts` for `parseWikiLinks`, covering:
+- [x] 3.1 Add `mdast-util-from-markdown` 2.0.2, pinned exactly, to `packages/contract`. Test first: write `packages/contract/src/wikiLinks.test.ts` for `parseWikiLinks`, covering:
   - `cite:` and `wiki:` links with their label and position;
   - decimal seconds with up to 3 places;
   - malformed targets reported;
@@ -55,6 +56,7 @@
   - the 500-link count.
 
   Then implement `wikiLinks.ts`. Verified by the tests.
+  Evidence: `sw-3.1-red.log`: `Cannot find module './wikiLinks'` → `Test Files 1 failed`. `sw-3.1-green.log`: `npx vitest run src/wikiLinks.test.ts` → `Tests 18 passed (18)`; contract suite `Tests 167 passed (167)` (baseline 149); `npm run typecheck` → `exit=0`; `npm ls mdast-util-from-markdown` → `mdast-util-from-markdown@2.0.2`.
 - [ ] 3.2 Test first: write `server/src/test/pg/wikiStore.pg.test.ts` for `catalog.wiki` against the policy fixture, covering:
   - create with revision 1 and note `created`, with `*_by_name` snapshotted, and still shown after the author leaves the team;
   - edit with compare-and-set (a stale write changes nothing and raises `WikiConflictError` with the current page);

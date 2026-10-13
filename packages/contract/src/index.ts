@@ -2,7 +2,9 @@
 // Re-exports the wire-facing modules moved in from server/src: the Zod
 // request schemas validated at the Hono route boundary, and the ai-v2
 // dashboard widget catalog + config validator. Single home of wire request
-// schemas and dashboard-config validation (package-architecture spec).
+// schemas and dashboard-config validation (package-architecture spec). Also the show wiki
+// `cite:`/`wiki:` link parser (show-wiki design D4).
 
 export * from './aiV2Catalog';
 export * from './schemas';
+export * from './wikiLinks';
