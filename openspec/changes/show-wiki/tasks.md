@@ -164,7 +164,8 @@
 
 ## 6. Docs, verification, PR
 
-- [ ] 6.1 Write ADR `docs/decisions/0030-show-wiki.md`: Markdown with inline `cite:`/`wiki:` links validated on the rendering parse, append-only revisions with name snapshots, compare-and-set with name pre-checks, access through `accessible_shows` plus composite keys, react-markdown safety, and the split from `show-wiki-ai`. Verified by the file and the ADR index check in `check-change.sh`.
+- [x] 6.1 Write ADR `docs/decisions/0030-show-wiki.md`: Markdown with inline `cite:`/`wiki:` links validated on the rendering parse, append-only revisions with name snapshots, compare-and-set with name pre-checks, access through `accessible_shows` plus composite keys, react-markdown safety, and the split from `show-wiki-ai`. Verified by the file and the ADR index check in `check-change.sh`.
+  Evidence: `docs/decisions/0030-show-wiki.md` written (Context, Decision incl. the injected parser and the web copy, Alternatives, Evidence, Consequences). `check-change.sh` has no ADR index gate (`grep -rln docs/decisions scripts/` → only `scripts/lib/adopt.py`); the hook gates pass with the file present.
 - [ ] 6.2 Run the dev-stack manual checks:
   1. create a person page with a citation, open it, and the session seeks;
   2. two tabs edit the same page, and the second gets the conflict banner;
