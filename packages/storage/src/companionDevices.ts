@@ -8,13 +8,14 @@
 import { randomUUID } from 'node:crypto';
 import type {
   CatalogDb,
-  CatalogRoot,
   Clock,
   CompanionDevice,
   CompanionDeviceAuth,
   CompanionDeviceStore,
   CreateCompanionDeviceResult,
 } from '@autologger/ports';
+import { CatalogTxTimeoutError } from './catalogErrors';
+import type { PostgresCatalogDb } from './postgresCatalogStore';
 
 /** At most this many devices per user (D5). */
 export const COMPANION_DEVICE_CAP = 10;
@@ -35,12 +36,18 @@ const iso = (ms: number) => new Date(ms).toISOString();
 
 export class PostgresCompanionDeviceStore implements CompanionDeviceStore {
   private readonly db: CatalogDb;
+  /** Per user, the tail of this process's creates (never rejects); see `create`. */
+  private readonly creating = new Map<string, Promise<unknown>>();
+  /** How long a create may wait in that queue: the adapter's transaction timeout by default. */
+  readonly queueTimeoutMs: number;
 
   constructor(
-    root: CatalogRoot,
+    root: PostgresCatalogDb,
     private readonly clock: Clock,
+    opts: { queueTimeoutMs?: number } = {},
   ) {
     this.db = root.bindSystem('companion-device');
+    this.queueTimeoutMs = opts.queueTimeoutMs ?? root.txTimeoutMs;
   }
 
   async lookup(tokenHash: string): Promise<CompanionDeviceAuth | null> {
@@ -104,12 +111,65 @@ export class PostgresCompanionDeviceStore implements CompanionDeviceStore {
     }));
   }
 
+  /** A user's creates in this process run one at a time, in call order. A catalog transaction is
+   * SERIALIZABLE and its snapshot is taken by its first statement, before the advisory lock below
+   * is granted, so a create that waited there behind another counted without that one's device and
+   * failed serialization once it committed; under contention the adapter's five runs could run out.
+   * Queued here, each transaction starts after the previous one ended. This holds while the API is
+   * one process (one store per process); across processes the advisory lock and serializable
+   * isolation still keep the cap, a race there costing a re-run.
+   *
+   * A create that has not started its transaction within `queueTimeoutMs` rejects with the
+   * adapter's `CatalogTxTimeoutError` (as a transaction past its deadline does) and is dropped from
+   * the queue, so it never inserts. The transaction then has its own deadline, so a create takes at
+   * most twice the transaction timeout. The port gives no request abort signal, so a caller that
+   * went away still waits out its turn. */
   async create(
     userId: string,
     name: string,
     tokenHash: string,
   ): Promise<CreateCompanionDeviceResult> {
     const id = randomUUID();
+    const prev = this.creating.get(userId) ?? Promise.resolve();
+    let tail!: Promise<void>;
+    const result = new Promise<CreateCompanionDeviceResult>((resolve, reject) => {
+      let gaveUp = false;
+      const timer = setTimeout(() => {
+        gaveUp = true;
+        reject(
+          new CatalogTxTimeoutError(
+            `companion device create waited over ${this.queueTimeoutMs} ms for the user's earlier creates`,
+          ),
+        );
+      }, this.queueTimeoutMs);
+      timer.unref();
+      // The turn settles the caller whatever it throws (a synchronous throw included), and the
+      // tail never rejects, so one failed create neither hangs nor blocks the user's later ones.
+      const turn = () => {
+        clearTimeout(timer);
+        if (gaveUp) return;
+        return Promise.resolve()
+          .then(() => this.insertCapped(userId, id, name, tokenHash))
+          .then(resolve, reject);
+      };
+      tail = prev.then(turn, turn);
+    });
+    this.creating.set(userId, tail);
+    // The last create to settle removes the user's entry (one that gave up leaves its tail queued).
+    const cleanup = () => {
+      if (this.creating.get(userId) === tail) this.creating.delete(userId);
+    };
+    void tail.then(cleanup, cleanup);
+    return result;
+  }
+
+  private insertCapped(
+    userId: string,
+    id: string,
+    name: string,
+    tokenHash: string,
+  ): Promise<CreateCompanionDeviceResult> {
+    // Read once this create's turn came, so creation times follow the queue's order.
     const createdAt = iso(this.clock.now());
     return this.db.tx(async (t) => {
       // Serializes the count and the insert per user (D5), so concurrent creates can't make 11.

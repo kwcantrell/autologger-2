@@ -6,9 +6,11 @@ import {
   companionDeviceCreatedResponseSchema,
   companionDeviceListResponseSchema,
 } from '@autologger/contract';
+import { PostgresCatalogDb, PostgresCompanionDeviceStore } from '@autologger/storage';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { Bindings } from '../appEnv';
 import { hashCompanionDeviceToken } from '../auth/companionDeviceToken';
-import { anonApp, env } from '../test/harness';
+import { anonApp, env, envWith, testDatabase } from '../test/harness';
 import { loginCookie, seedCompanionDevice, seedUser, testDb } from '../test/helpers';
 
 const PATH = '/api/companion-devices';
@@ -32,7 +34,7 @@ function list(headers: Record<string, string>) {
   return anonApp.request(PATH, { headers }, env);
 }
 
-function create(headers: Record<string, string>, body: unknown) {
+function create(headers: Record<string, string>, body: unknown, bindings: Bindings = env) {
   return anonApp.request(
     PATH,
     {
@@ -40,7 +42,7 @@ function create(headers: Record<string, string>, body: unknown) {
       headers: { ...headers, 'content-type': 'application/json' },
       body: JSON.stringify(body),
     },
-    env,
+    bindings,
   );
 }
 
@@ -242,6 +244,35 @@ describe('the per-user cap of 10', () => {
     expect(statuses.filter((s) => s === 409)).toHaveLength(4);
     expect(await storedCount(me.id)).toBe(10);
     expect(await devicesOf(me)).toHaveLength(10);
+  });
+});
+
+// fix-companion-device-cap: the route's own reproduction. With the adapter's re-runs off, a create
+// that counted a stale snapshot surfaces as the 500 that exhausted re-runs gave under load.
+describe('the per-user cap without serialization re-runs', () => {
+  const adapters: PostgresCatalogDb[] = [];
+  afterEach(async () => {
+    await Promise.all(adapters.splice(0).map((a) => a.close()));
+  });
+
+  it('14 concurrent creates give ten 201s and four 409s on an adapter with maxTries 1', async () => {
+    const me = await caller();
+    const noRetry = new PostgresCatalogDb({ ...testDatabase(), maxTries: 1 });
+    adapters.push(noRetry);
+    const bindings = envWith(
+      {},
+      { companionDevices: new PostgresCompanionDeviceStore(noRetry, env.ports.clock) },
+    );
+    const answers = await Promise.all(
+      Array.from({ length: 14 }, (_, i) =>
+        create({ cookie: me.cookie }, { name: `N${i}` }, bindings),
+      ),
+    );
+    expect(answers.map((r) => r.status).sort()).toEqual([
+      ...Array(10).fill(201),
+      ...Array(4).fill(409),
+    ]);
+    expect(await storedCount(me.id)).toBe(10);
   });
 });
 
