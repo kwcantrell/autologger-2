@@ -87,7 +87,7 @@
   - `expected_revision` as a positive integer.
   Then implement. Verified by the tests.
   Evidence: `sw-4.1-red.log`: `Tests 37 failed (37)` (schemas undefined). `sw-4.1-green.log`: `npx vitest run src/schemas.wiki.test.ts` → `Tests 37 passed (37)`; contract suite `Tests 204 passed (204)`; `npm run typecheck` rc=0; `npx biome check` clean.
-- [ ] 4.2 Test first: write `server/src/routers/wiki.int.test.ts`, covering every endpoint in the api-contract-freeze delta:
+- [x] 4.2 Test first: write `server/src/routers/wiki.int.test.ts`, covering every endpoint in the api-contract-freeze delta:
   - 200 or 201 shapes;
   - 401;
   - masked 404s for an ungranted member, an outsider and a nonexistent id;
@@ -95,9 +95,10 @@
   - each 422 (schema, bad link, merge into self, merge overflow, a `kind` change to or from `session`, a session kind in split, a session from another show);
   - the scenarios "Create then list", "Stale edit", "Read an old revision", "Revisions page backwards" and "Merge answers the target";
   - `GET` of a merged page and of a deleted page returns their aliases from the newest revision.
-
   Then implement `server/src/routers/wiki.ts` and mount it. Verified by the tests.
-- [ ] 4.3 Capture the fixtures (`fixtures/api-responses/wiki*.json`) in `apiResponseFixtures.int.test.ts` (D8 category 5), including the conflict branch. Add the README endpoint rows. Verified by `npm run fixtures:capture -w server` and the fixtures test.
+  Evidence: `sw-4.2-red.log`: `Tests 68 failed | 10 passed (78)` (only the anonymous 401s passed, from the existing auth middleware). `sw-4.2-green.log`: `npx vitest run --project integration src/routers/wiki.int.test.ts` → `Tests 78 passed (78)`; server unit `482 passed | 5 skipped`; typecheck rc=0. Split with a `session` kind: the 4.1 schema refused it as a zod-issue 422, but the delta lists it as a message 422, so the test now expects a string detail (`sw-4.2-splitkind-red.log`: `expected 'object' to be 'string'`) and the split schema takes any kind, leaving the store's message (`sw-4.2-splitkind-green.log`: contract `204 passed`, wiki int `78 passed`, typecheck rc=0).
+- [x] 4.3 Capture the fixtures (`fixtures/api-responses/wiki*.json`) in `apiResponseFixtures.int.test.ts` (D8 category 5), including the conflict branch. Add the README endpoint rows. Verified by `npm run fixtures:capture -w server` and the fixtures test.
+  Evidence: `sw-4.3-green.log`: `npm run fixtures:capture -w server` → `Tests 58 passed (58)`, `git status` shows only the 11 new wiki fixtures; assert-only run `58 passed`; `web: apiResponseShapes.repo.test.ts` → `48 passed`. The fixtures are `fixtures/api-responses/wiki*.ts`, not `.json`: `server/src/test/apiFixtures.ts` requires `.ts` when the client type has a string-literal union (`kind`), as for search. README gains 10 API rows, the `/wiki` shell row and the `wiki.ts` router-tree line.
 - [x] 4.4 Test first: in `staticServing.int.test.ts` (D8 category 2), check that:
   - `GET /wiki` and `GET /wiki/abc` serve the shell with no `Set-Cookie`;
   - `/wiki/`, `/wiki/abc/` and `/wiki/abc/history` give 404.

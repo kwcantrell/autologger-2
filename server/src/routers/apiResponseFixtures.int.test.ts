@@ -1584,3 +1584,222 @@ describe('catalog search', () => {
     expect(kinds).toEqual(['event', 'topic', 'transcript']);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Show wiki (show-wiki task 4.3, design D6, D8 category 5): one capture per wiki route, plus the
+// version-conflict branch of `PUT`. The default member (an admin of the seeded team) writes, so
+// every `*_by_name` is "Default User". `.ts` fixtures: `kind` is a string-literal union in every
+// page, list item and revision (design D4's rule, as for `search`).
+// ---------------------------------------------------------------------------
+
+describe('show wiki', () => {
+  async function wikiSend(method: string, path: string, body?: unknown): Promise<Response> {
+    return app.request(
+      path,
+      body === undefined
+        ? { method }
+        : { method, headers: JSON_HEADERS, body: JSON.stringify(body) },
+      { ...env },
+    );
+  }
+
+  /** A show with a person page (body, two aliases, revision 2), a topic page, and a session page;
+   * the default member administers its team. */
+  async function seedWiki() {
+    const studioId = await seedMemberStudio();
+    const showId = await seedShow({ studioId, name: 'Wiki Show', code: 'WS' });
+    const sessionId = await seedSession({ showId, episode: '003', title: 'WS - 3' });
+    const create = async (body: unknown) => {
+      const res = await wikiSend('POST', `/api/shows/${showId}/wiki/pages`, body);
+      expect(res.status).toBe(201);
+      return (await res.json()) as { id: string; revision: number };
+    };
+    const person = await create({
+      kind: 'person',
+      title: 'Christina Ramos',
+      body_md: 'Co-host.',
+      aliases: ['Tina', 'C. Ramos'],
+    });
+    const edited = await wikiSend('PUT', `/api/wiki/pages/${person.id}`, {
+      expected_revision: 1,
+      body_md: `Co-host. See [the cold open](cite:${sessionId}@12.5).`,
+    });
+    expect(edited.status).toBe(200);
+    const topic = await create({ kind: 'topic', title: 'Cold opens', body_md: 'Running list.' });
+    const session = await create({ kind: 'session', title: 'WS - 3', session_id: sessionId });
+    return { showId, sessionId, person, topic, session };
+  }
+
+  it('GET /api/shows/:showId/wiki/pages matches the captured fixture', async () => {
+    const { showId } = await seedWiki();
+    const res = await wikiSend('GET', `/api/shows/${showId}/wiki/pages`);
+    const body = await expectCapturedResponse(
+      {
+        name: 'wikiPageList',
+        endpoint: 'GET /api/shows/:showId/wiki/pages',
+        format: 'ts',
+      },
+      res,
+    );
+    expect(body).toMatchObject({ truncated: false });
+    expect((body as { pages: unknown[] }).pages).toHaveLength(3);
+  });
+
+  it('POST /api/shows/:showId/wiki/pages matches the captured fixture', async () => {
+    const studioId = await seedMemberStudio();
+    const showId = await seedShow({ studioId, name: 'Wiki Show', code: 'WS' });
+    const res = await wikiSend('POST', `/api/shows/${showId}/wiki/pages`, {
+      kind: 'bit',
+      title: 'The Ladder',
+      body_md: 'A running bit.',
+      aliases: ['Step Ladder'],
+    });
+    const body = await expectCapturedResponse(
+      {
+        name: 'wikiPageCreate',
+        endpoint: 'POST /api/shows/:showId/wiki/pages',
+        format: 'ts',
+        status: 201,
+      },
+      res,
+    );
+    expect(body).toMatchObject({ revision: 1, deleted: false, merged_into: null });
+  });
+
+  it('GET /api/wiki/pages/:pageId matches the captured fixture', async () => {
+    const { person } = await seedWiki();
+    const res = await wikiSend('GET', `/api/wiki/pages/${person.id}`);
+    const body = await expectCapturedResponse(
+      { name: 'wikiPage', endpoint: 'GET /api/wiki/pages/:pageId', format: 'ts' },
+      res,
+    );
+    expect(body).toMatchObject({ title: 'Christina Ramos', revision: 2 });
+  });
+
+  it('PUT /api/wiki/pages/:pageId matches the captured fixture', async () => {
+    const { person } = await seedWiki();
+    const res = await wikiSend('PUT', `/api/wiki/pages/${person.id}`, {
+      expected_revision: 2,
+      title: 'Christina R. Ramos',
+      aliases: ['Tina'],
+    });
+    const body = await expectCapturedResponse(
+      { name: 'wikiPageUpdate', endpoint: 'PUT /api/wiki/pages/:pageId', format: 'ts' },
+      res,
+    );
+    expect(body).toMatchObject({ revision: 3, aliases: ['Tina'] });
+  });
+
+  it('PUT /api/wiki/pages/:pageId with a stale revision (409) matches the captured fixture', async () => {
+    const { person } = await seedWiki();
+    const res = await wikiSend('PUT', `/api/wiki/pages/${person.id}`, {
+      expected_revision: 1,
+      body_md: 'late',
+    });
+    const body = await expectCapturedResponse(
+      {
+        name: 'wikiPageUpdateConflict',
+        endpoint: 'PUT /api/wiki/pages/:pageId (stale revision)',
+        format: 'ts',
+        status: 409,
+      },
+      res,
+    );
+    expect(body).toMatchObject({ detail: 'Version conflict.', current: { revision: 2 } });
+  });
+
+  it('DELETE /api/wiki/pages/:pageId?expected_revision= matches the captured fixture', async () => {
+    const { topic } = await seedWiki();
+    const res = await wikiSend('DELETE', `/api/wiki/pages/${topic.id}?expected_revision=1`);
+    const body = await expectCapturedResponse(
+      {
+        name: 'wikiPageDelete',
+        endpoint: 'DELETE /api/wiki/pages/:pageId?expected_revision=',
+        format: 'ts',
+      },
+      res,
+    );
+    expect(body).toMatchObject({ deleted: true, revision: 2 });
+  });
+
+  it('POST /api/wiki/pages/:pageId/restore matches the captured fixture', async () => {
+    const { topic } = await seedWiki();
+    const del = await wikiSend('DELETE', `/api/wiki/pages/${topic.id}?expected_revision=1`);
+    expect(del.status).toBe(200);
+    const res = await wikiSend('POST', `/api/wiki/pages/${topic.id}/restore`, {
+      expected_revision: 2,
+    });
+    const body = await expectCapturedResponse(
+      {
+        name: 'wikiPageRestore',
+        endpoint: 'POST /api/wiki/pages/:pageId/restore',
+        format: 'ts',
+      },
+      res,
+    );
+    expect(body).toMatchObject({ deleted: false, revision: 3 });
+  });
+
+  it('GET /api/wiki/pages/:pageId/revisions matches the captured fixture', async () => {
+    const { person } = await seedWiki();
+    const res = await wikiSend('GET', `/api/wiki/pages/${person.id}/revisions?limit=1`);
+    const body = await expectCapturedResponse(
+      {
+        name: 'wikiRevisionList',
+        endpoint: 'GET /api/wiki/pages/:pageId/revisions',
+        format: 'ts',
+      },
+      res,
+    );
+    expect(body).toMatchObject({ next_before: 2, revisions: [{ revision: 2, note: 'edited' }] });
+  });
+
+  it('GET /api/wiki/pages/:pageId/revisions/:rev matches the captured fixture', async () => {
+    const { person } = await seedWiki();
+    const res = await wikiSend('GET', `/api/wiki/pages/${person.id}/revisions/1`);
+    const body = await expectCapturedResponse(
+      {
+        name: 'wikiRevision',
+        endpoint: 'GET /api/wiki/pages/:pageId/revisions/:rev',
+        format: 'ts',
+      },
+      res,
+    );
+    expect(body).toMatchObject({ revision: 1, note: 'created', body_md: 'Co-host.' });
+  });
+
+  it('POST /api/wiki/pages/:pageId/merge matches the captured fixture', async () => {
+    const { person, topic } = await seedWiki();
+    const res = await wikiSend('POST', `/api/wiki/pages/${topic.id}/merge`, {
+      into_page_id: person.id,
+      expected_revision: 1,
+      into_expected_revision: 2,
+    });
+    const body = await expectCapturedResponse(
+      { name: 'wikiMerge', endpoint: 'POST /api/wiki/pages/:pageId/merge', format: 'ts' },
+      res,
+    );
+    expect(body).toMatchObject({
+      page: { revision: 3, aliases: ['Tina', 'C. Ramos', 'Cold opens'] },
+    });
+  });
+
+  it('POST /api/wiki/pages/:pageId/split matches the captured fixture', async () => {
+    const { topic } = await seedWiki();
+    const res = await wikiSend('POST', `/api/wiki/pages/${topic.id}/split`, {
+      expected_revision: 1,
+      remaining_body_md: 'Running list.',
+      new_page: { kind: 'bit', title: 'The Ladder', body_md: 'Moved here.', aliases: ['Ladder'] },
+    });
+    const body = await expectCapturedResponse(
+      {
+        name: 'wikiSplit',
+        endpoint: 'POST /api/wiki/pages/:pageId/split',
+        format: 'ts',
+        status: 201,
+      },
+      res,
+    );
+    expect(body).toMatchObject({ page: { revision: 2 }, new_page: { revision: 1, kind: 'bit' } });
+  });
+});

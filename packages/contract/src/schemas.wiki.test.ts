@@ -402,12 +402,11 @@ describe('wikiSplitBodySchema', () => {
     for (const n of BAD_REVISIONS) expect(split({ expected_revision: n })).toBe(false);
   });
 
-  it('refuses a session kind for the new page, and takes the other three', () => {
+  it("takes any kind for the new page (a `session` kind is the store's rule 422 with a message)", () => {
     const kinds = (kind: string) =>
       wikiSplitBodySchema.safeParse({ ...body, new_page: { ...body.new_page, kind } }).success;
-    expect(kinds('session')).toBe(false);
     expect(kinds('place')).toBe(false);
-    for (const k of ['person', 'topic', 'bit']) expect(kinds(k), k).toBe(true);
+    for (const k of ['person', 'topic', 'bit', 'session']) expect(kinds(k), k).toBe(true);
   });
 });
 

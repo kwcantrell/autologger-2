@@ -684,7 +684,6 @@ export const WIKI_DETAIL = {
 
 export const wikiKindSchema = z.enum(WIKI_KINDS);
 export type WikiKind = z.infer<typeof wikiKindSchema>;
-const wikiNewPageKindSchema = z.enum(['person', 'topic', 'bit']);
 
 // biome-ignore lint/suspicious/noControlCharactersInRegex: refusing control characters is the point (D6).
 const WIKI_NO_CONTROL = /^[^\u0000-\u001f\u007f]*$/;
@@ -769,7 +768,8 @@ export const wikiSplitBodySchema = z.object({
   expected_revision: wikiRevisionNumberSchema,
   remaining_body_md: wikiBodySchema,
   new_page: z.object({
-    kind: wikiNewPageKindSchema,
+    // Any kind parses: a `session` kind is a rule 422 with a message (api-contract-freeze delta).
+    kind: wikiKindSchema,
     title: wikiTitleSchema,
     body_md: wikiBodySchema,
     aliases: wikiAliasesSchema.default([]),
