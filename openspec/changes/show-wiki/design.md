@@ -97,6 +97,7 @@ The schema is listed in the catalog-database delta.
   - It parses the body with `mdast-util-from-markdown` 2.0.2, the CommonMark parser react-markdown uses through `remark-parse` 11, with no extensions. So the links it validates are exactly the links the page renders (panel: three reviewers showed a regex missed reference definitions, autolinks, angle-bracket destinations, titles, escapes, entities and upper-case schemes).
   - It walks the `link` and `definition` nodes (autolinks become `link` nodes) and returns each one's decoded URL, scheme, target, label (the link text, which `show-wiki-ai` will use as the quote) and position.
   - Code is skipped by construction, since code nodes contain no links.
+  - **The store gets the parser by injection** (added 2026-10-13, after approval; owner decision after the re-panel). `package-architecture` lets catalog depend only on `domain` and `ports`, so `packages/catalog` does not import `packages/contract`. `Catalog` and `createCatalog` take an optional `wikiLinks` option, a function with `parseWikiLinks`' signature whose result type the store declares locally. Bound and derived catalogs carry it on. The server passes `parseWikiLinks` where it creates the catalog (`server/src/middleware/auth.ts`) and in its test helpers. A catalog built without the option refuses every wiki write that sets a body with an error (a 500), so validation can never be skipped silently.
   - **The grammar**, where a scheme is recognised case-insensitively, but only the lower-case form is valid:
     - `cite:` + session id `[A-Za-z0-9_-]{1,64}` + `@` + seconds `\d+(\.\d{1,3})?`;
     - `wiki:` + page id `[A-Za-z0-9_-]{1,64}`.
@@ -169,6 +170,7 @@ An existing test may change only in these categories. Anything else is a stop.
 4. **`useSwitchActive`.** Its tests may gain an expectation for the wiki invalidation, and nothing else may change.
 5. **Registry and fixture inventories gain wiki entries.** These are `server/src/routers/apiResponseFixtures.int.test.ts` (new captures), `web/src/api/types.conformance.test.ts` (new conformance checks), and `web/src/queryKeyFactories.repo.test.ts` (registering `wikiKeys`). Existing entries are unchanged, as catalog-search did (`31e68f9e`).
 6. **Shell controls gain the wiki entry points.** `TopBar.test.tsx` and the `SessionWorkspace*.test.tsx` files may gain assertions or mocks for the "Wiki" link and the "Wiki page" button. Their existing assertions are unchanged.
+7. **The catalog facade inventory gains the wiki store** (added 2026-10-13, after approval, when task 3.2 hit it): `packages/catalog/src/catalog.test.ts` ("carries no flat delegate methods") gains `'wiki'` in its pinned store list. Nothing else in that file changes.
 
 ## Risks / Trade-offs
 

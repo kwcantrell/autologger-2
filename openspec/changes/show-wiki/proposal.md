@@ -6,7 +6,7 @@ Tier reason:
 - adds a migration with three tables, RLS policies, grants and composite foreign keys (`supabase/migrations/**`);
 - wiki pages are drawn from transcripts, so they must follow the show-grant rules exactly.
 
-Approved-by: Kalen 2026-10-12
+Approved-by: Kalen 2026-10-12 (re-panel: wiki link parser injection)
 
 ## Why
 

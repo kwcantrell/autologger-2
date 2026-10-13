@@ -16,3 +16,13 @@ Tier: 2 · Reviewers: assumption tester, failure and abuse, scope and simplicity
 - [x] [major] Task 5.7 named no test file and targeted a workspace header that doesn't exist; the TopBar link had no test and risked the one-line rule at 390px. Resolved: the button sits at the end of the feed-tab row (D7), tested in `SessionWorkspace.wikiButton.test.tsx`; the TopBar link is icon-only below `md`, with a `TopBar.test.tsx` assertion and a 390px check in 5.8.
 - [x] [major] RLS lets a `wiki_aliases` row (and `merged_into`) carry another accessible show's `show_id`, which leaks text across shows and blocks names there. Evidence: a rolled-back probe as `catalog_user` gave `INSERT 0 1`, `MISMATCH|t`. Resolved: `unique (id, show_id)` on `wiki_pages`, with composite FKs `(page_id, show_id)` and `(merged_into, show_id)`; scenario "Alias in the wrong show"; tests 2.1.
 - [x] [major] `*_by_name` read through `catalog.users` RLS (self plus co-members) would lose or blank the names of people who left the team. Evidence: the `users_user_select` policy. Resolved: names are snapshotted at write time (`created_by_name`, `updated_by_name`, `author_name`); spec "Names"; tests 3.2.
+
+## Re-panel 2026-10-13
+Delta: task 3.2 broke two existing tests outside D8 (`packageBoundaries.repo.test.ts`: catalog may not import contract; `catalog.test.ts`: pinned store list). First proposal: D8 category 7 allowing the `catalog->contract` edge and the `'wiki'` entry. Reviewers: assumption tester, failure and abuse, scope and simplicity (fresh subagents, delta only).
+
+- [x] [critical] Allowing `catalog->contract` contradicts `openspec/specs/package-architecture/spec.md` (catalog "may depend on `domain` and `ports`"; scenario "L1 packages are siblings that reach only L0" pins `catalog → {domain, ports}`), and the change had no package-architecture delta. Evidence: `grep -n catalog openspec/specs/package-architecture/spec.md` -> lines 43-44, 80. Resolved: owner chose to inject the parser instead (D4 "The store gets the parser by injection"); catalog never imports contract, the boundary test and the package spec are unchanged.
+- [x] [major] D8 is a test-change permission list, but category 7 carried an architecture and manifest change. Resolved: category 7 now covers only the `'wiki'` entry in `catalog.test.ts`; the design decision lives in D4.
+- [x] [major] A simpler option (parse outside catalog and hand the parser in) was not considered in the record. Resolved: that option is now the design (D4), with fail-closed behaviour when the parser is missing.
+
+Failure and abuse: no findings (no cycle; the edge would not weaken the sibling checks). Assumption tester: no findings (only the two named tests fail; typecheck exit 0; the server already ships contract).
+
