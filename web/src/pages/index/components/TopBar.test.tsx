@@ -291,12 +291,12 @@ describe('TopBar: switching (task 3.2)', () => {
     expect(within(showTrigger()).getByText('Harbour Lights')).toBeTruthy();
   });
 
-  it('after a switch the four query keys are invalidated on the shared query client', async () => {
+  it('after a switch the five query keys are invalidated on the shared query client', async () => {
     apiFetchMock.mockResolvedValue(makeProfile({ active_studio_id: 'team-north' }));
     const { invalidate } = setup();
     openMenu(teamTrigger());
     fireEvent.click(await screen.findByRole('menuitemradio', { name: /northlight/i }));
-    await waitFor(() => expect(invalidate).toHaveBeenCalledTimes(4));
+    await waitFor(() => expect(invalidate).toHaveBeenCalledTimes(5));
     const keys = invalidate.mock.calls.map(([filters]) => filters?.queryKey);
     expect(keys).toEqual(
       expect.arrayContaining([
@@ -316,7 +316,7 @@ describe('TopBar: switching (task 3.2)', () => {
     await waitFor(() => expect(apiFetchMock).toHaveBeenCalledTimes(1));
     const body = JSON.parse(String(apiFetchMock.mock.calls[0][1]?.body));
     expect(body).toEqual({ active_studio_id: 'team-yt', active_show_id: 'show-late' });
-    await waitFor(() => expect(invalidate).toHaveBeenCalledTimes(4));
+    await waitFor(() => expect(invalidate).toHaveBeenCalledTimes(5));
     expect(onCloseSession).not.toHaveBeenCalled();
     await waitFor(() => expect(within(showTrigger()).getByText('Late Edition')).toBeTruthy());
   });

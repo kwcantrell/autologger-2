@@ -109,15 +109,15 @@
 
 - [x] 5.1 Add `react-markdown` 10.1.0 and `diff` 8.0.2 to `web/package.json`, pinned exactly. Verified by `npm ls react-markdown diff` and `shadcnHygiene.repo.test.ts`.
   Evidence: `sw-5.1-green.log`: `npm ls react-markdown diff` → `diff@8.0.2`, `react-markdown@10.1.0`; `shadcnHygiene.repo.test.ts` → `Tests 7 passed (7)`. `diff` ships its own types.
-- [ ] 5.2 Test first: write `useWiki.test.tsx` for the hooks and `wikiKeys`, covering:
+- [x] 5.2 Test first: write `useWiki.test.tsx` for the hooks and `wikiKeys`, covering:
   - list, page, revisions and revision queries;
   - mutations invalidate the right keys;
   - a `409` surfaces as a version conflict;
   - registration in `queryKeyFactories.repo.test.ts` (D8 category 5);
   - types in `api/types.ts`, with conformance checks against the captured fixtures in `types.conformance.test.ts` (D8 category 5);
   - revisions as an infinite query over `next_before`.
-
   Then implement. In `useSwitchActive`, add a `wikiKeys.all()` invalidation (D8 category 4). Verified by the tests and the repo tests.
+  Evidence: `sw-5.2-red.log`: `Failed to resolve import "./useWiki"` → `Test Files 3 failed`, typecheck rc=2. `sw-5.2-green.log`: targeted (useWiki, queryKeyFactories.repo, types.conformance, useSwitchActive, TopBar, apiResponseShapes.repo, versionConflict, webBoundaries.repo) → `Tests 273 passed (273)`; full web `Tests 2104 passed (2104)`; typecheck rc=0; biome clean; hook gates PASS. Key root `'wikiPages'` (D7, re-panel 2); `TopBar.test.tsx` count 4 → 5 (D8 cat 4); biome reordered existing import lines in `types.conformance.test.ts` (no assertion changed). `versionConflictOf` gains an optional `field: 'revision'` for the wiki conflict body.
 - [x] 5.3 Test first: write `WikiMarkdown.test.tsx`, covering:
   - "Script links are inert": `<img onerror>` gives no `img`, and a `javascript:` link renders as text;
   - a `cite:` link renders an `<a>` to `/sessions/S1?t=754`, labelled `0:12:34`;

@@ -55,10 +55,6 @@ import audioSegmentCreate from '../../../fixtures/api-responses/audioSegmentCrea
 import audioSegmentsList from '../../../fixtures/api-responses/audioSegmentsList.json';
 import companionDeviceCreate from '../../../fixtures/api-responses/companionDeviceCreate.json';
 import companionDevicesList from '../../../fixtures/api-responses/companionDevicesList.json';
-import providerSave from '../../../fixtures/api-responses/providerSave.json';
-import providerSaveClaudeCli from '../../../fixtures/api-responses/providerSaveClaudeCli.json';
-import providersList from '../../../fixtures/api-responses/providersList.json';
-import providerTest from '../../../fixtures/api-responses/providerTest.json';
 import eventCreate from '../../../fixtures/api-responses/eventCreate.json';
 import eventDeleteConflict from '../../../fixtures/api-responses/eventDeleteConflict.json';
 import eventsList from '../../../fixtures/api-responses/eventsList.json';
@@ -68,11 +64,15 @@ import logImportJobCreate from '../../../fixtures/api-responses/logImportJobCrea
 import { logImportJobStatus } from '../../../fixtures/api-responses/logImportJobStatus';
 import { profileAuthenticated } from '../../../fixtures/api-responses/profileAuthenticated';
 import { profileLoggedOutOauth } from '../../../fixtures/api-responses/profileLoggedOutOauth';
+import providerSave from '../../../fixtures/api-responses/providerSave.json';
+import providerSaveClaudeCli from '../../../fixtures/api-responses/providerSaveClaudeCli.json';
+import providersList from '../../../fixtures/api-responses/providersList.json';
+import providerTest from '../../../fixtures/api-responses/providerTest.json';
+import { search } from '../../../fixtures/api-responses/search';
 import sessionCreate from '../../../fixtures/api-responses/sessionCreate.json';
 import { sessionDetail } from '../../../fixtures/api-responses/sessionDetail';
 import sessionStatus from '../../../fixtures/api-responses/sessionStatus.json';
 import { sessionsList } from '../../../fixtures/api-responses/sessionsList';
-import { search } from '../../../fixtures/api-responses/search';
 import { sessionsListNoAccess } from '../../../fixtures/api-responses/sessionsListNoAccess';
 import sessionUpdate from '../../../fixtures/api-responses/sessionUpdate.json';
 import { showCategories } from '../../../fixtures/api-responses/showCategories';
@@ -101,6 +101,17 @@ import transcriptWordUpdate from '../../../fixtures/api-responses/transcriptWord
 import transcriptWordUpdateConflict from '../../../fixtures/api-responses/transcriptWordUpdateConflict.json';
 import transportStart from '../../../fixtures/api-responses/transportStart.json';
 import transportStop from '../../../fixtures/api-responses/transportStop.json';
+import { wikiMerge } from '../../../fixtures/api-responses/wikiMerge';
+import { wikiPage } from '../../../fixtures/api-responses/wikiPage';
+import { wikiPageCreate } from '../../../fixtures/api-responses/wikiPageCreate';
+import { wikiPageDelete } from '../../../fixtures/api-responses/wikiPageDelete';
+import { wikiPageList } from '../../../fixtures/api-responses/wikiPageList';
+import { wikiPageRestore } from '../../../fixtures/api-responses/wikiPageRestore';
+import { wikiPageUpdate } from '../../../fixtures/api-responses/wikiPageUpdate';
+import { wikiPageUpdateConflict } from '../../../fixtures/api-responses/wikiPageUpdateConflict';
+import { wikiRevision } from '../../../fixtures/api-responses/wikiRevision';
+import { wikiRevisionList } from '../../../fixtures/api-responses/wikiRevisionList';
+import { wikiSplit } from '../../../fixtures/api-responses/wikiSplit';
 import type { LogImportJobStatus } from '../pages/index/batchImport/logImportClient';
 import { fmtDateOnly } from '../shared/utils/fmtDateOnly';
 import type {
@@ -115,14 +126,14 @@ import type {
   Category,
   CompanionDeviceCreatedResponse,
   CompanionDeviceListResponse,
-  ProviderCredential,
-  ProvidersResponse,
-  ProviderTestResponse,
   EventsResponse,
   EventVersionConflict,
   LogEvent,
   ProfilePayload,
   ProfileShow,
+  ProviderCredential,
+  ProvidersResponse,
+  ProviderTestResponse,
   SearchMoment,
   SearchMomentSession,
   SearchResponse,
@@ -148,6 +159,15 @@ import type {
   TransportStartResponse,
   TransportStateSnapshot,
   TransportStopResponse,
+  WikiMergeResponse,
+  WikiPage,
+  WikiPageListItem,
+  WikiPageListResponse,
+  WikiRevision,
+  WikiRevisionListItem,
+  WikiRevisionListResponse,
+  WikiSplitResponse,
+  WikiVersionConflict,
 } from './types';
 
 describe('CW-1 — transport start/stop emit the transport state, not `{ok}`', () => {
@@ -860,6 +880,60 @@ describe('catalog search — the response `GET /api/search` answers (catalog-sea
         expect(sec).toBeNull();
       }
     }
+  });
+});
+
+describe('show wiki — the bodies the wiki routes answer (show-wiki D6, D8 category 5)', () => {
+  it('every page-returning capture is assignable to WikiPage', () => {
+    const read: WikiPage = wikiPage;
+    const created: WikiPage = wikiPageCreate;
+    const updated: WikiPage = wikiPageUpdate;
+    const deleted: WikiPage = wikiPageDelete;
+    const restored: WikiPage = wikiPageRestore;
+    const pages: [string, WikiPage][] = [
+      ['wikiPage', read],
+      ['wikiPageCreate', created],
+      ['wikiPageUpdate', updated],
+      ['wikiPageDelete', deleted],
+      ['wikiPageRestore', restored],
+    ];
+    for (const [name, p] of pages) {
+      expect(Object.keys(p).sort(), name).toEqual(Object.keys(wikiPage).sort());
+    }
+    expect(wikiPageDelete.deleted).toBe(true);
+    expect(wikiPageRestore.deleted).toBe(false);
+  });
+
+  it('the list capture is assignable to WikiPageListResponse', () => {
+    const check: WikiPageListResponse = wikiPageList;
+    const items: WikiPageListItem[] = wikiPageList.pages;
+    expect(items.map((p) => p.kind)).toEqual(['person', 'topic', 'session']);
+    expect(check.truncated).toBe(false);
+  });
+
+  it('the stale-revision 409 is assignable to WikiVersionConflict, current a whole page', () => {
+    const check: WikiVersionConflict = wikiPageUpdateConflict;
+    expect(check.detail).toBe('Version conflict.');
+    expect(Object.keys(check.current).sort()).toEqual(Object.keys(wikiPage).sort());
+  });
+
+  it('the revision captures are assignable to WikiRevisionListResponse and WikiRevision', () => {
+    const list: WikiRevisionListResponse = wikiRevisionList;
+    const items: WikiRevisionListItem[] = wikiRevisionList.revisions;
+    const next: number | null = list.next_before;
+    expect(items[0].note).toBe('edited');
+    expect(next).toBe(2);
+    const one: WikiRevision = wikiRevision;
+    expect(one.note).toBe('created');
+    expect(one.aliases).toEqual(['Tina', 'C. Ramos']);
+  });
+
+  it('the merge and split captures are assignable to their responses', () => {
+    const merged: WikiMergeResponse = wikiMerge;
+    expect(merged.page.aliases).toContain('Cold opens');
+    const split: WikiSplitResponse = wikiSplit;
+    expect(split.new_page.kind).toBe('bit');
+    expect(split.page.revision).toBe(2);
   });
 });
 
