@@ -1,4 +1,4 @@
-import { ChevronDownIcon, ChevronRightIcon } from 'lucide-react';
+import { BookOpenIcon, ChevronDownIcon, ChevronRightIcon } from 'lucide-react';
 import { useMemo, useSyncExternalStore } from 'react';
 import { useProfile } from '../../../api/hooks/useProfile';
 import { showAccessFrom } from '../../../api/hooks/useShowAccess';
@@ -24,6 +24,7 @@ import {
 } from '../coordination/transportStatus';
 import { useSwitchActive } from '../hooks/useSwitchActive';
 import { SearchPalette } from './search/SearchPalette';
+import { openInPlace } from './wiki/WikiPageLink';
 
 // --- The shell's top bar (redesign-show-ignition D5, D10; web-ui-system "Top bar names the
 // active team, show and transport state") ---
@@ -207,6 +208,16 @@ export function TopBar({ onCloseSession, onReturnToSession, confirmSwitch }: Pro
       {/* Search (catalog-search D9): the button opens the palette, as Cmd/Ctrl-K does. A result
           that switches the team or show goes through the same guard and close-session path. */}
       <SearchPalette onCloseSession={onCloseSession} confirmSwitch={confirmSwitch} />
+
+      {/* Wiki (show-wiki D7): the active show's wiki. Icon-only below `md`, so the bar keeps to
+          one line at 390px (web-ui-system "Phone width keeps one line"); named "Wiki" at every
+          width. A plain click opens it in place through the navigation funnel. */}
+      <Button asChild variant="ghost" size="icon" className="shrink-0 md:w-auto md:px-2.5">
+        <a href="/wiki" aria-label="Wiki" title="Wiki" onClick={(e) => openInPlace(e, '/wiki')}>
+          <BookOpenIcon aria-hidden="true" />
+          <span className="max-md:hidden">Wiki</span>
+        </a>
+      </Button>
 
       {/* The transport's status for assistive technology: announced when the state changes,
           never on a timecode tick (the store only changes on transitions). */}

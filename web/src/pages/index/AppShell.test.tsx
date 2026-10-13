@@ -183,6 +183,18 @@ vi.mock('./components/search/SearchRoute', () => ({
   },
 }));
 
+// The wiki screens (show-wiki task 5.4, D8 category 2): this file pins only that `/wiki` and
+// `/wiki/:pageId` mount them in place of the session route. The screens are WikiRoute.test.tsx's
+// and WikiPageView.test.tsx's.
+vi.mock('./components/wiki/WikiRoute', () => ({
+  WikiRoute: () => <div data-testid="wiki-route" />,
+}));
+vi.mock('./components/wiki/WikiPageView', () => ({
+  WikiPageView: (props: { pageId: string }) => (
+    <div data-testid="wiki-page-view" data-page-id={props.pageId} />
+  ),
+}));
+
 vi.mock('./components/settings/SettingsView', async () => {
   const { useEffect } = await import('react');
   const SettingsView = (props: {
@@ -1234,6 +1246,31 @@ describe('AppShell search route (catalog-search 5.6)', () => {
   it('a path under /search is not the search route', () => {
     renderShell('/search/x');
     expect(screen.queryByTestId('search-route')).toBeNull();
+    expect(workspaceSessionId()).toBe('');
+  });
+});
+
+// show-wiki D7 (task 5.4; D8 category 2): `/wiki` and `/wiki/:pageId` are routes, and nothing
+// deeper is.
+describe('AppShell wiki routes (show-wiki 5.4)', () => {
+  it('/wiki renders the wiki list with no session selected', () => {
+    renderShell('/wiki');
+    expect(screen.getByTestId('wiki-route')).not.toBeNull();
+    expect(screen.queryByTestId('wiki-page-view')).toBeNull();
+    expect(screen.queryByTestId('session-route')).toBeNull();
+  });
+
+  it('/wiki/:pageId renders the page view for that page', () => {
+    renderShell('/wiki/page-1');
+    expect(screen.getByTestId('wiki-page-view').getAttribute('data-page-id')).toBe('page-1');
+    expect(screen.queryByTestId('wiki-route')).toBeNull();
+    expect(screen.queryByTestId('session-route')).toBeNull();
+  });
+
+  it('a path two segments under /wiki is not a wiki route', () => {
+    renderShell('/wiki/page-1/x');
+    expect(screen.queryByTestId('wiki-route')).toBeNull();
+    expect(screen.queryByTestId('wiki-page-view')).toBeNull();
     expect(workspaceSessionId()).toBe('');
   });
 });

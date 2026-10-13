@@ -127,14 +127,14 @@
   - headings and lists render.
   Extract `secondsHref` into `searchLinks.ts` (D8 category 3). Verified by the tests and the existing `searchLinks` tests.
   Evidence: `sw-5.3-red.log`: `Failed to resolve import "./WikiMarkdown"` → `Test Files 2 failed`. `sw-5.3-green.log`: wiki tests `Tests 48 passed (48)`; search tests (searchLinks callers) `Tests 41 passed (41)`; full web suite `Tests 2080 passed (2080)`; typecheck rc=0. No existing test edited. Note: `webBoundaries.repo.test.ts` bars web production code from importing `packages/`, so `wiki/wikiUrl.ts` copies `classifyWikiUrl` and `wikiUrl.pinning.test.ts` checks it against the contract on 34 URLs (the `aiV2/clientAggregates` precedent).
-- [ ] 5.4 Test first: write `WikiRoute.test.tsx`, covering:
+- [x] 5.4 Test first: write `WikiRoute.test.tsx`, covering:
   - the tabs per kind;
   - the filter;
   - the Deleted view with Restore;
   - New page creates and navigates;
   - with no active show, it asks to choose one.
-
   Then implement, plus the `/wiki` and `/wiki/:pageId` routes in `AppShell` (D8 category 2), and the TopBar "Wiki" link with a `TopBar.test.tsx` assertion (D8 category 6). Verified by the tests.
+  Evidence: `sw-5.4-red.log`: `Tests 4 failed | 81 passed (85)` (`./WikiRoute` unresolved; no `wiki-route`/`wiki-page-view` in AppShell; no "Wiki" link in TopBar). `sw-5.4-green.log`: WikiRoute + TopBar + AppShell → `Tests 96 passed (96)`; full web `Tests 2146 passed`; typecheck rc=0; biome clean. Existing-test edits are additions only: `AppShell.test.tsx` (cat 2) gains three `/wiki` route assertions plus `vi.mock`s of the two new wiki screens they need; `TopBar.test.tsx` (cat 6) gains two "Wiki" link tests.
 - [x] 5.5 Test first: write `WikiPageView.test.tsx`, covering:
   - the rendered body and metadata;
   - edit and save;
@@ -153,13 +153,13 @@
   - split sends the remaining body and the new page.
   Then implement. Verified by the tests.
   Evidence: `sw-5.6-red.log`: `Test Files 3 failed (3)` (`./WikiHistorySheet`, `./WikiMergeDialog`, `./WikiSplitDialog` unresolved). `sw-5.6-green.log`: `Tests 11 passed (11)`; full web `Tests 2146 passed`; typecheck rc=0; biome clean. No existing test edited.
-- [ ] 5.7 Test first: write `SessionWorkspace.wikiButton.test.tsx` for "Session page from the workspace":
+- [x] 5.7 Test first: write `SessionWorkspace.wikiButton.test.tsx` for "Session page from the workspace":
   - the button is at the end of the feed-tab row;
   - the first press creates the page and opens it;
   - the second press opens the same page;
   - a `409 Session already has a page.` opens the named page.
-
   Then implement the "Wiki page" button. Verified by the tests.
+  Evidence: `sw-5.7-red.log`: `Tests 3 failed (3)` (no button named "Wiki page"). `sw-5.7-green.log`: `SessionWorkspace*` + TopBar + AppShell → `Tests 130 passed (130)`; full web `Tests 2146 passed`; typecheck rc=0. No `SessionWorkspace*.test.tsx` changed (the button calls `apiFetch` directly because `SessionWorkspace.test.tsx` mocks react-query without `useMutation`).
 - [ ] 5.8 Check the UI with agent-browser on the dev stack (`localhost:8787`) at desktop and mobile widths: list, page, edit, conflict, history diff, merge, split, citation click and seek, the session-page button, and the top bar on one line at 390px. Fix what the check finds. Verified by screenshots noted in the evidence.
 
 ## 6. Docs, verification, PR
