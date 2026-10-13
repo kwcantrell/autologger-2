@@ -44,7 +44,8 @@
 
 ## 3. Store
 
-- [ ] 3.1 Refactor `packages/catalog/src/wikiStore.ts` so create and edit run through in-transaction steps (`createInTx`, `updateInTx`) that take an optional revision note, as design D2 describes. No behaviour change. Verified by `wikiStore.pg.test.ts` (31 tests) and `showWiki.pg.test.ts` passing unchanged, and the catalog unit suite.
+- [x] 3.1 Refactor `packages/catalog/src/wikiStore.ts` so create and edit run through in-transaction steps (`createInTx`, `updateInTx`) that take an optional revision note, as design D2 describes. No behaviour change. Verified by `wikiStore.pg.test.ts` (31 tests) and `showWiki.pg.test.ts` passing unchanged, and the catalog unit suite.
+  Evidence: `swa-3.1-green.log`: `createInTx`/`updateInTx` (optional note) with `createPage`/`updatePage` calling them; tests unchanged: wikiStore.pg `Tests 31 passed (31)`; showWiki.pg `Tests 25 passed (25)`; wiki.int `Tests 78 passed (78)`; catalog unit `Tests 61 passed (61)`; `typecheck rc=0`.
 - [ ] 3.2 Test first: write `server/src/test/pg/wikiSuggestionStore.pg.test.ts` for the suggestion methods on `catalog.wiki`, covering:
   - `saveRun` stores pending rows with `created_by_name`, in proposal order; "A newer run supersedes the older suggestion" for a page target and for a new-page target matched ignoring case and accents; a run with a bad link stores nothing;
   - list by status and `page_id`, newest first, with `page.state`, `stale` and the 500 cap with `truncated`;
