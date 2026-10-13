@@ -26,3 +26,8 @@ Delta: task 3.2 broke two existing tests outside D8 (`packageBoundaries.repo.tes
 
 Failure and abuse: no findings (no cycle; the edge would not weaken the sibling checks). Assumption tester: no findings (only the two named tests fail; typecheck exit 0; the server already ships contract).
 
+
+## Re-panel 2026-10-13 (2)
+Delta: task 5.2 hit two existing tests outside D8. D7: the wiki query-key root becomes `'wikiPages'` (the registry guard in `queryKeyFactories.repo.test.ts` would flag the existing `'wiki'` route-segment and link-kind literals). D8 cat 4: `TopBar.test.tsx`'s two `toHaveBeenCalledTimes(4)` become `5` and its title "four" becomes "five", for the approved `wikiKeys.all()` invalidation on show switch. Reviewers: assumption tester, failure and abuse, scope and simplicity (fresh subagents, delta only).
+
+No findings.

@@ -152,7 +152,7 @@ The routes, bodies and statuses are in the api-contract-freeze delta.
 
   Confirmations use the existing `useConfirm`.
 - **Hooks** live in `api/hooks/useWiki.ts`, with a `wikiKeys` factory:
-  - `all: ['wiki']`, `list(showId, filters)`, `page(id)`, `revisions(id)` (infinite), `revision(id, n)`;
+  - `all: ['wikiPages']`, `list(showId, filters)`, `page(id)`, `revisions(id)` (infinite), `revision(id, n)`. The root is `'wikiPages'`, not `'wiki'` (changed 2026-10-13, after approval): the registry guard in `queryKeyFactories.repo.test.ts` treats every quoted root literal as a key, and `'wiki'` is already a route segment and a link kind;
   - it is registered in `queryKeyFactories.repo.test.ts`;
   - `useSwitchActive` adds `wikiKeys.all()` to its invalidation list.
 - **Moment links.** `searchLinks.ts` gains `secondsHref(sessionId, sec)`. `momentHref` calls it for transcript moments, and so does `WikiMarkdown`.
@@ -167,7 +167,7 @@ An existing test may change only in these categories. Anything else is a stop.
 1. **Schema inventories gain the wiki objects.** That means `catalogSchema.pg.test.ts` (tables, columns, per-table policy names, and the new `sessions (id, show_id)` unique constraint), `catalogPolicies.pg.test.ts` (the policy count, 38 today), `catalogPolicyHelpers.pg.test.ts`, `catalogRoles.pg.test.ts`, and `server/src/test/session/isolation.int.test.ts`. Existing entries are otherwise unchanged.
 2. **Route inventories gain `/wiki`.** In `loginReturnPath.test.ts`, `loginReturnStash.test.ts`, `AppShell.test.tsx` and `staticServing.int.test.ts`, the only changes allowed are a route count, or an assertion that `/wiki…` is or isn't a route.
 3. **`searchLinks` refactor.** `searchLinks` tests may change only their imports. What `momentHref` returns stays the same.
-4. **`useSwitchActive`.** Its tests may gain an expectation for the wiki invalidation, and nothing else may change.
+4. **`useSwitchActive`.** Its tests may gain an expectation for the wiki invalidation, and nothing else may change. `TopBar.test.tsx` pins the switch's invalidation count: its two `toHaveBeenCalledTimes(4)` become `5`, and its test title's "four query keys" becomes "five". Nothing else in it changes under this category (added 2026-10-13, after approval; task 1.1's classification missed it).
 5. **Registry and fixture inventories gain wiki entries.** These are `server/src/routers/apiResponseFixtures.int.test.ts` (new captures), `web/src/api/types.conformance.test.ts` (new conformance checks), and `web/src/queryKeyFactories.repo.test.ts` (registering `wikiKeys`). Existing entries are unchanged, as catalog-search did (`31e68f9e`).
 6. **Shell controls gain the wiki entry points.** `TopBar.test.tsx` and the `SessionWorkspace*.test.tsx` files may gain assertions or mocks for the "Wiki" link and the "Wiki page" button. Their existing assertions are unchanged.
 7. **The catalog facade inventory gains the wiki store** (added 2026-10-13, after approval, when task 3.2 hit it): `packages/catalog/src/catalog.test.ts` ("carries no flat delegate methods") gains `'wiki'` in its pinned store list. Nothing else in that file changes.
