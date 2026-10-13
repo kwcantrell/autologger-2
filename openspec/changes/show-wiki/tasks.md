@@ -106,7 +106,8 @@
 
 ## 5. Web
 
-- [ ] 5.1 Add `react-markdown` 10.1.0 and `diff` 8.0.2 to `web/package.json`, pinned exactly. Verified by `npm ls react-markdown diff` and `shadcnHygiene.repo.test.ts`.
+- [x] 5.1 Add `react-markdown` 10.1.0 and `diff` 8.0.2 to `web/package.json`, pinned exactly. Verified by `npm ls react-markdown diff` and `shadcnHygiene.repo.test.ts`.
+  Evidence: `sw-5.1-green.log`: `npm ls react-markdown diff` → `diff@8.0.2`, `react-markdown@10.1.0`; `shadcnHygiene.repo.test.ts` → `Tests 7 passed (7)`. `diff` ships its own types.
 - [ ] 5.2 Test first: write `useWiki.test.tsx` for the hooks and `wikiKeys`, covering:
   - list, page, revisions and revision queries;
   - mutations invalidate the right keys;
@@ -116,15 +117,15 @@
   - revisions as an infinite query over `next_before`.
 
   Then implement. In `useSwitchActive`, add a `wikiKeys.all()` invalidation (D8 category 4). Verified by the tests and the repo tests.
-- [ ] 5.3 Test first: write `WikiMarkdown.test.tsx`, covering:
+- [x] 5.3 Test first: write `WikiMarkdown.test.tsx`, covering:
   - "Script links are inert": `<img onerror>` gives no `img`, and a `javascript:` link renders as text;
   - a `cite:` link renders an `<a>` to `/sessions/S1?t=754`, labelled `0:12:34`;
   - a malformed `cite:`, an upper-case `CITE:` and an image each render as text;
   - a `wiki:` link goes to `/wiki/<id>`;
   - an `https:` link gets `target=_blank` and `rel="noopener noreferrer"`;
   - headings and lists render.
-
   Extract `secondsHref` into `searchLinks.ts` (D8 category 3). Verified by the tests and the existing `searchLinks` tests.
+  Evidence: `sw-5.3-red.log`: `Failed to resolve import "./WikiMarkdown"` → `Test Files 2 failed`. `sw-5.3-green.log`: wiki tests `Tests 48 passed (48)`; search tests (searchLinks callers) `Tests 41 passed (41)`; full web suite `Tests 2080 passed (2080)`; typecheck rc=0. No existing test edited. Note: `webBoundaries.repo.test.ts` bars web production code from importing `packages/`, so `wiki/wikiUrl.ts` copies `classifyWikiUrl` and `wikiUrl.pinning.test.ts` checks it against the contract on 34 URLs (the `aiV2/clientAggregates` precedent).
 - [ ] 5.4 Test first: write `WikiRoute.test.tsx`, covering:
   - the tabs per kind;
   - the filter;
