@@ -167,13 +167,13 @@
 
 - [x] 6.1 Write ADR `docs/decisions/0030-show-wiki.md`: Markdown with inline `cite:`/`wiki:` links validated on the rendering parse, append-only revisions with name snapshots, compare-and-set with name pre-checks, access through `accessible_shows` plus composite keys, react-markdown safety, and the split from `show-wiki-ai`. Verified by the file and the ADR index check in `check-change.sh`.
   Evidence: `docs/decisions/0030-show-wiki.md` written (Context, Decision incl. the injected parser and the web copy, Alternatives, Evidence, Consequences). `check-change.sh` has no ADR index gate (`grep -rln docs/decisions scripts/` → only `scripts/lib/adopt.py`); the hook gates pass with the file present.
-- [ ] 6.2 Run the dev-stack manual checks:
+- [x] 6.2 Run the dev-stack manual checks:
   1. create a person page with a citation, open it, and the session seeks;
   2. two tabs edit the same page, and the second gets the conflict banner;
   3. merge two pages: the old page redirects and its title becomes an alias;
   4. an ungranted member gets 404 on the wiki;
   5. history diff and restore.
-
   Verified by notes in the evidence.
+  Evidence: checks 1, 2, 3 and 5 ran on the dev stack in the 5.8 browser pass (`sw-5.8/`): `06`/`09` a person page with a citation opens session ATS_asdf at 00:01:15; `10` a stale-revision save shows the conflict banner and keeps the draft; `19` merging "QA Person Alicia" into "QA Person Alice" redirects the old URL and adds the alias; `13`/`16` the history diff and restoring r2 to r4. Check 4: dev has no ungranted member and no second login, so `sw-6.2-rls.log` adds one inside a rolled-back transaction and reads as `catalog_user`: `ungranted member|t|0|0|0`, `granted member|t|6|3|12`, `owner|t|6|3|12`, `after rollback|0`. The HTTP 404 for an ungranted member is covered by `wiki.int.test.ts` (masked 404s).
 - [ ] 6.3 Run `GITHUB_BASE_REF=supabase-migration scripts/check-change.sh --stage hook` and `openspec validate --all --strict`, then run the consistency read and append it to `panel.md`. Verified by green runs.
 - [ ] 6.4 When the owner asks, push the branch and open a PR to `supabase-migration`, then confirm CI is green. Verified by the PR checks.
