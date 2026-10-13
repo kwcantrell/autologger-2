@@ -135,7 +135,7 @@
   - with no active show, it asks to choose one.
 
   Then implement, plus the `/wiki` and `/wiki/:pageId` routes in `AppShell` (D8 category 2), and the TopBar "Wiki" link with a `TopBar.test.tsx` assertion (D8 category 6). Verified by the tests.
-- [ ] 5.5 Test first: write `WikiPageView.test.tsx`, covering:
+- [x] 5.5 Test first: write `WikiPageView.test.tsx`, covering:
   - the rendered body and metadata;
   - edit and save;
   - "Edit conflict keeps the draft";
@@ -143,16 +143,16 @@
   - a merged page replaces the URL with its target;
   - a page of another show offers a switch;
   - delete confirms first.
-
   Then implement. Verified by the tests.
-- [ ] 5.6 Test first: write the tests for `WikiHistorySheet`, `WikiMergeDialog` and `WikiSplitDialog`:
+  Evidence: `sw-5.5-red.log`: `Failed to resolve import "./WikiPageView"`. `sw-5.5-green.log`: `WikiPageView.test.tsx` → `Tests 12 passed (12)`; full web `Tests 2146 passed (2146)`; typecheck rc=0; biome clean. No existing test edited.
+- [x] 5.6 Test first: write the tests for `WikiHistorySheet`, `WikiMergeDialog` and `WikiSplitDialog`:
   - revisions newest first, with "Load older";
   - the line diff against the current page;
   - restore sends a `PUT` with the revision's content, `restored_from` and `expected_revision`;
   - the merge picker lists only other live non-session pages of the show and confirms first;
   - split sends the remaining body and the new page.
-
   Then implement. Verified by the tests.
+  Evidence: `sw-5.6-red.log`: `Test Files 3 failed (3)` (`./WikiHistorySheet`, `./WikiMergeDialog`, `./WikiSplitDialog` unresolved). `sw-5.6-green.log`: `Tests 11 passed (11)`; full web `Tests 2146 passed`; typecheck rc=0; biome clean. No existing test edited.
 - [ ] 5.7 Test first: write `SessionWorkspace.wikiButton.test.tsx` for "Session page from the workspace":
   - the button is at the end of the feed-tab row;
   - the first press creates the page and opens it;
