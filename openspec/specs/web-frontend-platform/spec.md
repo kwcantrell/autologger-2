@@ -130,7 +130,8 @@ SHALL fail the boot loudly — it SHALL NOT silently degrade to API-only mode.
 
 ### Requirement: Shell routing from the shared route definition
 Next SHALL serve the index shell for exactly the router-known paths — `/`,
-`/sessions/:id` (one non-empty raw segment), `/teams` — via a catch-all that validates
+`/sessions/:id` (one non-empty raw segment), `/teams`, `/search`, `/wiki` and
+`/wiki/:pageId` (one non-empty raw segment) — via a catch-all that validates
 the segment list the framework provides, treating each raw path segment as exactly one
 entry regardless of any percent-encoded separators it carries — the validator SHALL NOT
 decode-and-re-split segment values. Any other path, including the retired `/admin/users`,
@@ -153,6 +154,10 @@ at runtime).
 
 #### Scenario: Nested session path stays 404
 - **WHEN** `GET /sessions/a/b` is requested
+- **THEN** the response is `404` (three raw segments — not a router-known shape)
+
+#### Scenario: Nested wiki path stays 404
+- **WHEN** `GET /wiki/a/b` is requested
 - **THEN** the response is `404` (three raw segments — not a router-known shape)
 
 #### Scenario: Percent-encoded slash stays a single segment
