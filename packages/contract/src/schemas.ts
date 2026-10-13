@@ -651,3 +651,244 @@ export const searchResponseSchema = z.strictObject({
   ),
 });
 export type SearchResponseWire = z.infer<typeof searchResponseSchema>;
+
+// -- show-wiki: wiki page routes (design D6; api-contract-freeze "Wiki …" requirements) ---------
+// Limits (show-wiki "Wiki pages belong to one show"): a title is 1–200 characters after trimming;
+// a body is at most 100 000 characters; at most 50 aliases, each 1–200 characters after trimming,
+// and a `session` page has none; a title or alias holds no control character (U+0000–U+001F,
+// U+007F), checked before trimming so a trailing newline is refused too; a body holds no NUL.
+// Request bodies and queries are plain objects, so unknown keys are stripped (ignored); response
+// bodies are strict. Rules the schema can't check (a session of another show, a kind change to or
+// from `session`, merge rules, bad links) are the router's 422s.
+export const WIKI_KINDS = ['person', 'topic', 'bit', 'session'] as const;
+export const WIKI_TITLE_MAX = 200;
+export const WIKI_ALIAS_MAX = 200;
+export const WIKI_ALIASES_MAX = 50;
+export const WIKI_BODY_MAX = 100_000;
+export const WIKI_LIST_MAX = 2000;
+export const WIKI_REVISIONS_LIMIT_DEFAULT = 50;
+export const WIKI_REVISIONS_LIMIT_MAX = 100;
+
+/** The fixed `detail` strings of the wiki routes. */
+export const WIKI_DETAIL = {
+  showNotFound: 'Show not found.',
+  pageNotFound: 'Page not found.',
+  revisionNotFound: 'Revision not found.',
+  versionConflict: 'Version conflict.',
+  merged: 'Page was merged.',
+  deleted: 'Page is deleted.',
+  notDeleted: 'Page is not deleted.',
+  titleUsed: 'Title already used.',
+  sessionHasPage: 'Session already has a page.',
+} as const;
+
+export const wikiKindSchema = z.enum(WIKI_KINDS);
+export type WikiKind = z.infer<typeof wikiKindSchema>;
+const wikiNewPageKindSchema = z.enum(['person', 'topic', 'bit']);
+
+// biome-ignore lint/suspicious/noControlCharactersInRegex: refusing control characters is the point (D6).
+const WIKI_NO_CONTROL = /^[^\u0000-\u001f\u007f]*$/;
+const wikiLineSchema = (max: number) =>
+  z
+    .string()
+    .regex(WIKI_NO_CONTROL, { message: 'must not contain control characters' })
+    .trim()
+    .min(1)
+    .max(max);
+const wikiTitleSchema = wikiLineSchema(WIKI_TITLE_MAX);
+const wikiAliasesSchema = z.array(wikiLineSchema(WIKI_ALIAS_MAX)).max(WIKI_ALIASES_MAX);
+const wikiBodySchema = z
+  .string()
+  .max(WIKI_BODY_MAX)
+  .refine((s) => !s.includes('\u0000'), { message: 'must not contain NUL' });
+/** A JSON revision number: a positive safe integer. */
+const wikiRevisionNumberSchema = z.number().int().min(1).max(Number.MAX_SAFE_INTEGER);
+/** A query revision number: decimal, 1 to `Number.MAX_SAFE_INTEGER`, no leading zero. */
+const wikiRevisionQueryParam = z
+  .string()
+  .regex(/^[1-9][0-9]{0,15}$/)
+  .transform(Number)
+  .refine((n) => n <= Number.MAX_SAFE_INTEGER, { message: 'revision is too large' });
+
+/** `POST /api/shows/:showId/wiki/pages`. `session_id` is required exactly when `kind` is
+ * `session`, and a `session` page takes no aliases. */
+export const wikiCreatePageBodySchema = z
+  .object({
+    kind: wikiKindSchema,
+    title: wikiTitleSchema,
+    body_md: wikiBodySchema.default(''),
+    aliases: wikiAliasesSchema.default([]),
+    session_id: z.string().min(1).optional(),
+  })
+  .superRefine((b, ctx) => {
+    if (b.kind === 'session' && b.session_id === undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['session_id'],
+        message: 'required for a session page',
+      });
+    }
+    if (b.kind !== 'session' && b.session_id !== undefined) {
+      ctx.addIssue({ code: 'custom', path: ['session_id'], message: 'only for a session page' });
+    }
+    if (b.kind === 'session' && b.aliases.length > 0) {
+      ctx.addIssue({ code: 'custom', path: ['aliases'], message: 'a session page has none' });
+    }
+  });
+export type WikiCreatePageBody = z.infer<typeof wikiCreatePageBodySchema>;
+
+/** `PUT /api/wiki/pages/:pageId`. Fields not sent stay unchanged; `aliases` replaces the list. */
+export const wikiUpdatePageBodySchema = z.object({
+  expected_revision: wikiRevisionNumberSchema,
+  title: wikiTitleSchema.optional(),
+  kind: wikiKindSchema.optional(),
+  body_md: wikiBodySchema.optional(),
+  aliases: wikiAliasesSchema.optional(),
+  restored_from: wikiRevisionNumberSchema.optional(),
+});
+export type WikiUpdatePageBody = z.infer<typeof wikiUpdatePageBodySchema>;
+
+/** `POST /api/wiki/pages/:pageId/restore`. */
+export const wikiRestoreBodySchema = z.object({ expected_revision: wikiRevisionNumberSchema });
+export type WikiRestoreBody = z.infer<typeof wikiRestoreBodySchema>;
+
+/** `DELETE /api/wiki/pages/:pageId?expected_revision=<n>`; other parameters are ignored. */
+export const wikiDeleteQuerySchema = z.object({ expected_revision: wikiRevisionQueryParam });
+export type WikiDeleteQuery = z.infer<typeof wikiDeleteQuerySchema>;
+
+/** `POST /api/wiki/pages/:pageId/merge`. */
+export const wikiMergeBodySchema = z.object({
+  into_page_id: z.string().min(1),
+  expected_revision: wikiRevisionNumberSchema,
+  into_expected_revision: wikiRevisionNumberSchema,
+});
+export type WikiMergeBody = z.infer<typeof wikiMergeBodySchema>;
+
+/** `POST /api/wiki/pages/:pageId/split`. A `session` kind for the new page is refused here (422). */
+export const wikiSplitBodySchema = z.object({
+  expected_revision: wikiRevisionNumberSchema,
+  remaining_body_md: wikiBodySchema,
+  new_page: z.object({
+    kind: wikiNewPageKindSchema,
+    title: wikiTitleSchema,
+    body_md: wikiBodySchema,
+    aliases: wikiAliasesSchema.default([]),
+  }),
+});
+export type WikiSplitBody = z.infer<typeof wikiSplitBodySchema>;
+
+/** `GET /api/shows/:showId/wiki/pages` query; `deleted=1` lists deleted pages instead. */
+export const wikiListQuerySchema = z.object({
+  kind: wikiKindSchema.optional(),
+  session_id: z.string().optional(),
+  deleted: z
+    .literal('1')
+    .transform(() => true)
+    .optional(),
+});
+export type WikiListQuery = z.infer<typeof wikiListQuerySchema>;
+
+/** `GET /api/wiki/pages/:pageId/revisions` query: `limit` a decimal 1–100 (default 50), and
+ * `before` an optional revision number. */
+export const wikiRevisionsQuerySchema = z.object({
+  limit: z
+    .string()
+    .regex(/^(?:[1-9]|[1-9][0-9]|100)$/)
+    .transform(Number)
+    .optional()
+    .transform((n) => n ?? WIKI_REVISIONS_LIMIT_DEFAULT),
+  before: wikiRevisionQueryParam.optional(),
+});
+export type WikiRevisionsQuery = z.infer<typeof wikiRevisionsQuerySchema>;
+
+/** The page object every page-returning wiki route answers with. */
+export const wikiPageSchema = z.strictObject({
+  id: z.string(),
+  show_id: z.string(),
+  kind: wikiKindSchema,
+  title: z.string(),
+  body_md: z.string(),
+  aliases: z.array(z.string()),
+  session_id: z.string().nullable(),
+  revision: wikiRevisionNumberSchema,
+  merged_into: z.string().nullable(),
+  deleted: z.boolean(),
+  created_at_utc: z.string(),
+  created_by_name: z.string(),
+  updated_at_utc: z.string(),
+  updated_by_name: z.string(),
+});
+export type WikiPageWire = z.infer<typeof wikiPageSchema>;
+
+export const wikiPageListItemSchema = z.strictObject({
+  id: z.string(),
+  kind: wikiKindSchema,
+  title: z.string(),
+  aliases: z.array(z.string()),
+  session_id: z.string().nullable(),
+  revision: wikiRevisionNumberSchema,
+  updated_at_utc: z.string(),
+  updated_by_name: z.string(),
+});
+export type WikiPageListItemWire = z.infer<typeof wikiPageListItemSchema>;
+
+export const wikiPageListResponseSchema = z.strictObject({
+  pages: z.array(wikiPageListItemSchema).max(WIKI_LIST_MAX),
+  truncated: z.boolean(),
+});
+export type WikiPageListResponse = z.infer<typeof wikiPageListResponseSchema>;
+
+const wikiRevisionItemShape = {
+  revision: wikiRevisionNumberSchema,
+  title: z.string(),
+  kind: wikiKindSchema,
+  author_name: z.string(),
+  at_utc: z.string(),
+  note: z.string(),
+};
+export const wikiRevisionListItemSchema = z.strictObject(wikiRevisionItemShape);
+export type WikiRevisionListItemWire = z.infer<typeof wikiRevisionListItemSchema>;
+
+export const wikiRevisionListResponseSchema = z.strictObject({
+  revisions: z.array(wikiRevisionListItemSchema),
+  next_before: wikiRevisionNumberSchema.nullable(),
+});
+export type WikiRevisionListResponse = z.infer<typeof wikiRevisionListResponseSchema>;
+
+/** `GET /api/wiki/pages/:pageId/revisions/:rev`: the list item plus the body and aliases. */
+export const wikiRevisionSchema = z.strictObject({
+  ...wikiRevisionItemShape,
+  body_md: z.string(),
+  aliases: z.array(z.string()),
+});
+export type WikiRevisionWire = z.infer<typeof wikiRevisionSchema>;
+
+export const wikiMergeResponseSchema = z.strictObject({ page: wikiPageSchema });
+export type WikiMergeResponse = z.infer<typeof wikiMergeResponseSchema>;
+
+export const wikiSplitResponseSchema = z.strictObject({
+  page: wikiPageSchema,
+  new_page: wikiPageSchema,
+});
+export type WikiSplitResponse = z.infer<typeof wikiSplitResponseSchema>;
+
+/** `409` when `expected_revision` isn't current; `current` is the stale page as it is now. */
+export const wikiVersionConflictSchema = z.strictObject({
+  detail: z.literal(WIKI_DETAIL.versionConflict),
+  current: wikiPageSchema,
+});
+export type WikiVersionConflict = z.infer<typeof wikiVersionConflictSchema>;
+
+/** `409` naming the page that holds the title or alias, or the session's page. */
+export const wikiPageIdConflictSchema = z.strictObject({
+  detail: z.enum([WIKI_DETAIL.titleUsed, WIKI_DETAIL.sessionHasPage]),
+  page_id: z.string(),
+});
+export type WikiPageIdConflict = z.infer<typeof wikiPageIdConflictSchema>;
+
+/** `409` for a page that was merged. */
+export const wikiMergedConflictSchema = z.strictObject({
+  detail: z.literal(WIKI_DETAIL.merged),
+  merged_into: z.string(),
+});
+export type WikiMergedConflict = z.infer<typeof wikiMergedConflictSchema>;

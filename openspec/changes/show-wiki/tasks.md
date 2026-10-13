@@ -80,13 +80,13 @@
 
 ## 4. API
 
-- [ ] 4.1 Test first: add the wiki schemas to `packages/contract/src/schemas.ts`, with `schemas.wiki.test.ts` covering:
+- [x] 4.1 Test first: add the wiki schemas to `packages/contract/src/schemas.ts`, with `schemas.wiki.test.ts` covering:
   - strict responses;
   - request limits (title, body, aliases, NUL, and control characters in titles and aliases);
   - `session_id` required exactly for `session`;
   - `expected_revision` as a positive integer.
-
   Then implement. Verified by the tests.
+  Evidence: `sw-4.1-red.log`: `Tests 37 failed (37)` (schemas undefined). `sw-4.1-green.log`: `npx vitest run src/schemas.wiki.test.ts` → `Tests 37 passed (37)`; contract suite `Tests 204 passed (204)`; `npm run typecheck` rc=0; `npx biome check` clean.
 - [ ] 4.2 Test first: write `server/src/routers/wiki.int.test.ts`, covering every endpoint in the api-contract-freeze delta:
   - 200 or 201 shapes;
   - 401;
