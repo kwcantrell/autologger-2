@@ -18,14 +18,15 @@ in favor of route-driven rendering.
 
 ### Requirement: URL-addressed session state
 The web app SHALL derive its active-session state from the URL via a client-side route
-table with exactly four app routes: `/` (no session selected; home/sessions view),
+table with exactly six app routes: `/` (no session selected; home/sessions view),
 `/sessions/:id` (the session workspace for `:id`), `/teams` (the sessions home view with the Settings view opened on its Members section; no
-session selected), and `/search` (the search results page; no session selected). Selecting a session SHALL push a
+session selected), `/search` (the search results page; no session selected), `/wiki` (the active show's wiki; no
+session selected), and `/wiki/:pageId` (one wiki page; no session selected). Selecting a session SHALL push a
 history entry for `/sessions/:id`; selecting the session that is already active SHALL
 NOT push a duplicate entry (no-op or replace); closing the active session SHALL
 navigate to `/`; browser Back/Forward SHALL drive the same state transitions as in-app
 selection and close. Creating a session SHALL navigate to its `/sessions/:id` the same
-way selection does. Navigating to `/teams` or `/search` SHALL push a history entry and leaves any
+way selection does. Navigating to `/teams`, `/search`, `/wiki` or `/wiki/:pageId` SHALL push a history entry and leaves any
 active session (the departure semantics of the transport-stop requirement apply
 unchanged). The workspace's session id SHALL come from the route parameter —
 there SHALL be no parallel component-state copy of the active session id that can
@@ -93,6 +94,11 @@ router; the previously reachable raw built-asset path, e.g.
 - **WHEN** an authenticated user opens `/search?q=budget` in-app, or reloads the browser on it
 - **THEN** the search results page renders for `budget` with no session selected, and browser
   Back returns to the previous view
+
+#### Scenario: Wiki routes are first-class app routes
+- **WHEN** an authenticated user opens `/wiki` or `/wiki/<pageId>` in-app, or reloads the browser on either
+- **THEN** the wiki list or that wiki page renders with no session selected, and browser Back returns to
+  the previous view
 
 #### Scenario: Route table extension is single-sourced
 - **WHEN** a future change adds a router-known route
