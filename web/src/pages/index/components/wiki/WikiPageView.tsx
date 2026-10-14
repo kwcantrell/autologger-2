@@ -4,6 +4,7 @@ import {
   HistoryIcon,
   PencilIcon,
   ScissorsIcon,
+  SparklesIcon,
   Trash2Icon,
 } from 'lucide-react';
 import { type MouseEvent, type ReactNode, useEffect, useState } from 'react';
@@ -16,6 +17,7 @@ import {
   useWikiPage,
   wikiVersionConflictOf,
 } from '../../../../api/hooks/useWiki';
+import { useWikiSuggestions } from '../../../../api/hooks/useWikiSuggestions';
 import type { WikiPage } from '../../../../api/types';
 import { Alert, AlertDescription, AlertTitle } from '../../../../shared/components/ui/alert';
 import { Badge } from '../../../../shared/components/ui/badge';
@@ -30,6 +32,7 @@ import { WikiHistorySheet } from './WikiHistorySheet';
 import { WikiMarkdown, wikiPageHref } from './WikiMarkdown';
 import { WikiMergeDialog } from './WikiMergeDialog';
 import { WikiSplitDialog } from './WikiSplitDialog';
+import { WikiSuggestionSheet } from './WikiSuggestionSheet';
 import { WIKI_KIND_LABEL } from './wikiKindLabels';
 
 // --- `/wiki/:pageId`, one wiki page (show-wiki D7; show-wiki "Wiki screens") ---
@@ -42,6 +45,7 @@ import { WIKI_KIND_LABEL } from './wikiKindLabels';
 // A merged page replaces its URL with the page it was merged into. A page of a show other than
 // the active one says so and offers the switch (`useSwitchActive`, as search results do).
 // Delete confirms first (`useConfirm`); a deleted page reads as deleted and offers Restore.
+// A pending suggestion for the page shows a banner that opens the review sheet (show-wiki-ai D6).
 
 interface Props {
   pageId: string;
@@ -115,6 +119,9 @@ export function WikiPageView({ pageId, onCloseSession = noop, confirmSwitch }: P
   const { confirm, confirmElement } = useConfirm();
   const [edit, setEdit] = useState<EditState | null>(null);
   const [panel, setPanel] = useState<'history' | 'merge' | 'split' | null>(null);
+  const [reviewing, setReviewing] = useState<string | null>(null);
+  const suggestions = useWikiSuggestions(page?.show_id ?? null, { pageId });
+  const pendingSuggestion = suggestions.data?.suggestions[0] ?? null;
 
   const mergedInto = page?.merged_into ?? null;
   useEffect(() => {
@@ -126,6 +133,7 @@ export function WikiPageView({ pageId, onCloseSession = noop, confirmSwitch }: P
   useEffect(() => {
     setEdit(null);
     setPanel(null);
+    setReviewing(null);
   }, [pageId]);
 
   if (isPending) {
@@ -290,6 +298,21 @@ export function WikiPageView({ pageId, onCloseSession = noop, confirmSwitch }: P
         </p>
       </header>
 
+      {live && pendingSuggestion && (
+        <Alert aria-label="A suggested update is waiting for review">
+          <SparklesIcon aria-hidden="true" />
+          <AlertTitle>A suggested update is waiting for review</AlertTitle>
+          <AlertDescription className="flex flex-wrap items-center gap-x-3 gap-y-2">
+            {pendingSuggestion.rationale && (
+              <span className="break-words">{pendingSuggestion.rationale}</span>
+            )}
+            <Button size="sm" variant="outline" onClick={() => setReviewing(pendingSuggestion.id)}>
+              Review suggestion
+            </Button>
+          </AlertDescription>
+        </Alert>
+      )}
+
       {!edit && (
         <div className="flex flex-wrap gap-2">
           {live && (
@@ -391,6 +414,13 @@ export function WikiPageView({ pageId, onCloseSession = noop, confirmSwitch }: P
       {live && panel === 'split' && (
         <WikiSplitDialog page={page} open onOpenChange={(o) => setPanel(o ? 'split' : null)} />
       )}
+      <WikiSuggestionSheet
+        suggestionId={reviewing}
+        open={reviewing != null}
+        onOpenChange={(o) => {
+          if (!o) setReviewing(null);
+        }}
+      />
       {confirmElement}
     </Frame>
   );
