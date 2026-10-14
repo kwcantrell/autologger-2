@@ -73,13 +73,14 @@
   - a thrown port error returns "Tool failed.".
   Then implement `wikiTools.ts` and the `TOOL_BUILDERS` entries. In `sdkTurn.ts`, add `'wiki'` and its tool set (D7 category 2). Verified by the tests, the ai-runtime suite and `sdkSafety.repo.test.ts`.
   Evidence: `swa-4.3-red.log`: before `wikiTools.ts`, `Error: Cannot find module './wikiTools'` → `Test Files 1 failed`; `swa-4.3-red-sdkTurn.log`: with the wiki kind added to "each turn kind gets exactly its tool set" (D7 category 2), `AssertionError: expected { chat: [ …(3) ], …(2) } to deeply equal { chat: [ …(3) ], …(3) }` → `Tests 1 failed`. `swa-4.3-green.log`: wikiTools, sdkTurn, sdkSafety.repo → `Tests 106 passed (106)` (wikiTools 45); ai-runtime suite `Tests 305 passed (305)` (260 at baseline + 45); server unit `482 passed | 5 skipped` (promiseHygiene.repo green after the token memo became a wrapper object); `typecheck rc=0`.
-- [ ] 4.4 Test first: write `packages/ai-runtime/src/wikiGenerate.test.ts`:
+- [x] 4.4 Test first: write `packages/ai-runtime/src/wikiGenerate.test.ts`:
   - with the fake LLM on the AI SDK route: a run that pages the transcript and proposes two pages returns both proposals, `ok` and full coverage; a capped run and a provider error return not-ok;
   - "A realistic run fits the bounds": a four-page transcript, 20 reads and 20 proposals finish within the default wiki step cap;
   - the wiki turn's 300-call hard cap ends the run as failed;
   - with the fake CLI: the allowlist is exactly the four wiki tools, and `--max-budget-usd` and the timeout come from the options; a chat turn's MCP server doesn't register the wiki tools, so a call to one runs nothing ("Chat turns cannot use the wiki tools");
   - the system prompt names transcript, titles, aliases, bodies and suggestion text as untrusted data, and states the timecode-to-seconds rule.
   Then implement `wikiGenerate.ts`. Verified by the tests.
+  Evidence: `swa-4.4-red.log`: before `wikiGenerate.ts`, `Error: Cannot find module '/src/wikiGenerate'` → `Test Files 1 failed`. `swa-4.4-green.log`: `npx vitest run src/wikiGenerate.test.ts` → `Tests 11 passed (11)` (two-proposal run ok with `{totalPages: 1, servedPages: 1}`; capped and provider-error runs not ok with no proposals; the realistic run: 4 transcript pages, 20 reads, 20 proposals in 26 steps under the default 80; the 300-call cap ends as `breach`/`tool-calls`; CLI argv `--allowedTools` the four wiki tools, `--max-budget-usd 2.5`, `timeoutMs: 12345`; a chat turn's MCP server lists only the chat tools and a wiki tool call runs nothing; the prompt's untrusted-data and timecode lines); ai-runtime suite `Tests 316 passed (316)`; server unit `482 passed | 5 skipped`; `typecheck rc=0`.
 
 ## 5. API
 
