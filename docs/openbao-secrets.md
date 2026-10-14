@@ -156,6 +156,12 @@ Other rules:
   back to the default. A turn's response bytes are capped at steps × output tokens × 400, from
   these validated values. The caller's own provider key pays, so these are per-turn caps, not a
   deployment-wide ceiling.
+- **The wiki update bounds are optional** (show-wiki-ai). `WIKI_GENERATE_TIMEOUT_SEC` (default
+  900) bounds one wiki update on both routes, and `WIKI_GENERATE_MAX_BUDGET_USD` (default 5.0) is
+  its Claude CLI cost ceiling. On the AI SDK route, `WIKI_GENERATE_MAX_STEPS` (default 80, valid
+  1–200) and `WIKI_GENERATE_MAX_TOKENS` (default 6000000) cap its model steps and tokens, with
+  `GENERATE_MAX_OUTPUT_TOKENS` per step. Anything invalid falls back to the default. A run that
+  reaches a bound fails and stores nothing.
 - **Never reuse prod secrets in dev or stage.** Use separate, low-limit keys and separate OAuth
   clients.
 - **Ports are set in OpenBao.** `DEV_PORT=9000 make dev-up` does not override them, because the

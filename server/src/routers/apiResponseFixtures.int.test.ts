@@ -26,7 +26,8 @@
 
 import { describe, expect, it, vi } from 'vitest';
 import { expectCapturedResponse } from '../test/apiFixtures';
-import { anonApp, app, env, envWith } from '../test/harness';
+import { answer, callTools, type FakeLlm, startFakeLlm } from '../test/fakeLlm';
+import { anonApp, app, defaultUser, env, envWith } from '../test/harness';
 import {
   adminHeader,
   catalogFor,
@@ -38,7 +39,9 @@ import {
   seedUser,
   testDb,
 } from '../test/helpers';
+import { saveSdkCredential } from '../test/llmRoutes';
 import { liveLeaseOfAnotherProcess } from '../test/runLeases';
+import { harnessHub } from '../test/session/sessionRows';
 
 const JSON_HEADERS = { 'content-type': 'application/json' };
 
@@ -1801,5 +1804,232 @@ describe('show wiki', () => {
       res,
     );
     expect(body).toMatchObject({ page: { revision: 2 }, new_page: { revision: 1, kind: 'bit' } });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Wiki suggestions (show-wiki-ai task 5.2, design D5, D7 category 3): one capture per suggestion
+// route, plus the version-conflict branch of accept and the already-resolved 409. The default
+// member (an admin of the seeded team) writes and reviews, so every `*_by_name` is "Default User".
+// `wiki/generate` runs on the AI SDK route against the local fake provider. `.ts` fixtures: `kind`
+// and `status` are string-literal unions.
+// ---------------------------------------------------------------------------
+
+describe('wiki suggestions', () => {
+  async function send(method: string, path: string, body?: unknown, on = env): Promise<Response> {
+    return app.request(
+      path,
+      body === undefined
+        ? { method }
+        : { method, headers: JSON_HEADERS, body: JSON.stringify(body) },
+      { ...on },
+    );
+  }
+
+  /** A show with a person page (revision 1), a pending edit of it, and a pending new topic page,
+   * stored as two runs of the default member, oldest first. */
+  async function seedSuggestions() {
+    const studioId = await seedMemberStudio();
+    const showId = await seedShow({ studioId, name: 'Wiki Show', code: 'WS' });
+    const sessionId = await seedSession({ showId, episode: '003', title: 'WS - 3' });
+    const created = await send('POST', `/api/shows/${showId}/wiki/pages`, {
+      kind: 'person',
+      title: 'Christina Ramos',
+      body_md: 'Co-host.',
+      aliases: ['Tina'],
+    });
+    expect(created.status).toBe(201);
+    const page = (await created.json()) as { id: string };
+    const wiki = catalogFor().forUser((await defaultUser()).id).wiki;
+    const [edit] = await wiki.saveRun(showId, sessionId, crypto.randomUUID(), [
+      {
+        target: { type: 'page', pageId: page.id, baseRevision: 1 },
+        kind: 'person',
+        title: 'Christina Ramos',
+        aliases: ['Tina'],
+        bodyMd: `Co-host. [She opens the show](cite:${sessionId}@12).`,
+        rationale: 'She opens this session.',
+      },
+    ]);
+    await new Promise((r) => setTimeout(r, 5));
+    const [fresh] = await wiki.saveRun(showId, sessionId, crypto.randomUUID(), [
+      {
+        target: { type: 'new' },
+        kind: 'topic',
+        title: 'Cold opens',
+        aliases: ['Openers'],
+        bodyMd: 'A running list.',
+        rationale: 'A recurring segment.',
+      },
+    ]);
+    if (!edit || !fresh) throw new Error('seeding the suggestions failed');
+    return { showId, sessionId, page, edit, fresh };
+  }
+
+  it('GET /api/shows/:showId/wiki/suggestions matches the captured fixture', async () => {
+    const { showId } = await seedSuggestions();
+    const res = await send('GET', `/api/shows/${showId}/wiki/suggestions`);
+    const body = await expectCapturedResponse(
+      {
+        name: 'wikiSuggestionList',
+        endpoint: 'GET /api/shows/:showId/wiki/suggestions',
+        format: 'ts',
+      },
+      res,
+    );
+    expect(body).toMatchObject({ truncated: false });
+    expect(
+      (body as { suggestions: Array<{ title: string }> }).suggestions.map((x) => x.title),
+    ).toEqual(['Cold opens', 'Christina Ramos']);
+  });
+
+  it('GET /api/wiki/suggestions/:suggestionId matches the captured fixture', async () => {
+    const { edit } = await seedSuggestions();
+    const res = await send('GET', `/api/wiki/suggestions/${edit.id}`);
+    const body = await expectCapturedResponse(
+      { name: 'wikiSuggestion', endpoint: 'GET /api/wiki/suggestions/:suggestionId', format: 'ts' },
+      res,
+    );
+    expect(body).toMatchObject({ status: 'pending', base_revision: 1, stale: false });
+  });
+
+  it('POST /api/wiki/suggestions/:suggestionId/accept (existing page, 200) matches the captured fixture', async () => {
+    const { edit } = await seedSuggestions();
+    const res = await send('POST', `/api/wiki/suggestions/${edit.id}/accept`, {
+      expected_revision: 1,
+    });
+    const body = await expectCapturedResponse(
+      {
+        name: 'wikiSuggestionAccept',
+        endpoint: 'POST /api/wiki/suggestions/:suggestionId/accept',
+        format: 'ts',
+      },
+      res,
+    );
+    expect(body).toMatchObject({
+      page: { revision: 2 },
+      suggestion: { status: 'accepted', resolved_revision: 2 },
+    });
+  });
+
+  it('POST /api/wiki/suggestions/:suggestionId/accept (new page, 201) matches the captured fixture', async () => {
+    const { fresh } = await seedSuggestions();
+    const res = await send('POST', `/api/wiki/suggestions/${fresh.id}/accept`, {});
+    const body = await expectCapturedResponse(
+      {
+        name: 'wikiSuggestionAcceptCreate',
+        endpoint: 'POST /api/wiki/suggestions/:suggestionId/accept (new page)',
+        format: 'ts',
+        status: 201,
+      },
+      res,
+    );
+    expect(body).toMatchObject({
+      page: { kind: 'topic', revision: 1 },
+      suggestion: { status: 'accepted', resolved_revision: 1 },
+    });
+  });
+
+  it('POST /api/wiki/suggestions/:suggestionId/accept with a stale revision (409) matches the captured fixture', async () => {
+    const { page, edit } = await seedSuggestions();
+    const bumped = await send('PUT', `/api/wiki/pages/${page.id}`, {
+      expected_revision: 1,
+      body_md: 'Co-host and producer.',
+    });
+    expect(bumped.status).toBe(200);
+    const res = await send('POST', `/api/wiki/suggestions/${edit.id}/accept`, {
+      expected_revision: 1,
+    });
+    const body = await expectCapturedResponse(
+      {
+        name: 'wikiSuggestionAcceptConflict',
+        endpoint: 'POST /api/wiki/suggestions/:suggestionId/accept (stale revision)',
+        format: 'ts',
+        status: 409,
+      },
+      res,
+    );
+    expect(body).toMatchObject({ detail: 'Version conflict.', current: { revision: 2 } });
+  });
+
+  it('POST /api/wiki/suggestions/:suggestionId/dismiss matches the captured fixture', async () => {
+    const { fresh } = await seedSuggestions();
+    const res = await send('POST', `/api/wiki/suggestions/${fresh.id}/dismiss`);
+    const body = await expectCapturedResponse(
+      {
+        name: 'wikiSuggestionDismiss',
+        endpoint: 'POST /api/wiki/suggestions/:suggestionId/dismiss',
+        format: 'ts',
+      },
+      res,
+    );
+    expect(body).toMatchObject({ status: 'dismissed', resolved_by_name: 'Default User' });
+  });
+
+  it('POST /api/wiki/suggestions/:suggestionId/dismiss when already resolved (409) matches the captured fixture', async () => {
+    const { fresh } = await seedSuggestions();
+    expect((await send('POST', `/api/wiki/suggestions/${fresh.id}/dismiss`)).status).toBe(200);
+    const res = await send('POST', `/api/wiki/suggestions/${fresh.id}/dismiss`);
+    const body = await expectCapturedResponse(
+      {
+        name: 'wikiSuggestionResolved',
+        endpoint: 'POST /api/wiki/suggestions/:suggestionId/dismiss (already resolved)',
+        format: 'ts',
+        status: 409,
+      },
+      res,
+    );
+    expect(body).toEqual({ detail: 'Suggestion already resolved.', status: 'dismissed' });
+  });
+
+  it('POST /api/sessions/:sessionId/wiki/generate matches the captured fixture', async () => {
+    const studioId = await seedMemberStudio();
+    const showId = await seedShow({ studioId, name: 'Wiki Show', code: 'WS' });
+    const sessionId = await seedSession({ showId, episode: '003', title: 'WS - 3' });
+    const hub = await harnessHub(sessionId);
+    for (const word of ['She', 'opens', 'the', 'show']) {
+      await hub.insertTranscriptWord({ session_time: '00:00:12:00', speaker: 'Host', word });
+    }
+    let llm: FakeLlm | null = null;
+    try {
+      llm = await startFakeLlm((n) =>
+        n === 1
+          ? callTools(1, [{ name: 'get_transcript_words', args: { page: 0 } }])
+          : n === 2
+            ? callTools(2, [
+                {
+                  name: 'propose_page',
+                  args: {
+                    kind: 'person',
+                    title: 'Christina Ramos',
+                    aliases: ['Tina'],
+                    body_md: `Co-host. [She opens the show](cite:${sessionId}@12).`,
+                    rationale: 'She opens this session.',
+                  },
+                },
+              ])
+            : answer('done'),
+      );
+      await saveSdkCredential(llm.baseURL);
+      const res = await send(
+        'POST',
+        `/api/sessions/${sessionId}/wiki/generate`,
+        undefined,
+        envWith({ HOST: '127.0.0.1' }),
+      );
+      const body = await expectCapturedResponse(
+        {
+          name: 'wikiSuggestionGenerate',
+          endpoint: 'POST /api/sessions/:sessionId/wiki/generate',
+          format: 'ts',
+        },
+        res,
+      );
+      expect(body).toMatchObject({
+        suggestions: [{ status: 'pending', page_id: null, kind: 'person' }],
+      });
+    } finally {
+      await llm?.close();
+    }
   });
 });
