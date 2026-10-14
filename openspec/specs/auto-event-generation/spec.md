@@ -371,9 +371,10 @@ T**, and generated events sort among themselves in timecode order.
   continues
 
 ### Requirement: Generation-density transcript rendering
-For a generation-density turn — an event-generation run or a topic-generation one-shot
+For a generation-density turn — an event-generation run, a topic-generation one-shot
 (the latter's use governed by `topic-generation`'s "One-shot transcript delivery is
-paged, complete, and snapshot-stable") — `get_transcript_words` SHALL render the
+paged, complete, and snapshot-stable") or a wiki-generation turn (governed by
+`wiki-generation`'s "The wiki turn and its tools") — `get_transcript_words` SHALL render the
 transcript with
 timecode anchors at a bounded interval — a new anchored line at least at every speaker
 change AND whenever the current line reaches a bounded word count (small enough that
