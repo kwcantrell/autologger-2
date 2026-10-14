@@ -74,6 +74,7 @@ describe('contentTypeForFamily', () => {
     expect(contentTypeForFamily('aac')).toBe('audio/mp4');
     expect(contentTypeForFamily('pcm')).toBe('audio/wav');
     expect(contentTypeForFamily('mp3')).toBe('audio/mpeg');
+    expect(contentTypeForFamily('flac')).toBe('audio/flac');
   });
 });
 

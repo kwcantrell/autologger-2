@@ -49,7 +49,7 @@ export function useWaveforms(
   sessionId: string,
   clips: AudioClipLite[],
   totalSec: number,
-): { mergedPeaks: Float32Array | null; isDecoding: boolean } {
+): { mergedPeaks: Float32Array | null; isDecoding: boolean; unavailable: boolean } {
   const { data: audioData } = useAudioSegments(sessionId || null);
   const upload = useUploadWaveform(sessionId);
 
@@ -70,6 +70,21 @@ export function useWaveforms(
   // so synchronous reads always see the latest value without waiting for a commit.
   const [mergedPeaks, setMergedPeaks] = useState<Float32Array | null>(null);
   const [isDecoding, setIsDecoding] = useState(false);
+  // Segments whose browser decode failed or was skipped (e.g. over the size cap). Never retried
+  // by this hook (a layout change must not re-download them); cleared when server peaks arrive.
+  const failedIdsRef = useRef<Set<string>>(new Set());
+  const [unavailable, setUnavailable] = useState(false);
+  const refreshUnavailable = useCallback((): void => {
+    const map = peaksByIdRef.current;
+    const lay = layoutRef.current?.clips ?? [];
+    setUnavailable(
+      lay.some((c) => {
+        if (!c.segmentId || !failedIdsRef.current.has(c.segmentId)) return false;
+        const p = map.get(c.segmentId);
+        return !(p && p.length > 0);
+      }),
+    );
+  }, []);
   const publishMerged = useCallback((peaks: Float32Array | null): void => {
     mergedRef.current = peaks;
     setMergedPeaks(peaks);
@@ -99,12 +114,19 @@ export function useWaveforms(
       map.set(id, remapWaveformPeaksDbEnvelope(arr, oldFloor, WF_DB_FLOOR));
       changed = true;
     }
+    if (changed) {
+      for (const id of map.keys()) {
+        const p = map.get(id);
+        if (p && p.length > 0) failedIdsRef.current.delete(id);
+      }
+      refreshUnavailable();
+    }
     if (changed && layoutRef.current) {
       const { clips, totalSec } = layoutRef.current;
       publishMerged(mergeAudioClipsIntoTimelinePeaks(totalSec, clips, map));
       mergedAtTotalSecRef.current = totalSec;
     }
-  }, [audioData, publishMerged]);
+  }, [audioData, publishMerged, refreshUnavailable]);
 
   // Ingest clip layout changes pushed from useAudioClips. Re-merges the cached
   // peaks and kicks off decodes for any new clip whose segment isn't cached yet.
@@ -156,6 +178,8 @@ export function useWaveforms(
       for (const { id, peaks } of results) {
         if (!id) continue;
         map.set(id, peaks);
+        if (peaks && peaks.length > 0) failedIdsRef.current.delete(id);
+        else failedIdsRef.current.add(id);
         if (peaks && peaks.length >= 8) {
           uploadRef.current
             .mutateAsync({ segmentId: id, body: { peaks: Array.from(peaks, (x) => Number(x)) } })
@@ -165,6 +189,7 @@ export function useWaveforms(
       if (gen !== decodeGenRef.current) return;
       if (layoutRef.current?.fp !== layoutFp) return;
       setIsDecoding(false);
+      refreshUnavailable();
       const totalAtMerge = layoutRef.current.totalSec;
       publishMerged(mergeAudioClipsIntoTimelinePeaks(totalAtMerge, layoutRef.current.clips, map));
       mergedAtTotalSecRef.current = totalAtMerge;
@@ -202,6 +227,7 @@ export function useWaveforms(
     mergedAtTotalSecRef.current = totalSec;
     const pending = clips.filter((c) => {
       if (!c.segmentId || !c.url || c.missingAudio) return false;
+      if (failedIdsRef.current.has(c.segmentId)) return false;
       const cached = map.get(c.segmentId);
       return !(cached && cached.length > 0);
     });
@@ -214,7 +240,7 @@ export function useWaveforms(
     } else {
       setIsDecoding(false);
     }
-  }, [clips, totalSec, publishMerged]);
+  }, [clips, totalSec, publishMerged, refreshUnavailable]);
 
   // Reset cache + layout on session switch.
   // biome-ignore lint/correctness/useExhaustiveDependencies: intentional reset
@@ -249,6 +275,8 @@ export function useWaveforms(
       newMap.set(id, remapWaveformPeaksDbEnvelope(arr, oldFloor, WF_DB_FLOOR));
     }
     peaksByIdRef.current = newMap;
+    failedIdsRef.current = new Set();
+    setUnavailable(false);
     layoutRef.current = null;
     publishMerged(null);
     setIsDecoding(false);
@@ -256,5 +284,5 @@ export function useWaveforms(
     decodeGenRef.current += 1;
   }, [sessionId]);
 
-  return { mergedPeaks, isDecoding };
+  return { mergedPeaks, isDecoding, unavailable };
 }

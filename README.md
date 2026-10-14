@@ -1571,6 +1571,127 @@ sudo du -sb "$VOL/blobs/audio" "$BVOL/audio"
 
 Then start `api` again and play an old and a new segment.
 
+### Waveform peaks backfill
+
+The timeline waveform of a segment comes from `waveform_peaks_json`. When it is NULL the browser
+fetches and decodes the whole file and stores the result, which never succeeds for large files
+(imported WAVs of a GB and more, hundreds of MP3s). `server/scripts/backfillWaveforms.ts` computes
+the same peaks offline for every NULL row and writes SQL for you to apply. Run it after an import
+of existing audio (the legacy import, an rsync of blobs) or whenever sessions show no waveform.
+
+- **Same values as the browser.** The peak math is `@autologger/domain`'s `waveformPeaks.ts`,
+  pinned bit for bit to the web's copy (`web/src/shared/utils/waveformDecode.pinning.test.ts`);
+  the bucket count is the browser's rule for a segment decoded on its own (4096 for anything over
+  0.41 s), the floor is -48. ffmpeg decodes at 48 kHz with every channel kept, like an
+  `AudioContext` at 48 kHz; on another rate or decoder the values differ by about 1% (<0.5 dB).
+- **Decoder.** By default ffmpeg runs in the pinned `linuxserver/ffmpeg` image (`docker run --rm
+  --network none`, the blob dir mounted read-only); `--ffmpeg <binary>` uses a local one instead.
+  The app images have no ffmpeg. Decoding streams (each file twice: count, then peaks), so memory
+  stays flat: a 1 GB, one-hour WAV takes about 40 s and 140 MB.
+- **Safe to re-run.** Every `UPDATE` has `... and waveform_peaks_json is null`, the file is one
+  transaction under `ON_ERROR_STOP`, and existing peaks (browser-made, legacy `-72` floors) are never
+  touched. Ids and keys are validated (`audio/<session_id>/<file>`, inside the blob dir) before
+  anything is opened or written.
+- **Report.** One line per segment on stderr: `ok`, `failed` (decode error), `missing` (no blob) or
+  `invalid` (bad id/key); a failure doesn't stop the rest. Exit `0` all filled, `1` any not filled
+  (the SQL still holds the ones that worked), `2` usage.
+- **Parallel.** `--jobs N` (1-64, default 1) decodes N files at once. The SQL is identical for any
+  N: rows keep the export's order. One job runs about 1.2 files a minute on the legacy import's mix.
+
+**Dev (on the VM, from the repo checkout, as a user in the `docker` group; the blob volume's
+mountpoint is root-only, hence `sudo`).**
+
+```bash
+DB=autologger-dev-db-1
+BLOBS=/var/lib/docker/volumes/autologger-dev_dev-blobs/_data
+W=$(mktemp -d)
+# 1. export the segments that have no peaks
+docker exec -i "$DB" psql -X -U postgres -c "$(npx tsx server/scripts/backfillWaveforms.ts --print-query)" > "$W/segments.csv"
+# 2. compute (pulls the pinned ffmpeg image on first use); --jobs decodes several files at once
+#    (one ffmpeg each; about a core per job, so leave headroom on a host serving traffic)
+sudo env "PATH=$PATH" npx tsx server/scripts/backfillWaveforms.ts \
+    --blob-dir "$BLOBS" --segments "$W/segments.csv" --out "$W/updates.sql" --jobs 8
+# 3. apply, then check what is left
+docker exec -i "$DB" psql -X -U postgres -v ON_ERROR_STOP=1 < "$W/updates.sql"
+docker exec -i "$DB" psql -X -U postgres -Atc \
+    "select count(*) filter (where waveform_peaks_json is null), count(*) from catalog.session_audio_segments"
+```
+
+**Stage and prod.** The same three steps on the host with the blob volume, with `DB` and `BLOBS`
+for that stack (`autologger-stage-db-1` and `autologger-stage_…-blobs` for stage, `autologger-db-1`
+and `autologger_autologger-blobs` for prod; `docker volume inspect -f '{{.Mountpoint}}' <volume>`).
+The api image ships no `server/scripts`, so step 2 needs a checkout of this repo with `npm ci`
+and Node 22+ on that host. Without one, copy the listed blobs (only the keys in `segments.csv`) to
+a machine that has it, run step 2 there with `--blob-dir` pointing at the copy, and apply the SQL on
+the target host: the updates are keyed by `(session_id, id)` only. The app needs no restart; an open
+session shows the waveform after a reload.
+
+### Convert WAV blobs to FLAC
+
+Imported 16- and 24-bit PCM WAVs (the legacy data has 22 of them, 22.7 GB) take about a third of the space,
+or less, as FLAC, with exactly the same samples. The app plays, draws and transcribes FLAC like
+any segment (`audio/flac`; transcription concatenates FLAC by frame copy).
+`server/scripts/convertWavToFlac.ts` writes a FLAC next to each WAV and SQL that points the row at
+it; a separate cleanup removes the WAVs once nothing references them.
+
+- **Lossless, checked.** ffmpeg (same pinned image and `--ffmpeg` choice as the waveform backfill)
+  encodes at `-compression_level 8` with the WAV's rate, channels and bit depth. A FLAC is only
+  accepted when both files decode to the same raw PCM (MD5 and length, in the WAV's sample format)
+  and its STREAMINFO has the WAV's parameters and sample count; otherwise it is deleted and the
+  segment reported `failed`. Only integer 16/24-bit PCM is converted (probed from the header);
+  anything else is `skipped` and stays as it is. **32-bit float WAVs** (4 in the legacy data,
+  3.86 GB) are reported `skipped … float PCM: FLAC is integer-only, kept as WAV`: FLAC holds only
+  integers, so a float WAV cannot become FLAC without rounding its samples. They keep working as
+  WAV; nothing to do. The summary line gives the size of everything skipped.
+- **Nothing is lost.** The convert step never touches a WAV. The FLAC is written to
+  `BLOB_DIR/.flac-tmp`, gets the WAV's mode (and owner when run as root, so the app's uid 1000 keeps
+  its access) and is linked into place as `audio/<sid>/<stem>.flac`, never over an existing file;
+  the temp dir is removed afterwards. An existing FLAC is verified and reused, or reported and left
+  alone. Each `UPDATE` sets `r2_key` and `mime_type = 'audio/flac'` only while the row still has the
+  WAV key (one transaction, `ON_ERROR_STOP`), so a re-run or stale file changes nothing. Waveform
+  peaks stay (same PCM).
+- **Disk.** The FLACs need space while the WAVs still exist (about a third of the WAVs' size). Each
+  file is only started when the filesystem keeps `--min-free-gb` (default 2) free after reserving the
+  WAV's size; otherwise it is `failed` with the numbers. On a tight disk convert in batches with
+  `--limit N` (the first N rows), apply, clean up, export again.
+- **Report and exit.** One line per segment: `ok`/`reused` (sizes, ratio, format, duration, PCM
+  MD5), `failed`, `missing`, `invalid`, `skipped`. Exit `0` all converted, `1` otherwise (the SQL
+  still holds the converted ones), `2` usage. `--jobs N` as for the backfill (each job runs three
+  ffmpeg at a time: encode, then both decodes).
+- **Cleanup** (`--cleanup`) reads a fresh export of every referenced key
+  (`--print-referenced-query`). It lists a WAV only when its `.flac` sibling is a regular file and
+  referenced and the WAV is not referenced; symlinks are ignored. Dry run by default; `--delete`
+  re-verifies each pair and unlinks the WAV. Sync-from-disk skips a file whose segment id already
+  has a row, so a leftover WAV never becomes a second segment.
+
+**Dev (on the VM, from the repo checkout; `sudo` because the volume is root-only and so the FLACs
+get uid 1000).**
+
+```bash
+DB=autologger-dev-db-1
+BLOBS=/var/lib/docker/volumes/autologger-dev_dev-blobs/_data
+W=$(mktemp -d)
+# 1. export the WAV rows
+docker exec -i "$DB" psql -X -U postgres -c "$(npx tsx server/scripts/convertWavToFlac.ts --print-query)" > "$W/wavs.csv"
+# 2. convert and verify (pulls the pinned ffmpeg image on first use); add --limit N on a tight disk
+sudo env "PATH=$PATH" npx tsx server/scripts/convertWavToFlac.ts \
+    --blob-dir "$BLOBS" --segments "$W/wavs.csv" --out "$W/flac.sql" --jobs 4
+# 3. apply
+docker exec -i "$DB" psql -X -U postgres -v ON_ERROR_STOP=1 < "$W/flac.sql"
+# 4. check: open a converted session, play and seek; regenerate its transcript
+docker exec -i "$DB" psql -X -U postgres -Atc \
+    "select mime_type, count(*) from catalog.session_audio_segments group by 1 order by 1"
+# 5. clean up: dry run, then --delete
+docker exec -i "$DB" psql -X -U postgres -c "$(npx tsx server/scripts/convertWavToFlac.ts --print-referenced-query)" > "$W/referenced.csv"
+sudo env "PATH=$PATH" npx tsx server/scripts/convertWavToFlac.ts --cleanup --blob-dir "$BLOBS" --referenced "$W/referenced.csv"
+sudo env "PATH=$PATH" npx tsx server/scripts/convertWavToFlac.ts --cleanup --blob-dir "$BLOBS" --referenced "$W/referenced.csv" --delete
+```
+
+**Stage and prod.** The same steps with that stack's `DB` and `BLOBS` (as for the backfill), and a
+`pg_dump -Fc` (README "Backup") after step 3 and before step 5: a dump from before the conversion
+references WAVs that the cleanup deletes. Export `referenced.csv` right before the cleanup, never
+reuse an old one. The app needs no restart.
+
 ### Backup
 
 This section describes prod, which runs `main` (catalog and session content in SQLite files)
@@ -1733,6 +1854,32 @@ Downtime ends after (i). **Verify from outside:** the OAuth round trip; Companio
 connects; a forged `X-Forwarded-For` is not adopted; and a **Google sign-in through the public
 origin** (the first place the callback and the `Secure` session cookie can be proven). Users
 who have not signed in yet are `PENDING`; re-run the membership bootstrap after they do.
+
+### Importing legacy data (ADR 0021 slice 11)
+
+The pre-Supabase SQLite files (`catalog.db`, `sessions/<id>.db`) are not read by the server. One
+team at a time moves into Postgres with `server/scripts/importLegacy.ts`. It runs on the host
+(the `api` image ships no `server/scripts`), reads the files read-only, and emits:
+- one SQL transaction for `psql` as `postgres`, fed non-interactively, never pasted
+  (`docker exec -i <stack>-db-1 psql -X -U postgres < import.sql`);
+- a parity check that compares every table's row count and content hash, and changes nothing;
+- the list of audio files the team references (with sizes, and optionally sha256), for an
+  additive `rsync --files-from` into the blob volume.
+
+```bash
+npx tsx server/scripts/importLegacy.ts <DATA_DIR> --studio <team id> --out import.sql \
+  --parity parity.sql --manifest manifest.txt --blob-sizes sizes.txt [--sha256 sha256.txt] \
+  [--replace | --replace-live] [--allow-signed-in-users]
+```
+
+It imports the team, its shows, its `studio_config` and every session with all its rows. It
+never imports users, memberships, prefs, invites or KV: the bootstrap owner claims the imported
+team at sign-in. It refuses a source whose `_migrations` isn't exactly `0001`-`0006`, and, at
+apply time, a team, show or session id that already exists, unless `--replace` is passed
+(which still refuses a team with live data: app-created sessions, memberships, grants, leases,
+…; `--replace-live` deletes those too).
+[docs/legacy-import.md](docs/legacy-import.md) is the rehearse, parity, cutover and rollback
+runbook.
 
 ### Membership bootstrap (re-runnable)
 

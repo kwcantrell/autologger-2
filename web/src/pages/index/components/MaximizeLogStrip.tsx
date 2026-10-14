@@ -20,6 +20,7 @@ interface Props {
   totalSec: number;
   mergedPeaks: Float32Array | null;
   isWaveformDecoding?: boolean;
+  waveformUnavailable?: boolean;
   audioPlaybackSec: number | null;
   onSeekAudio: (sec: number) => void;
   onAudioRecord: () => void;
@@ -58,6 +59,7 @@ export function MaximizeLogStrip({
   totalSec,
   mergedPeaks,
   isWaveformDecoding,
+  waveformUnavailable,
   audioPlaybackSec,
   onSeekAudio,
   onAudioRecord,
@@ -267,6 +269,7 @@ export function MaximizeLogStrip({
         totalSec={totalSec}
         mergedPeaks={mergedPeaks}
         isWaveformDecoding={isWaveformDecoding}
+        waveformUnavailable={waveformUnavailable}
         audioPlaybackSec={audioPlaybackSec}
         onSeekAudio={onSeekAudio}
         stripOnly

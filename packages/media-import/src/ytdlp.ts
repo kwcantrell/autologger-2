@@ -106,6 +106,7 @@ const CONTENT_TYPE_BY_EXT: Record<string, string> = {
   wav: 'audio/wav',
   m4a: 'audio/mp4',
   mp4: 'audio/mp4',
+  flac: 'audio/flac',
 };
 
 /** Env vars whitelisted onto the child beyond HOME + the resolved-binary-dir

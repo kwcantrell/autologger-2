@@ -13,14 +13,21 @@
 //                             Safari MediaRecorder output (ffmpeg -movflags
 //                             frag_keyframe+empty_moov+default_base_moof)
 //   seg-corrupt.bin         — 256 random bytes, no valid container at all
+//   seg-flac.flac / seg-flac2.flac — FLAC, 48kHz mono s16 (0.5s + 0.4s): the
+//                             lossless storage format WAV blobs are converted to
+//   seg-flac-mismatch.flac  — FLAC, 44.1kHz stereo s16 (0.3s): param change
+//   seg-flac-24bit.flac     — FLAC, 48kHz mono 24-bit (0.2s): bit-depth change only
+//   seg-flac-12k.flac / seg-flac-64k.flac — FLAC at 12/64 kHz (0.3s): frame headers use the
+//                             "rate in kHz" code mediabunny 1.50.8 misreads (no packets)
 
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ALL_FORMATS, FilePathSource, Input } from 'mediabunny';
+import { ALL_FORMATS, EncodedPacketSink, FilePathSource, Input } from 'mediabunny';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { mergeAudioSegments } from './audioMerge';
+import { mergeAudioSegments, partitionRuns } from './audioMerge';
 import { TRANSCRIPTION_FIXTURES_DIR } from './fixturesDir';
+import { parseFlacFrameHeader } from './flacFrames';
 
 const fixtures = join(TRANSCRIPTION_FIXTURES_DIR, 'audio');
 const seg1 = join(fixtures, 'seg1.webm');
@@ -32,6 +39,12 @@ const aac1 = join(fixtures, 'seg-aac.m4a');
 const aac2 = join(fixtures, 'seg-aac2.m4a');
 const mp3 = join(fixtures, 'deepgram-enrichment-source.mp3');
 const corrupt = join(fixtures, 'seg-corrupt.bin');
+const flac1 = join(fixtures, 'seg-flac.flac');
+const flac2 = join(fixtures, 'seg-flac2.flac');
+const flacMismatch = join(fixtures, 'seg-flac-mismatch.flac');
+const flac24 = join(fixtures, 'seg-flac-24bit.flac');
+const flac12k = join(fixtures, 'seg-flac-12k.flac');
+const flac64k = join(fixtures, 'seg-flac-64k.flac');
 
 let outDir: string;
 beforeAll(async () => {
@@ -48,7 +61,6 @@ async function readBack(path: string) {
     if (track === null) throw new Error(`no primary audio track in '${path}'`);
     const duration = await track.computeDuration();
     let packets = 0;
-    const { EncodedPacketSink } = await import('mediabunny');
     const sink = new EncodedPacketSink(track);
     for await (const _ of sink.packets()) packets += 1;
     return { codec: track.codec, duration, packets };
@@ -191,6 +203,143 @@ describe('mergeAudioSegments', () => {
     expect(groups[0].durationSeconds).toBeGreaterThan(0);
     expect(groups[0].segments).toEqual([
       { path: mp3, offsetSeconds: 0, durationSeconds: groups[0].durationSeconds },
+    ]);
+  });
+
+  it('packet-copies FLAC segments into one FLAC file, back-to-back', async () => {
+    const groupOutDir = join(outDir, 'flac');
+    const { groups, skipped } = await mergeAudioSegments([flac1, flac2], groupOutDir);
+
+    expect(skipped).toEqual([]);
+    expect(groups).toHaveLength(1);
+    const [group] = groups;
+    expect(group.family).toBe('flac');
+    expect(group.outPath.endsWith('.flac')).toBe(true);
+
+    const [a, b, merged] = await Promise.all([
+      readBack(flac1),
+      readBack(flac2),
+      readBack(group.outPath),
+    ]);
+    expect(merged.codec).toBe('flac');
+    expect(group.packets).toBe(a.packets + b.packets);
+    expect(merged.packets).toBe(a.packets + b.packets);
+    expect(group.segments.map((s) => s.path)).toEqual([flac1, flac2]);
+    expect(group.segments[1].offsetSeconds).toBeCloseTo(a.duration, 2);
+    expect(group.durationSeconds).toBeCloseTo(a.duration + b.duration, 2);
+    expect(merged.duration).toBeCloseTo(a.duration + b.duration, 2);
+
+    // Conformant stream: variable block size, each frame's sample number follows on.
+    const input = new Input({ formats: ALL_FORMATS, source: new FilePathSource(group.outPath) });
+    try {
+      const track = await input.getPrimaryAudioTrack();
+      if (!track) throw new Error('no track');
+      let expected = 0;
+      for await (const p of new EncodedPacketSink(track).packets()) {
+        const h = parseFlacFrameHeader(p.data);
+        expect(h.variableBlockSize).toBe(true);
+        expect(h.codedNumber).toBe(expected);
+        expected += h.blockSize;
+      }
+      expect(expected).toBe(24_000 + 19_200);
+    } finally {
+      input.dispose();
+    }
+  });
+
+  it('starts a new FLAC group when only the bit depth changes', async () => {
+    const groupOutDir = join(outDir, 'flac-bitdepth');
+    const { groups } = await mergeAudioSegments([flac1, flac24, flac2], groupOutDir);
+    expect(groups.map((g) => g.segments.map((s) => s.path))).toEqual([[flac1], [flac24], [flac2]]);
+  });
+
+  it('starts a new FLAC group on a stream-parameter change, and on a family change', async () => {
+    const groupOutDir = join(outDir, 'flac-mismatch');
+    const { groups, skipped } = await mergeAudioSegments(
+      [flac1, flacMismatch, flac2, wav],
+      groupOutDir,
+    );
+
+    expect(skipped).toEqual([]);
+    expect(groups.map((g) => g.family)).toEqual(['flac', 'flac', 'flac', 'pcm']);
+    expect(groups.map((g) => g.segments.map((s) => s.path))).toEqual([
+      [flac1],
+      [flacMismatch],
+      [flac2],
+      [wav],
+    ]);
+    const mismatch = await readBack(groups[1].outPath);
+    expect(mismatch.codec).toBe('flac');
+    expect(mismatch.duration).toBeCloseTo(0.3, 2);
+  });
+
+  it('copies a FLAC with trailing bytes (ID3v1 tag) as valid frames only', async () => {
+    const dir = join(outDir, 'flac-tag-src');
+    await rm(dir, { recursive: true, force: true });
+    const { mkdir } = await import('node:fs/promises');
+    await mkdir(dir, { recursive: true });
+    const tagged = join(dir, 'tagged.flac');
+    const tag = Buffer.alloc(128);
+    tag.write('TAGtitle', 0);
+    await writeFile(tagged, Buffer.concat([await readFile(flac1), tag]));
+    const padded = join(dir, 'padded.flac');
+    await writeFile(padded, Buffer.concat([await readFile(flac2), Buffer.alloc(300)]));
+
+    const { groups, skipped } = await mergeAudioSegments(
+      [tagged, padded, flac1],
+      join(outDir, 'flac-tag'),
+    );
+    expect(skipped).toEqual([]);
+    expect(groups).toHaveLength(1);
+    const input = new Input({
+      formats: ALL_FORMATS,
+      source: new FilePathSource(groups[0].outPath),
+    });
+    try {
+      const track = await input.getPrimaryAudioTrack();
+      if (!track) throw new Error('no track');
+      let expected = 0;
+      for await (const p of new EncodedPacketSink(track).packets()) {
+        const h = parseFlacFrameHeader(p.data);
+        expect(h.codedNumber).toBe(expected);
+        expected += h.blockSize;
+      }
+      expect(expected).toBe(24_000 + 19_200 + 24_000);
+    } finally {
+      input.dispose();
+    }
+    const bytes = await readFile(groups[0].outPath);
+    expect(bytes.includes(Buffer.from('TAGtitle'))).toBe(false);
+  });
+
+  it('skips FLAC segments the demuxer yields no packets for (12/64 kHz) instead of failing', async () => {
+    const { groups, skipped } = await mergeAudioSegments(
+      [flac12k, flac1, flac64k, flac2],
+      join(outDir, 'flac-12k'),
+    );
+    expect(skipped.map((s) => s.path)).toEqual([flac12k, flac64k]);
+    expect(skipped[0].reason).toMatch(/no audio packets/);
+    expect(groups.map((g) => g.segments.map((s) => s.path))).toEqual([[flac1], [flac2]]);
+  });
+
+  it('starts a new FLAC run before the sample numbers would reach 2^31', () => {
+    const seg = (path: string, totalSamples: number) => ({
+      path,
+      codec: 'flac' as const,
+      family: 'flac' as const,
+      config: { codec: 'flac', sampleRate: 48_000, numberOfChannels: 2 },
+      bitsPerSample: 16,
+      totalSamples,
+    });
+    const runs = partitionRuns([
+      seg('a', 2 ** 30),
+      seg('b', 2 ** 30 - 1),
+      seg('c', 1),
+      seg('d', 5),
+    ]);
+    expect(runs.map((r) => r.map((s) => s.path))).toEqual([
+      ['a', 'b'],
+      ['c', 'd'],
     ]);
   });
 });

@@ -21,7 +21,7 @@ import { fileURLToPath } from 'node:url';
  * Resolved path to this package's fixtures directory (design D4 — the
  * `new URL(..., import.meta.url)` pattern for shipping
  * non-TS assets from a source-only package, applied unchanged). Holds
- * `audio/` (10 committed tiny test-audio files) and
+ * `audio/` (14 committed tiny test-audio files) and
  * `deepgram-enrichment-response.json` (a captured real DeepGram response
  * pinning remap behavior) — read by this package's own audioMerge.test.ts /
  * deepgram.test.ts / transcriptRemap.test.ts and by the staying
