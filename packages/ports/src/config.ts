@@ -78,6 +78,15 @@ export interface Config {
    * failure). */
   EVENT_GENERATE_MAX_INSTRUCTION_BYTES: string;
   EVENT_GENERATE_MAX_INSTRUCTION_ENTRIES: string;
+  /** The wiki update (show-wiki-ai, wiki-generation "Wiki update bounds"): its own bounds, since a
+   * run reads pages as well as the transcript and writes whole pages. The timeout (default 900 s)
+   * bounds both routes; the budget (default 5.0 USD) is the CLI turn's; the steps (default 80,
+   * valid 1-200) and tokens (default 6 000 000) are the AI SDK turn's. Absent, invalid or out of
+   * range gives the defaults. */
+  WIKI_GENERATE_TIMEOUT_SEC?: string;
+  WIKI_GENERATE_MAX_BUDGET_USD?: string;
+  WIKI_GENERATE_MAX_STEPS?: string;
+  WIKI_GENERATE_MAX_TOKENS?: string;
   /** AI v2 dashboards (ai-v2-dashboards). Off by default: unlike the AI chat's
    * implicit gate (any non-blank CLAUDE_CLI_PATH enables it), AI v2 ALSO
    * requires this EXPLICIT flag (spec "Configuration-gated AI v2 endpoints")
