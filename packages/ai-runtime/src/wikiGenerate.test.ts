@@ -69,7 +69,10 @@ function fakePort(pages: WikiToolPageDetail[] = [], sessionId = SESSION) {
     sessionId,
     listPages: async () => {
       note('listPages');
-      return pages.map(({ bodyMd: _b, pending, ...p }) => ({ ...p, pending: pending !== null }));
+      return pages.map(({ bodyMd: _b, pendingSuggestionId, ...p }) => ({
+        ...p,
+        pending: pendingSuggestionId !== null,
+      }));
     },
     listPendingNew: async () => {
       note('listPendingNew');
@@ -79,8 +82,16 @@ function fakePort(pages: WikiToolPageDetail[] = [], sessionId = SESSION) {
       note('readPage');
       return pages.find((p) => p.id === id) ?? null;
     },
-    readPendingNew: async () => {
-      note('readPendingNew');
+    readPending: async () => {
+      note('readPending');
+      return null;
+    },
+    pendingFor: async () => {
+      note('pendingFor');
+      return null;
+    },
+    sessionWords: async () => {
+      note('sessionWords');
       return null;
     },
     sessionPageId: async () => {
@@ -110,7 +121,7 @@ const page = (i: number): WikiToolPageDetail => ({
   aliases: [],
   revision: 1,
   bodyMd: 'Old.',
-  pending: null,
+  pendingSuggestionId: null,
 });
 
 const servers: FakeLlm[] = [];
@@ -452,6 +463,7 @@ describe('the wiki system prompt', () => {
     expect(p).toContain('ENTIRE session transcript');
     expect(p).toContain('list_wiki_pages');
     expect(p).toContain('pending suggestion');
+    expect(p).toContain('suggestion_id');
     expect(p).toContain('session page');
     expect(p).toContain('30,000 characters');
     expect(wikiGenerateMessage('S1')).toContain('S1');

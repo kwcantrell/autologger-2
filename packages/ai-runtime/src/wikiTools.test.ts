@@ -18,10 +18,12 @@ import {
   createWikiTurnState,
   WIKI_LIST_MAX_CHARS,
   WIKI_LIST_MAX_LINES,
+  WIKI_OTHER_SESSIONS_MAX,
+  WIKI_READ_RESULT_MAX_CHARS,
   WIKI_RUN_MAX_TARGETS,
   type WikiSnapshotWord,
   type WikiToolPageDetail,
-  type WikiToolPendingNewDetail,
+  type WikiToolPendingDetail,
   type WikiToolPort,
   type WikiTurnState,
   wikiRunProposals,
@@ -38,7 +40,12 @@ const fold = (s: string) =>
 interface FakePortOptions {
   pages?: WikiToolPageDetail[];
   merged?: Record<string, string>;
-  pendingNew?: WikiToolPendingNewDetail[];
+  /** The show's pending suggestions, for pages (`pageId`) and new pages (`pageId: null`). The fake
+   * holds only what the real port would answer: pending rows of the run's show. */
+  pending?: WikiToolPendingDetail[];
+  /** Words of the show's other sessions, by session id; any other id answers `null` (not a
+   * session of the show). */
+  sessions?: Record<string, WikiSnapshotWord[]>;
   sessionPage?: string | null;
   /** name (folded) → page id holding it. */
   names?: Record<string, string>;
@@ -48,7 +55,10 @@ interface FakePortOptions {
 
 function fakePort(o: FakePortOptions = {}) {
   const calls: string[] = [];
+  /** `sessionWords` and `pendingFor` arguments, in call order. */
+  const args: string[] = [];
   const pages = o.pages ?? [];
+  const pending = o.pending ?? [];
   const maybeThrow = (m: keyof WikiToolPort) => {
     calls.push(m);
     if (o.throwOn === m) throw new Error('SECRET-PORT-ERROR');
@@ -58,24 +68,39 @@ function fakePort(o: FakePortOptions = {}) {
     sessionId: SESSION,
     listPages: async () => {
       maybeThrow('listPages');
-      return pages.map(({ bodyMd: _b, pending, ...p }) => ({ ...p, pending: pending !== null }));
+      return pages.map(({ bodyMd: _b, pendingSuggestionId, ...p }) => ({
+        ...p,
+        pending: pendingSuggestionId !== null,
+      }));
     },
     listPendingNew: async () => {
       maybeThrow('listPendingNew');
-      return (o.pendingNew ?? []).map(({ suggestionId, kind, title }) => ({
-        suggestionId,
-        kind,
-        title,
-      }));
+      return pending
+        .filter((s) => s.pageId === null)
+        .map(({ suggestionId, kind, title }) => ({ suggestionId, kind, title }));
     },
     readPage: async (id) => {
       maybeThrow('readPage');
       if (o.merged?.[id]) return { mergedInto: o.merged[id] };
       return pages.find((p) => p.id === id) ?? null;
     },
-    readPendingNew: async (id) => {
-      maybeThrow('readPendingNew');
-      return (o.pendingNew ?? []).find((s) => s.suggestionId === id) ?? null;
+    readPending: async (id) => {
+      maybeThrow('readPending');
+      return pending.find((s) => s.suggestionId === id) ?? null;
+    },
+    pendingFor: async (target) => {
+      maybeThrow('pendingFor');
+      if ('pageId' in target) {
+        args.push(`pendingFor page:${target.pageId}`);
+        return pending.find((s) => s.pageId === target.pageId) ?? null;
+      }
+      args.push(`pendingFor new:${target.normTitle}`);
+      return pending.find((s) => s.pageId === null && fold(s.title) === target.normTitle) ?? null;
+    },
+    sessionWords: async (sessionId) => {
+      maybeThrow('sessionWords');
+      args.push(`sessionWords ${sessionId}`);
+      return o.sessions?.[sessionId] ?? null;
     },
     sessionPageId: async () => {
       maybeThrow('sessionPageId');
@@ -98,7 +123,7 @@ function fakePort(o: FakePortOptions = {}) {
       return texts.map(fold);
     },
   };
-  return { port, calls };
+  return { port, calls, args };
 }
 
 const word = (w: string, session_time: string, start_sec = 0): WikiSnapshotWord => ({
@@ -143,7 +168,17 @@ const livePage = (over: Partial<WikiToolPageDetail> = {}): WikiToolPageDetail =>
   aliases: ['CR'],
   revision: 3,
   bodyMd: 'Host.',
-  pending: null,
+  pendingSuggestionId: null,
+  ...over,
+});
+
+const pendingSuggestion = (over: Partial<WikiToolPendingDetail> = {}): WikiToolPendingDetail => ({
+  suggestionId: 'sg1',
+  pageId: 'p1',
+  kind: 'person',
+  title: 'Christina Ramos',
+  aliases: ['CR', 'Chris'],
+  bodyMd: 'Host. Earlier unreviewed addition.',
   ...over,
 });
 
@@ -189,11 +224,19 @@ describe('list_wiki_pages', () => {
           title: 'Budget',
           aliases: [],
           revision: 1,
-          pending: { suggestionId: 'sg1', title: 'Budget', aliases: [], bodyMd: 'x' },
+          pendingSuggestionId: 'sg1',
         }),
       ],
-      pendingNew: [
-        { suggestionId: 'sg9', kind: 'bit', title: 'The Duck', aliases: [], bodyMd: 'Quack.' },
+      pending: [
+        pendingSuggestion({ pageId: 'p2', kind: 'topic', title: 'Budget', aliases: [] }),
+        pendingSuggestion({
+          suggestionId: 'sg9',
+          pageId: null,
+          kind: 'bit',
+          title: 'The Duck',
+          aliases: [],
+          bodyMd: 'Quack.',
+        }),
       ],
     });
     const { call } = wikiTools(port);
@@ -220,7 +263,16 @@ describe('list_wiki_pages', () => {
     const { call } = wikiTools(
       fakePort({
         pages,
-        pendingNew: [{ suggestionId: 'sgA', kind: 'topic', title: 'New', aliases: [], bodyMd: '' }],
+        pending: [
+          pendingSuggestion({
+            suggestionId: 'sgA',
+            pageId: null,
+            kind: 'topic',
+            title: 'New',
+            aliases: [],
+            bodyMd: '',
+          }),
+        ],
       }).port,
     );
     const first = (await call('list_wiki_pages')).text.split('\n');
@@ -270,19 +322,11 @@ describe('list_wiki_pages', () => {
 });
 
 describe('read_wiki_page', () => {
-  it('a pending suggestion is carried forward: the page and its pending suggestion body', async () => {
+  it('a pending suggestion is carried forward: the page read gives its id, the suggestion read its body', async () => {
     const { call } = wikiTools(
       fakePort({
-        pages: [
-          livePage({
-            pending: {
-              suggestionId: 'sg1',
-              title: 'Christina Ramos',
-              aliases: ['CR', 'Chris'],
-              bodyMd: 'Host. Earlier unreviewed addition.',
-            },
-          }),
-        ],
+        pages: [livePage({ pendingSuggestionId: 'sg1' })],
+        pending: [pendingSuggestion()],
       }).port,
     );
     const res = await call('read_wiki_page', { page_id: 'p1' });
@@ -290,25 +334,41 @@ describe('read_wiki_page', () => {
     expect(res.text).toContain('page p1 · person · r3');
     expect(res.text).toContain('title: "Christina Ramos"');
     expect(res.text).toContain('aliases: ["CR"]');
-    expect(res.text).toContain('=== page body (5 characters) ===\nHost.\n=== end of page body ===');
     expect(res.text).toContain('pending suggestion sg1');
-    expect(res.text).toContain('aliases: ["CR","Chris"]');
-    expect(res.text).toContain(
+    expect(res.text).toContain('suggestion_id "sg1"');
+    expect(res.text).toContain('=== page body (5 characters) ===\nHost.\n=== end of page body ===');
+    // One body per result: the page read holds only the page's body.
+    expect(res.text).not.toContain('Earlier unreviewed addition');
+    expect(res.text).not.toContain('suggestion body');
+
+    const sg = await call('read_wiki_page', { suggestion_id: 'sg1' });
+    expect(sg.isError).toBe(false);
+    expect(sg.text).toContain('pending suggestion sg1 for page p1 · person');
+    expect(sg.text).toContain('aliases: ["CR","Chris"]');
+    expect(sg.text).toContain(
       '=== suggestion body (34 characters) ===\nHost. Earlier unreviewed addition.\n=== end of suggestion body ===',
     );
+    expect(sg.text).not.toContain('=== page body');
+  });
+
+  it('a page with no pending suggestion names none', async () => {
+    const { call } = wikiTools(fakePort({ pages: [livePage()] }).port);
+    const res = await call('read_wiki_page', { page_id: 'p1' });
+    expect(res.text).not.toContain('pending suggestion');
   });
 
   it('reads a pending new-page suggestion by suggestion_id', async () => {
     const { call } = wikiTools(
       fakePort({
-        pendingNew: [
-          {
+        pending: [
+          pendingSuggestion({
             suggestionId: 'sg9',
+            pageId: null,
             kind: 'bit',
             title: 'The Duck',
             aliases: ['Duck'],
             bodyMd: 'Quack.',
-          },
+          }),
         ],
       }).port,
     );
@@ -318,9 +378,49 @@ describe('read_wiki_page', () => {
     expect(res.text).toContain('title: "The Duck"');
     expect(res.text).toContain('aliases: ["Duck"]');
     expect(res.text).toContain('=== suggestion body (6 characters) ===\nQuack.');
-    expect((await call('read_wiki_page', { suggestion_id: 'nope' })).text).toBe(
-      'Suggestion not found.',
+  });
+
+  it('"Suggestion not found." for another show\'s or a resolved suggestion (the port answers null)', async () => {
+    const { port, calls } = fakePort({ pending: [pendingSuggestion()] });
+    const { call } = wikiTools(port);
+    for (const id of ['other-show-sg', 'resolved-sg']) {
+      expect(await call('read_wiki_page', { suggestion_id: id })).toEqual({
+        text: 'Suggestion not found.',
+        isError: true,
+      });
+    }
+    expect(calls.filter((c) => c === 'readPending')).toHaveLength(2);
+  });
+
+  it(`an adversarial header still keeps the whole result within ${WIKI_READ_RESULT_MAX_CHARS} characters, the cut marked`, async () => {
+    const title = '"'.repeat(200);
+    const aliases = Array.from({ length: 50 }, (_, i) => (i % 2 === 0 ? '"' : '\\').repeat(200));
+    const body = `${'b'.repeat(29_990)}TAIL`;
+    const { call } = wikiTools(
+      fakePort({
+        pages: [livePage({ title, aliases, bodyMd: body, pendingSuggestionId: 'sg1' })],
+        pending: [pendingSuggestion({ title, aliases, bodyMd: body })],
+      }).port,
     );
+    for (const args of [{ page_id: 'p1' }, { suggestion_id: 'sg1' }]) {
+      const res = await call('read_wiki_page', args);
+      expect(res.isError).toBe(false);
+      expect(res.text.length).toBeLessThanOrEqual(WIKI_READ_RESULT_MAX_CHARS);
+      // The header is whole: every escaped alias is there.
+      expect(res.text).toContain(`aliases: ${JSON.stringify(aliases)}`);
+      expect(res.text).toContain(`title: ${JSON.stringify(title)}`);
+      expect(res.text).toMatch(/body \(cut: the first \d+ of 29994 characters/);
+      expect(res.text).not.toContain('TAIL');
+      expect(res.text.trimEnd().endsWith('body ===')).toBe(true);
+    }
+  });
+
+  it('a short body under an ordinary header is not cut', async () => {
+    const body = 'c'.repeat(30_000);
+    const { call } = wikiTools(fakePort({ pages: [livePage({ bodyMd: body })] }).port);
+    const res = await call('read_wiki_page', { page_id: 'p1' });
+    expect(res.text).toContain('=== page body (30000 characters) ===');
+    expect(res.text.length).toBeLessThanOrEqual(WIKI_READ_RESULT_MAX_CHARS);
   });
 
   it('"Page not found." for a missing, deleted or other-show page (the port answers null)', async () => {
@@ -679,11 +779,175 @@ describe('propose_page: citations and the quote match (D4 steps 4–5)', () => {
   });
 });
 
+describe('propose_page: carried-forward citations of another session (D4 step 4)', () => {
+  /** Session S0's words: "x y" at 100 s. */
+  const S0_WORDS = [word('x', '00:01:40:00'), word('y', '00:01:40:05')];
+  const pageWithPending = (pendingBody: string) =>
+    fakePort({
+      pages: [livePage({ pendingSuggestionId: 'sg1' })],
+      pending: [pendingSuggestion({ bodyMd: pendingBody })],
+      sessions: { S0: S0_WORDS },
+    });
+  const newWithPending = (pendingBody: string) =>
+    fakePort({
+      pending: [
+        pendingSuggestion({
+          suggestionId: 'sg9',
+          pageId: null,
+          kind: 'topic',
+          title: 'Café Noir',
+          aliases: [],
+          bodyMd: pendingBody,
+        }),
+      ],
+      sessions: { S0: S0_WORDS },
+    });
+  const toPage = (body: string) => ({
+    page_id: 'p1',
+    title: 'Christina Ramos',
+    aliases: ['CR'],
+    body_md: body,
+    rationale: 'r',
+  });
+  const toNew = (body: string) => newProposal({ title: 'CAFE NOIR', body_md: body });
+
+  it('a carried-forward citation passes, checked against the earlier session (page target)', async () => {
+    const { port, args } = pageWithPending('Host. [x y](cite:S0@100)');
+    const t = wikiTools(port);
+    const res = await t.call('propose_page', toPage('Host. [x y](cite:S0@100)'));
+    expect(res.isError).toBe(false);
+    expect(args).toEqual(['pendingFor page:p1', 'sessionWords S0']);
+  });
+
+  it('a carried-forward misquote is refused, naming the citation (page target)', async () => {
+    const { port } = pageWithPending('Host. [x z](cite:S0@100)');
+    const t = wikiTools(port);
+    const res = await t.call('propose_page', toPage('Host. [x z](cite:S0@100)'));
+    expect(res.isError).toBe(true);
+    expect(res.text).toContain('cite:S0@100 "x z": not found within 30 s of 00:01:40');
+    expect(wikiRunProposals(t.state)).toEqual([]);
+  });
+
+  it('a carried-forward citation outside the time window is refused', async () => {
+    const { port } = pageWithPending('[x y](cite:S0@200)');
+    const res = await wikiTools(port).call('propose_page', toPage('[x y](cite:S0@200)'));
+    expect(res.isError).toBe(true);
+    expect(res.text).toContain('cite:S0@200 "x y": not found within 30 s of 00:03:20');
+  });
+
+  it('a carried-forward citation passes for a new-page target, found by its normalised title', async () => {
+    const { port, args } = newWithPending('[x y](cite:S0@100)');
+    const t = wikiTools(port);
+    const res = await t.call('propose_page', toNew('More. [X, Y!](cite:S0@100)'));
+    expect(res.isError).toBe(false);
+    expect(args).toEqual(['pendingFor new:cafe noir', 'sessionWords S0']);
+  });
+
+  it('a carried-forward misquote is refused for a new-page target', async () => {
+    const { port } = newWithPending('[x z](cite:S0@100)');
+    const t = wikiTools(port);
+    const res = await t.call('propose_page', toNew('[x z](cite:S0@100)'));
+    expect(res.isError).toBe(true);
+    expect(res.text).toContain('cite:S0@100 "x z": not found within 30 s of 00:01:40');
+    expect(wikiRunProposals(t.state)).toEqual([]);
+  });
+
+  it("a new citation of a session the target's pending suggestion doesn't cite is refused, with no read of its words", async () => {
+    const { port, args } = fakePort({
+      pages: [livePage({ pendingSuggestionId: 'sg1' })],
+      pending: [pendingSuggestion({ bodyMd: '[x y](cite:S0@100)' })],
+      sessions: { S0: S0_WORDS, S2: S0_WORDS },
+    });
+    const res = await wikiTools(port).call('propose_page', toPage('[x y](cite:S2@100)'));
+    expect(res.isError).toBe(true);
+    expect(res.text).toContain('cite:S2@100 "x y": new citations must quote this session (S1)');
+    expect(args).not.toContain('sessionWords S2');
+  });
+
+  it("a citation of another page's pending suggestion's session doesn't qualify", async () => {
+    const { port, args } = fakePort({
+      pages: [livePage(), livePage({ id: 'p2', title: 'Other', pendingSuggestionId: 'sg2' })],
+      pending: [
+        pendingSuggestion({ suggestionId: 'sg2', pageId: 'p2', bodyMd: '[x y](cite:S0@100)' }),
+      ],
+      sessions: { S0: S0_WORDS },
+    });
+    const res = await wikiTools(port).call('propose_page', toPage('[x y](cite:S0@100)'));
+    expect(res.text).toContain('new citations must quote this session (S1)');
+    expect(args).toEqual(['pendingFor page:p1']);
+  });
+
+  it("sessionWords of another show's session (null) is refused", async () => {
+    const { port, args } = fakePort({
+      pages: [livePage({ pendingSuggestionId: 'sg1' })],
+      pending: [pendingSuggestion({ bodyMd: '[x y](cite:SX@100)' })],
+      sessions: {},
+    });
+    const t = wikiTools(port);
+    const res = await t.call('propose_page', toPage('[x y](cite:SX@100)'));
+    expect(res.isError).toBe(true);
+    expect(res.text).toContain('cite:SX@100 "x y": new citations must quote this session (S1)');
+    expect(args).toContain('sessionWords SX');
+    expect(wikiRunProposals(t.state)).toEqual([]);
+  });
+
+  it(`at most ${WIKI_OTHER_SESSIONS_MAX} other sessions per run; the next is refused`, async () => {
+    const ids = Array.from({ length: WIKI_OTHER_SESSIONS_MAX + 1 }, (_, i) => `O${i}`);
+    const body = ids.map((id) => `[x y](cite:${id}@100)`).join(' ');
+    const { port, args } = fakePort({
+      pages: [livePage({ pendingSuggestionId: 'sg1' })],
+      pending: [pendingSuggestion({ bodyMd: body })],
+      sessions: Object.fromEntries(ids.map((id) => [id, S0_WORDS])),
+    });
+    const res = await wikiTools(port).call('propose_page', toPage(body));
+    expect(res.isError).toBe(true);
+    const problems = res.text.split('\n').slice(1);
+    expect(problems).toEqual([
+      `cite:O${WIKI_OTHER_SESSIONS_MAX}@100 "x y": at most ${WIKI_OTHER_SESSIONS_MAX} other sessions can be checked per run`,
+    ]);
+    expect(args.filter((a) => a.startsWith('sessionWords'))).toHaveLength(WIKI_OTHER_SESSIONS_MAX);
+  });
+
+  it("another session's words are read and normalised once per run", async () => {
+    const { port, calls, args } = pageWithPending('[x y](cite:S0@100) [y](cite:S0@100)');
+    const t = wikiTools(port);
+    expect((await t.call('propose_page', toPage('[x y](cite:S0@100)'))).isError).toBe(false);
+    expect((await t.call('propose_page', toPage('[y](cite:S0@100) again'))).isError).toBe(false);
+    expect(args.filter((a) => a === 'sessionWords S0')).toHaveLength(1);
+    // Per proposal one call for its citation texts, plus one for S0's words.
+    expect(calls.filter((c) => c === 'normalize')).toHaveLength(3);
+  });
+
+  it('a pending suggestion is not trusted: its citations of the run session are checked too', async () => {
+    const { port } = pageWithPending('[we never said that](cite:S1@120)');
+    const res = await wikiTools(port).call(
+      'propose_page',
+      toPage('[we never said that](cite:S1@120)'),
+    );
+    expect(res.isError).toBe(true);
+    expect(res.text).toContain('cite:S1@120 "we never said that": not found');
+  });
+
+  it.each([
+    'pendingFor',
+    'sessionWords',
+  ] as const)('a thrown %s returns "Tool failed."', async (m) => {
+    const { port } = fakePort({
+      pages: [livePage({ pendingSuggestionId: 'sg1' })],
+      pending: [pendingSuggestion({ bodyMd: '[x y](cite:S0@100)' })],
+      sessions: { S0: S0_WORDS },
+      throwOn: m,
+    });
+    const res = await wikiTools(port).call('propose_page', toPage('[x y](cite:S0@100)'));
+    expect(res).toEqual({ text: TOOL_FAILED_TEXT, isError: true });
+  });
+});
+
 describe('a thrown port error returns "Tool failed."', () => {
   it.each([
     ['list_wiki_pages', 'listPages', {}],
     ['read_wiki_page', 'readPage', { page_id: 'p1' }],
-    ['read_wiki_page', 'readPendingNew', { suggestion_id: 'sg1' }],
+    ['read_wiki_page', 'readPending', { suggestion_id: 'sg1' }],
     ['propose_page', 'checkLinks', newProposal()],
     ['propose_page', 'nameHolder', newProposal()],
     ['propose_page', 'normalize', newProposal()],

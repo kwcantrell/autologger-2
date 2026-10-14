@@ -4,11 +4,14 @@
 // - `list_wiki_pages {page?}`: the show's live pages, then its pending new-page suggestions, as
 //   text lines, packed to at most 200 entries and 40 000 characters per call, ending with a
 //   marker line;
-// - `read_wiki_page {page_id? | suggestion_id?}`: one live page (and its pending suggestion), or
-//   one pending new-page suggestion; every body is cut at 30 000 characters and marked;
+// - `read_wiki_page {page_id? | suggestion_id?}`: one body per result: a live page (naming its
+//   pending suggestion's id), or one pending suggestion of the show; every body is cut at 30 000
+//   characters, and further so the whole result stays within 45 000, and the cut is marked;
 // - `propose_page`: checks one whole page version (shape, target, links, citations, quotes) and
-//   records it in the run's in-memory proposals, keyed by target. It writes nothing: the wiki
-//   route stores the proposals only when the run succeeds.
+//   records it in the run's in-memory proposals, keyed by target. Citations not on the page now
+//   are quote-checked against the run's session, or a session the target's pending suggestion
+//   cites (re-panel 2026-10-14). It writes nothing: the wiki route stores the proposals only when
+//   the run succeeds.
 //
 // The catalog comes in through `WikiToolPort`, which the server implements over the catalog bound
 // to the caller, so every read is under the caller's row-level security; ai-runtime never imports
@@ -37,6 +40,11 @@ export const WIKI_LIST_MAX_LINES = 200;
 export const WIKI_LIST_MAX_CHARS = 40_000;
 /** Bodies `read_wiki_page` returns are cut here; a longer page can't be an AI target. */
 export const WIKI_READ_BODY_MAX = WIKI_PROPOSAL_BODY_MAX;
+/** Most characters one `read_wiki_page` result holds, header included (the CLI's 45 000-character
+ * tool-output bound, `GENERATION_PAGE_MAX_CHARS`). */
+export const WIKI_READ_RESULT_MAX_CHARS = 45_000;
+/** Most sessions other than the run's whose words one run may read for the quote check. */
+export const WIKI_OTHER_SESSIONS_MAX = 10;
 /** Most targets one run may propose. */
 export const WIKI_RUN_MAX_TARGETS = 20;
 /** A quote's first word must be within this many seconds of the cited time. */
@@ -71,15 +79,7 @@ export interface WikiToolPendingNew {
   title: string;
 }
 
-/** A page's pending suggestion, as `read_wiki_page` shows it. */
-export interface WikiToolPendingSuggestion {
-  suggestionId: string;
-  title: string;
-  aliases: string[];
-  bodyMd: string;
-}
-
-/** One live page with its body, and its pending suggestion when it has one. */
+/** One live page with its body, and the id of its pending suggestion when it has one. */
 export interface WikiToolPageDetail {
   id: string;
   kind: WikiKind;
@@ -87,12 +87,14 @@ export interface WikiToolPageDetail {
   aliases: string[];
   revision: number;
   bodyMd: string;
-  pending: WikiToolPendingSuggestion | null;
+  pendingSuggestionId: string | null;
 }
 
-/** One pending new-page suggestion with its body. */
-export interface WikiToolPendingNewDetail {
+/** One pending suggestion of the show with its body: for a page (`pageId`) or a new page
+ * (`pageId: null`). */
+export interface WikiToolPendingDetail {
   suggestionId: string;
+  pageId: string | null;
   kind: WikiKind;
   title: string;
   aliases: string[];
@@ -110,8 +112,18 @@ export interface WikiToolPort {
   /** A live page of the show; `{mergedInto}` for a merged page; `null` for a missing or deleted
    * page, or a page of another show. */
   readPage(id: string): Promise<WikiToolPageDetail | { mergedInto: string } | null>;
-  /** A pending new-page suggestion of the show, or `null`. */
-  readPendingNew(suggestionId: string): Promise<WikiToolPendingNewDetail | null>;
+  /** A pending suggestion of the run's show (for a page or a new page), or `null`: the port
+   * filters on the show and `status = 'pending'` itself, since RLS alone would also return other
+   * accessible shows' and resolved rows. */
+  readPending(suggestionId: string): Promise<WikiToolPendingDetail | null>;
+  /** The pending suggestion for a page of the show, or for a new page whose title normalises to
+   * `normTitle`; `null` when there is none. */
+  pendingFor(
+    target: { pageId: string } | { normTitle: string },
+  ): Promise<WikiToolPendingDetail | null>;
+  /** A session's transcript words, read as the caller; `null` unless it is a session of the run's
+   * show. */
+  sessionWords(sessionId: string): Promise<WikiSnapshotWord[] | null>;
   /** The run session's live page, or `null`. */
   sessionPageId(): Promise<string | null>;
   /** The live page holding one of `names` as its title or an alias (as `catalog.search_norm`
@@ -146,6 +158,12 @@ interface TranscriptToken {
   readonly time: number;
 }
 
+/** A memo slot: a wrapper object, so the checks below compare objects, not promises (promise
+ * hygiene, async-session-hub D9). */
+interface Memo<T> {
+  promise: Promise<T>;
+}
+
 /** A wiki turn's state, carried on its registration. */
 export interface WikiTurnState {
   readonly port: WikiToolPort;
@@ -153,7 +171,10 @@ export interface WikiTurnState {
   /** The run's proposals by target (`page:<id>` or `new:<normalised title>`), in proposal order. */
   readonly proposals: Map<string, WikiRunProposal>;
   /** The transcript's tokens, normalised once per run on first need. */
-  tokens: { promise: Promise<readonly TranscriptToken[]> } | null;
+  tokens: Memo<readonly TranscriptToken[]> | null;
+  /** Other sessions' tokens (`null`: not a session of the show), read and normalised once per
+   * run on first need; at most `WIKI_OTHER_SESSIONS_MAX` entries. */
+  readonly otherTokens: Map<string, Memo<readonly TranscriptToken[] | null>>;
   /** Set when the turn is over: a tool body still running records nothing. */
   closed: boolean;
 }
@@ -162,7 +183,14 @@ export function createWikiTurnState(
   port: WikiToolPort,
   words: readonly WikiSnapshotWord[],
 ): WikiTurnState {
-  return { port, words, proposals: new Map(), tokens: null, closed: false };
+  return {
+    port,
+    words,
+    proposals: new Map(),
+    tokens: null,
+    otherTokens: new Map(),
+    closed: false,
+  };
 }
 
 /** The run's proposals, in order. */
@@ -218,20 +246,25 @@ function clock(seconds: number): string {
   return `${pad(Math.floor(s / 3600))}:${pad(Math.floor((s % 3600) / 60))}:${pad(s % 60)}`;
 }
 
+/** Words as tokens, normalised in one `port.normalize` call. */
+async function tokenize(
+  port: WikiToolPort,
+  words: readonly WikiSnapshotWord[],
+): Promise<readonly TranscriptToken[]> {
+  if (words.length === 0) return [];
+  const normalised = await port.normalize(words.map((w) => w.word));
+  const out: TranscriptToken[] = [];
+  words.forEach((w, i) => {
+    const time = wordTime(w);
+    for (const token of tokensOf(normalised[i] ?? '')) out.push({ token, time });
+  });
+  return out;
+}
+
 function transcriptTokens(state: WikiTurnState): Promise<readonly TranscriptToken[]> {
   if (state.tokens !== null) return state.tokens.promise;
-  // The memo is a wrapper object, so the checks below compare objects, not promises (promise
-  // hygiene, async-session-hub D9).
-  const wrapper: { promise: Promise<readonly TranscriptToken[]> } = {
-    promise: (async () => {
-      const normalised = await state.port.normalize(state.words.map((w) => w.word));
-      const out: TranscriptToken[] = [];
-      state.words.forEach((w, i) => {
-        const time = wordTime(w);
-        for (const token of tokensOf(normalised[i] ?? '')) out.push({ token, time });
-      });
-      return out;
-    })(),
+  const wrapper: Memo<readonly TranscriptToken[]> = {
+    promise: tokenize(state.port, state.words),
   };
   // A failed normalise is retried by the next call, not memoised.
   wrapper.promise = wrapper.promise.catch((err: unknown) => {
@@ -239,6 +272,29 @@ function transcriptTokens(state: WikiTurnState): Promise<readonly TranscriptToke
     throw err;
   });
   state.tokens = wrapper;
+  return wrapper.promise;
+}
+
+/** Another session's tokens, read and normalised once per run; `null` when it isn't a session of
+ * the show. The caller checks the per-run limit before asking for a new session. */
+function otherSessionTokens(
+  state: WikiTurnState,
+  sessionId: string,
+): Promise<readonly TranscriptToken[] | null> {
+  const memo = state.otherTokens.get(sessionId);
+  if (memo !== undefined) return memo.promise;
+  const wrapper: Memo<readonly TranscriptToken[] | null> = {
+    promise: (async () => {
+      const words = await state.port.sessionWords(sessionId);
+      return words === null ? null : tokenize(state.port, words);
+    })(),
+  };
+  // A failed read is retried by the next call, not memoised, and doesn't count to the limit.
+  wrapper.promise = wrapper.promise.catch((err: unknown) => {
+    if (state.otherTokens.get(sessionId) === wrapper) state.otherTokens.delete(sessionId);
+    throw err;
+  });
+  state.otherTokens.set(sessionId, wrapper);
   return wrapper.promise;
 }
 
@@ -340,26 +396,59 @@ function quotedId(id: string): string {
 
 // -- read_wiki_page -------------------------------------------------------------------------------
 
-function bodyBlock(name: 'page' | 'suggestion', body: string): string {
-  const cut = body.length > WIKI_READ_BODY_MAX;
-  const head = cut
-    ? `=== ${name} body (cut: the first ${WIKI_READ_BODY_MAX} of ${body.length} characters; ` +
-      'this page is too long for you to rewrite) ==='
-    : `=== ${name} body (${body.length} characters) ===`;
-  return `${head}\n${cut ? body.slice(0, WIKI_READ_BODY_MAX) : body}\n=== end of ${name} body ===`;
+/** Header lines are capped so the body always keeps room in the result. A real header (a title of
+ * 200 characters and 50 aliases of 200, all of which may JSON-escape to double) fits these. */
+const READ_TITLE_LINE_MAX = 1_500;
+const READ_ALIASES_LINE_MAX = 21_000;
+
+/** An untrusted header line, cut (and marked) past `max` characters. */
+function capLine(line: string, max: number): string {
+  const mark = ' …(cut)';
+  return line.length <= max ? line : `${line.slice(0, max - mark.length)}${mark}`;
 }
+
+function bodyHead(name: 'page' | 'suggestion', shownChars: number, total: number): string {
+  if (shownChars === total) return `=== ${name} body (${total} characters) ===`;
+  return total > WIKI_READ_BODY_MAX
+    ? `=== ${name} body (cut: the first ${shownChars} of ${total} characters; ` +
+        'this page is too long for you to rewrite) ==='
+    : `=== ${name} body (cut: the first ${shownChars} of ${total} characters, to fit one ` +
+        'result; the rest is not shown, so do not rewrite this page from it) ===';
+}
+
+/** The header lines and then one body between fixed delimiters, the body cut at 30 000 characters
+ * and further so the whole result is at most `WIKI_READ_RESULT_MAX_CHARS`. */
+function renderRead(header: string[], name: 'page' | 'suggestion', body: string): string {
+  const head = header.join('\n');
+  const end = `=== end of ${name} body ===`;
+  // The longest the body's own heading can be (a cut length has at most 5 digits).
+  const headMax = Math.max(
+    bodyHead(name, 99_999, WIKI_READ_BODY_MAX + 1).length,
+    bodyHead(name, 99_999, WIKI_READ_BODY_MAX).length,
+  );
+  const room = WIKI_READ_RESULT_MAX_CHARS - head.length - headMax - end.length - 3;
+  const shownChars = Math.max(0, Math.min(body.length, WIKI_READ_BODY_MAX, room));
+  return `${head}\n${bodyHead(name, shownChars, body.length)}\n${body.slice(0, shownChars)}\n${end}`;
+}
+
+const titleLine = (title: string) => capLine(`title: ${quoted(title)}`, READ_TITLE_LINE_MAX);
+const aliasesLine = (aliases: string[]) =>
+  capLine(`aliases: ${quoted(aliases)}`, READ_ALIASES_LINE_MAX);
 
 function buildReadWikiPage(server: ToolSink, wiki: WikiTurnState): void {
   server.tool(
     'read_wiki_page',
-    'Reads one wiki page of this show by page_id (with its pending suggestion, if any), or one ' +
-      'pending new-page suggestion by suggestion_id. Give exactly one of the two.',
+    'Reads one wiki page of this show by page_id, or one pending suggestion of this show by ' +
+      'suggestion_id: a page read names its pending suggestion, if any, so you can read that ' +
+      'suggestion next. Give exactly one of the two. Each result holds one body.',
     {
       page_id: z.string().optional().describe('A page id from list_wiki_pages.'),
       suggestion_id: z
         .string()
         .optional()
-        .describe('A pending new-page suggestion id from list_wiki_pages.'),
+        .describe(
+          'A pending suggestion id: from a page read, or a pending new page from list_wiki_pages.',
+        ),
     },
     async (args) =>
       guarded(async () => {
@@ -369,16 +458,17 @@ function buildReadWikiPage(server: ToolSink, wiki: WikiTurnState): void {
           return toolError('Give exactly one of page_id or suggestion_id.');
         }
         if (hasSuggestion) {
-          const s = await wiki.port.readPendingNew(args.suggestion_id as string);
+          const s = await wiki.port.readPending(args.suggestion_id as string);
           if (s === null) return toolError('Suggestion not found.');
+          const first =
+            s.pageId === null
+              ? `pending new-page suggestion ${quotedId(s.suggestionId)} · ${s.kind} (unreviewed; ` +
+                'to build on it, propose the same title without page_id, keeping its additions)'
+              : `pending suggestion ${quotedId(s.suggestionId)} for page ${quotedId(s.pageId)} · ` +
+                `${s.kind} (an earlier, unreviewed suggestion for this page: write your new ` +
+                `version of page ${quotedId(s.pageId)} from it, keeping its additions)`;
           return toolText(
-            [
-              `pending new-page suggestion ${quotedId(s.suggestionId)} · ${s.kind} (unreviewed; ` +
-                'to build on it, propose the same title without page_id, keeping its additions)',
-              `title: ${quoted(s.title)}`,
-              `aliases: ${quoted(s.aliases)}`,
-              bodyBlock('suggestion', s.bodyMd),
-            ].join('\n'),
+            renderRead([first, titleLine(s.title), aliasesLine(s.aliases)], 'suggestion', s.bodyMd),
           );
         }
         const id = args.page_id as string;
@@ -390,22 +480,20 @@ function buildReadWikiPage(server: ToolSink, wiki: WikiTurnState): void {
               `read ${quotedId(page.mergedInto)} instead.`,
           );
         }
-        const parts = [
+        const header = [
           `page ${quotedId(page.id)} · ${page.kind} · r${page.revision}`,
-          `title: ${quoted(page.title)}`,
-          `aliases: ${quoted(page.aliases)}`,
-          bodyBlock('page', page.bodyMd),
+          titleLine(page.title),
+          aliasesLine(page.aliases),
         ];
-        if (page.pending !== null) {
-          parts.push(
-            `pending suggestion ${quotedId(page.pending.suggestionId)} (an earlier, unreviewed ` +
-              'suggestion for this page: write your new version from it, keeping its additions)',
-            `title: ${quoted(page.pending.title)}`,
-            `aliases: ${quoted(page.pending.aliases)}`,
-            bodyBlock('suggestion', page.pending.bodyMd),
+        if (page.pendingSuggestionId !== null) {
+          header.push(
+            `pending suggestion ${quotedId(page.pendingSuggestionId)}: this page has an earlier, ` +
+              'unreviewed suggestion; read it with read_wiki_page suggestion_id ' +
+              `${quoted(page.pendingSuggestionId)} and write your new version from it, keeping ` +
+              'its additions',
           );
         }
-        return toolText(parts.join('\n'));
+        return toolText(renderRead(header, 'page', page.bodyMd));
       }),
   );
 }
@@ -444,7 +532,8 @@ function buildProposePage(server: ToolSink, wiki: WikiTurnState): void {
     'propose_page',
     'Proposes one whole page version for a person to review: a change to an existing page ' +
       '(page_id) or a new page (kind and title). Nothing is written to the wiki. Every new ' +
-      'citation must quote this session exactly. On a problem nothing is recorded and every ' +
+      "citation must quote this session exactly; a citation kept from the target's pending " +
+      'suggestion may cite its earlier session and is checked against it. On a problem nothing is recorded and every ' +
       'problem is listed: fix them and call again. A later proposal for the same page replaces ' +
       'the earlier one.',
     proposePageShape,
@@ -564,26 +653,53 @@ async function propose(
     .map((c, i) => ({ c, tokens: citeTokens[i] ?? [] }))
     .filter(({ c, tokens }) => !kept.has(keyOf(c, tokens)));
 
-  // 5. Quotes.
+  // 5. Quotes. A citation of another session qualifies only when the target's pending suggestion
+  // cites that session; it is checked against that session's words (design D4 step 4).
   if (toCheck.length > WIKI_MAX_CHECKED_CITATIONS) {
     problems.push(
       `body_md: ${toCheck.length} new citations; at most ${WIKI_MAX_CHECKED_CITATIONS} per proposal.`,
     );
   } else {
-    let tokens: readonly TranscriptToken[] | null = null;
+    let carried: Set<string> | null = null;
+    if (toCheck.some(({ c }) => c.sessionId !== port.sessionId)) {
+      const pending = await port.pendingFor(
+        target.type === 'page' ? { pageId: target.pageId } : { normTitle: normalised[0] ?? '' },
+      );
+      carried = new Set(
+        pending === null
+          ? []
+          : citationsOf(pending.bodyMd)
+              .map((c) => c.sessionId)
+              .filter((id) => id !== port.sessionId),
+      );
+    }
+    const mustQuoteThis = `new citations must quote this session (${port.sessionId})`;
     for (const { c, tokens: quote } of toCheck) {
       const name = `${citeName(c)} ${shown(c.text)}`;
-      if (c.sessionId !== port.sessionId) {
-        problems.push(`${name}: new citations must quote this session (${port.sessionId})`);
+      const own = c.sessionId === port.sessionId;
+      if (!own && !carried?.has(c.sessionId)) {
+        problems.push(`${name}: ${mustQuoteThis}`);
       } else if (quote.length === 0) {
         problems.push(`${name}: the quote has no words`);
       } else if (quote.length > WIKI_QUOTE_MAX_WORDS) {
         problems.push(
           `${name}: the quote has ${quote.length} words; at most ${WIKI_QUOTE_MAX_WORDS}`,
         );
+      } else if (
+        !own &&
+        !wiki.otherTokens.has(c.sessionId) &&
+        wiki.otherTokens.size >= WIKI_OTHER_SESSIONS_MAX
+      ) {
+        problems.push(
+          `${name}: at most ${WIKI_OTHER_SESSIONS_MAX} other sessions can be checked per run`,
+        );
       } else {
-        tokens ??= await transcriptTokens(wiki);
-        if (!quoteFound(tokens, quote, c.seconds)) {
+        const tokens = own
+          ? await transcriptTokens(wiki)
+          : await otherSessionTokens(wiki, c.sessionId);
+        if (tokens === null) {
+          problems.push(`${name}: ${mustQuoteThis}`);
+        } else if (!quoteFound(tokens, quote, c.seconds)) {
           problems.push(
             `${name}: not found within ${WIKI_QUOTE_WINDOW_SEC} s of ${clock(c.seconds)}`,
           );
