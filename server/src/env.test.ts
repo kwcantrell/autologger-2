@@ -2,6 +2,7 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { sdkResponseByteCap } from '@autologger/ai-runtime/sdkTurn';
+import { WIKI_GENERATE_DEFAULTS } from '@autologger/ai-runtime/wikiGenerate';
 import type { Config } from '@autologger/ports';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
@@ -30,6 +31,9 @@ import {
   sessionTtlDays,
   topicGenerateMaxBudgetUsd,
   topicGenerateTimeoutSec,
+  wikiGenerateMaxBudgetUsd,
+  wikiGenerateTimeoutSec,
+  wikiSdkLimits,
   ytDlpConfigured,
 } from './env';
 
@@ -428,5 +432,55 @@ describe('AI SDK turn limits and their ranges (ai-sdk-agent-harness D3 Limits, D
     );
     const max = E({ GENERATE_MAX_STEPS: '100', GENERATE_MAX_OUTPUT_TOKENS: '128000' });
     expect(sdkResponseByteCap('topics', generateSdkLimits(max))).toBe(5_120_000_000);
+  });
+});
+
+describe('wiki update bounds (show-wiki-ai; wiki-generation "Wiki update bounds")', () => {
+  it('default to 900 s, $5.0, 80 steps and 6 000 000 tokens, equal to WIKI_GENERATE_DEFAULTS', () => {
+    expect(wikiGenerateTimeoutSec(E({}))).toBe(900);
+    expect(wikiGenerateMaxBudgetUsd(E({}))).toBe(5.0);
+    expect(wikiSdkLimits(E({}))).toEqual({
+      maxSteps: 80,
+      maxTotalTokens: 6_000_000,
+      maxOutputTokens: 16_000,
+    });
+    expect({
+      timeoutSec: wikiGenerateTimeoutSec(E({})),
+      maxBudgetUsd: wikiGenerateMaxBudgetUsd(E({})),
+      maxSteps: wikiSdkLimits(E({})).maxSteps,
+      maxTotalTokens: wikiSdkLimits(E({})).maxTotalTokens,
+    }).toEqual({ ...WIKI_GENERATE_DEFAULTS });
+  });
+
+  it('WIKI_GENERATE_TIMEOUT_SEC and WIKI_GENERATE_MAX_BUDGET_USD take positive numbers, else the default', () => {
+    expect(wikiGenerateTimeoutSec(E({ WIKI_GENERATE_TIMEOUT_SEC: '1200' }))).toBe(1200);
+    expect(wikiGenerateTimeoutSec(E({ WIKI_GENERATE_TIMEOUT_SEC: ' 0.5 ' }))).toBe(0.5);
+    for (const bad of ['', 'abc', '0', '-1']) {
+      expect(wikiGenerateTimeoutSec(E({ WIKI_GENERATE_TIMEOUT_SEC: bad }))).toBe(900);
+      expect(wikiGenerateMaxBudgetUsd(E({ WIKI_GENERATE_MAX_BUDGET_USD: bad }))).toBe(5.0);
+    }
+    expect(wikiGenerateMaxBudgetUsd(E({ WIKI_GENERATE_MAX_BUDGET_USD: '2.5' }))).toBe(2.5);
+  });
+
+  it('WIKI_GENERATE_MAX_STEPS takes 1–200 and WIKI_GENERATE_MAX_TOKENS a positive integer; the output cap is GENERATE_MAX_OUTPUT_TOKENS', () => {
+    const steps = (v: string) => wikiSdkLimits(E({ WIKI_GENERATE_MAX_STEPS: v })).maxSteps;
+    expect([steps('1'), steps('200'), steps('201'), steps('0'), steps('x'), steps('')]).toEqual([
+      1, 200, 80, 80, 80, 80,
+    ]);
+    const tokens = (v: string) => wikiSdkLimits(E({ WIKI_GENERATE_MAX_TOKENS: v })).maxTotalTokens;
+    expect([tokens('40'), tokens('0'), tokens('-3'), tokens('1.5'), tokens('abc')]).toEqual([
+      40, 6_000_000, 6_000_000, 6_000_000, 6_000_000,
+    ]);
+    // The generation knobs don't move the wiki's steps or tokens.
+    expect(
+      wikiSdkLimits(
+        E({
+          GENERATE_MAX_STEPS: '3',
+          GENERATE_MAX_TOKENS: '9',
+          GENERATE_MAX_OUTPUT_TOKENS: '9000',
+        }),
+      ),
+    ).toEqual({ maxSteps: 80, maxTotalTokens: 6_000_000, maxOutputTokens: 9000 });
+    expect(sdkResponseByteCap('wiki', wikiSdkLimits(E({})))).toBe(80 * 16_000 * 400);
   });
 });

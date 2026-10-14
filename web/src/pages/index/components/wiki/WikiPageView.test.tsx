@@ -262,3 +262,56 @@ describe('WikiPageView: delete', () => {
     expect(writesOf(calls)).toHaveLength(0);
   });
 });
+
+// show-wiki-ai task 6.4 (design D6; show-wiki "Suggestions inbox"; D7 category 4): a page with a
+// pending suggestion shows a banner offering to review it.
+describe('WikiPageView: suggestion banner', () => {
+  const PENDING = {
+    id: 'sg1',
+    show_id: 'sh-1',
+    session_id: 'sess-a',
+    status: 'pending',
+    page_id: 'p1',
+    base_revision: 3,
+    kind: 'person',
+    title: 'Christina Ramos',
+    aliases: ['Chris R.'],
+    rationale: 'She produces the show now.',
+    page: { title: 'Christina Ramos', revision: 3, state: 'live' },
+    stale: false,
+    created_at_utc: '2026-10-14T10:00:00.000Z',
+    created_by_name: 'Kai Lee',
+    resolved_at_utc: null,
+    resolved_by_name: null,
+    resolved_revision: null,
+  };
+
+  it('offers to review the pending suggestion and opens the sheet', async () => {
+    serve(wikiPage(), (call) => {
+      if (call.method === 'GET' && call.path === 'shows/sh-1/wiki/suggestions?page_id=p1')
+        return { json: { suggestions: [PENDING], truncated: false } };
+      if (call.method === 'GET' && call.path === 'wiki/suggestions/sg1')
+        return { json: { ...PENDING, body_md: 'Christina **produces** the show.' } };
+      return undefined;
+    });
+    renderView();
+    const banner = await screen.findByRole('alert', { name: /suggested update/i });
+    expect(within(banner).getByText('She produces the show now.')).toBeTruthy();
+    fireEvent.click(within(banner).getByRole('button', { name: 'Review suggestion' }));
+    expect(await screen.findByRole('dialog')).toBeTruthy();
+  });
+
+  it('shows no banner with nothing pending', async () => {
+    serve(wikiPage(), (call) =>
+      call.method === 'GET' && call.path === 'shows/sh-1/wiki/suggestions?page_id=p1'
+        ? { json: { suggestions: [], truncated: false } }
+        : undefined,
+    );
+    renderView();
+    await screen.findByRole('heading', { level: 1, name: 'Christina Ramos' });
+    await waitFor(() =>
+      expect(calls.some((c) => c.path === 'shows/sh-1/wiki/suggestions?page_id=p1')).toBe(true),
+    );
+    expect(screen.queryByRole('alert', { name: /suggested update/i })).toBeNull();
+  });
+});

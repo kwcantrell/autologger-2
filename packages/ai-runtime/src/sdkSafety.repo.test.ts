@@ -25,7 +25,7 @@ import { describe, expect, it } from 'vitest';
 
 const PKG_SRC = __dirname;
 const REPO = join(PKG_SRC, '..', '..', '..');
-const ROUTERS = ['ai.ts', 'transcribe.ts', 'events.ts'].map((f) =>
+const ROUTERS = ['ai.ts', 'transcribe.ts', 'events.ts', 'wikiSuggestions.ts'].map((f) =>
   join(REPO, 'server', 'src', 'routers', f),
 );
 

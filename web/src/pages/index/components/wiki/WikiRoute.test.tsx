@@ -4,7 +4,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Router } from 'wouter';
 import { memoryLocation } from 'wouter/memory-location';
 import { ApiError, apiFetch } from '../../../../api/client';
-import type { ProfilePayload, WikiPage, WikiPageListItem } from '../../../../api/types';
+import type {
+  ProfilePayload,
+  WikiPage,
+  WikiPageListItem,
+  WikiSuggestion,
+} from '../../../../api/types';
 import { renderWithQueryClient } from '../../../../test/renderWithQueryClient';
 import { setNavigationImplForTesting } from '../../navigation';
 import { WikiRoute } from './WikiRoute';
@@ -66,6 +71,31 @@ function page(over: Partial<WikiPage> & Pick<WikiPage, 'id' | 'kind' | 'title'>)
   };
 }
 
+// Pending suggestions the list route answers; empty unless a Suggestions test sets them.
+let SUGGESTIONS: WikiSuggestion[] = [];
+
+function suggestion(
+  over: Partial<WikiSuggestion> & Pick<WikiSuggestion, 'id' | 'kind' | 'title'>,
+): WikiSuggestion {
+  return {
+    show_id: 'sh-1',
+    session_id: 'sess-1',
+    status: 'pending',
+    page_id: null,
+    base_revision: null,
+    aliases: [],
+    rationale: '',
+    page: null,
+    stale: false,
+    created_at_utc: '2026-10-14T10:00:00.000Z',
+    created_by_name: 'Kai Lee',
+    resolved_at_utc: null,
+    resolved_by_name: null,
+    resolved_revision: null,
+    ...over,
+  };
+}
+
 type Handler = (path: string, init?: RequestInit) => unknown;
 let onWrite: Handler;
 
@@ -73,6 +103,16 @@ function routeApi() {
   apiFetchMock.mockImplementation(async (path: string, init?: RequestInit) => {
     if (init?.method && init.method !== 'GET') return onWrite(path, init);
     const url = new URL(path, 'http://x/');
+    // show-wiki-ai task 6.4 (D7 category 4): the suggestion reads the Suggestions tab makes.
+    if (url.pathname === '/shows/sh-1/wiki/suggestions') {
+      return { suggestions: SUGGESTIONS, truncated: false };
+    }
+    const detail = /^\/wiki\/suggestions\/([^/]+)$/.exec(url.pathname);
+    const found = detail && SUGGESTIONS.find((s) => s.id === detail[1]);
+    if (found) return { ...found, body_md: 'Suggested body.' };
+    if (url.pathname === '/wiki/pages/p-ana') {
+      return page({ id: 'p-ana', kind: 'person', title: 'Ana Ruiz', revision: 2 });
+    }
     if (url.pathname !== '/shows/sh-1/wiki/pages') throw new Error(`unexpected GET ${path}`);
     if (url.searchParams.get('deleted') === '1') return { pages: DELETED, truncated: false };
     const kind = url.searchParams.get('kind');
@@ -90,8 +130,8 @@ function routeApi() {
   });
 }
 
-function setup(profile: ProfilePayload = PROFILE) {
-  const memory = memoryLocation({ path: '/wiki', record: true });
+function setup(profile: ProfilePayload = PROFILE, path = '/wiki') {
+  const memory = memoryLocation({ path, record: true });
   setNavigationImplForTesting((p, o) => memory.navigate(p, o));
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   client.setQueryData(['profile'], profile);
@@ -117,6 +157,7 @@ function listedTitles(): string[] {
 }
 
 beforeEach(() => {
+  SUGGESTIONS = [];
   apiFetchMock.mockReset();
   onWrite = (path) => {
     throw new Error(`unexpected write ${path}`);
@@ -132,7 +173,14 @@ describe('WikiRoute: tabs per kind', () => {
   it('has People, Topics, Running bits and Sessions tabs, plus Deleted; People lists first', async () => {
     setup();
     const tabs = screen.getAllByRole('tab').map((t) => t.textContent?.trim());
-    expect(tabs).toEqual(['People', 'Topics', 'Running bits', 'Sessions', 'Deleted']);
+    expect(tabs).toEqual([
+      'People',
+      'Topics',
+      'Running bits',
+      'Sessions',
+      'Deleted',
+      'Suggestions',
+    ]);
     await waitFor(() => expect(listedTitles()).toEqual(['Ana Ruiz', 'Bo Chen']));
     expect(apiFetchMock).toHaveBeenCalledWith(
       'shows/sh-1/wiki/pages?kind=person',
@@ -309,5 +357,90 @@ describe('WikiRoute: no active show', () => {
     expect(screen.queryByRole('tab')).toBeNull();
     expect(screen.queryByRole('button', { name: /new page/i })).toBeNull();
     expect(apiFetchMock).not.toHaveBeenCalled();
+  });
+});
+
+// show-wiki-ai task 6.4 (design D6; show-wiki "Suggestions inbox"; D7 category 4).
+describe('WikiRoute: Suggestions tab', () => {
+  const ANA = suggestion({
+    id: 'sg-ana',
+    kind: 'person',
+    title: 'Ana Ruiz',
+    page_id: 'p-ana',
+    base_revision: 1,
+    page: { title: 'Ana Ruiz', revision: 2, state: 'live' },
+    stale: true,
+    rationale: 'She is the mayor now.',
+  });
+  const COLD = suggestion({
+    id: 'sg-cold',
+    kind: 'topic',
+    title: 'Cold opens',
+    rationale: 'A recurring segment.',
+  });
+
+  it('is labelled with the pending count', async () => {
+    SUGGESTIONS = [ANA, COLD];
+    setup();
+    await waitFor(() =>
+      expect(screen.getByRole('tab', { name: /Suggestions/ }).textContent).toMatch(/2/),
+    );
+    expect(apiFetchMock).toHaveBeenCalledWith('shows/sh-1/wiki/suggestions', expect.anything());
+  });
+
+  it('?tab=suggestions opens it on load', async () => {
+    SUGGESTIONS = [ANA];
+    setup(PROFILE, '/wiki?tab=suggestions');
+    const tab = screen.getByRole('tab', { name: /Suggestions/ });
+    expect(tab.getAttribute('aria-selected')).toBe('true');
+    expect(await screen.findByText('She is the mayor now.')).toBeTruthy();
+  });
+
+  it('scrolls the selected Suggestions tab into view, so a narrow tab row shows it', async () => {
+    const scrolled: Element[] = [];
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = function (
+      this: Element,
+      opts?: boolean | ScrollIntoViewOptions,
+    ) {
+      expect(opts).toEqual({ block: 'nearest', inline: 'nearest' });
+      scrolled.push(this);
+    };
+    try {
+      setup(PROFILE, '/wiki?tab=suggestions');
+      const tab = screen.getByRole('tab', { name: /Suggestions/ });
+      await waitFor(() => expect(scrolled).toContain(tab));
+    } finally {
+      Element.prototype.scrollIntoView = original;
+    }
+  });
+
+  it('groups items by target, names a new page with its kind, and badges a stale one', async () => {
+    SUGGESTIONS = [COLD, ANA];
+    setup(PROFILE, '/wiki?tab=suggestions');
+    const list = await screen.findByRole('list', { name: 'Pending suggestions' });
+    const groups = within(list).getAllByRole('region');
+    expect(groups.map((g) => g.getAttribute('aria-label'))).toEqual([
+      'New page · Topic: Cold opens',
+      'Ana Ruiz',
+    ]);
+    expect(within(groups[1]).getByText('Stale')).toBeTruthy();
+    expect(within(groups[0]).queryByText('Stale')).toBeNull();
+    expect(within(groups[0]).getByText('A recurring segment.')).toBeTruthy();
+    const session = within(groups[0]).getByRole('link', { name: /session/i });
+    expect(session.getAttribute('href')).toBe('/sessions/sess-1');
+  });
+
+  it('with none pending, says so', async () => {
+    setup(PROFILE, '/wiki?tab=suggestions');
+    expect(await screen.findByText(/No suggestions waiting/)).toBeTruthy();
+  });
+
+  it('choosing an item opens the review sheet', async () => {
+    SUGGESTIONS = [ANA];
+    setup(PROFILE, '/wiki?tab=suggestions');
+    fireEvent.click(await screen.findByRole('button', { name: /Review Ana Ruiz/ }));
+    const sheet = await screen.findByRole('dialog');
+    expect(await within(sheet).findByText(/changed since this suggestion/)).toBeTruthy();
   });
 });

@@ -4,7 +4,7 @@
 // with its decoded URL, label and position, and whether it matches the exact grammar.
 
 import { describe, expect, it } from 'vitest';
-import { WIKI_MAX_LINKS, classifyWikiUrl, parseWikiLinks } from './wikiLinks';
+import { WIKI_MAX_LINKS, citationsOf, classifyWikiUrl, parseWikiLinks } from './wikiLinks';
 
 const urls = (body: string) => parseWikiLinks(body).links.map((l) => l.url);
 const one = (body: string) => {
@@ -194,5 +194,82 @@ describe('classifyWikiUrl', () => {
     ]) {
       expect(classifyWikiUrl(url), url).toBeNull();
     }
+  });
+});
+
+// show-wiki-ai task 4.2 (design D4 step 4; wiki-generation "Proposals are checked when they are
+// made"): every RENDERED citation, keyed by its rendered text, so the quote check sees what a
+// reader sees, including reference-style citations whose text `parseWikiLinks` never reports.
+describe('citationsOf', () => {
+  const cites = (body: string) =>
+    citationsOf(body).map(({ sessionId, seconds, text }) => ({ sessionId, seconds, text }));
+
+  it('finds inline, angle-bracket and autolinked cite: links with their rendered text', () => {
+    expect(
+      cites(
+        'A [we start **Monday**](cite:S1@754), B [two](<cite:S2@1.5>), C <cite:S3@9> and ' +
+          '[a page](wiki:p1).',
+      ),
+    ).toEqual([
+      { sessionId: 'S1', seconds: 754, text: 'we start Monday' },
+      { sessionId: 'S2', seconds: 1.5, text: 'two' },
+      { sessionId: 'S3', seconds: 9, text: 'cite:S3@9' },
+    ]);
+  });
+
+  it('a reference-style citation is checked by its text, for full, collapsed and shortcut references', () => {
+    const body =
+      'He said [we never said that][r], then [the quote][] and [the quote].\n\n' +
+      '[r]: cite:S1@120\n[the quote]: cite:S1@200';
+    expect(cites(body)).toEqual([
+      { sessionId: 'S1', seconds: 120, text: 'we never said that' },
+      { sessionId: 'S1', seconds: 200, text: 'the quote' },
+      { sessionId: 'S1', seconds: 200, text: 'the quote' },
+    ]);
+    // The definition's label alone is all parseWikiLinks reports for the first one.
+    expect(parseWikiLinks(body).links.map((l) => l.label)).toEqual(['r', 'the quote']);
+  });
+
+  it('matches reference labels case-insensitively, as CommonMark does, and the first definition wins', () => {
+    const body = 'See [Words][MiXeD] and [mixed].\n\n[mixed]: cite:S1@5\n[MIXED]: cite:S9@9';
+    expect(cites(body)).toEqual([
+      { sessionId: 'S1', seconds: 5, text: 'Words' },
+      { sessionId: 'S1', seconds: 5, text: 'mixed' },
+    ]);
+  });
+
+  it('an unused definition renders nothing and is no citation', () => {
+    expect(cites('Plain text.\n\n[unused]: cite:S1@120')).toEqual([]);
+  });
+
+  it('references to non-cite: definitions, and other links, are ignored', () => {
+    expect(
+      cites(
+        '[a][w], [b][h], [c](https://x.test), [d](wiki:p1)\n\n[w]: wiki:p2\n[h]: https://y.test',
+      ),
+    ).toEqual([]);
+  });
+
+  it('the rendered text of a label with emphasis, code and escapes', () => {
+    expect(cites('[*we* `start` \\*Monday\\* &amp; go](cite:S1@1)')).toEqual([
+      { sessionId: 'S1', seconds: 1, text: 'we start *Monday* & go' },
+    ]);
+    expect(cites('[**bold** _it_][r]\n\n[r]: cite:S1@2')).toEqual([
+      { sessionId: 'S1', seconds: 2, text: 'bold it' },
+    ]);
+  });
+
+  it('citations in code are not rendered, and malformed cite: URLs are not citations', () => {
+    expect(
+      cites('`[x](cite:S1@1)`\n\n    [y](cite:S1@2)\n\n[z](cite:S1@x) [u](CITE:S1@3)'),
+    ).toEqual([]);
+  });
+
+  it("reports each citation's source and position, in document order", () => {
+    const got = citationsOf('[a](cite:S1@1)\n\n[b][r]\n\n[r]: cite:S1@2');
+    expect(got.map((c) => [c.source, c.position.line])).toEqual([
+      ['link', 1],
+      ['reference', 3],
+    ]);
   });
 });

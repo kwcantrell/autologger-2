@@ -593,15 +593,16 @@ describe('locked reads and multi-step writes (design D3, D5)', () => {
 // -- the policy catalog ---------------------------------------------------------------------------
 
 describe('the catalog_user policies as installed', () => {
-  it('no catalog_user policy is the constant true, and there are 42', async () => {
+  it('no catalog_user policy is the constant true, and there are 45', async () => {
     const rows = await admin`select tablename, policyname, qual, with_check from pg_policies
                              where schemaname = 'catalog' and 'catalog_user' = any(roles)`;
     // session-row-versions D1: 32 plus the overwrite audit's insert policy; session-leases D1:
     // plus the four lease policies. companion-devices D1: the two Companion tables add none.
     // byo-ai-providers D1: nor do the two provider tables. catalog-search D4: plus the transcript
     // chunks' select policy. show-wiki D1, D2: plus the pages' and aliases' `_user_all` policies
-    // and the revisions' select and insert policies.
-    expect(rows).toHaveLength(42);
+    // and the revisions' select and insert policies. show-wiki-ai D1: plus the suggestions' select,
+    // insert and update policies.
+    expect(rows).toHaveLength(45);
     for (const p of rows) {
       expect(p.qual, `${p.policyname} using`).not.toBe('true');
       expect(p.with_check, `${p.policyname} with check`).not.toBe('true');

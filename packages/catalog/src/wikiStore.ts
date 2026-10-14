@@ -23,6 +23,9 @@
 //    read decides conflict, merged, deleted or not found.
 // A stray unique violation (a race the serializable check did not catch) re-runs the whole
 // transaction once, so its pre-check names the holder; a second one propagates.
+// Create and edit are in-transaction steps (`createInTx`, `updateInTx`, taking an optional revision
+// note), so the suggestion store (`wikiSuggestionStore.ts`, show-wiki-ai D2) accepts a suggestion
+// with every rule of a manual save inside its own transaction.
 //
 // Revision notes (`wiki_revisions.note`), short and fixed:
 //   `created`                   revision 1 of a page made by create
@@ -33,6 +36,8 @@
 //   `merged from <A id>`        the target page B
 //   `split to <new id>`         the source page of a split
 //   `split from <source id>`    revision 1 of the page a split created
+//   `accepted suggestion <id>` [` (edited)`] / `created from suggestion <id>`: an accepted AI
+//                               suggestion (wikiSuggestionStore.ts)
 // Names are snapshotted from the writer's own `users` row: given and family name joined by a
 // space, `""` when neither is set, never the email (design D1).
 
@@ -281,7 +286,8 @@ function isUniqueViolation(e: unknown): boolean {
   return false;
 }
 
-interface Writer {
+/** The signed-in writer of a wiki write: id, name snapshot and time. */
+export interface WikiWriter {
   uid: string;
   name: string;
   at: string;
@@ -311,7 +317,7 @@ export class WikiStore implements WikiStoreFacade {
   ) {}
 
   /** The configured parser, or the fail-closed error. */
-  #parser(): WikiLinksParser {
+  protected parser(): WikiLinksParser {
     if (!this.wikiLinks) throw new Error('wiki link parser not configured');
     return this.wikiLinks;
   }
@@ -357,7 +363,7 @@ export class WikiStore implements WikiStoreFacade {
 
   /** The page, including merged and deleted pages; `null` when missing or not accessible. */
   async getPage(id: string): Promise<WikiPage | null> {
-    return WikiStore.#read(this.db, id);
+    return WikiStore.readIn(this.db, id);
   }
 
   /** Newest first, at most `limit` (1-100, default 50), below `before` when given; `nextBefore`
@@ -413,8 +419,29 @@ export class WikiStore implements WikiStoreFacade {
   // -- writes --------------------------------------------------------------------------------------
 
   async createPage(showId: string, input: WikiCreateInput): Promise<WikiPage> {
-    const parse = this.#parser();
+    this.parser();
     const id = crypto.randomUUID();
+    return this.write((t) => this.createInTx(t, id, showId, input));
+  }
+
+  /** `null` when the page is missing or not accessible. An edit that changes nothing returns the
+   * page unchanged and appends nothing. */
+  async updatePage(id: string, input: WikiUpdateInput): Promise<WikiPage | null> {
+    if (input.bodyMd !== undefined) this.parser();
+    return this.write((t) => this.updateInTx(t, id, input));
+  }
+
+  /** The create pipeline as one step inside the caller's transaction `t` (show-wiki-ai D2). `id`
+   * is generated before the transaction starts, so a retried transaction reuses it. `note` labels
+   * revision 1 (default `created`). */
+  protected async createInTx(
+    t: CatalogDb,
+    id: string,
+    showId: string,
+    input: WikiCreateInput,
+    note = 'created',
+  ): Promise<WikiPage> {
+    const parse = this.parser();
     const kind = input.kind;
     if (!WIKI_KINDS.includes(kind)) throw new WikiInvalidError('Unknown page kind.');
     const sessionId = input.sessionId ?? null;
@@ -425,122 +452,115 @@ export class WikiStore implements WikiStoreFacade {
     }
     const title = input.title.trim();
     const body = input.bodyMd ?? '';
-    return this.#write(async (t) => {
-      const w = await WikiStore.#writer(t);
-      const aliases = await WikiStore.#normalise(t, title, input.aliases ?? []);
-      WikiStore.#checkLimits(title, body, aliases);
-      if (kind === 'session') {
-        if (aliases.length > 0) throw new WikiInvalidError('A session page has no aliases.');
-        await WikiStore.#checkSession(t, showId, sessionId as string, id);
-      } else {
-        await WikiStore.#checkNames(t, showId, [title, ...aliases], [id]);
-      }
-      await WikiStore.#checkLinks(parse, t, showId, body);
-      await t.run(
-        `insert into wiki_pages (id, show_id, kind, title, body_md, session_id, revision,
-           merged_into, deleted_at_utc, created_by, created_by_name, created_at_utc, updated_by,
-           updated_by_name, updated_at_utc)
-         values (?, ?, ?, ?, ?, ?, 1, null, null, ?, ?, ?, ?, ?, ?)`,
-        id,
-        showId,
-        kind,
-        title,
-        body,
-        sessionId,
-        w.uid,
-        w.name,
-        w.at,
-        w.uid,
-        w.name,
-        w.at,
-      );
-      await WikiStore.#insertAliases(t, id, showId, aliases);
-      await WikiStore.#insertRevision(
-        t,
-        w,
-        id,
-        1,
-        { title, kind, body_md: body, aliases },
-        'created',
-      );
-      return WikiStore.#mustRead(t, id);
-    });
+    const w = await WikiStore.writerOf(t);
+    const aliases = await WikiStore.#normalise(t, title, input.aliases ?? []);
+    WikiStore.checkLimits(title, body, aliases);
+    if (kind === 'session') {
+      if (aliases.length > 0) throw new WikiInvalidError('A session page has no aliases.');
+      await WikiStore.#checkSession(t, showId, sessionId as string, id);
+    } else {
+      await WikiStore.#checkNames(t, showId, [title, ...aliases], [id]);
+    }
+    await WikiStore.checkLinksIn(parse, t, showId, body);
+    await t.run(
+      `insert into wiki_pages (id, show_id, kind, title, body_md, session_id, revision,
+         merged_into, deleted_at_utc, created_by, created_by_name, created_at_utc, updated_by,
+         updated_by_name, updated_at_utc)
+       values (?, ?, ?, ?, ?, ?, 1, null, null, ?, ?, ?, ?, ?, ?)`,
+      id,
+      showId,
+      kind,
+      title,
+      body,
+      sessionId,
+      w.uid,
+      w.name,
+      w.at,
+      w.uid,
+      w.name,
+      w.at,
+    );
+    await WikiStore.#insertAliases(t, id, showId, aliases);
+    await WikiStore.#insertRevision(t, w, id, 1, { title, kind, body_md: body, aliases }, note);
+    return WikiStore.#mustRead(t, id);
   }
 
-  /** `null` when the page is missing or not accessible. An edit that changes nothing returns the
-   * page unchanged and appends nothing. */
-  async updatePage(id: string, input: WikiUpdateInput): Promise<WikiPage | null> {
-    const parse = input.bodyMd === undefined ? null : this.#parser();
-    return this.#write(async (t) => {
-      const cur = await WikiStore.#read(t, id);
-      if (!cur) return null;
-      WikiStore.#assertWritable(cur, input.expectedRevision);
-      const kind = input.kind ?? cur.kind;
-      if (!WIKI_KINDS.includes(kind)) throw new WikiInvalidError('Unknown page kind.');
-      if (kind !== cur.kind && (kind === 'session' || cur.kind === 'session')) {
-        throw new WikiInvalidError('A page kind cannot change to or from session.');
-      }
-      const restoredFrom = input.restoredFrom;
-      if (
-        restoredFrom !== undefined &&
-        (!Number.isInteger(restoredFrom) || restoredFrom < 1 || restoredFrom >= cur.revision)
-      ) {
-        throw new WikiInvalidError('restored_from must name an earlier revision.');
-      }
-      const title = input.title === undefined ? cur.title : input.title.trim();
-      const body = input.bodyMd ?? cur.body_md;
-      const aliases =
-        input.aliases === undefined && title === cur.title
-          ? cur.aliases
-          : await WikiStore.#normalise(t, title, input.aliases ?? cur.aliases);
-      if (kind === 'session' && aliases.length > 0) {
-        throw new WikiInvalidError('A session page has no aliases.');
-      }
-      WikiStore.#checkLimits(title, body, aliases);
-      if (
-        title === cur.title &&
-        kind === cur.kind &&
-        body === cur.body_md &&
-        sameList(aliases, cur.aliases)
-      ) {
-        return cur;
-      }
-      const w = await WikiStore.#writer(t);
-      if (kind !== 'session')
-        await WikiStore.#checkNames(t, cur.show_id, [title, ...aliases], [id]);
-      if (parse && body !== cur.body_md) await WikiStore.#checkLinks(parse, t, cur.show_id, body);
-      await WikiStore.#cas(
-        t,
-        id,
-        cur.revision,
-        'title = ?, kind = ?, body_md = ?',
-        [title, kind, body],
-        w,
-      );
-      if (!sameList(aliases, cur.aliases)) {
-        await t.run('delete from wiki_aliases where page_id = ?', id);
-        await WikiStore.#insertAliases(t, id, cur.show_id, aliases);
-      }
-      const note = restoredFrom === undefined ? 'edited' : `restored r${restoredFrom}`;
-      await WikiStore.#insertRevision(
-        t,
-        w,
-        id,
-        cur.revision + 1,
-        { title, kind, body_md: body, aliases },
-        note,
-      );
-      return WikiStore.#mustRead(t, id);
-    });
+  /** The edit pipeline as one step inside the caller's transaction `t` (show-wiki-ai D2). `note`
+   * labels the new revision; by default `edited`, or `restored r<n>` with `restoredFrom`. */
+  protected async updateInTx(
+    t: CatalogDb,
+    id: string,
+    input: WikiUpdateInput,
+    note?: string,
+  ): Promise<WikiPage | null> {
+    const parse = input.bodyMd === undefined ? null : this.parser();
+    const cur = await WikiStore.readIn(t, id);
+    if (!cur) return null;
+    WikiStore.#assertWritable(cur, input.expectedRevision);
+    const kind = input.kind ?? cur.kind;
+    if (!WIKI_KINDS.includes(kind)) throw new WikiInvalidError('Unknown page kind.');
+    if (kind !== cur.kind && (kind === 'session' || cur.kind === 'session')) {
+      throw new WikiInvalidError('A page kind cannot change to or from session.');
+    }
+    const restoredFrom = input.restoredFrom;
+    if (
+      restoredFrom !== undefined &&
+      (!Number.isInteger(restoredFrom) || restoredFrom < 1 || restoredFrom >= cur.revision)
+    ) {
+      throw new WikiInvalidError('restored_from must name an earlier revision.');
+    }
+    const title = input.title === undefined ? cur.title : input.title.trim();
+    const body = input.bodyMd ?? cur.body_md;
+    const aliases =
+      input.aliases === undefined && title === cur.title
+        ? cur.aliases
+        : await WikiStore.#normalise(t, title, input.aliases ?? cur.aliases);
+    if (kind === 'session' && aliases.length > 0) {
+      throw new WikiInvalidError('A session page has no aliases.');
+    }
+    WikiStore.checkLimits(title, body, aliases);
+    if (
+      title === cur.title &&
+      kind === cur.kind &&
+      body === cur.body_md &&
+      sameList(aliases, cur.aliases)
+    ) {
+      return cur;
+    }
+    const w = await WikiStore.writerOf(t);
+    if (kind !== 'session') await WikiStore.#checkNames(t, cur.show_id, [title, ...aliases], [id]);
+    if (parse && body !== cur.body_md) await WikiStore.checkLinksIn(parse, t, cur.show_id, body);
+    await WikiStore.#cas(
+      t,
+      id,
+      cur.revision,
+      'title = ?, kind = ?, body_md = ?',
+      [title, kind, body],
+      w,
+    );
+    if (!sameList(aliases, cur.aliases)) {
+      await t.run('delete from wiki_aliases where page_id = ?', id);
+      await WikiStore.#insertAliases(t, id, cur.show_id, aliases);
+    }
+    const label = note ?? (restoredFrom === undefined ? 'edited' : `restored r${restoredFrom}`);
+    await WikiStore.#insertRevision(
+      t,
+      w,
+      id,
+      cur.revision + 1,
+      { title, kind, body_md: body, aliases },
+      label,
+    );
+    return WikiStore.#mustRead(t, id);
   }
 
   /** Soft delete; `null` when the page is missing or not accessible. */
   async deletePage(id: string, expectedRevision: number): Promise<WikiPage | null> {
-    return this.#write(async (t) => {
-      const cur = await WikiStore.#read(t, id);
+    return this.write(async (t) => {
+      const cur = await WikiStore.readIn(t, id);
       if (!cur) return null;
       WikiStore.#assertWritable(cur, expectedRevision);
-      const w = await WikiStore.#writer(t);
+      const w = await WikiStore.writerOf(t);
       await WikiStore.#cas(t, id, cur.revision, 'deleted_at_utc = ?', [w.at], w);
       await t.run('delete from wiki_aliases where page_id = ?', id);
       await WikiStore.#insertRevision(
@@ -557,13 +577,13 @@ export class WikiStore implements WikiStoreFacade {
 
   /** Undelete; `null` when the page is missing or not accessible. */
   async restorePage(id: string, expectedRevision: number): Promise<WikiPage | null> {
-    return this.#write(async (t) => {
-      const cur = await WikiStore.#read(t, id);
+    return this.write(async (t) => {
+      const cur = await WikiStore.readIn(t, id);
       if (!cur) return null;
       if (cur.merged_into !== null) throw new WikiMergedError(cur.merged_into);
       if (!cur.deleted) throw new WikiNotDeletedError();
       if (cur.revision !== expectedRevision) throw new WikiConflictError(cur);
-      const w = await WikiStore.#writer(t);
+      const w = await WikiStore.writerOf(t);
       if (cur.kind === 'session') {
         await WikiStore.#checkSession(t, cur.show_id, cur.session_id as string, id);
       } else {
@@ -591,11 +611,11 @@ export class WikiStore implements WikiStoreFacade {
     expectedRevision: number,
     intoExpectedRevision: number,
   ): Promise<WikiPage | null> {
-    const parse = this.#parser();
+    const parse = this.parser();
     if (id === intoId) throw new WikiInvalidError('A page cannot be merged into itself.');
-    return this.#write(async (t) => {
-      const a = await WikiStore.#read(t, id);
-      const b = await WikiStore.#read(t, intoId);
+    return this.write(async (t) => {
+      const a = await WikiStore.readIn(t, id);
+      const b = await WikiStore.readIn(t, intoId);
       if (!a || !b || a.show_id !== b.show_id) return null;
       for (const p of [a, b]) {
         if (p.merged_into !== null) throw new WikiMergedError(p.merged_into);
@@ -616,9 +636,9 @@ export class WikiStore implements WikiStoreFacade {
       if (aliases.length > WIKI_MAX_ALIASES) {
         throw new WikiInvalidError(`The merged page would exceed ${WIKI_MAX_ALIASES} aliases.`);
       }
-      const w = await WikiStore.#writer(t);
+      const w = await WikiStore.writerOf(t);
       await WikiStore.#checkNames(t, b.show_id, [b.title, ...aliases], [a.id, b.id]);
-      await WikiStore.#checkLinks(parse, t, b.show_id, body);
+      await WikiStore.checkLinksIn(parse, t, b.show_id, body);
 
       await WikiStore.#cas(t, a.id, a.revision, 'merged_into = ?', [b.id], w);
       await t.run('delete from wiki_aliases where page_id = ?', a.id);
@@ -651,23 +671,23 @@ export class WikiStore implements WikiStoreFacade {
     id: string,
     input: WikiSplitInput,
   ): Promise<{ page: WikiPage; newPage: WikiPage } | null> {
-    const parse = this.#parser();
+    const parse = this.parser();
     const np = input.newPage;
     if (np.kind === 'session') throw new WikiInvalidError('A split cannot create a session page.');
     if (!WIKI_KINDS.includes(np.kind)) throw new WikiInvalidError('Unknown page kind.');
     const newId = crypto.randomUUID();
     const newTitle = np.title.trim();
-    return this.#write(async (t) => {
-      const cur = await WikiStore.#read(t, id);
+    return this.write(async (t) => {
+      const cur = await WikiStore.readIn(t, id);
       if (!cur) return null;
       WikiStore.#assertWritable(cur, input.expectedRevision);
       const aliases = await WikiStore.#normalise(t, newTitle, np.aliases ?? []);
-      WikiStore.#checkLimits(newTitle, np.bodyMd, aliases);
-      WikiStore.#checkLimits(cur.title, input.remainingBodyMd, []);
-      const w = await WikiStore.#writer(t);
+      WikiStore.checkLimits(newTitle, np.bodyMd, aliases);
+      WikiStore.checkLimits(cur.title, input.remainingBodyMd, []);
+      const w = await WikiStore.writerOf(t);
       await WikiStore.#checkNames(t, cur.show_id, [newTitle, ...aliases], [newId]);
-      await WikiStore.#checkLinks(parse, t, cur.show_id, input.remainingBodyMd);
-      await WikiStore.#checkLinks(parse, t, cur.show_id, np.bodyMd);
+      await WikiStore.checkLinksIn(parse, t, cur.show_id, input.remainingBodyMd);
+      await WikiStore.checkLinksIn(parse, t, cur.show_id, np.bodyMd);
 
       await WikiStore.#cas(t, id, cur.revision, 'body_md = ?', [input.remainingBodyMd], w);
       await WikiStore.#insertRevision(
@@ -714,7 +734,7 @@ export class WikiStore implements WikiStoreFacade {
   // -- helpers -------------------------------------------------------------------------------------
 
   /** One catalog transaction; a unique violation re-runs it once (design D3). */
-  async #write<T>(fn: (t: CatalogDb) => Promise<T>): Promise<T> {
+  protected async write<T>(fn: (t: CatalogDb) => Promise<T>): Promise<T> {
     try {
       return await this.db.tx(fn);
     } catch (e) {
@@ -723,13 +743,13 @@ export class WikiStore implements WikiStoreFacade {
     }
   }
 
-  static async #read(t: CatalogDb, id: string): Promise<WikiPage | null> {
+  protected static async readIn(t: CatalogDb, id: string): Promise<WikiPage | null> {
     const r = await t.first<PageRow>(SELECT_PAGE, id);
     return r ? pageOf(r) : null;
   }
 
   static async #mustRead(t: CatalogDb, id: string): Promise<WikiPage> {
-    const p = await WikiStore.#read(t, id);
+    const p = await WikiStore.readIn(t, id);
     if (!p) throw new Error(`wiki page ${id} vanished inside its own transaction`);
     return p;
   }
@@ -748,7 +768,7 @@ export class WikiStore implements WikiStoreFacade {
     expected: number,
     set: string,
     binds: unknown[],
-    w: Writer,
+    w: WikiWriter,
   ): Promise<void> {
     const { changes } = await t.run(
       `update wiki_pages set ${set}, revision = revision + 1, updated_by = ?, updated_by_name = ?,
@@ -762,7 +782,7 @@ export class WikiStore implements WikiStoreFacade {
       expected,
     );
     if (changes === 1) return;
-    const now = await WikiStore.#read(t, id);
+    const now = await WikiStore.readIn(t, id);
     if (!now) throw new Error(`wiki page ${id} is no longer visible`);
     if (now.merged_into !== null) throw new WikiMergedError(now.merged_into);
     throw new WikiConflictError(now);
@@ -773,7 +793,7 @@ export class WikiStore implements WikiStoreFacade {
   }
 
   /** The signed-in writer: id and name snapshot (given and family name, never the email). */
-  static async #writer(t: CatalogDb): Promise<Writer> {
+  protected static async writerOf(t: CatalogDb): Promise<WikiWriter> {
     const r = await t.first<{ uid: string | null; name: string | null }>(
       `select catalog.app_user_id() as uid,
               (select btrim(concat_ws(' ', nullif(btrim(u.given_name), ''), nullif(btrim(u.family_name), '')))
@@ -785,7 +805,7 @@ export class WikiStore implements WikiStoreFacade {
 
   /** The request limits of the show-wiki capability. The contract schema refuses these first; this
    * keeps the store from reaching a DB check (`23514`) with them. */
-  static #checkLimits(title: string, body: string, aliases: string[]): void {
+  protected static checkLimits(title: string, body: string, aliases: string[]): void {
     if (title.length < 1 || title.length > 200 || hasControl(title)) {
       throw new WikiInvalidError('A title is 1-200 characters of one line.');
     }
@@ -828,6 +848,18 @@ export class WikiStore implements WikiStoreFacade {
     names: string[],
     exclude: string[],
   ): Promise<void> {
+    const hit = await WikiStore.nameHolderIn(t, showId, names, exclude);
+    if (hit !== null) throw new WikiTitleTakenError(hit);
+  }
+
+  /** The id of the live non-session page of the show, other than `exclude`, holding one of
+   * `names` as its title or an alias; `null` when none does. */
+  protected static async nameHolderIn(
+    t: CatalogDb,
+    showId: string,
+    names: string[],
+    exclude: string[],
+  ): Promise<string | null> {
     const hit = await t.first<{ id: string }>(
       `with n as (select catalog.search_norm(v) as n from json_array_elements_text(?::text::json) v),
             x as (select v as id from json_array_elements_text(?::text::json) v)
@@ -845,7 +877,7 @@ export class WikiStore implements WikiStoreFacade {
       showId,
       showId,
     );
-    if (hit) throw new WikiTitleTakenError(hit.id);
+    return hit ? hit.id : null;
   }
 
   /** The session is a session of the show, and no other live page is its session page. */
@@ -872,7 +904,7 @@ export class WikiStore implements WikiStoreFacade {
   }
 
   /** Every `cite:`/`wiki:` link of `body` is valid and points into the show (design D4). */
-  static async #checkLinks(
+  protected static async checkLinksIn(
     parse: WikiLinksParser,
     t: CatalogDb,
     showId: string,
@@ -925,7 +957,7 @@ export class WikiStore implements WikiStoreFacade {
 
   static async #insertRevision(
     t: CatalogDb,
-    w: Writer,
+    w: WikiWriter,
     pageId: string,
     revision: number,
     s: { title: string; kind: WikiKind; body_md: string; aliases: string[] },

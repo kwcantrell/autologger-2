@@ -37,6 +37,7 @@ import { showsRouter } from './routers/shows';
 import { teamsRouter } from './routers/teams';
 import { transcribeRouter } from './routers/transcribe';
 import { wikiRouter } from './routers/wiki';
+import { wikiSuggestionsRouter } from './routers/wikiSuggestions';
 
 /** The Next.js frontend bridge (nextjs-frontend-migration, design D1) — the
  * minimal seam app.ts's catch-all consumes: given the raw Node req/res pair
@@ -262,6 +263,7 @@ export function wireApp(
   app.route('/', showsRouter);
   app.route('/', searchRouter);
   app.route('/', wikiRouter);
+  app.route('/', wikiSuggestionsRouter);
   app.route('/', teamsRouter);
   app.route('/', sessionsRouter);
   app.route('/', logImportRouter);

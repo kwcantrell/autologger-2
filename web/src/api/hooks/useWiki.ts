@@ -18,6 +18,7 @@ import type {
   WikiRevisionListResponse,
   WikiSplitBody,
   WikiSplitResponse,
+  WikiSuggestionStatus,
   WikiVersionConflict,
 } from '../types';
 import { versionConflictOf } from '../versionConflict';
@@ -61,7 +62,27 @@ export const wikiKeys = {
   revisions: (pageId: string) => ['wikiPages', 'page', pageId, 'revisions'] as const,
   revision: (pageId: string, revision: number) =>
     ['wikiPages', 'page', pageId, 'revisions', revision] as const,
+  // Suggestions (show-wiki-ai D6), under the same root so `all()` covers them.
+  // `suggestions(showId)` (no filters) is a prefix of every filtered list of that show.
+  allSuggestions: () => ['wikiPages', 'suggestions'] as const,
+  suggestions: (showId: string, filters?: WikiSuggestionFilters) =>
+    ['wikiPages', 'suggestions', showId, wireSuggestionFilters(filters)] as const,
+  suggestion: (suggestionId: string) => ['wikiPages', 'suggestion', suggestionId] as const,
 };
+
+export interface WikiSuggestionFilters {
+  /** Default `pending`. */
+  status?: WikiSuggestionStatus;
+  pageId?: string;
+}
+
+/** The suggestion filters as the server spells them; `pending` (the default) and empty ones dropped. */
+export function wireSuggestionFilters({ status, pageId }: WikiSuggestionFilters = {}) {
+  return {
+    ...(status && status !== 'pending' ? { status } : {}),
+    ...(pageId ? { page_id: pageId } : {}),
+  };
+}
 
 /** The `shows/:showId/wiki/pages[?…]` path for these filters. */
 export function wikiPagesPath(showId: string, filters?: WikiPageFilters): string {
@@ -123,13 +144,14 @@ export function useWikiRevision(pageId: string | null, revision: number | null) 
 }
 
 /** Store a page the server returned and refresh it, its history and its show's lists. */
-function settlePage(qc: QueryClient, page: WikiPage) {
+export function settlePage(qc: QueryClient, page: WikiPage) {
   qc.setQueryData(wikiKeys.page(page.id), page);
   void qc.invalidateQueries({ queryKey: wikiKeys.page(page.id) });
   void qc.invalidateQueries({ queryKey: wikiKeys.list(page.show_id) });
 }
 
-function onWikiConflict(qc: QueryClient) {
+/** On a wiki `409 Version conflict.`, write `current` into the page cache and refresh it. */
+export function onWikiConflict(qc: QueryClient) {
   return (error: unknown) => {
     const conflict = wikiVersionConflictOf(error);
     if (!conflict) return;

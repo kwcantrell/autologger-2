@@ -892,3 +892,131 @@ export const wikiMergedConflictSchema = z.strictObject({
   merged_into: z.string(),
 });
 export type WikiMergedConflict = z.infer<typeof wikiMergedConflictSchema>;
+
+// -- show-wiki-ai: AI wiki suggestions (design D4/D5; api-contract-freeze "Wiki suggestion …",
+// "Wiki update endpoint"; wiki-generation "Proposals are checked when they are made") ------------
+// A proposal is a whole page version written by the model: the page limits of a manual save, a
+// body of at most 30 000 characters (so one rewrite fits in one model step) and a 1–500 character
+// rationale. Response bodies are strict; the accept body and the list query strip unknown keys.
+export const WIKI_PROPOSAL_BODY_MAX = 30_000;
+export const WIKI_RATIONALE_MAX = 500;
+export const WIKI_SUGGESTION_STATUSES = ['pending', 'accepted', 'dismissed', 'superseded'] as const;
+
+/** The fixed `detail` strings of the suggestion and wiki-update routes. */
+export const WIKI_SUGGESTION_DETAIL = {
+  suggestionNotFound: 'Suggestion not found.',
+  resolved: 'Suggestion already resolved.',
+  expectedRevisionRequired: 'expected_revision is required.',
+  noLanguageModel: 'Add a language model in Settings → Advanced to update the wiki.',
+  noTranscript: 'This session has no transcript words to update the wiki from.',
+  busy:
+    'A turn (AI chat, AI v2, topic generation, event generation, or wiki update) is already ' +
+    'in progress for this session; wait for it to finish before updating the wiki again. ' +
+    'These features share one per-session AI slot by design.',
+  failed: 'Wiki update failed.',
+} as const;
+
+export const wikiSuggestionStatusSchema = z.enum(WIKI_SUGGESTION_STATUSES);
+export type WikiSuggestionStatusWire = z.infer<typeof wikiSuggestionStatusSchema>;
+
+const wikiSuggestionShape = {
+  id: z.string(),
+  show_id: z.string(),
+  session_id: z.string(),
+  status: wikiSuggestionStatusSchema,
+  page_id: z.string().nullable(),
+  base_revision: wikiRevisionNumberSchema.nullable(),
+  kind: wikiKindSchema,
+  title: z.string(),
+  aliases: z.array(z.string()),
+  rationale: z.string(),
+  page: z
+    .strictObject({
+      title: z.string(),
+      revision: wikiRevisionNumberSchema,
+      state: z.enum(['live', 'merged', 'deleted']),
+    })
+    .nullable(),
+  stale: z.boolean(),
+  created_at_utc: z.string(),
+  created_by_name: z.string(),
+  resolved_at_utc: z.string().nullable(),
+  resolved_by_name: z.string().nullable(),
+  resolved_revision: wikiRevisionNumberSchema.nullable(),
+};
+
+/** The suggestion object every suggestion-returning route answers with. */
+export const wikiSuggestionSchema = z.strictObject(wikiSuggestionShape);
+export type WikiSuggestionWire = z.infer<typeof wikiSuggestionSchema>;
+
+/** `GET /api/wiki/suggestions/:suggestionId`: the suggestion plus its proposed body. */
+export const wikiSuggestionDetailSchema = z.strictObject({
+  ...wikiSuggestionShape,
+  body_md: z.string(),
+});
+export type WikiSuggestionDetailWire = z.infer<typeof wikiSuggestionDetailSchema>;
+
+/** `GET /api/shows/:showId/wiki/suggestions`: newest first, at most 500. */
+export const wikiSuggestionListSchema = z.strictObject({
+  suggestions: z.array(wikiSuggestionSchema),
+  truncated: z.boolean(),
+});
+export type WikiSuggestionListResponse = z.infer<typeof wikiSuggestionListSchema>;
+
+/** `GET /api/shows/:showId/wiki/suggestions` query: `status` (default `pending`) and `page_id`. */
+export const wikiSuggestionListQuerySchema = z.object({
+  status: wikiSuggestionStatusSchema.default('pending'),
+  page_id: z.string().min(1).optional(),
+});
+export type WikiSuggestionListQuery = z.infer<typeof wikiSuggestionListQuerySchema>;
+
+/** `POST /api/sessions/:sessionId/wiki/generate` `200`: the suggestions the run stored. */
+export const wikiGenerateResponseSchema = z.strictObject({
+  suggestions: z.array(wikiSuggestionSchema),
+});
+export type WikiGenerateResponse = z.infer<typeof wikiGenerateResponseSchema>;
+
+/** `POST /api/wiki/suggestions/:suggestionId/accept`. `expected_revision` is required for an
+ * existing page (the router's 422); the overrides have the wiki page limits; the kind can't change. */
+export const wikiSuggestionAcceptSchema = z.object({
+  expected_revision: wikiRevisionNumberSchema.optional(),
+  title: wikiTitleSchema.optional(),
+  body_md: wikiBodySchema.optional(),
+  aliases: wikiAliasesSchema.optional(),
+});
+export type WikiSuggestionAcceptBody = z.infer<typeof wikiSuggestionAcceptSchema>;
+
+/** The accept `200` (page updated) and `201` (page created) body. */
+export const wikiSuggestionAcceptResponseSchema = z.strictObject({
+  page: wikiPageSchema,
+  suggestion: wikiSuggestionSchema,
+});
+export type WikiSuggestionAcceptResponse = z.infer<typeof wikiSuggestionAcceptResponseSchema>;
+
+/** `409` for a suggestion that isn't pending. */
+export const wikiSuggestionResolvedConflictSchema = z.strictObject({
+  detail: z.literal(WIKI_SUGGESTION_DETAIL.resolved),
+  status: wikiSuggestionStatusSchema,
+});
+export type WikiSuggestionResolvedConflict = z.infer<typeof wikiSuggestionResolvedConflictSchema>;
+
+/** `propose_page`'s shape check (design D4 step 1). Whether `kind` is required, and whether it
+ * matches the target page, depends on the target, so the tool checks it. */
+export const wikiProposalSchema = z
+  .object({
+    page_id: z.string().min(1).optional(),
+    kind: wikiKindSchema.optional(),
+    title: wikiTitleSchema,
+    aliases: wikiAliasesSchema.default([]),
+    body_md: z
+      .string()
+      .max(WIKI_PROPOSAL_BODY_MAX)
+      .refine((s) => !s.includes('\u0000'), { message: 'must not contain NUL' }),
+    rationale: z.string().trim().min(1).max(WIKI_RATIONALE_MAX),
+  })
+  .superRefine((p, ctx) => {
+    if (p.kind === 'session' && p.aliases.length > 0) {
+      ctx.addIssue({ code: 'custom', path: ['aliases'], message: 'a session page has none' });
+    }
+  });
+export type WikiProposalInput = z.infer<typeof wikiProposalSchema>;

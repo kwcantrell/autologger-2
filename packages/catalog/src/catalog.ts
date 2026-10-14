@@ -11,7 +11,8 @@ import { type CatalogSearchResult, type SearchParams, SearchStore } from './sear
 import { SessionIndexStore, type SessionIndexStoreFacade } from './sessionIndexStore';
 import { ShowsStore, type ShowsStoreFacade } from './showsStore';
 import { StudioRegistry, type StudioRegistryFacade } from './studioRegistry';
-import { type WikiLinksParser, WikiStore, type WikiStoreFacade } from './wikiStore';
+import type { WikiLinksParser } from './wikiStore';
+import { type WikiFacade, WikiSuggestionStore } from './wikiSuggestionStore';
 
 export type { AuthUser, ProfileCtx, Row } from '@autologger/domain';
 export type { AuthStoreFacade } from './authStore';
@@ -21,6 +22,7 @@ export type { ShowsStoreFacade } from './showsStore';
 export { showApiDict, showCategoriesApiShape } from './showsStore';
 export type { StudioRegistryFacade } from './studioRegistry';
 export type { WikiStoreFacade } from './wikiStore';
+export type { WikiFacade, WikiSuggestionStoreFacade } from './wikiSuggestionStore';
 
 /** Facade interface for `Catalog` (persistence-package-extraction design D3 /
  * spec "Persistence facades are consumed through package-exported
@@ -36,8 +38,8 @@ export interface CatalogFacade {
   readonly auth: AuthStoreFacade;
   readonly sessions: SessionIndexStoreFacade;
   readonly profile: ProfileAssemblerFacade;
-  /** The show wiki (show-wiki design D1-D4). */
-  readonly wiki: WikiStoreFacade;
+  /** The show wiki (show-wiki design D1-D4) and its AI suggestions (show-wiki-ai D2). */
+  readonly wiki: WikiFacade;
   init: () => Promise<void>;
   /** Runs `fn` on a Catalog bound to one catalog transaction (async-catalog-stores D3). */
   tx: <T>(fn: (cat: CatalogFacade) => Promise<T>) => Promise<T>;
@@ -89,7 +91,7 @@ export class Catalog implements CatalogFacade {
   readonly auth: AuthStore;
   readonly sessions: SessionIndexStore;
   readonly profile: ProfileAssembler;
-  readonly wiki: WikiStore;
+  readonly wiki: WikiSuggestionStore;
   /** Private (`#`), so the stores stay the only enumerable fields. */
   readonly #db: CatalogDb;
   readonly #root: CatalogRoot | undefined;
@@ -108,7 +110,7 @@ export class Catalog implements CatalogFacade {
     this.auth = new AuthStore(db);
     this.sessions = new SessionIndexStore(db, this.studios, this.shows);
     this.profile = new ProfileAssembler(this.studios, this.auth, this.shows);
-    this.wiki = new WikiStore(db, opts.wikiLinks);
+    this.wiki = new WikiSuggestionStore(db, opts.wikiLinks);
   }
 
   /** Refresh the studio registry; must run once per request before registry reads. */

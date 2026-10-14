@@ -58,6 +58,8 @@ const TABLES = [
   'wiki_pages',
   'wiki_aliases',
   'wiki_revisions',
+  // show-wiki-ai D1: the AI's pending and resolved wiki suggestions.
+  'wiki_suggestions',
 ];
 // companion-devices D1: the tables with no catalog_user policy and no catalog_user privilege.
 // byo-ai-providers D1: plus the two provider tables.
@@ -92,6 +94,7 @@ const KEY_COLUMN: Record<string, string> = {
   wiki_pages: 'id',
   wiki_aliases: 'page_id',
   wiki_revisions: 'page_id',
+  wiki_suggestions: 'id',
 };
 const MIGRATIONS = resolve(import.meta.dirname, '../../../../supabase/migrations');
 const MIGRATION = resolve(MIGRATIONS, '20261001000000_catalog_schema.sql');
@@ -583,6 +586,36 @@ const EXPECTED_SCHEMA: SchemaRecord = {
     primaryKey: ['page_id', 'revision'],
     foreignKeys: ['FOREIGN KEY (page_id) REFERENCES catalog.wiki_pages(id)'],
   },
+  // show-wiki-ai D1: one row per AI suggestion; composite keys keep its session and page in the show.
+  wiki_suggestions: {
+    columns: [
+      'id text collate C not null',
+      'show_id text collate C not null',
+      'session_id text collate C not null',
+      'run_id text collate C not null',
+      'page_id text collate C',
+      'base_revision bigint',
+      'kind text collate C not null',
+      'title text collate C not null',
+      'body_md text collate C not null',
+      'aliases_json jsonb not null',
+      'rationale text collate C not null',
+      'status text collate C not null',
+      'created_by text collate C not null',
+      'created_by_name text collate C not null',
+      'created_at_utc text collate C not null',
+      'resolved_by text collate C',
+      'resolved_by_name text collate C',
+      'resolved_at_utc text collate C',
+      'resolved_revision bigint',
+    ],
+    primaryKey: ['id'],
+    foreignKeys: [
+      'FOREIGN KEY (page_id, show_id) REFERENCES catalog.wiki_pages(id, show_id)',
+      'FOREIGN KEY (session_id, show_id) REFERENCES catalog.sessions(id, show_id)',
+      'FOREIGN KEY (show_id) REFERENCES catalog.shows(id)',
+    ],
+  },
   // show-wiki D1: the composite-key targets.
   $unique: [
     'catalog.companion_devices UNIQUE (token_hash)',
@@ -612,6 +645,14 @@ const EXPECTED_SCHEMA: SchemaRecord = {
     "catalog.wiki_pages wiki_pages_kind_check CHECK ((kind = ANY (ARRAY['person'::text, 'topic'::text, 'bit'::text, 'session'::text])))",
     "catalog.wiki_pages wiki_pages_session_kind_check CHECK (((kind = 'session'::text) = (session_id IS NOT NULL)))",
     'catalog.wiki_pages wiki_pages_title_check CHECK (((char_length(btrim(title)) >= 1) AND (char_length(btrim(title)) <= 200)))',
+    // show-wiki-ai D1: kinds, statuses, the page/base pairing, resolution fields and length limits.
+    'catalog.wiki_suggestions wiki_suggestions_body_md_check CHECK ((char_length(body_md) <= 100000))',
+    "catalog.wiki_suggestions wiki_suggestions_kind_check CHECK ((kind = ANY (ARRAY['person'::text, 'topic'::text, 'bit'::text, 'session'::text])))",
+    'catalog.wiki_suggestions wiki_suggestions_rationale_check CHECK ((char_length(rationale) <= 500))',
+    "catalog.wiki_suggestions wiki_suggestions_resolved_check CHECK ((((status = ANY (ARRAY['accepted'::text, 'dismissed'::text])) = (resolved_by IS NOT NULL)) AND ((status = ANY (ARRAY['accepted'::text, 'dismissed'::text])) = (resolved_at_utc IS NOT NULL)) AND ((status = 'accepted'::text) = (resolved_revision IS NOT NULL))))",
+    "catalog.wiki_suggestions wiki_suggestions_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'accepted'::text, 'dismissed'::text, 'superseded'::text])))",
+    'catalog.wiki_suggestions wiki_suggestions_target_check CHECK (((page_id IS NULL) = (base_revision IS NULL)))',
+    'catalog.wiki_suggestions wiki_suggestions_title_check CHECK (((char_length(btrim(title)) >= 1) AND (char_length(btrim(title)) <= 200)))',
   ],
   $indexes: [
     'CREATE INDEX idx_companion_devices_user ON catalog.companion_devices USING btree (user_id)',
@@ -648,6 +689,10 @@ const EXPECTED_SCHEMA: SchemaRecord = {
     'CREATE UNIQUE INDEX idx_wiki_pages_live_session ON catalog.wiki_pages USING btree (show_id, session_id) WHERE ((session_id IS NOT NULL) AND (merged_into IS NULL) AND (deleted_at_utc IS NULL))',
     "CREATE UNIQUE INDEX idx_wiki_pages_live_title ON catalog.wiki_pages USING btree (show_id, catalog.search_norm(title)) WHERE ((kind <> 'session'::text) AND (merged_into IS NULL) AND (deleted_at_utc IS NULL))",
     'CREATE INDEX idx_wiki_pages_show ON catalog.wiki_pages USING btree (show_id)',
+    // show-wiki-ai D1: one pending suggestion per page and per new-page title; the show listing.
+    "CREATE UNIQUE INDEX idx_wiki_suggestions_pending_page ON catalog.wiki_suggestions USING btree (show_id, page_id) WHERE ((status = 'pending'::text) AND (page_id IS NOT NULL))",
+    "CREATE UNIQUE INDEX idx_wiki_suggestions_pending_title ON catalog.wiki_suggestions USING btree (show_id, catalog.search_norm(title)) WHERE ((status = 'pending'::text) AND (page_id IS NULL))",
+    'CREATE INDEX idx_wiki_suggestions_show ON catalog.wiki_suggestions USING btree (show_id)',
   ],
 };
 const EXPECTED_SHOWS: unknown[] = [
@@ -808,6 +853,12 @@ describe('the app role (design D3)', () => {
     await sql`insert into wiki_aliases (page_id, show_id, alias) values ('wp', 'sh', 'a')`;
     await sql`insert into wiki_revisions (page_id, revision, title, kind, body_md, aliases_json,
                 author_user_id, author_name, at_utc) values ('wp', 1, 'W', 'session', '', '[]', 'u', 'U', ${t})`;
+    // show-wiki-ai D1: a pending suggestion for that page.
+    await sql`insert into wiki_suggestions (id, show_id, session_id, run_id, page_id, base_revision,
+                kind, title, body_md, aliases_json, rationale, status, created_by, created_by_name,
+                created_at_utc)
+              values ('ws', 'sh', 'se', 'r', 'wp', 1, 'session', 'W', '', '[]', '', 'pending', 'u',
+                'U', ${t})`;
     for (const table of TABLES) {
       const n = await sql.unsafe(`select count(*)::int as n from ${table}`);
       expect(n[0]?.n, table).toBeGreaterThan(0);
@@ -1009,6 +1060,36 @@ describe('row-level security on every catalog table (catalog-roles D1, D2; catal
             await sql`select has_table_privilege('catalog_user', 'catalog.session_transcript_chunks', ${priv}) as p`;
           expect(r[0]?.p, `session_transcript_chunks ${priv}`).toBe(priv === 'select');
         }
+      }
+      // show-wiki-ai D1: suggestions have the system policy and user select, insert and update
+      // policies; catalog_user holds select and insert, and update on the resolution columns only.
+      if (t.relname === 'wiki_suggestions') {
+        const cmds = await sql`select policyname, cmd, roles::text[] as roles from pg_policies
+                               where schemaname = 'catalog' and tablename = 'wiki_suggestions'
+                               order by policyname`;
+        expect(cmds.map((p) => [p.policyname, p.cmd, p.roles])).toEqual([
+          ['wiki_suggestions_system_all', 'ALL', ['catalog_system']],
+          ['wiki_suggestions_user_insert', 'INSERT', ['catalog_user']],
+          ['wiki_suggestions_user_select', 'SELECT', ['catalog_user']],
+          ['wiki_suggestions_user_update', 'UPDATE', ['catalog_user']],
+        ]);
+        for (const priv of ['select', 'insert', 'update', 'delete']) {
+          const r =
+            await sql`select has_table_privilege('catalog_user', 'catalog.wiki_suggestions', ${priv}) as p`;
+          expect(r[0]?.p, `wiki_suggestions ${priv}`).toBe(priv === 'select' || priv === 'insert');
+        }
+        const cols = await sql`select column_name from information_schema.columns
+                               where table_schema = 'catalog' and table_name = 'wiki_suggestions'
+                                 and has_column_privilege('catalog_user', 'catalog.wiki_suggestions',
+                                                          column_name, 'update')
+                               order by ordinal_position`;
+        expect(cols.map((c) => c.column_name)).toEqual([
+          'status',
+          'resolved_by',
+          'resolved_by_name',
+          'resolved_at_utc',
+          'resolved_revision',
+        ]);
       }
       if (session) {
         expect(policies.map((p) => p.policyname).sort(), t.relname).toEqual([

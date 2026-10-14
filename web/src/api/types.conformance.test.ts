@@ -112,6 +112,14 @@ import { wikiPageUpdateConflict } from '../../../fixtures/api-responses/wikiPage
 import { wikiRevision } from '../../../fixtures/api-responses/wikiRevision';
 import { wikiRevisionList } from '../../../fixtures/api-responses/wikiRevisionList';
 import { wikiSplit } from '../../../fixtures/api-responses/wikiSplit';
+import { wikiSuggestion } from '../../../fixtures/api-responses/wikiSuggestion';
+import { wikiSuggestionAccept } from '../../../fixtures/api-responses/wikiSuggestionAccept';
+import { wikiSuggestionAcceptConflict } from '../../../fixtures/api-responses/wikiSuggestionAcceptConflict';
+import { wikiSuggestionAcceptCreate } from '../../../fixtures/api-responses/wikiSuggestionAcceptCreate';
+import { wikiSuggestionDismiss } from '../../../fixtures/api-responses/wikiSuggestionDismiss';
+import { wikiSuggestionGenerate } from '../../../fixtures/api-responses/wikiSuggestionGenerate';
+import { wikiSuggestionList } from '../../../fixtures/api-responses/wikiSuggestionList';
+import { wikiSuggestionResolved } from '../../../fixtures/api-responses/wikiSuggestionResolved';
 import type { LogImportJobStatus } from '../pages/index/batchImport/logImportClient';
 import { fmtDateOnly } from '../shared/utils/fmtDateOnly';
 import type {
@@ -159,6 +167,7 @@ import type {
   TransportStartResponse,
   TransportStateSnapshot,
   TransportStopResponse,
+  WikiGenerateResponse,
   WikiMergeResponse,
   WikiPage,
   WikiPageListItem,
@@ -167,6 +176,11 @@ import type {
   WikiRevisionListItem,
   WikiRevisionListResponse,
   WikiSplitResponse,
+  WikiSuggestion,
+  WikiSuggestionAcceptResponse,
+  WikiSuggestionDetail,
+  WikiSuggestionListResponse,
+  WikiSuggestionResolvedConflict,
   WikiVersionConflict,
 } from './types';
 
@@ -934,6 +948,50 @@ describe('show wiki — the bodies the wiki routes answer (show-wiki D6, D8 cate
     const split: WikiSplitResponse = wikiSplit;
     expect(split.new_page.kind).toBe('bit');
     expect(split.page.revision).toBe(2);
+  });
+});
+
+describe('show wiki AI — the bodies the suggestion routes answer (show-wiki-ai D6, D7 category 3)', () => {
+  const SUGGESTION_KEYS = Object.keys(wikiSuggestionDismiss).sort();
+
+  it('the read capture is assignable to WikiSuggestionDetail: the suggestion object plus body_md', () => {
+    const check: WikiSuggestionDetail = wikiSuggestion;
+    expect(Object.keys(check).sort()).toEqual([...SUGGESTION_KEYS, 'body_md'].sort());
+    expect(check.page?.state).toBe('live');
+  });
+
+  it('the list and generate captures are assignable to their responses', () => {
+    const list: WikiSuggestionListResponse = wikiSuggestionList;
+    const items: WikiSuggestion[] = wikiSuggestionList.suggestions;
+    expect(list.truncated).toBe(false);
+    for (const s of items) expect(Object.keys(s).sort()).toEqual(SUGGESTION_KEYS);
+    expect(items[0].page_id).toBeNull();
+    expect(items[0].page).toBeNull();
+    const generated: WikiGenerateResponse = wikiSuggestionGenerate;
+    expect(generated.suggestions[0].status).toBe('pending');
+  });
+
+  it('the accept captures (200 and 201) are assignable to WikiSuggestionAcceptResponse', () => {
+    const updated: WikiSuggestionAcceptResponse = wikiSuggestionAccept;
+    const created: WikiSuggestionAcceptResponse = wikiSuggestionAcceptCreate;
+    for (const r of [updated, created]) {
+      expect(Object.keys(r.page).sort()).toEqual(Object.keys(wikiPage).sort());
+      expect(Object.keys(r.suggestion).sort()).toEqual(SUGGESTION_KEYS);
+      expect(r.suggestion.status).toBe('accepted');
+    }
+  });
+
+  it('the accept 409s are assignable to WikiVersionConflict and WikiSuggestionResolvedConflict', () => {
+    const stale: WikiVersionConflict = wikiSuggestionAcceptConflict;
+    expect(stale.detail).toBe('Version conflict.');
+    expect(Object.keys(stale.current).sort()).toEqual(Object.keys(wikiPage).sort());
+    const resolved: WikiSuggestionResolvedConflict = wikiSuggestionResolved;
+    expect(resolved.detail).toBe('Suggestion already resolved.');
+  });
+
+  it('the dismiss capture is assignable to WikiSuggestion', () => {
+    const check: WikiSuggestion = wikiSuggestionDismiss;
+    expect(check.status).toBe('dismissed');
   });
 });
 

@@ -21,10 +21,12 @@ import {
   WikiNotDeletedError,
   type WikiPage,
   WikiSessionTakenError,
+  WikiSuggestionResolvedError,
   WikiTitleTakenError,
 } from '@autologger/catalog';
 import {
   WIKI_DETAIL,
+  WIKI_SUGGESTION_DETAIL,
   wikiCreatePageBodySchema,
   wikiDeleteQuerySchema,
   wikiListQuerySchema,
@@ -59,8 +61,9 @@ function found<T>(v: T | null): T {
   return v;
 }
 
-/** The delta's 409 and 422 bodies for the wiki store's errors; anything else is rethrown. */
-function wikiError(c: Context<AppEnv>, error: unknown): Response {
+/** The delta's 409 and 422 bodies for the wiki store's errors, the suggestion routes' included
+ * (show-wiki-ai D5); anything else is rethrown. */
+export function wikiError(c: Context<AppEnv>, error: unknown): Response {
   if (error instanceof WikiConflictError) {
     return c.json({ detail: WIKI_DETAIL.versionConflict, current: error.current }, 409);
   }
@@ -74,6 +77,9 @@ function wikiError(c: Context<AppEnv>, error: unknown): Response {
   }
   if (error instanceof WikiSessionTakenError) {
     return c.json({ detail: WIKI_DETAIL.sessionHasPage, page_id: error.pageId }, 409);
+  }
+  if (error instanceof WikiSuggestionResolvedError) {
+    return c.json({ detail: WIKI_SUGGESTION_DETAIL.resolved, status: error.status }, 409);
   }
   if (error instanceof WikiInvalidError) return c.json({ detail: error.message }, 422);
   throw error;

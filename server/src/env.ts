@@ -305,6 +305,40 @@ export function eventGenerateMaxInstructionEntries(env: Config): number {
   return Number.isInteger(n) && n > 0 ? n : 50;
 }
 
+// ── Wiki update (show-wiki-ai, wiki-generation "Wiki update bounds") ───────
+// `wiki/generate` shares the AI gates and the per-session slot, but a run reads wiki pages as well
+// as the whole transcript and writes whole pages, so it has bounds of its own. The defaults equal
+// ai-runtime's `WIKI_GENERATE_DEFAULTS` (pinned by env.test.ts).
+
+/** Per-turn timeout in seconds for a wiki update, on both routes (default 900). Non-numeric or
+ * non-positive falls back to the default. */
+export function wikiGenerateTimeoutSec(env: Config): number {
+  const n = Number((env.WIKI_GENERATE_TIMEOUT_SEC || '').trim());
+  return Number.isFinite(n) && n > 0 ? n : 900;
+}
+
+/** Per-turn CLI cost ceiling in USD for a wiki update (default 5.0). Non-numeric or non-positive
+ * falls back to the default. */
+export function wikiGenerateMaxBudgetUsd(env: Config): number {
+  const n = Number((env.WIKI_GENERATE_MAX_BUDGET_USD || '').trim());
+  return Number.isFinite(n) && n > 0 ? n : 5.0;
+}
+
+/** AI SDK wiki turn limits: steps (`WIKI_GENERATE_MAX_STEPS`, default 80, valid 1–200), the
+ * per-turn token budget (`WIKI_GENERATE_MAX_TOKENS`, default 6 000 000), and generation's per-step
+ * output cap (`GENERATE_MAX_OUTPUT_TOKENS`, as `generateSdkLimits`). */
+export function wikiSdkLimits(env: Config): {
+  maxSteps: number;
+  maxTotalTokens: number;
+  maxOutputTokens: number;
+} {
+  return {
+    maxSteps: intInRange(env.WIKI_GENERATE_MAX_STEPS, 1, 200, 80),
+    maxTotalTokens: positiveInt(env.WIKI_GENERATE_MAX_TOKENS, 6_000_000),
+    maxOutputTokens: generateSdkLimits(env).maxOutputTokens,
+  };
+}
+
 // ── AI v2 dashboards (ai-v2-dashboards, design D9) ──────────────────────────
 
 /** Gate (spec "Configuration-gated AI v2 endpoints"): AI v2 requires an

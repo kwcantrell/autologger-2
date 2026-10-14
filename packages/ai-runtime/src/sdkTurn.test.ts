@@ -329,8 +329,9 @@ describe('tools (D3)', () => {
       chat: ['get_transcript_words', 'list_topics', 'create_topic'],
       topics: ['get_transcript_words', 'create_topic'],
       events: ['get_transcript_words', 'create_event'],
+      wiki: ['get_transcript_words', 'list_wiki_pages', 'read_wiki_page', 'propose_page'],
     });
-    for (const kind of ['chat', 'topics', 'events'] as const) {
+    for (const kind of ['chat', 'topics', 'events', 'wiki'] as const) {
       const llm = await llmWith(() => answer('ok'));
       // A context naming a wider set never widens the kind's own set.
       const context: AiMcpTurnContext =
