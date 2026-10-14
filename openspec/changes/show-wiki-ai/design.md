@@ -20,7 +20,7 @@ See proposal.md (Why). The current state that shapes the approach:
 
 **Goals:**
 - The AI can propose, and never write. A page changes only when a person accepts, as an ordinary compare-and-set edit that the person authors.
-- Every quote the AI adds is real: it occurs in the run's session, close to the cited time.
+- Every quote the AI adds is real: it occurs in the cited session (the run's, or an earlier one a carried-forward suggestion cites), close to the cited time.
 - The AI reads exactly what the triggering user may read, through row-level security, with no system binding.
 - A failed run leaves no trace, as topic generation guarantees.
 - Unreviewed work is never silently lost: a newer run builds on the older pending suggestion.
@@ -179,13 +179,14 @@ An existing test may change only in these categories. Anything else is a stop.
 
 ## Risks / Trade-offs
 
-- [A wiki tool leaks another show's pages or transcript] → Every read goes through the caller-bound catalog under RLS. The show comes from the session, never a tool parameter. New citations may quote only the run's session, whose words are already in the turn. Each tool has a cross-show test.
+- [A wiki tool leaks another show's pages or transcript] → Every read goes through the caller-bound catalog under RLS. The show comes from the session, never a tool parameter. New citations may quote the run's session, whose words are already in the turn, or a session the target's pending suggestion cites, whose words are read as the caller and only answered pass or fail (D4 step 4). Each tool has a cross-show test.
 - [Prompt injection in a transcript or page body steers the model] → No tool writes anything. `propose_page` only produces a pending suggestion that a person reviews as a diff. Bodies render under show-wiki's safe-rendering rules, and the system prompt names all tool output as untrusted data.
 - [A forged or reference-style citation gets past the check] → The check runs on every rendered citation (`citationsOf`), keyed by rendered text, using the same parser the page renders with.
 - [A real quote supports a false claim] → Not prevented. The quote check stops invented quotes; the diff and the Stale flag help review; the reviewer decides.
 - [Quote matching is too strict for a noisy transcript] → Case, accents and punctuation are ignored, and a failing citation goes back to the model with the reason, so it can quote the exact words or drop the citation. If real runs fail often, the window or the normalisation is a later change.
 - [A newer run drops an older run's unreviewed work] → The model reads the pending suggestion and builds on it (D3), and the superseded row stays listable by status.
 - [Long pages or large lists overflow a tool result or a step] → Lists are packed to 40,000 characters, reads are cut at 30,000, and proposals are capped at 30,000. Pages over the cap can't be rewritten by the AI (a non-goal).
+- [A reasoning model spends the per-step output cap before it finishes a page] → Accepted by the owner on 2026-10-14, after the dev check (task 6.5): on the dev SGLang model a 1,362-word session failed twice at `GENERATE_MAX_OUTPUT_TOKENS` (16,000) with `last=length`, storing nothing, as specified. The estimate above ("one rewrite fits in one step") holds for the body, not for a model that reasons first. The remedy is configuration (raise `GENERATE_MAX_OUTPUT_TOKENS`, up to 128,000, which also applies to topic and event generation); a wiki-only output cap is a possible follow-up.
 - [A long run holds the session's AI slot] → Bounded by `WIKI_GENERATE_TIMEOUT_SEC` and the wiki step and token caps.
 - [Concurrent runs on two sessions of a show target the same page] → SERIALIZABLE plus the pending unique index; the later commit supersedes the earlier one.
 - [Other routes' busy `409` doesn't name "wiki update"] → Accepted (D3).
