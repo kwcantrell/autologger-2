@@ -82,8 +82,10 @@ and `app_settings` before it checks.
 - **`--replace`:** it first refuses ids that belong to another team. It then refuses, too, when
   the team holds **live data** the source can't bring back: a session, show or audio segment
   (by `r2_key`, COPY-loaded as scope kind `audio`) that isn't in the source, or any membership,
-  invite, show grant, session lease or overwrite record. The error names each kind with its
+  invite, show grant, session lease, overwrite record, wiki page or wiki suggestion. The error names each kind with its
   count and says `use --replace-live`. Otherwise (and always with `--replace-live`) it deletes:
+  - its shows' wiki suggestions, revisions, aliases and pages (they reference its shows and
+    sessions);
   - the team's sessions' overwrite records, leases and nine session tables;
   - its sessions (Companion presence is set null by its foreign key);
   - its show grants, shows, setting, memberships, invites and the team row.

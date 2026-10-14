@@ -41,11 +41,12 @@ The emitted transaction SHALL refuse:
 - a target whose newest applied migration isn't the one the map was written for;
 - a team, show or session id or `studio_config` key that already exists, unless the import was
   generated with `--replace`. Then it SHALL first delete that team's sessions with all their rows
-  (leases and overwrite records included), its shows, grants, setting, memberships and invites.
+  (leases and overwrite records included), its shows' wiki pages, aliases, revisions and
+  suggestions, its shows, grants, setting, memberships and invites.
   Even then it SHALL refuse a show or session id that belongs to another team. And unless it
   was generated with `--replace-live`, it SHALL refuse, changing nothing, when the team has a
   session, show or audio segment not in the source, or any membership, invite, show grant,
-  session lease or overwrite record. Blob files SHALL never be deleted.
+  session lease, overwrite record, wiki page or wiki suggestion. Blob files SHALL never be deleted.
 
 #### Scenario: A second import
 - **WHEN** the same import is applied twice

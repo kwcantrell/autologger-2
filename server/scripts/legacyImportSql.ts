@@ -488,6 +488,24 @@ const LIVE_DATA: Array<[string, string]> = [
     'overwrite record(s)',
     'SELECT count(*) FROM catalog.session_overwrites WHERE session_id IN (SELECT id FROM legacy_replace_sessions)',
   ],
+  // show-wiki: the wiki is written in the app only, and its rows reference the team's shows and sessions.
+  [
+    'wiki page(s)',
+    'SELECT count(*) FROM catalog.wiki_pages WHERE show_id IN (SELECT id FROM catalog.shows WHERE studio_id = st)',
+  ],
+  [
+    'wiki suggestion(s)',
+    'SELECT count(*) FROM catalog.wiki_suggestions WHERE show_id IN (SELECT id FROM catalog.shows WHERE studio_id = st)',
+  ],
+];
+
+/** `--replace-live`: the team's wiki rows, children first (they reference its shows and sessions). */
+const TEAM_SHOWS = '(SELECT id FROM catalog.shows WHERE studio_id = st)';
+const WIKI_DELETES = [
+  `  DELETE FROM catalog.wiki_suggestions WHERE show_id IN ${TEAM_SHOWS};`,
+  `  DELETE FROM catalog.wiki_revisions WHERE page_id IN (SELECT id FROM catalog.wiki_pages WHERE show_id IN ${TEAM_SHOWS});`,
+  `  DELETE FROM catalog.wiki_aliases WHERE show_id IN ${TEAM_SHOWS};`,
+  `  DELETE FROM catalog.wiki_pages WHERE show_id IN ${TEAM_SHOWS};`,
 ];
 
 /** After the scope COPY: refuse any collision, or (`replace`) delete the studio's rows first.
@@ -540,6 +558,7 @@ export function collisionBlock(mode: CollisionMode): string {
     `  IF n > 0 THEN RAISE EXCEPTION 'legacy import refused: % session id(s) belong to another team', n; END IF;`,
     `  CREATE TEMP TABLE legacy_replace_sessions ON COMMIT DROP AS ${SCOPE_SESSIONS.replace(/\n\s+/g, ' ')};`,
     ...liveGuard,
+    ...WIKI_DELETES,
     ...SESSION_CHILD_TABLES.map(
       (tb) =>
         `  DELETE FROM catalog.${tb} WHERE session_id IN (SELECT id FROM legacy_replace_sessions);`,

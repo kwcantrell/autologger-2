@@ -364,7 +364,9 @@ describe('legacy import into Postgres', () => {
           (select count(*) from catalog.team_invites)::int as invites,
           (select count(*) from catalog.show_grants)::int as grants,
           (select count(*) from catalog.session_leases)::int as leases,
-          (select count(*) from catalog.session_overwrites)::int as overwrites`)
+          (select count(*) from catalog.session_overwrites)::int as overwrites,
+          (select count(*) from catalog.wiki_pages)::int as wiki_pages,
+          (select count(*) from catalog.wiki_suggestions)::int as wiki_suggestions`)
       )[0];
     const cases: Array<[string, string, RegExp]> = [
       [
@@ -410,6 +412,25 @@ describe('legacy import into Postgres', () => {
         'delete from catalog.session_overwrites',
         /1 overwrite record\(s\)/,
       ],
+      // show-wiki: a wiki page (with an alias and a revision) on an imported show.
+      [
+        `insert into catalog.wiki_pages (id, show_id, kind, title, body_md, revision, created_by, created_by_name,
+           created_at_utc, updated_by, updated_by_name, updated_at_utc)
+           values ('wp1', '${IDS.showA}', 'topic', 'T', '', 1, 'owner', 'O', '${T}', 'owner', 'O', '${T}');
+         insert into catalog.wiki_aliases (page_id, show_id, alias) values ('wp1', '${IDS.showA}', 'tee');
+         insert into catalog.wiki_revisions (page_id, revision, title, kind, body_md, aliases_json, author_user_id,
+           author_name, at_utc) values ('wp1', 1, 'T', 'topic', '', '[]', 'owner', 'O', '${T}')`,
+        'delete from catalog.wiki_revisions; delete from catalog.wiki_aliases; delete from catalog.wiki_pages',
+        /1 wiki page\(s\)/,
+      ],
+      // show-wiki-ai: a pending suggestion from an imported session.
+      [
+        `insert into catalog.wiki_suggestions (id, show_id, session_id, run_id, kind, title, body_md, aliases_json,
+           rationale, status, created_by, created_by_name, created_at_utc)
+           values ('ws1', '${IDS.showA}', '${IDS.s1}', 'r', 'topic', 'T', '', '[]', '', 'pending', 'owner', 'O', '${T}')`,
+        'delete from catalog.wiki_suggestions',
+        /1 wiki suggestion\(s\)/,
+      ],
     ];
     for (const [setup, undo, msg] of cases) {
       await sql.unsafe(setup);
@@ -443,7 +464,19 @@ describe('legacy import into Postgres', () => {
       insert into catalog.session_overwrites (session_id, id, table_name, row_id, user_id, at_utc, replaced_version, before_json)
         values ('${IDS.s1}', 'o1', 'session_events', 'e1', 'owner', '${T}', 1, '{}');
       insert into catalog.companion_presence (client_id, user_id, session_id, visible, is_playing, updated_at_ms)
-        values ('tab', 'owner', '${IDS.s1}', true, false, 1);`);
+        values ('tab', 'owner', '${IDS.s1}', true, false, 1);
+      insert into catalog.wiki_pages (id, show_id, kind, title, body_md, session_id, revision, created_by,
+        created_by_name, created_at_utc, updated_by, updated_by_name, updated_at_utc)
+        values ('wp-s', '${IDS.showA}', 'session', 'S', '', '${IDS.s1}', 1, 'owner', 'O', '${T}', 'owner', 'O', '${T}'),
+               ('wp-t', '${IDS.showA}', 'topic', 'T', '', null, 1, 'owner', 'O', '${T}', 'owner', 'O', '${T}');
+      update catalog.wiki_pages set merged_into = 'wp-t' where id = 'wp-s';
+      insert into catalog.wiki_aliases (page_id, show_id, alias) values ('wp-t', '${IDS.showA}', 'tee');
+      insert into catalog.wiki_revisions (page_id, revision, title, kind, body_md, aliases_json, author_user_id,
+        author_name, at_utc) values ('wp-t', 1, 'T', 'topic', '', '[]', 'owner', 'O', '${T}');
+      insert into catalog.wiki_suggestions (id, show_id, session_id, run_id, page_id, base_revision, kind, title,
+        body_md, aliases_json, rationale, status, created_by, created_by_name, created_at_utc)
+        values ('ws1', '${IDS.showA}', 'new-in-app', 'r', 'wp-t', 1, 'topic', 'T', '', '[]', '', 'pending', 'owner',
+          'O', '${T}');`);
     // The source changed too: an event was deleted.
     const db = new Database(join(root, 'sessions', `${IDS.s1}.db`));
     db.exec("DELETE FROM events WHERE id = 'e4'");
@@ -451,7 +484,7 @@ describe('legacy import into Postgres', () => {
     const plain = await emit(root);
     expect(psql(name, plain.importSql).out).toMatch(/already exists/);
     expect(psql(name, (await emit(root, { replace: true })).importSql).out).toMatch(
-      /would delete live data of team ymhs: 1 session\(s\) not in the source; 1 membership\(s\); 1 show grant\(s\); 1 session lease\(s\); 1 overwrite record\(s\)/,
+      /would delete live data of team ymhs: 1 session\(s\) not in the source; 1 membership\(s\); 1 show grant\(s\); 1 session lease\(s\); 1 overwrite record\(s\); 2 wiki page\(s\); 1 wiki suggestion\(s\)/,
     );
     const replaced = await emit(root, { replaceLive: true, allowSignedInUsers: true });
     const r = psql(name, replaced.importSql);
@@ -466,7 +499,11 @@ describe('legacy import into Postgres', () => {
       (select session_id from catalog.companion_presence where client_id = 'tab') as presence,
       (select event_count from catalog.sessions where id = '${IDS.s1}')::int as events,
       (select count(*) from catalog.users)::int as users,
-      (select count(*) from catalog.shows where id = 'show-autolog-test')::int as seed_show`);
+      (select count(*) from catalog.shows where id = 'show-autolog-test')::int as seed_show,
+      (select count(*) from catalog.wiki_pages)::int as wiki_pages,
+      (select count(*) from catalog.wiki_aliases)::int as wiki_aliases,
+      (select count(*) from catalog.wiki_revisions)::int as wiki_revisions,
+      (select count(*) from catalog.wiki_suggestions)::int as wiki_suggestions`);
     expect(after).toEqual({
       app_session: 0,
       memberships: 0,
@@ -477,6 +514,10 @@ describe('legacy import into Postgres', () => {
       events: 3,
       users: 1,
       seed_show: 1,
+      wiki_pages: 0,
+      wiki_aliases: 0,
+      wiki_revisions: 0,
+      wiki_suggestions: 0,
     });
   });
 

@@ -38,6 +38,7 @@ from the pre-Supabase SQLite files (`DATA_DIR/catalog.db`, `DATA_DIR/sessions/<i
 `--replace` deletes the team's existing rows in the same transaction before importing:
 
 - its sessions and every session row, including leases and overwrite records;
+- its shows' wiki (pages, aliases, revisions and suggestions);
 - its shows, show grants, settings, memberships and invites.
 
 It still refuses when an imported show or session id belongs to *another* team. And plain
@@ -48,7 +49,8 @@ has any of:
 - a session, show or audio segment that isn't in the source (created in the app after the
   import);
 - a membership or invite (someone signed in, or the owner claimed the team);
-- a show grant, a session lease or an overwrite record.
+- a show grant, a session lease or an overwrite record;
+- a wiki page or wiki suggestion (the wiki is written only in the app).
 
 `--replace-live` deletes those too. Use it only when you mean to throw away what was done in the
 app. It does not delete blob files: the audio of a deleted segment that isn't in the new manifest
