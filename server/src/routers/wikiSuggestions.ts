@@ -94,6 +94,7 @@ wikiSuggestionsRouter.post('/api/sessions/:sessionId/wiki/generate', async (c) =
       registry: c.env.ports.sessions,
       caller: sessionCaller(c),
       sessionId,
+      sessionTitle: session.title == null ? '' : String(session.title),
       port,
       timeoutMs: wikiGenerateTimeoutSec(c.env.config) * 1000,
     };
