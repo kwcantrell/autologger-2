@@ -21,7 +21,6 @@ const useCompanionPresenceMock = vi.fn();
 const useSessionSocketMock = vi.fn();
 const useRecoveryStopWarningMock = vi.fn();
 const useRemoteRecordingGateMock = vi.fn();
-const useDebugTransportOverrideMock = vi.fn();
 
 vi.mock('../../../api/hooks/useSessionStatus', () => ({
   useSessionStatus: (...args: unknown[]) => useSessionStatusMock(...args),
@@ -48,9 +47,6 @@ vi.mock('../hooks/useRecoveryStopWarning', () => ({
 }));
 vi.mock('../hooks/useRemoteRecordingGate', () => ({
   useRemoteRecordingGate: (...args: unknown[]) => useRemoteRecordingGateMock(...args),
-}));
-vi.mock('../../../shared/hooks/useDebugTransportOverride', () => ({
-  useDebugTransportOverride: (...args: unknown[]) => useDebugTransportOverrideMock(...args),
 }));
 vi.mock('../../../api/client', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../../api/client')>()),
@@ -187,7 +183,6 @@ describe('SessionWorkspace: the Wiki page button', () => {
     useSessionSocketMock.mockReturnValue(undefined);
     useRecoveryStopWarningMock.mockReturnValue(null);
     useRemoteRecordingGateMock.mockReturnValue(false);
-    useDebugTransportOverrideMock.mockReturnValue(null);
   });
 
   afterEach(() => {

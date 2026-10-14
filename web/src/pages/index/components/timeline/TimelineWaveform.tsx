@@ -9,7 +9,7 @@ import {
 
 // --- converted class strings (were Timeline.module.css) ---
 // The `timelineWaveforms` / `timelineWaveformFill` / `timelineWaveformProgress` literals
-// are retained for the perf-debug @layer rules that target them. The unplayed body is a flat
+// are kept as stable hooks. The unplayed body is a flat
 // on-palette wash (`--si-wave-body`; 11.4 cleanup retired the V5 slate gradient). The decoding
 // label folds Timeline's former hash-scoped keyframe into the shared wf-label-pulse token.
 const WAVEFORMS = 'timelineWaveforms absolute inset-0 h-full pointer-events-none z-[1]';

@@ -8,7 +8,6 @@ import { useSessionStatus } from '../../../api/hooks/useSessionStatus';
 import type { CompanionCommandType } from '../../../api/types';
 import { showToast } from '../../../shared/components/Toast';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../../shared/components/ui/tabs';
-import { useDebugTransportOverride } from '../../../shared/hooks/useDebugTransportOverride';
 import { ConfirmDialog } from '../../../shared/ui/ConfirmDialog';
 import { isOverlayOpen } from '../../../shared/ui/overlayOpen';
 import { AUTOLOGGER_LOADING_VIDEO_SRC } from '../../../shared/utils/loadingVideo';
@@ -106,7 +105,6 @@ export function SessionWorkspace({ sessionId, ytImportPending }: Props) {
 
   const { clips: audioClips, totalSec: audioTotalSec, segments } = useAudioClips(sessionId, events);
 
-  const debugOverride = useDebugTransportOverride();
   const blocksMedia = useRemoteRecordingGate(sessionId || null);
   const recoveryStopPending = useRecoveryStopWarning(sessionId || null, blocksMedia);
   const { mergedPeaks, isDecoding: isWaveformDecoding } = useWaveforms(
@@ -127,7 +125,7 @@ export function SessionWorkspace({ sessionId, ytImportPending }: Props) {
       : isPlaying
         ? 'play'
         : 'stop';
-  const effectiveTransport = debugOverride ?? intrinsicState;
+  const effectiveTransport = intrinsicState;
   const liveDock = effectiveTransport === 'rolling' || effectiveTransport === 'audio-recording';
 
   // Set body.dataset.v4Transport — CSS reads this to swap capture/playback panels.
@@ -511,7 +509,7 @@ export function SessionWorkspace({ sessionId, ytImportPending }: Props) {
               className="v4-session-workspace flex flex-col flex-1 w-full min-w-0 items-stretch min-h-0 max-h-none [overflow-x:clip] overflow-y-visible max-md:block max-md:h-auto"
             >
               {/* #v4-log-session — ancestor id retained (drives descendant
-                [#v4-log-session_&] variants; perfDebug/e2e hooks target it).
+                [#v4-log-session_&] variants).
                 is-visible is always present here so display resolves to flex. min-h-0
                 !important quintet member; max-md reflows to block. */}
               <section

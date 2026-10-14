@@ -444,15 +444,12 @@ describe('Show Ignition tokens (redesign-show-ignition D1)', () => {
   });
 
   // Finish review fix round 2: the waveform's played portion was sky blue (~200 deg) beside the
-  // #5b7cff accent; it is the accent now, and so is its perf-debug flat fallback.
+  // #5b7cff accent; it is the accent now.
   it('the waveform progress is the accent, with no sky-blue stops', () => {
     const src = read('pages/index/components/timeline/TimelineWaveform.tsx');
     for (const sky of ['#7dd3fc', '#38bdf8', '#0284c7']) expect(src).not.toContain(sky);
     const prog = src.match(/const WAVEFORM_PROGRESS =\s*'([^']*)'/)?.[1] ?? '';
     expect(prog).toMatch(/var\(--tx-wave-progress\)/);
-    const perf = CSS.match(/\.timelineWaveformProgress\s*\{([^}]*)\}/)?.[1] ?? '';
-    expect(perf).toMatch(/var\(--tx-wave-progress\)/);
-    expect(perf).not.toMatch(/56, 189, 248/);
   });
 
   // Finish review fix round 3: the played portion stayed full accent while stopped, so a stopped

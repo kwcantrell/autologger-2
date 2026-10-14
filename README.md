@@ -2262,7 +2262,7 @@ the app's root layout (`web/src/app/(index)/layout.page.tsx`). No CSS Modules, n
 - **`components`** — chrome families ported as named `@utility` / `@layer components`
   rules (`.btn`, `.field`, `.glass-panel`, …), multi-consumer classes, exotic-selector
   rules Tailwind can't express inline (`::-webkit-scrollbar`, keyframes), and
-  `perfDebug`'s cross-component `body.perf-dbg--*` escape hatches.
+  cross-component escape hatches such as the hide-internal marker rule.
 - **`utilities`** — Tailwind's generated utility set, used inline in JSX composed with
   `clsx` at the existing call sites (exclusive branches per state, not toggled overrides).
 

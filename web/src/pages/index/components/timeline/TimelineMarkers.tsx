@@ -9,7 +9,7 @@ import { resolveCategoryColor } from '../../../../shared/utils/categoryColor';
 // TWO-MODE: base = standalone marker (0.62rem, big glow on hover); `[#v4-log-session_&]:`
 // = the session-context look (0.92rem, subtler v5 glows). Hover is UNGUARDED (audit default)
 // → `hover-always:`. --mcol is runtime-set inline. The literal `timelineMarker` /
-// `timelineMarkerSelected` are retained for the hide-internal + perf-debug @layer rules.
+// `timelineMarkerSelected` are retained for the hide-internal @layer rule.
 const MARKERS = 'absolute inset-0 z-[5] pointer-events-none';
 // Base rest transform is written as the `transform` PROPERTY (not Tailwind's `translate`
 // utilities) so it matches the hover/selected `[transform:...]` overrides on the SAME

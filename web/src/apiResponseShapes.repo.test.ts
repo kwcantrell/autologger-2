@@ -1582,11 +1582,6 @@ const EXEMPTIONS: readonly Exemption[] = [
     reason:
       "audit §8.8 — a DELIBERATE exclusion, not an oversight. `localStorageDashboardPersistence.load` parses browser localStorage (which this client itself wrote), not a server response; the audit's universe is the server↔client wire. It does re-assert `parsed as DashboardConfig` two lines later after an `Array.isArray(...widgets)` check — that second assertion is downstream of this parse and is not separately detected, which §8.8 predicted and this entry is the named exemption for.",
   },
-  {
-    key: 'shared/utils/perfDebug.ts :: const o = JSON.parse(raw);',
-    reason:
-      "Parses a localStorage-backed debug-flag record (`FlagState`), not an API response. Guarded by `o && typeof o === 'object'` before the cast.",
-  },
 
   // --- `navigator.sendBeacon` — fire-and-forget, no Response object exists.
   {

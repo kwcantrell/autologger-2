@@ -91,10 +91,6 @@ vi.mock('../../../shared/components/Toast', () => ({
   showToast: vi.fn(),
 }));
 
-vi.mock('../../../shared/hooks/useDebugTransportOverride', () => ({
-  useDebugTransportOverride: () => null,
-}));
-
 vi.mock('../../../shared/ui/Tooltip', () => ({
   Tooltip: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   TooltipProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
