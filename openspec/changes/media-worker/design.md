@@ -244,7 +244,7 @@ a WebM or Ogg prefix cut at a slice boundary or mid-slice exits 0 (WebM logs "Fi
 prematurely" at level error, so stderr content alone must not mean failure); an MP4 cut
 mid-fragment exits 183 ("corrupt input packet") after decoding the earlier fragments, while an MP4
 cut at a slice boundary exits 0. A partial chunk is therefore trimmed to its last whole slice (D10
-note) before upload. Scripts and outputs: `/tmp/claude-1000/-home-spark-spark-infra/6240e2d2-a7e0-415a-bc19-67c2995ccb4b/scratchpad/spike-browser/` (`drive.mjs`, `www/`, `out/`).
+note) before upload. Scripts: `docs/spikes/media-worker/browser/` (`drive.mjs`, `www/`; outputs go to `out/` of a working copy); spike 0.1: `docs/spikes/media-worker/volume/run.sh`.
 
 ### D5. On-ingest processing for every new segment
 

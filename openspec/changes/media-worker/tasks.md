@@ -642,7 +642,7 @@ environments" ("Dev, stage and prod compared"). No other README section is touch
   logged and carried a `lastError`); green `Tests 74 passed (74)`; queue + recorder + banner + locks
   `Tests 172 passed (172)`; `cd web && npx vitest run` `Test Files 162 passed (162)`, `Tests 2176
   passed (2176)`, no unhandled errors; `npx tsc --noEmit -p .` clean; biome clean.
-- [x] A.11 Safari finished-chunks-only (owner decision 2026-10-12: no Safari available for spike 0.2): `SAFARI_PERSIST_MODE = 'finished-only'`; Safari records without a timeslice and persists each chunk when it completes (crash loss up to one chunk, as before this change). Switch to `slices` once `~/media-worker-safari-spike/www` passes on Safari.
+- [x] A.11 Safari finished-chunks-only (owner decision 2026-10-12: no Safari available for spike 0.2): `SAFARI_PERSIST_MODE = 'finished-only'`; Safari records without a timeslice and persists each chunk when it completes (crash loss up to one chunk, as before this change). Switch to `slices` once `docs/spikes/media-worker/browser/www/record.html` passes on Safari (README "Safari").
   Evidence: red `npx vitest run src/pages/index/components/AudioRecorder.chunks.test.tsx -t "Safari records"` -> `expected 5000 to be undefined`; green after the constant -> full web `Test Files 162 passed`, `Tests 2177 passed`; `tsc --noEmit` exit 0.
 - [x] A.12 Development builds log every toast (`web/src/shared/components/Toast.tsx`
   `_devLogToast`: `console.warn` for errors, `console.info` otherwise, only when `NODE_ENV ===
