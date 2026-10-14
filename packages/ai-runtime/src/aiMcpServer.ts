@@ -851,6 +851,11 @@ const TOOL_BUILDERS: Record<AiMcpToolName, (server: ToolSink, ctx: ToolBuildCont
     );
   },
 
+  // show-wiki-ai D3/D4: the wiki tools read the catalog only through the turn's port. Kept
+  // before create_event, which stays last (aiMcpServer.int pins its handler's end).
+  list_wiki_pages: (server, { wiki }) => WIKI_TOOL_BUILDERS.list_wiki_pages(server, wiki),
+  read_wiki_page: (server, { wiki }) => WIKI_TOOL_BUILDERS.read_wiki_page(server, wiki),
+  propose_page: (server, { wiki }) => WIKI_TOOL_BUILDERS.propose_page(server, wiki),
   create_event: (server, { registry, sessionId, caller, generation, createdEvents }) => {
     server.tool(
       'create_event',
@@ -962,11 +967,6 @@ const TOOL_BUILDERS: Record<AiMcpToolName, (server: ToolSink, ctx: ToolBuildCont
       },
     );
   },
-
-  // show-wiki-ai D3/D4: the wiki tools read the catalog only through the turn's port.
-  list_wiki_pages: (server, { wiki }) => WIKI_TOOL_BUILDERS.list_wiki_pages(server, wiki),
-  read_wiki_page: (server, { wiki }) => WIKI_TOOL_BUILDERS.read_wiki_page(server, wiki),
-  propose_page: (server, { wiki }) => WIKI_TOOL_BUILDERS.propose_page(server, wiki),
 };
 
 /** Register the turn's tool set (D6) on a sink: the MCP server per request, or the AI SDK turn's
