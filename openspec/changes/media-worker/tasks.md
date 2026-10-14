@@ -76,7 +76,7 @@ environments" ("Dev, stage and prod compared"). No other README section is touch
   Firefox unsettled after 5 s; ephemeral WebKit: `getDirectory()` `UnknownError` and IndexedDB
   `Blob` put fails. **Pending owner check (Safari):** the same `storage.html` in Safari, normal and
   Private window.
-- [ ] 0.4 Branch: while #107 is open, run gates with `--base supabase-11a-legacy-import`. After
+- [x] 0.4 Branch: while #107 is open, run gates with `--base supabase-11a-legacy-import`. After
   #107 merges, rebase `media-worker` onto `supabase-migration` so the branch carries only this
   change directory (the first commit must be the approved artifacts; re-verify `artifacts-first`),
   and reconcile the `transcript-generation` "Segment grouping" delta with #107's archived text.
@@ -86,6 +86,13 @@ environments" ("Dev, stage and prod compared"). No other README section is touch
     collided with `20261019000000_catalog_search.sql`), the ADR is renumbered 0032, the importer
     pin moves to `20261023000000`, and the schema and policy tests count both sides (49
     `catalog_user` policies). Content unchanged.
+  Evidence: #107 merged (`4beb5a3e`); `git rebase --onto origin/supabase-migration 5e994021` ->
+  28 commits, no conflicts, `a3c7c2af` (artifacts) first; PR base set to `supabase-migration`;
+  `check-change.sh --base supabase-migration` -> `PASS change tier 2 (openspec/changes/media-worker)`,
+  `PASS artifacts-first plan pinned before code`. Archive of #107 is PR #122; against its synced
+  main specs, every MODIFIED requirement here is unchanged since `ac6420c4` except
+  transcript-generation "Segment grouping and concatenation", whose delta already carries #107's
+  FLAC text verbatim plus this change's missing-blob `502` (diff checked).
 
 ## S. Schema and storage
 
