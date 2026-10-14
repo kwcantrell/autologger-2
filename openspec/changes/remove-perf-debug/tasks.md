@@ -42,4 +42,5 @@
   - the loading states (route loading, session loading) show the frozen first frame and nothing else changes.
   Verified by screenshots and DOM queries.
   Evidence: agent-browser on localhost:8787. At 1440 and 390, `/`, a session, `/wiki`, `/search` and Settings all report `0 0` for `[id^=perf]` and Perf/Hide buttons. On session ATS_0098, clicking "Play or pause audio" → `PLAY / topbar: PLAY`. Settings at both widths → `saves=1 gap=0 pr16=false perf=0` (screenshot `rpd-settings-390.png`: "Saved" flush right). Loading states: sampling `video.autologger-loading-video__media` four times during a session load → `none` each time, so the transient loading video couldn't be caught; per design.md, videos mounted after AppShell were never touched by the removed code.
-- [ ] 3.3 Open the PR, and confirm CI is green on it. Verified by the PR's check status.
+- [x] 3.3 Open the PR, and confirm CI is green on it. Verified by the PR's check status.
+  Evidence: PR #119 (`gh pr checks 119`, run 38616522582): `db-shard (1..3) pass`, `db-tests pass`, `dependency-review pass`, `secrets pass`; `gates` failed only `FAIL  tasks  1 unticked task(s) in tasks.md` (this task). This tick clears it; the rerun on this commit is the final check.
