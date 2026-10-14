@@ -422,45 +422,49 @@ export function SearchRoute({ onCloseSession, confirmSwitch }: Props) {
     );
   }
 
+  // The shell's main area clips on desktop, so the route scrolls itself; on a
+  // phone the document scrolls.
   return (
-    <div
-      data-slot="search-route"
-      className="mx-auto flex w-full max-w-[52rem] flex-col gap-5 px-4 py-6 max-md:px-3"
-    >
-      <h1 className="m-0 text-[1.35rem] font-semibold text-si-fg">Search</h1>
-      <div className="flex flex-col gap-2 md:flex-row md:items-center">
-        <div className="relative min-w-0 flex-1">
-          <SearchIcon
-            aria-hidden="true"
-            className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-si-dim"
-          />
-          <Input
-            type="search"
-            aria-label="Search"
-            placeholder="Search sessions, transcripts, topics, events…"
-            value={state.q}
-            onChange={(e) => replace({ q: e.target.value })}
-            className="pl-9"
-          />
+    <div className="md:absolute md:inset-0 md:overflow-y-auto">
+      <div
+        data-slot="search-route"
+        className="mx-auto flex w-full max-w-[52rem] flex-col gap-5 px-4 py-6 max-md:px-3"
+      >
+        <h1 className="m-0 text-[1.35rem] font-semibold text-si-fg">Search</h1>
+        <div className="flex flex-col gap-2 md:flex-row md:items-center">
+          <div className="relative min-w-0 flex-1">
+            <SearchIcon
+              aria-hidden="true"
+              className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-si-dim"
+            />
+            <Input
+              type="search"
+              aria-label="Search"
+              placeholder="Search sessions, transcripts, topics, events…"
+              value={state.q}
+              onChange={(e) => replace({ q: e.target.value })}
+              className="pl-9"
+            />
+          </div>
+          <div className={cn('flex gap-2 max-md:[&>*]:flex-1')}>
+            <Select
+              ariaLabel="Studio filter"
+              value={state.studioId || ALL}
+              options={studioOptions}
+              onChange={chooseStudioFilter}
+              className="md:w-44"
+            />
+            <Select
+              ariaLabel="Show filter"
+              value={state.showId || ALL}
+              options={showOptions}
+              onChange={(v) => replace({ showId: v === ALL ? '' : v })}
+              className="md:w-44"
+            />
+          </div>
         </div>
-        <div className={cn('flex gap-2 max-md:[&>*]:flex-1')}>
-          <Select
-            ariaLabel="Studio filter"
-            value={state.studioId || ALL}
-            options={studioOptions}
-            onChange={chooseStudioFilter}
-            className="md:w-44"
-          />
-          <Select
-            ariaLabel="Show filter"
-            value={state.showId || ALL}
-            options={showOptions}
-            onChange={(v) => replace({ showId: v === ALL ? '' : v })}
-            className="md:w-44"
-          />
-        </div>
+        {body}
       </div>
-      {body}
     </div>
   );
 }
