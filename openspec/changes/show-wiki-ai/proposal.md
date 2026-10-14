@@ -6,7 +6,7 @@ Tier reason:
 - adds a migration with a new table, RLS policies and composite foreign keys (`supabase/migrations/**`);
 - adds an AI turn kind whose tools read the catalog (wiki pages and pending suggestions), so it is a new least-privilege surface that feeds untrusted transcript and page text to an LLM.
 
-Approved-by: Kalen 2026-10-13
+Approved-by: Kalen 2026-10-13 (re-panel: pending carry-forward re-check, one body per read)
 ## Why
 
 `show-wiki` (#115, ADR 0030) gave each show a wiki that people edit by hand. Keeping it current by hand after every episode is the work producers skip, and it's the reason the wiki exists: the owner wants "show memory for producers" that stays up to date.
@@ -49,7 +49,7 @@ This change adds the AI step the grill planned: after a session, a producer clic
 - Wiki pages in search results, semantic search and embeddings.
 - Retention or pruning of old suggestions.
 - AI rewrites of pages longer than 30,000 characters.
-- Searching other sessions during a run, and new citations of other sessions.
+- Searching other sessions during a run, and new citations of other sessions (a carried-forward suggestion's citations of an earlier session are kept only after they are re-checked against that session).
 - The phone top-bar layout pass (a separate follow-up).
 
 ## Capabilities

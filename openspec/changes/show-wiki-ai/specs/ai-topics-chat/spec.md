@@ -6,7 +6,9 @@
 Each chat turn SHALL be given session-scoped tools, all hard-bound to the `:sessionId` of the
 originating request via the turn registration (the model cannot address any other session — no
 tool parameter names a session; the wiki tools below are bound to that session's show and read
-only what the caller may read there). On the Claude CLI route the spawned CLI SHALL be given a
+only what the caller may read there, and the one other-session read is that a wiki proposal's
+citations may cause a read of the words of a show session its target's pending suggestion cites,
+answered only as pass or fail). On the Claude CLI route the spawned CLI SHALL be given a
 generated MCP configuration exposing those tools. On the AI SDK route the server SHALL give the
 model the same tools in process, wrapping the **same tool bodies, input schemas and validation**
 the MCP server uses, so a tool call has the same effect and result on either route. The registry
@@ -167,7 +169,8 @@ only capabilities SHALL be the turn's tools. In particular:
 - nothing the model drives SHALL run a command, read or write a file, or reach any network
   destination; the only actions available to it are calls to the turn's tool set, which act on
   the originating session (and, on a wiki turn, that session's show wiki and its pending
-  suggestions, read as the caller) through the validated tool bodies;
+  suggestions, and the transcript words of the show's sessions that a target's pending suggestion
+  cites, all read as the caller) through the validated tool bodies;
 - a model call naming a tool outside the turn's set, including a tool the turn does not define,
   SHALL run nothing and SHALL NOT be relayed;
 - the model's tool calls SHALL be limited per step (soft) and capped per turn, and run one at a time

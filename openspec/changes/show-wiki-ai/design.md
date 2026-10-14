@@ -86,7 +86,9 @@ The methods live in `packages/catalog/src/wikiSuggestionStore.ts` and are expose
     listPages(): Promise<WikiToolPage[]>;            // live pages + pending flag
     listPendingNew(): Promise<WikiToolPendingNew[]>; // pending new-page suggestions
     readPage(id: string): Promise<WikiToolPageDetail | { mergedInto: string } | null>;
-    readPendingNew(suggestionId: string): Promise<WikiToolPendingNewDetail | null>;
+    readPending(suggestionId: string): Promise<WikiToolPendingDetail | null>; // a pending suggestion of the show only
+    pendingFor(target: { pageId: string } | { normTitle: string }): Promise<WikiToolPendingDetail | null>;
+    sessionWords(sessionId: string): Promise<WikiSnapshotWord[] | null>;     // null unless a session of the show
     sessionPageId(): Promise<string | null>;
     nameHolder(names: string[]): Promise<string | null>;
     checkLinks(bodyMd: string): Promise<string[]>;   // problems, [] when fine
@@ -97,7 +99,7 @@ The methods live in `packages/catalog/src/wikiSuggestionStore.ts` and are expose
 - **Per-turn state lives on the registration.** The port, the word snapshot and the run's `proposals` map are carried in the turn registration's context (as `pagedWords` and `pageState` are today), so the CLI's per-request MCP servers and the SDK tools share them.
 - **Tool bodies:**
   - `list_wiki_pages {page?}` renders text lines `id · kind · title · aliases · rN · [pending]`, then the pending new-page lines `suggestion <id> · new · kind · title`. It packs at most 200 lines and 40,000 characters per call, with a final marker line, under the CLI's 45,000-character tool-output bound;
-  - `read_wiki_page {page_id? | suggestion_id?}` renders a header and then the body, and the pending suggestion's body, between fixed delimiters. Any body is cut at 30,000 characters and marked, so the result stays under the same bound;
+  - `read_wiki_page {page_id? | suggestion_id?}` renders a header and then one body between fixed delimiters: the page's (with its pending suggestion's id in the header) or a pending suggestion's of the show. `readPending` filters on the run's show and `status = 'pending'` itself; RLS alone would also return other accessible shows' and resolved rows. Any body is cut at 30,000 characters, then further so the rendered result, header included (aliases are JSON-escaped and can double), is at most 45,000 characters, and the cut is marked (re-panel 2026-10-14: a page plus its suggestion in one result could reach about 60,000, and an escaped header about 50,700);
   - `propose_page` validates (D4) and adds the proposal to the run's `proposals` map, keyed by target (`page:<id>` or `new:<normalized title>`, normalised through `port.normalize`). A later proposal for the same key replaces the earlier one. At most 20 keys.
 - **`wikiGenerate.ts`** mirrors `generateTopicsTurn`:
   - it takes the word snapshot (`listTranscriptWords`, as topics do) before registering;
@@ -129,9 +131,11 @@ The methods live in `packages/catalog/src/wikiSuggestionStore.ts` and are expose
 
    Each comes with its session, seconds and rendered text (the node's text content). Definitions that no reference uses render nothing and aren't citations.
 
-   A citation is **kept** when `citationsOf(baseBody)` has the same `(sessionId, seconds, normalised text)`. Kept citations aren't checked. Every other citation must cite the run's session and pass the quote match.
+   A citation is **kept** when `citationsOf(baseBody)` has the same `(sessionId, seconds, normalised text)`. Kept citations aren't checked. Every other citation must cite the run's session, or a session that the target's pending suggestion (`port.pendingFor`, for a page id or a new page's normalised title) cites, and pass the quote match against that session's words.
+   - **Why not exempt the pending suggestion's citations** (re-panel 2026-10-14): a pending body can hold citations its own run kept unchecked from an older base, which a person may since have removed from the page, and nothing in the database proves a pending row went through `propose_page`. Re-checking keeps one rule: anything not on the page now is checked.
+   - **Other sessions' words** come from `port.sessionWords(id)`, read as the caller and only for a session of the show, once per run and cached, normalised with one `port.normalize` call each. At most 10 other sessions per run; past that the tool error says so. Only sessions the target's pending suggestion cites qualify. That is a limit on the model, not on a member: a member who inserts a pending row directly could cite any session of the show, so the check can tell a run whether words occur in any session of the show. That stays within what the caller can already read (their own access, RLS on words), and the answer is only pass or fail.
 5. **Quote match**, in TS over the run's word snapshot:
-   - once per run, the snapshot's words are normalised through `port.normalize` (one SQL call), then `regexp`-split into tokens (each run of non-alphanumerics becomes a boundary). Each token keeps its word's time: the `session_time` timecode parsed as `HH×3600 + MM×60 + SS` (frames dropped; `:` or `;` before the frames), or `start_sec` when the timecode is empty;
+   - once per run and per session, that session's words are normalised through `port.normalize` (one SQL call), then `regexp`-split into tokens (each run of non-alphanumerics becomes a boundary). Each token keeps its word's time: the `session_time` timecode parsed as `HH×3600 + MM×60 + SS` (frames dropped; `:` or `;` before the frames), or `start_sec` when the timecode is empty;
    - the quote is normalised the same way, and must be 1–60 tokens;
    - it must occur as a contiguous token run whose first token's time is in `[t−30, t+30]`;
    - at most 200 checked citations per proposal.
@@ -142,7 +146,7 @@ The methods live in `packages/catalog/src/wikiSuggestionStore.ts` and are expose
 *Alternatives:*
 - **Strip failing citations and keep the rest.** The owner chose rejection: the server never rewrites Markdown, and the model fixes its own text.
 - **Refuse reference-style citations.** That's simpler, but react-markdown renders them as citations, and a page a person wrote could already hold them. Checking the rendered text covers both.
-- **Quote other sessions of the show.** Cut by the panel: it needs window queries against other sessions' words, gives a yes/no oracle into them, and isn't needed for "from this session".
+- **Quote any session of the show.** Cut by the panel: it needs reads of other sessions' words, gives a yes/no oracle into them, and isn't needed for "from this session". The re-panel (2026-10-14) allows exactly one narrower case, the sessions the target's pending suggestion cites, because carrying a suggestion forward otherwise drops its citations; the oracle it gives stays within the caller's own access (see step 4).
 - **A TS port of `search_norm`.** It would only approximate `unaccent`; `port.normalize` keeps one definition.
 
 ### D5. API

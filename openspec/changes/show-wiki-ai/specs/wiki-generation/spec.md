@@ -29,10 +29,10 @@ The run SHALL be one AI turn of the kind `wiki`, on the caller's AI SDK route or
 
 - **`get_transcript_words`** — the session's transcript at generation density with deterministic paging (auto-event-generation "Generation-density transcript rendering"), from a word snapshot taken before the turn starts. As for topic generation's one-shot, the pages SHALL be stable for the whole turn and the turn SHALL record which pages it served.
 - **`list_wiki_pages {page?}`** — the show's live pages in title order, each with id, kind, title, aliases, revision and whether it has a pending suggestion, followed by the show's pending new-page suggestions (suggestion id, kind, title). Each call returns at most 200 entries and at most 40,000 characters, ending with a marker line saying whether more remain.
-- **`read_wiki_page {page_id? | suggestion_id?}`** — exactly one of the two:
-  - with `page_id`, one live page of the show: kind, title, aliases, revision, body, and the body of its pending suggestion when it has one. A page of another show, a missing page and a deleted page answer the tool error "Page not found."; a merged page answers which page it was merged into;
-  - with `suggestion_id`, one pending new-page suggestion of the show: kind, title, aliases and body;
-  - a body over 30,000 characters is cut at 30,000 and marked as cut, and the page is marked too long to rewrite.
+- **`read_wiki_page {page_id? | suggestion_id?}`** — exactly one of the two, and each result holds at most one body:
+  - with `page_id`, one live page of the show: kind, title, aliases, revision and body, and the id of its pending suggestion when it has one. A page of another show, a missing page and a deleted page answer the tool error "Page not found."; a merged page answers which page it was merged into;
+  - with `suggestion_id`, one pending suggestion of the show, for an existing page or a new page: its target, kind, title, aliases and body. Any other id answers "Suggestion not found.";
+  - a body over 30,000 characters is cut at 30,000 and marked as cut, and the page is marked too long to rewrite; the body is cut further if needed, and marked, so the whole result, header included, is at most 45,000 characters.
 - **`propose_page {page_id?, kind?, title, aliases, body_md, rationale}`** — records one proposal for this run (next requirement).
 
 Rules for the turn:
@@ -50,8 +50,8 @@ Rules for the turn:
 - **THEN** the tool answers "Page not found." and returns no page content
 
 #### Scenario: A pending suggestion is carried forward
-- **WHEN** a page has a pending suggestion from an earlier session and the model reads that page
-- **THEN** the tool returns the page and the pending suggestion's body, so the new proposal can keep the earlier, unreviewed additions
+- **WHEN** a page has a pending suggestion from an earlier session and the model reads that page, then reads the suggestion by the id the page read gave
+- **THEN** the second read returns the pending suggestion's body, so the new proposal can keep the earlier, unreviewed additions, including their citations of the earlier session, which are checked again (next requirement)
 
 ### Requirement: Proposals are checked when they are made
 `propose_page` SHALL check each proposal at once and, on any failure, record nothing for it and return a tool error naming every problem, so the model can fix it and call again. The server SHALL NOT rewrite a proposal's Markdown.
@@ -63,12 +63,12 @@ The checks:
   - Without `page_id`, `kind` is required. The title and aliases SHALL NOT match a live page's title or alias, ignoring case and accents as `catalog.search_norm` does; the error names that page's id so the model can target it instead. Kind `session` is allowed only for the run's own session, and only when that session has no live page.
 - **Links:** the link grammar, the 500-link limit, and the show checks of a manual save (cited sessions and linked pages of the show; hidden sessions and deleted or merged pages are allowed), run by the same store code a manual save uses.
 - **Quotes:** every **rendered citation** — an inline or autolinked `cite:` link, and every full, collapsed or shortcut reference whose definition is a `cite:` URL — that is not already rendered in the base body with the same session, seconds and text SHALL:
-  - cite the run's own session;
-  - quote that session's transcript, where the quote is the citation's rendered text and both quote and transcript words are normalised with `catalog.search_norm` (case and accents), each run of non-alphanumeric characters becoming one space;
+  - cite the run's own session, or a session that the target's pending suggestion cites (so a carried-forward suggestion can keep its citations of an earlier session); at most 10 such other sessions per run, each read once, as the caller;
+  - quote the cited session's transcript, where the quote is the citation's rendered text and both quote and transcript words are normalised with `catalog.search_norm` (case and accents), each run of non-alphanumeric characters becoming one space;
   - have 1–60 normalised words;
-  - match the run's word snapshot, in transcript order, as one contiguous run whose first word's time is within 30 seconds before or after the cited seconds. A word's time is its `session_time` timecode as seconds (`HH×3600 + MM×60 + SS`, frames dropped), or its `start_sec` when it has no timecode.
+  - match that session's words (the run's word snapshot for the run's session), in transcript order, as one contiguous run whose first word's time is within 30 seconds before or after the cited seconds. A word's time is its `session_time` timecode as seconds (`HH×3600 + MM×60 + SS`, frames dropped), or its `start_sec` when it has no timecode.
 
-  At most 200 citations are checked per proposal; more is an error. Citations already in the base body keep whatever session they cite and are not re-checked.
+  At most 200 citations are checked per proposal; more is an error. Citations already in the base body keep whatever session they cite and are not re-checked. Citations carried from a pending suggestion are always checked, because a pending suggestion can hold citations its own run kept unchecked from an older base.
 - **Limits per run:** at most 20 targets. A target is a page id, or a new page's title normalised as above. A later proposal for a target already proposed in this run replaces the earlier one and does not count again.
 
 #### Scenario: A misquote is sent back to the model
@@ -87,8 +87,16 @@ The checks:
 - **WHEN** a person wrote a paraphrased citation into a page, and the model's proposal for that page keeps it unchanged
 - **THEN** that citation is not quote-checked, and the proposal can pass
 
+#### Scenario: A carried-forward citation passes
+- **WHEN** the target's pending suggestion, from session 1's run, cites session 1 with a quote that occurs in session 1 at that time, and the session 2 run's proposal keeps that citation
+- **THEN** the citation is checked against session 1's transcript and passes
+
+#### Scenario: A carried-forward misquote is refused
+- **WHEN** the target's pending suggestion carries a citation of session 1 whose quote doesn't occur in session 1 near that time, and the proposal keeps it
+- **THEN** `propose_page` refuses the proposal, naming that citation
+
 #### Scenario: A new citation of another session is refused
-- **WHEN** the model's proposal adds a citation of a different session of the same show
+- **WHEN** the model's proposal adds a citation of a different session of the same show that the target's pending suggestion doesn't cite
 - **THEN** `propose_page` returns a tool error saying new citations must quote this session
 
 ### Requirement: Nothing is stored unless the run succeeds
