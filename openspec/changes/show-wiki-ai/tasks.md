@@ -95,7 +95,8 @@
 
 ## 6. Web
 
-- [ ] 6.1 Move `lineDiff` and `RevisionDiff` from `WikiHistorySheet.tsx` to `wiki/wikiDiff.tsx` (D7 category 5). Verified by the existing `WikiHistorySheet` tests passing with no assertion changed.
+- [x] 6.1 Move `lineDiff` and `RevisionDiff` from `WikiHistorySheet.tsx` to `wiki/wikiDiff.tsx` (D7 category 5). Verified by the existing `WikiHistorySheet` tests passing with no assertion changed.
+  Evidence: `swa-6.1-red.log`: a move with no behaviour change, so before it the existing tests are already green: `WikiHistorySheet.test.tsx` → `Tests 4 passed (4)`. `swa-6.1-green.log`: after the move (`wikiDiff.tsx` exports `DiffKind`, `lineDiff`, `RevisionDiff`; `WikiHistorySheet.tsx` imports `RevisionDiff`), the wiki component tests → `Test Files 7 passed (7)`, `Tests 85 passed (85)`; `WikiHistorySheet.test.tsx` unchanged (empty diff); `biome` on the two files clean; `typecheck rc=0`.
 - [ ] 6.2 Test first: write `useWikiSuggestions.test.tsx` for the hooks and the new `wikiKeys` entries, covering queries, invalidations after accept, dismiss and generate, and a `409` surfacing as a version conflict. Register the keys in `queryKeyFactories.repo.test.ts`, and add the types to `api/types.ts` with conformance checks (D7 category 3). Then implement. Verified by the tests and the repo tests.
 - [ ] 6.3 Test first: write `UpdateWikiButton.test.tsx` ("Update wiki from the session page": the pending label and disabled state, the success toast with the count and the link, the empty result, the 503 message, another error's detail), and add it to the workspace feed-tab row immediately before "Wiki page", which stays last (D7 category 4). Then implement. Verified by the tests.
 - [ ] 6.4 Test first: write `WikiSuggestionSheet.test.tsx` and extend the `WikiRoute` and `WikiPageView` tests (D7 category 4), covering:
