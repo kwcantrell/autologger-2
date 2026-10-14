@@ -396,6 +396,25 @@ describe('WikiRoute: Suggestions tab', () => {
     expect(await screen.findByText('She is the mayor now.')).toBeTruthy();
   });
 
+  it('scrolls the selected Suggestions tab into view, so a narrow tab row shows it', async () => {
+    const scrolled: Element[] = [];
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = function (
+      this: Element,
+      opts?: boolean | ScrollIntoViewOptions,
+    ) {
+      expect(opts).toEqual({ block: 'nearest', inline: 'nearest' });
+      scrolled.push(this);
+    };
+    try {
+      setup(PROFILE, '/wiki?tab=suggestions');
+      const tab = screen.getByRole('tab', { name: /Suggestions/ });
+      await waitFor(() => expect(scrolled).toContain(tab));
+    } finally {
+      Element.prototype.scrollIntoView = original;
+    }
+  });
+
   it('groups items by target, names a new page with its kind, and badges a stale one', async () => {
     SUGGESTIONS = [COLD, ANA];
     setup(PROFILE, '/wiki?tab=suggestions');

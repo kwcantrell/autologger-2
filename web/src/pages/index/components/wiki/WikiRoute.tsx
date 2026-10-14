@@ -1,5 +1,5 @@
 import { PlusIcon, SearchIcon } from 'lucide-react';
-import { type ReactNode, useEffect, useMemo, useState } from 'react';
+import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearch as useLocationSearch } from 'wouter';
 import { useProfile } from '../../../../api/hooks/useProfile';
 import {
@@ -314,11 +314,19 @@ export function WikiRoute() {
   }, [search]);
   const [filter, setFilter] = useState('');
   const [creating, setCreating] = useState(false);
+  // Below md the tab row scrolls sideways; bring the selected tab into view (the Suggestions tab
+  // is last, so `?tab=suggestions` would otherwise select a tab off the right edge at 390px).
+  const tabRow = useRef<HTMLDivElement>(null);
 
   const showId = profile?.active_show_id ?? null;
   const showName = profile?.shows.find((s) => s.id === showId)?.name ?? '';
   const pending = useWikiSuggestions(showId);
   const pendingCount = pending.data?.suggestions.length ?? 0;
+  // Also when the count badge arrives, since it widens the Suggestions tab.
+  useEffect(() => {
+    const active = tabRow.current?.querySelector('[role="tab"][data-state="active"]');
+    active?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+  }, [tab, pendingCount]);
   const needle = fold(filter.trim());
   const newKind: NewPageKind = tab === 'topic' || tab === 'bit' ? tab : 'person';
 
@@ -356,7 +364,10 @@ export function WikiRoute() {
           />
         </div>
         <Tabs value={tab} onValueChange={(v) => setTab(v as TabId)} className="min-w-0">
-          <div className="flex min-w-0 max-md:overflow-x-auto max-md:[scrollbar-width:none]">
+          <div
+            ref={tabRow}
+            className="flex min-w-0 max-md:overflow-x-auto max-md:[scrollbar-width:none]"
+          >
             <TabsList variant="line" aria-label="Page kinds">
               {TABS.map((t) => (
                 <TabsTrigger key={t.id} value={t.id}>
