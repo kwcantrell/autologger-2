@@ -26,7 +26,7 @@ export const EXPECTED_LEGACY_MIGRATIONS = [
 /** The newest `supabase/migrations` version this map was written against (design D6). The emitted
  * import refuses a target whose newest applied migration differs; a unit test pins it to the
  * newest file in the checkout, so a new migration makes this file be reviewed. */
-export const TARGET_SCHEMA_VERSION = '20261018000000';
+export const TARGET_SCHEMA_VERSION = '20261022000000';
 
 export type ColType = 'text' | 'int' | 'real';
 export type Value = string | bigint | number | null;

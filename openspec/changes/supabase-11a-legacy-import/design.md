@@ -6,7 +6,7 @@
   - `catalog.db`, built by the deleted SQLite catalog migrations;
   - `sessions/<id>.db`, one file per session;
   - `blobs/audio/<sid>/<NNNN>_<segment id>.<ext>`.
-- **Target:** schema `catalog`, from `supabase/migrations` up to `20261018000000` (`20261018000000_claude_cli_provider.sql` only relaxes `user_provider_credentials`, which the import never writes). The nine
+- **Target:** schema `catalog`, from `supabase/migrations` up to `20261022000000` (`20261018000000_claude_cli_provider.sql` only relaxes `user_provider_credentials`, which the import never writes; `20261019000000`–`20261020000000` catalog search adds stored generated `tsvector` columns, which the explicit column lists never name, and fills `session_transcript_chunks` by trigger from the imported words; `20261021000000`–`20261022000000` show wiki adds wiki tables the import never writes and a `unique (id, show_id)` on `sessions`). The nine
   session tables are keyed `(session_id, id)` (7b-1). `version` and `sessions.revision` come
   from 7c-1. The leases (8a/8b), the Companion tables (9d) and the provider tables come later;
   only the leases and the overwrite records reference sessions.
