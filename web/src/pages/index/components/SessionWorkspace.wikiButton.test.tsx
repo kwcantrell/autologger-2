@@ -208,6 +208,15 @@ describe('SessionWorkspace: the Wiki page button', () => {
     );
   });
 
+  // show-wiki-ai task 6.3 (D7 category 4): "Update wiki" sits immediately before "Wiki page".
+  it('Update wiki sits immediately before Wiki page, which stays last', () => {
+    serveWiki(() => sessionPage('wp-1'));
+    renderWorkspace();
+    const update = screen.getByRole('button', { name: 'Update wiki' });
+    expect(update.nextElementSibling).toBe(wikiButton());
+    expect(wikiButton().parentElement?.lastElementChild).toBe(wikiButton());
+  });
+
   it('the first press creates the session page titled after the session and opens it; the second opens the same page', async () => {
     const { calls } = serveWiki(() => sessionPage('wp-1'));
     const { memory } = renderWorkspace();

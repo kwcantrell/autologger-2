@@ -41,6 +41,7 @@ import { isTypingTarget, ShortcutsDialog } from './ShortcutsDialog';
 import { TopicsFeed } from './TopicsFeed';
 import { TranscribeFeed } from './TranscribeFeed';
 import { SessionWikiButton } from './wiki/SessionWikiButton';
+import { UpdateWikiButton } from './wiki/UpdateWikiButton';
 
 // Feed tab inventory — one source for the tablist buttons AND the tabpanel
 // wrappers below (code-health-tail 4.8). `label` doubles as each panel's
@@ -568,7 +569,9 @@ export function SessionWorkspace({ sessionId, ytImportPending }: Props) {
                           </TabsTrigger>
                         ))}
                       </TabsList>
-                      {/* The session's wiki page (show-wiki D7), at the end of the row. */}
+                      {/* "Update wiki" (show-wiki-ai D6), then the session's wiki page
+                          (show-wiki D7), which stays at the end of the row. */}
+                      <UpdateWikiButton sessionId={sessionId} />
                       <SessionWikiButton
                         sessionId={sessionId}
                         showId={status?.show_id ?? null}

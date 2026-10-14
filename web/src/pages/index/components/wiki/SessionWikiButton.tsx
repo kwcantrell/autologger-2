@@ -10,7 +10,8 @@ import { navigate } from '../../navigation';
 import { conflictPageId } from './NewWikiPageDialog';
 import { wikiPageHref } from './WikiPageLink';
 
-// "Wiki page" at the end of the session workspace's feed-tab row (show-wiki D7; scenario
+// "Wiki page" at the end of the session workspace's feed-tab row, after "Update wiki", which
+// pushes the pair to the row's end (show-wiki D7, show-wiki-ai D6; scenario
 // "Session page from the workspace"). A press lists the session's page and opens it; with none,
 // it creates a `session` page titled after the session and opens that. A `409 Session already
 // has a page.` (someone made it meanwhile) opens the page the 409 names. Nothing is fetched
@@ -74,7 +75,7 @@ export function SessionWikiButton({ sessionId, showId, title }: Props) {
     <Button
       variant="ghost"
       size="sm"
-      className="ml-auto shrink-0 self-center text-si-muted hover:text-si-fg"
+      className="shrink-0 self-center text-si-muted hover:text-si-fg"
       disabled={!showId || busy}
       onClick={() => void open()}
     >
