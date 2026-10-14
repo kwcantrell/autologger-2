@@ -174,6 +174,26 @@ describe('scanForBareKeyLiterals — end-to-end mutation check on a real filesys
   });
 });
 
+describe('the wiki suggestion keys (show-wiki-ai D6): built through wikiKeys, under its root', () => {
+  it('useWikiSuggestions.ts holds no quoted root and keys every query through wikiKeys', () => {
+    const src = fs.readFileSync(
+      path.join(WEB_SRC, 'api', 'hooks', 'useWikiSuggestions.ts'),
+      'utf8',
+    );
+    expect(quotedPattern(WIKI_PAGES).test(src)).toBe(false);
+    expect(src).toMatch(/wikiKeys\.suggestions\(/);
+    expect(src).toMatch(/wikiKeys\.suggestion\(/);
+    expect(src).toMatch(/wikiKeys\.allSuggestions\(/);
+  });
+
+  it('the factory module defines the suggestion entries on wikiKeys', () => {
+    const src = fs.readFileSync(path.join(WEB_SRC, FACTORY_MODULE[WIKI_PAGES]), 'utf8');
+    for (const entry of ['allSuggestions', 'suggestions', 'suggestion']) {
+      expect(src).toMatch(new RegExp(`^  ${entry}: \\(`, 'm'));
+    }
+  });
+});
+
 describe('web/src grep-clean guard — factories are the only key-literal owners (finding 2.8)', () => {
   it('contains ZERO bare session-status/audio-segments/studio-shows/show key literals outside the factory modules', () => {
     expect(scanForBareKeyLiterals(WEB_SRC)).toEqual([]);

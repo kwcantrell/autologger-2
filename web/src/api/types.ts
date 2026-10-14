@@ -967,3 +967,71 @@ export interface WikiSplitBody {
     aliases?: string[];
   };
 }
+
+// -- Show wiki AI suggestions (show-wiki-ai D6; api-contract-freeze "Wiki suggestion object" and
+// the suggestion endpoints). Mirrors `packages/contract`'s suggestion schemas, which the web may
+// not import; `types.conformance.test.ts` checks these against the captured responses. ---
+
+export type WikiSuggestionStatus = 'pending' | 'accepted' | 'dismissed' | 'superseded';
+
+/** The suggestion object every suggestion-returning route answers. */
+export interface WikiSuggestion {
+  id: string;
+  show_id: string;
+  session_id: string;
+  status: WikiSuggestionStatus;
+  /** `null`: the suggestion proposes a new page of `kind` and `title`. */
+  page_id: string | null;
+  /** The page revision the run read; `null` for a new page. */
+  base_revision: number | null;
+  kind: WikiKind;
+  title: string;
+  aliases: string[];
+  rationale: string;
+  /** The target page now; `null` for a new page. */
+  page: { title: string; revision: number; state: 'live' | 'merged' | 'deleted' } | null;
+  /** The target page's current revision differs from `base_revision`. */
+  stale: boolean;
+  created_at_utc: string;
+  created_by_name: string;
+  resolved_at_utc: string | null;
+  resolved_by_name: string | null;
+  resolved_revision: number | null;
+}
+
+/** `GET /api/wiki/suggestions/:suggestionId`: the suggestion plus its proposed body. */
+export interface WikiSuggestionDetail extends WikiSuggestion {
+  body_md: string;
+}
+
+/** `GET /api/shows/:showId/wiki/suggestions`: newest first, at most 500. */
+export interface WikiSuggestionListResponse {
+  suggestions: WikiSuggestion[];
+  truncated: boolean;
+}
+
+/** `POST /api/sessions/:sessionId/wiki/generate` `200`: what the run stored, in proposal order. */
+export interface WikiGenerateResponse {
+  suggestions: WikiSuggestion[];
+}
+
+/** `POST /api/wiki/suggestions/:suggestionId/accept`. Fields not sent take the suggestion's value. */
+export interface WikiSuggestionAcceptBody {
+  /** Required for an existing page: the revision the reviewer saw. Ignored for a new page. */
+  expected_revision?: number;
+  title?: string;
+  body_md?: string;
+  aliases?: string[];
+}
+
+/** The accept `200` (page updated) and `201` (page created). */
+export interface WikiSuggestionAcceptResponse {
+  page: WikiPage;
+  suggestion: WikiSuggestion;
+}
+
+/** `409` for a suggestion that isn't pending. */
+export interface WikiSuggestionResolvedConflict {
+  detail: 'Suggestion already resolved.';
+  status: WikiSuggestionStatus;
+}
