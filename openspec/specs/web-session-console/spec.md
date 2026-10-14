@@ -1395,8 +1395,6 @@ The shell SHALL reflect the open session's transport state, using the same sourc
 
 The label SHALL always be present, so colour is never the only channel. It SHALL be exposed to assistive technology as the transport's status, announced when the state changes and not on every timecode tick.
 
-When the performance-debug transport override is active, the tint and label SHALL follow the overridden state, as the strip does.
-
 Under `prefers-reduced-motion: reduce` the tint SHALL change instantly and the live indicator SHALL NOT blink. The tint SHALL follow the open session even while the Settings view is shown over it. The state SHALL be derived from those existing sources; this requirement adds no request and no WebSocket message.
 
 #### Scenario: Recording tints the shell and says REC
@@ -1422,6 +1420,10 @@ Under `prefers-reduced-motion: reduce` the tint SHALL change instantly and the l
 #### Scenario: Settings over a live session
 - **WHEN** the Settings view is open over a session that is recording or rolling
 - **THEN** the top bar and rail keep the full tint and the REC or ROLLING status
+
+#### Scenario: No client-side override of the transport state
+- **WHEN** the browser still holds a value saved by the removed performance-debug panel
+- **THEN** the tint and status label follow only the sources above, and no performance-debug control is shown anywhere in the app
 
 ### Requirement: Feed count matches the rows shown
 The event feed's heading count SHALL equal the number of events the feed's active filters (including whether internal events are shown) select from the session's fetched events — the whole filtered set, not the portion of it currently paged into the windowed list. When the session has more events than the workspace fetches, the count SHALL be shown with a trailing `+` rather than as an exact figure. It SHALL NOT be taken from a count that covers a different row set; the session's `logged_event_count`, which excludes internal events, is one such count. A filter change SHALL update the count in the same render. The workspace tab strip carries no count. The server's `logged_event_count` field and its meaning are unchanged.
