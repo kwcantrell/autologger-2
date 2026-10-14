@@ -63,6 +63,7 @@ import type { SessionCaller, SessionHubRegistryFacade } from '@autologger/sessio
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
+import { WIKI_TOOL_BUILDERS, type WikiTurnState } from './wikiTools';
 
 const LOOPBACK = '127.0.0.1';
 const MCP_PATH = '/mcp';
@@ -82,6 +83,10 @@ export const AI_MCP_TOOL_NAMES = [
   'list_topics',
   'create_topic',
   'create_event',
+  // show-wiki-ai D3: the wiki turn's catalog tools (`wikiTools.ts`), offered on wiki turns only.
+  'list_wiki_pages',
+  'read_wiki_page',
+  'propose_page',
 ] as const;
 
 /** One of the short tool names above — the type callers use to
@@ -193,6 +198,10 @@ export interface AiMcpTurnContext {
    * rendering. It carries no event-run fields, and `create_event` registration
    * stays keyed by `tools`, never by a snapshot's presence. */
   readonly pagedWords?: readonly AiGenerationSnapshotWord[];
+  /** show-wiki-ai D3 — a wiki turn's state: the caller-bound catalog port, the word snapshot the
+   * quote match reads, and the run's proposals map, which the wiki run reads after the turn.
+   * Only wiki turns carry it; the wiki tools are registered by `tools`, never by its presence. */
+  readonly wiki?: WikiTurnState;
 }
 
 /** How much of a turn's transcript snapshot the model actually fetched
@@ -716,6 +725,8 @@ interface ToolBuildContext {
   readonly pagedWords: readonly AiGenerationSnapshotWord[] | undefined;
   /** The registration's pagination memo + served-page set (D1/D6). */
   readonly pageState: TurnPageState;
+  /** A wiki turn's port, word snapshot and proposals (show-wiki-ai D3); undefined otherwise. */
+  readonly wiki: WikiTurnState | undefined;
 }
 
 /**
@@ -951,6 +962,11 @@ const TOOL_BUILDERS: Record<AiMcpToolName, (server: ToolSink, ctx: ToolBuildCont
       },
     );
   },
+
+  // show-wiki-ai D3/D4: the wiki tools read the catalog only through the turn's port.
+  list_wiki_pages: (server, { wiki }) => WIKI_TOOL_BUILDERS.list_wiki_pages(server, wiki),
+  read_wiki_page: (server, { wiki }) => WIKI_TOOL_BUILDERS.read_wiki_page(server, wiki),
+  propose_page: (server, { wiki }) => WIKI_TOOL_BUILDERS.propose_page(server, wiki),
 };
 
 /** Register the turn's tool set (D6) on a sink: the MCP server per request, or the AI SDK turn's
@@ -970,6 +986,7 @@ function registerTurnTools(
     createdEvents: reg.createdEvents,
     pagedWords: reg.context?.pagedWords,
     pageState: reg.pageState,
+    wiki: reg.context?.wiki,
   };
   for (const name of turnToolNames(reg)) {
     TOOL_BUILDERS[name](sink, ctx);

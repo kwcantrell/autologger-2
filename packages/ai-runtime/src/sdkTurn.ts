@@ -84,12 +84,14 @@ export interface SdkTurnDeps {
 }
 
 /** The turn kinds and exactly their tool sets (D3). */
-export type SdkTurnKind = 'chat' | 'topics' | 'events';
+export type SdkTurnKind = 'chat' | 'topics' | 'events' | 'wiki';
 export const SDK_TURN_TOOLS: Readonly<Record<SdkTurnKind, readonly AiMcpToolName[]>> =
   Object.freeze({
     chat: ['get_transcript_words', 'list_topics', 'create_topic'],
     topics: ['get_transcript_words', 'create_topic'],
     events: ['get_transcript_words', 'create_event'],
+    // show-wiki-ai D3: the wiki turn reads the transcript and the show's wiki, and proposes pages.
+    wiki: ['get_transcript_words', 'list_wiki_pages', 'read_wiki_page', 'propose_page'],
   });
 
 /** Always sent: without it Anthropic requests 128 000 output tokens (A24). Chat's fixed per-step
