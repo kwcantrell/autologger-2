@@ -43,7 +43,7 @@ Four facts shaped the design:
 
 ## Evidence
 
-- The panel and re-panel are in `openspec/changes/archive/<date>-show-wiki-ai/panel.md` (4 critical and 15 major findings, then 8 major at the re-panel, all resolved), and the measured assumptions are in that change's `design.md`.
+- The panel and re-panel are in `openspec/changes/archive/2026-10-14-show-wiki-ai/panel.md` (4 critical and 15 major findings, then 8 major at the re-panel, all resolved), and the measured assumptions are in that change's `design.md`.
 - **Access and rows:** owner, granted member, ungranted member and outsider for select, insert, update and delete; forged authors, reopened rows and rewritten bodies refused (`wikiSuggestions.pg.test.ts`).
 - **Checks:** reference-style misquotes, the ±30 s edges, carried-forward citations re-checked and misquotes refused, other-session limits, adversarial result sizes (`wikiTools.test.ts`).
 - **End to end:** the gate order, both AI routes, no-store on provider failure, unread pages, a failed store and a timeout with a running tool body, and the real port's show and status filters (`wikiSuggestions.int.test.ts`).

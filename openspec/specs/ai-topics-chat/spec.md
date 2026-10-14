@@ -368,15 +368,22 @@ name only — never the prompt, transcript, history, provider body or key.
 ### Requirement: Session-scoped MCP toolset
 Each chat turn SHALL be given session-scoped tools, all hard-bound to the `:sessionId` of the
 originating request via the turn registration (the model cannot address any other session — no
-tool parameter names a session). On the Claude CLI route the spawned CLI SHALL be given a
+tool parameter names a session; the wiki tools below are bound to that session's show and read
+only what the caller may read there, and the one other-session read is that a wiki proposal's
+citations may cause a read of the words of a show session its target's pending suggestion cites,
+answered only as pass or fail). On the Claude CLI route the spawned CLI SHALL be given a
 generated MCP configuration exposing those tools. On the AI SDK route the server SHALL give the
 model the same tools in process, wrapping the **same tool bodies, input schemas and validation**
 the MCP server uses, so a tool call has the same effect and result on either route. The registry
-comprises four tools; **each turn registration SHALL carry the turn's tool set, and the per-request
+comprises seven tools; **each turn registration SHALL carry the turn's tool set, and the per-request
 MCP server, or the AI SDK turn, SHALL offer only that turn's tools — a chat turn's set is exactly
 the three tools below** (the CLI `--allowedTools` allowlist remains as belt-and-braces).
-`create_event` (defined by `auto-event-generation`) is offered only for event-generation turns; a
-chat turn never exposes it:
+`create_event` (defined by `auto-event-generation`) is offered only for event-generation turns, and
+`list_wiki_pages`, `read_wiki_page` and `propose_page` (defined by `wiki-generation`
+"The wiki turn and its tools") only for wiki turns; a chat turn never exposes any of them. The wiki
+tools read the catalog through a catalog bound to the turn's caller, never a system binding, and
+`propose_page` writes nothing: it records a proposal in the turn's memory, which the wiki route
+stores only on success:
 
 - `get_transcript_words` — returns the session's transcript rendered as **compact,
   model-readable text**, not JSON rows: consecutive words are grouped into per-speaker
@@ -387,7 +394,7 @@ chat turn never exposes it:
   `session_id`, …), which the model does not need and whose per-word repetition made the
   JSON form a single oversized payload that overflowed the CLI's tool-output limit and
   hid the transcript from the model. The output SHALL be a bounded, non-JSON rendering.
-  On a generation-density turn (event generation and the topic-generation one-shot) the
+  On a generation-density turn (event generation, the topic-generation one-shot and the wiki turn) the
   same tool renders at generation density with deterministic paging — defined solely by
   `auto-event-generation`'s "Generation-density transcript rendering". Chat turns keep
   the unpaged compact rendering unchanged, and a chat turn's registration SHALL NOT
@@ -403,7 +410,7 @@ chat turn never exposes it:
 - **per step, a soft cap of 16 calls**: a call past the 16th in one step SHALL run nothing and SHALL
   return the tool error "Too many tool calls in one step; continue in the next step." to the
   model, and the turn SHALL continue;
-- **per turn, a hard cap** of 32 calls (chat) or 300 (topic and event generation): a call past it
+- **per turn, a hard cap** of 32 calls (chat) or 300 (topic, event and wiki generation): a call past it
   SHALL run nothing, no further tool body or model request SHALL run, and the turn SHALL end as
   failed — a chat turn with exactly one upstream-failed `error` event, a generation turn with its
   `502`;
@@ -492,6 +499,11 @@ an alteration of emission semantics.)
   the turn finished
 - **THEN** no tool body runs for it, and no row is read or written for it
 
+#### Scenario: Chat turns cannot use the wiki tools
+- **WHEN** a chat turn runs
+- **THEN** `list_wiki_pages`, `read_wiki_page` and `propose_page` are not offered to
+  the model on either route, and a call to one of them runs nothing
+
 ### Requirement: Subprocess security lockdown
 The spawned CLI, and the model on the AI SDK route, MUST be restricted to the autologger tools
 and nothing else.
@@ -519,7 +531,9 @@ only capabilities SHALL be the turn's tools. In particular:
 
 - nothing the model drives SHALL run a command, read or write a file, or reach any network
   destination; the only actions available to it are calls to the turn's tool set, which act on
-  the originating session through the validated tool bodies;
+  the originating session (and, on a wiki turn, that session's show wiki and its pending
+  suggestions, and the transcript words of the show's sessions that a target's pending suggestion
+  cites, all read as the caller) through the validated tool bodies;
 - a model call naming a tool outside the turn's set, including a tool the turn does not define,
   SHALL run nothing and SHALL NOT be relayed;
 - the model's tool calls SHALL be limited per step (soft) and capped per turn, and run one at a time
