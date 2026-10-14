@@ -403,24 +403,28 @@ export function WikiRoute() {
     );
   }
 
+  // The shell's main area clips on desktop, so the route scrolls itself; on a
+  // phone the document scrolls.
   return (
-    <div
-      data-slot="wiki-route"
-      className="mx-auto flex w-full max-w-[52rem] flex-col gap-5 px-4 py-6 max-md:px-3"
-    >
-      <div className="flex min-w-0 items-start gap-3">
-        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-          <h1 className="m-0 text-[1.35rem] font-semibold text-si-fg">Wiki</h1>
-          {showId && showName && <p className="m-0 truncate text-sm text-si-muted">{showName}</p>}
+    <div className="md:absolute md:inset-0 md:overflow-y-auto">
+      <div
+        data-slot="wiki-route"
+        className="mx-auto flex w-full max-w-[52rem] flex-col gap-5 px-4 py-6 max-md:px-3"
+      >
+        <div className="flex min-w-0 items-start gap-3">
+          <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+            <h1 className="m-0 text-[1.35rem] font-semibold text-si-fg">Wiki</h1>
+            {showId && showName && <p className="m-0 truncate text-sm text-si-muted">{showName}</p>}
+          </div>
+          {showId && (
+            <Button onClick={() => setCreating(true)}>
+              <PlusIcon data-icon="inline-start" />
+              New page
+            </Button>
+          )}
         </div>
-        {showId && (
-          <Button onClick={() => setCreating(true)}>
-            <PlusIcon data-icon="inline-start" />
-            New page
-          </Button>
-        )}
+        {body}
       </div>
-      {body}
     </div>
   );
 }

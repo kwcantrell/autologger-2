@@ -90,18 +90,22 @@ function inAppClick(href: string) {
   };
 }
 
+// The shell's main area clips on desktop, so the page scrolls itself; on a
+// phone the document scrolls.
 function Frame({ children }: { children: ReactNode }) {
   return (
-    <div
-      data-slot="wiki-page"
-      className="mx-auto flex w-full max-w-[52rem] flex-col gap-5 px-4 py-6 max-md:px-3"
-    >
-      <Button asChild variant="link" size="xs" className="self-start px-0 text-si-dim">
-        <a href="/wiki" onClick={inAppClick('/wiki')}>
-          <ArrowLeftIcon aria-hidden="true" /> Wiki
-        </a>
-      </Button>
-      {children}
+    <div className="md:absolute md:inset-0 md:overflow-y-auto">
+      <div
+        data-slot="wiki-page"
+        className="mx-auto flex w-full max-w-[52rem] flex-col gap-5 px-4 py-6 max-md:px-3"
+      >
+        <Button asChild variant="link" size="xs" className="self-start px-0 text-si-dim">
+          <a href="/wiki" onClick={inAppClick('/wiki')}>
+            <ArrowLeftIcon aria-hidden="true" /> Wiki
+          </a>
+        </Button>
+        {children}
+      </div>
     </div>
   );
 }
