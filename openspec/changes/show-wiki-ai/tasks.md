@@ -109,6 +109,7 @@
   - a 409 conflict refetches and redraws, keeping edited text;
   - the rationale, title and aliases render as text (a `<script>` title shows literally).
   Then implement. Verified by the tests, the full web suite and typecheck.
+- [ ] 6.6 Add `server/src/routers/wikiSuggestions.ts` to the router list in `sdkSafety.repo.test.ts` (D7 category 7). Verified by the test passing with the router scanned (a scratch violation in a copy of the router fails it, then is removed).
 - [ ] 6.5 Manual check in the dev stack (`make dev-up`) with the dev SGLang credential, using agent-browser at 1280px and 390px: run "Update wiki" on a QA session; review and accept a suggestion and see the `accepted suggestion …` revision authored by the reviewer; edit a page, then accept its now-stale suggestion; dismiss one; an ungranted member gets the masked 404 on the list. Verified by the screenshots and notes in the log.
 
 ## 7. Docs and verification
