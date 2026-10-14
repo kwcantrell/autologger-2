@@ -117,6 +117,7 @@
 
 ## 7. Docs and verification
 
-- [ ] 7.1 Write ADR `docs/decisions/0031-show-wiki-ai.md`: the injected caller-bound catalog port, the quote check and why it rejects rather than strips, store-only-on-success, the reviewer authoring the revision, and the accepted busy-detail gap. Verified by the file existing, with a `Rule:` line naming the specs and tests it backs, as ADR 0030 does.
+- [x] 7.1 Write ADR `docs/decisions/0031-show-wiki-ai.md`: the injected caller-bound catalog port, the quote check and why it rejects rather than strips, store-only-on-success, the reviewer authoring the revision, and the accepted busy-detail gap. Verified by the file existing, with a `Rule:` line naming the specs and tests it backs, as ADR 0030 does.
+  Evidence: `docs/decisions/0031-show-wiki-ai.md` written, with a `Rule:` line naming wiki-generation, the show-wiki, catalog-database, api-contract-freeze, ai-topics-chat and auto-event-generation requirements and six test files; `test -f` on each cited test → `ok` ×6.
 - [ ] 7.2 Run `GITHUB_BASE_REF=supabase-migration scripts/check-change.sh --stage hook` and `openspec validate --all --strict`, then the `consistency-read` skill, appending its result to `panel.md`. Verified by the green run and the appended section.
 - [ ] 7.3 Open the PR, and confirm CI is green on it. Verified by the PR's check status.
