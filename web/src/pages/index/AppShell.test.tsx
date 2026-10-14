@@ -57,10 +57,6 @@ vi.mock('../../shared/utils/loadingVideo', () => ({
   freezeAutologgerLoadingVideos: () => {},
 }));
 
-vi.mock('../../shared/utils/perfDebug', () => ({
-  initPerfDebugUI: () => {},
-}));
-
 // The rail mock reads the shell's real `SidebarProvider` (redesign-show-ignition D8): it reports
 // the sidebar state and holds a search input, for the `[` shortcut tests.
 vi.mock('./components/V6Rail', async () => {
@@ -357,6 +353,15 @@ afterEach(() => {
   window.history.replaceState(null, '', '/');
   resetOriginationForTesting();
   vi.clearAllMocks();
+});
+
+// The removed Perf button and its panel stay gone from every build.
+describe('AppShell debug chrome', () => {
+  it('renders no performance-debug control', () => {
+    renderShell();
+    expect(screen.queryByRole('button', { name: /^perf$/i })).toBeNull();
+    expect(document.querySelector('[id^="perf"]')).toBeNull();
+  });
 });
 
 describe('AppShell routing (URL-addressed session state)', () => {

@@ -32,8 +32,7 @@ interface Props {
   onOffState: Map<string, 'on' | 'off'>;
   onToggle: (categoryId: string) => void;
   /**
-   * The shell transport state SessionWorkspace publishes to the top bar (perf override
-   * included): the pill reads the top bar's label for it. Recording comes from the session-wide
+   * The shell transport state SessionWorkspace publishes to the top bar: the pill reads the top bar's label for it. Recording comes from the session-wide
    * lease ("Truthful recording indication"), so a remote client's recording reads REC here too.
    */
   transport: ShellTransportState;

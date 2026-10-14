@@ -170,9 +170,7 @@ export function SidePanel<T>({
                 <AlertDescription>{error}</AlertDescription>
               </Alert>
             )}
-            {/* `pr-16` keeps the actions clear of the bottom-right corner, where the perf-debug
-                toggle (shared/utils/perfDebug.ts, fixed 10px in, every build) sits over them. */}
-            <div data-slot="side-panel-actions" className="flex justify-end gap-2 pr-16">
+            <div data-slot="side-panel-actions" className="flex justify-end gap-2">
               <Button variant="outline" disabled={saving} onClick={() => void requestClose()}>
                 Cancel
               </Button>

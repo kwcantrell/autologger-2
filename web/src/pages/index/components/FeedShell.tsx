@@ -4,7 +4,7 @@ import type { ReactNode } from 'react';
 // FeedShell chrome (was `:global(...)` rules in EventLogSheet.module.css + the feed-targeting
 // `:global(...)` overrides extracted from SessionWorkspace.module.css). The global class
 // strings (`v4-log-sheet`, `v5-event-feed*`, `v4-log-bottom`, `v5-panel-main-title*`) STAY —
-// they remain hooks for SessionWorkspace's non-feed rules and perfDebug. The utilities are
+// they remain hooks for SessionWorkspace's non-feed rules. The utilities are
 // added alongside. `#v4-log-session`-scoped rules become `[#v4-log-session_&]:` ancestor
 // variants (the id keeps being emitted by SessionWorkspace).
 

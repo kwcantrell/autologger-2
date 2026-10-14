@@ -47,9 +47,8 @@ import { TimelineWaveform } from './timeline/TimelineWaveform';
 // RETAINED LITERAL CLASS STRINGS. A handful of elements keep their legacy class name
 // (timelineMarker, timelineMarkerSelected, timelineMarkerPlayheadGlow, timelinePlayhead,
 // timelineClipActive, timelineWaveforms, timelineWaveformFill, timelineWaveformProgress,
-// timelineShell, timelineTrack, v4TlTrackLive) so the perf-debug toggles and the
-// hide-internal marker rule — both parked as @layer components rules in tailwind.css —
-// can still target them. Those class families are dropped in Task 11 with perfDebug.
+// timelineShell, timelineTrack, v4TlTrackLive) as stable hooks; the hide-internal marker
+// rule (an @layer components rule in tailwind.css) still targets `timelineMarker`.
 //
 // LOCAL CUSTOM PROPERTIES stay local (--timeline-clip-strip-h, --v5-timeline-r, --mcol,
 // --marker-glow-col, --nav-cat-col, --tooltip-cat-col, --v4-ext-row-pad-y,
@@ -103,8 +102,7 @@ const TIMELINE_TRACK_STRIP_H =
 // Compact zoom rail — sits under the scrubber at full width.
 const ZOOM_RAIL_STRIP =
   'flex flex-row flex-nowrap items-center gap-[0.3rem] w-full min-w-0 relative box-border px-0 pt-0 pb-0 flex-[0_0_auto]';
-// The literal `v4TlTrackLive` class is retained for the perf-debug @layer rules that
-// target it. Tight gap under ticks so zoom sits closer to the border-centered labels.
+// The literal `v4TlTrackLive` class is kept as a stable hook. Tight gap under ticks so zoom sits closer to the border-centered labels.
 const V4_TL_TRACK_LIVE_STRIP =
   'v4TlTrackLive flex h-auto w-full min-w-0 flex-[0_0_auto] flex-col items-stretch justify-start gap-[0.1rem] overflow-visible bg-transparent p-0';
 // .timelineShell base + `.v4TlTrackLive .timelineShell` base + #v4-log-session override
