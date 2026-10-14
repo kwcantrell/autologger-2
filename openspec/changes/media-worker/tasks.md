@@ -820,7 +820,7 @@ environments" ("Dev, stage and prod compared"). No other README section is touch
   purges trash, the log shows the transition.
 - [x] V.3 Tier 2 consistency read (`consistency-read` skill) over the whole branch; `panel.md`
   re-panel section for any scope change; the design-owned constants confirmed by the owner.
-  Evidence (2026-10-12): `git diff 138649f3..HEAD` read against proposal, design D1-D20, tasks,
+  Evidence: (2026-10-12) `git diff 138649f3..HEAD` read against proposal, design D1-D20, tasks,
   the nine spec deltas, ADR 0032 and the code; `panel.md` "Consistency read 2026-10-12" (scope
   change: no; two open findings for the owner); stale text fixed in design ("Edits after
   approval"), live-recording-chunks, media-processing, ADR 0032 and README "Media jobs";
