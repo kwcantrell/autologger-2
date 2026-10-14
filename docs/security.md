@@ -151,7 +151,7 @@ These live in the forge, not the repo, so the template can't apply them:
   its reasoning as text unless its reasoning parser is enabled. A CLI turn spends the operator's
   quota, so keep `CLAUDE_CLI_EMAILS` short.
 - **Untrusted media in the worker** (media-worker D1-D4, D20, ADR
-  [0029](decisions/0029-media-worker.md)). Uploaded audio is attacker-shaped input to `ffmpeg`, so
+  [0032](decisions/0032-media-worker.md)). Uploaded audio is attacker-shaped input to `ffmpeg`, so
   decoding runs in its own `media-worker` container, never in the API. **ffmpeg never opens a
   path:** the worker opens each input itself (`O_RDONLY | O_NOFOLLOW`, a regular file under
   `/blobs/audio/` or `/blobs/.trash/`), sniffs the container from its first bytes, forces the

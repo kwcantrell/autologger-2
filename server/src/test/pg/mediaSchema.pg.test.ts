@@ -1,5 +1,5 @@
 // media-worker design D2, D7, D12, D18 (task S.1): the media tables of
-// `20261019000000_media_jobs.sql` — `catalog.media_jobs`, `catalog.media_uploads`,
+// `20261023000000_media_jobs.sql` — `catalog.media_jobs`, `catalog.media_uploads`,
 // `catalog.session_audio_seams` — the three new `session_audio_segments` columns, row-level
 // security, the `catalog_system` allow-all policies and the `catalog_user` rules (catalog-database
 // "The media worker connects as its own read-mostly role"). The worker role's grants are

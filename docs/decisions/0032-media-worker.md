@@ -1,4 +1,4 @@
-# 0029: Audio post-processing runs in a sandboxed media worker fed by a Postgres job queue
+# 0032: Audio post-processing runs in a sandboxed media worker fed by a Postgres job queue
 
 - Date: 2026-10-11
 - Status: Proposed

@@ -16,7 +16,7 @@ design D1-D4, D6-D13, D16-D20. The consistency read follows implementation.
 
 Approved-by: Kalen 2026-10-11
 
-ADR 0029.
+ADR 0032.
 
 ## Why
 
@@ -72,7 +72,7 @@ conversion, but only as operator scripts. And prod's Cloudflare Tunnel caps a re
 
 ## What changes
 
-- **Schema** (`supabase/migrations/20261019000000_media_jobs.sql`): `catalog.media_jobs` (with
+- **Schema** (`supabase/migrations/20261023000000_media_jobs.sql`): `catalog.media_jobs` (with
   the worker-guard trigger and column-level grants), `catalog.media_uploads`,
   `catalog.session_audio_seams` (one row per accepted chunk window, the idempotency index and the
   seam map), three columns on `catalog.session_audio_segments` (`duration_ms`, `media_status`,
@@ -104,7 +104,7 @@ conversion, but only as operator scripts. And prod's Cloudflare Tunnel caps a re
   per-part hashes and IndexedDB-remembered resumes; timeline lays a merged segment out as one
   clip per seam and shows "Finalizing recording…" while a merge is pending.
 - **Docs**: README (endpoints, topology, "Media worker", runbooks), `docs/openbao-secrets.md`
-  (new key), `docs/security.md` (untrusted media), ADR 0029.
+  (new key), `docs/security.md` (untrusted media), ADR 0032.
 
 ## Non-goals
 
@@ -168,7 +168,7 @@ regenerated for the three new keys.
 
 ## Impact
 
-- Code: `media-worker/**` (new), `supabase/migrations/20261019000000_media_jobs.sql`,
+- Code: `media-worker/**` (new), `supabase/migrations/20261023000000_media_jobs.sql`,
   `docker/supabase/migrate.sh`, `docker/media-worker.Dockerfile`, `docker-bake.hcl`,
   `compose.yaml`, `docker/compose.dev.yaml`, `docker/compose.stage.yaml`,
   `docker/scripts/{compose-run.mjs,check-envs.sh,supabase-keys.mjs}`, `Makefile`,
@@ -181,7 +181,7 @@ regenerated for the three new keys.
   `web/src/api/types.ts`, `server/scripts/enqueueMediaJobs.ts` (new).
 - Tests: per workstream in `tasks.md`; new pg tests for the migration, the role, the queue and the
   apply step; worker unit and `*.ffmpeg.test.ts` tests; web jsdom tests with fake OPFS/IDB.
-- Docs: README, `docs/openbao-secrets.md`, `docs/security.md`, `docs/decisions/0029-media-worker.md`.
+- Docs: README, `docs/openbao-secrets.md`, `docs/security.md`, `docs/decisions/0032-media-worker.md`.
 - **spark-infra (out of scope here, for the owner):** `MEDIA_DB_PASSWORD` must exist in
   `kv/autologger/<env>` **before** the migration ships (the migrations runner refuses without it;
   `docker/scripts/supabase-keys.mjs <env>` creates it, the AppRole policy already covers the

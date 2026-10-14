@@ -1,5 +1,5 @@
 // media-worker design D1, D2 (task S.2): the worker role `autologger_media` of
-// `20261019000000_media_jobs.sql` — created NOLOGIN by the migration, given LOGIN and its password
+// `20261023000000_media_jobs.sql` — created NOLOGIN by the migration, given LOGIN and its password
 // by migrate.sh's password phase (MEDIA_DB_PASSWORD; docker/supabase/test_migrate.sh covers the
 // runner), its attributes, its exact privileges, its RLS policies, and the `media_jobs` guard
 // trigger and result size check (catalog-database "The media worker connects as its own
@@ -18,7 +18,7 @@ import {
 
 const MIGRATION = resolve(
   import.meta.dirname,
-  '../../../../supabase/migrations/20261019000000_media_jobs.sql',
+  '../../../../supabase/migrations/20261023000000_media_jobs.sql',
 );
 
 const open: postgres.Sql[] = [];

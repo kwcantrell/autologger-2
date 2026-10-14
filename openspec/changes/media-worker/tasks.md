@@ -25,7 +25,7 @@ environments" ("Dev, stage and prod compared"). No other README section is touch
 
 | WS | Owner of |
 | --- | --- |
-| S schema + storage | `supabase/migrations/20261019000000_media_jobs.sql`, `docker/supabase/{migrate.sh,test_migrate.sh}`, `packages/storage/src/{mediaJobs,mediaUploads,audioSeams,mediaLimits}.ts`, `packages/storage/src/blobStore.ts`, `packages/storage/src/{mediaJobs,mediaUploads,audioSeams}.pg.test.ts`, `packages/storage/src/blobStore.test.ts`, `packages/ports/src/media.ts` (new port interfaces), `server/src/test/pg/{mediaJobs,mediaRole,mediaUploads,mediaSchema,audioSeams}.pg.test.ts`, `server/src/test/pg/{catalogSchema,catalogPolicies,catalogRoles}.pg.test.ts` |
+| S schema + storage | `supabase/migrations/20261023000000_media_jobs.sql`, `docker/supabase/{migrate.sh,test_migrate.sh}`, `packages/storage/src/{mediaJobs,mediaUploads,audioSeams,mediaLimits}.ts`, `packages/storage/src/blobStore.ts`, `packages/storage/src/{mediaJobs,mediaUploads,audioSeams}.pg.test.ts`, `packages/storage/src/blobStore.test.ts`, `packages/ports/src/media.ts` (new port interfaces), `server/src/test/pg/{mediaJobs,mediaRole,mediaUploads,mediaSchema,audioSeams}.pg.test.ts`, `server/src/test/pg/{catalogSchema,catalogPolicies,catalogRoles}.pg.test.ts` |
 | B API + session-core | `packages/contract/src/schemas.ts` (+ tests), `server/src/routers/audio.ts`, `server/src/routers/audioUploads.ts` (new), `server/src/mediaApply.ts` (new), `server/src/startupPurge.ts`, `server/src/main.ts`, `server/src/node/config.ts`, `packages/session-core/src/{audioStore,SessionHub,audioSegmentMeta}.ts`, `server/scripts/enqueueMediaJobs.ts`, `fixtures/api-responses/**`, server unit/int tests for these, README sections "Endpoints", "Storage map", "Waveform peaks backfill", "Convert WAV blobs to FLAC", new "Media jobs" runbook (and no other README section) |
 | W worker + infra | `media-worker/**`, `docker/media-worker.Dockerfile`, `docker-bake.hcl`, `compose.yaml`, `docker/compose.dev.yaml`, `docker/compose.stage.yaml`, `docker/supabase-db.yaml` (db joins `media`), `docker/scripts/{compose-run.mjs,compose-run.test.mjs,check-envs.sh,test_check_envs.sh,supabase-keys.mjs,supabase-keys.test.mjs,compose-env.sh}`, `Makefile`, root `package.json` workspaces/scripts, `.github/dependabot.yml` (docker ecosystem), `server/scripts/blobSegmentRows.ts` (pin equality only), `docker/scripts/test_media_image.sh` (new), `server/src/test/ffmpegPin.repo.test.ts` (new), `docs/openbao-secrets.md`, `docs/security.md`, README sections "Topology", "Build, push, and pin images", "Volumes", "Dev, stage and prod compared" (and no other README section), the package-architecture repo test's app list |
 | A web recorder | `web/src/pages/index/utils/chunkStore/**` (new), `web/src/pages/index/utils/{chunkUploadQueue,uploadBackoff,chunkLeaveWarning,recorderLocks,micReacquire,wakeLock}.ts`, `web/src/pages/index/components/{AudioRecorder,ChunkRescueBanner,HiddenTabWarning}.tsx`, `web/src/shared/utils/workerInterval.ts`, the sign-out hook's chunk-wipe call site (`web/src/api/hooks/useAuth*.ts`, one call), their tests, `web/src/test/fakes/{opfs,idb,locks,wakeLock}.ts` (new) |
@@ -80,6 +80,12 @@ environments" ("Dev, stage and prod compared"). No other README section is touch
   #107 merges, rebase `media-worker` onto `supabase-migration` so the branch carries only this
   change directory (the first commit must be the approved artifacts; re-verify `artifacts-first`),
   and reconcile the `transcript-generation` "Segment grouping" delta with #107's archived text.
+  - 2026-10-14 (base moved, #107 still open): `supabase-migration` gained catalog search
+    (`20261019000000`, ADR 0029) and show wiki (`20261021000000`-`20261022000000`, ADRs 0030,
+    0031). Rebased onto #107; the migration is renumbered `20261023000000_media_jobs.sql` (it
+    collided with `20261019000000_catalog_search.sql`), the ADR is renumbered 0032, the importer
+    pin moves to `20261023000000`, and the schema and policy tests count both sides (49
+    `catalog_user` policies). Content unchanged.
 
 ## S. Schema and storage
 
@@ -90,7 +96,7 @@ environments" ("Dev, stage and prod compared"). No other README section is touch
   `media_jobs` only for accessible sessions and cannot update; `media_uploads` user policy by
   access and creator; `session_audio_seams` user policy like the session tables); extend
   `catalogSchema.pg.test.ts` (`TABLES`, `KEY_COLUMN`) and `catalogPolicies.pg.test.ts` (policy
-  count). Then write `supabase/migrations/20261019000000_media_jobs.sql` (header per the
+  count). Then write `supabase/migrations/20261023000000_media_jobs.sql` (header per the
   convention, rollback note). Also publish the TypeScript shapes `MediaJob`, `MediaUpload`,
   `MediaJobResult`, `AudioSeam` and the port interfaces `MediaJobsPort`, `MediaUploadsPort`,
   `AudioSeamsPort` in `packages/ports/src/media.ts` (**hand-off to B and W**; freeze the names in
@@ -815,9 +821,9 @@ environments" ("Dev, stage and prod compared"). No other README section is touch
 - [x] V.3 Tier 2 consistency read (`consistency-read` skill) over the whole branch; `panel.md`
   re-panel section for any scope change; the design-owned constants confirmed by the owner.
   Evidence (2026-10-12): `git diff 138649f3..HEAD` read against proposal, design D1-D20, tasks,
-  the nine spec deltas, ADR 0029 and the code; `panel.md` "Consistency read 2026-10-12" (scope
+  the nine spec deltas, ADR 0032 and the code; `panel.md` "Consistency read 2026-10-12" (scope
   change: no; two open findings for the owner); stale text fixed in design ("Edits after
-  approval"), live-recording-chunks, media-processing, ADR 0029 and README "Media jobs";
+  approval"), live-recording-chunks, media-processing, ADR 0032 and README "Media jobs";
   `npx openspec validate media-worker --strict` -> `Change 'media-worker' is valid`. Owner
   2026-10-12: constants confirmed; both findings resolved (merge block kept, polling only; spec
   amended, design notes, `panel.md` ticked); `check-change.sh --only panel` -> `47 finding(s), no

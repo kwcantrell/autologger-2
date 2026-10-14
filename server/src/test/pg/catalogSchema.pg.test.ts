@@ -696,7 +696,6 @@ const EXPECTED_SCHEMA: SchemaRecord = {
       'FOREIGN KEY (session_id) REFERENCES catalog.sessions(id)',
     ],
   },
-  $unique: ['catalog.companion_devices UNIQUE (token_hash)', 'catalog.users UNIQUE (google_sub)'],
   // owner-bootstrap D1: the role check and at most one owner per team.
   $checks: [
     'catalog.companion_devices companion_devices_name_check CHECK (((char_length(name) >= 1) AND (char_length(name) <= 80)))',

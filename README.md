@@ -1340,7 +1340,7 @@ behind a small internal router (OpenSpec change `containerize-split-images`; spe
   it.
 - **Caddy admin API** listens on `127.0.0.1:2019` *inside* the router container and exists only
   for its healthcheck; it is unreachable from either compose network.
-- **`media-worker`** (OpenSpec change `media-worker`, ADR 0029) is the fourth service: it probes,
+- **`media-worker`** (OpenSpec change `media-worker`, ADR 0032) is the fourth service: it probes,
   peaks, converts (WAV → FLAC) and merges audio with a digest-pinned `ffmpeg`. It joins only the
   `media` network (internal, host-isolated, pinned subnet; its only other member is `db`) and
   connects as the `autologger_media` role with `MEDIA_DB_PASSWORD`, so it can reach nothing but
