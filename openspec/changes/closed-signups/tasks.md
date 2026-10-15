@@ -27,11 +27,12 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
     `42501`, select and delete work; `autologger_app` under `catalog_user` and under
     `catalog_system` executing `catalog.approve_account` fails `42501`;
   - the RLS listing names `account_approvals` as system-only (no `catalog_user` policy).
+  Evidence: under 1.2 (one red/green run covers 1.1 and 1.2).
 - [x] 1.2 `supabase/migrations/20261024000000_account_approvals.sql`: the table, RLS, the
   system policy, the revokes (`catalog_user` all; `catalog_system` insert, update, truncate), the
   two functions with `execute` revoked from `public`, a header comment with the rollback steps
   (KV first, design Risks).
-  Evidence (1.1, 1.2): red `cd server && npx vitest run --project pg
+  Evidence: (1.1, 1.2) red `cd server && npx vitest run --project pg
   src/test/pg/accountApprovals.pg.test.ts src/test/pg/catalogSchema.pg.test.ts
   src/test/pg/catalogPolicies.pg.test.ts` -> `20 failed` (`no-at-sign: expected '42883' to be
   '22023'`, `expected '42P01' to be '23514'`) (cs-1.1-red.log); green -> `Test Files 3 passed (3)`,
@@ -59,12 +60,13 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
     blank and absent pass;
   - a boot test that the server logs `sign-ups: closed` for stack `stage` with `SIGNUPS` unset and
     `sign-ups: open` for `dev`.
+  Evidence: under 2.2 (one red/green run covers 2.1 and 2.2).
 - [x] 2.2 `packages/ports/src/config.ts` (optional `SIGNUPS`, `AUTOLOGGER_STACK`),
   `server/src/env.ts` (`signupsMode`), `server/src/node/config.ts` (both keys, the boot log line),
   `server/src/bootGuard.ts`, `docker/scripts/compose-run.mjs` (`checkSignupsSetting` beside
   `checkSignInClient`); `docker/secrets-env.yaml` gains `SIGNUPS:` under "Sign-in and tokens".
   `make check` stays green.
-  Evidence (2.1, 2.2): red `cd server && npx vitest run --project unit src/env.test.ts
+  Evidence: (2.1, 2.2) red `cd server && npx vitest run --project unit src/env.test.ts
   src/bootGuard.test.ts src/node/config.test.ts` -> `Tests 8 failed | 91 passed (99)`
   (`TypeError: signupsMode is not a function`, `expected undefined to be ''`); `node --test
   docker/scripts/compose-run.test.mjs` -> `checkSignupsSetting is not a function` (cs-2.1-red.log;
@@ -99,12 +101,13 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
   - the refusal log line holds no email and is written once per refusal.
   Existing tests that create accounts through the callback (including
   `server/src/routers/nulText.int.test.ts`) set `SIGNUPS: 'open'` in their config.
+  Evidence: under 3.2 (one red/green run covers 3.1 and 3.2).
 - [x] 3.2 `packages/catalog/src/authStore.ts`: `authHasUsableAccountApproval(emailNorm, cutoff)`
   and `authConsumeAccountApproval(emailNorm, cutoff)` (`DELETE … RETURNING`);
   `server/src/routers/auth.ts`: the pre-check before the exchange, the consume after the user
   insert with the `SignupRefused` rollback, the re-lookup and the single log line outside the
   transaction body.
-  Evidence (3.1, 3.2): red `cd server && npx vitest run --project integration
+  Evidence: (3.1, 3.2) red `cd server && npx vitest run --project integration
   src/routers/auth.int.test.ts src/routers/nulText.int.test.ts` -> `9 failed | 58 passed`
   (`expected '/' to be '/?login_error=signup_closed'`, `expected [ 'someone@example.com' ] to
   deeply equal []`, `Test timed out in 5000ms` for the revoke and approved-concurrent holds that
@@ -122,8 +125,9 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
 - [x] 4.1 Test first, `web/src/pages/index/components/LoginPage.test.tsx`: `signup_closed`
   shows the no-access-yet message with the retry control; the message contains none of
   `SIGNUPS`, `closed`, `stage`, `prod`.
+  Evidence: under 4.2 (one red/green run covers 4.1 and 4.2).
 - [x] 4.2 `LoginPage.tsx`: the message in `LOGIN_ERROR_MESSAGES`; the comment says four groups.
-  Evidence (4.1, 4.2): red `cd web && npx vitest run src/pages/index/components/LoginPage.test.tsx`
+  Evidence: (4.1, 4.2) red `cd web && npx vitest run src/pages/index/components/LoginPage.test.tsx`
   -> `expected 'Sign-in didn't complete.Try again' to contain 'This Google account doesn't have
   acc…'`, `1 failed | 14 passed` (cs-4.1-red.log); green -> `Test Files 1 passed (1)`, `Tests 15
   passed (15)` (cs-4.1-green.log); `node_modules/.bin/biome check` on both files -> `Checked 2
@@ -151,5 +155,8 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
   `auth.users` row appears; after `approve_account` it signs in and the row is gone; the owner's
   existing account signs in. Then the owner removes `SIGNUPS` again before the dev VM runs any
   branch without this change.
-- [ ] V.3 Tier 2 consistency read (`consistency-read` skill) over the whole branch; `panel.md`
+- [x] V.3 Tier 2 consistency read (`consistency-read` skill) over the whole branch; `panel.md`
   section for any scope change.
+  Evidence: (2026-10-15) `git diff 1a30e1f9 -- openspec/changes/closed-signups/` -> tasks.md
+  only; whole-branch read against D1-D7: no findings, scope change no; recorded in panel.md
+  "Consistency read 2026-10-15".
