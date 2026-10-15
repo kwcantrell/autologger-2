@@ -64,6 +64,8 @@ const TABLES = [
   'media_jobs',
   'media_uploads',
   'session_audio_seams',
+  // closed-signups D2: the emails a developer approved for a first sign-in.
+  'account_approvals',
 ];
 // companion-devices D1: the tables with no catalog_user policy and no catalog_user privilege.
 // byo-ai-providers D1: plus the two provider tables.
@@ -74,6 +76,8 @@ const SYSTEM_ONLY = [
   'user_provider_credentials',
   'provider_key_check',
   'provider_test_windows',
+  // closed-signups D2: written only by postgres, read and deleted by the OAuth callback.
+  'account_approvals',
 ];
 const KEY_COLUMN: Record<string, string> = {
   users: 'id',
@@ -102,6 +106,7 @@ const KEY_COLUMN: Record<string, string> = {
   media_jobs: 'id',
   media_uploads: 'id',
   session_audio_seams: 'session_id',
+  account_approvals: 'email_norm',
 };
 const MIGRATIONS = resolve(import.meta.dirname, '../../../../supabase/migrations');
 const MIGRATION = resolve(MIGRATIONS, '20261001000000_catalog_schema.sql');
@@ -696,8 +701,21 @@ const EXPECTED_SCHEMA: SchemaRecord = {
       'FOREIGN KEY (session_id) REFERENCES catalog.sessions(id)',
     ],
   },
+  // closed-signups D2: one row per approved email, system-only.
+  account_approvals: {
+    columns: [
+      'email_norm text collate C not null',
+      'approved_at_utc text collate C not null',
+      'note text collate C',
+    ],
+    primaryKey: ['email_norm'],
+    foreignKeys: [],
+  },
   // owner-bootstrap D1: the role check and at most one owner per team.
   $checks: [
+    // closed-signups D2: a printable-ASCII, lowercase local@domain; a note of at most 200.
+    "catalog.account_approvals account_approvals_email_norm_check CHECK (((email_norm ~ '^[!-~]+@[!-~]+$'::text) AND (email_norm = lower(email_norm))))",
+    'catalog.account_approvals account_approvals_note_check CHECK (((note IS NULL) OR (char_length(note) <= 200)))',
     'catalog.companion_devices companion_devices_name_check CHECK (((char_length(name) >= 1) AND (char_length(name) <= 80)))',
     'catalog.companion_presence companion_presence_client_id_check CHECK (((char_length(client_id) >= 1) AND (char_length(client_id) <= 256)))',
     // media-worker D2, D12, D5, D7.
@@ -962,11 +980,16 @@ describe('the app role (design D3)', () => {
               values ('up', 'se', 'u', 'audio/wav', 1, 1, 1, '[]', 1, 1)`;
     await sql`insert into session_audio_seams (session_id, recording_ordinal, started_at_utc,
                 segment_id, source_key) values ('se', 1, ${t}, 'a', 'k')`;
+    // closed-signups D2: only postgres writes an approval; catalog_system reads and deletes it.
+    await connect(db.admin)`select catalog.approve_account('e@example.com')`;
     for (const table of TABLES) {
       const n = await sql.unsafe(`select count(*)::int as n from ${table}`);
       expect(n[0]?.n, table).toBeGreaterThan(0);
       const target = KEY_COLUMN[table];
-      await sql.unsafe(`update ${table} set ${target} = ${target}`);
+      const update = sql.unsafe(`update ${table} set ${target} = ${target}`);
+      if (table === 'account_approvals')
+        await expect(update).rejects.toMatchObject({ code: '42501' });
+      else await update;
     }
     for (const table of [...TABLES].reverse()) await sql.unsafe(`delete from ${table}`);
   });
@@ -1306,6 +1329,7 @@ describe('row-level security on every catalog table (catalog-roles D1, D2; catal
         insert into catalog.kv (key, value) values ('k-o', 'v');
         insert into catalog.team_invites (studio_id, email_norm, invited_by_user_id, invited_at_utc) values ('st-o', 'e', 'other', '${t}');
         insert into catalog.show_grants (user_id, show_id, granted_at_utc) values ('other', 'sh-o', '${t}');
+        select catalog.approve_account('o@example.com');
       `);
     const counts: Record<string, number> = {};
     for (const table of TABLES) {
@@ -1320,6 +1344,9 @@ describe('row-level security on every catalog table (catalog-roles D1, D2; catal
       for (const table of TABLES) {
         const sel = await tx.unsafe(`select count(*)::int as n from ${table}`);
         expect(sel[0]?.n, `select ${table}`).toBe(counts[table]);
+        // closed-signups D2: catalog_system holds no update on account_approvals (its 42501:
+        // accountApprovals.pg.test.ts).
+        if (table === 'account_approvals') continue;
         const key = KEY_COLUMN[table];
         const upd = await tx.unsafe(`update ${table} set ${key} = ${key}`);
         expect(upd.count, `update ${table}`).toBe(counts[table]);

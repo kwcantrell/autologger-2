@@ -13,7 +13,7 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
 
 ## 1. Migration: the approvals table and the operator functions (design D2)
 
-- [ ] 1.1 Test first, new `server/src/test/pg/accountApprovals.pg.test.ts`, plus the recorded
+- [x] 1.1 Test first, new `server/src/test/pg/accountApprovals.pg.test.ts`, plus the recorded
   expectation in `catalogSchema.pg.test.ts` and the system-only list in the RLS listing test
   (`catalogPolicies.pg.test.ts` or wherever it lives):
   - approve `'  Someone@Example.COM '` returns `someone@example.com`, writes the row, and
@@ -27,10 +27,25 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
     `42501`, select and delete work; `autologger_app` under `catalog_user` and under
     `catalog_system` executing `catalog.approve_account` fails `42501`;
   - the RLS listing names `account_approvals` as system-only (no `catalog_user` policy).
-- [ ] 1.2 `supabase/migrations/20261024000000_account_approvals.sql`: the table, RLS, the
+- [x] 1.2 `supabase/migrations/20261024000000_account_approvals.sql`: the table, RLS, the
   system policy, the revokes (`catalog_user` all; `catalog_system` insert, update, truncate), the
   two functions with `execute` revoked from `public`, a header comment with the rollback steps
   (KV first, design Risks).
+  Evidence (1.1, 1.2): red `cd server && npx vitest run --project pg
+  src/test/pg/accountApprovals.pg.test.ts src/test/pg/catalogSchema.pg.test.ts
+  src/test/pg/catalogPolicies.pg.test.ts` -> `20 failed` (`no-at-sign: expected '42883' to be
+  '22023'`, `expected '42P01' to be '23514'`) (cs-1.1-red.log); green -> `Test Files 3 passed (3)`,
+  `Tests 73 passed (73)` (cs-1.1-green.log); related pg files (catalogRoles, importLegacy.pg,
+  companionTables) `33 passed` (cs-1.1-green-related.log); `docker/supabase/test_migrate.sh` `55
+  passed` (cs-1.1-test_migrate.log). Two existing catalogSchema tests that insert/update every
+  table as `catalog_system` now seed this table as `postgres` and expect `42501` on its update
+  (D2). The plpgsql bodies are indented because `migrate.sh` refuses lines starting `begin`/`end`;
+  the trim covers all ASCII whitespace, as `asciiEmailNorm`'s `trim()` does. **Outside the task
+  list, recorded for the consistency read:** the new migration moves the legacy importer's pin
+  (`server/scripts/legacyImportSql.ts` `TARGET_SCHEMA_VERSION` `20261023000000` ->
+  `20261024000000`), which `server/src/test/importLegacy.test.ts` "is the newest migration"
+  requires; the importer never touches `account_approvals`; importer unit tests `24 passed`
+  (cs-1.1-importer-unit-green.log).
 
 ## 2. Setting (design D1)
 
