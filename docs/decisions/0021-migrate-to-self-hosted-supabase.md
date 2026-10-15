@@ -111,9 +111,11 @@ Slice order:
        - The service roles get their own password, separate from the superuser's.
        - Studio and postgres-meta are deferred to a later slice (owner, 2026-09-30, after the
          panel);
-   - 1.3 `postgres-backups`. Not built yet, and a **cutover blocker** (owner, 2026-10-03): from
-     slice 7b-1 session content lives in Postgres too, and nothing backs it up. It is done as its
-     own change before slice 11;
+   - 1.3 `postgres-backups`. A **cutover blocker** (owner, 2026-10-03): from slice 7b-1 session
+     content lives in Postgres too. **Built (2026-10-15):** in `~/spark-infra`, not this
+     repository: a nightly `pg_dumpall` of stage and prod pulled to Spark (`stage_db_backup` role,
+     `spark-stage-db-backup.timer`, 14 kept), plus a dump right before each prod migration
+     (`make prod-up` in the spark-infra deploy). The blob and data volumes are being added;
    - 1.4, run before 1.3 (owner, 2026-09-30), split into:
      - 1.4a `retire-e2e`: retire the Playwright e2e harness; the router's security cases are
        kept as `docker/scripts/test_router.sh`. **Size exception:** 1,410 counted lines,
@@ -857,8 +859,8 @@ Slice order:
       order across processes; the FIFO lock stays for in-process serialization);
    3. **start empty,** as 4c did: the `sessions/*.db` files stay untouched for slice 11's
       import, and every existing session's live projection resets to an empty session's;
-   4. **backups** (1.3) were never built: a cutover blocker, done as their own change before
-      slice 11, not in 7b.
+   4. **backups** (1.3) were not built in 7b: a cutover blocker, done as their own change before
+      slice 11. **Amended (2026-10-15):** built in spark-infra (slice 1.3 above).
 
    After the adversarial panel (owner, 2026-10-03):
    - **session calls get their own pool** of 4 connections beside the catalog's 3 root and 5
@@ -1214,11 +1216,19 @@ Slice order:
     playback is confirmed.
 11. The import script, parity check, cutover runbook and rollback plan. It must not import users,
     memberships, prefs, invites or login sessions (slice 5a above).
-    - 11a `supabase-11a-legacy-import` (2026-10-11, not yet reviewed): the tool emits a single
-      `psql` transaction per team, carrying values only as `COPY` data, a read-only parity file
+    - 11a `supabase-11a-legacy-import` (2026-10-11; reviewed and merged, #107, 2026-10-14): the
+      tool emits a single `psql` transaction per team, carrying values only as `COPY` data, a read-only parity file
       (per-table counts and content hashes) and the audio manifest. The runbook is
       `docs/legacy-import.md`. It was rehearsed on `server/data` for the `ymhs` team (274
-      sessions) against a throwaway Postgres: parity OK.
+      sessions) against a throwaway Postgres: parity OK; then on the `autologger-import` VM
+      (dev stack, `kv/autologger-import/dev`).
+    - **Release audit (2026-10-15):** a whole-branch audit of `supabase-migration` before the
+      release found no critical findings; its runbook and doc gaps are fixed in the README section
+      "Upgrading prod in place" and `docs/legacy-import.md` ("Prod disk budget and transfer").
+
+**Status (2026-10-15):** the cutover release, `supabase-migration` into `main`, is PR #130; the
+deploy and audio move follow README "Upgrading prod in place (first deploy of the Postgres-era
+release)", and the slice 11 import runs after it.
 
 ## Evidence
 
@@ -1241,7 +1251,8 @@ Slice order:
 - The dev loop gains roughly 10 containers per stack. Offline native dev goes away.
 - Self-hosting makes backups, upgrades and secret rotation the owner's job.
 - Backups are a cutover blocker (owner, 2026-10-03): from slice 7b-1 session content is in
-  Postgres and nothing backs it up yet; slice 1.3 is done as its own change before slice 11.
+  Postgres. **Amended (2026-10-15):** built in spark-infra (slice 1.3): nightly `pg_dumpall` of
+  stage and prod to Spark (14 kept) and a dump right before each prod migration.
 - Main is frozen until cutover, and the only prod feedback comes at cutover.
 - Revisit if:
   - the Companion spike fails and a relay would keep the old WebSocket protocol alive anyway; or
