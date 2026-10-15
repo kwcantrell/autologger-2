@@ -300,7 +300,8 @@ proxy's Companion bypass rules do not change. The module SHALL NOT post presence
 A `compose.yaml` SHALL define `router`, `web`, `api` and `media-worker` services. The prod
 project SHALL also include:
 - a `db` service: Supabase Postgres;
-- a `migrate` tool service, which `up` never starts. No prod target runs it;
+- a `migrate` tool service, which `up` never starts. Only `prod-up` runs it, as
+  `compose run --rm migrate`, before it starts the project;
 - the Supabase Auth service `auth` (GoTrue), the only Supabase API service. No `rest`,
   `realtime`, `storage` or Supabase gateway service SHALL be defined.
 
