@@ -507,7 +507,8 @@ Wherever either is set, its value SHALL be a single dotted IPv4 address.
 - the current branch is `main`.
 
 `prod-push` SHALL:
-- build and push the multi-arch images with `GIT_SHA=$(git rev-parse --short=12 HEAD)`;
+- build and push the multi-arch images (`web`, `api` and `media-worker`, the bake file's
+  default group) with `GIT_SHA=$(git rev-parse --short=12 HEAD)`;
 - first verify that the named builder lists `linux/amd64` and `linux/arm64`.
 
 `prod-build` SHALL:
@@ -517,8 +518,8 @@ Wherever either is set, its value SHALL be a single dotted IPv4 address.
 `prod-up` SHALL:
 - use `compose.yaml` with the OpenBao `prod` KV secret exactly as README "Container
   deployment" documents, with no overlay;
-- fail if `WEB_TAG` or `API_TAG` is unset, empty, or `latest` in the OpenBao `prod`
-  KV secret.
+- fail if `WEB_TAG`, `API_TAG` or `MEDIA_TAG` is unset, empty, or `latest` in the OpenBao
+  `prod` KV secret.
 
 `prod-check` SHALL run the prod guards and resolve the prod config through OpenBao `prod`
 without starting anything and without the `main` requirement. This lets a deploy host dry-run
@@ -539,9 +540,14 @@ the OpenBao path before cutover.
   SHA is created or overwritten
 
 #### Scenario: Unpinned prod tag refuses start
-- **WHEN** the OpenBao `prod` KV secret has `API_TAG=latest` and `make prod-up` runs on a
-  clean `main`
-- **THEN** it exits non-zero naming `API_TAG`, and starts nothing
+- **WHEN** the OpenBao `prod` KV secret has `API_TAG=latest` (or `MEDIA_TAG` unset) and
+  `make prod-up` runs on a clean `main`
+- **THEN** it exits non-zero naming `API_TAG` (or `MEDIA_TAG`), and starts nothing
+
+#### Scenario: Push covers the worker image
+- **WHEN** `make prod-push` runs on a clean `main`
+- **THEN** the bake pushes `autologger-web`, `autologger-api` and `autologger-media-worker`
+  under the same 12-character SHA tag, each with both platforms
 
 #### Scenario: Prod dry run starts nothing
 - **WHEN** `make prod-check` runs on any branch with valid prod credentials
@@ -572,13 +578,15 @@ When it runs, it SHALL:
   file's changes and its record SHALL then both be absent, and later files SHALL NOT be applied;
 - after the migrations, in one transaction with statement logging and `pg_stat_statements`
   utility tracking turned off, give the `autologger_app` role `LOGIN` and set its password to
-  `APP_DB_PASSWORD`, read from the environment and never from the command line. When no such
-  role exists, it SHALL say so and succeed;
+  `APP_DB_PASSWORD`, and likewise give the `autologger_media` role `LOGIN` and set its
+  password to `MEDIA_DB_PASSWORD`, both read from the environment and never from the command
+  line. When a role does not exist, it SHALL say so for that role and succeed;
 - report the number of files it applied;
 - print no secret value.
 
-Before connecting, the runner SHALL also refuse, printing no value, when `APP_DB_PASSWORD` is
-unset, or is not a single line of at least 32 lowercase hexadecimal characters.
+Before connecting, the runner SHALL also refuse, printing no value, when `APP_DB_PASSWORD` or
+`MEDIA_DB_PASSWORD` is unset, or is not a single line of at least 32 lowercase hexadecimal
+characters.
 
 #### Scenario: A second run applies nothing
 - **WHEN** the migrations runner runs twice with no new migration file
@@ -614,6 +622,13 @@ unset, or is not a single line of at least 32 lowercase hexadecimal characters.
 - **WHEN** the migrations runner runs with `APP_DB_PASSWORD` unset or set to `-e`
 - **THEN** it exits non-zero naming `APP_DB_PASSWORD`, prints no value, and applies nothing
 
+#### Scenario: The worker role gets its password without leaking it
+- **WHEN** the migrations runner runs with `MEDIA_DB_PASSWORD` set
+- **THEN** `autologger_media` can log in with that password over TCP and a wrong password is
+  refused, and no row of `pg_stat_statements`, no line of the database log and no line of the
+  runner's output contains it; with `MEDIA_DB_PASSWORD` unset the runner exits non-zero
+  naming it and applies nothing
+
 ### Requirement: Stage can run pushed images behind a public HTTPS edge
 `make stage-up` SHALL accept two optional, non-secret operator values, passed to
 `docker/scripts/compose-run.mjs` by name (never spliced into the recipe's shell text) by the
@@ -622,8 +637,9 @@ stage targets SHALL treat them the same way: `stage-down`, `stage-logs` and `sta
 validate and resolve with the same options, and `stage-build` always builds `:local` (it is
 refused while a tag is set).
 - `STAGE_IMAGE_TAG`: exactly 40 lowercase hex characters (a full git SHA). With it, stage SHALL
-  run `ghcr.io/kwcantrell/autologger-web:<tag>` and `ghcr.io/kwcantrell/autologger-api:<tag>`:
-  `stage-up` SHALL pull `web` and `api`, run the migrations, and start with
+  run `ghcr.io/kwcantrell/autologger-web:<tag>`, `ghcr.io/kwcantrell/autologger-api:<tag>` and
+  `ghcr.io/kwcantrell/autologger-media-worker:<tag>`:
+  `stage-up` SHALL pull `web`, `api` and `media-worker`, run the migrations, and start with
   `compose up -d --no-build --remove-orphans`; the wrapper SHALL refuse any build step, and any `up` without
   `--no-build`, while a tag is set. A tag SHALL require `STAGE_PUBLIC_BASE_URL` (a tagged run
   is a public run). With a tag, the wrapper SHALL refuse unless the tree it runs in is the tagged
@@ -651,13 +667,13 @@ which serves the public stage), the wrapper SHALL refuse any compose step contai
 
 The wrapper SHALL:
 - refuse `STAGE_IMAGE_TAG` and `STAGE_PUBLIC_BASE_URL` for dev and prod;
-- pass compose only the derived `STAGE_WEB_IMAGE`, `STAGE_API_IMAGE`, `STAGE_PUBLIC_BASE_URL`,
-  `STAGE_COOKIE_SECURE` (and, with a tag and `DOCKER_CONFIG`, its own temporary `DOCKER_CONFIG`
-  with `DOCKER_CONTEXT=default`), never `STAGE_IMAGE_TAG`;
+- pass compose only the derived `STAGE_WEB_IMAGE`, `STAGE_API_IMAGE`, `STAGE_MEDIA_IMAGE`,
+  `STAGE_PUBLIC_BASE_URL`, `STAGE_COOKIE_SECURE` (and, with a tag and `DOCKER_CONFIG`, its own
+  temporary `DOCKER_CONFIG` with `DOCKER_CONTEXT=default`), never `STAGE_IMAGE_TAG`;
 - refuse every one of those names, and `STAGE_IMAGE_TAG`, as an OpenBao secret;
-- in the `resolved` step, refuse unless the merged stage config runs exactly the expected `web`
-  and `api` images, `PUBLIC_BASE_URL` and `COOKIE_SECURE` match the options, and `TRUST_PROXY`
-  is `1`.
+- in the `resolved` step, refuse unless the merged stage config runs exactly the expected `web`,
+  `api` and `media-worker` images, `PUBLIC_BASE_URL` and `COOKIE_SECURE` match the options, and
+  `TRUST_PROXY` is `1`.
 
 In every mode the router SHALL publish only `127.0.0.1:${STAGE_PORT}`; the HTTPS edge connector
 runs on the same host and targets that port. The static invariant check SHALL resolve stage both
@@ -674,6 +690,7 @@ reaches GoTrue.
 - **AND** the tree is that commit (git `HEAD`, or `REVISION` without `.git`)
 - **THEN** compose receives `STAGE_WEB_IMAGE=ghcr.io/kwcantrell/autologger-web:<sha>`,
   `STAGE_API_IMAGE=ghcr.io/kwcantrell/autologger-api:<sha>`,
+  `STAGE_MEDIA_IMAGE=ghcr.io/kwcantrell/autologger-media-worker:<sha>`,
   `STAGE_PUBLIC_BASE_URL=https://stage.example.com` and `STAGE_COOKIE_SECURE=1`, no
   `STAGE_IMAGE_TAG`, and `urls` prints the https origin with the loopback port it proxies to
 
@@ -783,7 +800,15 @@ It SHALL fail, naming the violated invariant, when any of the following holds:
     of the resolved prod `api` or dev `app`, excluding keys that service pins with a literal.
 16. In any of the dev, stage, or prod projects:
     - a service other than `db`, `migrate` and `auth` joins the `db` network; `migrate` joins any
-      other network; or `db` joins any network other than `db` and `catalog`;
+      other network; or `db` joins any network other than `db`, `catalog` and `media`;
+    - the `media` network's members are not exactly `db` and `media-worker`; `media-worker`'s
+      networks are not exactly `media`; `media-worker` publishes a port, is not `read_only`,
+      runs as uid `0` or as the app's uid, keeps any capability, lacks `no-new-privileges`, or
+      mounts a volume other than the blob volume at `/blobs`; or the `media` network is not
+      internal, host-isolated and on its pinned subnet (prod `172.28.18.0/24`, stage
+      `172.28.29.0/24`, dev `172.28.37.0/24`);
+    - the dev service set is not exactly `app`, `app-gate`, `auth`, `companion`,
+      `companion-gate`, `db`, `media-worker` and `migrate`;
     - the `catalog` network's members are not exactly `db` and the app service (dev `app`;
       stage and prod `api`), or the app service joins `db`. A service with
       `network_mode: service:X` counts as a member of X's networks, and only `app-gate` may
@@ -812,6 +837,7 @@ It SHALL fail, naming the violated invariant, when any of the following holds:
       | `POSTGRES_PASSWORD` | `db`, `migrate` |
       | `SUPABASE_ROLES_PASSWORD` | `db`, `auth` |
       | `APP_DB_PASSWORD` | dev: `app`, `migrate`; stage and prod: `api`, `migrate` |
+      | `MEDIA_DB_PASSWORD` | `media-worker`, `migrate` |
       | `JWT_SECRET` | `auth` |
       | `ANON_KEY`, `SERVICE_ROLE_KEY`, `SECRET_KEY_BASE`, `REALTIME_DB_ENC_KEY`, `SUPABASE_PORT` (retired) | none |
 
@@ -890,10 +916,16 @@ It SHALL need only `docker`, `jq`, and a POSIX shell.
   label of the prod `api` or of `auth`
 - **THEN** `make check` exits non-zero and names invariant 16
 
+#### Scenario: A widened worker is caught
+- **WHEN** `media-worker` is joined to `catalog` or `back`, `api` is joined to `media`,
+  `media-worker` publishes a port, drops `read_only`, runs as `node`, or mounts `/data`, or
+  `${MEDIA_DB_PASSWORD}` is referenced in `api` or `auth`
+- **THEN** `make check` exits non-zero and names invariant 16
+
 ### Requirement: Database and GoTrue secret generator
 `docker/scripts/supabase-keys.mjs ENV [--writer FILE]` SHALL create each missing Supabase secret
 for environment `ENV` in that environment's OpenBao KV secret: `POSTGRES_PASSWORD`,
-`SUPABASE_ROLES_PASSWORD`, `APP_DB_PASSWORD` and `JWT_SECRET`. It SHALL NOT create, change, delete
+`SUPABASE_ROLES_PASSWORD`, `APP_DB_PASSWORD`, `MEDIA_DB_PASSWORD` and `JWT_SECRET`. It SHALL NOT create, change, delete
 or report the retired keys `ANON_KEY`, `SERVICE_ROLE_KEY`, `SECRET_KEY_BASE`,
 `REALTIME_DB_ENC_KEY` and `SUPABASE_PORT`. It SHALL:
 - read the OpenBao address, CA path and KV path from `.env.openbao.<ENV>`, with the same
@@ -918,7 +950,7 @@ or report the retired keys `ANON_KEY`, `SERVICE_ROLE_KEY`, `SECRET_KEY_BASE`,
   `options.cas` set to the version it read, or, when the path does not exist yet, a `POST` with
   `options.cas` `0`. A concurrent write SHALL make the whole write fail, so a run creates all of
   them or none;
-- only ever add keys. It SHALL never change or delete an existing key. One of its four keys that
+- only ever add keys. It SHALL never change or delete an existing key. One of its five keys that
   already exists SHALL be reported as kept. A write that OpenBao rejects SHALL exit non-zero without retrying;
 - print key names and outcomes only, never a value or a token;
 - refuse Node older than 22.12, and need no npm packages.
@@ -937,10 +969,15 @@ or report the retired keys `ANON_KEY`, `SERVICE_ROLE_KEY`, `SECRET_KEY_BASE`,
 - **THEN** it creates `JWT_SECRET`, and creates neither `ANON_KEY` nor `SERVICE_ROLE_KEY`
 
 #### Scenario: Retired keys are left alone
-- **WHEN** the environment holds the four keys and also `ANON_KEY`, `SERVICE_ROLE_KEY`,
+- **WHEN** the environment holds the five keys and also `ANON_KEY`, `SERVICE_ROLE_KEY`,
   `SECRET_KEY_BASE`, `REALTIME_DB_ENC_KEY` and `SUPABASE_PORT`, and the generator runs
-- **THEN** it reports the four keys as kept, names no retired key, makes no write request, and
+- **THEN** it reports the five keys as kept, names no retired key, makes no write request, and
   exits zero
+
+#### Scenario: The worker password is created for an existing stack
+- **WHEN** the environment holds the generator's other four keys but not `MEDIA_DB_PASSWORD`,
+  and the generator runs
+- **THEN** it creates only `MEDIA_DB_PASSWORD`, reports the others as kept, and prints no value
 
 #### Scenario: A rejected create is not retried as an update
 - **WHEN** OpenBao answers the write with an error, for example a check-and-set mismatch because
@@ -948,7 +985,7 @@ or report the retired keys `ANON_KEY`, `SERVICE_ROLE_KEY`, `SECRET_KEY_BASE`,
 - **THEN** the generator exits non-zero, prints no value, and sends no second write
 
 #### Scenario: The app password is created for an existing stack
-- **WHEN** the environment holds the generator's other three keys but not `APP_DB_PASSWORD`, and the
+- **WHEN** the environment holds the generator's other four keys but not `APP_DB_PASSWORD`, and the
   generator runs
 - **THEN** it creates only `APP_DB_PASSWORD`, reports the others as kept, and prints no value
 

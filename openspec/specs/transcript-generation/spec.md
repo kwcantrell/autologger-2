@@ -192,8 +192,12 @@ sample number and its CRCs recomputed, the audio bytes unchanged, so the file is
 RFC 9639 and decodes to exactly the concatenated samples). Segments within
 a group SHALL be ordered by segment ordinal, and each segment's cumulative time offset
 within the group file SHALL be recorded for timestamp remapping. Segments that are
-missing from the blob store, unreadable, unparseable, or whose probed codec is outside the
-supported families SHALL be **skipped** (the reconciliation posture used elsewhere); a
+unreadable, unparseable, or whose probed codec is outside the
+supported families SHALL be **skipped** (the reconciliation posture used elsewhere), but a
+segment whose blob is **missing** from the blob store SHALL fail the run with `502` and a
+detail naming the segment (a listed row without bytes means a swap or restore is in
+progress, never a stale legacy row, now that the media worker replaces rows only in one
+transaction); a
 stream-parameter mismatch within a codec family (sample rate, channel count, or a FLAC
 bit depth) splits into a further sub-group rather than failing the run. One STT request SHALL be issued per resulting group. Concatenation
 SHALL be spooled through temporary files (not held wholly in memory), and a group file
@@ -236,11 +240,23 @@ naming the limit.
 - **WHEN** consecutive FLAC segments differ in sample rate, channel count or bit depth
 - **THEN** each run of identical parameters becomes its own group and request
 
+#### Scenario: A missing blob fails the run instead of silently dropping audio
+- **WHEN** a listed segment's blob is absent from the blob store
+- **THEN** generation fails with `502` and a detail naming that segment, and no transcript
+  is replaced
+
 ### Requirement: Timeline remapping of word timestamps
 Each returned word's provider timestamp (time within the combined group file) SHALL be
 remapped to the session timeline: group-file time minus the owning segment's group offset
 gives the within-segment offset; the segment's session-timeline anchor plus that offset
-gives the timeline position. For anchor resolution, segments sharing a
+gives the timeline position. A **merged segment** (one produced by the media worker from
+a recording's chunks, carrying `seams`: for each original chunk its media offset in the
+merged file and its `started_at_utc`) SHALL be remapped seam by seam: the word's owning
+seam is the last seam whose offset is at or before the within-segment offset; that seam's
+anchor is derived from the segment's resolved anchor exactly as a chunk's would be
+(`A + max(0, (started_at_utc(seam) − wall_time_utc(E)) / 1000)`), and the position is the
+seam anchor plus the offset within the seam. A segment without seams is remapped as
+before. For anchor resolution, segments sharing a
 `recording_ordinal` form a **chunk group** whose base is its lowest-ordinal member
 (segments with a null `recording_ordinal` are each their own group, as are all
 pre-existing single-segment recordings); when multiple `Recording N Started` anchors
@@ -325,6 +341,17 @@ end. Anchorless words SHALL still be stored, with empty `session_time` and `star
 - **THEN** the paragraph's `start_sec`/`end_sec` are remapped through that derived anchor
   (the enrichment requirements' "same anchor chain" language now includes derivation),
   not `null`
+
+#### Scenario: A merged recording places words as its chunks did
+- **WHEN** a three-chunk recording is merged into one segment with three seams and the
+  transcript is regenerated
+- **THEN** every word's `start_sec` equals, within 1 ms, the value it had when the three
+  chunks were separate segments: words of the third chunk are anchored at that chunk's
+  wall-clock delta from the start event, not at the merged file's running time
+
+#### Scenario: A segment without seams is unchanged
+- **WHEN** a session has only single-segment recordings and no `seams`
+- **THEN** every word's position is identical to the output before this change
 
 ### Requirement: Word content, ordering, and provider parameters
 Provider requests SHALL set `diarize=true`, `smart_format=true`, `paragraphs=true`,
