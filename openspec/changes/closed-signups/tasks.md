@@ -150,11 +150,20 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
 
 - [ ] V.1 `scripts/check-change.sh` green (tests, typecheck, audit, openspec, tests-with-code);
   `openspec validate closed-signups --strict`; CI db shards for the pg tiers.
-- [ ] V.2 On the dev stack with `SIGNUPS=closed` set in `kv/autologger/dev` by the owner: a
+- [x] V.2 On the dev stack with `SIGNUPS=closed` set in `kv/autologger/dev` by the owner: a
   Google account with no account and no approval gets the no-access-yet page and no
   `auth.users` row appears; after `approve_account` it signs in and the row is gone; the owner's
   existing account signs in. Then the owner removes `SIGNUPS` again before the dev VM runs any
   branch without this change.
+  Evidence: (2026-10-15, autologger-dev at 260033fd, `SIGNUPS=closed` in `kv/autologger/dev`)
+  boot log `sign-ups: closed`, migrations at `20261024000000`. Owner signed in with a Google
+  account with no account and no approval (its earlier dev account deleted first) -> the
+  no-access page; log `OAuth callback: sign-ups are closed and subject 1162… has no account or
+  approval; refusing sign-in`, `GET /?login_error=signup_closed`; `catalog.users`, `auth.users`,
+  `auth.identities` for that email -> `0|0|0`. `approve_account` (README command) -> returned the
+  normalized email; owner signed in again -> account created (`catalog.users` row whose id equals
+  the `auth.users` id), `catalog.account_approvals` -> `0` rows left; the owner's existing account
+  signed in. Removing `SIGNUPS` from dev: per owner.
 - [x] V.3 Tier 2 consistency read (`consistency-read` skill) over the whole branch; `panel.md`
   section for any scope change.
   Evidence: (2026-10-15) `git diff 1a30e1f9 -- openspec/changes/closed-signups/` -> tasks.md
