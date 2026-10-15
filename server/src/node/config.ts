@@ -2,6 +2,7 @@
 // and Config (plain strings) the app runs on, from process env.
 
 import { mkdirSync, readdirSync } from 'node:fs';
+import { stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { AiV2PendingQuestionRegistry } from '@autologger/ai-runtime/aiV2PendingQuestions';
@@ -27,6 +28,8 @@ import {
   PostgresSessionDb,
   sweepStaleBlobPutTemps,
 } from '@autologger/storage';
+import { audioSeams } from '@autologger/storage/audioSeams';
+import { mediaJobs } from '@autologger/storage/mediaJobs';
 import type { Bindings } from '../appEnv';
 import { GoogleIdentityVerifier } from '../auth/oauth_google';
 import { ProviderKeyCipher, parseProviderKeysSecret } from '../auth/providerKeyCrypto';
@@ -92,6 +95,9 @@ export function createBindings(
   /** Starts the Postgres bus's listener and resolves after its first LISTEN; `main.ts` awaits it
    * before `listen()` (session-frame-bus D1). Resolves at once on the local bus. */
   startFrameBus(): Promise<void>;
+  /** Resolves once `BLOB_DIR/media/` exists with mode 1777 (media-worker D4); rejects with the
+   * error that prevented it. */
+  ensureMediaDir(): Promise<void>;
 } {
   // retire-host-dev D1: no default data directory (never server/data by accident).
   const dataDir = procEnv.DATA_DIR ?? '';
@@ -159,12 +165,31 @@ export function createBindings(
           commands: SESSION_COMMANDS,
           clock: options.frameBusClock ?? clock,
         });
+  const audioBlobStore = new BlobStore(blobDir, { putTmpDir, scratchDir: join(dataDir, 'tmp') });
   const registry = new SessionHubRegistry({
     storage: (id) => sessions.forSession(id),
     clock,
     bus: frameBus ?? undefined,
+    // media-worker D2, D18: segments get their seam and ingest job in the hub's transaction; a
+    // merge job's input size is its inputs' blob sizes.
+    media: {
+      jobs: mediaJobs,
+      seams: audioSeams,
+      blobBytes: async (key) => {
+        try {
+          return (await stat(audioBlobStore.resolveKeyPath(key))).size;
+        } catch {
+          return 0;
+        }
+      },
+    },
   });
-  const audioBlobStore = new BlobStore(blobDir, { putTmpDir, scratchDir: join(dataDir, 'tmp') });
+  // media-worker D4: `media/` mode 1777 for the worker's job directories. Started here, awaited by
+  // `ensureMediaDir()` (main.ts awaits it before listening); a failure is reported there.
+  const mediaDirReady = audioBlobStore.ensureMediaDir().then(
+    () => null,
+    (err: unknown) => err,
+  );
   // Startup hygiene (design D6, task 5.4): remove any youtube-import per-request
   // temp dir orphaned by a crash/kill that skipped the route handler's own
   // `finally` cleanup. Prefix-scoped — never touches other scratch-root users
@@ -183,6 +208,7 @@ export function createBindings(
       sessions: registry,
       frameBus: registry.bus,
       audio: audioBlobStore,
+      mediaBlobs: audioBlobStore,
       // companion-devices D4: binds its own reviewed reason, system:companion-presence.
       presence: new PostgresPresence(catalogDb, clock),
       logImportJobs: createLogImportJobStore(kv, clock),
@@ -289,6 +315,10 @@ export function createBindings(
     frameBus,
     startFrameBus: async () => {
       await frameBus?.start(registry);
+    },
+    ensureMediaDir: async () => {
+      const err = await mediaDirReady;
+      if (err !== null) throw err;
     },
     close: async () => {
       await registry.closeAll();

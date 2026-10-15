@@ -593,7 +593,7 @@ describe('locked reads and multi-step writes (design D3, D5)', () => {
 // -- the policy catalog ---------------------------------------------------------------------------
 
 describe('the catalog_user policies as installed', () => {
-  it('no catalog_user policy is the constant true, and there are 45', async () => {
+  it('no catalog_user policy is the constant true, and there are 49', async () => {
     const rows = await admin`select tablename, policyname, qual, with_check from pg_policies
                              where schemaname = 'catalog' and 'catalog_user' = any(roles)`;
     // session-row-versions D1: 32 plus the overwrite audit's insert policy; session-leases D1:
@@ -601,8 +601,9 @@ describe('the catalog_user policies as installed', () => {
     // byo-ai-providers D1: nor do the two provider tables. catalog-search D4: plus the transcript
     // chunks' select policy. show-wiki D1, D2: plus the pages' and aliases' `_user_all` policies
     // and the revisions' select and insert policies. show-wiki-ai D1: plus the suggestions' select,
-    // insert and update policies.
-    expect(rows).toHaveLength(45);
+    // insert and update policies. media-worker D2, D7, D12: plus the media_jobs select and insert
+    // policies and the uploads' and seams' `_user_all` (mediaSchema.pg.test.ts runs their rules).
+    expect(rows).toHaveLength(49);
     for (const p of rows) {
       expect(p.qual, `${p.policyname} using`).not.toBe('true');
       expect(p.with_check, `${p.policyname} with check`).not.toBe('true');
@@ -620,7 +621,9 @@ describe('the catalog_user policies as installed', () => {
       'provider_test_windows',
     ];
     const systemOnly = ['kv', ...extra];
-    for (const table of [...Object.keys(RULES), ...extra]) {
+    // media-worker D2, D7, D12: the three media tables have both.
+    const media = ['media_jobs', 'media_uploads', 'session_audio_seams'];
+    for (const table of [...Object.keys(RULES), ...extra, ...media]) {
       const rows = await admin`select roles::text[] as roles from pg_policies
                                where schemaname = 'catalog' and tablename = ${table}`;
       const roles = rows.flatMap((r) => r.roles as string[]);

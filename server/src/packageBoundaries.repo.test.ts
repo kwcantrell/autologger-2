@@ -340,6 +340,7 @@ const APP_WORKSPACE_BARE_NAMES = new Set([
   'autologger-server',
   'autologger-web',
   'companion-module-autologger',
+  'autologger-media-worker',
 ]);
 
 type ViolationKind = 'undeclared-dependency' | 'escape' | 'disallowed-layer-edge';
@@ -613,6 +614,18 @@ describe('checkPackagesBoundary (mutation check on a synthetic package tree)', (
     const violations = checkPackagesBoundary(tmpRoot);
     expect(
       violations.some((v) => v.kind === 'escape' && v.detail.includes('autologger-server')),
+    ).toBe(true);
+  });
+
+  it('DOES flag a bare specifier naming the media-worker app (media-worker D14)', () => {
+    tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pkg-boundary-bare-media-worker-'));
+    writeTree(tmpRoot, {
+      ...CLEAN_FILES,
+      'packages/domain/src/index.ts': `import { marker } from 'autologger-media-worker';\nexport const x = marker;\n`,
+    });
+    const violations = checkPackagesBoundary(tmpRoot);
+    expect(
+      violations.some((v) => v.kind === 'escape' && v.detail.includes('autologger-media-worker')),
     ).toBe(true);
   });
 

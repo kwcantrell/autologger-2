@@ -99,7 +99,12 @@ interface BtnConfig {
   rec: boolean;
   enabled: boolean;
   ariaLabel: string;
+  /** Why an otherwise available control is held, announced with it (aria-describedby). */
+  reason?: string;
 }
+
+/** media-worker D10: Record waits for the recorder's recovery scan of unsent audio. */
+export const RECORD_RECOVERING_REASON = 'Recovering unsent audio…';
 
 function getConfigs(
   st: TransportState,
@@ -224,6 +229,8 @@ interface Props {
   isPlaying?: boolean;
   /** Smaller tiles for the maximize-log fused strip. */
   compact?: boolean;
+  /** The recorder is still scanning for unsent audio (its `scanning` phase): Record is held. */
+  recordRecovering?: boolean;
 }
 
 export function TransportControls({
@@ -233,6 +240,7 @@ export function TransportControls({
   ytImportPending,
   isPlaying,
   compact = false,
+  recordRecovering = false,
 }: Props) {
   const { data: status } = useSessionStatus(sessionId);
   const { start, stop } = useTransport(sessionId);
@@ -255,7 +263,14 @@ export function TransportControls({
       : null;
   const remoteBlocked = Boolean(leaseHolder && myClientId && leaseHolder !== myClientId);
 
-  const configs = getConfigs(transportState, remoteBlocked);
+  const baseConfigs = getConfigs(transportState, remoteBlocked);
+  // Starting a recording waits for the recovery scan; stopping one never does.
+  const configs =
+    recordRecovering && baseConfigs[2].ariaLabel === 'Record audio'
+      ? (baseConfigs.map((c, i) =>
+          i === 2 ? { ...c, enabled: false, reason: RECORD_RECOVERING_REASON } : c,
+        ) as typeof baseConfigs)
+      : baseConfigs;
   if (ytImportPending) {
     for (let i = 0; i < configs.length; i += 1) {
       configs[i] = { ...configs[i], enabled: false };
@@ -336,7 +351,7 @@ export function TransportControls({
       aria-label={compact ? undefined : 'Session transport controls'}
     >
       {configs.map((cfg, i) => (
-        <Tooltip key={cfg.ariaLabel} content={cfg.ariaLabel}>
+        <Tooltip key={cfg.ariaLabel} content={cfg.reason ?? cfg.ariaLabel}>
           <Button
             variant="transport"
             size="icon"
@@ -349,6 +364,7 @@ export function TransportControls({
             id={`btn-ctl-${i + 1}`}
             disabled={!cfg.enabled || busy}
             aria-label={cfg.ariaLabel}
+            aria-describedby={cfg.reason ? `btn-ctl-${i + 1}-reason` : undefined}
             onClick={() => handleClick(i)}
           >
             <span
@@ -360,6 +376,11 @@ export function TransportControls({
             >
               <TransportGlyph icon={cfg.icon} size={compact ? 18 : 22} />
             </span>
+            {cfg.reason && (
+              <span id={`btn-ctl-${i + 1}-reason`} className="sr-only">
+                {cfg.reason}
+              </span>
+            )}
           </Button>
         </Tooltip>
       ))}

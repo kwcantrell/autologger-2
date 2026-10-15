@@ -1,0 +1,41 @@
+<!doctype html><meta charset="utf-8"><title>Storage spike</title>
+<body><h1>Storage / locks / wake lock spike (0.3)</h1>
+<p>Open this page in two tabs. In tab 1 click "Run + hold lock"; within 30 s in tab 2 click "Run (lock probe)". Tab 2 should report <code>contended: true</code>.</p>
+<button id="hold">Run + hold lock 30 s</button> <button id="probe">Run (lock probe)</button><pre id="log"></pre>
+<script>
+const log = s => { document.getElementById('log').textContent += s + '\n'; console.log(s); };
+const err = e => String(e && (e.name + ': ' + e.message));
+const LOCK = 'autologger:recording:spike:1';
+async function opfs() { if (!window.Worker) return { error: 'no Worker' };
+  const w = new Worker('opfs-worker.js'); const r = await new Promise((ok) => { w.onmessage = e => ok(e.data); w.onerror = e => ok({ workerError: e.message }); w.postMessage(1); setTimeout(() => ok({ timeout: true }), 10000); }); w.terminate(); return r; }
+async function idb() { let step = 'open'; try {
+  const db = await new Promise((ok, ko) => { const r = indexedDB.open('spike-chunks', 1); r.onupgradeneeded = () => r.result.createObjectStore('c'); r.onsuccess = () => ok(r.result); r.onerror = () => ko(r.error); });
+  step = 'put'; const blob = new Blob([new Uint8Array(200000).map((_, i) => i * 7 & 255)], { type: 'audio/webm' });
+  await new Promise((ok, ko) => { const t = db.transaction('c', 'readwrite'); t.objectStore('c').put({ parts: [blob, blob.slice(0, 10)] }, 'k'); t.oncomplete = ok; t.onerror = () => ko(t.error); });
+  step = 'get'; const v = await new Promise((ok, ko) => { const t = db.transaction('c'); const g = t.objectStore('c').get('k'); g.onsuccess = () => ok(g.result); g.onerror = () => ko(g.error); });
+  const back = new Uint8Array(await new Blob(v.parts).arrayBuffer());
+  let match = back.length === 200010; for (let i = 0; match && i < 200000; i++) match = back[i] === (i * 7 & 255);
+  db.close(); indexedDB.deleteDatabase('spike-chunks');
+  return { ok: true, partIsBlob: v.parts[0] instanceof Blob, bytes: back.length, match };
+} catch (e) { return { ok: false, step, error: err(e) }; } }
+async function wake() { if (!('wakeLock' in navigator)) return { available: false };
+  try { const s = await navigator.wakeLock.request('screen'); const r = { available: true, granted: true, released: s.released }; await s.release(); return r; }
+  catch (e) { return { available: true, granted: false, error: err(e) }; } }
+async function storage() { const r = {};
+  try { r.estimate = await navigator.storage.estimate(); delete r.estimate.usageDetails; } catch (e) { r.estimateError = err(e); }
+  try { r.persistedBefore = await navigator.storage.persisted(); } catch (e) { r.persistedError = err(e); }
+  try { r.persist = await Promise.race([navigator.storage.persist(), new Promise(ok => setTimeout(() => ok('no answer in 5 s (prompt?)'), 5000))]); } catch (e) { r.persistError = err(e); }
+  return r; }
+async function common() { return { ua: navigator.userAgent, secure: isSecureContext, locksAvailable: 'locks' in navigator,
+  opfs: await opfs(), idb: await idb(), wakeLock: await wake(), storage: await storage() }; }
+async function hold(ms = 30000) { const r = await common();
+  let resolveHeld; r.holding = new Promise(ok => resolveHeld = ok);
+  navigator.locks.request(LOCK, async () => { resolveHeld(true); await new Promise(ok => setTimeout(ok, ms)); });
+  await r.holding; r.holding = true; log(JSON.stringify(r, null, 1)); return r; }
+async function probe() { const r = await common();
+  r.contended = await navigator.locks.request(LOCK, { ifAvailable: true }, lock => lock === null);
+  r.query = await navigator.locks.query().then(q => ({ held: q.held.map(l => l.name), pending: q.pending.length })).catch(err);
+  log(JSON.stringify(r, null, 1)); return r; }
+document.getElementById('hold').onclick = () => hold(); document.getElementById('probe').onclick = () => probe();
+window.spike = { hold, probe, common };
+</script>

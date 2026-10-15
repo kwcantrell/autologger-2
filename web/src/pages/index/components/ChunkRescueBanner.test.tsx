@@ -4,6 +4,8 @@ import {
   installChunkLeaveWarning,
   uninstallChunkLeaveWarningForTesting,
 } from '../utils/chunkLeaveWarning';
+import { type ChunkStore, createChunkStore } from '../utils/chunkStore';
+import { createMemoryBackend } from '../utils/chunkStore/memoryBackend';
 import {
   type ChunkInput,
   getChunkUploadQueue,
@@ -50,7 +52,7 @@ function chunkInput(overrides: Partial<ChunkInput> = {}): ChunkInput {
 }
 
 let uploadImpl: (chunk: ChunkInput) => Promise<{ ok: false; status?: number; message: string }> =
-  async () => ({ ok: false, status: 502, message: 'still failing' });
+  async () => ({ ok: false, status: 404, message: 'still failing' }); // permanent: the error alert (A.9)
 
 function seedQueue() {
   return getChunkUploadQueue({
@@ -71,7 +73,7 @@ beforeEach(() => {
   // reinstalled creation subscription is what picks up this test's `seedQueue()`.
   uninstallChunkLeaveWarningForTesting();
   installChunkLeaveWarning();
-  uploadImpl = async () => ({ ok: false, status: 502, message: 'still failing' });
+  uploadImpl = async () => ({ ok: false, status: 404, message: 'still failing' }); // permanent: the error alert (A.9)
 });
 
 afterEach(() => {
@@ -140,12 +142,14 @@ describe('ChunkRescueBanner', () => {
   });
 
   it('failed-then-retrying: banner stays visible while a retry is in flight', async () => {
+    uploadImpl = async () => ({ ok: false, status: 502, message: 'still failing' });
     const queue = seedQueue();
     queue.enqueue(chunkInput());
     await queue.pump(); // fails with status 502 -> queued with lastError set
 
     render(<ChunkRescueBanner />);
-    expect(await screen.findByRole('alert')).toBeTruthy();
+    // Retrying is a neutral status, not the error alert (A.9); it keeps its actions.
+    expect(await screen.findByRole('status')).toBeTruthy();
 
     uploadImpl = () => new Promise(() => {}); // in-flight retry, never settles
 
@@ -156,7 +160,7 @@ describe('ChunkRescueBanner', () => {
     // clears it on a fresh outcome) — the banner must remain visible, not
     // flicker off mid-retry.
     await waitFor(() => expect(queue.getSnapshot().inFlight).toBe(true));
-    expect(screen.getByRole('alert')).toBeTruthy();
+    expect(screen.getByRole('status')).toBeTruthy();
     expect(screen.getByText('Retrying…')).toBeTruthy();
   });
 
@@ -431,5 +435,182 @@ describe('chunk leave-warning coverage (task 5.1)', () => {
     queue.discardAll();
     queue.discardAll(); // repeated empty snapshot must not re-remove
     expect(beforeUnloadCalls(spies.remove)).toBe(1);
+  });
+});
+
+// --- media-worker A.6: recovered group, blocked rows, Retry reaching every class ---
+
+class StatusError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+describe('ChunkRescueBanner (media-worker A.6)', () => {
+  async function storeWith(
+    entries: Array<{ index: number; bytes: number; finalized: boolean; safari?: boolean }>,
+  ): Promise<ChunkStore> {
+    const t0 = Date.parse('2026-10-12T10:00:00.000Z');
+    let now = t0 - 120_000; // written two minutes ago: heartbeats are stale
+    const store = createChunkStore({
+      backends: [() => createMemoryBackend()],
+      now: () => now,
+      isSafari: entries.some((e) => e.safari),
+    });
+    for (const e of entries) {
+      const start = t0 - 1_200_000 + e.index * 600_000;
+      const h = await store.openChunk({
+        userId: 'u',
+        sessionId: 'sess-1',
+        recordingOrdinal: 3,
+        chunkIndex: e.index,
+        startedAtUtc: new Date(start).toISOString(),
+        mimeType: 'audio/webm',
+      });
+      await store.append(h, blob(e.bytes));
+      if (e.finalized) await store.finalize(h, new Date(start + 600_000).toISOString());
+    }
+    now = t0;
+    return store;
+  }
+
+  async function recoveredQueue(
+    store: ChunkStore,
+    upload = vi.fn(async () => {
+      throw new StatusError(503, 'Service Unavailable');
+    }),
+  ) {
+    const queue = getChunkUploadQueue({
+      upload,
+      listSegments: async () => [],
+      clock: { now: () => Date.now() },
+      store,
+    });
+    await queue.recover('u');
+    await queue.pump();
+    return { queue, upload };
+  }
+
+  it('shows recovered chunks as a group with their count and approximate minutes', async () => {
+    const store = await storeWith([
+      { index: 0, bytes: 4, finalized: true },
+      { index: 1, bytes: 4, finalized: false },
+    ]);
+    await recoveredQueue(store);
+    render(<ChunkRescueBanner />);
+    const header = await screen.findByText(/Recovered 2 chunks/);
+    expect(header.textContent).toMatch(/≈\s?\d+ min/);
+    expect(header.textContent).toMatch(/previous session/);
+    expect(screen.getByRole('button', { name: 'Upload all' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Download all' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Discard recovered' })).toBeTruthy();
+    // The partial one is labelled.
+    expect(screen.getByText(/partial/i)).toBeTruthy();
+    // No Safari note outside Safari.
+    expect(screen.queryByText(/7 days/)).toBeNull();
+  });
+
+  it('adds the 7-day note for chunks Safari wrote', async () => {
+    const store = await storeWith([{ index: 0, bytes: 4, finalized: true, safari: true }]);
+    await recoveredQueue(store);
+    render(<ChunkRescueBanner />);
+    await screen.findByText(/Recovered 1 chunk/);
+    expect(screen.getByText(/7 days/)).toBeTruthy();
+  });
+
+  it('Upload all re-attempts the recovered chunks', async () => {
+    const store = await storeWith([{ index: 0, bytes: 4, finalized: true }]);
+    const { upload } = await recoveredQueue(store);
+    render(<ChunkRescueBanner />);
+    await screen.findByText(/Recovered 1 chunk/);
+    const before = upload.mock.calls.length;
+    fireEvent.click(screen.getByRole('button', { name: 'Upload all' }));
+    await waitFor(() => expect(upload.mock.calls.length).toBe(before + 1));
+  });
+
+  it('Discard of the recovered group confirms with the amount and empties storage', async () => {
+    const store = await storeWith([
+      { index: 0, bytes: 4, finalized: true },
+      { index: 1, bytes: 4, finalized: true },
+    ]);
+    await recoveredQueue(store);
+    render(<ChunkRescueBanner />);
+    await screen.findByText(/Recovered 2 chunks/);
+    fireEvent.click(screen.getByRole('button', { name: 'Discard recovered' }));
+    const dialog = await screen.findByRole('alertdialog');
+    expect(dialog.textContent).toMatch(/20m of audio \(2 chunks\)/);
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Discard' }));
+    await waitFor(async () => expect(await store.list('u')).toEqual([]));
+  });
+
+  it('a blocked row names signing in again', async () => {
+    const queue = seedQueue();
+    uploadImpl = async () => ({ ok: false, status: 401, message: 'Not authenticated.' });
+    queue.enqueue(chunkInput());
+    await queue.pump();
+    render(<ChunkRescueBanner />);
+    await screen.findByRole('alert');
+    expect(screen.getByText(/Sign in again in another tab, then press Retry/)).toBeTruthy();
+  });
+
+  it('Retry on a permanent row makes exactly one attempt', async () => {
+    const queue = seedQueue();
+    let calls = 0;
+    uploadImpl = async () => {
+      calls += 1;
+      return { ok: false, status: 404, message: 'Session not found.' };
+    };
+    queue.enqueue(chunkInput());
+    await queue.pump();
+    expect(calls).toBe(1);
+    render(<ChunkRescueBanner />);
+    await screen.findByText('Failed permanently');
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(calls).toBe(2));
+    await new Promise((r) => setTimeout(r, 10));
+    expect(calls).toBe(2);
+  });
+
+  it('recovered chunks arm the leave warning', async () => {
+    const store = await storeWith([{ index: 0, bytes: 4, finalized: true }]);
+    const add = vi.spyOn(window, 'addEventListener');
+    await recoveredQueue(store);
+    expect(add.mock.calls.filter(([t]) => t === 'beforeunload')).toHaveLength(1);
+  });
+});
+
+describe('ChunkRescueBanner shows only the signed-in user’s chunks (A.8)', () => {
+  it("never lists another user's chunk", async () => {
+    const queue = seedQueue();
+    queue.enqueue({ ...chunkInput({ chunkIndex: 0 }), userId: 'user-a' });
+    queue.enqueue({ ...chunkInput({ chunkIndex: 1 }), userId: 'user-b' });
+    queue.setCurrentUser('user-a'); // let user-a's fail so both would be shown
+    await queue.pump();
+    queue.setCurrentUser('user-b');
+    await queue.pump();
+    render(<ChunkRescueBanner />);
+    await screen.findByRole('alert');
+    expect(screen.getByText(/chunk 2/)).toBeTruthy();
+    expect(screen.queryByText(/chunk 1\b/)).toBeNull();
+  });
+});
+
+describe('A.9: a chunk that is only retrying is a neutral status, not an error alert', () => {
+  it('shows "Uploading … retrying" as a status, and the error alert once a chunk is terminal', async () => {
+    uploadImpl = async () => ({ ok: false, status: 502, message: 'still failing' }); // transient
+    const queue = seedQueue();
+    queue.enqueue(chunkInput());
+    await queue.pump();
+    render(<ChunkRescueBanner />);
+    const status = await screen.findByRole('status');
+    expect(status.textContent).toMatch(/Uploading 1 recorded audio chunk… retrying/);
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy(); // actions stay
+    expect(screen.queryByRole('alert')).toBeNull();
+    uploadImpl = async () => ({ ok: false, status: 404, message: 'Session not found.' });
+    await queue.retryAll();
+    expect(await screen.findByRole('alert')).toBeTruthy();
   });
 });

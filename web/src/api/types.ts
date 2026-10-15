@@ -575,6 +575,18 @@ export interface ShowCategoriesResponse {
  * probe, which is the only source of a real decoded media length the client
  * has; do not reintroduce `duration_sec` here without the server emitting it.
  */
+/** Server-side media processing state of a segment (media-worker D5); `null` on rows that predate
+ * it, which the browser keeps decoding for peaks as before. */
+export type AudioMediaStatus = 'pending' | 'done' | 'failed';
+
+/** One original chunk inside a merged segment, in media order (media-worker D7/D16). */
+export interface AudioSegmentSeam {
+  /** Offset of the chunk's first sample in the merged file, milliseconds. */
+  offset_ms: number;
+  started_at_utc: string;
+  ended_at_utc: string | null;
+}
+
 export interface AudioSegment {
   id: string;
   ordinal: number;
@@ -585,6 +597,50 @@ export interface AudioSegment {
   url: string;
   waveform_peaks: number[] | null;
   waveform_db_floor: number | null;
+  // media-worker D16: the server emits all three on every dict (12 keys; the conformance test
+  // pins the captured fixtures). Optional here only so hand-built test segments elsewhere in the
+  // tree that predate the fields keep compiling; every consumer treats absent as `null`.
+  /** Decoded media length, `null` while unknown (then the browser probes). */
+  duration_ms?: number | null;
+  media_status?: AudioMediaStatus | null;
+  /** A merged segment's chunks, `null` for a segment with a single seam at offset 0 or none. */
+  seams?: AudioSegmentSeam[] | null;
+}
+
+/** `201` of `POST /api/sessions/:id/audio/uploads` (media-worker D12). */
+export interface AudioUploadCreated {
+  upload_id: string;
+  part_size: number;
+  parts_total: number;
+  expires_at_utc: string;
+}
+
+/** `200` of `GET /api/sessions/:id/audio/uploads/:uploadId` (media-worker D12). */
+export interface AudioUploadStatus {
+  upload_id: string;
+  status: string;
+  size_bytes: number;
+  part_size: number;
+  parts_total: number;
+  /** Part numbers (1-based) stored, ascending. */
+  received: number[];
+  expires_at_utc: string;
+}
+
+/** `200` of `POST /api/sessions/:id/audio/uploads/:uploadId/complete` (media-worker D12). */
+export interface AudioUploadCompleted {
+  ok: true;
+  segment_id: string;
+}
+
+/** How a finalize call left the recording's merge (media-worker D6). */
+export type RecordingFinalizeMerge = 'queued' | 'not-needed' | 'already-queued' | 'waiting';
+
+/** `200` of `POST /api/sessions/:id/audio/recordings/:ordinal/finalize` (media-worker D6;
+ * `audioFinalizeResponseSchema`). */
+export interface RecordingFinalizeResponse {
+  ok: true;
+  merge: RecordingFinalizeMerge;
 }
 
 export interface AudioSegmentsResponse {

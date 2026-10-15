@@ -68,11 +68,6 @@ const ALLOWLIST: readonly { file: string; reason: string; why: string }[] = [
     why: 'the lease sweeper frees an expired recording lease no process has open, whoever held it (run-status-and-sweeper D6)',
   },
   {
-    file: 'server/src/routers/audio.ts',
-    reason: 'session-undo',
-    why: "the upload's undo deletes only the segment row the same request created",
-  },
-  {
     file: 'server/src/routers/sessions.ts',
     reason: 'session-undo',
     why: "the audio imports' undo steps delete only the segment the same request created",
@@ -88,6 +83,31 @@ const ALLOWLIST: readonly { file: string; reason: string; why: string }[] = [
     why: "the operator's merge script reads a session's audio segments, for any session",
   },
   { file: 'server/src/main.ts', reason: 'boot-wait', why: 'the boot-time readiness wait' },
+  {
+    file: 'server/src/main.ts',
+    reason: 'media-apply',
+    why: "media-worker D3: the apply loop reads done and failed media jobs and marks them, any session's",
+  },
+  {
+    file: 'server/src/mediaApply.ts',
+    reason: 'media-apply',
+    why: "media-worker D3: a worker result's rows are written through the hub as this system task (the session's writer, not any user's)",
+  },
+  {
+    file: 'server/src/main.ts',
+    reason: 'media-reconcile',
+    why: 'media-worker D6, D20: the lease sweeper tick lists finished recordings across sessions, enqueues their merges and reads the notification queue usage',
+  },
+  {
+    file: 'server/src/main.ts',
+    reason: 'media-sweep',
+    why: 'media-worker D2, D12: the 10-minute sweep deletes expired uploads and old terminal media jobs, every user',
+  },
+  {
+    file: 'server/src/routers/audioUploads.ts',
+    reason: 'media-uploads',
+    why: 'media-worker D12: upload rows, every statement scoped in code to the session (after the access check) and the creating user',
+  },
   {
     file: 'server/src/routers/logImport.ts',
     reason: 'log-import-job',

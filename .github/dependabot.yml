@@ -16,3 +16,11 @@ updates:
     groups:
       npm-minor-patch:
         update-types: ["minor", "patch"]
+  # docker: base-image digest bumps for the Dockerfiles under /docker, including the media
+  # worker's ffmpeg pin (ARG FFMPEG_IMAGE, media-worker D13). A bump is reviewed as tier 1: the
+  # `# reviewed` date moves, blobSegmentRows.ts follows (ffmpegPin.repo.test.ts) and
+  # docker/scripts/test_media_image.sh is re-run.
+  - package-ecosystem: docker
+    directory: /docker
+    schedule:
+      interval: weekly

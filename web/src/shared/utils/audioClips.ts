@@ -1,4 +1,4 @@
-import type { AudioSegment, LogEvent, SessionStatus } from '../../api/types';
+import type { AudioMediaStatus, AudioSegment, LogEvent, SessionStatus } from '../../api/types';
 import type { AudioClipLite } from './waveformMerge';
 
 /** Non-negative timeline seconds for layout; invalid values become `fallback`. */
@@ -441,6 +441,7 @@ function placeChunkGroupWithinInterval(
       endSec: Math.max(clipEnd, clipStart + 0.05),
       duration: d,
       missingAudio: false,
+      ...clipExtrasFor(audioSegments[idx]),
     });
   }
 
@@ -567,6 +568,7 @@ function rebuildAudioClipsLegacyOrdinalAndChain(
             endSec: endSecMember,
             duration: d,
             missingAudio: false,
+            ...clipExtrasFor(audioSegments[idx]),
           });
         }
         continue;
@@ -590,6 +592,7 @@ function rebuildAudioClipsLegacyOrdinalAndChain(
           endSec: endSecMember,
           duration: d,
           missingAudio: false,
+          ...clipExtrasFor(audioSegments[idx]),
         });
       }
       continue;
@@ -633,6 +636,7 @@ function rebuildAudioClipsLegacyOrdinalAndChain(
         endSec,
         duration: d,
         missingAudio: false,
+        ...clipExtrasFor(audioSegments[idx]),
       });
     }
   }
@@ -640,11 +644,17 @@ function rebuildAudioClipsLegacyOrdinalAndChain(
 }
 
 export function rebuildAudioClips(
-  audioSegments: AudioSegment[],
-  segmentDurations: (number | null)[],
+  inputSegments: AudioSegment[],
+  inputDurations: (number | null)[],
   events: LogEvent[],
   status: SessionStatus | null | undefined,
 ): AudioClipLite[] {
+  // media-worker D16: a merged segment becomes one layout member per seam; every member below
+  // is then placed exactly as a chunk is.
+  const { segments: audioSegments, durations: segmentDurations } = expandMergedSegments(
+    inputSegments,
+    inputDurations,
+  );
   const nSeg = audioSegments.length;
   if (!nSeg) return [];
 
@@ -699,11 +709,196 @@ export function rebuildAudioClips(
       endSec,
       duration: d,
       missingAudio: false,
+      ...clipExtrasFor(audioSegments[i]),
     });
   }
 
   out.sort((a, b) => a.startSec - b.startSec);
   return out;
+}
+
+// --- media-worker D16: merged segments, seams and server media status ---------------------------
+
+/**
+ * The optional fields a laid-out clip carries beyond `AudioClipLite` (media-worker D16). They are
+ * set only when meaningful, so a clip of a legacy segment is exactly an `AudioClipLite`.
+ * - `mediaOffsetSec`/`mediaDurationSec`: a seam clip of a merged segment plays the segment's URL
+ *   from `mediaOffsetSec` (seek = position − clip start + offset); `mediaDurationSec` is the
+ *   merged file's whole length, for slicing its peaks.
+ * - `mediaStatus`: the segment's server `media_status` when not null.
+ * - `finalizing`: the clip's recording still has two or more segments and one is pending.
+ */
+export interface SeamAwareClip extends AudioClipLite {
+  mediaOffsetSec?: number;
+  mediaDurationSec?: number;
+  mediaStatus?: AudioMediaStatus;
+  finalizing?: boolean;
+}
+
+type ClipExtras = Pick<
+  SeamAwareClip,
+  'mediaOffsetSec' | 'mediaDurationSec' | 'mediaStatus' | 'finalizing'
+>;
+
+/** Extras of the (possibly per-seam) layout members of the current `rebuildAudioClips` call. */
+const clipExtras = new WeakMap<AudioSegment, ClipExtras>();
+
+function clipExtrasFor(s: AudioSegment): ClipExtras {
+  return clipExtras.get(s) ?? {};
+}
+
+function hasSeams(s: AudioSegment): s is AudioSegment & {
+  seams: NonNullable<AudioSegment['seams']>;
+} {
+  return s.recording_ordinal != null && Array.isArray(s.seams) && s.seams.length > 0;
+}
+
+/**
+ * Replace each merged segment (non-null `recording_ordinal` and seams) by one member per seam:
+ * the segment's id, URL, ordinal and recording ordinal with the seam's own window, so the chunk
+ * layout positions it from the seam's `started_at_utc`. A seam's duration runs to the next seam's
+ * offset, the last to the segment's duration (`segmentDurations`, else `duration_ms`).
+ */
+function expandMergedSegments(
+  segments: AudioSegment[],
+  durations: (number | null)[],
+): { segments: AudioSegment[]; durations: (number | null)[] } {
+  const byRecording = new Map<number, AudioSegment[]>();
+  for (const s of segments) {
+    if (s.recording_ordinal == null) continue;
+    const list = byRecording.get(s.recording_ordinal) ?? [];
+    list.push(s);
+    byRecording.set(s.recording_ordinal, list);
+  }
+  const finalizing = new Set<AudioSegment>();
+  for (const list of byRecording.values()) {
+    if (list.length >= 2 && list.some((s) => s.media_status === 'pending')) {
+      for (const s of list) finalizing.add(s);
+    }
+  }
+
+  const outSegments: AudioSegment[] = [];
+  const outDurations: (number | null)[] = [];
+  segments.forEach((s, i) => {
+    const base: ClipExtras = {};
+    if (s.media_status != null) base.mediaStatus = s.media_status;
+    if (finalizing.has(s)) base.finalizing = true;
+    if (!hasSeams(s)) {
+      if (Object.keys(base).length > 0) clipExtras.set(s, base);
+      else clipExtras.delete(s);
+      outSegments.push(s);
+      outDurations.push(durations[i] ?? null);
+      return;
+    }
+    const dRaw = Number(durations[i]);
+    const msRaw = Number(s.duration_ms);
+    const totalSec =
+      Number.isFinite(dRaw) && dRaw > 0
+        ? dRaw
+        : s.duration_ms != null && Number.isFinite(msRaw) && msRaw > 0
+          ? msRaw / 1000
+          : null;
+    const seams = [...s.seams].sort((a, b) => a.offset_ms - b.offset_ms);
+    seams.forEach((seam, k) => {
+      const offsetSec = seam.offset_ms / 1000;
+      const next = seams[k + 1];
+      const d =
+        next != null
+          ? (next.offset_ms - seam.offset_ms) / 1000
+          : totalSec != null
+            ? totalSec - offsetSec
+            : null;
+      const member: AudioSegment = {
+        ...s,
+        started_at_utc: seam.started_at_utc,
+        ended_at_utc: seam.ended_at_utc,
+      };
+      const extras: ClipExtras = { ...base, mediaOffsetSec: offsetSec };
+      if (totalSec != null) extras.mediaDurationSec = totalSec;
+      clipExtras.set(member, extras);
+      outSegments.push(member);
+      outDurations.push(d != null && d > 0 ? d : null);
+    });
+  });
+  return { segments: outSegments, durations: outDurations };
+}
+
+/** Where a clip's audio starts inside its URL's media: the seam offset, 0 for a plain clip. */
+export function clipMediaOffsetSec(clip: AudioClipLite): number {
+  const v = (clip as SeamAwareClip).mediaOffsetSec;
+  return typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0;
+}
+
+/** The media position (seconds into the clip's URL) that plays at timeline second `sec`. */
+export function clipMediaPositionSec(clip: AudioClipLite, sec: number): number {
+  return Math.max(0, sec - clip.startSec) + clipMediaOffsetSec(clip);
+}
+
+/**
+ * The timeline second at which media position `mediaSec` of segment `segmentId` plays: the clip
+ * of that segment whose media range starts last at/before `mediaSec` (a seam clip of a merged
+ * segment, or the segment's one clip) plus the offset into it. `null` when no clip shows it.
+ */
+export function timelineSecAtMediaPosition(
+  clips: readonly AudioClipLite[],
+  segmentId: string,
+  mediaSec: number,
+): number | null {
+  let best: AudioClipLite | null = null;
+  let first: AudioClipLite | null = null;
+  for (const c of clips) {
+    if (c.segmentId !== segmentId) continue;
+    const off = clipMediaOffsetSec(c);
+    if (first === null || off < clipMediaOffsetSec(first)) first = c;
+    if (off <= mediaSec + 1e-9 && (best === null || off > clipMediaOffsetSec(best))) best = c;
+  }
+  best = best ?? first;
+  if (!best) return null;
+  return Math.max(0, best.startSec + (mediaSec - clipMediaOffsetSec(best)));
+}
+
+/** The clip's segment `media_status`, `null` for legacy rows and placeholders. */
+export function clipMediaStatus(clip: AudioClipLite): AudioMediaStatus | null {
+  return (clip as SeamAwareClip).mediaStatus ?? null;
+}
+
+/** True while the clip's recording has two or more segments and one is pending (a merge is due). */
+export function clipIsFinalizing(clip: AudioClipLite): boolean {
+  return (clip as SeamAwareClip).finalizing === true;
+}
+
+/**
+ * Draw a merged segment's peaks across its seam clips (media-worker D16): each seam clip gets its
+ * own key and the slice of the segment's peaks covering `[offset, offset + duration)` of the merged
+ * media, so `mergeAudioClipsIntoTimelinePeaks` maps every slice onto its own clip span. Returns the
+ * inputs unchanged when no clip is a seam clip.
+ */
+export function seamClipPeaks(
+  clips: AudioClipLite[],
+  peaksById: Map<string, Float32Array | null>,
+): { clips: AudioClipLite[]; peaksById: Map<string, Float32Array | null> } {
+  if (!clips.some((c) => (c as SeamAwareClip).mediaOffsetSec !== undefined)) {
+    return { clips, peaksById };
+  }
+  const map = new Map(peaksById);
+  const out = clips.map((c) => {
+    const sc = c as SeamAwareClip;
+    if (sc.mediaOffsetSec === undefined || !c.segmentId) return c;
+    const key = `${c.segmentId}#seam@${sc.mediaOffsetSec}`;
+    const peaks = peaksById.get(c.segmentId);
+    const total = sc.mediaDurationSec;
+    if (peaks && peaks.length > 0 && total != null && total > 0) {
+      const n = peaks.length;
+      const from = Math.max(0, Math.min(n - 1, Math.round((sc.mediaOffsetSec / total) * n)));
+      const to = Math.max(
+        from + 1,
+        Math.min(n, Math.round(((sc.mediaOffsetSec + c.duration) / total) * n)),
+      );
+      map.set(key, peaks.subarray(from, to));
+    }
+    return { ...c, segmentId: key };
+  });
+  return { clips: out, peaksById: map };
 }
 
 /** Master timeline length: max of 30, status rolling sec + 5, last event +5, last clip end +5. */

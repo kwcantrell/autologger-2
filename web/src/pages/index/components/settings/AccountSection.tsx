@@ -5,6 +5,7 @@ import { Card, CardContent } from '../../../../shared/components/ui/card';
 import { Empty, EmptyDescription } from '../../../../shared/components/ui/empty';
 import { FieldGroup, FieldSeparator } from '../../../../shared/components/ui/field';
 import { Input } from '../../../../shared/components/ui/input';
+import { useChunkSignOutGuard } from '../../utils/chunkLeaveWarning';
 import { showToast } from '../../utils/toast';
 import { runSaveSteps } from './SidePanel';
 import { activeShowIdForSave, profileStudioId } from './settingsModel';
@@ -37,6 +38,8 @@ export function AccountSection() {
     user ? { givenName: user.given_name ?? '', familyName: user.family_name ?? '' } : null,
   );
   const [error, setError] = useState<string | null>(null);
+  // media-worker D10: warn about this user's unsent recorded audio, then wipe it, before leaving.
+  const signOut = useChunkSignOutGuard(user?.id ?? null);
 
   async function handleSave() {
     if (!profile || !draft.value) return;
@@ -122,8 +125,11 @@ export function AccountSection() {
                 <SettingRow label="Sign out" description="Ends your session on this device.">
                   {/* A real link: logout is a full-page navigation. */}
                   <Button variant="destructive" asChild>
-                    <a href="/auth/logout">Sign out</a>
+                    <a href="/auth/logout" onClick={signOut.onSignOut}>
+                      Sign out
+                    </a>
                   </Button>
+                  {signOut.confirmElement}
                 </SettingRow>
               </FieldGroup>
             </CardContent>

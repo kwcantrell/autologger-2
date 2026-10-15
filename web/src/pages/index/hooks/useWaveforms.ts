@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAudioSegments, useUploadWaveform } from '../../../api/hooks/useAudio';
+import {
+  clipMediaStatus,
+  type SeamAwareClip,
+  seamClipPeaks,
+} from '../../../shared/utils/audioClips';
 import { fetchAndDecodeWaveformPeaks } from '../../../shared/utils/waveformDecode';
 import {
   type AudioClipLite,
@@ -37,6 +42,17 @@ function getAudioContextCtor(): WaveformAudioContextCtor | null {
     webkitAudioContext?: WaveformAudioContextCtor;
   };
   return w.AudioContext ?? w.webkitAudioContext ?? null;
+}
+
+/** Merge the cached peaks onto the timeline, drawing a merged segment's peaks across its seam
+ * clips by media offset (media-worker D16). */
+function mergePeaks(
+  totalSec: number,
+  clips: AudioClipLite[],
+  peaksById: Map<string, Float32Array | null>,
+): Float32Array {
+  const drawn = seamClipPeaks(clips, peaksById);
+  return mergeAudioClipsIntoTimelinePeaks(totalSec, drawn.clips, drawn.peaksById);
 }
 
 interface LayoutSnapshot {
@@ -123,7 +139,7 @@ export function useWaveforms(
     }
     if (changed && layoutRef.current) {
       const { clips, totalSec } = layoutRef.current;
-      publishMerged(mergeAudioClipsIntoTimelinePeaks(totalSec, clips, map));
+      publishMerged(mergePeaks(totalSec, clips, map));
       mergedAtTotalSecRef.current = totalSec;
     }
   }, [audioData, publishMerged, refreshUnavailable]);
@@ -160,7 +176,9 @@ export function useWaveforms(
           const url = c.url;
           if (!id || !url) return { id: null as string | null, peaks: null as Float32Array | null };
           try {
-            const bc = segmentWaveformDecodeBucketCount(c.duration, spanSec);
+            // A seam clip decodes its whole merged file (media-worker D16).
+            const mediaSec = (c as SeamAwareClip).mediaDurationSec ?? c.duration;
+            const bc = segmentWaveformDecodeBucketCount(mediaSec, spanSec);
             const peaks = await fetchAndDecodeWaveformPeaks(url, ctx, {
               bucketCount: bc,
               dbFloor: WF_DB_FLOOR,
@@ -191,7 +209,7 @@ export function useWaveforms(
       setIsDecoding(false);
       refreshUnavailable();
       const totalAtMerge = layoutRef.current.totalSec;
-      publishMerged(mergeAudioClipsIntoTimelinePeaks(totalAtMerge, layoutRef.current.clips, map));
+      publishMerged(mergePeaks(totalAtMerge, layoutRef.current.clips, map));
       mergedAtTotalSecRef.current = totalAtMerge;
     };
 
@@ -212,7 +230,7 @@ export function useWaveforms(
         );
         mergedAtTotalSecRef.current = totalSec;
       } else if (!mergedRef.current) {
-        publishMerged(mergeAudioClipsIntoTimelinePeaks(totalSec, clips, map));
+        publishMerged(mergePeaks(totalSec, clips, map));
         mergedAtTotalSecRef.current = totalSec;
       }
       layoutRef.current = { fp, clips, totalSec };
@@ -223,14 +241,29 @@ export function useWaveforms(
     decodeGenRef.current += 1;
     const gen = decodeGenRef.current;
     layoutRef.current = { fp, clips, totalSec };
-    publishMerged(mergeAudioClipsIntoTimelinePeaks(totalSec, clips, map));
+    publishMerged(mergePeaks(totalSec, clips, map));
     mergedAtTotalSecRef.current = totalSec;
+    // media-worker D16: the server computes peaks for every new segment. A `pending` segment is
+    // never decoded here (its peaks arrive on `audio.changed`); a `failed` one is unavailable
+    // without a decode attempt; legacy rows (`null`) still decode. One decode per segment, even
+    // when a merged segment lays out as several seam clips.
+    const seen = new Set<string>();
     const pending = clips.filter((c) => {
       if (!c.segmentId || !c.url || c.missingAudio) return false;
+      if (seen.has(c.segmentId)) return false;
+      seen.add(c.segmentId);
       if (failedIdsRef.current.has(c.segmentId)) return false;
       const cached = map.get(c.segmentId);
-      return !(cached && cached.length > 0);
+      if (cached && cached.length > 0) return false;
+      const mediaStatus = clipMediaStatus(c);
+      if (mediaStatus === 'pending') return false;
+      if (mediaStatus === 'failed') {
+        failedIdsRef.current.add(c.segmentId);
+        return false;
+      }
+      return true;
     });
+    refreshUnavailable();
     if (pending.length > 0) {
       decodeAbortRef.current?.abort();
       const ctrl = new AbortController();

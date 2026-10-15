@@ -44,7 +44,14 @@ export function TimelineClips({ clips, totalSec, activeClipIdx }: Props) {
       const wPct = Math.max(0.2, ePct - sPct);
       const missing = c.missingAudio || !c.url;
       const title = missing ? 'No audio file for this log interval' : `Audio clip ${i + 1}`;
-      return { i, sPct, wPct, missing, title, key: c.segmentId ?? `idx-${i}` };
+      // Seam clips of a merged segment share its id (media-worker D16); the media offset tells them apart.
+      const seam = (c as { mediaOffsetSec?: number }).mediaOffsetSec;
+      const key = c.segmentId
+        ? seam === undefined
+          ? c.segmentId
+          : `${c.segmentId}@${seam}`
+        : `idx-${i}`;
+      return { i, sPct, wPct, missing, title, key };
     });
   }, [clips, totalSec]);
 

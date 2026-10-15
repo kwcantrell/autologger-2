@@ -1,0 +1,19 @@
+chrome-rollover-{1,2,3}.webm — synthetic, no recorded voice (media-worker D.8).
+
+Three consecutive MediaRecorder chunks from one getUserMedia stream, the recorder's rollover
+(stop, then a new MediaRecorder on the same stream), recorded 2026-10-12 by headless Chromium
+156.0.8078.4 (Playwright) with `--use-fake-device-for-media-stream
+--use-file-for-fake-audio-capture=<a generated test-tone WAV, 48 kHz mono s16>`; `new MediaRecorder(stream,
+{mimeType: 'audio/webm;codecs=opus', audioBitsPerSecond: 24000})`, `start(5000)`, stopped after
+2.3 s; each chunk's slices joined into one Blob. Opus 48 kHz mono, 60 ms frames, 38 packets each.
+
+Like every Chrome MediaRecorder WebM they have no duration header and their LAST block carries no
+duration (mediabunny reports packet.duration 0), which is what made the packet-copy merge reuse
+the last packet's timestamp for the next input's first packet (non-monotonic DTS at each seam).
+
+chrome-rollover-drift-{1,2,3}.webm — the same three chunks' Opus packets, byte for byte, remuxed by
+mediabunny into WebM with the block times a real microphone's clock gives Chrome: each block at
+round(i × 59.6 ms) (steps of 0.059/0.060 s, as on a real capture; the fake device above is
+sample-exact), the last block again without a duration. Against the old merge these reproduce the
+real-device failure: the next chunk's first block lands 24 samples before the previous chunk's
+decoded end ("Non-monotonic DTS; previous: 105864, current: 105840" with `-f wav -xerror`).

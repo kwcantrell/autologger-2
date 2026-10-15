@@ -1346,9 +1346,19 @@ const EXEMPTIONS: readonly Exemption[] = [
     reason: 'audit §5 row 20 CONFORMS — emits `{ok: true}` (404 for an unknown segment).',
   },
   {
-    key: 'pages/index/components/AudioRecorder.tsx :: apiFetch<OkResponse>(`sessions/<var>/audio/segments/<var>/waveform`) [PUT]',
+    key: 'api/uploads.ts :: apiFetch<>(uploadsPath(sessionId, `/<var>/parts/<var>`)) [PUT]',
     reason:
-      'Same endpoint as audit §5 row 20 (CONFORMS — emits `{ok: true}`, 404 for an unknown segment), called from the chunk pipeline’s per-chunk waveform PUT (chunked-live-recording task 4.2) instead of the useUploadWaveform hook. Result discarded; best-effort by spec.',
+      'media-worker D12: `PUT …/audio/uploads/:uploadId/parts/:n` answers 204 with no body (api-contract-freeze "Resumable audio upload endpoints"); there is no response shape to capture, and the untyped call reads none.',
+  },
+  {
+    key: 'api/uploads.ts :: apiFetch<>(uploadsPath(sessionId, `/<var>`)) [DELETE]',
+    reason:
+      'media-worker D12: `DELETE …/audio/uploads/:uploadId` answers 204 with no body (404 `{detail}` when unknown); there is no response shape to capture, and the untyped call reads none.',
+  },
+  {
+    key: 'pages/index/utils/chunkStore/opfsWorker.ts :: out.push(JSON.parse(text) as ChunkManifest);',
+    reason:
+      'media-worker D10: parses the chunk store’s own `manifest.json`, written by this worker into the origin-private file system; local data, not an API response.',
   },
   {
     key: 'api/hooks/useEvents.ts :: apiFetch<OkResponse>(`sessions/<var>/events/<var><var>`) [DELETE]',

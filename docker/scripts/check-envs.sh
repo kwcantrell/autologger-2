@@ -27,17 +27,18 @@ cd "$ROOT"
 # The caller's shell must not influence the result: every interpolated variable falls back to
 # its compose default, and the placeholder env files below supply any non-default value.
 unset DEV_PORT DEV_COMPANION_PORT STAGE_PORT ROUTER_PORT ROUTER_FRONT_GW ROUTER_BACK_GW \
-  STAGE_WEB_IMAGE STAGE_API_IMAGE STAGE_PUBLIC_BASE_URL STAGE_COOKIE_SECURE STAGE_IMAGE_TAG \
-  WEB_TAG API_TAG PUBLIC_BASE_URL HOST TRUST_PROXY \
+  STAGE_WEB_IMAGE STAGE_API_IMAGE STAGE_MEDIA_IMAGE STAGE_PUBLIC_BASE_URL STAGE_COOKIE_SECURE STAGE_IMAGE_TAG \
+  WEB_TAG API_TAG MEDIA_TAG PUBLIC_BASE_URL HOST TRUST_PROXY \
   IP_ALLOWLIST DATA_DIR BLOB_DIR PORT 2>/dev/null || true
 # supabase-db D4, supabase-services D4: one sentinel per Supabase secret, so invariant 16 can find
 # each value anywhere; SB_SCOPE is the services each may appear in (same table as compose-run.mjs).
 # drop-unused-supabase-services D4: SB_RETIRED are the removed services' keys; compose-run.mjs never
 # passes them on, so their sentinel may appear in no service at all.
-SB_SECRETS="POSTGRES_PASSWORD SUPABASE_ROLES_PASSWORD APP_DB_PASSWORD JWT_SECRET"
+# media-worker D15: MEDIA_DB_PASSWORD reaches only media-worker and migrate.
+SB_SECRETS="POSTGRES_PASSWORD SUPABASE_ROLES_PASSWORD APP_DB_PASSWORD MEDIA_DB_PASSWORD JWT_SECRET"
 SB_RETIRED="ANON_KEY SERVICE_ROLE_KEY SECRET_KEY_BASE REALTIME_DB_ENC_KEY SUPABASE_PORT"
 for k in $SB_SECRETS $SB_RETIRED; do eval "$k=sbsentinel_${k}_z; export $k"; done
-SB_SCOPE='{"POSTGRES_PASSWORD":["db","migrate"],"APP_DB_PASSWORD":{"dev":["app","migrate"],"stage":["api","migrate"],"prod":["api","migrate"]},"SUPABASE_ROLES_PASSWORD":["db","auth"],"JWT_SECRET":["auth"]}'
+SB_SCOPE='{"POSTGRES_PASSWORD":["db","migrate"],"APP_DB_PASSWORD":{"dev":["app","migrate"],"stage":["api","migrate"],"prod":["api","migrate"]},"MEDIA_DB_PASSWORD":["media-worker","migrate"],"SUPABASE_ROLES_PASSWORD":["db","auth"],"JWT_SECRET":["auth"]}'
 
 # The shared allowlist (infisical-secrets D2; secrets now come from OpenBao, openbao-secrets): every key a container may receive, one null
 # passthrough per line. Those keys must not leak the caller's values into the resolved JSON, and
@@ -122,10 +123,11 @@ cat >"$TMP/stage-public.env" <<'EOF'
 STAGE_PORT=18788
 STAGE_WEB_IMAGE=ghcr.io/kwcantrell/autologger-web:0000000000000000000000000000000000000000
 STAGE_API_IMAGE=ghcr.io/kwcantrell/autologger-api:0000000000000000000000000000000000000000
+STAGE_MEDIA_IMAGE=ghcr.io/kwcantrell/autologger-media-worker:0000000000000000000000000000000000000000
 STAGE_PUBLIC_BASE_URL=https://stage.example.invalid
 STAGE_COOKIE_SECURE=1
 EOF
-printf 'WEB_TAG=abcdef123456\nAPI_TAG=abcdef123456\nPUBLIC_BASE_URL=https://example.invalid\n' >"$TMP/prod.env"
+printf 'WEB_TAG=0000000000aa\nAPI_TAG=0000000000aa\nMEDIA_TAG=0000000000aa\nPUBLIC_BASE_URL=https://example.invalid\n' >"$TMP/prod.env"
 
 # ---------------------------------------------------------------- shared assertions -----------
 # Invariant 1 (any project): every published port is on the literal 127.0.0.1.
@@ -210,12 +212,12 @@ check_gw_values() { # json label
 # no retired service (rest, realtime, storage, supabase-gw) or network (supabase, edge) is back; and
 # each secret stays in its services, a retired key in none. The value check covers every string in
 # a service (env, command, labels, healthcheck, build args).
-check_supabase() { # json label db-subnet catalog-subnet auth-egress-subnet auth-app-subnet
+check_supabase() { # json label db-subnet catalog-subnet auth-egress-subnet auth-app-subnet media-subnet
   [ "$2" = dev ] && app=app || app=api
-  jq_ok 16 "$2: db or migrate is missing, publishes a port, or joins other networks than db (migrate) or db and catalog (db)" "$1" \
+  jq_ok 16 "$2: db or migrate is missing, publishes a port, or joins other networks than db (migrate) or db, catalog and media (db)" "$1" \
     '(.services.db and .services.migrate)
      and ([.services.db,.services.migrate]|all((.ports//[])|length==0))
-     and ((.services.migrate.networks//{})|keys==["db"]) and ((.services.db.networks//{})|keys==["catalog","db"])'
+     and ((.services.migrate.networks//{})|keys==["db"]) and ((.services.db.networks//{})|keys==["catalog","db","media"])'
   jq_ok 16 "$2: the catalog network's members are not exactly db and $app" "$1" \
     '[.services|to_entries[]|select((.value.networks//{})|has("catalog"))|.key]|sort==(["db",$app]|sort)' --arg app "$app"
   jq_ok 16 "$2: a service shares the network namespace of $app, db, migrate or auth (only app-gate may share app's, in dev)" "$1" \
@@ -240,14 +242,15 @@ check_supabase() { # json label db-subnet catalog-subnet auth-egress-subnet auth
       '(.services.api.networks//{})|keys==["auth-app","back","catalog"]'
   fi
   jq_ok 16 "$2: the auth-egress network is not on $5" "$1" '.networks["auth-egress"].ipam.config==[{"subnet":$sn}]' --arg sn "$5"
-  for n in db catalog auth-app; do
-    case $n in db) sn=$3 ;; catalog) sn=$4 ;; *) sn=$6 ;; esac
+  for n in db catalog auth-app media; do
+    case $n in db) sn=$3 ;; catalog) sn=$4 ;; media) sn=$7 ;; *) sn=$6 ;; esac
     jq_ok 16 "$2: the $n network is not internal, not host-isolated (gateway_mode_ipv4/ipv6 isolated), or not on $sn" "$1" \
       '.networks[$n]|.internal==true
        and .driver_opts["com.docker.network.bridge.gateway_mode_ipv4"]=="isolated"
        and .driver_opts["com.docker.network.bridge.gateway_mode_ipv6"]=="isolated"
        and .ipam.config==[{"subnet":$sn}]' --arg n "$n" --arg sn "$sn"
   done
+  check_media "$1" "$2" "$app"
   jq_ok 16 "$2: a Supabase image (db, migrate, auth) is not pinned by @sha256: digest" "$1" \
     '[.services|(.db,.migrate,.auth)|.image]|all(type=="string" and test("@sha256:[0-9a-f]{64}$"))'
   for k in $SB_SECRETS; do
@@ -259,6 +262,32 @@ check_supabase() { # json label db-subnet catalog-subnet auth-egress-subnet auth
     jq_ok 16 "$2: the retired $k value appears in a service (nothing reads a retired key)" "$1" \
       '[.services[]|select([..|strings|contains($v)]|any)]|length==0' --arg v "sbsentinel_${k}_z"
   done
+}
+
+# Invariant 16 (dev, stage, prod; media-worker D1, D4, D15): the media worker reaches only Postgres,
+# over the two-member media network, as autologger_media; it runs confined (read-only root, a uid
+# that is neither root nor the app's node user, every capability dropped, no-new-privileges, no
+# published port), its environment is exactly the five connection literals plus BLOB_DIR (no
+# allowlist passthrough, no other secret), and it mounts only the stack's blob volume at /blobs.
+check_media() { # json label app-service
+  [ "$2" = dev ] && vol=dev-blobs || vol=autologger-blobs
+  jq_ok 16 "$2: the media network's members are not exactly db and media-worker" "$1" \
+    '[.services|to_entries[]|select((.value.networks//{})|has("media"))|.key]|sort==["db","media-worker"]'
+  jq_ok 16 "$2: media-worker is missing, joins networks other than exactly media, or publishes a port" "$1" \
+    '.services["media-worker"]|. != null and ((.networks//{})|keys==["media"]) and ((.ports//[])|length==0) and (.network_mode==null)'
+  jq_ok 16 "$2: media-worker does not run read_only as a numeric uid other than 0 and the app's (1000), with cap_drop [ALL], no cap_add and no-new-privileges" "$1" \
+    '.services["media-worker"]
+     | .read_only==true and ((.cap_drop//[])==["ALL"]) and ((.cap_add//[])==[])
+       and ((.security_opt//[])|index("no-new-privileges:true")!=null) and ((.privileged//false)|not)
+       and ((.user//"")|test("^[0-9]+(:[0-9]+)?$") and ((split(":")[0]|tonumber) as $u|$u!=0 and $u!=1000))'
+  jq_ok 16 "$2: media-worker mounts something other than exactly the $vol volume at /blobs" "$1" \
+    '(.services["media-worker"].volumes//[])|length==1 and .[0].type=="volume" and .[0].source==$vol and .[0].target=="/blobs"' --arg vol "$vol"
+  jq_ok 16 "$2: media-worker's environment is not exactly PGHOST=db PGPORT=5432 PGDATABASE=postgres PGUSER=autologger_media PGPASSWORD=\${MEDIA_DB_PASSWORD} BLOB_DIR=/blobs" "$1" \
+    '(.services["media-worker"].environment//{})
+     | (keys==["BLOB_DIR","PGDATABASE","PGHOST","PGPASSWORD","PGPORT","PGUSER"])
+       and .PGHOST=="db" and .PGPORT=="5432" and .PGDATABASE=="postgres" and .PGUSER=="autologger_media"
+       and .PGPASSWORD==$pw and .BLOB_DIR=="/blobs"' --arg pw "sbsentinel_MEDIA_DB_PASSWORD_z"
+  jq_ok 16 "$2: $3 joins the media network" "$1" '(.services[$app].networks//{})|has("media")|not' --arg app "$3"
 }
 
 # ---------------------------------------------------------------- DEV ------------------------
@@ -312,9 +341,9 @@ check_dev() {
   jq_ok 6 "dev: companion command is not exactly [\"--admin-address\",\"127.0.0.1\"]" "$D" \
     '.services.companion.command==["--admin-address","127.0.0.1"]'
   # 6: the dev service set is exactly the four expected services (no extra/privileged sidecar).
-  jq_ok 6 "dev: the service set is not exactly app, app-gate, auth, companion, companion-gate, db, migrate" "$D" \
-    '(.services|keys|sort)==["app","app-gate","auth","companion","companion-gate","db","migrate"]'
-  check_supabase "$D" dev 172.28.31.0/24 172.28.34.0/24 172.28.35.0/24 172.28.36.0/24 # 16
+  jq_ok 6 "dev: the service set is not exactly app, app-gate, auth, companion, companion-gate, db, media-worker, migrate" "$D" \
+    '(.services|keys|sort)==["app","app-gate","auth","companion","companion-gate","db","media-worker","migrate"]'
+  check_supabase "$D" dev 172.28.31.0/24 172.28.34.0/24 172.28.35.0/24 172.28.36.0/24 172.28.37.0/24 # 16
   jq_ok 16 "dev: app-gate does not refuse exactly the catalog and auth-app subnets (GATE_DENY_SUBNET), so db or auth could reach the app" "$D" \
     '.services["app-gate"].environment.GATE_DENY_SUBNET==(.networks.catalog.ipam.config[0].subnet+" "+.networks["auth-app"].ipam.config[0].subnet)'
   check_no_host_priv "$D" dev
@@ -416,7 +445,7 @@ check_stage() {
   check_no_host_priv "$S" stage                                        # 6
   check_no_env_file "$S" stage                                         # 14
   check_container_name "$S" stage api autologger-stage-api            # 6 (container name pinned)
-  check_supabase "$S" stage 172.28.22.0/24 172.28.25.0/24 172.28.27.0/24 172.28.28.0/24 # 16
+  check_supabase "$S" stage 172.28.22.0/24 172.28.25.0/24 172.28.27.0/24 172.28.28.0/24 172.28.29.0/24 # 16
   for f in "$S" "$SC" "$SP"; do
     check_loopback_ports "$f" stage                                    # 1
     check_no_8080_numeric "$f" stage                                   # 2
@@ -438,11 +467,13 @@ check_stage() {
   # 7 (stage-public-https): unset, stage is the local one (:local images, plain-http cookie); the
   # public mode swaps only the images, the origin and COOKIE_SECURE=1, and keeps the loopback port.
   for f in "$S" "$SC"; do
-    jq_ok 7 "stage: without the public variables, web/api are not the :local images or COOKIE_SECURE is not \"0\"" "$f" \
-      '.services.web.image=="autologger-stage-web:local" and .services.api.image=="autologger-stage-api:local" and .services.api.environment.COOKIE_SECURE=="0"'
+    jq_ok 7 "stage: without the public variables, web/api/media-worker are not the :local images or COOKIE_SECURE is not \"0\"" "$f" \
+      '.services.web.image=="autologger-stage-web:local" and .services.api.image=="autologger-stage-api:local"
+       and .services["media-worker"].image=="autologger-stage-media-worker:local" and .services.api.environment.COOKIE_SECURE=="0"'
   done
   jq_ok 7 "stage: the public variables do not set the ghcr images, the https PUBLIC_BASE_URL and COOKIE_SECURE=1 (on the loopback STAGE_PORT)" "$SP" \
     '.services.web.image=="ghcr.io/kwcantrell/autologger-web:0000000000000000000000000000000000000000" and .services.api.image=="ghcr.io/kwcantrell/autologger-api:0000000000000000000000000000000000000000"
+     and .services["media-worker"].image=="ghcr.io/kwcantrell/autologger-media-worker:0000000000000000000000000000000000000000"
      and .services.api.environment.PUBLIC_BASE_URL=="https://stage.example.invalid" and .services.api.environment.COOKIE_SECURE=="1"
      and .services.router.ports[0].published=="18788"'
 
@@ -477,7 +508,10 @@ check_prod() {
   resolve "$TMP/prod.json" "prod" compose_prod "$TMP/prod.env" || return 0
   resolve "$TMP/prod-raw.json" "prod (raw, --no-interpolate)" compose_prod "$TMP/prod.env" --no-interpolate || return 0
   check_allowlist "$TMP/prod-raw.json" prod api                        # 15
-  check_supabase "$TMP/prod.json" prod 172.28.12.0/24 172.28.15.0/24 172.28.16.0/24 172.28.17.0/24 # 16
+  check_supabase "$TMP/prod.json" prod 172.28.12.0/24 172.28.15.0/24 172.28.16.0/24 172.28.17.0/24 172.28.18.0/24 # 16
+  # 7 (media-worker D13, D15): the worker image is the registry image at the OpenBao MEDIA_TAG.
+  jq_ok 7 "prod: media-worker image is not ghcr.io/kwcantrell/autologger-media-worker:\${MEDIA_TAG}" "$TMP/prod.json" \
+    '.services["media-worker"].image=="ghcr.io/kwcantrell/autologger-media-worker:0000000000aa"'
   f=$TMP/prod.json
   check_name "$f" prod autologger                                      # 9
   check_loopback_ports "$f" prod                                       # 1

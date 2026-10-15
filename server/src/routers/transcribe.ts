@@ -88,14 +88,16 @@ export function enforceGroupSizeLimit(bytes: number): void {
   }
 }
 
-function mapGenerateError(err: unknown): never {
+/** Maps a generation error to its HTTP status. `missing_blob` (media-worker D9: a listed segment's
+ * blob is gone, a restore in progress or a bug) is `502` like an upstream failure. */
+export function mapGenerateError(err: unknown): never {
   if (err instanceof TranscriptGenerateError) {
     const status =
       err.code === 'unavailable'
         ? 503
         : err.code === 'in_flight'
           ? 409
-          : err.code === 'upstream' || err.code === 'oversize'
+          : err.code === 'upstream' || err.code === 'oversize' || err.code === 'missing_blob'
             ? 502
             : 400;
     throw new ApiError(status, err.message);

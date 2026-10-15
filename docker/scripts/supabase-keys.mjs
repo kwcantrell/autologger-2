@@ -21,7 +21,7 @@ import { Refusal, checkCredFile, checkNodeVersion, deletedMessage, deletedState,
 const ROOT = resolve(import.meta.dirname, '../..');
 const ENVS = ['dev', 'stage', 'prod'];
 // The secrets this generator owns, with how each value is made (formats: compose-run.mjs KEY_FORMAT).
-// drop-unused-supabase-services D3: four keys. The retired ones (ANON_KEY, SERVICE_ROLE_KEY,
+// drop-unused-supabase-services D3, media-worker D15: five keys. The retired ones (ANON_KEY, SERVICE_ROLE_KEY,
 // SECRET_KEY_BASE, REALTIME_DB_ENC_KEY, SUPABASE_PORT) are never read, reported, written or deleted;
 // the merge-patch write leaves them in place.
 const hex = (n) => () => randomBytes(n).toString('hex');
@@ -30,6 +30,8 @@ const KEYS = {
   POSTGRES_PASSWORD: hex(16),
   SUPABASE_ROLES_PASSWORD: hex(16),
   APP_DB_PASSWORD: hex(16),
+  // media-worker D15: the worker role's password, made like APP_DB_PASSWORD.
+  MEDIA_DB_PASSWORD: hex(16),
   JWT_SECRET: b64u(32),
 };
 

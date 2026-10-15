@@ -20,12 +20,13 @@ const TOKEN = 'tok-SHOULD-NOT-LEAK';
 const KVURL = '/v1/kv/data/autologger/dev';
 // drop-unused-supabase-services D3: the generator owns four keys; the five retired ones are never
 // created, reported or written.
-const ALL = ['POSTGRES_PASSWORD', 'SUPABASE_ROLES_PASSWORD', 'APP_DB_PASSWORD', 'JWT_SECRET'];
+const ALL = ['POSTGRES_PASSWORD', 'SUPABASE_ROLES_PASSWORD', 'APP_DB_PASSWORD', 'MEDIA_DB_PASSWORD', 'JWT_SECRET'];
 const RETIRED = ['ANON_KEY', 'SERVICE_ROLE_KEY', 'SECRET_KEY_BASE', 'REALTIME_DB_ENC_KEY', 'SUPABASE_PORT'];
 const FORMAT = {
   POSTGRES_PASSWORD: /^[0-9a-f]{32}$/,
   SUPABASE_ROLES_PASSWORD: /^[0-9a-f]{32}$/,
   APP_DB_PASSWORD: /^[0-9a-f]{32}$/,
+  MEDIA_DB_PASSWORD: /^[0-9a-f]{32}$/,
   JWT_SECRET: /^[A-Za-z0-9_-]{43}$/,
 };
 
@@ -231,6 +232,20 @@ describe('supabase-keys.mjs (supabase-db D5, openbao-secrets D4)', () => {
     assert.ok(!r.out.includes(b.data.APP_DB_PASSWORD));
     assert.match(r.out, /^created APP_DB_PASSWORD$/m);
     for (const k of ALL.filter((x) => x !== 'APP_DB_PASSWORD')) assert.match(r.out, new RegExp(`^kept ${k}$`, 'm'));
+  });
+
+  it('an existing stack gets only the worker password created (media-worker D15)', async () => {
+    const w = writeFiles();
+    handler = standIn({ keys: ALL.filter((k) => k !== 'MEDIA_DB_PASSWORD') });
+    const r = await run(['dev', '--writer', w]);
+    assert.equal(r.code, 0, r.out);
+    assert.equal(writes().length, 1);
+    const b = JSON.parse(writes()[0].body);
+    assert.deepEqual(Object.keys(b.data), ['MEDIA_DB_PASSWORD']);
+    assert.match(b.data.MEDIA_DB_PASSWORD, FORMAT.MEDIA_DB_PASSWORD);
+    assert.ok(!r.out.includes(b.data.MEDIA_DB_PASSWORD));
+    assert.match(r.out, /^created MEDIA_DB_PASSWORD$/m);
+    for (const k of ALL.filter((x) => x !== 'MEDIA_DB_PASSWORD')) assert.match(r.out, new RegExp(`^kept ${k}$`, 'm'));
   });
 
   // drop-unused-supabase-services D3: no trio any more; JWT_SECRET stands alone.

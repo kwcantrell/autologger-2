@@ -97,8 +97,11 @@ const WIRE_SEGMENT = {
   duration_sec: WIRE_DURATION_SEC,
 };
 
+let wireSegments: object[] = [WIRE_SEGMENT];
+
 beforeEach(() => {
   probedUrls.length = 0;
+  wireSegments = [WIRE_SEGMENT];
   mockedApiFetch.mockReset();
   mockedApiFetch.mockImplementation(async (path: string) => {
     if (path.includes('/status')) return statusFixture();
@@ -107,7 +110,7 @@ beforeEach(() => {
     if (path.includes('/sync-from-disk')) {
       return { inserted: 0, updated: 0, scanned: 1, has_audio: true };
     }
-    if (path.includes('/audio/segments')) return { segments: [WIRE_SEGMENT], has_audio: true };
+    if (path.includes('/audio/segments')) return { segments: wireSegments, has_audio: true };
     throw new Error(`unexpected apiFetch call: ${path}`);
   });
   vi.stubGlobal('Audio', FakeAudio);
@@ -132,5 +135,40 @@ describe('useAudioClips segment durations (audit CW-5)', () => {
     // The probe ran — the removed fast path would have skipped it outright.
     expect(probedUrls).toEqual(['blob:seg-a']);
     expect(result.current.clips[0].duration).not.toBe(WIRE_DURATION_SEC);
+  });
+});
+
+// media-worker D16 (web-session-console "Recording intervals lay out multi-chunk segments
+// contiguously"): the clip duration comes from the server's `duration_ms` when present; the
+// media-element probe runs only when it is `null`.
+describe('useAudioClips server durations (media-worker D16)', () => {
+  it('uses duration_ms when present and never probes that segment', async () => {
+    wireSegments = [{ ...WIRE_SEGMENT, duration_ms: 1_812_345, media_status: 'done', seams: null }];
+    const { result } = renderHook(() => useAudioClips(SESSION_ID, []), { wrapper });
+    await waitFor(() => expect(result.current.clips).toHaveLength(1));
+    await waitFor(() => expect(result.current.clips[0].duration).toBeCloseTo(1812.345, 6));
+    expect(probedUrls).toEqual([]);
+  });
+
+  it('probes only the segments whose duration_ms is null', async () => {
+    wireSegments = [
+      { ...WIRE_SEGMENT, duration_ms: 30_000, media_status: 'done', seams: null },
+      {
+        ...WIRE_SEGMENT,
+        id: 'seg-b',
+        ordinal: 1,
+        url: 'blob:seg-b',
+        started_at_utc: '2026-07-27T00:00:35Z',
+        duration_ms: null,
+        media_status: 'pending',
+        seams: null,
+      },
+    ];
+    const { result } = renderHook(() => useAudioClips(SESSION_ID, []), { wrapper });
+    await waitFor(() => expect(result.current.clips).toHaveLength(2));
+    await waitFor(() => expect(probedUrls).toEqual(['blob:seg-b']));
+    await waitFor(() =>
+      expect(result.current.clips.map((c) => c.duration).sort((a, b) => a - b)).toEqual([30, 42]),
+    );
   });
 });

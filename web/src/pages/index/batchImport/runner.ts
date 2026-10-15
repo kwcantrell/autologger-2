@@ -1,5 +1,20 @@
 import { apiFetch } from '../../../api/client';
-import type { ProfilePayload, Session, SessionsResponse } from '../../../api/types';
+import type {
+  AudioSegmentsResponse,
+  ProfilePayload,
+  Session,
+  SessionsResponse,
+} from '../../../api/types';
+import {
+  fileGroupIdentity,
+  findImportSession,
+  findRememberedUpload,
+  forgetImportSession,
+  IMPORT_PARTS_THRESHOLD_BYTES,
+  PartsUploadError,
+  rememberImportSession,
+  uploadInParts,
+} from '../../../api/uploads';
 import { discoverAudioFiles, groupAudioFiles } from './grouping';
 import { stitchAudioFiles } from './stitch';
 
@@ -136,6 +151,62 @@ async function importLocalAudio(
 }
 
 /**
+ * media-worker D12: a blob over the parts threshold uploads through the resumable parts flow with
+ * the same `duration_s` and seam parts as `local-audio-import`, remembered by the group's identity
+ * so a re-run resumes it. `onPart` reports each part.
+ */
+async function importAudioInParts(
+  sessionId: string,
+  blob: Blob,
+  durationS: number,
+  partDurationsS: number[],
+  signal: AbortSignal,
+  fallbackName: string,
+  resumeKey: string,
+  onPart: (partsDone: number, partsTotal: number) => void,
+): Promise<void> {
+  throwIfAborted(signal);
+  await uploadInParts({
+    sessionId,
+    blob,
+    contentType: contentTypeForAudioBlob(blob, fallbackName),
+    completion: {
+      mode: 'import',
+      durationS,
+      seamParts: partDurationsS.map((duration_s) => ({ duration_s })),
+    },
+    resumeKey,
+    signal,
+    onProgress: ({ partsDone, partsTotal }) => onPart(partsDone, partsTotal),
+  });
+}
+
+export function formatResumableFailedLine(stem: string, detail: string): string {
+  return `${formatFailedLine(stem, detail)} (re-run the import to resume the upload)`;
+}
+
+/**
+ * The matching session `sessionId` is this group's own interrupted import: its remembered upload
+ * belongs to it, or (the upload memory expired) it is the session this import created for the
+ * group and it still has no audio. Anything else — a session someone made by hand, or one that
+ * already has audio — stays skipped.
+ */
+async function resumableSessionFor(
+  sessionId: string,
+  resumeKey: string,
+  signal: AbortSignal,
+): Promise<string | null> {
+  if ((await findRememberedUpload(resumeKey))?.sessionId === sessionId) return sessionId;
+  if ((await findImportSession(resumeKey)) !== sessionId) return null;
+  throwIfAborted(signal);
+  const { segments } = await apiFetch<AudioSegmentsResponse>(
+    `sessions/${encodeURIComponent(sessionId)}/audio/segments`,
+    { signal },
+  );
+  return segments.length === 0 ? sessionId : null;
+}
+
+/**
  * Roll back a created-but-audio-less session. Deliberately takes NO abort
  * signal: this must run even when the failure being cleaned up IS an abort
  * (modal close / unmount), otherwise the ghost session would match
@@ -192,8 +263,14 @@ export async function runBatchImport(options: RunBatchImportOptions): Promise<vo
       percent: basePercent,
     });
 
+    const groupFiles = group.segments.map((s) => s.file);
+    const resumeKey = fileGroupIdentity(groupFiles);
     const existing = findMatchingSession(sessions, stem);
-    if (existing) {
+    // A session left by an interrupted parts upload of this very group is resumed, not skipped:
+    // into its remembered upload while that lives (24 h), and after it expired with a fresh
+    // upload, but only while the session this import created is still empty.
+    const resumeInto = existing ? await resumableSessionFor(existing.id, resumeKey, signal) : null;
+    if (existing && resumeInto === null) {
       state.lines.push(formatSkippedLine(stem));
       emit({
         current: null,
@@ -208,8 +285,7 @@ export async function runBatchImport(options: RunBatchImportOptions): Promise<vo
     let durationS: number;
     let partDurationsS: number[];
     try {
-      const segmentFiles = group.segments.map((s) => s.file);
-      const stitched = await stitchAudioFiles(segmentFiles);
+      const stitched = await stitchAudioFiles(groupFiles);
       blob = stitched.blob;
       durationS = stitched.durationS;
       partDurationsS = stitched.partDurationsS;
@@ -232,12 +308,16 @@ export async function runBatchImport(options: RunBatchImportOptions): Promise<vo
     // From session create until upload success, ANY failure — including abort —
     // must attempt the delete rollback, or the audio-less session would match
     // this stem on the next run and block it forever.
-    let sessionId: string | null = null;
+    const useParts = blob.size > IMPORT_PARTS_THRESHOLD_BYTES;
+    let sessionId: string | null = resumeInto;
     try {
-      const created = await createSessionForStem(showId, stem, profile, signal);
-      sessionId = created.id;
-      onSessionCreated?.();
-      sessions = await fetchSessions(signal);
+      if (sessionId === null) {
+        const created = await createSessionForStem(showId, stem, profile, signal);
+        sessionId = created.id;
+        if (useParts) await rememberImportSession(resumeKey, sessionId);
+        onSessionCreated?.();
+        sessions = await fetchSessions(signal);
+      }
 
       throwIfAborted(signal);
       emit({
@@ -245,13 +325,49 @@ export async function runBatchImport(options: RunBatchImportOptions): Promise<vo
         percent: Math.round(((i + 0.5) / total) * 100),
       });
 
-      await importLocalAudio(sessionId, blob, durationS, partDurationsS, signal, uploadName);
+      if (useParts) {
+        await importAudioInParts(
+          sessionId,
+          blob,
+          durationS,
+          partDurationsS,
+          signal,
+          uploadName,
+          resumeKey,
+          (partsDone, partsTotal) => {
+            if (partsDone === 0) return;
+            emit({
+              current: `Uploading ${stem}: part ${partsDone} of ${partsTotal}...`,
+              percent: Math.round(((i + 0.5 + (0.5 * partsDone) / partsTotal) / total) * 100),
+            });
+          },
+        );
+      } else {
+        await importLocalAudio(sessionId, blob, durationS, partDurationsS, signal, uploadName);
+      }
+      if (useParts) await forgetImportSession(resumeKey);
       state.lines.push(formatCompletedLine(stem));
     } catch (err) {
       const aborted = isAbortError(err);
+      // An interrupted parts upload stays remembered with its session: keep the session so a
+      // re-run of this import resumes the upload into it (media-worker D12).
+      const resumable =
+        useParts &&
+        sessionId !== null &&
+        (err instanceof PartsUploadError
+          ? err.resumable
+          : aborted && (await findRememberedUpload(resumeKey))?.sessionId === sessionId);
+      if (resumable) {
+        if (aborted) throw err;
+        const detail = err instanceof Error ? err.message : 'Upload failed';
+        state.lines.push(formatResumableFailedLine(stem, detail));
+        emit({ current: null, percent: Math.round((clipIndex / total) * 100) });
+        continue;
+      }
       if (sessionId !== null) {
         try {
           await deleteSession(sessionId);
+          if (useParts) await forgetImportSession(resumeKey);
           if (!aborted) sessions = await fetchSessions(signal);
         } catch {
           // Best-effort rollback; a leftover empty session would block retry via match.

@@ -39,7 +39,8 @@ const ENVS = ['dev', 'stage', 'prod'];
 // Compose-interpolation keys an environment may hold besides the allowlist (design D3).
 // The Supabase keys reach only the services SECRET_SCOPE allows (supabase-db D4, supabase-services D4;
 // drop-unused-supabase-services D3: the four that db, migrate, auth and the app still use).
-const SUPABASE_KEYS = ['POSTGRES_PASSWORD', 'SUPABASE_ROLES_PASSWORD', 'APP_DB_PASSWORD', 'JWT_SECRET'];
+// media-worker D15: MEDIA_DB_PASSWORD, the worker role's password (the worker and the runner only).
+const SUPABASE_KEYS = ['POSTGRES_PASSWORD', 'SUPABASE_ROLES_PASSWORD', 'APP_DB_PASSWORD', 'MEDIA_DB_PASSWORD', 'JWT_SECRET'];
 // drop-unused-supabase-services D3: keys of the removed Supabase services. A secret may still hold
 // them (another checkout runs the old stack): accepted, never format-checked, never passed to
 // compose, and named once in a warning.
@@ -47,13 +48,14 @@ const RETIRED_KEYS = ['ANON_KEY', 'SERVICE_ROLE_KEY', 'SECRET_KEY_BASE', 'REALTI
 const COMPOSE_KEYS = {
   dev: ['DEV_PORT', 'DEV_COMPANION_PORT', ...SUPABASE_KEYS, ...RETIRED_KEYS],
   stage: ['STAGE_PORT', ...SUPABASE_KEYS, ...RETIRED_KEYS],
-  prod: ['ROUTER_PORT', 'WEB_TAG', 'API_TAG', 'PUBLIC_BASE_URL', ...SUPABASE_KEYS, ...RETIRED_KEYS],
+  prod: ['ROUTER_PORT', 'WEB_TAG', 'API_TAG', 'MEDIA_TAG', 'PUBLIC_BASE_URL', ...SUPABASE_KEYS, ...RETIRED_KEYS],
 };
 // Per-key value formats: strong, URL-safe, and safe for busybox echo and psql backticks.
 const KEY_FORMAT = {
   POSTGRES_PASSWORD: /^[0-9a-f]{32,}$/,
   SUPABASE_ROLES_PASSWORD: /^[0-9a-f]{32,}$/,
   APP_DB_PASSWORD: /^[0-9a-f]{32,}$/,
+  MEDIA_DB_PASSWORD: /^[0-9a-f]{32,}$/,
   JWT_SECRET: /^[A-Za-z0-9_-]{40,}$/,
 };
 // The services each secret value may appear in (spec invariant 16); per stack where it differs.
@@ -62,6 +64,8 @@ const SECRET_SCOPE = {
   POSTGRES_PASSWORD: ['db', 'migrate'],
   // The catalog's app role (catalog-pg-schema D4): the stack's app service and the runner.
   APP_DB_PASSWORD: { dev: ['app', 'migrate'], stage: ['api', 'migrate'], prod: ['api', 'migrate'] },
+  // The media worker's role (media-worker D1, D15): the worker and the runner, in every stack.
+  MEDIA_DB_PASSWORD: { dev: ['media-worker', 'migrate'], stage: ['media-worker', 'migrate'], prod: ['media-worker', 'migrate'] },
   SUPABASE_ROLES_PASSWORD: ['db', 'auth'],
   JWT_SECRET: ['auth'],
 };
@@ -74,7 +78,7 @@ const REGISTRY = 'ghcr.io/kwcantrell';
 // 40 hex only: prod-push tags the 12-char SHA (multi-arch); a stage push must never overwrite it.
 const STAGE_TAG_RE = /^[0-9a-f]{40}$/;
 const DNS_RE = /^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/;
-export const STAGE_LOCAL_IMAGES = { web: 'autologger-stage-web:local', api: 'autologger-stage-api:local' };
+export const STAGE_LOCAL_IMAGES = { web: 'autologger-stage-web:local', api: 'autologger-stage-api:local', media: 'autologger-stage-media-worker:local' };
 const MAX_CA = 64 * 1024;
 const MAX_DOCKER_CFG = 1024 * 1024;
 
@@ -240,7 +244,7 @@ export function checkProviderKeysSecret(env, secrets) {
 }
 
 export function checkProdTags(secrets) {
-  for (const k of ['WEB_TAG', 'API_TAG']) {
+  for (const k of ['WEB_TAG', 'API_TAG', 'MEDIA_TAG']) {
     const v = secrets.get(k);
     if (!v) refuse(`${k} is unset or empty in the OpenBao prod secret (a git-SHA tag is required)`);
     if (v === 'latest') refuse(`${k}=latest is refused; pin a git-SHA tag`);
@@ -282,7 +286,9 @@ export function parseStageOptions(own) {
   const dc = tag ? (own.DOCKER_CONFIG ?? '') : '';
   return {
     tag,
-    images: tag ? { web: `${REGISTRY}/autologger-web:${tag}`, api: `${REGISTRY}/autologger-api:${tag}` } : { ...STAGE_LOCAL_IMAGES },
+    images: tag
+      ? { web: `${REGISTRY}/autologger-web:${tag}`, api: `${REGISTRY}/autologger-api:${tag}`, media: `${REGISTRY}/autologger-media-worker:${tag}` }
+      : { ...STAGE_LOCAL_IMAGES },
     publicBaseUrl: url,
     cookieSecure: url ? '1' : '0',
     dockerAuths: dc !== '' ? readDockerAuths(dc) : null,
@@ -396,6 +402,7 @@ export function stageComposeEnv(opts, dockerDir = '') {
   if (opts.tag) {
     out.STAGE_WEB_IMAGE = opts.images.web;
     out.STAGE_API_IMAGE = opts.images.api;
+    out.STAGE_MEDIA_IMAGE = opts.images.media;
   }
   if (opts.publicBaseUrl) {
     out.STAGE_PUBLIC_BASE_URL = opts.publicBaseUrl;
@@ -424,6 +431,7 @@ export function checkStageResolved(cfg, opts) {
   if (s.web?.image !== opts.images.web || s.api?.image !== opts.images.api) {
     refuse(`refusing: the resolved stage web/api images are not ${opts.images.web} and ${opts.images.api}`);
   }
+  if (s['media-worker']?.image !== opts.images.media) refuse(`refusing: the resolved stage media-worker image is not ${opts.images.media}`);
   const e = s.api?.environment ?? {};
   const port = s.router?.ports?.[0]?.published;
   const url = opts.publicBaseUrl || `http://localhost:${port}`;

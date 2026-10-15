@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { clipIsFinalizing, clipMediaStatus } from '../../../../shared/utils/audioClips';
 import type { AudioClipLite } from '../../../../shared/utils/waveformMerge';
 import {
   clipIndexContainingTimelineSec,
@@ -72,16 +73,35 @@ export function TimelineWaveform({
     return timelineWaveformProgressClipRect(w, activeSec, totalSec, idx, clips);
   }, [mergedPeaks, w, activeSec, totalSec, clips]);
 
+  // media-worker D16: the server's processing state of the laid-out segments. "Finalizing
+  // recording…" while a recording with two or more segments has a pending one (its merge is due),
+  // "Generating waveform…" while a segment is pending (no browser decode runs for it) or a legacy
+  // segment decodes, "Waveform unavailable" when a segment failed (server or browser) and nothing
+  // could be drawn.
+  const { finalizing, pending, failed } = useMemo(
+    () => ({
+      finalizing: clips.some((c) => clipIsFinalizing(c)),
+      pending: clips.some((c) => clipMediaStatus(c) === 'pending'),
+      failed: clips.some((c) => clipMediaStatus(c) === 'failed'),
+    }),
+    [clips],
+  );
+  const busyLabel = finalizing
+    ? 'Finalizing recording…'
+    : pending || isDecoding
+      ? 'Generating waveform…'
+      : null;
+
   if (!mergedPeaks || mergedPeaks.length === 0) {
     return (
       <div className={WAVEFORMS} id="timeline-waveforms" aria-hidden={true}>
         <div className={WAVEFORM_FULL} aria-hidden={true} />
-        {clips.length > 0 && isDecoding && (
+        {clips.length > 0 && busyLabel && (
           <div className={WAVEFORM_DECODING_LABEL} aria-hidden={true}>
-            Generating waveform…
+            {busyLabel}
           </div>
         )}
-        {clips.length > 0 && !isDecoding && unavailable && (
+        {clips.length > 0 && !busyLabel && (unavailable || failed) && (
           <div className={WAVEFORM_UNAVAILABLE_LABEL} aria-hidden={true}>
             Waveform unavailable
           </div>
@@ -106,9 +126,9 @@ export function TimelineWaveform({
           )}
         </svg>
       </div>
-      {isDecoding && (
+      {busyLabel && (
         <div className={WAVEFORM_DECODING_LABEL} aria-hidden={true}>
-          Generating waveform…
+          {busyLabel}
         </div>
       )}
     </div>

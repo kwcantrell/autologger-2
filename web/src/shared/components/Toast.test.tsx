@@ -1,6 +1,6 @@
 import { act, screen, waitFor } from '@testing-library/react';
 import { toast as sonnerToast } from 'sonner';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderStrict } from '../../test/renderStrict';
 import { hideToast, showToast, Toast, toast } from './Toast';
 
@@ -77,5 +77,21 @@ describe('Toast (sonner facade)', () => {
     act(() => hideToast());
     await waitFor(() => expect(screen.queryByText('Saving Audio...')).toBeNull());
     expect(toastEl('plain three')).not.toBeNull();
+  });
+});
+
+describe('dev toast log (media-worker V.2: toasts readable after they vanish)', () => {
+  it('logs every toast to the console in development only', async () => {
+    const { _devLogToast } = await import('./Toast');
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    _devLogToast('saved', false, 'development');
+    _devLogToast('failed', true, 'development');
+    _devLogToast('quiet', false, 'production');
+    _devLogToast('quiet', true, 'test');
+    expect(info.mock.calls).toEqual([['[toast] saved']]);
+    expect(warn.mock.calls).toEqual([['[toast:error] failed']]);
+    info.mockRestore();
+    warn.mockRestore();
   });
 });

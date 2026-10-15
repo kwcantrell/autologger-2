@@ -29,7 +29,14 @@ import {
   appendSerializedAudioSeamParts,
   deserializeAudioSeamParts,
 } from './audioSeamParts';
-import type { AudioSegmentMeta } from './audioStore';
+import type {
+  AddedAudioSegment,
+  AudioSegmentMeta,
+  FinalizeOutcome,
+  IngestApply,
+  MergeApply,
+  SessionMediaPorts,
+} from './audioStore';
 import { AudioStore } from './audioStore';
 import type { StoredDashboard } from './dashboardStore';
 import { DashboardStore } from './dashboardStore';
@@ -261,27 +268,67 @@ export interface SessionHubFacade {
   expireStaleLeases: () => Promise<void>;
 
   // --- audio RPCs ---
+  /** Stores a segment, or answers the segment already holding its recording window with
+   * `existing: true` and writes nothing (media-worker D18; a concurrent duplicate's `23505`
+   * included). A new row comes with its seam and its `ingest` job (D5). */
   addAudioSegment: (input: {
     sessionId: string;
     mimeType: string;
     startedAtUtc: string | null;
     endedAtUtc: string | null;
     recordingOrdinal: number | null;
-  }) => Promise<AudioSegmentMeta>;
+    inputBytes?: number;
+    segmentId?: string;
+    r2Key?: string;
+  }) => Promise<AddedAudioSegment>;
+  /** A new segment's id and blob key, so the caller writes the blob before the row. */
+  planAudioSegment: (mimeType: string) => Promise<{ segmentId: string; r2Key: string }>;
+  /** The segment already holding a recording window, or null (media-worker D18). */
+  heldAudioWindow: (
+    recordingOrdinal: number,
+    startedAtUtc: string,
+  ) => Promise<AudioSegmentMeta | null>;
   /** An imported take's segment: picks the next recording ordinal and inserts the segment with
-   * it, in one transaction (S4). */
+   * it, in one transaction (S4), with its `ingest` job (media-worker D5). */
   addImportedAudioSegment: (input: {
     sessionId: string;
     mimeType: string;
     startedAtUtc: string | null;
     endedAtUtc: string | null;
+    inputBytes?: number;
+    segmentId?: string;
+    r2Key?: string;
   }) => Promise<{ segment: AudioSegmentMeta; recordingOrdinal: number }>;
   listAudioSegments: () => Promise<AudioSegmentMeta[]>;
+  /** One segment with its seams, or null. */
+  getAudioSegment: (segmentId: string) => Promise<AudioSegmentMeta | null>;
+  /** The recording's segments in merge input order (media-worker D7). */
+  segmentsOfRecording: (recordingOrdinal: number) => Promise<AudioSegmentMeta[]>;
+  /** The finalize (media-worker D6), in one transaction; writes no segment row. */
+  finalizeRecording: (
+    recordingOrdinal: number,
+    windows: readonly string[],
+  ) => Promise<FinalizeOutcome>;
+  /** Whether a `transcript-generation` or `youtube-import` run lease is live (media-worker D7). */
+  mediaRunLeaseHeld: () => Promise<boolean>;
+  /** Applies a validated ingest result and marks job `jobId` applied, in one transaction
+   * (media-worker D3, D5); `cancelled` when the target row is gone, `stale` when the job was no
+   * longer `done` (nothing written). */
+  applyMediaIngest: (jobId: string, a: IngestApply) => Promise<MediaIngestApplyOutcome>;
+  /** Applies a validated merge result and marks job `jobId` applied, in one transaction
+   * (media-worker D7): `deferred` while a run lease is held (nothing written), `cancelled` (and a
+   * new merge enqueued) when the inputs changed, `invalid` (the job failed `invalid-result`) when
+   * the result drops a held window, `stale` when the job was no longer `done`. */
+  applyMediaMerge: (jobId: string, a: MergeApply) => Promise<MediaMergeApplyOutcome>;
+  /** A failed job's segment: `media_status = 'failed'` with the code (media-worker D5). */
+  markMediaFailed: (segmentId: string, error: string) => Promise<boolean>;
+  /** Records the recording's current segment set as one its merge cannot handle (B.9). */
+  blockMerge: (recordingOrdinal: number) => Promise<void>;
   deleteAudioSegment: (segmentId: string) => Promise<void>;
   getAudioSegmentKey: (segmentId: string) => Promise<{ r2_key: string; mime_type: string } | null>;
   setAudioSegmentWaveform: (input: { segmentId: string; peaks: number[] }) => Promise<boolean>;
   syncAudioFromBlobs: (
-    known: Array<{ r2_key: string; ordinal: number }>,
+    known: Array<{ r2_key: string; ordinal: number; bytes?: number }>,
   ) => Promise<{ inserted: number }>;
   appendAudioSeamParts: (parts: AudioSeamPart[]) => Promise<void>;
   getAudioSeamParts: () => Promise<AudioSeamPart[] | null>;
@@ -428,6 +475,36 @@ export interface SessionHubRegistryOptions {
   storage: (sessionId: string) => SessionStorage;
   clock?: Clock;
   bus?: SessionFrameBus;
+  /** The media statements (media-worker D2, D18); without them segments get no seam or job. */
+  media?: SessionMediaPorts;
+}
+
+export type MediaIngestApplyOutcome =
+  | { kind: 'applied'; replacedKey: string | null }
+  | { kind: 'cancelled' }
+  | { kind: 'stale' };
+
+export type MediaMergeApplyOutcome =
+  | { kind: 'applied'; trashKeys: string[] }
+  | { kind: 'deferred' }
+  | { kind: 'cancelled' }
+  | { kind: 'invalid' }
+  | { kind: 'stale' };
+
+/** The job was no longer `done` when its apply tried to mark it (media-worker D3): the transaction
+ * rolls back and the apply answers `stale`. */
+class MediaJobStaleError extends Error {
+  override name = 'MediaJobStaleError';
+}
+
+/** A Postgres unique violation (SQLSTATE `23505`), anywhere in the cause chain. */
+function isUniqueViolation(err: unknown): boolean {
+  let e: unknown = err;
+  for (let depth = 0; e && depth < 5; depth += 1) {
+    if ((e as { code?: unknown }).code === '23505') return true;
+    e = (e as { cause?: unknown }).cause;
+  }
+  return false;
 }
 
 /** What a hub body runs against (design D3): the stores over one core. A write body gets them
@@ -442,15 +519,17 @@ interface HubStores {
   transcript: TranscriptStore;
   topics: TopicStore;
   dashboards: DashboardStore;
+  media: SessionMediaPorts | null;
   tx<T>(fn: (s: HubStores) => Promise<T>): Promise<T>;
 }
 
-function storesFor(core: SessionCore): HubStores {
+function storesFor(core: SessionCore, media: SessionMediaPorts | null): HubStores {
   const stores: HubStores = {
     core,
     events: new EventStore(core),
     transport: new TransportStore(core),
-    audio: new AudioStore(core),
+    audio: new AudioStore(core, media),
+    media,
     lease: new LeaseStore(core),
     transcript: new TranscriptStore(core),
     topics: new TopicStore(core),
@@ -458,6 +537,25 @@ function storesFor(core: SessionCore): HubStores {
     tx: (fn) => core.db.tx(() => fn(stores)),
   };
   return stores;
+}
+
+/** The hub's media ports, which every media apply needs (the composition root wires them). */
+function requireMedia(s: HubStores): SessionMediaPorts {
+  if (s.media === null) throw new Error('this session hub has no media ports');
+  return s.media;
+}
+
+/** A live `transcript-generation` or `youtube-import` run lease (media-worker D7): the merge apply
+ * waits, since those runs read the segment blobs for seconds. */
+async function runLeaseHeld(s: HubStores): Promise<boolean> {
+  const r = await s.core.first(
+    `SELECT 1 AS x FROM session_leases
+      WHERE session_id = ? AND kind IN ('transcript-generation', 'youtube-import')
+        AND expires_at_ms > ?`,
+    s.core.sessionId,
+    s.core.now(),
+  );
+  return r !== null;
 }
 
 /** The async context of an open hub transaction body; `parent` is an enclosing body on another
@@ -540,6 +638,7 @@ export class SessionHub implements SessionHubEntry {
     private readonly storage: SessionStorage,
     private readonly clock: Clock,
     bus: SessionFrameBus | undefined,
+    private readonly media: SessionMediaPorts | null = null,
   ) {
     this.lastTouchedMs = clock.now();
     // A hub opened on its own delivers to its own sockets (session-frame-bus D1).
@@ -562,8 +661,9 @@ export class SessionHub implements SessionHubEntry {
     storage: SessionStorage,
     clock: Clock = DEFAULT_CLOCK,
     bus?: SessionFrameBus,
+    media?: SessionMediaPorts,
   ): Promise<SessionHub> {
-    const hub = new SessionHub(sessionId, storage, clock, bus);
+    const hub = new SessionHub(sessionId, storage, clock, bus, media ?? null);
     try {
       // A lease that went stale while the process was down: clean it up now and
       // re-arm the timer if it is still live (spec: expireIfStale on open).
@@ -603,7 +703,7 @@ export class SessionHub implements SessionHubEntry {
         return mode === 'write'
           ? await this.transaction(caller, body)
           : await this.storage.snapshot(caller, (t) =>
-              body(storesFor(this.core.forSnapshot(t, caller))),
+              body(storesFor(this.core.forSnapshot(t, caller), this.media)),
             );
       } finally {
         release();
@@ -660,7 +760,7 @@ export class SessionHub implements SessionHubEntry {
         return SessionHub.txContext.run(ctx, async () => {
           try {
             bound.core = this.core.forTransaction(t, caller);
-            const result = await body(storesFor(bound.core));
+            const result = await body(storesFor(bound.core, this.media));
             // The live projection commits with the write (session-tables design D8).
             await bound.core.writeProjectionIfDirty();
             const sessionId = this.core.sessionId;
@@ -1179,8 +1279,102 @@ export class SessionHubView implements SessionHubFacade {
   }
 
   // --- audio delegates ---
-  addAudioSegment(input: Parameters<AudioStore['addAudioSegment']>[0]) {
-    return this.inTxn((s) => s.audio.addAudioSegment(input));
+  /** media-worker D18: a concurrent upload of the same window fails this transaction with
+   * `23505` on the seam key; the request then answers the segment that won. */
+  async addAudioSegment(
+    input: Parameters<AudioStore['addAudioSegment']>[0],
+  ): Promise<AddedAudioSegment> {
+    try {
+      return await this.inTxn((s) => s.audio.addAudioSegment(input));
+    } catch (err) {
+      const ro = input.recordingOrdinal;
+      if (!isUniqueViolation(err) || ro === null || input.startedAtUtc === null) throw err;
+      const started = input.startedAtUtc;
+      const held = await this.read((s) => s.audio.heldWindow(ro, started));
+      if (held === null) throw err;
+      return { ...held, existing: true };
+    }
+  }
+  getAudioSegment(segmentId: string) {
+    return this.read((s) => s.audio.getAudioSegment(segmentId));
+  }
+  planAudioSegment(mimeType: string) {
+    return this.read((s) => s.audio.planAudioSegment(mimeType));
+  }
+  heldAudioWindow(recordingOrdinal: number, startedAtUtc: string) {
+    return this.read((s) => s.audio.heldWindow(recordingOrdinal, startedAtUtc));
+  }
+  segmentsOfRecording(recordingOrdinal: number) {
+    return this.read((s) => s.audio.segmentsOfRecording(recordingOrdinal));
+  }
+  finalizeRecording(recordingOrdinal: number, windows: readonly string[]) {
+    return this.inTxn((s) => s.audio.finalizeRecording(recordingOrdinal, windows));
+  }
+  mediaRunLeaseHeld() {
+    return this.read((s) => runLeaseHeld(s));
+  }
+  applyMediaIngest(jobId: string, a: IngestApply): Promise<MediaIngestApplyOutcome> {
+    return this.staleSafe(
+      this.inTxn(async (s): Promise<MediaIngestApplyOutcome> => {
+        const media = requireMedia(s);
+        const now = s.core.now();
+        const out = await s.audio.applyIngest(a);
+        if (out === null) {
+          if (!(await media.jobs.markCancelled(s.core.uncountedDb, jobId, 'inputs-changed', now))) {
+            throw new MediaJobStaleError('the media job is no longer live');
+          }
+          return { kind: 'cancelled' };
+        }
+        if (!(await media.jobs.markApplied(s.core.uncountedDb, jobId, now))) {
+          throw new MediaJobStaleError('the media job is no longer done');
+        }
+        return { kind: 'applied', replacedKey: out.replacedKey };
+      }),
+    );
+  }
+  applyMediaMerge(jobId: string, a: MergeApply): Promise<MediaMergeApplyOutcome> {
+    return this.staleSafe(
+      this.inTxn(async (s): Promise<MediaMergeApplyOutcome> => {
+        const media = requireMedia(s);
+        const now = s.core.now();
+        // panel C: a generation or YouTube run reads blobs for seconds; never swap under it.
+        if (await runLeaseHeld(s)) return { kind: 'deferred' };
+        const out = await s.audio.applyMerge(a);
+        if (out.kind === 'inputs-changed') {
+          if (!(await media.jobs.markCancelled(s.core.uncountedDb, jobId, 'inputs-changed', now))) {
+            throw new MediaJobStaleError('the media job is no longer live');
+          }
+          if ((await s.audio.segmentsOfRecording(a.recordingOrdinal)).length >= 2) {
+            await s.audio.enqueueMerge(a.recordingOrdinal);
+          }
+          return { kind: 'cancelled' };
+        }
+        if (out.kind === 'invalid') {
+          if (!(await media.jobs.markFailed(s.core.uncountedDb, jobId, 'invalid-result', now))) {
+            throw new MediaJobStaleError('the media job is no longer done');
+          }
+          return { kind: 'invalid' };
+        }
+        if (!(await media.jobs.markApplied(s.core.uncountedDb, jobId, now))) {
+          throw new MediaJobStaleError('the media job is no longer done');
+        }
+        return { kind: 'applied', trashKeys: out.trashKeys };
+      }),
+    );
+  }
+  markMediaFailed(segmentId: string, error: string) {
+    return this.inTxn((s) => s.audio.markMediaFailed(segmentId, error));
+  }
+  blockMerge(recordingOrdinal: number) {
+    return this.inTxn((s) => s.audio.blockMerge(recordingOrdinal));
+  }
+  private async staleSafe<T>(p: Promise<T>): Promise<T | { kind: 'stale' }> {
+    try {
+      return await p;
+    } catch (err) {
+      if (err instanceof MediaJobStaleError) return { kind: 'stale' };
+      throw err;
+    }
   }
   /** An imported take's segment (async-session-hub design D5, S4): the next recording ordinal
    * (`nextRecordingOrdinal`) and the segment that carries it are one transaction, so two
@@ -1190,6 +1384,9 @@ export class SessionHubView implements SessionHubFacade {
     mimeType: string;
     startedAtUtc: string | null;
     endedAtUtc: string | null;
+    inputBytes?: number;
+    segmentId?: string;
+    r2Key?: string;
   }) {
     return this.inTxn(async (s) => {
       const recordingOrdinal = await nextRecordingOrdinal(s);
@@ -1370,6 +1567,7 @@ export class SessionHubRegistry implements SessionHubRegistryFacade {
 
   private readonly storage: (sessionId: string) => SessionStorage;
   private readonly clock: Clock;
+  private readonly media: SessionMediaPorts | undefined;
   /** Every hub's frame bus (session-frame-bus D1). */
   readonly bus: SessionFrameBus;
 
@@ -1379,6 +1577,7 @@ export class SessionHubRegistry implements SessionHubRegistryFacade {
   constructor(options: SessionHubRegistryOptions) {
     this.storage = options.storage;
     this.clock = options.clock ?? DEFAULT_CLOCK;
+    this.media = options.media;
     this.bus = options.bus ?? new LocalFrameBus((msg) => this.deliver(msg));
   }
 
@@ -1405,7 +1604,13 @@ export class SessionHubRegistry implements SessionHubRegistryFacade {
 
   private async openHub(sessionId: string): Promise<SessionHub> {
     try {
-      const hub = await SessionHub.open(sessionId, this.storage(sessionId), this.clock, this.bus);
+      const hub = await SessionHub.open(
+        sessionId,
+        this.storage(sessionId),
+        this.clock,
+        this.bus,
+        this.media,
+      );
       this.hubs.set(sessionId, hub);
       return hub;
     } finally {

@@ -16,7 +16,7 @@
 // Consumed by scripts/merge-session-audio.ts and (transcript generation) the
 // transcribe router; not part of the HTTP surface itself.
 
-import { mkdir, rm } from 'node:fs/promises';
+import { mkdir, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   ALL_FORMATS,
@@ -57,7 +57,22 @@ export interface MergedGroup {
 
 export interface SkippedSegment {
   path: string;
+  /** `missing`: no file at the path (a listed row without bytes; transcript generation fails the
+   * run on it, media-worker D9). `unreadable`: present but unparseable, trackless or outside the
+   * supported families (skipped, the reconciliation posture). */
+  kind: 'missing' | 'unreadable';
   reason: string;
+}
+
+/** True when `path` names no file (`ENOENT`/`ENOTDIR`); other stat errors are left to the probe. */
+async function isMissingPath(path: string): Promise<boolean> {
+  try {
+    await stat(path);
+    return false;
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    return code === 'ENOENT' || code === 'ENOTDIR';
+  }
 }
 
 export interface MergeAudioSegmentsResult {
@@ -142,21 +157,29 @@ async function probeSegment(
   path: string,
   skipped: SkippedSegment[],
 ): Promise<ProbedSegment | null> {
+  if (await isMissingPath(path)) {
+    skipped.push({ path, kind: 'missing', reason: 'blob missing from the blob store' });
+    return null;
+  }
   const input = new Input({ formats: ALL_FORMATS, source: new FilePathSource(path) });
   try {
     const track = await input.getPrimaryAudioTrack();
     if (!track) {
-      skipped.push({ path, reason: 'no audio track found' });
+      skipped.push({ path, kind: 'unreadable', reason: 'no audio track found' });
       return null;
     }
     const config = await track.getDecoderConfig();
     if (!config || !track.codec) {
-      skipped.push({ path, reason: 'unsupported or unknown codec' });
+      skipped.push({ path, kind: 'unreadable', reason: 'unsupported or unknown codec' });
       return null;
     }
     const family = classifyFamily(track.codec);
     if (!family) {
-      skipped.push({ path, reason: `unsupported codec family (${track.codec})` });
+      skipped.push({
+        path,
+        kind: 'unreadable',
+        reason: `unsupported codec family (${track.codec})`,
+      });
       return null;
     }
     const isFlac = family === 'flac';
@@ -169,7 +192,11 @@ async function probeSegment(
       totalSamples: isFlac ? flacTotalSamples(config) : null,
     };
   } catch (err) {
-    skipped.push({ path, reason: err instanceof Error ? err.message : String(err) });
+    skipped.push({
+      path,
+      kind: 'unreadable',
+      reason: err instanceof Error ? err.message : String(err),
+    });
     return null;
   } finally {
     input.dispose();
@@ -205,6 +232,48 @@ export function partitionRuns(probed: ProbedSegment[]): ProbedSegment[][] {
   return runs;
 }
 
+/** Samples (at 48 kHz) in one Opus packet, from its TOC byte (RFC 6716 §3.1); null when the
+ * packet is too short to tell. */
+export function opusPacketSamples(data: Uint8Array): number | null {
+  if (data.length < 1) return null;
+  const config = data[0] >> 3;
+  // Frame size in 48 kHz samples: SILK 10/20/40/60 ms, hybrid 10/20 ms, CELT 2.5/5/10/20 ms.
+  const frame =
+    config < 12
+      ? [480, 960, 1920, 2880][config % 4]
+      : config < 16
+        ? [480, 960][config % 2]
+        : [120, 240, 480, 960][config % 4];
+  const code = data[0] & 0x03;
+  let frames: number;
+  if (code === 0) frames = 1;
+  else if (code === 1 || code === 2) frames = 2;
+  else {
+    if (data.length < 2) return null;
+    frames = data[1] & 0x3f;
+  }
+  return frames * frame;
+}
+
+/** A packet's exact duration in seconds: Opus from its TOC (Opus timestamps are 48 kHz), else the
+ * container's duration, else (an undurationed last block) the previous packet's, else an AAC
+ * frame. */
+function exactPacketDuration(
+  family: Exclude<CodecFamily, 'mp3' | 'flac'>,
+  data: Uint8Array,
+  containerDuration: number,
+  previous: number,
+  sampleRate: number,
+): number {
+  if (family === 'opus') {
+    const samples = opusPacketSamples(data);
+    if (samples !== null && samples > 0) return samples / 48_000;
+  }
+  if (containerDuration > 0) return containerDuration;
+  if (previous > 0) return previous;
+  return family === 'aac' ? 1024 / sampleRate : 0;
+}
+
 /** Packet-copy one param-homogeneous run into a single output file. The
  * decoder config is attached on the first packet of THIS group's output
  * track only (a counter scoped to this call, not shared across groups) —
@@ -221,6 +290,7 @@ async function mergeGroup(
   output.addAudioTrack(source);
 
   const segments: SegmentOffset[] = [];
+  const sampleRate = run[0].config.sampleRate;
   let packets = 0;
   let offset = 0;
   let firstPacketOfGroup = true;
@@ -239,21 +309,38 @@ async function mergeGroup(
           const track = await input.getPrimaryAudioTrack();
           if (!track) throw new Error('no audio track found on merge pass');
           const sink = new EncodedPacketSink(track);
-          let firstTimestamp: number | null = null;
+          // media-worker D.8: each packet is placed at the running end of what was written, by
+          // its exact sample duration, never by the input's container times. Chrome's
+          // MediaRecorder WebM leaves its last block without a duration and rounds block times to
+          // whole milliseconds, so container times made the next input start on (or before) the
+          // previous one's last packet: non-monotonic timestamps at every seam. The inputs are
+          // continuous streams, so the running sum is also what a decoder plays.
+          let lastDuration = 0;
           for await (const packet of sink.packets()) {
-            firstTimestamp ??= packet.timestamp;
-            const timestamp = packet.timestamp - firstTimestamp + offset;
+            const timestamp = end;
             let data: Uint8Array | undefined;
+            let duration: number;
             if (family === 'flac') {
+              const { blockSize } = parseFlacFrameHeader(packet.data);
               data = renumberFlacFrame(packet.data, flacSampleNumber);
-              flacSampleNumber += parseFlacFrameHeader(packet.data).blockSize;
+              flacSampleNumber += blockSize;
+              duration = blockSize / sampleRate;
+            } else {
+              duration = exactPacketDuration(
+                family,
+                packet.data,
+                packet.duration,
+                lastDuration,
+                sampleRate,
+              );
             }
+            lastDuration = duration;
             await source.add(
-              packet.clone(data ? { timestamp, data } : { timestamp }),
+              packet.clone(data ? { timestamp, duration, data } : { timestamp, duration }),
               firstPacketOfGroup ? { decoderConfig: run[0].config } : undefined,
             );
             firstPacketOfGroup = false;
-            end = Math.max(end, timestamp + packet.duration);
+            end = timestamp + duration;
             packets += 1;
           }
         } catch (err) {
@@ -263,13 +350,18 @@ async function mergeGroup(
           if (packets !== packetsBefore) throw err;
           skipped.push({
             path: seg.path,
+            kind: 'unreadable',
             reason: err instanceof Error ? err.message : String(err),
           });
           continue;
         }
         if (packets === packetsBefore) {
           // e.g. mediabunny 1.50.8 misreads the FLAC "rate in kHz" frame-header code (12, 64 kHz)
-          skipped.push({ path: seg.path, reason: 'no audio packets could be read' });
+          skipped.push({
+            path: seg.path,
+            kind: 'unreadable',
+            reason: 'no audio packets could be read',
+          });
           continue;
         }
         segments.push({
@@ -361,6 +453,7 @@ export async function mergeAudioSegments(
       if (run.length === 1) {
         skipped.push({
           path: run[0].path,
+          kind: 'unreadable',
           reason: err instanceof Error ? err.message : String(err),
         });
         continue;
@@ -375,7 +468,11 @@ export async function mergeAudioSegments(
           if (group) groups.push(group);
           skipped.push(...oneSkipped);
         } catch (e) {
-          skipped.push({ path: seg.path, reason: e instanceof Error ? e.message : String(e) });
+          skipped.push({
+            path: seg.path,
+            kind: 'unreadable',
+            reason: e instanceof Error ? e.message : String(e),
+          });
         }
       }
     }

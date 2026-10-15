@@ -1,55 +1,68 @@
 /**
- * Recorder-owned chunk upload pipeline (chunked-live-recording, design D6;
- * spec: live-recording-chunks "Chunk uploads are single-flight and ordered",
- * "Upload failure is surfaced and recoverable", "Rescue and uploads are
- * bound to their recording's session and survive component lifecycle").
+ * Recorder-owned chunk upload pipeline (chunked-live-recording, design D6; media-worker design
+ * D6, D10, D11; spec: live-recording-chunks "Chunk uploads are single-flight and ordered",
+ * "Upload failure is surfaced and recoverable", "Rescue and uploads are bound to their
+ * recording's session and survive component lifecycle", "Finished chunks are persisted locally
+ * until the server confirms them", "A stopped recording is finalized").
  *
- * Pure sequencing/queue/ordering logic — framework-free (no React import),
- * clock and upload injected. `MediaRecorder` wiring stays in
- * `AudioRecorder.tsx` (task 4.2 consumes this module; it does not construct
- * one).
+ * Framework-free (no React import); every effect (upload, segments list, finalize, the parts
+ * upload, storage, locks, the timer, the network) is an injected dependency, so tests drive it
+ * with fakes. `getChunkUploadQueue()` builds the tab's singleton with the real ones.
  *
- * **Single-flight, in order.** All triggers — a rollover boundary, the
- * user's Retry, the final stop — call `pump()`, which is the only place an
- * upload attempt starts. `pump()` is re-entrancy-guarded (`inFlight`): a
- * concurrent call while an attempt is already running does not start a
- * second one — it returns the SAME promise as the in-flight attempt (fix-
- * wave F1), so a caller that awaits a collapsed call still observes the
- * real drain outcome rather than a false-immediate resolution. Only the
- * head of the queue (lowest capture index among chunks still eligible for
- * upload — queued or retry-eligible permanent-but-not-yet-classified) is
- * ever attempted; a later chunk is never attempted while an earlier one's
- * outcome is unknown.
+ * **Single-flight, in order.** Every trigger (a rollover, the final stop, Retry, the backoff
+ * tick, `online`) calls `pump()`, the only place an attempt starts. A concurrent call while one
+ * runs returns the SAME promise (fix-wave F1). Only the earliest eligible chunk in capture order
+ * is attempted; a later chunk never starts while an earlier one's outcome is unknown.
  *
- * **Failure classification.** `ApiError` (thrown by `apiFetch`, see
- * `web/src/api/client.ts`) carries an HTTP status: 5xx, 408, and 429 are
- * transient (re-attempted on the next pump); any other 4xx is permanent
- * (set aside as rescue-only, never blocks later chunks). Anything else
- * (a raw network-level `TypeError`, an aborted fetch, or any rejection
- * without a numeric `status`) is treated as **ambiguous** — the request may
- * have reached the server — and is handled via the dedupe hook below rather
- * than assumed transient outright.
+ * **Classification** (media-worker D11). Transient (network, 5xx, 408, 429) → stays `queued`
+ * with a per-chunk exponential backoff (`uploadBackoff.ts`, 2 s → 5 min, jittered) persisted as
+ * `nextAttemptAt`; a 1 s tick on a worker interval pumps when the head is due. `401`/`403` →
+ * `blocked` (sign-in lost). Other 4xx → `permanent` (rescue-only, never blocks later chunks).
+ * `413` → re-sent through the resumable parts upload in segment mode. Neither `blocked` nor
+ * `permanent` chunks are retried automatically; **Retry** (`retryAll`, `retryChunk`) gives each
+ * of them one attempt. While the browser is `offline` nothing is attempted and no attempt is
+ * counted; `online` resets the delays and pumps at once.
  *
- * **Ambiguous-failure dedupe.** Before re-attempting a chunk that
- * previously failed ambiguously, the pipeline calls the injected
- * `listSegments()` and looks for an existing segment sharing the chunk's
- * `recordingOrdinal` and `startedAtUtc`. A match is treated as that chunk's
- * success (no re-upload); no match re-attempts the upload as transient.
+ * **Ambiguous-failure dedupe.** A failure with no status (the request may have reached the
+ * server) and every recovered chunk start `ambiguous`: before the next attempt the segments list
+ * is checked for the window `(recording_ordinal, started_at_utc)` (live rows and the seams of
+ * merged rows), normalised exactly as the server's `parseOptionalMarkedAt` does. A match is that
+ * chunk's success. The server's idempotent segment POST (D18) is the second guard.
  *
- * **Zero-byte chunks are rejected at `enqueue()`** (documented choice, task
- * 4.1): `enqueue()` returns `false` and never adds the chunk to the queue,
- * rather than silently accepting and later skipping it — this keeps "what
- * is in the queue" answerable without a hidden skip rule, and lets the
- * caller (task 4.2) decide what, if anything, to log.
+ * **Storage** (D10). A chunk may carry its bytes in memory (`blob`) or by reference into the
+ * chunk store (`storeId`); the bytes are read back for each attempt and removed from storage on
+ * confirmation, before the next chunk is attempted. Each attempt holds the chunk's Web Lock.
+ * `recover(userId)` scans the store once per page load and enqueues every unlocked entry of
+ * that user in capture order.
  *
- * **Leaving the queue.** A chunk is removed from the queue only on
- * confirmed success (including dedupe-confirmed success) or an explicit
- * `discard`/`discardAll` call. Nothing in this module auto-discards —
- * permanent classification sets a chunk aside as rescue-only; it does not
- * remove it.
+ * **Finalize** (D6). `requestFinalize` records (and persists) a stopped recording's window list;
+ * once no chunk of that recording remains in the queue (queued, blocked, permanent or in flight)
+ * the queue sends `POST …/recordings/:ordinal/finalize` once. Any `2xx` (`queued`, `not-needed`,
+ * `already-queued`, `waiting`) is done; a failure is retried on the backoff. Discarding a chunk
+ * drops its window from the list. Finalize never changes the queue's `idle`.
+ *
+ * **Zero-byte chunks are rejected at `enqueue()`** (returns `false`). Nothing here auto-discards.
  */
 
-/** A clock the pipeline reads for chunk bookkeeping — never `Date.now()` directly, so tests inject a fake one. */
+import { apiFetch } from '../../../api/client';
+import type {
+  AudioSegment,
+  AudioSegmentsResponse,
+  RecordingFinalizeResponse,
+} from '../../../api/types';
+import { PartsUploadError, type PartsUploadOptions, uploadInParts } from '../../../api/uploads';
+import { createWorkerInterval } from '../../../shared/utils/workerInterval';
+import { type ChunkStore, getChunkStore } from './chunkStore';
+import type { ChunkManifest } from './chunkStore/types';
+import {
+  browserLockManager,
+  createRecorderLocks,
+  HEARTBEAT_REFRESH_MS,
+  type RecorderLocks,
+} from './recorderLocks';
+import { backoffDelayMs } from './uploadBackoff';
+
+/** A clock the pipeline reads — never `Date.now()` directly, so tests inject a fake one. */
 export interface Clock {
   now: () => number;
 }
@@ -62,66 +75,172 @@ export type UploadOutcome =
     }
   | { ok: false; status?: number; message: string };
 
-/** A previously-uploaded segment, as returned by the injected `listSegments()` — the shape `useAudioSegments` already exposes, narrowed to the fields dedupe needs. */
+/** A stored segment as the dedupe sees it: its window and, when merged, its seams' windows. */
 export interface ExistingSegment {
   recording_ordinal: number | null;
   started_at_utc: string | null;
+  seams?: ReadonlyArray<{ started_at_utc: string | null }> | null;
 }
 
-/** One chunk as captured by the recorder, before it enters the queue. */
+/** One chunk entering the queue. Bytes come either in memory (`blob`) or from the store. */
 export interface ChunkInput {
   sessionId: string;
   recordingOrdinal: number;
-  /** 0-based capture order within the recording — the single-flight ordering key. */
+  /** 0-based capture order within the recording. */
   chunkIndex: number;
-  blob: Blob;
   startedAtUtc: string;
   endedAtUtc: string;
   mimeType: string;
+  /** In-memory bytes (a chunk the store could not persist, or tests). */
+  blob?: Blob;
+  /** The chunk store entry holding the bytes. */
+  storeId?: string;
+  /** The signed-in user owning `storeId`. */
+  userId?: string;
+  /** Byte count when `blob` is absent. */
+  bytes?: number;
+  /** Recovered from storage after a reload (the rescue surface groups these). */
+  recovered?: boolean;
+  /** Captured up to a crash, never finalized by its recorder. */
+  partial?: boolean;
+  /** Written by Safari (7-day eviction note). */
+  safari?: boolean;
 }
 
-export type ChunkClassification = 'queued' | 'permanent';
+/** What an upload function receives: the chunk with its bytes. */
+export type UploadChunk = Omit<ChunkInput, 'blob'> & { blob: Blob };
 
-/** A chunk's state as tracked by the queue — the shape exposed in snapshots. */
+export type ChunkClassification = 'queued' | 'blocked' | 'permanent';
+
+/** A chunk's state as exposed in snapshots. */
 export interface QueuedChunk {
+  /** Stable identity within this queue (the store id when stored). */
+  key: string;
   sessionId: string;
   recordingOrdinal: number;
   chunkIndex: number;
-  blob: Blob;
+  /** In-memory bytes, or `null` when the bytes live in the store (`readChunk`). */
+  blob: Blob | null;
+  bytes: number;
+  storeId: string | null;
   startedAtUtc: string;
   endedAtUtc: string;
   mimeType: string;
-  /** 'queued': eligible for the next pump (fresh, or transient-failed). 'permanent': rescue-only, never auto-retried by pump. */
+  /** `queued`: eligible (fresh or transient-failed); `blocked`: 401/403; `permanent`: other 4xx. */
   classification: ChunkClassification;
-  /** Present once at least one attempt has failed; cleared on a fresh enqueue (never happens post-classification, but kept honest). */
   lastError: string | null;
   attempts: number;
+  /** Epoch ms of the next automatic attempt, `null` when not scheduled. */
+  nextAttemptAt: number | null;
+  recovered: boolean;
+  partial: boolean;
+  safari: boolean;
+  /** The signed-in user who recorded it (`null`: unknown). */
+  userId: string | null;
+}
+
+export interface PendingFinalizeRef {
+  sessionId: string;
+  recordingOrdinal: number;
 }
 
 /** Immutable snapshot of queue state — what the rescue surface and recorder read. */
 export interface ChunkQueueSnapshot {
   chunks: QueuedChunk[];
   inFlight: boolean;
-  /** True iff there is nothing queued, nothing permanent, and no attempt in flight. */
+  /** True iff no chunk is held and no attempt is in flight (a pending finalize does not count). */
   idle: boolean;
-  /** Distinct recording ordinals held by chunks still in the queue (queued or permanent) — a general snapshot facet for callers that need to know which recordings still have unresolved chunks. Does NOT feed design D8's next-ordinal derivation: `AudioRecorder.tsx` derives that directly from the queue's own `chunks` (session-filtered), not from this field. */
+  /** Distinct recording ordinals held by chunks in the queue. */
   pendingOrdinals: number[];
+  offline: boolean;
+  pendingFinalizes: PendingFinalizeRef[];
+  /** The signed-in user the recorder reported (`undefined` until it did). */
+  currentUser: string | null | undefined;
 }
 
-export type UploadFn = (chunk: ChunkInput) => Promise<UploadOutcome>;
+// The finalize answer is a client response type (api/types, checked against its capture).
+export type { RecordingFinalizeMerge, RecordingFinalizeResponse } from '../../../api/types';
+
+export type UploadFn = (chunk: UploadChunk) => Promise<UploadOutcome>;
 export type ListSegmentsFn = (sessionId: string) => Promise<ExistingSegment[]>;
+export type FinalizeFn = (
+  sessionId: string,
+  recordingOrdinal: number,
+  windows: string[],
+) => Promise<RecordingFinalizeResponse>;
 export type QueueListener = (snapshot: ChunkQueueSnapshot) => void;
+
+export interface NetworkStatus {
+  isOnline(): boolean;
+  /** Subscribe to `online`/`offline`; returns an unsubscribe. */
+  subscribe(onOnline: () => void, onOffline: () => void): () => void;
+}
+
+export type QueueStore = Pick<
+  ChunkStore,
+  'read' | 'remove' | 'list' | 'saveFinalize' | 'removeFinalize' | 'touch'
+>;
 
 export interface ChunkUploadQueueDeps {
   upload: UploadFn;
   listSegments: ListSegmentsFn;
   clock: Clock;
+  finalize?: FinalizeFn;
+  /** The resumable parts upload in segment mode (the `413` fallback, D11/D12). */
+  uploadSegmentParts?: UploadFn;
+  store?: QueueStore;
+  locks?: RecorderLocks;
+  /** Starts the backoff tick (production: `createWorkerInterval`). No scheduler, no auto-retry. */
+  scheduler?: (periodMs: number, onTick: () => void) => { stop(): void };
+  network?: NetworkStatus;
+  random?: () => number;
+  /** Duration in seconds of recovered bytes (media element), `null`/non-finite when unknown. */
+  probeDuration?: (blob: Blob) => Promise<number | null>;
+  /** Called after a chunk is confirmed (segments query invalidation). */
+  onConfirmed?: (sessionId: string) => void;
+  /**
+   * Diagnostics for a failed attempt (A.9; development builds only in production wiring): the
+   * failure class and HTTP status, with the chunk's identity — never its bytes.
+   */
+  debug?: (message: string) => void;
 }
 
-/** Internal per-chunk record — carries fields a `QueuedChunk` snapshot copy omits (ambiguous-failure state). */
+export interface RequestFinalizeInput {
+  userId?: string | null;
+  sessionId: string;
+  recordingOrdinal: number;
+  windows: string[];
+}
+
+/** The backoff tick's period (design D11). */
+export const SCHEDULER_TICK_MS = 1_000;
+
 interface InternalChunk extends QueuedChunk {
-  /** Set when the most recent attempt failed ambiguously (no usable status) — the head-of-queue check re-checks via `listSegments()` before re-attempting instead of retrying blind. */
+  /** Failures counted for the backoff (reset by `online`). */
+  failures: number;
   ambiguous: boolean;
+  /** One user-initiated attempt regardless of classification. */
+  retryOnce: boolean;
+  /** A `413` sent this chunk to the parts upload; later attempts go there directly. */
+  viaParts: boolean;
+  seq: number;
+  /** Releases the chunk lock this queue holds while it owns the chunk (A.8). */
+  releaseLock: (() => void) | null;
+  /** The chunk-lock hold `own()` started and has not settled yet (A.10). */
+  holding: Promise<void> | null;
+  /** A hold was attempted and another tab held the lock. */
+  holdRefused: boolean;
+  /** A recovered partial chunk whose end is measured from its bytes before its first upload. */
+  measure: ChunkManifest | null;
+}
+
+interface PendingFinalize {
+  userId: string | null;
+  sessionId: string;
+  recordingOrdinal: number;
+  windows: string[];
+  failures: number;
+  nextAttemptAt: number | null;
 }
 
 function isTransientStatus(status: number): boolean {
@@ -129,41 +248,80 @@ function isTransientStatus(status: number): boolean {
 }
 
 /**
- * Construct a chunk upload queue instance. Framework-free: callers own
- * lifetime and identity — see `getChunkUploadQueue` below for the module-
- * scope singleton this repo's coordination modules use (`coordination/
- * registry.ts`, `departureWatcher.ts`), which is what task 4.2's component
- * wiring is expected to consume.
+ * The server's window key: `parseOptionalMarkedAt` (`server/src/routers/_helpers.ts`), i.e.
+ * `new Date(Date.parse(raw.trim().replace('+00:00', 'Z'))).toISOString()`.
  */
+export function normaliseWindow(raw: string | null | undefined): string | null {
+  if (raw === null || raw === undefined) return null;
+  const trimmed = String(raw).trim();
+  if (!trimmed) return null;
+  const ms = Date.parse(trimmed.replace('+00:00', 'Z'));
+  return Number.isNaN(ms) ? trimmed : new Date(ms).toISOString();
+}
+
+const finalizeKey = (sessionId: string, ordinal: number) => `${sessionId}\u0000${ordinal}`;
+
+function compareCapture(a: InternalChunk, b: InternalChunk): number {
+  const ta = Date.parse(a.startedAtUtc);
+  const tb = Date.parse(b.startedAtUtc);
+  if (Number.isFinite(ta) && Number.isFinite(tb) && ta !== tb) return ta - tb;
+  if (a.sessionId === b.sessionId && a.recordingOrdinal !== b.recordingOrdinal) {
+    return a.recordingOrdinal - b.recordingOrdinal;
+  }
+  if (a.chunkIndex !== b.chunkIndex) return a.chunkIndex - b.chunkIndex;
+  return a.seq - b.seq;
+}
+
+/** Duration (s) of `bytes` from the slice log's byte rate, or null. */
+function durationFromSliceLog(m: ChunkManifest, bytes: number): number | null {
+  const start = Date.parse(m.startedAtUtc);
+  const last = m.sliceLog[m.sliceLog.length - 1];
+  if (!last || !Number.isFinite(start)) return null;
+  const logged = m.sliceLog.reduce((s, e) => s + e.bytes, 0);
+  const spanSec = (last.at - start) / 1000;
+  if (logged <= 0 || spanSec <= 0) return null;
+  return bytes / (logged / spanSec);
+}
+
 export function createChunkUploadQueue(deps: ChunkUploadQueueDeps) {
   const { upload, listSegments, clock } = deps;
+  const random = deps.random ?? Math.random;
 
   let chunks: InternalChunk[] = [];
+  const finalizes = new Map<string, PendingFinalize>();
   let inFlight = false;
-  /**
-   * The currently-running pump's completion promise (fix-wave F1). A
-   * collapsed `pump()` call (re-entrancy guard below) returns THIS promise
-   * rather than resolving immediately with no signal — callers that need to
-   * know when the queue has actually finished draining (e.g. the final-stop
-   * drain in `AudioRecorder.tsx`) can `await` a collapsed call and get a
-   * real completion signal instead of a false "done" the instant the guard
-   * trips.
-   */
+  /** The running pump's promise (fix-wave F1): a collapsed `pump()` returns it. */
   let current: Promise<void> | null = null;
   const listeners = new Set<QueueListener>();
+  let seq = 0;
+  let offline = deps.network ? !deps.network.isOnline() : false;
+  let ticker: { stop(): void } | null = null;
+  let lastHeartbeatAt = 0;
+  const recoveries = new Map<string, Promise<{ recovered: number }>>();
+  const recoveredUsers = new Set<string>();
+  /** The signed-in user; `undefined` until told (then nothing is filtered). */
+  let currentUser: string | null | undefined;
 
   function toSnapshot(): ChunkQueueSnapshot {
     const snapshotChunks: QueuedChunk[] = chunks.map((c) => ({
+      key: c.key,
       sessionId: c.sessionId,
       recordingOrdinal: c.recordingOrdinal,
       chunkIndex: c.chunkIndex,
       blob: c.blob,
+      bytes: c.bytes,
+      storeId: c.storeId,
       startedAtUtc: c.startedAtUtc,
       endedAtUtc: c.endedAtUtc,
       mimeType: c.mimeType,
       classification: c.classification,
       lastError: c.lastError,
       attempts: c.attempts,
+      userId: c.userId,
+      nextAttemptAt: c.nextAttemptAt,
+      recovered: c.recovered,
+      partial: c.partial,
+      safari: c.safari,
     }));
     const pendingOrdinals = Array.from(new Set(chunks.map((c) => c.recordingOrdinal))).sort(
       (a, b) => a - b,
@@ -173,160 +331,431 @@ export function createChunkUploadQueue(deps: ChunkUploadQueueDeps) {
       inFlight,
       idle: !inFlight && chunks.length === 0,
       pendingOrdinals,
+      offline,
+      currentUser,
+      pendingFinalizes: Array.from(finalizes.values(), (f) => ({
+        sessionId: f.sessionId,
+        recordingOrdinal: f.recordingOrdinal,
+      })),
     };
   }
 
+  /** Run the backoff tick only while something is pending. */
+  function syncTicker(): void {
+    const busy = chunks.length > 0 || finalizes.size > 0;
+    if (busy && !ticker && deps.scheduler) {
+      ticker = deps.scheduler(SCHEDULER_TICK_MS, onTick);
+    } else if (!busy && ticker) {
+      ticker.stop();
+      ticker = null;
+    }
+  }
+
   function notify(): void {
+    syncTicker();
     const snapshot = toSnapshot();
     for (const listener of listeners) listener(snapshot);
   }
 
+  const due = (at: number | null) => at === null || at <= clock.now();
+  const holdsOrdinal = (sessionId: string, ordinal: number) =>
+    chunks.some((c) => c.sessionId === sessionId && c.recordingOrdinal === ordinal);
+
+  function scheduleRetry(c: { failures: number; nextAttemptAt: number | null }): void {
+    c.failures += 1;
+    c.nextAttemptAt = clock.now() + backoffDelayMs(c.failures, random);
+  }
+
+  /** Pending chunk-lock acquisitions (`whenOwned`). */
+  const owning = new Set<Promise<void>>();
+
   /**
-   * Enqueue a captured chunk. Zero-byte blobs are rejected outright (never
-   * added to the queue) — returns `false`. Returns `true` on successful
-   * enqueue. Chunks are kept sorted by `chunkIndex` so the head is always
-   * the earliest un-resolved chunk in capture order.
+   * Hold the chunk's Web Lock for as long as this queue owns the chunk — through backoff,
+   * offline and blocked, not only during an attempt — so another tab's scan never recovers it
+   * (A.8). When another tab already holds it, the chunk is checked against the server first.
    */
-  function enqueue(input: ChunkInput): boolean {
-    if (input.blob.size === 0) return false;
+  function own(record: InternalChunk): void {
+    const locks = deps.locks;
+    if (locks?.mode !== 'locks' || !record.storeId) return;
+    const p = locks.holdChunk(record.storeId).then((release) => {
+      if (!release) {
+        record.holdRefused = true;
+        return;
+      }
+      if (chunks.includes(record)) record.releaseLock = release;
+      else release();
+    });
+    record.holding = p;
+    owning.add(p);
+    void p.finally(() => {
+      owning.delete(p);
+      if (record.holding === p) record.holding = null;
+    });
+  }
+
+  /**
+   * Before an attempt (A.10): wait for this queue's own pending hold — the rollover pumps right
+   * after the enqueue — and, when another tab held the lock, ask once more. False: another tab
+   * still owns the chunk.
+   */
+  async function ensureOwned(head: InternalChunk): Promise<boolean> {
+    if (head.holding) await head.holding;
+    if (!head.holdRefused || !head.storeId || !deps.locks) return true;
+    const release = await deps.locks.holdChunk(head.storeId);
+    if (!release) return false;
+    head.holdRefused = false;
+    if (chunks.includes(head)) head.releaseLock = release;
+    else release();
+    return true;
+  }
+
+  function disown(record: InternalChunk): void {
+    const release = record.releaseLock;
+    record.releaseLock = null;
+    release?.();
+  }
+
+  /** Settles once every chunk lock this queue is acquiring is held. */
+  async function whenOwned(): Promise<void> {
+    await Promise.all(Array.from(owning));
+  }
+
+  /** A chunk this tab may upload: never another user's (the request carries this user's cookie). */
+  const mayUpload = (c: InternalChunk) =>
+    currentUser === undefined || c.userId === null || c.userId === currentUser;
+
+  function setCurrentUser(userId: string | null): void {
+    currentUser = userId;
+    notify();
+  }
+
+  /** Drop every chunk and pending finalize of `userId` (sign-out wipes their storage). */
+  function discardUser(userId: string): void {
+    for (const c of chunks.slice()) if (c.userId === userId) void discardChunk(c.key);
+    for (const [k, f] of Array.from(finalizes)) if (f.userId === userId) finalizes.delete(k);
+    notify();
+  }
+
+  function enqueueInternal(
+    input: ChunkInput,
+    flags: { ambiguous?: boolean; measure?: ChunkManifest; held?: () => void } = {},
+  ): InternalChunk | null {
+    const size = input.blob ? input.blob.size : (input.bytes ?? 0);
+    if (size === 0) return null;
+    seq += 1;
     const record: InternalChunk = {
+      key:
+        input.storeId ?? `${input.sessionId}:${input.recordingOrdinal}:${input.chunkIndex}:${seq}`,
       sessionId: input.sessionId,
       recordingOrdinal: input.recordingOrdinal,
       chunkIndex: input.chunkIndex,
-      blob: input.blob,
+      blob: input.blob ?? null,
+      bytes: size,
+      storeId: input.storeId ?? null,
+      userId: input.userId ?? null,
       startedAtUtc: input.startedAtUtc,
       endedAtUtc: input.endedAtUtc,
       mimeType: input.mimeType,
       classification: 'queued',
       lastError: null,
       attempts: 0,
-      ambiguous: false,
+      nextAttemptAt: null,
+      recovered: input.recovered === true,
+      partial: input.partial === true,
+      safari: input.safari === true,
+      failures: 0,
+      ambiguous: flags.ambiguous === true,
+      retryOnce: false,
+      viaParts: false,
+      seq,
+      measure: null,
+      releaseLock: null,
+      holding: null,
+      holdRefused: false,
     };
+    record.measure = flags.measure ?? null;
     chunks.push(record);
-    chunks.sort((a, b) => a.chunkIndex - b.chunkIndex);
+    chunks.sort(compareCapture);
+    if (record.storeId && !flags.held) own(record);
+    else if (flags.held) record.releaseLock = flags.held;
+    return record;
+  }
+
+  /** Enqueue a captured chunk. Zero-byte chunks are rejected (`false`). */
+  function enqueue(input: ChunkInput): boolean {
+    const record = enqueueInternal(input);
+    if (!record) return false;
     notify();
     return true;
   }
 
-  /** The earliest chunk still eligible for an upload attempt: 'queued' classification, in capture order. Permanent chunks are skipped — they never block or get auto-retried by pump. */
+  /** The earliest chunk eligible for an attempt: `queued`, or given one attempt by Retry. */
   function nextAttemptable(): InternalChunk | undefined {
-    return chunks.find((c) => c.classification === 'queued');
+    return chunks.find((c) => (c.classification === 'queued' || c.retryOnce) && mayUpload(c));
   }
 
-  /** 'confirmed': a matching segment exists — success. 'not-found': the lookup ran cleanly and found no match — safe to re-attempt now. 'lookup-failed': the lookup itself errored — still unknown, must not re-attempt blind. */
-  type DedupeResult = 'confirmed' | 'not-found' | 'lookup-failed';
+  type DedupeResult = 'confirmed' | 'not-found' | 'lookup-failed' | 'blocked';
 
   async function resolveAmbiguous(chunk: InternalChunk): Promise<DedupeResult> {
     let existing: ExistingSegment[];
     try {
       existing = await listSegments(chunk.sessionId);
-    } catch {
-      return 'lookup-failed';
+    } catch (err) {
+      const status = extractStatus(err);
+      // Signed out: retrying the lookup on its own can never succeed (A.8).
+      return status === 401 || status === 403 ? 'blocked' : 'lookup-failed';
     }
+    const want = normaliseWindow(chunk.startedAtUtc);
     const found = existing.some(
       (seg) =>
         seg.recording_ordinal === chunk.recordingOrdinal &&
-        seg.started_at_utc === chunk.startedAtUtc,
+        (normaliseWindow(seg.started_at_utc) === want ||
+          (seg.seams ?? []).some((seam) => normaliseWindow(seam.started_at_utc) === want)),
     );
     return found ? 'confirmed' : 'not-found';
   }
 
+  async function confirmChunk(chunk: InternalChunk): Promise<void> {
+    if (chunk.storeId && deps.store && chunk.userId) {
+      try {
+        await deps.store.remove(chunk.userId, chunk.storeId);
+      } catch {
+        /* the 30-day cleanup removes a leftover; the dedupe stops a re-upload */
+      }
+    }
+    chunks = chunks.filter((c) => c !== chunk);
+    disown(chunk);
+    deps.onConfirmed?.(chunk.sessionId);
+    notify();
+  }
+
+  async function bytesOf(chunk: InternalChunk): Promise<Blob> {
+    if (chunk.blob) return chunk.blob;
+    if (!chunk.storeId || !chunk.userId || !deps.store) {
+      throw new Error('This chunk has no bytes attached.');
+    }
+    return deps.store.read(chunk.userId, chunk.storeId);
+  }
+
+  type Step = 'continue' | 'stop';
+
+  function report(head: InternalChunk, cls: string, status: number | undefined, message: string) {
+    deps.debug?.(
+      `chunk upload ${cls}${status === undefined ? '' : ` (HTTP ${status})`}: session ${head.sessionId}, recording ${head.recordingOrdinal}, chunk ${head.chunkIndex + 1}, attempt ${head.attempts}: ${message}`,
+    );
+  }
+
+  /** Classify a failed outcome that carried a status (or none, reported by the upload fn). */
+  function onFailure(head: InternalChunk, status: number | undefined, message: string): Step {
+    head.lastError = message;
+    const cls =
+      status === 401 || status === 403
+        ? 'blocked'
+        : status !== undefined && !isTransientStatus(status)
+          ? 'permanent'
+          : 'transient';
+    report(head, cls, status, message);
+    if (status === 401 || status === 403) {
+      head.classification = 'blocked';
+      head.nextAttemptAt = null;
+      return 'continue';
+    }
+    if (status !== undefined && !isTransientStatus(status)) {
+      head.classification = 'permanent';
+      head.nextAttemptAt = null;
+      return 'continue';
+    }
+    // Transient (5xx/408/429), or a status-less failure the upload fn reported itself.
+    head.classification = 'queued';
+    scheduleRetry(head);
+    return 'stop';
+  }
+
+  /** One attempt for `head` under its chunk lock. */
+  async function attempt(head: InternalChunk): Promise<Step> {
+    head.retryOnce = false;
+    if (!(await ensureOwned(head))) return contended(head);
+    if (head.ambiguous) {
+      const result = await resolveAmbiguous(head);
+      if (result === 'confirmed') {
+        await confirmChunk(head);
+        return 'continue';
+      }
+      if (result === 'blocked') {
+        head.classification = 'blocked';
+        head.lastError = 'Signed out: the server refused the upload check.';
+        head.nextAttemptAt = null;
+        return 'continue';
+      }
+      if (result === 'lookup-failed') {
+        // Still unknown: never re-upload blind. The tick tries the lookup again.
+        scheduleRetry(head);
+        return 'stop';
+      }
+      head.ambiguous = false;
+    }
+
+    const run = async (): Promise<Step> => {
+      let blob: Blob;
+      try {
+        blob = await bytesOf(head);
+      } catch {
+        // The bytes vanished: most likely another tab uploaded the chunk and removed it. Ask the
+        // server before parking it (A.8).
+        const result = await resolveAmbiguous(head);
+        if (result === 'confirmed') {
+          await confirmChunk(head);
+          return 'continue';
+        }
+        if (result === 'lookup-failed') {
+          head.ambiguous = true;
+          scheduleRetry(head);
+          return 'stop';
+        }
+        head.classification = result === 'blocked' ? 'blocked' : 'permanent';
+        head.lastError = 'The locally stored audio for this chunk is no longer available.';
+        return 'continue';
+      }
+      if (head.measure) {
+        head.endedAtUtc = await measuredEnd(head.measure, blob);
+        head.measure = null;
+      }
+      if (head.storeId && head.userId && deps.store && deps.locks?.mode === 'heartbeat') {
+        await deps.store.touch(head.userId, head.storeId).catch(() => {});
+      }
+      const payload: UploadChunk = {
+        sessionId: head.sessionId,
+        recordingOrdinal: head.recordingOrdinal,
+        chunkIndex: head.chunkIndex,
+        startedAtUtc: head.startedAtUtc,
+        endedAtUtc: head.endedAtUtc,
+        mimeType: head.mimeType,
+        blob,
+        storeId: head.storeId ?? undefined,
+        userId: head.userId ?? undefined,
+        bytes: head.bytes,
+        recovered: head.recovered,
+        partial: head.partial,
+        safari: head.safari,
+      };
+      head.attempts += 1;
+      const send = async (fn: UploadFn): Promise<UploadOutcome | 'network'> => {
+        try {
+          return await fn(payload);
+        } catch (err) {
+          const status = extractStatus(err);
+          if (status === undefined) {
+            head.lastError = errorMessage(err);
+            return 'network';
+          }
+          return { ok: false, status, message: errorMessage(err) };
+        }
+      };
+      const parts = deps.uploadSegmentParts;
+      let outcome = await send(head.viaParts && parts ? parts : upload);
+      if (
+        outcome !== 'network' &&
+        !outcome.ok &&
+        outcome.status === 413 &&
+        !head.viaParts &&
+        parts
+      ) {
+        head.viaParts = true;
+        outcome = await send(parts);
+      }
+      if (outcome === 'network') {
+        // Ambiguous: the request may have reached the server. Dedupe before the next attempt.
+        report(head, 'network (ambiguous)', undefined, head.lastError ?? '');
+        head.ambiguous = true;
+        head.classification = 'queued';
+        scheduleRetry(head);
+        return 'stop';
+      }
+      if (outcome.ok) {
+        await confirmChunk(head);
+        return 'continue';
+      }
+      return onFailure(head, outcome.status, outcome.message);
+    };
+
+    // The queue already holds this chunk's lock for its whole stay (locks are not re-entrant);
+    // a per-attempt lock only where no hold was attempted (a chunk without a store entry).
+    if (!deps.locks || head.releaseLock) return run();
+    const locked = await deps.locks.withChunkLock(head.storeId ?? head.key, run);
+    if (locked.acquired) return locked.value;
+    return contended(head);
+  }
+
   /**
-   * Pump the pipeline: attempt the queue head, in a loop, until the queue
-   * drains or the head is left in a state that requires a fresh pump call
-   * (ambiguous-then-still-ambiguous, or all remaining chunks are
-   * permanent). Re-entrancy-guarded — concurrent callers (boundary, Retry,
-   * final stop) collapse onto whichever call is already running; a second
-   * call while `inFlight` is true returns the SAME promise as the running
-   * attempt (fix-wave F1) rather than resolving immediately with no
-   * signal, so a caller that awaits a collapsed call still observes the
-   * real drain outcome.
+   * Another tab owns this chunk: check the segments list later instead. Not a failure, so no
+   * `lastError` (the rescue surface does not show it); logged in development builds (A.10).
    */
-  function pump(): Promise<void> {
+  function contended(head: InternalChunk): Step {
+    report(head, 'lock contention', undefined, 'another tab holds this chunk');
+    head.ambiguous = true;
+    scheduleRetry(head);
+    return 'stop';
+  }
+
+  async function processFinalizes(auto: boolean): Promise<void> {
+    const send = deps.finalize;
+    if (!send) return;
+    for (const [key, f] of Array.from(finalizes)) {
+      if (offline) return;
+      if (holdsOrdinal(f.sessionId, f.recordingOrdinal)) continue;
+      if (currentUser !== undefined && f.userId !== null && f.userId !== currentUser) continue;
+      if (auto && !due(f.nextAttemptAt)) continue;
+      try {
+        await send(f.sessionId, f.recordingOrdinal, [...f.windows]);
+      } catch (err) {
+        const status = extractStatus(err);
+        const refused =
+          status !== undefined && status !== 401 && status !== 403 && !isTransientStatus(status);
+        if (!refused) {
+          scheduleRetry(f);
+          notify();
+          continue;
+        }
+        // 400/404: the server refuses this recording; its reconcile is the fallback (D6).
+        console.warn(
+          `Recording ${f.recordingOrdinal} could not be finalized (${status}: ${errorMessage(err)}); the server will merge it later.`,
+        );
+      }
+      finalizes.delete(key);
+      if (deps.store && f.userId) {
+        await deps.store.removeFinalize(f.userId, f.sessionId, f.recordingOrdinal).catch(() => {});
+      }
+      notify();
+    }
+  }
+
+  /**
+   * Pump the pipeline: attempt the head in a loop until the queue drains or the head needs a
+   * later attempt; then send due finalizes. `auto` (the tick) only acts on due items; every
+   * explicit trigger (rollover, stop, Retry) attempts the head now. Nothing runs while offline.
+   */
+  function pump(opts: { auto?: boolean } = {}): Promise<void> {
     if (inFlight) return current ?? Promise.resolve();
-    const run = runPump();
+    if (offline) return Promise.resolve();
+    const run = runPump(opts.auto === true);
     current = run;
     return run;
   }
 
-  async function runPump(): Promise<void> {
+  async function runPump(auto: boolean): Promise<void> {
     inFlight = true;
     try {
       notify();
-      // Loop rather than one-attempt-per-call so a single pump() (e.g. the
-      // final-stop trigger) drains everything currently attemptable without
-      // requiring the caller to re-invoke pump() per chunk.
       for (;;) {
+        if (offline) break;
         const head = nextAttemptable();
         if (!head) break;
-
-        if (head.ambiguous) {
-          const result = await resolveAmbiguous(head);
-          if (result === 'confirmed') {
-            chunks = chunks.filter((c) => c !== head);
-            notify();
-            continue;
-          }
-          if (result === 'lookup-failed') {
-            // The dedupe lookup itself is unreliable right now — stay
-            // ambiguous and stop this pump's loop rather than risk a
-            // duplicate upload on an unconfirmed chunk. A later pump tries
-            // the lookup again.
-            notify();
-            break;
-          }
-          // 'not-found': cleanly confirmed as not-yet-uploaded — safe to
-          // re-attempt the upload itself below.
-          head.ambiguous = false;
-        }
-
-        head.attempts += 1;
-        let outcome: UploadOutcome;
-        try {
-          outcome = await upload({
-            sessionId: head.sessionId,
-            recordingOrdinal: head.recordingOrdinal,
-            chunkIndex: head.chunkIndex,
-            blob: head.blob,
-            startedAtUtc: head.startedAtUtc,
-            endedAtUtc: head.endedAtUtc,
-            mimeType: head.mimeType,
-          });
-        } catch (err) {
-          const status = extractStatus(err);
-          if (status === undefined) {
-            // Network-level failure — ambiguous: the request may have
-            // reached the server. Stay queued; mark for dedupe-check on the
-            // next attempt instead of blind retry.
-            head.ambiguous = true;
-            head.lastError = errorMessage(err);
-            notify();
-            break;
-          }
-          outcome = { ok: false, status, message: errorMessage(err) };
-        }
-
-        if (outcome.ok) {
-          chunks = chunks.filter((c) => c !== head);
-          notify();
-          continue;
-        }
-
-        if (outcome.status !== undefined && !isTransientStatus(outcome.status)) {
-          head.classification = 'permanent';
-          head.lastError = outcome.message;
-          notify();
-          continue;
-        }
-
-        // Transient (5xx/408/429) or status-less non-network failure the
-        // upload fn reported directly: stay queued, re-attempted on the
-        // next pump — but stop this pump's loop so it doesn't spin forever
-        // against a live failure.
-        head.lastError = outcome.message;
+        if (auto && !head.retryOnce && !due(head.nextAttemptAt)) break;
+        const step = await attempt(head);
         notify();
-        break;
+        if (step === 'stop') break;
       }
+      await processFinalizes(auto);
     } finally {
       inFlight = false;
       current = null;
@@ -334,18 +763,286 @@ export function createChunkUploadQueue(deps: ChunkUploadQueueDeps) {
     }
   }
 
-  /** Explicit per-chunk discard — the only way (besides confirmed success) a chunk leaves the queue. Identifies the chunk by recordingOrdinal + chunkIndex. */
-  function discard(recordingOrdinal: number, chunkIndex: number): void {
-    chunks = chunks.filter(
-      (c) => !(c.recordingOrdinal === recordingOrdinal && c.chunkIndex === chunkIndex),
+  function onTick(): void {
+    if (offline || inFlight) return;
+    if (deps.locks?.mode === 'heartbeat' && deps.store) {
+      const now = clock.now();
+      if (now - lastHeartbeatAt >= HEARTBEAT_REFRESH_MS) {
+        lastHeartbeatAt = now;
+        for (const c of chunks) {
+          if (c.storeId && c.userId) void deps.store.touch(c.userId, c.storeId).catch(() => {});
+        }
+      }
+    }
+    const head = nextAttemptable();
+    const chunkDue = !!head && (head.retryOnce || due(head.nextAttemptAt));
+    const finalizeDue = Array.from(finalizes.values()).some(
+      (f) => due(f.nextAttemptAt) && !holdsOrdinal(f.sessionId, f.recordingOrdinal),
     );
-    notify();
+    if (chunkDue || finalizeDue) void pump({ auto: true });
   }
 
-  /** Explicit discard-all — requires the caller to have already obtained confirmation naming the amount discarded (the confirmation UI lives in the rescue surface, task 5.1; this module never auto-discards). */
-  function discardAll(): void {
-    chunks = [];
+  /** Retry: one attempt for every chunk, blocked and permanent included, in order. */
+  function retryAll(): Promise<void> {
+    for (const c of chunks) {
+      if (c.classification === 'queued') c.nextAttemptAt = null;
+      else c.retryOnce = true;
+    }
+    for (const f of finalizes.values()) f.nextAttemptAt = null;
     notify();
+    return pump();
+  }
+
+  /** Retry one chunk (its row's button): one attempt regardless of classification. */
+  function retryChunk(key: string): Promise<void> {
+    const c = chunks.find((x) => x.key === key);
+    if (c) {
+      if (c.classification === 'queued') c.nextAttemptAt = null;
+      else c.retryOnce = true;
+      notify();
+    }
+    return pump();
+  }
+
+  function dropWindow(chunk: InternalChunk): void {
+    const fk = finalizeKey(chunk.sessionId, chunk.recordingOrdinal);
+    const f = finalizes.get(fk);
+    if (!f) return;
+    const gone = normaliseWindow(chunk.startedAtUtc);
+    f.windows = f.windows.filter((w) => normaliseWindow(w) !== gone);
+    const store = deps.store;
+    if (f.windows.length > 0) {
+      if (store && f.userId) {
+        void store
+          .saveFinalize(f.userId, {
+            sessionId: f.sessionId,
+            recordingOrdinal: f.recordingOrdinal,
+            windows: f.windows,
+          })
+          .catch(() => {});
+      }
+      return;
+    }
+    finalizes.delete(fk);
+    if (store && f.userId) {
+      void store.removeFinalize(f.userId, f.sessionId, f.recordingOrdinal).catch(() => {});
+    }
+  }
+
+  /** Explicit discard of one chunk (after the user confirmed): queue, storage and its window. */
+  function discardChunk(key: string): Promise<void> {
+    const chunk = chunks.find((c) => c.key === key);
+    if (!chunk) return Promise.resolve();
+    chunks = chunks.filter((c) => c !== chunk);
+    disown(chunk);
+    dropWindow(chunk);
+    notify();
+    // The remaining windows of that recording may now be complete.
+    if (finalizes.size > 0) void pump();
+    if (chunk.storeId && chunk.userId && deps.store) {
+      return deps.store.remove(chunk.userId, chunk.storeId).catch(() => {});
+    }
+    return Promise.resolve();
+  }
+
+  /** Legacy addressing by recording ordinal + chunk index (first match). */
+  function discard(recordingOrdinal: number, chunkIndex: number): void {
+    const c = chunks.find(
+      (x) => x.recordingOrdinal === recordingOrdinal && x.chunkIndex === chunkIndex,
+    );
+    if (c) void discardChunk(c.key);
+  }
+
+  /** Discard every chunk (the caller obtained a confirmation naming the amount). */
+  function discardAll(): void {
+    for (const c of chunks.slice()) void discardChunk(c.key);
+  }
+
+  /** The chunk's bytes (Download). */
+  function readChunk(key: string): Promise<Blob> {
+    const c = chunks.find((x) => x.key === key);
+    if (!c) return Promise.reject(new Error('No such chunk in the queue.'));
+    return bytesOf(c);
+  }
+
+  /** Record a stopped recording's windows; finalize once its last chunk is confirmed. */
+  async function requestFinalize(input: RequestFinalizeInput): Promise<void> {
+    const fk = finalizeKey(input.sessionId, input.recordingOrdinal);
+    const existing = finalizes.get(fk);
+    const windows = existing
+      ? Array.from(new Set([...existing.windows, ...input.windows]))
+      : [...input.windows];
+    if (windows.length === 0) return;
+    const record: PendingFinalize = existing ?? {
+      userId: input.userId ?? null,
+      sessionId: input.sessionId,
+      recordingOrdinal: input.recordingOrdinal,
+      windows,
+      failures: 0,
+      nextAttemptAt: null,
+    };
+    record.windows = windows;
+    finalizes.set(fk, record);
+    notify();
+    if (deps.store && record.userId) {
+      await deps.store
+        .saveFinalize(record.userId, {
+          sessionId: record.sessionId,
+          recordingOrdinal: record.recordingOrdinal,
+          windows: record.windows,
+        })
+        .catch(() => {});
+    }
+    void pump();
+  }
+
+  /**
+   * A partial chunk's end (D10): its start plus the duration of its stored bytes — probed with a
+   * media element, else the slice log's byte rate (Chromium's joined WebM has no duration) —
+   * and the manifest's last write only as the fallback.
+   */
+  async function measuredEnd(m: ChunkManifest, blob: Blob): Promise<string> {
+    const start = Date.parse(m.startedAtUtc);
+    let sec: number | null = null;
+    try {
+      const probed = deps.probeDuration ? await deps.probeDuration(blob) : null;
+      if (typeof probed === 'number' && Number.isFinite(probed) && probed > 0) sec = probed;
+    } catch {
+      /* fall back to the slice log */
+    }
+    if (sec === null) sec = durationFromSliceLog(m, blob.size);
+    if (sec === null || !Number.isFinite(start)) return new Date(m.updatedAt).toISOString();
+    return new Date(start + Math.round(sec * 1000)).toISOString();
+  }
+
+  async function runRecovery(userId: string): Promise<{ recovered: number }> {
+    const store = deps.store;
+    if (!store) return { recovered: 0 };
+    let entries: ChunkManifest[];
+    try {
+      entries = await store.list(userId);
+    } catch {
+      return { recovered: 0 };
+    }
+    const known = new Set(chunks.map((c) => c.storeId).filter(Boolean));
+    const recoverable = async (m: ChunkManifest) =>
+      deps.locks ? deps.locks.isRecoverable(m) : true;
+
+    // Persisted finalize records first, so chunk groups below merge into them.
+    const records = new Map<string, ChunkManifest>();
+    for (const m of entries) {
+      if (m.kind !== 'finalize' || !(await recoverable(m))) continue;
+      records.set(finalizeKey(m.sessionId, m.recordingOrdinal), m);
+    }
+
+    const chunkEntries = entries
+      .filter((m) => m.kind === 'chunk' && !known.has(m.id))
+      .sort((a, b) => {
+        const d = Date.parse(a.startedAtUtc) - Date.parse(b.startedAtUtc);
+        if (Number.isFinite(d) && d !== 0) return d;
+        return a.recordingOrdinal - b.recordingOrdinal || a.chunkIndex - b.chunkIndex;
+      });
+
+    let recovered = 0;
+    const groups = new Map<string, { latest: ChunkManifest; starts: string[]; empty: string[] }>();
+    for (const m of chunkEntries) {
+      if (!(await recoverable(m))) continue;
+      const gk = finalizeKey(m.sessionId, m.recordingOrdinal);
+      const g = groups.get(gk) ?? { latest: m, starts: [], empty: [] };
+      if (m.chunkIndex >= g.latest.chunkIndex) g.latest = m;
+      groups.set(gk, g);
+      if (m.bytes <= 0) {
+        g.empty.push(m.startedAtUtc);
+        await store.remove(userId, m.id).catch(() => {});
+        continue;
+      }
+      // Own it for its whole stay here; another tab that got there first keeps it.
+      let held: (() => void) | undefined;
+      if (deps.locks?.mode === 'locks') {
+        const release = await deps.locks.holdChunk(m.id);
+        if (!release) continue;
+        held = release;
+      }
+      g.starts.push(m.startedAtUtc);
+      const partial = !(m.finalized && m.endedAtUtc);
+      const added = enqueueInternal(
+        {
+          sessionId: m.sessionId,
+          recordingOrdinal: m.recordingOrdinal,
+          chunkIndex: m.chunkIndex,
+          startedAtUtc: m.startedAtUtc,
+          // Measured from the bytes right before the first upload (never delays the scan).
+          endedAtUtc: partial ? new Date(m.updatedAt).toISOString() : (m.endedAtUtc as string),
+          mimeType: m.mimeType || 'audio/webm',
+          storeId: m.id,
+          userId,
+          bytes: m.bytes,
+          recovered: true,
+          partial: !m.finalized,
+          safari: m.safari,
+        },
+        partial ? { ambiguous: true, measure: m, held } : { ambiguous: true, held },
+      );
+      if (added) recovered += 1;
+      else held?.();
+    }
+
+    // Every recovered recording is over (its tab is gone): finalize it with its windows.
+    const keys = new Set([...records.keys(), ...groups.keys()]);
+    for (const fk of keys) {
+      if (finalizes.has(fk)) continue;
+      const record = records.get(fk);
+      const group = groups.get(fk);
+      const empty = new Set((group?.empty ?? []).map(normaliseWindow));
+      const base = record?.pendingFinalize ?? group?.latest.pendingFinalize ?? group?.starts ?? [];
+      const windows = base.filter((w) => !empty.has(normaliseWindow(w)));
+      const ref = record ?? group?.latest;
+      if (!ref || windows.length === 0) {
+        if (record) {
+          await store
+            .removeFinalize(userId, record.sessionId, record.recordingOrdinal)
+            .catch(() => {});
+        }
+        continue;
+      }
+      finalizes.set(fk, {
+        userId,
+        sessionId: ref.sessionId,
+        recordingOrdinal: ref.recordingOrdinal,
+        windows,
+        failures: 0,
+        nextAttemptAt: null,
+      });
+      if (!record) {
+        await store
+          .saveFinalize(userId, {
+            sessionId: ref.sessionId,
+            recordingOrdinal: ref.recordingOrdinal,
+            windows,
+          })
+          .catch(() => {});
+      }
+    }
+    notify();
+    void pump();
+    return { recovered };
+  }
+
+  /** Scan the store once per user per page load and enqueue its unlocked entries. */
+  function recover(userId: string): Promise<{ recovered: number }> {
+    let p = recoveries.get(userId);
+    if (!p) {
+      p = runRecovery(userId).finally(() => {
+        recoveredUsers.add(userId);
+      });
+      recoveries.set(userId, p);
+    }
+    return p;
+  }
+
+  /** True once this page load's scan for `userId` has completed. */
+  function recoveryDone(userId: string): boolean {
+    return recoveredUsers.has(userId);
   }
 
   function subscribe(listener: QueueListener): () => void {
@@ -359,21 +1056,57 @@ export function createChunkUploadQueue(deps: ChunkUploadQueueDeps) {
     return toSnapshot();
   }
 
-  // Exposed for tests / advanced callers that need to reason about "now"
-  // consistently with this queue's injected clock, without reaching back
-  // into deps themselves.
   function now(): number {
     return clock.now();
+  }
+
+  const unsubscribeNetwork = deps.network?.subscribe(
+    () => {
+      offline = false;
+      for (const c of chunks) {
+        c.failures = 0;
+        if (c.classification === 'queued') c.nextAttemptAt = null;
+      }
+      for (const f of finalizes.values()) {
+        f.failures = 0;
+        f.nextAttemptAt = null;
+      }
+      notify();
+      void pump();
+    },
+    () => {
+      offline = true;
+      notify();
+    },
+  );
+
+  /** Stop the tick and the network subscription (tests; the singleton lives with the tab). */
+  function dispose(): void {
+    for (const c of chunks) disown(c);
+    ticker?.stop();
+    ticker = null;
+    unsubscribeNetwork?.();
   }
 
   return {
     enqueue,
     pump,
+    retryAll,
+    retryChunk,
     discard,
+    discardChunk,
     discardAll,
+    readChunk,
+    requestFinalize,
+    recover,
+    recoveryDone,
+    whenOwned,
+    setCurrentUser,
+    discardUser,
     subscribe,
     getSnapshot,
     now,
+    dispose,
   };
 }
 
@@ -393,39 +1126,182 @@ function errorMessage(err: unknown): string {
 }
 
 // ---------------------------------------------------------------------------
-// Module-owned singleton registry — survives AudioRecorder unmount/remount
-// and session switches (design D6, spec "Rescue and uploads are bound to
-// their recording's session and survive component lifecycle"). Follows the
-// same convention as `coordination/registry.ts` and `departureWatcher.ts`:
-// plain module-scope state, never a `window` global. One queue instance per
-// browser tab (not per session) — chunks already carry `sessionId` bound at
-// their recording's start (D3/spec), so a single queue instance uploading
-// to multiple sessions' worth of stragglers is correct by construction; the
-// recorder does not need a fresh instance per session switch.
+// Production dependencies and the module-owned singleton.
+// ---------------------------------------------------------------------------
+
+/** Listeners told after any chunk is confirmed (the recorder invalidates the segments query). */
+const confirmedListeners = new Set<(sessionId: string) => void>();
+
+export function onChunkConfirmed(listener: (sessionId: string) => void): () => void {
+  confirmedListeners.add(listener);
+  return () => {
+    confirmedListeners.delete(listener);
+  };
+}
+
+/** Duration (s) of recorded bytes from a media element; `null` when not finite (Chromium WebM). */
+export function probeMediaDuration(blob: Blob, timeoutMs = 3_000): Promise<number | null> {
+  if (typeof document === 'undefined' || typeof URL.createObjectURL !== 'function') {
+    return Promise.resolve(null);
+  }
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(blob);
+    const el = document.createElement('audio');
+    let settled = false;
+    const finish = (value: number | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      el.removeAttribute('src');
+      URL.revokeObjectURL(url);
+      resolve(value);
+    };
+    const timer = setTimeout(() => finish(null), timeoutMs);
+    el.preload = 'metadata';
+    el.onloadedmetadata = () => finish(Number.isFinite(el.duration) ? el.duration : null);
+    el.onerror = () => finish(null);
+    el.src = url;
+  });
+}
+
+function browserNetwork(): NetworkStatus | undefined {
+  if (typeof window === 'undefined' || typeof navigator === 'undefined') return undefined;
+  return {
+    isOnline: () => navigator.onLine !== false,
+    subscribe(onOnline, onOffline) {
+      window.addEventListener('online', onOnline);
+      window.addEventListener('offline', onOffline);
+      return () => {
+        window.removeEventListener('online', onOnline);
+        window.removeEventListener('offline', onOffline);
+      };
+    },
+  };
+}
+
+/** A failure carrying an HTTP-like status the queue classifies (parts upload, A.8). */
+export class ChunkUploadError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'ChunkUploadError';
+  }
+}
+
+/**
+ * The `413` fallback (D11/D12): one live chunk through the resumable parts upload in segment
+ * mode. The upload is remembered per chunk (`resumeKey`), so a retry resumes it instead of
+ * opening another (the server allows 2 open uploads per user). A `PartsUploadError` becomes a
+ * status the queue classifies: capacity 429 and low disk 507 retry on the backoff, an interrupted
+ * resumable upload retries as 503, and a non-resumable failure is terminal (400) and visible.
+ */
+export async function uploadChunkViaParts(
+  chunk: UploadChunk,
+  uploader: (opts: PartsUploadOptions) => Promise<{ segmentId: string }> = uploadInParts,
+): Promise<UploadOutcome> {
+  try {
+    const { segmentId } = await uploader({
+      sessionId: chunk.sessionId,
+      blob: chunk.blob,
+      contentType: chunk.mimeType || chunk.blob.type || 'audio/webm',
+      completion: {
+        mode: 'segment',
+        recordingOrdinal: chunk.recordingOrdinal,
+        startedAtUtc: chunk.startedAtUtc,
+        endedAtUtc: chunk.endedAtUtc,
+      },
+      resumeKey: `live-chunk:${chunk.storeId ?? `${chunk.sessionId}:${chunk.recordingOrdinal}:${chunk.startedAtUtc}`}`,
+    });
+    return {
+      ok: true,
+      segment: {
+        id: segmentId,
+        recording_ordinal: chunk.recordingOrdinal,
+        started_at_utc: chunk.startedAtUtc,
+      },
+    };
+  } catch (err) {
+    if (err instanceof PartsUploadError) {
+      const status =
+        err.kind === 'capacity'
+          ? 429
+          : err.kind === 'disk'
+            ? 507
+            : err.kind === 'rejected'
+              ? (err.status ?? 400)
+              : err.resumable
+                ? 503
+                : 400;
+      throw new ChunkUploadError(status, `Large-chunk upload: ${err.message}`);
+    }
+    throw err;
+  }
+}
+
+/** The real dependencies: the segment POST, the segments list, finalize, parts, store, locks. */
+export function createDefaultChunkUploadQueueDeps(): ChunkUploadQueueDeps {
+  return {
+    upload: async (chunk) => {
+      const params = new URLSearchParams({
+        started_at_utc: chunk.startedAtUtc,
+        ended_at_utc: chunk.endedAtUtc,
+        recording_ordinal: String(chunk.recordingOrdinal),
+      });
+      const seg = await apiFetch<AudioSegment>(
+        `sessions/${chunk.sessionId}/audio/segments?${params.toString()}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': chunk.mimeType || 'audio/webm' },
+          body: chunk.blob,
+        },
+      );
+      return {
+        ok: true as const,
+        segment: {
+          id: seg.id,
+          recording_ordinal: seg.recording_ordinal,
+          started_at_utc: seg.started_at_utc,
+        },
+      };
+    },
+    uploadSegmentParts: (chunk) => uploadChunkViaParts(chunk),
+    listSegments: async (sessionId: string) =>
+      (await apiFetch<AudioSegmentsResponse>(`sessions/${sessionId}/audio/segments`)).segments,
+    finalize: (sessionId, recordingOrdinal, windows) =>
+      apiFetch<RecordingFinalizeResponse>(
+        `sessions/${sessionId}/audio/recordings/${recordingOrdinal}/finalize`,
+        { method: 'POST', body: JSON.stringify({ chunks: windows }) },
+      ),
+    clock: { now: () => Date.now() },
+    store: getChunkStore(),
+    locks: createRecorderLocks({ locks: browserLockManager(), now: () => Date.now() }),
+    scheduler: (period, onTick) => createWorkerInterval(period, onTick),
+    network: browserNetwork(),
+    probeDuration: (blob) => probeMediaDuration(blob),
+    onConfirmed: (sessionId) => {
+      for (const l of confirmedListeners) l(sessionId);
+    },
+    debug: process.env.NODE_ENV === 'development' ? (m) => console.warn(m) : undefined,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Module-owned singleton registry — survives AudioRecorder unmount/remount and session switches
+// (chunked-live-recording D6). One queue per tab; chunks carry their own session id.
 // ---------------------------------------------------------------------------
 
 let singleton: ChunkUploadQueue | null = null;
 
 /**
- * Listeners notified the moment the singleton comes into existence. The point
- * is to let a module that must NOT construct the queue itself (see
- * `chunkLeaveWarning.ts`, which reads via `peekChunkUploadQueue()` precisely so
- * it never wins the deps race) still start observing it the instant a real
- * caller builds it — without an import cycle, since the warning module already
- * imports this one and never the reverse.
+ * Listeners notified the moment the singleton comes into existence, so a module that must NOT
+ * construct the queue itself (`chunkLeaveWarning.ts`, which keeps the page bfcache-eligible until
+ * a recording exists) still observes it from its first moment.
  */
 const creationListeners = new Set<(queue: ChunkUploadQueue) => void>();
 
-/**
- * Subscribe to singleton construction. A late registrant — one that arrives
- * after the queue already exists — is called back immediately, so callers never
- * have to branch on "did I get here first?". Returns an unsubscribe.
- *
- * Listeners are NOT cleared by `resetChunkUploadQueueForTesting()`: the reset
- * seam drops the instance, not the observers, so a test that reconstructs the
- * singleton gets a fresh notification with the fresh instance (which is exactly
- * what re-arms the leave warning against the new queue).
- */
+/** Subscribe to singleton construction; a late registrant is called back at once. */
 export function onChunkUploadQueueCreated(cb: (queue: ChunkUploadQueue) => void): () => void {
   if (singleton) cb(singleton);
   creationListeners.add(cb);
@@ -435,41 +1311,25 @@ export function onChunkUploadQueueCreated(cb: (queue: ChunkUploadQueue) => void)
 }
 
 /**
- * Get (lazily creating) the process-wide chunk upload queue. `deps` is only
- * consulted on first call — later calls return the existing instance
- * regardless of `deps` (mirrors `SessionHubRegistry#get()`-style lazy
- * singleton lifecycles elsewhere in the repo). Production call sites pass
- * the same `deps` shape every time (bound `upload`/`listSegments` close over
- * the current session id at recording start per chunk, not per queue
- * instance — see `ChunkInput.sessionId`), so this is not observable outside
- * tests.
+ * Get (lazily creating) the tab's chunk upload queue. With no `deps` it is built with the real
+ * dependencies (media-worker A.3: there is no placeholder that throws, so whichever component
+ * renders first builds a working queue). `deps` is a test seam and only counts on construction.
  */
-export function getChunkUploadQueue(deps: ChunkUploadQueueDeps): ChunkUploadQueue {
+export function getChunkUploadQueue(deps?: ChunkUploadQueueDeps): ChunkUploadQueue {
   if (!singleton) {
-    singleton = createChunkUploadQueue(deps);
-    // Notified here rather than inside `createChunkUploadQueue` so that only
-    // the SINGLETON's construction is announced — a caller building a private
-    // instance (tests, future non-singleton use) is not an event anyone else
-    // should react to. Notifying on every fresh construction (not just the
-    // first ever) is what makes the post-reset rebuild re-announce.
+    singleton = createChunkUploadQueue(deps ?? createDefaultChunkUploadQueueDeps());
     for (const listener of creationListeners) listener(singleton);
   }
   return singleton;
 }
 
-/**
- * Read the singleton WITHOUT constructing it (never calls `createChunkUploadQueue`,
- * never touches `deps`). `null` when nothing has called `getChunkUploadQueue()`
- * yet in this tab — i.e. no recording has ever started, so there is nothing to
- * warn about. Callers that must not risk winning the first-construction race
- * (task 5.1's `beforeunload` leave-warning, which must work even if it happens
- * to evaluate before `AudioRecorder` does) use this instead of `getChunkUploadQueue`.
- */
+/** Read the singleton WITHOUT constructing it (`null` before any recording in this tab). */
 export function peekChunkUploadQueue(): ChunkUploadQueue | null {
   return singleton;
 }
 
-/** Test seam: drop the singleton so the next `getChunkUploadQueue()` call constructs a fresh instance against fresh deps. Production code never calls this. */
+/** Test seam: drop the singleton so the next `getChunkUploadQueue()` builds a fresh one. */
 export function resetChunkUploadQueueForTesting(): void {
+  singleton?.dispose();
   singleton = null;
 }

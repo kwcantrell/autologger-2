@@ -131,6 +131,70 @@ export const audioSegmentWaveformBodySchema = z.object({
 });
 export type AudioSegmentWaveformBody = z.infer<typeof audioSegmentWaveformBodySchema>;
 
+// -- media-worker (design D6, D12, D16) --------------------------------------
+
+/** The largest resumable upload (D12): equal to the local-audio-import cap. The server's own
+ * constant (`UPLOAD_MAX_BYTES` in `@autologger/storage/mediaLimits`) is the same value; the route
+ * answers `413` above it before this schema runs. */
+export const AUDIO_UPLOAD_MAX_BYTES = 1500 * 1024 * 1024;
+
+/** `POST /api/sessions/:sessionId/audio/uploads` (D12). The route checks the exact part count
+ * (`ceil(size_bytes / part_size)`) against its own part size. */
+export const audioUploadCreateBodySchema = z.object({
+  content_type: z.string().trim().min(1).max(255),
+  size_bytes: z.number().int().min(1).max(AUDIO_UPLOAD_MAX_BYTES),
+  part_sha256: z
+    .array(z.string().regex(/^[0-9a-f]{64}$/))
+    .min(1)
+    .max(10000),
+});
+export type AudioUploadCreateBody = z.infer<typeof audioUploadCreateBodySchema>;
+
+/** `POST /api/sessions/:sessionId/audio/recordings/:recordingOrdinal/finalize` (D6): the windows
+ * (`started_at_utc`) the client recorded. */
+export const audioFinalizeBodySchema = z.object({
+  chunks: z.array(z.string().min(1).max(64)).min(1).max(1000),
+});
+export type AudioFinalizeBody = z.infer<typeof audioFinalizeBodySchema>;
+
+/** The finalize route's answer (D6); a response shape, for the web client's type. */
+export const audioFinalizeResponseSchema = z.strictObject({
+  ok: z.literal(true),
+  merge: z.enum(['queued', 'not-needed', 'already-queued', 'waiting']),
+});
+export type AudioFinalizeResponse = z.infer<typeof audioFinalizeResponseSchema>;
+
+/** One seam of a merged segment in the segment dict (D7, D16). */
+export const audioSegmentSeamSchema = z.strictObject({
+  offset_ms: z.number().int().min(0),
+  started_at_utc: z.string(),
+  ended_at_utc: z.string().nullable(),
+});
+
+/** The audio segment dict (`GET`/`POST …/audio/segments`, D16): the 9 frozen keys plus
+ * `duration_ms`, `media_status` and `seams`. A response shape, pinned for the server's dict and
+ * the captured fixtures. */
+export const audioSegmentDictSchema = z.strictObject({
+  id: z.string(),
+  ordinal: z.number().int(),
+  started_at_utc: z.string().nullable(),
+  ended_at_utc: z.string().nullable(),
+  mime_type: z.string(),
+  recording_ordinal: z.number().int().nullable(),
+  url: z.string(),
+  waveform_peaks: z.array(z.number()).nullable(),
+  waveform_db_floor: z.number().nullable(),
+  duration_ms: z.number().int().min(0).nullable(),
+  media_status: z.enum(['pending', 'done', 'failed']).nullable(),
+  seams: z.array(audioSegmentSeamSchema).nullable(),
+});
+export type AudioSegmentDict = z.infer<typeof audioSegmentDictSchema>;
+
+/** The segment dict's keys, in the server's order. */
+export const AUDIO_SEGMENT_DICT_KEYS = Object.keys(
+  audioSegmentDictSchema.shape,
+) as readonly (keyof AudioSegmentDict)[];
+
 export const adminStudioCreateBodySchema = z.object({
   id: z.string().min(2).max(63),
   display_name: z.string().min(1).max(200),

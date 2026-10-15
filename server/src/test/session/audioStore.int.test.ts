@@ -25,6 +25,11 @@ describe('audioRowToMeta', () => {
       recording_ordinal: 2,
       waveform_peaks: [0.1, 0.2, 0.3],
       waveform_db_floor: -48,
+      // media-worker D16: a row without the media columns maps them to null.
+      duration_ms: null,
+      media_status: null,
+      media_error: null,
+      seams: null,
     });
   });
 
@@ -50,6 +55,10 @@ describe('audioRowToMeta', () => {
       recording_ordinal: null,
       waveform_peaks: null,
       waveform_db_floor: null,
+      duration_ms: null,
+      media_status: null,
+      media_error: null,
+      seams: null,
     });
   });
 });

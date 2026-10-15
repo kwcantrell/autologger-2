@@ -949,3 +949,114 @@ function sentSeg(
 ): DeepgramSentimentSegment {
   return { text, start_word, end_word, sentiment, sentiment_score };
 }
+
+// media-worker D.4 (design D9, transcript-generation "Timeline remapping of word timestamps"): a
+// merged segment carries `seams` (each original chunk's media offset and `started_at_utc`); each
+// word is anchored at its owning seam's wall-clock-derived anchor plus its offset inside the seam,
+// so the merged recording places words exactly as its separate chunks did.
+describe('seam-aware remap (media-worker D9)', () => {
+  const W0 = '2026-10-12T10:00:00.000Z';
+  const at = (sec: number) => new Date(Date.parse(W0) + sec * 1000).toISOString();
+  // `Recording 1 Started` at timeline 100 s (2400 frames @ 24 fps), wall time W0.
+  const anchors = recordingStartAnchors([
+    {
+      category: 'internal',
+      message: 'Recording 1 Started',
+      timecode_total_frames: 2400,
+      frame_rate: 24,
+      wall_time_utc: W0,
+    },
+  ]);
+  // Three 600 s chunks whose rollover gaps (30 ms, 50 ms) accumulate in wall-clock time.
+  const chunkStarts = [0, 600.03, 1200.08];
+  const chunkInfo: SegmentAnchorInfo[] = chunkStarts.map((s, i) => ({
+    path: `c${i + 1}`,
+    ordinal: i,
+    recordingOrdinal: 1,
+    startedAtUtc: at(s),
+  }));
+  const chunkGroup: EnrichmentGroup = {
+    segments: [
+      { path: 'c1', offsetSeconds: 0, durationSeconds: 600 },
+      { path: 'c2', offsetSeconds: 600, durationSeconds: 600 },
+      { path: 'c3', offsetSeconds: 1200, durationSeconds: 600 },
+    ],
+    words: [word('one', 5, 5.5), word('two', 610, 610.4), word('three', 1220, 1220.3)],
+    paragraphs: [{ start: 610, end: 1221, speaker: 0, text: 'two three' }],
+    sentiments: [],
+  };
+  const mergedInfo: SegmentAnchorInfo = {
+    path: 'm',
+    ordinal: 0,
+    recordingOrdinal: 1,
+    startedAtUtc: at(0),
+    seams: chunkStarts.map((s, i) => ({ offsetSec: i * 600, startedAtUtc: at(s) })),
+  };
+  const mergedGroup: EnrichmentGroup = {
+    ...chunkGroup,
+    segments: [{ path: 'm', offsetSeconds: 0, durationSeconds: 1800 }],
+  };
+
+  it('places each seam’s words at that seam’s anchor plus the in-seam offset, equal to the chunks', () => {
+    const before = remapTranscriptWords([chunkGroup], chunkInfo, anchors, 24);
+    const after = remapTranscriptWords([mergedGroup], [mergedInfo], anchors, 24);
+    expect(before.map((w) => w.start_sec)).toEqual(
+      [105, 710.03, 1320.08].map((v) => expect.closeTo(v, 6)),
+    );
+    expect(after).toHaveLength(3);
+    after.forEach((w, i) => {
+      expect(w.word).toBe(before[i].word);
+      expect(Math.abs(w.start_sec - before[i].start_sec)).toBeLessThan(0.001);
+      expect(Math.abs(w.end_sec - before[i].end_sec)).toBeLessThan(0.001);
+      expect(w.session_time).toBe(before[i].session_time);
+    });
+  });
+
+  it('never places the third chunk’s words at the merged file’s running time', () => {
+    const [, , third] = remapTranscriptWords([mergedGroup], [mergedInfo], anchors, 24);
+    // Running time would give 100 + 1220 = 1320; the seam anchor gives 1320.08.
+    expect(third.start_sec).toBeCloseTo(1320.08, 6);
+  });
+
+  it('resolves seams of a merged segment that sits later in a combined group file', () => {
+    const other: SegmentAnchorInfo = { path: 'x', ordinal: 9, recordingOrdinal: null };
+    const group: GroupWords = {
+      segments: [
+        { path: 'x', offsetSeconds: 0, durationSeconds: 50 },
+        { path: 'm', offsetSeconds: 50, durationSeconds: 1800 },
+      ],
+      words: [word('two', 660, 660.4)],
+    };
+    const [w] = remapTranscriptWords([group], [mergedInfo, other], anchors, 24);
+    expect(w.start_sec).toBeCloseTo(710.03, 6);
+  });
+
+  it('a segment without seams (null or absent) gives output identical to today', () => {
+    const withNull = chunkInfo.map((s) => ({ ...s, seams: null }));
+    expect(remapTranscriptWords([chunkGroup], withNull, anchors, 24)).toEqual(
+      remapTranscriptWords([chunkGroup], chunkInfo, anchors, 24),
+    );
+    expect(remapTranscriptEnrichment([chunkGroup], withNull, anchors)).toEqual(
+      remapTranscriptEnrichment([chunkGroup], chunkInfo, anchors),
+    );
+  });
+
+  it('paragraphs remap through the same seam path', () => {
+    const before = remapTranscriptEnrichment([chunkGroup], chunkInfo, anchors);
+    const after = remapTranscriptEnrichment([mergedGroup], [mergedInfo], anchors);
+    expect(after.paragraphs).toHaveLength(1);
+    expect(after.paragraphs[0].start_sec).toBeCloseTo(before.paragraphs[0].start_sec as number, 6);
+    expect(after.paragraphs[0].start_sec).toBeCloseTo(710.03, 6);
+  });
+
+  it('sentiment remaps through the same seam path', () => {
+    const withSentiment: EnrichmentGroup = {
+      ...mergedGroup,
+      sentiments: [
+        { start_word: 2, end_word: 2, text: 'three', sentiment: 'neutral', sentiment_score: 0 },
+      ],
+    };
+    const { sentiment } = remapTranscriptEnrichment([withSentiment], [mergedInfo], anchors);
+    expect(sentiment[0].start_sec).toBeCloseTo(1320.08, 6);
+  });
+});

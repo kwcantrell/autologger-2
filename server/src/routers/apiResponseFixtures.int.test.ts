@@ -705,7 +705,9 @@ describe('audio segments', () => {
       {
         name: 'audioSegmentCreate',
         endpoint: 'POST /api/sessions/:id/audio/segments',
-        format: 'json',
+        // media-worker D16: `media_status` is a literal union, which a JSON import widens.
+        format: 'ts',
+        exportName: 'audioSegmentCreate',
       },
       res,
     );
@@ -731,9 +733,120 @@ describe('audio segments', () => {
       {
         name: 'audioSegmentsList',
         endpoint: 'GET /api/sessions/:id/audio/segments',
-        format: 'json',
+        // media-worker D16: `media_status` is a literal union, which a JSON import widens.
+        format: 'ts',
+        exportName: 'audioSegmentsList',
       },
       res,
+    );
+  });
+});
+
+describe('audio media-worker routes (finalize, resumable uploads)', () => {
+  const sha = async (b: Uint8Array) =>
+    (await import('node:crypto')).createHash('sha256').update(b).digest('hex');
+
+  it('POST …/audio/recordings/:ord/finalize matches the captured fixture', async () => {
+    const { sessionId } = await seedActiveChain();
+    for (const [started, ended] of [
+      ['2026-10-12T10:00:00.000Z', '2026-10-12T10:10:00.000Z'],
+      ['2026-10-12T10:10:00.000Z', '2026-10-12T10:20:00.000Z'],
+    ] as const) {
+      const q = new URLSearchParams({
+        recording_ordinal: '1',
+        started_at_utc: started,
+        ended_at_utc: ended,
+      });
+      await app.request(
+        `/api/sessions/${sessionId}/audio/segments?${q.toString()}`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'audio/webm' },
+          body: new Uint8Array([1, 2, 3]),
+        },
+        { ...env },
+      );
+    }
+    const res = await app.request(
+      `/api/sessions/${sessionId}/audio/recordings/1/finalize`,
+      {
+        method: 'POST',
+        headers: JSON_HEADERS,
+        body: JSON.stringify({ chunks: ['2026-10-12T10:00:00.000Z', '2026-10-12T10:10:00.000Z'] }),
+      },
+      { ...env },
+    );
+    await expectCapturedResponse(
+      {
+        name: 'audioRecordingFinalize',
+        endpoint: 'POST /api/sessions/:id/audio/recordings/:recordingOrdinal/finalize',
+        format: 'ts',
+        exportName: 'audioRecordingFinalize',
+      },
+      res,
+    );
+  });
+
+  it('the upload create, status and complete bodies match the captured fixtures', async () => {
+    const { sessionId } = await seedActiveChain();
+    const file = new Uint8Array([4, 5, 6, 7, 8]);
+    const created = await app.request(
+      `/api/sessions/${sessionId}/audio/uploads`,
+      {
+        method: 'POST',
+        headers: JSON_HEADERS,
+        body: JSON.stringify({
+          content_type: 'audio/wav',
+          size_bytes: file.length,
+          part_sha256: [await sha(file)],
+        }),
+      },
+      { ...env },
+    );
+    await expectCapturedResponse(
+      {
+        name: 'audioUploadCreate',
+        endpoint: 'POST /api/sessions/:id/audio/uploads',
+        format: 'json',
+        status: 201,
+      },
+      created,
+    );
+    // The capture redacts the id; read the real one from the database.
+    const [row] = await testDb().all<{ id: string }>(
+      'SELECT id FROM catalog.media_uploads WHERE session_id = ? ORDER BY created_at_ms DESC LIMIT 1',
+      sessionId,
+    );
+    const id = String(row?.id);
+    await app.request(
+      `/api/sessions/${sessionId}/audio/uploads/${id}/parts/1`,
+      { method: 'PUT', headers: { 'content-type': 'application/octet-stream' }, body: file },
+      { ...env },
+    );
+    await expectCapturedResponse(
+      {
+        name: 'audioUploadStatus',
+        endpoint: 'GET /api/sessions/:id/audio/uploads/:uploadId',
+        format: 'json',
+      },
+      await app.request(
+        `/api/sessions/${sessionId}/audio/uploads/${id}`,
+        { method: 'GET' },
+        { ...env },
+      ),
+    );
+    await expectCapturedResponse(
+      {
+        name: 'audioUploadComplete',
+        endpoint: 'POST /api/sessions/:id/audio/uploads/:uploadId/complete',
+        format: 'ts',
+        exportName: 'audioUploadComplete',
+      },
+      await app.request(
+        `/api/sessions/${sessionId}/audio/uploads/${id}/complete?duration_s=1`,
+        { method: 'POST' },
+        { ...env },
+      ),
     );
   });
 });

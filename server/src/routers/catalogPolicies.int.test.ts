@@ -20,7 +20,7 @@ import {
   testDb,
 } from '../test/helpers';
 import { RewritingCatalog } from '../test/rewritingCatalog';
-import { type GateMatch, nthUserCall, sessionGate, systemCall } from '../test/session/sessionGate';
+import { type GateMatch, nthUserCall, sessionGate } from '../test/session/sessionGate';
 import { harnessHub } from '../test/session/sessionRows';
 import type { TestRegistry } from '../test/session/testHub';
 
@@ -555,7 +555,28 @@ describe('session hub calls refused in a race keep each route’s status (sessio
     expect(frames.filter((f) => f.type === 'event.changed')).toEqual([]);
   });
 
-  it('an audio upload whose blob write fails is undone as session-undo after a revoke: no segment row stays', async () => {
+  // media-worker (coordinator decision 2026-10-12): the blob is written before the row, so the
+  // undo of a row is gone; a revoke between the two refuses the row and the request deletes the
+  // blob it wrote, so neither stays.
+  it('an audio upload whose row is refused after a revoke leaves no segment row and no blob', async () => {
+    const m = await seedAccessMatrix();
+    const { res, hub } = await raced(m, nthUserCall(1, 'tx'), (e) =>
+      anonApp.request(
+        `/api/sessions/${m.sessionId}/audio/segments`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'audio/webm', Cookie: m.granted.cookie },
+          body: new Uint8Array([1, 2, 3, 4]),
+        },
+        e,
+      ),
+    );
+    expect(res.status).toBe(404);
+    expect(await hub.listAudioSegments()).toEqual([]);
+    expect((await env.ports.audio.list({ prefix: `audio/${m.sessionId}/` })).objects).toEqual([]);
+  });
+
+  it('an audio upload whose blob write fails writes no row', async () => {
     const m = await seedAccessMatrix();
     const failingAudio = new Proxy(env.ports.audio, {
       get(target, prop) {
@@ -564,23 +585,21 @@ describe('session hub calls refused in a race keep each route’s status (sessio
         return typeof value === 'function' ? value.bind(target) : value;
       },
     });
-    const { res, hub } = await raced(
-      m,
-      systemCall('session-undo'),
-      (e) =>
-        anonApp.request(
-          `/api/sessions/${m.sessionId}/audio/segments`,
-          {
-            method: 'POST',
-            headers: { 'content-type': 'audio/webm', Cookie: m.granted.cookie },
-            body: new Uint8Array([1, 2, 3, 4]),
-          },
-          e,
-        ),
-      { ports: { audio: failingAudio } },
+    const res = await anonApp.request(
+      `/api/sessions/${m.sessionId}/audio/segments`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'audio/webm', Cookie: m.granted.cookie },
+        body: new Uint8Array([1, 2, 3, 4]),
+      },
+      envWith({}, { audio: failingAudio }),
     );
     expect(res.status).toBe(500);
-    expect(await hub.listAudioSegments()).toEqual([]);
+    const rows = await testDb().all(
+      'SELECT 1 FROM catalog.session_audio_segments WHERE session_id = ?',
+      m.sessionId,
+    );
+    expect(rows).toEqual([]);
   });
 
   it('Companion with a cookie: log answers 409 and stores nothing; state answers 200 with the active session masked', async () => {

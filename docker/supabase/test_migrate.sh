@@ -15,6 +15,8 @@ P=alg-migrate-test
 PW=0123456789abcdef0123456789abcdef
 # The app role's password (catalog-pg-schema D4); runner passes it by name, like the service does.
 APPPW=fedcba9876543210fedcba9876543210; export APPPW
+# The media worker role's password (media-worker D1), passed the same way.
+MEDIAPW=0011223344556677889900aabbccddeeff; export MEDIAPW
 SCRATCH=$(mktemp -d)
 PASS=0; FAILED=0
 
@@ -34,14 +36,17 @@ until docker exec "$P-db" pg_isready -U postgres -h localhost >/dev/null 2>&1; d
 sleep 2 # the image restarts once after initdb
 
 # runner DIR: run migrate.sh over fixture DIR; output in $SCRATCH/out, status in $rc.
-# APP_DB_PASSWORD comes from the runner's environment ($APPPW unless the caller overrides it).
+# APP_DB_PASSWORD and MEDIA_DB_PASSWORD come from the runner's environment ($APPPW and $MEDIAPW
+# unless the caller overrides them); NO_APP_PW=1 / NO_MEDIA_PW=1 leave one out.
 runner() {
   rc=0
   _app="-e APP_DB_PASSWORD"; [ "${NO_APP_PW:-}" = 1 ] && _app=
-  # shellcheck disable=SC2086 # $_app is one flag pair or nothing
-  APP_DB_PASSWORD=${APP_DB_PASSWORD-$APPPW} docker run --rm --network "$P" --user postgres \
+  _media="-e MEDIA_DB_PASSWORD"; [ "${NO_MEDIA_PW:-}" = 1 ] && _media=
+  # shellcheck disable=SC2086 # $_app and $_media are one flag pair or nothing
+  APP_DB_PASSWORD=${APP_DB_PASSWORD-$APPPW} MEDIA_DB_PASSWORD=${MEDIA_DB_PASSWORD-$MEDIAPW} \
+    docker run --rm --network "$P" --user postgres \
     --read-only --tmpfs /tmp --cap-drop ALL \
-    -e PGHOST="$P-db" -e PGUSER=postgres -e PGDATABASE=postgres -e PGPASSWORD="$PW" $_app \
+    -e PGHOST="$P-db" -e PGUSER=postgres -e PGDATABASE="${RUN_DB:-postgres}" -e PGPASSWORD="$PW" $_app $_media \
     -v "$1:/migrations:ro" -v "$ROOT/docker/supabase/migrate.sh:/migrate.sh:ro" \
     --entrypoint sh "$IMG" /migrate.sh >"$SCRATCH/out" 2>&1 || rc=$?
 }
@@ -59,6 +64,7 @@ runner "$d"
 check "empty directory exits 0 and creates the history table" \
   test "$rc" = 0 -a "$(sql "select to_regclass('supabase_migrations.schema_migrations') is not null")" = t
 check "with no app role the password step says so and succeeds" grep -q '^app role absent; password not set' "$SCRATCH/out"
+check "with no media role the password step says so and succeeds" grep -q '^media role absent; password not set' "$SCRATCH/out"
 
 # 2. two files in order; rerun applies nothing
 d=$(fixture two)
@@ -106,6 +112,7 @@ d=$(fixture race); put "$d" 20260101000010_race.sql "select pg_sleep(2); create 
 sleep 0.3
 rc2=0; docker run --rm --network "$P" --user postgres --read-only --tmpfs /tmp --cap-drop ALL \
   -e PGHOST="$P-db" -e PGUSER=postgres -e PGDATABASE=postgres -e PGPASSWORD="$PW" -e APP_DB_PASSWORD="$APPPW" \
+  -e MEDIA_DB_PASSWORD="$MEDIAPW" \
   -v "$d:/migrations:ro" -v "$ROOT/docker/supabase/migrate.sh:/migrate.sh:ro" \
   --entrypoint sh "$IMG" /migrate.sh >"$SCRATCH/out2" 2>&1 || rc2=$?
 wait $p1 || true
@@ -142,6 +149,23 @@ for c in unset dash multiline short; do
   check "nothing applied for: app_$c" test "$(sql "select to_regclass('t_app_$c') is null")" = t
 done
 
+# 7b. MEDIA_DB_PASSWORD is checked the same way (media-worker D1): the runner refuses without it.
+n=40
+for c in unset dash multiline short upper; do
+  n=$((n + 1))
+  d=$(fixture "media_$c"); put "$d" "202601010000${n}_ok.sql" "create table t_media_$c (v int);"
+  case $c in
+    unset) NO_MEDIA_PW=1 runner "$d" ;;
+    dash) MEDIA_DB_PASSWORD=-e runner "$d" ;;
+    multiline) MEDIA_DB_PASSWORD=$(printf '%s\n%s' "$MEDIAPW" "$MEDIAPW") runner "$d" ;;
+    short) MEDIA_DB_PASSWORD=$(printf %s "$MEDIAPW" | cut -c1-31) runner "$d" ;;
+    upper) MEDIA_DB_PASSWORD=$(printf %s "$MEDIAPW" | tr a-f A-F) runner "$d" ;;
+  esac
+  check "MEDIA_DB_PASSWORD refused before connecting: $c" sh -c \
+    "[ $rc != 0 ] && grep -q 'refusing: MEDIA_DB_PASSWORD' '$SCRATCH/out' && ! grep -qi '$(printf %s "$MEDIAPW" | cut -c1-31)' '$SCRATCH/out'"
+  check "nothing applied for: media_$c" test "$(sql "select to_regclass('t_media_$c') is null")" = t
+done
+
 # 8. with the app role present, the step sets its password without leaking it. This db runs
 #    without log_min_messages=fatal, so log_statement=ddl would log the ALTER ROLE unless the
 #    step turns statement logging off.
@@ -149,17 +173,40 @@ d=$(fixture approle); put "$d" 20260101000013_role.sql "create role autologger_a
 runner "$d"
 check "the password step reports it set the password" sh -c "[ $rc = 0 ] && grep -q '^app role password set' '$SCRATCH/out'"
 check "the runner output holds no password" sh -c "! grep -q '$APPPW' '$SCRATCH/out'"
-login() { # PASSWORD: connect over TCP from another container (pg_hba trusts only loopback)
+login() { # PASSWORD [USER]: connect over TCP from another container (pg_hba trusts only loopback)
   docker run --rm --network "$P" -e PGPASSWORD="$1" --entrypoint psql "$IMG" \
-    -X -At -h "$P-db" -U autologger_app -d postgres -c 'select current_user' >"$SCRATCH/out" 2>&1
+    -X -At -h "$P-db" -U "${2:-autologger_app}" -d postgres -c 'select current_user' >"$SCRATCH/out" 2>&1
 }
-refused_login() { if login "$1"; then return 1; fi; grep -q 'password authentication failed' "$SCRATCH/out"; }
+refused_login() { if login "$1" "${2:-}"; then return 1; fi; grep -q 'password authentication failed' "$SCRATCH/out"; }
 check "the app role logs in over TCP with APP_DB_PASSWORD" login "$APPPW"
 check "a wrong password is refused" refused_login ffffffffffffffffffffffffffffffff
 check "pg_stat_statements holds no row with the password" \
   test "$(sql "select count(*) from extensions.pg_stat_statements where strpos(query, '$APPPW') > 0")" = 0
+
+# 9. the media worker role (media-worker D1): the real migrations alone leave it NOLOGIN; the
+#    runner's password phase then grants LOGIN with MEDIA_DB_PASSWORD, without leaking it.
+sql "create database realmig" >/dev/null
+for f in "$ROOT"/supabase/migrations/*.sql; do
+  docker exec -i -e PGPASSWORD="$PW" "$P-db" psql -X -q -v ON_ERROR_STOP=1 --single-transaction \
+    -h localhost -U postgres -d realmig <"$f" >"$SCRATCH/out" 2>&1 || { echo "FAIL applying $f"; cat "$SCRATCH/out"; }
+done
+check "after the migrations alone the media role exists NOLOGIN" \
+  test "$(sql "select rolcanlogin from pg_roles where rolname = 'autologger_media'")" = f
+d=$(fixture media_login); touch "$d/.gitkeep"
+runner "$d"
+check "the password step reports it set the media role's password" sh -c "[ $rc = 0 ] && grep -q '^media role password set' '$SCRATCH/out'"
+check "the runner output holds no media password" sh -c "! grep -q '$MEDIAPW' '$SCRATCH/out'"
+check "the media role can log in after the runner" \
+  test "$(sql "select rolcanlogin from pg_roles where rolname = 'autologger_media'")" = t
+check "the media role logs in over TCP with MEDIA_DB_PASSWORD" login "$MEDIAPW" autologger_media
+check "the app password does not log in as the media role" refused_login "$APPPW" autologger_media
+check "the media password does not log in as the app role" refused_login "$MEDIAPW" autologger_app
+check "pg_stat_statements holds no row with the media password" \
+  test "$(sql "select count(*) from extensions.pg_stat_statements where strpos(query, '$MEDIAPW') > 0")" = 0
+
 docker logs "$P-db" >"$SCRATCH/dblog" 2>&1
 check "the database log holds no password" sh -c "! grep -q '$APPPW' '$SCRATCH/dblog'"
+check "the database log holds no media password" sh -c "! grep -q '$MEDIAPW' '$SCRATCH/dblog'"
 
 echo "test_migrate: $PASS passed, $FAILED failed"
 [ "$FAILED" -eq 0 ]

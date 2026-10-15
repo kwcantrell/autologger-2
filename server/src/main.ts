@@ -1,8 +1,12 @@
 // src/main.ts — Node entry: env config → bindings → frontend → app → listen.
 
+import { stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import type { MediaSql } from '@autologger/ports/media';
 import { DataDirLockedError, FrameBusSecretError } from '@autologger/storage';
+import { mediaJobs } from '@autologger/storage/mediaJobs';
+import { mediaUploads } from '@autologger/storage/mediaUploads';
 import { serve } from '@hono/node-server';
 import { createNodeWebSocket } from '@hono/node-ws';
 import { Hono } from 'hono';
@@ -11,9 +15,17 @@ import type { AppEnv } from './appEnv';
 import { ProviderKeysSecretError, verifyProviderKeysCheck } from './auth/providerKeyCrypto';
 import { checkBootEnv } from './bootGuard';
 import { maskBootstrapOwnerEmail, runFeatureEmails } from './env';
+import { startMediaApply } from './mediaApply';
 import { createBindings } from './node/config';
 import { createNextFrontend } from './node/nextFrontend';
-import { purgeExpiredAtBoot, startLeaseSweeper, startPeriodicPurge } from './startupPurge';
+import {
+  purgeExpiredAtBoot,
+  reconcileMergesOnce,
+  startLeaseSweeper,
+  startMediaSweeper,
+  startPeriodicPurge,
+  trashOrphanBlobsOnce,
+} from './startupPurge';
 import { captureHonoUpgradeHandler, installUpgradeDispatcher } from './upgradeDispatch';
 import { waitForCatalog } from './waitForCatalog';
 
@@ -42,7 +54,7 @@ try {
   }
   throw e;
 }
-const { bindings, close, startFrameBus } = created;
+const { bindings, close, startFrameBus, ensureMediaDir } = created;
 // owner-bootstrap D8: the masked bootstrap owner (domain and a short hash, never the local part),
 // so the operator can check the configured value for a typo.
 console.info(`bootstrap owner: ${maskBootstrapOwnerEmail(bindings.config.BOOTSTRAP_OWNER_EMAIL)}`);
@@ -61,6 +73,8 @@ try {
   // session-frame-bus D1: the bus's listener is up (its first LISTEN done) before listen(), so no
   // socket attaches before this process receives frames.
   await startFrameBus();
+  // media-worker D4: `BLOB_DIR/media/` (mode 1777) exists before the worker's first job.
+  await ensureMediaDir();
 } catch (e) {
   console.error(`autologger: ${(e as Error).message}`);
   await close().catch(() => {});
@@ -71,10 +85,56 @@ try {
 await purgeExpiredAtBoot(bindings.ports.kv);
 const purgeTimer = startPeriodicPurge(bindings.ports.kv);
 // run-status-and-sweeper D6: every process sweeps expired session leases; first tick in 60 s.
+// media-worker D2, D6, D20: each tick also reconciles finished recordings into merge jobs and
+// checks the notification queue.
+const mediaBlobBytes = async (key: string): Promise<number> => {
+  try {
+    return (await stat(bindings.ports.audio.resolveKeyPath(key))).size;
+  } catch {
+    return 0;
+  }
+};
+const reconcileDb = bindings.ports.catalog.bindSystem('media-reconcile') as unknown as MediaSql;
 const leaseSweepTimer = startLeaseSweeper({
   leases: bindings.ports.leases,
   presence: bindings.ports.presence,
   sessions: bindings.ports.sessions,
+  clock: bindings.ports.clock,
+  reconcile: () =>
+    reconcileMergesOnce({
+      db: reconcileDb,
+      jobs: mediaJobs,
+      clock: bindings.ports.clock,
+      blobBytes: mediaBlobBytes,
+    }),
+});
+// media-worker D8, D12: trash, expired uploads, old jobs, orphan job directories, low-disk mode.
+const mediaSweepDb = bindings.ports.catalog.bindSystem('media-sweep') as unknown as MediaSql;
+// Blobs are written before their rows: once at boot, an hour-old blob no row names (a crash
+// between the two) goes to the trash. Not awaited, so it never delays listen().
+void trashOrphanBlobsOnce({
+  db: mediaSweepDb,
+  blobs: {
+    list: (o) => bindings.ports.audio.list(o),
+    resolveKeyPath: (k) => bindings.ports.audio.resolveKeyPath(k),
+    trash: (k, now) => bindings.ports.mediaBlobs.trash(k, now),
+  },
+  clock: bindings.ports.clock,
+});
+const mediaSweepTimer = startMediaSweeper({
+  db: mediaSweepDb,
+  jobs: mediaJobs,
+  uploads: mediaUploads,
+  blobs: bindings.ports.mediaBlobs,
+  clock: bindings.ports.clock,
+});
+// media-worker D3: this process applies the worker's results, every 10 s (the worker's
+// `media_jobs_done` notification is a wake-up only; see README "Media jobs").
+const mediaApply = startMediaApply({
+  db: bindings.ports.catalog.bindSystem('media-apply') as unknown as MediaSql,
+  jobs: mediaJobs,
+  sessions: bindings.ports.sessions,
+  blobs: bindings.ports.mediaBlobs,
   clock: bindings.ports.clock,
 });
 const port = Number(process.env.PORT || '8787');
@@ -142,6 +202,8 @@ for (const sig of ['SIGINT', 'SIGTERM'] as const) {
     // them too, and guarantee exit even if something else holds the loop.
     clearInterval(purgeTimer);
     clearInterval(leaseSweepTimer);
+    clearInterval(mediaSweepTimer);
+    mediaApply.stop();
     const failsafe = setTimeout(() => process.exit(1), 5000);
     failsafe.unref();
     const serverClosed = new Promise<void>((resolve) => server.close(() => resolve()));
@@ -160,7 +222,12 @@ for (const sig of ['SIGINT', 'SIGTERM'] as const) {
     // close() ends the frame bus's listener and publisher and the catalog connections
     // (catalog-on-postgres D2, session-frame-bus D1); the failsafe above still
     // bounds it, and a transaction it cuts short rolls back on the server.
-    void Promise.all([serverClosed, frontendClosed])
+    // media-worker (B.9): a pass in flight finishes before the hubs and the database close, so it
+    // never sees a closing registry (its job would otherwise stay `done` for the next start).
+    const applyIdle = mediaApply.idle().catch((err) => {
+      console.error('media apply pass failed during shutdown', err);
+    });
+    void Promise.all([serverClosed, frontendClosed, applyIdle])
       .then(() => close())
       .catch((err) => console.error('catalog close() rejected during shutdown', err))
       .finally(() => process.exit());

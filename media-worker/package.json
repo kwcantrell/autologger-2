@@ -1,0 +1,25 @@
+{
+  "name": "autologger-media-worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/main.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@autologger/domain": "*",
+    "@autologger/ports": "*",
+    "@autologger/storage": "*",
+    "@autologger/transcription": "*",
+    "mediabunny": "^1.50.8",
+    "postgres": "^3.4.9",
+    "tsx": "^4.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.1",
+    "typescript": "^5.7.2",
+    "vitest": "^4.1.10"
+  }
+}

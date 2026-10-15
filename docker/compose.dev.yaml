@@ -186,6 +186,46 @@ services:
       - ./docker/dev-gate.Caddyfile:/etc/caddy/Caddyfile:ro
     logging: *logging
 
+  # The media worker (media-worker D1, D4, D13, D15), as in compose.yaml: built locally, joins only
+  # the internal two-member `media` network (db and itself), runs read-only as uid 10001 with no
+  # capabilities, holds only MEDIA_DB_PASSWORD and the connection literals plus BLOB_DIR, and
+  # mounts only the dev blob volume. No source binds: rebuild it (make dev-build) after a change.
+  media-worker:
+    build:
+      context: .
+      dockerfile: docker/media-worker.Dockerfile
+      target: media-worker
+    image: autologger-dev-media-worker:local
+    restart: unless-stopped
+    init: true
+    user: "10001:10001"
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 128
+    cpus: 2
+    mem_limit: 1g
+    networks: [media]
+    environment:
+      PGHOST: db
+      PGPORT: "5432"
+      PGDATABASE: postgres
+      PGUSER: autologger_media
+      PGPASSWORD: ${MEDIA_DB_PASSWORD:?add MEDIA_DB_PASSWORD with docker/scripts/supabase-keys.mjs (see docs/openbao-secrets.md)}
+      BLOB_DIR: /blobs
+    volumes:
+      - dev-blobs:/blobs
+    healthcheck:
+      # The worker loop touches this file at least every 10 s; no network tool is needed.
+      test: ["CMD", "node", "-e", "const s=require('fs').statSync('/tmp/media-worker.heartbeat');process.exit(Date.now()-s.mtimeMs<60000?0:1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging: *logging
+
 networks:
   dev:
     ipam:
@@ -225,6 +265,16 @@ networks:
     ipam:
       config:
         - subnet: 172.28.36.0/24
+  # The media network (media-worker D1): internal and host-isolated, with exactly two members, `db`
+  # and `media-worker`.
+  media:
+    internal: true
+    driver_opts:
+      com.docker.network.bridge.gateway_mode_ipv4: isolated
+      com.docker.network.bridge.gateway_mode_ipv6: isolated
+    ipam:
+      config:
+        - subnet: 172.28.37.0/24
 
 volumes:
   dev-data:

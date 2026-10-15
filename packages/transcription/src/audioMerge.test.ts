@@ -343,3 +343,25 @@ describe('mergeAudioSegments', () => {
     ]);
   });
 });
+
+// media-worker D.4 (design D9, transcript-generation "Segment grouping and concatenation"): a
+// listed segment whose blob is missing must fail generation, while an unparseable one is still
+// skipped, so the merge reports the two distinctly.
+describe('mergeAudioSegments skip kinds', () => {
+  it('reports a missing path as kind "missing" and an unparseable one as kind "unreadable"', async () => {
+    const groupOutDir = join(outDir, 'skip-kinds');
+    const missing = join(outDir, 'no-such-blob.webm');
+    const { groups, skipped } = await mergeAudioSegments([seg1, missing, corrupt], groupOutDir);
+    expect(groups).toHaveLength(1);
+    expect(skipped.map((s) => [s.path, s.kind])).toEqual([
+      [missing, 'missing'],
+      [corrupt, 'unreadable'],
+    ]);
+    expect(skipped[0].reason).toMatch(/missing/i);
+  });
+
+  it('marks every probe-time skip of a present file as "unreadable"', async () => {
+    const { skipped } = await mergeAudioSegments([flac12k], join(outDir, 'skip-kinds-2'));
+    expect(skipped.map((s) => s.kind)).toEqual(['unreadable']);
+  });
+});

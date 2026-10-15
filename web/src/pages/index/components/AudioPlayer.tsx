@@ -10,6 +10,7 @@ import {
 import type { AudioSegment } from '../../../api/types';
 import { toast } from '../../../shared/components/Toast';
 import { isOverlayOpen } from '../../../shared/ui/overlayOpen';
+import { clipMediaOffsetSec, timelineSecAtMediaPosition } from '../../../shared/utils/audioClips';
 import type { AudioClipLite } from '../../../shared/utils/waveformMerge';
 import { isTypingTarget } from './ShortcutsDialog';
 
@@ -225,11 +226,14 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(funct
     const tick = () => {
       const el = audioRef.current;
       const seg = validSegments[clipIndexRef.current];
-      const clip = seg ? clipsRef.current.find((c) => c.segmentId === seg.id) : null;
-      if (el && clip) {
-        const sec = Math.max(0, clip.startSec + (Number(el.currentTime) || 0));
-        onPlaybackSecChangeRef.current?.(sec);
-      }
+      // media-worker D16: a merged segment shows as one clip per seam; the media time maps to
+      // the seam clip holding it, so the playhead follows each seam's own wall-clock position
+      // while the element plays the one file straight through.
+      const sec =
+        el && seg
+          ? timelineSecAtMediaPosition(clipsRef.current, seg.id, Number(el.currentTime) || 0)
+          : null;
+      if (sec != null) onPlaybackSecChangeRef.current?.(sec);
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
@@ -264,7 +268,10 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(funct
       const wasPlaying = playingRef.current;
       const shouldPlay = forcePlay || wasPlaying;
       const el = ensureAudio();
-      pendingOffsetRef.current = target.offsetSec;
+      // media-worker D16: the clip picked by index may be a seam clip of a merged segment, whose
+      // audio starts `mediaOffsetSec` into the segment's file.
+      const mediaSec = target.offsetSec + clipMediaOffsetSec(clip);
+      pendingOffsetRef.current = mediaSec;
       clipIndexRef.current = idx;
       // Reflect the playing state immediately when starting fresh playback (mirrors
       // playClip's synchronous UI feedback) — don't wait on the deferred applyOffset
@@ -278,7 +285,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(funct
       }
       const applyOffset = () => {
         try {
-          el.currentTime = target.offsetSec;
+          el.currentTime = mediaSec;
         } catch {
           /* ignore */
         }

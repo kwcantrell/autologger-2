@@ -89,7 +89,7 @@ A secret may hold only these keys:
   | --- | --- |
   | `dev` | `DEV_PORT`, `DEV_COMPANION_PORT`, plus the Supabase keys |
   | `stage` | `STAGE_PORT`, plus the Supabase keys |
-  | `prod` | `ROUTER_PORT`, `WEB_TAG`, `API_TAG`, `PUBLIC_BASE_URL`, plus the Supabase keys |
+  | `prod` | `ROUTER_PORT`, `WEB_TAG`, `API_TAG`, `MEDIA_TAG`, `PUBLIC_BASE_URL`, plus the Supabase keys |
 
   Every environment also accepts the retired Supabase keys (see "Retired keys" below), and
   ignores them.
@@ -99,8 +99,10 @@ value. That includes `LD_PRELOAD`, `DOCKER_HOST`, any `COMPOSE_*` name, any `BAO
 meant for another service.
 
 Other rules:
-- **Tags.** `WEB_TAG` and `API_TAG` are the 12-character git SHA that `make prod-push` prints.
-  `latest` is refused.
+- **Tags.** `WEB_TAG`, `API_TAG` and `MEDIA_TAG` (the `media-worker` image, media-worker D15)
+  are the 12-character git SHA that `make prod-push` prints, normally all three the same.
+  `make prod-up`, `prod-pull`, `prod-down`, `prod-logs` and `prod-check` refuse an unset or empty
+  tag and `latest`. Add `MEDIA_TAG` before the first prod deploy that carries the worker.
 - **Required prod keys.** `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `BOOTSTRAP_OWNER_EMAIL` and
   `ADMIN_TOKEN`. `API_TOKEN` is no longer required: it is ignored since ADR 0021 slice 9d
   (companion-devices), and you may leave it or delete it. A Companion uses a device token created
@@ -178,9 +180,22 @@ where a value appears in any other service.
 | `POSTGRES_PASSWORD` (superuser) | at least 32 lowercase hex characters | `db`, `migrate` |
 | `SUPABASE_ROLES_PASSWORD` (`supabase_auth_admin`) | at least 32 lowercase hex characters | `db`, `auth` |
 | `APP_DB_PASSWORD` (`autologger_app`, the catalog's app role) | at least 32 lowercase hex characters | dev: `app`, `migrate`; stage and prod: `api`, `migrate` |
+| `MEDIA_DB_PASSWORD` (`autologger_media`, the media worker's role) | at least 32 lowercase hex characters | `media-worker`, `migrate` (every stack) |
 | `JWT_SECRET` (signs GoTrue's tokens) | at least 40 characters of `A-Za-z0-9_-` | `auth` |
 
 Any value outside its format is refused.
+
+- **`MEDIA_DB_PASSWORD` must exist before the migration runs** (media-worker D1, D15). The
+  migrations runner (`docker/supabase/migrate.sh`) refuses to connect without it, the same way
+  it refuses without `APP_DB_PASSWORD`, and compose refuses to resolve `migrate` and
+  `media-worker` without it. So before the first `make dev-up`, `make stage-up` or prod deploy
+  that carries the media worker, run the generator for that stack (below): it creates only the
+  missing `MEDIA_DB_PASSWORD` and reports the other keys as kept. This applies to each of
+  `kv/autologger/dev`, `kv/autologger/stage` and `kv/autologger/prod`, and to any other KV path a
+  stack of this repository reads (for example the legacy-import rehearsal's
+  `kv/autologger-import/dev`). The runner gives `autologger_media` `LOGIN` and sets its
+  password in the same phase as `autologger_app`'s; a database never migrated by the runner has
+  no login for it.
 
 - **Create the keys with the generator,** never by hand. It needs an admin token (the AppRole
   can only read), from a file or from `BAO_TOKEN`:
@@ -195,10 +210,10 @@ Any value outside its format is refused.
   line. `BAO_ADDR`, `BAO_CACERT` and `BAO_KV_PATH` come from `.env.openbao.<env>`.
 
   The generator reads the secret's key names (values are discarded), then writes every missing
-  one of the four keys in one request: a KV v2 `PATCH` (`application/merge-patch+json`)
+  one of the five keys in one request: a KV v2 `PATCH` (`application/merge-patch+json`)
   with `options.cas` set to the version it read, or a `POST` with `cas: 0` if the path doesn't
   exist yet. A concurrent write makes the whole request fail, and nothing is retried. An existing
-  key is never overwritten. It prints `created` or `kept` for each of the four keys and never
+  key is never overwritten. It prints `created` or `kept` for each of the five keys and never
   shows a value. It never reads, reports, writes or deletes a retired key. If the path's current
   version is deleted (`bao kv delete`) or destroyed, it
   refuses and writes nothing: restore a deleted version with `bao kv undelete` or
