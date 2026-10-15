@@ -805,6 +805,23 @@ event's wall time) the derived delta is 0, and the clip width matches the pre-ch
 `Math.max(intervalEnd, startSec + d)` floor exactly, so layout SHALL be exactly as
 before this change.
 
+A segment's clip duration SHALL come from the server's `duration_ms` when it is present,
+and from the media-element metadata probe only when it is `null`; the 1 s placeholder
+applies only when both are missing. A recording the server has merged into one segment
+(media-processing "A stopped recording is merged into one verified segment") SHALL lay out
+as **one clip per seam**: each clip plays the merged segment's URL from its seam's
+`offset_ms`, is positioned from that seam's own `started_at_utc` exactly as a chunk was, and
+extends to the next seam's position (the last to the interval end or its remaining
+duration), so a merged recording renders, seeks and plays exactly as its chunks did and no
+drift accumulates across the rollover gaps. While a recording still has
+two or more segments and any of them has `media_status: "pending"`, the interval's
+waveform slot SHALL show "Finalizing recording…" in place of "Generating waveform…"; the
+clip layout is the chunk layout above until the merged segment arrives through
+`audio.changed`. The browser SHALL NOT decode a segment for waveform peaks while its
+`media_status` is `"pending"`; it keeps decoding segments whose `media_status` is `null`
+(rows that predate server-side processing) and shows "Waveform unavailable" for
+`"failed"` as for a failed decode.
+
 #### Scenario: A three-chunk recording renders inside one interval
 - **WHEN** a recording interval has three segments sharing its `recording_ordinal`, each
   with sequential `started_at_utc` values
@@ -844,6 +861,30 @@ before this change.
 - **WHEN** a feed-row jump resolves to a second covered by a follow-on chunk's clip
 - **THEN** playback starts within that chunk at the correct offset, using the existing
   jump/seek requirements without modification
+
+#### Scenario: A merged recording lays out by its seams
+- **WHEN** a recording's three chunks have been merged by the server into one segment with
+  three seams and `duration_ms = 1 812 345`
+- **THEN** the interval shows three clips at the seams' wall-clock positions, each playing
+  the merged segment from its seam's `offset_ms`, with no media-element probe and no 1 s
+  placeholder, and a feed-row jump into the third clip starts playback at the same media
+  position it did when the chunk was a separate segment
+
+#### Scenario: Seam clips do not drift over a long recording
+- **WHEN** a three-hour recording with eighteen seams whose rollover gaps sum to 1.1 s is laid
+  out
+- **THEN** the eighteenth clip starts at its seam's wall-clock position, not 1.1 s early
+
+#### Scenario: Finalizing is shown while the merge is pending
+- **WHEN** a recording has three segments and the client has just finalized it
+- **THEN** the interval's waveform slot reads "Finalizing recording…" until the
+  `audio.changed` message delivers the merged segment, and the clips stay laid out as
+  chunks meanwhile
+
+#### Scenario: Pending segments are not decoded in the browser
+- **WHEN** a freshly uploaded chunk lists `media_status: "pending"` and no peaks
+- **THEN** the browser does not fetch and decode its audio; the slot shows "Generating
+  waveform…" and the server's peaks replace it on `audio.changed`
 
 ### Requirement: The event feed renders a windowed row set
 
