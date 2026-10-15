@@ -149,6 +149,11 @@ Other rules:
   bootstrap owner (trimmed, ASCII case-insensitive). Anyone else does not see the option, and a
   save of it gets `403`. Add or remove an email in the stack's KV secret and restart the stack
   (`make <env>-up`). See [ADR 0028](decisions/0028-ai-sdk-agent-harness.md).
+- **`SIGNUPS` is optional** (closed-signups). `open` or `closed`; unset is `open` on dev and
+  `closed` on stage and prod. While closed, only existing accounts, the bootstrap owner and emails
+  approved in the last 7 days can sign in (operator commands: README, "Closed sign-ups"). Any other
+  value is refused by `make <env>-up` before compose starts and by the server at boot. On rollback,
+  remove the key from every KV secret before reverting the code.
 - **The AI SDK turn limits are optional** (ai-sdk-agent-harness). `AI_CHAT_MAX_STEPS` and
   `AI_CHAT_MAX_TOKENS` (defaults 8 and 400000) cap one chat turn's model steps and tokens;
   `GENERATE_MAX_STEPS` and `GENERATE_MAX_TOKENS` (defaults 40 and 3000000) cap one topic or event

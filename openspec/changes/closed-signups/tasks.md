@@ -131,11 +131,16 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
 
 ## 5. Docs (design D7)
 
-- [ ] 5.1 README: `SIGNUPS` in the settings table (default by stack, a typo refused); a "Closed
+- [x] 5.1 README: `SIGNUPS` in the settings table (default by stack, a typo refused); a "Closed
   sign-ups" section with approve, revoke and list commands for dev, stage and prod (statement on
   stdin, `-v ON_ERROR_STOP=1`, always `-v note=…`), the 7-day expiry and "approve shortly before
   sending the link"; the rollback order (remove `SIGNUPS` from KV first); `signup_closed` in the
   login-error notes. `docs/openbao-secrets.md` lists `SIGNUPS` if it lists optional keys.
+  Evidence: README `### Closed sign-ups` (who signs in, invites, 7-day approvals, approve/revoke/list
+  for `autologger-dev-db-1`, `autologger-stage-db-1`, `autologger-db-1` with `-v ON_ERROR_STOP=1`
+  and `-v note`, 22023, deploy note, rollback order), `SIGNUPS` rows in the settings and prod-keys
+  tables, `signup_closed` in the callback failure-redirect list; `docs/openbao-secrets.md` "SIGNUPS
+  is optional" bullet. `scripts/check-change.sh --only guide-size,yaml` -> PASS.
 
 ## V. Verify
 
