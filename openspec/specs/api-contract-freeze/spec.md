@@ -65,6 +65,7 @@ is the stable identifier for the failure class:
 | Authorization-code token exchange failed | `exchange_failed` |
 | Missing `id_token`, id_token verification failed (including a failed JWKS fetch), or missing `sub` claim | `token_invalid` |
 | The verified id_token's `email_verified` claim is not `true`, or its email is empty | `email_unverified` |
+| Sign-ups are closed, no account exists for the verified `sub`, and the email is neither the bootstrap owner's nor approved (api-contract-freeze "Closed sign-up redirect"); checked before the Supabase Auth exchange | `signup_closed` |
 | Supabase Auth unreachable, timed out, or refused the verified Google ID token; its user does not hold exactly one Google identity with the verified `sub`; or its user id differs from the account's id for this `sub`, or belongs to an account with another `sub` | `identity_unavailable` |
 
 Frozen surface: the redirect mechanism (`302`, `Location: /?login_error=<code>`, empty
@@ -91,9 +92,11 @@ request/provider-derived values are normative in the change's design and tests, 
 this contract.
 
 The success path SHALL remain byte-identical in behavior: set the session cookie and
-`302` to `/` with no query parameters. Before any account is read or created, the verified
+`302` to `/` with no query parameters. Before any account is created or changed, the verified
 Google ID token SHALL be exchanged with Supabase Auth, and the account's id SHALL be the
-Supabase Auth user id.
+Supabase Auth user id. While sign-ups are closed, the closed sign-up check (api-contract-freeze
+"Closed sign-up redirect") SHALL run before the exchange; it only reads (the account by the
+verified `sub`, the approval by email), so a refused sign-in never reaches Supabase Auth.
 
 #### Scenario: User cancels at Google
 - **WHEN** Google redirects to `/auth/google/callback?error=access_denied`
@@ -1409,7 +1412,10 @@ validation-error body, instead of failing on storage.
 
 ### Requirement: Concurrent first sign-in succeeds
 Two OAuth callbacks for the same Google subject, carrying different valid states, that both find
-no existing user SHALL both complete sign-in to the one user created. Neither SHALL get a `500`.
+no existing user and may both create an account (sign-ups open, the email approved, or the
+bootstrap owner's; api-contract-freeze "Closed sign-up redirect") SHALL both complete sign-in to
+the one user created, and an approval SHALL be consumed once. While sign-ups are closed and the
+email is neither approved nor the bootstrap owner's, both SHALL get `signup_closed`. Neither SHALL get a `500`.
 The second follows the existing-user path, including its disabled-account redirect. This replaces
 the latent `500` that the unique Google-subject constraint gave the loser.
 
@@ -1420,6 +1426,12 @@ still gives `500`.
 #### Scenario: Two tabs sign in for the first time
 - **WHEN** two first sign-in callbacks for one Google subject run at the same time with different valid states
 - **THEN** both redirect to `/` with a session cookie, and exactly one user exists for that subject
+
+#### Scenario: Two tabs of an approved email sign in for the first time while closed
+- **WHEN** sign-ups are closed, the email is approved, and two first sign-in callbacks for one
+  Google subject run at the same time
+- **THEN** both redirect to `/` with a session cookie, exactly one user exists for that subject,
+  and the approval row is gone
 
 ### Requirement: Log-import job lines carry no internal error text
 The lines and `error` field of a log-import job SHALL keep showing the operator-readable message
@@ -3086,3 +3098,81 @@ same as for a new segment (clients cannot tell a replay from the first upload, a
 #### Scenario: Two tabs race on one window
 - **WHEN** two uploads of the same window arrive at once
 - **THEN** one row and one blob exist afterwards and both answers carry that segment's dict
+
+### Requirement: Closed sign-up redirect
+While sign-ups are closed, the OAuth callback SHALL create a catalog account for a Google subject
+that has none only when the verified token email is the bootstrap owner's (matched under the
+bootstrap owner's exact-ASCII rule) or holds a usable approval in `catalog.account_approvals`.
+An approval is usable for 7 days from its `approved_at_utc`, read against the server's Clock, and
+is consumed in the transaction that creates the account; an account that is not created consumes
+nothing. A token email with any character above U+007F is never approved.
+
+The check SHALL run after the verified-email check and before the Supabase Auth exchange, and
+SHALL only read: the account by the verified `sub` (any state) and, when there is none, the
+approval by email. When the subject has no account and the email is neither the bootstrap owner's
+nor approved, the server SHALL respond `302` with `Location: /?login_error=signup_closed`, set no
+cookie, not call Supabase Auth, and create or change no catalog account. A subject that already
+has an account, enabled or disabled, is handled exactly as before. When the approval is gone by
+the time the account would be created (revoked, expired, or consumed by a concurrent first
+sign-in of the same subject), the callback SHALL look the subject up once more and continue as an
+existing account if one now exists, else respond `signup_closed`.
+
+Sign-ups are closed when the `SIGNUPS` setting (trimmed, `A`-`Z` folded) is `closed`, or when it
+is unset or blank and `AUTOLOGGER_STACK` is not `dev`; `open` opens them. Any other value SHALL
+refuse boot with a message naming `SIGNUPS` and its two values and not printing the value, and
+the compose wrapper SHALL refuse such a KV secret the same way before compose starts. The server
+SHALL log the effective mode once at boot (`sign-ups: open` or `sign-ups: closed`). While sign-ups
+are open, the callback SHALL behave exactly as before this change.
+
+`signup_closed` joins the login-error code set under its existing additive-open rule (clients
+treat unrecognized codes as a generic sign-in failure).
+
+#### Scenario: A new, unapproved email is refused while closed
+- **WHEN** sign-ups are closed and a Google account with no catalog account and an unapproved
+  email completes the OAuth flow
+- **THEN** the callback responds `302` to `/?login_error=signup_closed` with no cookie, Supabase
+  Auth is not called, and no catalog account, membership or invite changes
+
+#### Scenario: An approved email gets its account
+- **WHEN** sign-ups are closed, `someone@example.com` was approved a day ago, and a new Google
+  account with the verified email `Someone@Example.com` completes the OAuth flow
+- **THEN** its account is created as on an open sign-up (session cookie, `302` to `/`, pending
+  invites materialized), and the approval row is gone
+
+#### Scenario: An expired approval is refused
+- **WHEN** sign-ups are closed and the email's approval is 8 days old
+- **THEN** the callback responds `302` to `/?login_error=signup_closed`, Supabase Auth is not
+  called, and the approval row stays
+
+#### Scenario: Revoked between the check and the account
+- **WHEN** sign-ups are closed and the approval is revoked after the check passed but before the
+  account is created
+- **THEN** no account is created and the callback responds `302` to `/?login_error=signup_closed`
+
+#### Scenario: The bootstrap owner always signs in
+- **WHEN** sign-ups are closed, nothing is approved, and the bootstrap owner's Google account
+  signs in for the first time
+- **THEN** its account is created and the bootstrap claim runs as before
+
+#### Scenario: Existing accounts are unaffected
+- **WHEN** sign-ups are closed and a Google subject with an enabled account signs in
+- **THEN** the sign-in succeeds as before; a disabled account still gets `account_disabled`
+
+#### Scenario: A non-ASCII email is never approved
+- **WHEN** sign-ups are closed and a new Google account's verified email contains a character
+  above U+007F
+- **THEN** the callback responds `302` to `/?login_error=signup_closed` and reads no approval
+
+#### Scenario: Open sign-ups are unchanged
+- **WHEN** sign-ups are open and a new Google account completes the OAuth flow
+- **THEN** its account is created exactly as before this change, whether or not its email is
+  approved, and an approval row for that email is left in place
+
+#### Scenario: A mistyped setting refuses to start
+- **WHEN** the KV secret holds `SIGNUPS=opne`
+- **THEN** the compose wrapper refuses before compose starts, and a server started with it refuses
+  to boot; both messages name `SIGNUPS` and neither contains `opne`
+
+#### Scenario: The default follows the stack
+- **WHEN** `SIGNUPS` is unset and the stack is `dev`, `stage` or `prod`
+- **THEN** sign-ups are open on `dev` and closed on `stage` and `prod`, and the boot log says which
