@@ -102,8 +102,8 @@ resolved-config guards and before `compose up -d`, from the clean `main` checkou
 checks the tree again right before the runner), and a failed migration stops it before `up`. A
 re-run applies nothing new. For prod, the compose wrapper runs only the Makefile's own compose
 steps: it refuses `compose exec`, any other `compose run`, and extra flags such as `-f`. Nothing
-opens a shell in the prod database. No backup is taken first: see README "Update order and
-rollback".
+opens a shell in the prod database. `make prod-up` takes no backup itself; the spark-infra deploy
+dumps the database right before it (README "Upgrading prod in place" and "Backup").
 
 ## Re-initialising Postgres (when the init SQL changes)
 

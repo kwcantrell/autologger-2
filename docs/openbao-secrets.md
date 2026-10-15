@@ -102,7 +102,9 @@ Other rules:
 - **Tags.** `WEB_TAG`, `API_TAG` and `MEDIA_TAG` (the `media-worker` image, media-worker D15)
   are the 12-character git SHA that `make prod-push` prints, normally all three the same.
   `make prod-up`, `prod-pull`, `prod-down`, `prod-logs` and `prod-check` refuse an unset or empty
-  tag and `latest`. Add `MEDIA_TAG` before the first prod deploy that carries the worker.
+  tag and `latest`. Add `MEDIA_TAG` before the first prod deploy that carries the worker; the
+  full key list for that deploy (and the KV version to record for rollback) is README
+  "Upgrading prod in place".
 - **Required prod keys.** `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `BOOTSTRAP_OWNER_EMAIL` and
   `ADMIN_TOKEN`. `API_TOKEN` is no longer required: it is ignored since ADR 0021 slice 9d
   (companion-devices), and you may leave it or delete it. A Companion uses a device token created
