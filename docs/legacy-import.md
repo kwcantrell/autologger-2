@@ -163,6 +163,38 @@ The rehearsal on 2026-10-11 used `server/data` with `--studio ymhs` against a th
 
 ## 3. Cutover (stage or prod)
 
+### Prod disk budget and transfer
+
+The importer and the legacy `server/data` copy (`$DATA`) live on Spark; prod (`prod-linode`) gets
+only the generated files and the team's audio. Prod had 65 GB free of 79 GB on 2026-10-15.
+
+- **Files:** generate them on Spark (step 1), then
+  `scp "$OUT"/{import.sql,parity.sql,manifest.txt,sizes.txt} prod-linode:`.
+- **Free space:** require at least 55 GB free in the blob volume's filesystem before the audio
+  copy: the manifest's 41.7 GB, about 7.6 GB of headroom for the FLAC conversion (section 5),
+  and a margin over the media worker's 10 GiB low-disk floor. Below about 60 GB the conversion's
+  peak dips under that floor; run it with `--limit N` and clean up between batches.
+- **Audio:** stream it from Spark straight into the prod blob volume, with no intermediate full
+  copy. Don't create a `$BMIRROR` (README "Migrating an existing deployment") or a
+  `~/legacy-blobs` staging copy for this: there's no room for the audio twice. Additive, never
+  `--delete`; run on Spark, `api` stopped on prod (step 3 below):
+
+  ```bash
+  # on Spark; prod-linode's sudo must run rsync without a password prompt
+  BVOL=$(ssh prod-linode "docker volume inspect -f '{{.Mountpoint}}' autologger_autologger-blobs")
+  ssh prod-linode "sudo df -BG --output=avail '$BVOL' | tail -1"           # must be >= 55G
+  rsync -a --files-from="$OUT/manifest.txt" --rsync-path="sudo rsync" \
+    --chown=1000:1000 --chmod=a+rX "$DATA/blobs/" prod-linode:"$BVOL/"
+  # on prod-linode: sizes as in the rehearsal
+  BVOL=$(docker volume inspect -f '{{.Mountpoint}}' autologger_autologger-blobs)
+  sudo sh -c 'cd "$1" && xargs -d "\n" stat -c "%s %n" -- < "$2"' _ "$BVOL" ~/manifest.txt | diff - ~/sizes.txt && echo blobs OK
+  ```
+
+  `--chmod=a+rX` keeps the files readable to the media worker (uid 10001; README "Volumes").
+  A broken transfer is safe to re-run: rsync skips what already arrived.
+
+### Steps
+
 1. **Freeze the old server** (no writes). Back up the target first:
    `pg_dump -Fc` of the stack's database, plus a snapshot of the blob volume (README "Backup").
 2. Make a WAL-safe copy of the old `DATA_DIR` (`server/scripts/copyDataDir.ts`). Then generate
@@ -170,8 +202,9 @@ The rehearsal on 2026-10-11 used `server/data` with `--studio ymhs` against a th
    signed-in users since 2026-10-08, so the default parity ("no users, memberships, prefs,
    invites or login sessions") would fail there. The table hashes, projection and revision checks
    are unchanged.
-3. **Audio:** follow README "Moving audio into BLOB_DIR", with `api` stopped. To copy one team
-   only, add `--files-from=manifest.txt`:
+3. **Audio:** on prod, stream it from Spark as in "Prod disk budget and transfer" above. On a
+   host that holds the legacy `DATA_DIR` itself, follow README "Moving audio into BLOB_DIR", with
+   `api` stopped. To copy one team only, add `--files-from=manifest.txt`:
 
    ```bash
    BVOL=$(docker volume inspect -f '{{.Mountpoint}}' autologger_autologger-blobs)
