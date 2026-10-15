@@ -42,7 +42,7 @@ export function oauthConfigured(env: Config): boolean {
 
 /** Trim, then fold only `A`-`Z`: JS `toLowerCase` is Unicode-aware (U+212A KELVIN SIGN folds to
  * `k`), so it must not be used for the bootstrap match (D16). */
-function asciiEmailNorm(v: string): string {
+export function asciiEmailNorm(v: string): string {
   return v.trim().replace(/[A-Z]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) + 32));
 }
 
@@ -68,6 +68,24 @@ export function maskBootstrapOwnerEmail(value: string): string {
   const domain = at >= 0 ? norm.slice(at + 1) : '';
   const hash = createHash('sha256').update(norm).digest('hex').slice(0, 8);
   return `${domain || '(no domain)'} #${hash}`;
+}
+
+// ── Sign-ups (closed-signups D1) ───────────────────────────────────────────
+
+/** The effective sign-up mode: `SIGNUPS` trimmed and `A`-`Z` folded is `open` or `closed`; blank
+ * or unset is open only when `AUTOLOGGER_STACK` is `dev` (no stack is closed: fail closed);
+ * anything else is `'invalid'`, which the boot guard and the compose wrapper refuse. */
+export function signupsMode(env: Config): 'open' | 'closed' | 'invalid' {
+  const v = asciiEmailNorm(env.SIGNUPS ?? '');
+  if (v === 'open' || v === 'closed') return v;
+  if (v !== '') return 'invalid';
+  return env.AUTOLOGGER_STACK === 'dev' ? 'open' : 'closed';
+}
+
+/** Whether sign-ups are closed: true unless the mode is `open` (an invalid value fails closed,
+ * though boot refuses it). */
+export function signupsClosed(env: Config): boolean {
+  return signupsMode(env) !== 'open';
 }
 
 // ── Approved users for run features (run-status-and-sweeper D9) ────────────

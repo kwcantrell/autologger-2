@@ -235,6 +235,14 @@ export function checkSignInClient(env, secrets) {
   }
 }
 
+// closed-signups D1: SIGNUPS is optional; trimmed and A-Z folded it must be open or closed (blank
+// follows the stack). The server refuses any other value at boot, so refuse it here before compose
+// replaces a working api with a crash-looping one. Never print the value.
+export function checkSignupsSetting(env, secrets) {
+  const v = (secrets.get('SIGNUPS') ?? '').trim().replace(/[A-Z]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) + 32));
+  if (v !== '' && v !== 'open' && v !== 'closed') refuse(`SIGNUPS in the OpenBao ${env} secret must be open or closed, or unset (unset follows the stack: open on dev, closed on stage and prod; see docs/openbao-secrets.md)`);
+}
+
 // byo-ai-providers D2: the server refuses to boot without PROVIDER_KEYS_SECRET (base64 of exactly
 // 32 bytes, which encrypts users' provider keys). Refuse before compose starts; never print it.
 export function checkProviderKeysSecret(env, secrets) {
@@ -782,6 +790,7 @@ async function main(argv, ownEnv) {
   const retired = retiredKeyWarning(secrets, env);
   if (retired) process.stderr.write(`${retired}\n`);
   checkSignInClient(env, secrets);
+  checkSignupsSetting(env, secrets);
   checkProviderKeysSecret(env, secrets);
 
   // H6, H12: the child environment, built from nothing.

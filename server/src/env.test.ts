@@ -29,6 +29,8 @@ import {
   runFeatureEmails,
   sessionCookieName,
   sessionTtlDays,
+  signupsClosed,
+  signupsMode,
   topicGenerateMaxBudgetUsd,
   topicGenerateTimeoutSec,
   wikiGenerateMaxBudgetUsd,
@@ -482,5 +484,42 @@ describe('wiki update bounds (show-wiki-ai; wiki-generation "Wiki update bounds"
       ),
     ).toEqual({ maxSteps: 80, maxTotalTokens: 6_000_000, maxOutputTokens: 9000 });
     expect(sdkResponseByteCap('wiki', wikiSdkLimits(E({})))).toBe(80 * 16_000 * 400);
+  });
+});
+
+// closed-signups D1: SIGNUPS is open or closed (trimmed, A-Z folded); blank follows the stack
+// (open only on dev; no stack is closed); anything else is invalid, and invalid fails closed.
+describe('SIGNUPS (closed-signups D1)', () => {
+  it('signupsMode reads open and closed, trimmed and A-Z folded', () => {
+    expect(signupsMode(E({ SIGNUPS: 'open', AUTOLOGGER_STACK: 'prod' }))).toBe('open');
+    expect(signupsMode(E({ SIGNUPS: 'closed', AUTOLOGGER_STACK: 'dev' }))).toBe('closed');
+    expect(signupsMode(E({ SIGNUPS: ' Closed ', AUTOLOGGER_STACK: 'dev' }))).toBe('closed');
+    expect(signupsMode(E({ SIGNUPS: 'OPEN', AUTOLOGGER_STACK: 'stage' }))).toBe('open');
+  });
+  it('signupsMode: blank or unset is open on dev, closed on stage, prod and with no stack', () => {
+    for (const v of [undefined, '', '  ']) {
+      expect(signupsMode(E({ SIGNUPS: v, AUTOLOGGER_STACK: 'dev' })), JSON.stringify(v)).toBe(
+        'open',
+      );
+      for (const stack of ['stage', 'prod', '', undefined]) {
+        expect(signupsMode(E({ SIGNUPS: v, AUTOLOGGER_STACK: stack })), `${v} ${stack}`).toBe(
+          'closed',
+        );
+      }
+    }
+    expect(signupsMode(E({}))).toBe('closed');
+  });
+  it('signupsMode: anything else is invalid (no Unicode folding)', () => {
+    for (const v of ['opne', 'yes', '1', 'open,closed', '\u212Alosed', 'clos\u0130d']) {
+      expect(signupsMode(E({ SIGNUPS: v, AUTOLOGGER_STACK: 'dev' })), v).toBe('invalid');
+    }
+  });
+  it('signupsClosed is true for closed and invalid, false only for open', () => {
+    expect(signupsClosed(E({ SIGNUPS: 'open' }))).toBe(false);
+    expect(signupsClosed(E({ AUTOLOGGER_STACK: 'dev' }))).toBe(false);
+    expect(signupsClosed(E({ SIGNUPS: 'closed', AUTOLOGGER_STACK: 'dev' }))).toBe(true);
+    expect(signupsClosed(E({ AUTOLOGGER_STACK: 'stage' }))).toBe(true);
+    expect(signupsClosed(E({}))).toBe(true);
+    expect(signupsClosed(E({ SIGNUPS: 'opne', AUTOLOGGER_STACK: 'dev' }))).toBe(true);
   });
 });

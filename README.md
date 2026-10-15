@@ -157,6 +157,39 @@ refactor of this one.
   remains unconditional `503 {detail}` (no external integration wired up). Manual
   transcript-word/topic CRUD still works.
 
+### Closed sign-ups
+
+`SIGNUPS=closed` (the default on stage and prod; dev is open unless set) stops new accounts.
+- **Who can sign in:** existing accounts (enabled or disabled, as before), the bootstrap owner, and
+  emails a developer approved in the last 7 days. Anyone else gets `/?login_error=signup_closed`
+  (the no-access message): no cookie, nothing written, no Supabase Auth record.
+- **Invites do not approve.** An invite waits until the email is approved, then applies on the first
+  sign-in as usual.
+- **Approvals** are consumed by the first sign-in; approving again restarts the 7 days. Approve
+  shortly before sending the link: an approval for a non-Gmail address can be used by any Google
+  account that verified that address.
+- **Commands** run as `postgres` in the stack's db container: dev `autologger-dev-db-1`, stage
+  `autologger-stage-db-1`, prod `autologger-db-1`. The statement goes on stdin (psql variables do not
+  interpolate under `-c`); always pass `-v note=...` for approve and `ON_ERROR_STOP`. A malformed or
+  non-ASCII email fails with SQLSTATE 22023.
+
+```sh
+DB=autologger-dev-db-1   # or autologger-stage-db-1, autologger-db-1
+echo "select catalog.approve_account(:'email', :'note');" \
+  | docker exec -i $DB psql -X -U postgres -At -v ON_ERROR_STOP=1 -v email=someone@example.com -v note='for X'
+echo "select catalog.revoke_account_approval(:'email');" \
+  | docker exec -i $DB psql -X -U postgres -At -v ON_ERROR_STOP=1 -v email=someone@example.com
+echo "select email_norm, approved_at_utc, note from catalog.account_approvals order by approved_at_utc;" \
+  | docker exec -i $DB psql -X -U postgres -At
+```
+
+- **Deploy:** on stage and prod the deploy that adds `catalog.account_approvals` also closes
+  sign-ups; approve new people right after it. Existing accounts keep working.
+- **Rollback**, in this order: (1) remove `SIGNUPS` from every KV secret that holds it (reverted code
+  refuses an unknown KV key); (2) revert the code; (3) `drop function
+  catalog.approve_account(text, text); drop function catalog.revoke_account_approval(text); drop
+  table catalog.account_approvals;`. Approvals are lost; accounts are untouched.
+
 ### Run features: approved users only
 
 Six routes start paid or egress-making runs: `POST …/ai/chat`, `…/ai/v2/design`,
@@ -1103,7 +1136,7 @@ token instead:
 - creating and revoking a device write one server log line each with the user and device ids,
   never the token.
 
-**Auth callback failure redirects:** `GET /auth/google/callback` failure responses are `302` redirects to `/?login_error=<code>` where `<code>` is one of: `provider_error`, `oauth_not_configured`, `missing_params`, `state_invalid`, `exchange_failed`, `token_invalid`, `email_unverified`, `identity_unavailable`, `account_disabled`. The code set is additive-open. Success path unchanged: `302 /` with session cookie. Only Google accounts with a verified email sign in (`email_unverified` otherwise); the verified ID token is then exchanged with Supabase Auth, whose user id is the account id, and `identity_unavailable` means Supabase Auth was unreachable, refused it, or returned an identity that doesn't match the account (gotrue-sign-in).
+**Auth callback failure redirects:** `GET /auth/google/callback` failure responses are `302` redirects to `/?login_error=<code>` where `<code>` is one of: `provider_error`, `oauth_not_configured`, `missing_params`, `state_invalid`, `exchange_failed`, `token_invalid`, `email_unverified`, `identity_unavailable`, `account_disabled`, `signup_closed`. The code set is additive-open. Success path unchanged: `302 /` with session cookie. Only Google accounts with a verified email sign in (`email_unverified` otherwise); the verified ID token is then exchanged with Supabase Auth, whose user id is the account id, and `identity_unavailable` means Supabase Auth was unreachable, refused it, or returned an identity that doesn't match the account (gotrue-sign-in). `signup_closed` means sign-ups are closed and the person has no account and no approval (see "Closed sign-ups"); the check runs before the Supabase Auth exchange, so nothing is written.
 
 WebSocket messages broadcast by the SessionHub: `event.changed` · `transport.changed` ·
 `audio.changed` · `lease.changed` · `command` (Companion → browser). The frontend consumes
@@ -1233,6 +1266,7 @@ only: nothing reads `server/.env`. The stacks take values from OpenBao
 | `BOOTSTRAP_OWNER_EMAIL` | *(required)* | The bootstrap owner's email. A sign-in whose verified Google email matches it (trimmed, ASCII case-insensitive) becomes owner of every team with no owner. The server refuses to boot when it is blank or non-ASCII, and logs it masked (domain plus a short hash). |
 | `RUN_FEATURE_EMAILS` | *(empty = the bootstrap owner only)* | Comma-separated emails of users approved for the run features (AI chat, AI v2 design, topic and event generation, YouTube import, transcript generation); the bootstrap owner is always approved. Others get `403`. A non-ASCII entry refuses boot. See "Run features: approved users only". |
 | `CLAUDE_CLI_EMAILS` | *(empty = nobody)* | Comma-separated emails that may choose "Claude CLI (operator)" as their language model (with `CLAUDE_CLI_PATH` set); matched trimmed, ASCII case-insensitive; the bootstrap owner is not implicitly listed. Set per stack in OpenBao. See "AI chat (AI SDK or Claude CLI)". |
+| `SIGNUPS` | *(empty = open on dev, closed on stage and prod)* | `open` or `closed` (trimmed, case-insensitive). While closed, only existing accounts, the bootstrap owner and emails approved in the last 7 days can sign in. Any other value is refused by `make <env>-up` before compose starts and by the server at boot (never printed). Boot logs `sign-ups: open` or `sign-ups: closed`. See "Closed sign-ups". |
 | `AI_CHAT_MAX_STEPS` / `AI_CHAT_MAX_TOKENS` | `8` / `400000` | AI SDK chat turn: model steps (1–50) and the per-turn token budget. |
 | `GENERATE_MAX_STEPS` / `GENERATE_MAX_TOKENS` | `40` / `3000000` | AI SDK topic and event generation: model steps (1–100) and the per-turn token budget. |
 | `GENERATE_MAX_OUTPUT_TOKENS` | `16000` | AI SDK topic and event generation: output tokens per model step (1000–128000; out of range uses the default). Chat's is fixed at `4000`. A first request answered `400` restarts once at `4000`. The turn's response-byte cap is steps × this × 400 (256 MB at the defaults). |
@@ -1443,6 +1477,7 @@ hand-typed `docker compose up` fails on purpose. Nothing reads `server/.env`.
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | yes | Google sign-in, the only way in for people; the server refuses to boot without them. |
 | `BOOTSTRAP_OWNER_EMAIL` | yes | The bootstrap owner; their first sign-in claims every ownerless team. Compose and the server refuse to start without it. |
 | `RUN_FEATURE_EMAILS` | optional | Users approved for the run features besides the bootstrap owner (comma-separated). Grant by adding an email and restarting. |
+| `SIGNUPS` | optional | `open` or `closed`; unset is `closed` on prod. See "Closed sign-ups". |
 | `API_TOKEN` | no | **Ignored since ADR 0021 slice 9d.** It stays on the `docker/secrets-env.yaml` allowlist only so a secret that still holds it is not refused; drop it from OpenBao. Companion installs use device tokens from Settings. |
 | `ADMIN_TOKEN` | yes for cutover | Gates `/api/admin/*` (membership bootstrap). |
 | `ROUTER_PORT` | no (`8080`) | Host loopback port the router publishes; the Newt target. |

@@ -152,6 +152,24 @@ describe('checkBootEnv', () => {
       expect(checkBootEnv({ ...ok, RUN_FEATURE_EMAILS: v }), JSON.stringify(v)).toBeNull();
     }
   });
+  // closed-signups D1: an invalid SIGNUPS refuses boot, naming SIGNUPS and its two values, never
+  // the value; open, closed (any ASCII case, trimmed), blank and unset boot.
+  it('refuses an invalid SIGNUPS, naming SIGNUPS, open and closed, and not the value', () => {
+    for (const v of ['opne', 'yes', ' clsoed ']) {
+      const msg = checkBootEnv({ ...ok, SIGNUPS: v });
+      expect(msg, v).toMatch(/SIGNUPS/);
+      expect(msg).toMatch(/open/);
+      expect(msg).toMatch(/closed/);
+      expect(msg).not.toContain(v.trim());
+    }
+  });
+  it('boots with SIGNUPS open, closed, blank or unset, on every stack', () => {
+    for (const s of ['dev', 'stage', 'prod']) {
+      for (const v of [undefined, '', ' ', 'open', 'closed', ' Closed ', 'OPEN']) {
+        expect(checkBootEnv({ ...ok, AUTOLOGGER_STACK: s, SIGNUPS: v }), `${s} ${v}`).toBeNull();
+      }
+    }
+  });
   it('allows exactly the environments the compose wrapper sets (docker/scripts/compose-run.mjs ENVS)', () => {
     const src = readFileSync(join(__dirname, '../../docker/scripts/compose-run.mjs'), 'utf8');
     const envs = JSON.parse(

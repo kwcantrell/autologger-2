@@ -6,6 +6,8 @@
 // D2); a host run has none. Messages name variables only, never their values.
 
 import { isAbsolute, resolve, sep } from 'node:path';
+import type { Config } from '@autologger/ports';
+import { signupsMode } from './env';
 
 /** The environments docker/scripts/compose-run.mjs sets as AUTOLOGGER_STACK. */
 export const STACKS: readonly string[] = ['dev', 'stage', 'prod'];
@@ -79,6 +81,12 @@ export function checkBootEnv(env: Record<string, string | undefined>): string | 
   const runFeature = env.RUN_FEATURE_EMAILS ?? '';
   if ([...runFeature].some((ch) => (ch.codePointAt(0) ?? 0) > 0x7f)) {
     return 'RUN_FEATURE_EMAILS has a non-ASCII character (the approved-users match is exact ASCII; fix it in OpenBao, see docs/openbao-secrets.md).';
+  }
+  // closed-signups D1: SIGNUPS is optional; a value other than open or closed is a typo, refused
+  // so it never silently picks a mode. The value is never printed.
+  const signups = { SIGNUPS: env.SIGNUPS, AUTOLOGGER_STACK: env.AUTOLOGGER_STACK } as Config;
+  if (signupsMode(signups) === 'invalid') {
+    return 'SIGNUPS must be open or closed, or unset (unset follows the stack: open on dev, closed on stage and prod); fix it in OpenBao, see docs/openbao-secrets.md.';
   }
   return null;
 }

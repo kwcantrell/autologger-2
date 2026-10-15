@@ -875,6 +875,51 @@ describe('provider keys secret (byo-ai-providers D2)', () => {
   });
 });
 
+// closed-signups D1: SIGNUPS is open or closed (trimmed, A-Z folded), or blank/absent (the stack
+// default); anything else is refused before compose starts, never printing the value.
+describe('SIGNUPS setting (closed-signups D1)', () => {
+  const base = () => [secret('GOOGLE_CLIENT_ID', 'gid'), secret('GOOGLE_CLIENT_SECRET', 'gsecret'), secret('BOOTSTRAP_OWNER_EMAIL', 'owner@example.com'), secret('PROVIDER_KEYS_SECRET', PKS), secret('DEV_PORT', '18787'), ...sbSecrets()];
+  it('every stack refuses an invalid SIGNUPS, naming SIGNUPS, open and closed, without the value', async () => {
+    const { checkSignupsSetting } = await import('./compose-run.mjs');
+    for (const env of ['dev', 'stage', 'prod']) {
+      for (const v of ['opne', 'yes', ' clsoed ', '\u212Alosed']) {
+        let msg = '';
+        try { checkSignupsSetting(env, new Map([['SIGNUPS', v]])); } catch (err) { msg = err.message; }
+        assert.match(msg, /SIGNUPS/, `${env} ${v}`);
+        assert.match(msg, /open/, `${env} ${v}`);
+        assert.match(msg, /closed/, `${env} ${v}`);
+        assert.ok(!msg.includes(v.trim()), `${env} ${v}`);
+      }
+    }
+  });
+  it('every stack accepts open, closed, Closed, blank and absent', async () => {
+    const { checkSignupsSetting } = await import('./compose-run.mjs');
+    for (const env of ['dev', 'stage', 'prod']) {
+      for (const v of ['open', 'closed', 'Closed', ' OPEN ', '', '  ']) {
+        assert.doesNotThrow(() => checkSignupsSetting(env, new Map([['SIGNUPS', v]])), `${env} ${v}`);
+      }
+      assert.doesNotThrow(() => checkSignupsSetting(env, new Map()), env);
+    }
+  });
+  it('a dev run with SIGNUPS=opne refuses before docker runs, without printing the value', async () => {
+    writeCreds('dev');
+    handler = standIn([...base(), secret('SIGNUPS', 'opne')]);
+    const r = await run(['dev', 'compose up -d']);
+    assert.notEqual(r.code, 0);
+    assert.match(r.out, /SIGNUPS/);
+    assert.doesNotMatch(r.out, /not-allowed/);
+    assert.doesNotMatch(r.out, /opne/);
+    assert.equal(log('argv'), '');
+  });
+  it('a dev run with SIGNUPS=Closed passes it to compose', async () => {
+    writeCreds('dev');
+    handler = standIn([...base(), secret('SIGNUPS', 'Closed')]);
+    const r = await run(['dev', 'compose version']);
+    assert.equal(r.code, 0, r.out);
+    assert.ok(log('env').split('\n').includes('SIGNUPS=Closed'));
+  });
+});
+
 // ai-sdk-agent-harness: the CLI allowlist and the AI SDK turn limits come from the OpenBao secret.
 describe('AI SDK harness keys (ai-sdk-agent-harness)', () => {
   const AI_KEYS = { CLAUDE_CLI_EMAILS: 'owner@example.com, b@example.com', AI_CHAT_MAX_STEPS: '8', AI_CHAT_MAX_TOKENS: '400000', GENERATE_MAX_STEPS: '40', GENERATE_MAX_TOKENS: '3000000', GENERATE_MAX_OUTPUT_TOKENS: '16000' };

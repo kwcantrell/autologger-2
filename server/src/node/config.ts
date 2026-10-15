@@ -40,6 +40,7 @@ import {
   newUserAllTeamsEnabled,
   parseAiProvider,
   resolveYtDlpPath,
+  signupsClosed,
 } from '../env';
 import { systemClock } from './systemClock';
 
@@ -231,6 +232,9 @@ export function createBindings(
       GOOGLE_CLIENT_SECRET: procEnv.GOOGLE_CLIENT_SECRET || '',
       BOOTSTRAP_OWNER_EMAIL: procEnv.BOOTSTRAP_OWNER_EMAIL || '',
       RUN_FEATURE_EMAILS: procEnv.RUN_FEATURE_EMAILS || '',
+      // closed-signups D1: the sign-up setting and the stack its blank default follows.
+      SIGNUPS: procEnv.SIGNUPS || '',
+      AUTOLOGGER_STACK: procEnv.AUTOLOGGER_STACK || '',
       SESSION_COOKIE: procEnv.SESSION_COOKIE || '',
       SESSION_DAYS: procEnv.SESSION_DAYS || '14',
       NEW_USER_ALL_TEAMS: procEnv.NEW_USER_ALL_TEAMS || '0',
@@ -309,6 +313,9 @@ export function createBindings(
         'variable from your environment.',
     );
   }
+  // closed-signups D1: the effective mode, once at boot; never the raw value (an invalid one is
+  // refused by the boot guard, and fails closed here).
+  console.info(`sign-ups: ${signupsClosed(bindings.config) ? 'closed' : 'open'}`);
 
   return {
     bindings,

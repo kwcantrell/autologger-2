@@ -139,6 +139,8 @@ describe('NUL in the OAuth callback', () => {
     GOOGLE_CLIENT_ID: CLIENT,
     GOOGLE_CLIENT_SECRET: 'secret',
     PUBLIC_BASE_URL: 'http://127.0.0.1:8787',
+    // closed-signups D1: this suite creates an account through the callback.
+    SIGNUPS: 'open',
   });
   let KP: Awaited<ReturnType<typeof makeKeypair>>;
   beforeAll(async () => {
