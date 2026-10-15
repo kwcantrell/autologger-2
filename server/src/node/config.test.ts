@@ -84,6 +84,37 @@ describe('createBindings -- NEW_USER_ALL_TEAMS deprecation (design D5)', () => {
   });
 });
 
+// closed-signups D1: SIGNUPS and AUTOLOGGER_STACK reach Config, and boot logs the effective mode
+// once, never the raw value.
+describe('createBindings -- SIGNUPS (closed-signups D1)', () => {
+  async function bootLines(overrides: Record<string, string | undefined>): Promise<string[]> {
+    const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
+    try {
+      const { bindings, close } = createBindings(freshProcEnv(overrides));
+      await close();
+      expect(bindings.config.SIGNUPS).toBe(overrides.SIGNUPS ?? '');
+      expect(bindings.config.AUTOLOGGER_STACK).toBe(overrides.AUTOLOGGER_STACK ?? '');
+      return infoSpy.mock.calls.map((c) => c.join(' ')).filter((l) => /sign-ups/.test(l));
+    } finally {
+      infoSpy.mockRestore();
+    }
+  }
+  it('logs sign-ups: closed once for stack stage with SIGNUPS unset', async () => {
+    expect(await bootLines({ AUTOLOGGER_STACK: 'stage' })).toEqual(['sign-ups: closed']);
+  });
+  it('logs sign-ups: open once for stack dev with SIGNUPS unset', async () => {
+    expect(await bootLines({ AUTOLOGGER_STACK: 'dev' })).toEqual(['sign-ups: open']);
+  });
+  it('logs the mode for an explicit value, never the raw value', async () => {
+    expect(await bootLines({ AUTOLOGGER_STACK: 'prod', SIGNUPS: ' Open ' })).toEqual([
+      'sign-ups: open',
+    ]);
+    expect(await bootLines({ AUTOLOGGER_STACK: 'dev', SIGNUPS: 'CLOSED' })).toEqual([
+      'sign-ups: closed',
+    ]);
+  });
+});
+
 describe('createBindings -- AI_V2_CREDENTIAL_SOURCE_PATH has NO environment override (ruling E6)', () => {
   it(
     'resolves the credential source path to EXACTLY join(homedir(), ".claude", ' +

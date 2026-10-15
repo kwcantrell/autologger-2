@@ -34,7 +34,7 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
 
 ## 2. Setting (design D1)
 
-- [ ] 2.1 Test first:
+- [x] 2.1 Test first:
   - `server/src/env.test.ts`: `signupsMode` for `open`, `closed`, ` Closed `, empty with stack
     `dev` (open), empty with `stage`, `prod` and no stack (closed), `opne` (invalid);
   - `server/src/bootGuard.test.ts`: `SIGNUPS=opne` refuses boot with a message naming `SIGNUPS`
@@ -44,11 +44,19 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
     blank and absent pass;
   - a boot test that the server logs `sign-ups: closed` for stack `stage` with `SIGNUPS` unset and
     `sign-ups: open` for `dev`.
-- [ ] 2.2 `packages/ports/src/config.ts` (optional `SIGNUPS`, `AUTOLOGGER_STACK`),
+- [x] 2.2 `packages/ports/src/config.ts` (optional `SIGNUPS`, `AUTOLOGGER_STACK`),
   `server/src/env.ts` (`signupsMode`), `server/src/node/config.ts` (both keys, the boot log line),
   `server/src/bootGuard.ts`, `docker/scripts/compose-run.mjs` (`checkSignupsSetting` beside
   `checkSignInClient`); `docker/secrets-env.yaml` gains `SIGNUPS:` under "Sign-in and tokens".
   `make check` stays green.
+  Evidence (2.1, 2.2): red `cd server && npx vitest run --project unit src/env.test.ts
+  src/bootGuard.test.ts src/node/config.test.ts` -> `Tests 8 failed | 91 passed (99)`
+  (`TypeError: signupsMode is not a function`, `expected undefined to be ''`); `node --test
+  docker/scripts/compose-run.test.mjs` -> `checkSignupsSetting is not a function` (cs-2.1-red.log;
+  the boots-with-open/closed/blank test and the `Closed` passthrough run already passed). Green ->
+  `Test Files 3 passed (3)`, `Tests 99 passed (99)`; node --test `pass 90`, `fail 0`
+  (cs-2.1-green.log). `make check` -> `check-envs: ok (all)` (cs-2.2-make-check.log); `npm run
+  typecheck` exit 0; biome clean on the TS files.
 
 ## 3. Callback (design D3, D4, D5)
 

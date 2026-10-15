@@ -14,6 +14,12 @@ export interface Config {
   /** The approved users for the run features (run-status-and-sweeper D9): comma-separated
    * emails, optional; the bootstrap owner is always approved in addition. */
   RUN_FEATURE_EMAILS: string;
+  /** Sign-ups (closed-signups D1): `open` or `closed` (trimmed, `A`-`Z` folded); unset or blank
+   * follows the stack (open only on `dev`). Optional so test Config literals need no edit; absent is
+   * closed. Read through `signupsMode()` in server/src/env.ts. */
+  SIGNUPS?: string;
+  /** The compose stack (`dev`, `stage` or `prod`) the server runs in; absent outside one. */
+  AUTOLOGGER_STACK?: string;
   SESSION_COOKIE: string;
   SESSION_DAYS: string;
   NEW_USER_ALL_TEAMS: string;

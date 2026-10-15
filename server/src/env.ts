@@ -70,6 +70,24 @@ export function maskBootstrapOwnerEmail(value: string): string {
   return `${domain || '(no domain)'} #${hash}`;
 }
 
+// ── Sign-ups (closed-signups D1) ───────────────────────────────────────────
+
+/** The effective sign-up mode: `SIGNUPS` trimmed and `A`-`Z` folded is `open` or `closed`; blank
+ * or unset is open only when `AUTOLOGGER_STACK` is `dev` (no stack is closed: fail closed);
+ * anything else is `'invalid'`, which the boot guard and the compose wrapper refuse. */
+export function signupsMode(env: Config): 'open' | 'closed' | 'invalid' {
+  const v = asciiEmailNorm(env.SIGNUPS ?? '');
+  if (v === 'open' || v === 'closed') return v;
+  if (v !== '') return 'invalid';
+  return env.AUTOLOGGER_STACK === 'dev' ? 'open' : 'closed';
+}
+
+/** Whether sign-ups are closed: true unless the mode is `open` (an invalid value fails closed,
+ * though boot refuses it). */
+export function signupsClosed(env: Config): boolean {
+  return signupsMode(env) !== 'open';
+}
+
 // ── Approved users for run features (run-status-and-sweeper D9) ────────────
 
 /** The approved users' emails, ASCII-normalized: the bootstrap owner first (a grant never locks
