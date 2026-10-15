@@ -75,7 +75,7 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
 
 ## 3. Callback (design D3, D4, D5)
 
-- [ ] 3.1 Test first, `server/src/routers/auth.int.test.ts` (closed unless a test says open):
+- [x] 3.1 Test first, `server/src/routers/auth.int.test.ts` (closed unless a test says open):
   - unapproved new email → `302 /?login_error=signup_closed`, no `Set-Cookie`, the Supabase Auth
     fake was not called, no `users` row, pending invites for that email untouched (this is also
     the team-management scenario "An invite does not open closed sign-ups");
@@ -99,11 +99,23 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
   - the refusal log line holds no email and is written once per refusal.
   Existing tests that create accounts through the callback (including
   `server/src/routers/nulText.int.test.ts`) set `SIGNUPS: 'open'` in their config.
-- [ ] 3.2 `packages/catalog/src/authStore.ts`: `authHasUsableAccountApproval(emailNorm, cutoff)`
+- [x] 3.2 `packages/catalog/src/authStore.ts`: `authHasUsableAccountApproval(emailNorm, cutoff)`
   and `authConsumeAccountApproval(emailNorm, cutoff)` (`DELETE … RETURNING`);
   `server/src/routers/auth.ts`: the pre-check before the exchange, the consume after the user
   insert with the `SignupRefused` rollback, the re-lookup and the single log line outside the
   transaction body.
+  Evidence (3.1, 3.2): red `cd server && npx vitest run --project integration
+  src/routers/auth.int.test.ts src/routers/nulText.int.test.ts` -> `9 failed | 58 passed`
+  (`expected '/' to be '/?login_error=signup_closed'`, `expected [ 'someone@example.com' ] to
+  deeply equal []`, `Test timed out in 5000ms` for the revoke and approved-concurrent holds that
+  never fired) (cs-3.1-red.log; bootstrap, existing enabled/disabled and both open cases already
+  passed). Green -> `2 passed`, `67 passed (67)` (cs-3.1-green.log). Concurrent: A held after
+  `DELETE FROM account_approvals`, B started unawaited until its user insert blocked, then A
+  released -> one user, two cookies, approval gone, B saw `40001` on 4 of 4 runs. "Supabase Auth
+  not called" = its `/token` mock still pending. Full integration project `108 files`, `1636
+  passed` (cs-3.2-integration-all.log); unit `615 passed | 5 skipped` (cs-3.2-unit-all.log); `npm
+  run typecheck` exit 0; biome clean on the touched lines (authStore.ts format issues predate this
+  change). `server/src/env.ts` now exports `asciiEmailNorm`.
 
 ## 4. Login page (design D5)
 

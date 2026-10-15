@@ -42,7 +42,7 @@ export function oauthConfigured(env: Config): boolean {
 
 /** Trim, then fold only `A`-`Z`: JS `toLowerCase` is Unicode-aware (U+212A KELVIN SIGN folds to
  * `k`), so it must not be used for the bootstrap match (D16). */
-function asciiEmailNorm(v: string): string {
+export function asciiEmailNorm(v: string): string {
   return v.trim().replace(/[A-Z]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) + 32));
 }
 

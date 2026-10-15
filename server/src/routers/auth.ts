@@ -14,6 +14,7 @@ import {
   takeOauthState,
 } from '../auth/identity';
 import {
+  asciiEmailNorm,
   bootstrapEmailMatch,
   bootstrapOwnerEmail,
   cookieSecureForRequest,
@@ -23,9 +24,18 @@ import {
   publicBaseUrl,
   sessionCookieName,
   sessionTtlDays,
+  signupsClosed,
 } from '../env';
 
 export const authRouter = new Hono<AppEnv>();
+
+/** closed-signups D3: an approval is usable for 7 days from `approved_at_utc`. */
+const APPROVAL_TTL_MS = 7 * 86_400_000;
+
+/** closed-signups D3: thrown inside the new-user transaction when the approval is gone (revoked,
+ * expired or consumed meanwhile), so the user insert rolls back. Caught outside the body, which
+ * may re-run and so never logs. */
+class SignupRefused extends Error {}
 
 // Log-sanitization for request/provider-derived values written to
 // console.warn on callback failure branches (design D4). A response body is
@@ -183,8 +193,33 @@ authRouter.get('/auth/google/callback', async (c) => {
     return c.redirect('/?login_error=email_unverified', 302);
   }
 
+  // catalog-roles D10: no session exists yet, so the callback runs as a system task.
+  const catalog = c.get('catalog').system('oauth-callback');
+
+  // closed-signups D3, D4: while sign-ups are closed, a new subject needs the bootstrap owner's
+  // email or a usable approval. This pre-check only reads, and runs before Supabase Auth, so a
+  // refused sign-in reaches nothing; the account's transaction consumes the approval below.
+  const match = bootstrapEmailMatch(email, bootstrapOwnerEmail(c.env.config));
+  const gateNewAccount = signupsClosed(c.env.config) && match !== true;
+  const approvalEmail = asciiEmailNorm(email);
+  const approvalCutoff = new Date(c.env.ports.clock.now() - APPROVAL_TTL_MS).toISOString();
+  const signupClosed = () => {
+    console.warn(
+      `OAuth callback: sign-ups are closed and subject ${sanitizeForLog(googleSub)} has no ` +
+        'account or approval; refusing sign-in (closed-signups D3)',
+    );
+    return c.redirect('/?login_error=signup_closed', 302);
+  };
+  if (gateNewAccount && !(await catalog.auth.authGetUserByGoogleSubAny(googleSub))) {
+    // A non-ASCII email is never approved: refused before any approval is read.
+    if (match === 'non-ascii') return signupClosed();
+    if (!(await catalog.auth.authHasUsableAccountApproval(approvalEmail, approvalCutoff))) {
+      return signupClosed();
+    }
+  }
+
   // gotrue-sign-in D1, D2: Supabase Auth verifies the same token again; its user id is the
-  // account id. It runs before any catalog read, so a failure touches nothing.
+  // account id. It runs before any catalog write, so a failure touches nothing.
   let authId: string;
   try {
     authId = (await exchangeGoogleIdToken(String(idTok), googleSub)).id;
@@ -197,9 +232,6 @@ authRouter.get('/auth/google/callback', async (c) => {
     console.warn(`OAuth callback: ${detail}; refusing sign-in (gotrue-sign-in D4)`);
     return c.redirect('/?login_error=identity_unavailable', 302);
   };
-
-  // catalog-roles D10: no session exists yet, so the callback runs as a system task.
-  const catalog = c.get('catalog').system('oauth-callback');
 
   // Design D11: resolve the sub against ALL rows (not just enabled ones)
   // before the existing/new split. A disabled match must redirect here.
@@ -219,36 +251,54 @@ authRouter.get('/auth/google/callback', async (c) => {
     // invite materialization + consumption -- runs inside one catalog
     // transaction, on stores bound to it (store transactions join it;
     // async-catalog-stores D3). The KV login-session write below stays outside.
-    const created = await catalog.tx(async (cat) => {
-      const newUid = await cat.auth.authCreateUserGoogle({
-        id: authId,
-        googleSub,
-        email: email || `${googleSub}@users.noreply.invalid`,
-        givenName: gn,
-        familyName: fn,
-        pictureUrl: pic,
-      });
-      // A concurrent first sign-in for this sub won (catalog-concurrency-hazards D5).
-      if (newUid === null) return null;
-      // No prefs seed (owner-bootstrap D10): a new user's prefs start empty, so their first team
-      // (or onboarding) applies.
-      // Materialize pending invites ONLY when the id_token asserts a
-      // verified email (team-management delta, "Email invites") -- the
-      // email claim becomes an authorization join key here, so an
-      // unverified or absent claim must not match. `email` (the raw claim,
-      // pre-fallback) is guarded non-empty so the synthesized
-      // `<sub>@users.noreply.invalid` address can never be normalized into
-      // a match.
-      if (emailVerified && email) {
-        const consumed = await cat.auth.authConsumeInvitesForEmail(normalizeEmail(email));
-        for (const invite of consumed) {
-          await cat.auth.authAddMembershipWithRole(newUid, String(invite.studio_id), 'member');
+    let created: string | null;
+    let refused = false;
+    try {
+      created = await catalog.tx(async (cat) => {
+        const newUid = await cat.auth.authCreateUserGoogle({
+          id: authId,
+          googleSub,
+          email: email || `${googleSub}@users.noreply.invalid`,
+          givenName: gn,
+          familyName: fn,
+          pictureUrl: pic,
+        });
+        // A concurrent first sign-in for this sub won (catalog-concurrency-hazards D5).
+        if (newUid === null) return null;
+        // closed-signups D3: the account consumes the approval; none left rolls the insert back.
+        if (
+          gateNewAccount &&
+          !(await cat.auth.authConsumeAccountApproval(approvalEmail, approvalCutoff))
+        ) {
+          throw new SignupRefused();
         }
-      }
-      return newUid;
-    });
+        // No prefs seed (owner-bootstrap D10): a new user's prefs start empty, so their first team
+        // (or onboarding) applies.
+        // Materialize pending invites ONLY when the id_token asserts a
+        // verified email (team-management delta, "Email invites") -- the
+        // email claim becomes an authorization join key here, so an
+        // unverified or absent claim must not match. `email` (the raw claim,
+        // pre-fallback) is guarded non-empty so the synthesized
+        // `<sub>@users.noreply.invalid` address can never be normalized into
+        // a match.
+        if (emailVerified && email) {
+          const consumed = await cat.auth.authConsumeInvitesForEmail(normalizeEmail(email));
+          for (const invite of consumed) {
+            await cat.auth.authAddMembershipWithRole(newUid, String(invite.studio_id), 'member');
+          }
+        }
+        return newUid;
+      });
+    } catch (e) {
+      if (!(e instanceof SignupRefused)) throw e;
+      // The approval went after the pre-check (revoked, expired, or consumed by a concurrent
+      // first sign-in that made the account): look the subject up once more below.
+      refused = true;
+      created = null;
+    }
     if (created === null) {
       anyExisting = await catalog.auth.authGetUserByGoogleSubAny(googleSub);
+      if (!anyExisting && refused) return signupClosed();
       if (!anyExisting) return mismatch(`Supabase Auth id ${authId} was taken by another account`);
     } else uid = created;
   }
@@ -272,7 +322,6 @@ authRouter.get('/auth/google/callback', async (c) => {
   // owner-bootstrap D7: the bootstrap owner claims every team with no owner, after either branch
   // (enabled, verified, identity matched) and before the session is issued. It fails open: a
   // failed claim is logged without the email and the next sign-in retries it.
-  const match = bootstrapEmailMatch(email, bootstrapOwnerEmail(c.env.config));
   if (match === 'non-ascii') {
     console.warn('OAuth callback: bootstrap owner claim refused (non-ASCII email)');
   } else if (match) {

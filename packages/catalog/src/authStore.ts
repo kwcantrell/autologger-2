@@ -76,6 +76,9 @@ export interface AuthStoreFacade {
   authCountPendingInvites: (studioId: string) => Promise<number>;
   authConsumeInvitesForEmail: (emailNorm: string) => Promise<Row[]>;
   authListUsersByEmailNorm: (emailNorm: string) => Promise<Row[]>;
+  // closed-signups D3: read and consume an account approval.
+  authHasUsableAccountApproval: (emailNorm: string, cutoffIso: string) => Promise<boolean>;
+  authConsumeAccountApproval: (emailNorm: string, cutoffIso: string) => Promise<boolean>;
   // show-grants D2: the access rule and the grant store.
   authCanAccessShow: (userId: string, showId: string) => Promise<boolean>;
   authCanAccessShowForShare: (userId: string, showId: string) => Promise<boolean>;
@@ -557,6 +560,32 @@ export class AuthStore implements AuthStoreFacade {
       }
       return rows;
     });
+  }
+
+  // -- closed-signups: account approvals (design D2, D3) ----------------------
+
+  /** Whether `emailNorm` (ASCII-normalized, as `asciiEmailNorm`) holds an approval written at or
+   * after `cutoffIso` (a `Date.toISOString()` string; the column has the same shape, so the text
+   * comparison orders by time). Read-only: the callback's pre-check before Supabase Auth. */
+  async authHasUsableAccountApproval(emailNorm: string, cutoffIso: string): Promise<boolean> {
+    const row = await this.db.first<Row>(
+      'SELECT 1 FROM account_approvals WHERE email_norm = ? AND approved_at_utc >= ?',
+      emailNorm,
+      cutoffIso,
+    );
+    return row !== null;
+  }
+
+  /** Delete a usable approval for `emailNorm`; true when one went. Runs in the transaction that
+   * creates the account, so a rolled-back account consumes nothing. */
+  async authConsumeAccountApproval(emailNorm: string, cutoffIso: string): Promise<boolean> {
+    const row = await this.db.first<Row>(
+      `DELETE FROM account_approvals WHERE email_norm = ? AND approved_at_utc >= ?
+       RETURNING email_norm`,
+      emailNorm,
+      cutoffIso,
+    );
+    return row !== null;
   }
 
   // -- teams-self-serve: user lookup by email (design D2 multi-match) ----------
