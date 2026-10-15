@@ -1320,7 +1320,9 @@ behind a small internal router (OpenSpec change `containerize-split-images`; spe
 `compose.yaml`, `docker-bake.hcl`, `docker/Dockerfile`, `docker/Caddyfile` and
 `docker/secrets-env.yaml`, with secrets from OpenBao (see
 [docs/openbao-secrets.md](docs/openbao-secrets.md)). For a hot-reload dev environment, a locally built stage, and
-`make` entry points for all three, see [Local container environments](#local-container-environments).
+`make` entry points for all three, see [Local container environments](#local-container-environments). The first
+deploy of the Postgres-era release onto the running prod is
+[Upgrading prod in place](#upgrading-prod-in-place-first-deploy-of-the-postgres-era-release).
 
 ### Topology
 
@@ -1863,8 +1865,19 @@ row names is moved to the trash (never deleted).
 
 ### Backup
 
-This section describes prod, which runs `main` (catalog and session content in SQLite files)
-until the Supabase cutover (ADR 0021 slice 11).
+**Postgres (stage and prod).** The catalog and session content live in Postgres; spark-infra
+backs it up, not this repository:
+- a nightly `pg_dumpall` of stage and prod, pulled to Spark (`~/backups/<host>/`, prod:
+  `~/backups/prod-linode/`) by `spark-stage-db-backup.timer` (role `stage_db_backup`, 14 kept);
+- a dump right before each prod `make prod-up` in the spark-infra deploy.
+
+Restoring a dump loses every write made since; it is the owner's step. The blob and data volumes
+are being added to that backup; until then back up the audio with `BLOBSYNC` as below.
+
+**SQLite files (legacy `DATA_DIR`).** The pre-Postgres `catalog.db` and `sessions/*.db` are no
+longer written; the copier below makes the WAL-safe copy the legacy import reads
+([Importing legacy data](#importing-legacy-data-adr-0021-slice-11)), and the `BLOBSYNC` line
+backs up the audio.
 
 Use the WAL-safe copier from a repo checkout on the host (it needs `tsx` and `better-sqlite3`,
 which the checkout has; it is not in the image). It opens every `*.db` read-only, copies a
@@ -2110,21 +2123,26 @@ setup is still the membership bootstrap script above.
 
 ### Update order and rollback
 
-- **Update order: `api` first, then `web`.** Set the new `API_TAG` in OpenBao `prod`, then
-  `make prod-pull prod-up`, wait for `healthy`; then the same for `WEB_TAG`/`web`. The HTTP/WS contract is frozen, so a new `api` under an old `web` is
-  safe. Volumes carry state across recreation.
+- **First deploy of the Postgres-era release:** follow
+  [Upgrading prod in place](#upgrading-prod-in-place-first-deploy-of-the-postgres-era-release)
+  (secrets, pre-deploy dump, audio move, smoke test, rollback).
+- **Update order.** A release sets `WEB_TAG`, `API_TAG` and `MEDIA_TAG` in OpenBao `prod` to the
+  same tag, the deploy commit (spark-infra asserts it), then `make prod-pull prod-up` and waits
+  for `healthy`. `prod-up` recreates the changed services in one step. The HTTP/WS contract is
+  frozen, so a new `api` briefly under an old `web` is safe. Volumes carry state across
+  recreation.
 - **`make prod-up` migrates first.** It applies every migration in the `main` checkout that the
   prod database hasn't recorded (`supabase/migrations/`, through `docker/supabase/migrate.sh`),
   then starts the project; a failed migration stops it before `up`. The migrations come from the
   checkout, not from the image tag, so check out the commit you pinned (the deploy host's Ansible
   checks that the checkout is the pinned commit). Migrations must leave the previous `api`
   working.
-- **Rollback is forward-only for data.** Re-pinning an older tag is safe only if no database
-  migration ran in between (migrations are forward-only);
-  otherwise restore a backup. `prod-up` takes no backup before it migrates: the newest one is the
-  deploy host's nightly Postgres dump, so restoring it loses the writes made since. Take a dump
-  by hand before a deploy whose migrations you may need to undo. Repointing Pangolin at the *old host*
-  drops every write made since cutover (they exist only in the volume) — take a final backup
+- **Rollback is forward-only for data.** Migrations are never undone. Re-pinning an older
+  release (its tags and its KV version) is safe when the migrations since leave its `api` working,
+  as the rule above requires (the Postgres-era release's do); otherwise restore a backup. `prod-up` itself takes no backup before it migrates; the
+  spark-infra deploy dumps the database right before it, and Spark keeps a nightly
+  `pg_dumpall` (see [Backup](#backup)). Restoring either loses the writes made since.
+  Repointing Pangolin at the *old host* drops every write made since cutover (they exist only in the volume) — take a final backup
   first if you might want them.
 - **Rolling back past `BLOB_DIR`.** Audio written since the deploy exists only in the blob
   volume, and a build from before `BLOB_DIR` reads `DATA_DIR/blobs`. In this order:
@@ -2141,6 +2159,117 @@ setup is still the membership bootstrap script above.
   3. Revert the code, then start.
   4. Keep the blob volume until playback of new and old segments is confirmed. Removing it is the
      owner's step.
+
+### Upgrading prod in place (first deploy of the Postgres-era release)
+
+The first deploy of `supabase-migration` (PR #130) onto the running prod (`prod-linode`,
+compose project `autologger`, db container `autologger-db-1`), which today runs `main` with
+#98 and prod-migrate (#100). spark-infra deploys it (`playbooks/autologger.yml --limit
+prod-linode`, deploy mode `prod`); the steps marked **owner** are by hand. Later deploys need
+only "Before" (tags) and "Deploy".
+
+**Before (owner)**, in this order:
+
+1. Merge PR #130 into `main`.
+2. Build and push from a clean `main` clone: spark-infra `playbooks/autologger-images.yml`
+   (`make prod-push`); note the 12-character tag it prints.
+3. Check the new GHCR package `autologger-media-worker` is pullable from prod: it must be linked
+   to the repository (or granted to the deploy PAT) like `autologger-web` and `autologger-api`.
+   `make prod-pull` uses only `~/.docker/config.json` of the deploy user, so a package the PAT
+   can't read fails the pull. On `prod-linode`:
+   `docker manifest inspect ghcr.io/kwcantrell/autologger-media-worker:<tag> >/dev/null && echo ok`.
+4. Record the rollback point: `bao kv metadata get kv/autologger/prod` and note
+   `current_version` (`N` below). Every write below creates a newer version.
+5. `node docker/scripts/supabase-keys.mjs prod --writer ~/.vault-token`: creates the missing
+   `MEDIA_DB_PASSWORD` and prints `kept` for the rest ([docs/openbao-secrets.md](docs/openbao-secrets.md)).
+6. `bao kv patch kv/autologger/prod PROVIDER_KEYS_SECRET="$(openssl rand -base64 32)" WEB_TAG=<tag> API_TAG=<tag> MEDIA_TAG=<tag>`.
+   `PROVIDER_KEYS_SECRET` encrypts users' provider keys: create it once and never rotate it
+   casually (a different value refuses boot; a lost one makes every stored key unreadable).
+7. Leave `SIGNUPS` unset (= `closed` on prod) unless you want open sign-ups.
+8. Keep `ROUTER_PORT=8080` and `PUBLIC_BASE_URL`. Keep the retired keys `ANON_KEY`,
+   `SERVICE_ROLE_KEY`, `SECRET_KEY_BASE`, `REALTIME_DB_ENC_KEY` and `SUPABASE_PORT` until the
+   release is accepted: the new code ignores them (one warning), the old code needs them for a
+   rollback.
+
+**Deploy (automated, spark-infra):**
+
+1. Read-only pre-checks: `MEDIA_DB_PASSWORD` and `PROVIDER_KEYS_SECRET` present, the three tags
+   equal to the pushed tag.
+2. A clean `main` checkout on the host, `make prod-check`, `make prod-pull`.
+3. A database dump, right before `prod-up` (the rollback point for the schema).
+4. `make prod-up`: `compose run --rm migrate` applies every migration through
+   `20261024000000`, then `compose up -d --remove-orphans` starts `media-worker` and removes the
+   `rest`, `realtime`, `storage` and `supabase-gw` containers. Their volume
+   (`autologger_supabase-storage`) and the `autologger_supabase` / `autologger_edge` networks stay as
+   leftovers.
+
+**Audio move (owner, right after `prod-up`).** The new code reads audio only from `BLOB_DIR`
+(`/blobs`, volume `autologger_autologger-blobs`); prod's audio is still in
+`autologger_autologger-data` under `blobs/` (91 MB, 4 files, measured 2026-10-15), so old segments
+answer `404` until moved. Both volumes are on one filesystem: while the target has no `audio/`
+yet (the first upgrade), a `mv` is a rename, instant and needs no space. The prod wrapper refuses
+any compose step other than the Makefile's, so stop and start the container with plain `docker`.
+
+```bash
+VOL=$(docker volume inspect -f '{{.Mountpoint}}' autologger_autologger-data)     # root-only path
+BVOL=$(docker volume inspect -f '{{.Mountpoint}}' autologger_autologger-blobs)   # root-only path
+docker stop autologger-api                       # nothing may write during the move
+sudo sh -c 'find "$1/blobs/audio" -type f | wc -l; du -sb "$1/blobs/audio"' _ "$VOL"   # note both
+sudo test -e "$BVOL/audio" && echo 'audio/ exists: use the fallback below' \
+  || { sudo mv "$VOL/blobs/audio" "$BVOL/" && sudo chown -R 1000:1000 "$BVOL/audio" && sudo chmod -R a+rX "$BVOL/audio"; }
+sudo sh -c 'find "$1/audio" -type f | wc -l; du -sb "$1/audio"' _ "$BVOL"              # must match
+docker start autologger-api
+```
+
+Then play an old segment (seek too). **Fallback** when `$BVOL/audio` already exists (an upload
+landed before the stop, or a re-run): an additive copy, never `--delete`, after a free-space
+check that requires the size plus 10 GiB (the media worker's low-disk floor):
+
+```bash
+need=$(( $(sudo du -sb "$VOL/blobs/audio" | cut -f1) + 10*1024*1024*1024 ))
+avail=$(sudo df --output=avail -B1 "$BVOL" | tail -1)
+if [ "$avail" -ge "$need" ]; then
+  sudo rsync -a --chown=1000:1000 "$VOL/blobs/audio/" "$BVOL/audio/" && sudo chmod -R a+rX "$BVOL/audio"
+else echo "need $need bytes free, have $avail - free space first"; fi
+```
+
+Check counts and bytes as above, then start `api`. Remove `$VOL/blobs` only once old and new
+segments play ("Moving audio into BLOB_DIR").
+
+**Smoke test (owner):**
+
+- Sign in. Existing accounts and the bootstrap owner are unaffected; a new person needs
+  `catalog.approve_account` first ([Closed sign-ups](#closed-sign-ups)).
+- Upload a short recording; it plays and gets a waveform.
+- `docker ps --filter name=autologger-media-worker --format '{{.Names}} {{.Status}}'` shows
+  `(healthy)`; `sudo stat -c '%a %u' "$BVOL/media"` prints `1777 1000`.
+
+**Behaviour changes to expect** (not regressions):
+
+- AI chat, topic, event and wiki generation answer `503` until the operator is in
+  `CLAUDE_CLI_EMAILS` and picks "Claude CLI (operator)" in Settings → Advanced, or a user saves
+  their own provider key.
+- Transcription answers `503` until each user saves their own Deepgram key: prod ignores the
+  operator's `DEEPGRAM_API_KEY`.
+- A team invite alone no longer lets a new email sign up while sign-ups are closed.
+
+**Rollback (owner):**
+
+1. Restore the KV version recorded in "Before" step 4: `bao kv rollback -version=N
+   kv/autologger/prod` (or `bao kv get -version=N` and `put` its data). That brings back the
+   old `WEB_TAG`/`API_TAG` too; re-pinning the tags alone is not enough, because the old code
+   refuses the new keys (`MEDIA_DB_PASSWORD`, `PROVIDER_KEYS_SECRET`, `MEDIA_TAG`, `SIGNUPS`).
+2. Move the audio back if the old code must play it: "Rolling back past `BLOB_DIR`" in
+   [Update order and rollback](#update-order-and-rollback) (copy, `api` stopped).
+3. Redeploy the previous `main` commit and its images.
+4. Schema: the migrations are additive and the old code works with them, so leave them. Restore
+   the pre-deploy dump only if the schema itself must go back; it loses every write since.
+
+**Later cleanup (owner, once the release is accepted):** remove the retired keys
+([docs/openbao-secrets.md](docs/openbao-secrets.md), "Retired keys", then rotate `JWT_SECRET`),
+the `autologger_supabase-storage` volume and the `autologger_supabase` / `autologger_edge`
+networks ([Removing the old Supabase services' leftovers](#removing-the-old-supabase-services-leftovers)),
+and `$VOL/blobs` once old audio plays.
 
 ### Verifying the container topology
 
@@ -2185,8 +2314,8 @@ existing configuration.
 | `make stage-down` / `make stage-logs` | Stop and remove stage containers (volumes kept) / follow logs |
 | `make stage-claude-login` | Interactive Claude login inside the stage api container |
 | `make stage-reset CONFIRM=yes` | **Destroy** the stage volumes, including Postgres and the audio blob volume (a leftover `supabase-storage` volume stays, see [the leftovers note](#removing-the-old-supabase-services-leftovers)) |
-| `make prod-build` | Native-arch build of both images, tagged `:local` only (no SHA tag, no push) |
-| `make prod-push` | Clean `main` only: multi-arch bake and push, tagged with the 12-char HEAD SHA |
+| `make prod-build` | Native-arch build of the three images (`web`, `api`, `media-worker`), tagged `:local` only (no SHA tag, no push) |
+| `make prod-push` | Clean `main` only: multi-arch bake and push of the three images (`web`, `api`, `media-worker`), tagged with the 12-char HEAD SHA |
 | `make prod-check` | Any branch: OpenBao `prod` login, guards and compose config; starts nothing |
 | `make prod-pull` / `make prod-up` | Clean `main` only: pull / apply the checkout's migrations (`compose run --rm migrate`), then start prod with the tags pinned in OpenBao `prod` |
 | `make prod-down` / `make prod-logs` | Stop and remove prod containers (volumes kept) / follow logs |
@@ -2451,7 +2580,8 @@ The variables are passed to `compose-run.mjs` by name; every `$(RUN)` target (`s
 PostgREST, Realtime, Storage and their gateway were removed (`drop-unused-supabase-services`).
 Every `make <env>-up`, `-down` and `-reset` passes `--remove-orphans`, so their containers go on
 the next run; removing a container deletes no volume. A dev or stage stack that ran them keeps
-three leftovers, which nothing uses (prod never ran these services):
+three leftovers, which nothing uses (prod ran them too; its first Postgres-era deploy removes the
+containers, see [Upgrading prod in place](#upgrading-prod-in-place-first-deploy-of-the-postgres-era-release)):
 - the `<project>_supabase-storage` volume, which `make <env>-reset` no longer deletes;
 - the `<project>_supabase` and `<project>_edge` networks;
 - in Postgres, the `_realtime` schema and storage-api's tables in the `storage` schema (the image
@@ -2460,7 +2590,8 @@ three leftovers, which nothing uses (prod never ran these services):
 **Don't remove them while any checkout still runs the old stack.** `~/autologger-ui` shares
 `kv/autologger/dev` and its branch still starts the old services, which reuse the volume, the
 schema and the tables, and its next `make dev-up` brings the four containers back. Once no
-checkout runs them, for `<project>` `autologger-dev` or `autologger-stage`:
+checkout runs them, for `<project>` `autologger-dev` or `autologger-stage` (or `autologger`, prod, once
+the release is accepted):
 
 ```sh
 docker volume rm <project>_supabase-storage
@@ -2468,7 +2599,7 @@ docker network rm <project>_supabase <project>_edge
 ```
 
 Optionally, in Postgres (`make dev-psql`, then `\c postgres supabase_admin`; stage:
-`docker exec -it autologger-stage-db-1 psql -U supabase_admin`):
+`docker exec -it autologger-stage-db-1 psql -U supabase_admin`; prod: `autologger-db-1`):
 
 ```sql
 DROP SCHEMA _realtime CASCADE;
@@ -2500,8 +2631,8 @@ removal those roles already have none. Then remove the retired keys from OpenBao
   also needs a buildx builder (`BUILDER`, default `autologger-multi`) that lists both
   `linux/amd64` and `linux/arm64` (a one-time privileged binfmt setup; the target prints the
   commands) and tags the **local** `main` HEAD, so push `main` first. `make prod-build` only
-  tags `:local`, so it never overwrites a pulled release. `prod-up` also needs `WEB_TAG` and
-  `API_TAG` pinned in OpenBao `prod`.
+  tags `:local`, so it never overwrites a pulled release. `prod-up` also needs `WEB_TAG`,
+  `API_TAG` and `MEDIA_TAG` pinned in OpenBao `prod`.
 - **`make stage-push`** needs a clean tree whose HEAD is `STAGE_IMAGE_TAG` (any branch) and the
   same builder; it pushes only `STAGE_PLATFORMS` (default `linux/amd64`), tagged with the full
   40-char SHA so it never collides with prod's 12-char multi-arch tags in the shared GHCR repositories.
