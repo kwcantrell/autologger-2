@@ -84,10 +84,15 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
 
 ## 4. Login page (design D5)
 
-- [ ] 4.1 Test first, `web/src/pages/index/components/LoginPage.test.tsx`: `signup_closed`
+- [x] 4.1 Test first, `web/src/pages/index/components/LoginPage.test.tsx`: `signup_closed`
   shows the no-access-yet message with the retry control; the message contains none of
   `SIGNUPS`, `closed`, `stage`, `prod`.
-- [ ] 4.2 `LoginPage.tsx`: the message in `LOGIN_ERROR_MESSAGES`; the comment says four groups.
+- [x] 4.2 `LoginPage.tsx`: the message in `LOGIN_ERROR_MESSAGES`; the comment says four groups.
+  Evidence (4.1, 4.2): red `cd web && npx vitest run src/pages/index/components/LoginPage.test.tsx`
+  -> `expected 'Sign-in didn't complete.Try again' to contain 'This Google account doesn't have
+  acc…'`, `1 failed | 14 passed` (cs-4.1-red.log); green -> `Test Files 1 passed (1)`, `Tests 15
+  passed (15)` (cs-4.1-green.log); `node_modules/.bin/biome check` on both files -> `Checked 2
+  files`, no fixes.
 
 ## 5. Docs (design D7)
 
