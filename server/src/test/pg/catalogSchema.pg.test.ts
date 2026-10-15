@@ -47,9 +47,38 @@ const TABLES = [
   // companion-devices D1: Companion devices and browser presence (ADR 0021 slice 9d).
   'companion_devices',
   'companion_presence',
+  // byo-ai-providers D1: per-user provider credentials and the master-key check value.
+  'user_provider_credentials',
+  'provider_key_check',
+  // byo-ai-providers 2.4: the per-user connection-test window.
+  'provider_test_windows',
+  // catalog-search D4: the transcript in blocks of 40 words, kept in sync by the database.
+  'session_transcript_chunks',
+  // show-wiki D1, D2: the show wiki's pages, aliases and revisions.
+  'wiki_pages',
+  'wiki_aliases',
+  'wiki_revisions',
+  // show-wiki-ai D1: the AI's pending and resolved wiki suggestions.
+  'wiki_suggestions',
+  // media-worker D2, D12, D7: the media queue, resumable uploads and recording seams.
+  'media_jobs',
+  'media_uploads',
+  'session_audio_seams',
+  // closed-signups D2: the emails a developer approved for a first sign-in.
+  'account_approvals',
 ];
 // companion-devices D1: the tables with no catalog_user policy and no catalog_user privilege.
-const SYSTEM_ONLY = ['kv', 'companion_devices', 'companion_presence'];
+// byo-ai-providers D1: plus the two provider tables.
+const SYSTEM_ONLY = [
+  'kv',
+  'companion_devices',
+  'companion_presence',
+  'user_provider_credentials',
+  'provider_key_check',
+  'provider_test_windows',
+  // closed-signups D2: written only by postgres, read and deleted by the OAuth callback.
+  'account_approvals',
+];
 const KEY_COLUMN: Record<string, string> = {
   users: 'id',
   user_studio_memberships: 'user_id',
@@ -66,6 +95,18 @@ const KEY_COLUMN: Record<string, string> = {
   session_leases: 'session_id',
   companion_devices: 'id',
   companion_presence: 'client_id',
+  user_provider_credentials: 'user_id',
+  provider_key_check: 'check_value',
+  provider_test_windows: 'user_id',
+  session_transcript_chunks: 'session_id',
+  wiki_pages: 'id',
+  wiki_aliases: 'page_id',
+  wiki_revisions: 'page_id',
+  wiki_suggestions: 'id',
+  media_jobs: 'id',
+  media_uploads: 'id',
+  session_audio_seams: 'session_id',
+  account_approvals: 'email_norm',
 };
 const MIGRATIONS = resolve(import.meta.dirname, '../../../../supabase/migrations');
 const MIGRATION = resolve(MIGRATIONS, '20261001000000_catalog_schema.sql');
@@ -223,6 +264,9 @@ const EXPECTED_SCHEMA: SchemaRecord = {
       'roll_started_at_utc text collate C',
       // session-row-versions D1.
       'revision bigint not null default 0',
+      // catalog-search D3: the generated search columns.
+      'search_meta tsvector',
+      'search_notes tsvector',
     ],
     primaryKey: ['id'],
     foreignKeys: ['FOREIGN KEY (show_id) REFERENCES catalog.shows(id)'],
@@ -269,6 +313,8 @@ const EXPECTED_SCHEMA: SchemaRecord = {
       'message text collate C not null',
       "metadata_json text collate C not null default '{}'::text",
       'version bigint not null default 1',
+      // catalog-search D3.
+      'search_tsv tsvector',
     ],
     primaryKey: ['session_id', 'id'],
     foreignKeys: ['FOREIGN KEY (session_id) REFERENCES catalog.sessions(id)'],
@@ -297,6 +343,10 @@ const EXPECTED_SCHEMA: SchemaRecord = {
       'waveform_peaks_json text collate C',
       'waveform_db_floor double precision',
       'created_at_utc text collate C not null',
+      // media-worker D5: the server-side duration and processing state.
+      'duration_ms bigint',
+      'media_status text collate C',
+      'media_error text collate C',
     ],
     primaryKey: ['session_id', 'id'],
     foreignKeys: ['FOREIGN KEY (session_id) REFERENCES catalog.sessions(id)'],
@@ -328,6 +378,8 @@ const EXPECTED_SCHEMA: SchemaRecord = {
       'ordinal bigint not null',
       'created_at_utc text collate C not null',
       'version bigint not null default 1',
+      // catalog-search D3.
+      'search_tsv tsvector',
     ],
     primaryKey: ['session_id', 'id'],
     foreignKeys: ['FOREIGN KEY (session_id) REFERENCES catalog.sessions(id)'],
@@ -443,33 +495,317 @@ const EXPECTED_SCHEMA: SchemaRecord = {
       'FOREIGN KEY (user_id) REFERENCES catalog.users(id) ON DELETE CASCADE',
     ],
   },
-  $unique: ['catalog.companion_devices UNIQUE (token_hash)', 'catalog.users UNIQUE (google_sub)'],
+  // byo-ai-providers D1: one credential per user and kind; the provider-key check value.
+  user_provider_credentials: {
+    columns: [
+      'user_id text collate C not null',
+      'kind text collate C not null',
+      'provider text collate C not null',
+      'base_url text collate C',
+      'base_origin text collate C',
+      'model text collate C not null',
+      // ai-sdk-agent-harness D2: nullable for the keyless `claude-cli` row; the claude_cli check
+      // below keeps every other row fully keyed.
+      'key_nonce bytea',
+      'key_ciphertext bytea',
+      'key_tag bytea',
+      'key_version smallint',
+      'key_last4 text collate C',
+      'created_at_utc text collate C not null',
+      'updated_at_utc text collate C not null',
+    ],
+    primaryKey: ['user_id', 'kind'],
+    foreignKeys: ['FOREIGN KEY (user_id) REFERENCES catalog.users(id) ON DELETE CASCADE'],
+  },
+  provider_test_windows: {
+    columns: [
+      'user_id text collate C not null',
+      'window_start_ms bigint not null',
+      'test_count smallint not null',
+    ],
+    primaryKey: ['user_id'],
+    foreignKeys: ['FOREIGN KEY (user_id) REFERENCES catalog.users(id) ON DELETE CASCADE'],
+  },
+  provider_key_check: {
+    columns: [
+      'id smallint not null',
+      'check_value text collate C not null',
+      'created_at_utc text collate C not null',
+    ],
+    primaryKey: ['id'],
+    foreignKeys: [],
+  },
+  // catalog-search D4: one row per non-empty 40-word block of a session's transcript.
+  session_transcript_chunks: {
+    columns: [
+      'session_id text collate C not null',
+      'bucket bigint not null',
+      'start_sec double precision',
+      'end_sec double precision',
+      "speaker text collate C not null default ''::text",
+      'text text collate C not null',
+      'search_tsv tsvector',
+    ],
+    primaryKey: ['session_id', 'bucket'],
+    foreignKeys: ['FOREIGN KEY (session_id) REFERENCES catalog.sessions(id)'],
+  },
+  // show-wiki D1: one row per page; composite keys keep sessions, redirects and aliases in the show.
+  wiki_pages: {
+    columns: [
+      'id text collate C not null',
+      'show_id text collate C not null',
+      'kind text collate C not null',
+      'title text collate C not null',
+      'body_md text collate C not null',
+      'session_id text collate C',
+      'revision bigint not null',
+      'merged_into text collate C',
+      'deleted_at_utc text collate C',
+      'created_by text collate C not null',
+      'created_by_name text collate C not null',
+      'created_at_utc text collate C not null',
+      'updated_by text collate C not null',
+      'updated_by_name text collate C not null',
+      'updated_at_utc text collate C not null',
+    ],
+    primaryKey: ['id'],
+    foreignKeys: [
+      'FOREIGN KEY (merged_into, show_id) REFERENCES catalog.wiki_pages(id, show_id)',
+      'FOREIGN KEY (session_id, show_id) REFERENCES catalog.sessions(id, show_id)',
+      'FOREIGN KEY (show_id) REFERENCES catalog.shows(id)',
+    ],
+  },
+  // show-wiki D1: one row per alias of a live non-session page.
+  wiki_aliases: {
+    columns: [
+      'page_id text collate C not null',
+      'show_id text collate C not null',
+      'alias text collate C not null',
+    ],
+    primaryKey: ['page_id', 'alias'],
+    foreignKeys: ['FOREIGN KEY (page_id, show_id) REFERENCES catalog.wiki_pages(id, show_id)'],
+  },
+  // show-wiki D2: an append-only snapshot per page write.
+  wiki_revisions: {
+    columns: [
+      'page_id text collate C not null',
+      'revision bigint not null',
+      'title text collate C not null',
+      'kind text collate C not null',
+      'body_md text collate C not null',
+      'aliases_json jsonb not null',
+      'author_user_id text collate C not null',
+      'author_name text collate C not null',
+      'at_utc text collate C not null',
+      'note text collate C',
+    ],
+    primaryKey: ['page_id', 'revision'],
+    foreignKeys: ['FOREIGN KEY (page_id) REFERENCES catalog.wiki_pages(id)'],
+  },
+  // show-wiki-ai D1: one row per AI suggestion; composite keys keep its session and page in the show.
+  wiki_suggestions: {
+    columns: [
+      'id text collate C not null',
+      'show_id text collate C not null',
+      'session_id text collate C not null',
+      'run_id text collate C not null',
+      'page_id text collate C',
+      'base_revision bigint',
+      'kind text collate C not null',
+      'title text collate C not null',
+      'body_md text collate C not null',
+      'aliases_json jsonb not null',
+      'rationale text collate C not null',
+      'status text collate C not null',
+      'created_by text collate C not null',
+      'created_by_name text collate C not null',
+      'created_at_utc text collate C not null',
+      'resolved_by text collate C',
+      'resolved_by_name text collate C',
+      'resolved_at_utc text collate C',
+      'resolved_revision bigint',
+    ],
+    primaryKey: ['id'],
+    foreignKeys: [
+      'FOREIGN KEY (page_id, show_id) REFERENCES catalog.wiki_pages(id, show_id)',
+      'FOREIGN KEY (session_id, show_id) REFERENCES catalog.sessions(id, show_id)',
+      'FOREIGN KEY (show_id) REFERENCES catalog.shows(id)',
+    ],
+  },
+  // show-wiki D1: the composite-key targets.
+  $unique: [
+    'catalog.companion_devices UNIQUE (token_hash)',
+    'catalog.sessions UNIQUE (id, show_id)',
+    'catalog.users UNIQUE (google_sub)',
+    'catalog.wiki_pages UNIQUE (id, show_id)',
+  ],
+  // media-worker D2: the durable job queue.
+  media_jobs: {
+    columns: [
+      'id text collate C not null',
+      'kind text collate C not null',
+      'session_id text collate C not null',
+      'target text collate C not null',
+      "status text collate C not null default 'queued'::text",
+      'attempts integer not null default 0',
+      'max_attempts integer not null default 5',
+      'input_bytes bigint not null',
+      'run_after_ms bigint not null',
+      'locked_by text collate C',
+      'locked_until_ms bigint',
+      'result_json text collate C',
+      'error text collate C',
+      'created_at_ms bigint not null',
+      'updated_at_ms bigint not null',
+      'applied_at_ms bigint',
+    ],
+    primaryKey: ['id'],
+    foreignKeys: ['FOREIGN KEY (session_id) REFERENCES catalog.sessions(id)'],
+  },
+  // media-worker D12: resumable parts uploads.
+  media_uploads: {
+    columns: [
+      'id text collate C not null',
+      'session_id text collate C not null',
+      'created_by_user_id text collate C not null',
+      'content_type text collate C not null',
+      'size_bytes bigint not null',
+      'part_size bigint not null',
+      'parts_total integer not null',
+      'part_sha256_json text collate C not null',
+      "received_json text collate C not null default '[]'::text",
+      "status text collate C not null default 'open'::text",
+      'expires_at_ms bigint not null',
+      'created_at_ms bigint not null',
+    ],
+    primaryKey: ['id'],
+    foreignKeys: [
+      'FOREIGN KEY (created_by_user_id) REFERENCES catalog.users(id) ON DELETE CASCADE',
+      'FOREIGN KEY (session_id) REFERENCES catalog.sessions(id)',
+    ],
+  },
+  // media-worker D7, D18: one row per accepted chunk window.
+  session_audio_seams: {
+    columns: [
+      'session_id text collate C not null',
+      'recording_ordinal bigint not null',
+      'started_at_utc text collate C not null',
+      'ended_at_utc text collate C',
+      'segment_id text collate C not null',
+      'offset_ms bigint not null default 0',
+      'source_key text collate C not null',
+    ],
+    primaryKey: ['session_id', 'recording_ordinal', 'started_at_utc'],
+    foreignKeys: [
+      'FOREIGN KEY (session_id, segment_id) REFERENCES catalog.session_audio_segments(session_id, id) ON DELETE CASCADE',
+      'FOREIGN KEY (session_id) REFERENCES catalog.sessions(id)',
+    ],
+  },
+  // closed-signups D2: one row per approved email, system-only.
+  account_approvals: {
+    columns: [
+      'email_norm text collate C not null',
+      'approved_at_utc text collate C not null',
+      'note text collate C',
+    ],
+    primaryKey: ['email_norm'],
+    foreignKeys: [],
+  },
   // owner-bootstrap D1: the role check and at most one owner per team.
   $checks: [
+    // closed-signups D2: a printable-ASCII, lowercase local@domain; a note of at most 200.
+    "catalog.account_approvals account_approvals_email_norm_check CHECK (((email_norm ~ '^[!-~]+@[!-~]+$'::text) AND (email_norm = lower(email_norm))))",
+    'catalog.account_approvals account_approvals_note_check CHECK (((note IS NULL) OR (char_length(note) <= 200)))',
     'catalog.companion_devices companion_devices_name_check CHECK (((char_length(name) >= 1) AND (char_length(name) <= 80)))',
     'catalog.companion_presence companion_presence_client_id_check CHECK (((char_length(client_id) >= 1) AND (char_length(client_id) <= 256)))',
+    // media-worker D2, D12, D5, D7.
+    "catalog.media_jobs media_jobs_error_code CHECK (((error IS NULL) OR (error = ANY (ARRAY['decode-failed'::text, 'mixed-codecs'::text, 'verify-mismatch'::text, 'interleaved-input'::text, 'missing-blob'::text, 'timeout'::text, 'low-disk'::text, 'internal'::text, 'invalid-result'::text, 'inputs-changed'::text]))))",
+    'catalog.media_jobs media_jobs_input_bytes_check CHECK ((input_bytes >= 0))',
+    "catalog.media_jobs media_jobs_kind_check CHECK ((kind = ANY (ARRAY['ingest'::text, 'merge'::text])))",
+    'catalog.media_jobs media_jobs_result_json_size CHECK ((octet_length(result_json) <= 262144))',
+    "catalog.media_jobs media_jobs_status_check CHECK ((status = ANY (ARRAY['queued'::text, 'running'::text, 'done'::text, 'applied'::text, 'failed'::text, 'cancelled'::text])))",
+    'catalog.media_uploads media_uploads_content_type_check CHECK (((char_length(content_type) >= 1) AND (char_length(content_type) <= 255)))',
+    'catalog.media_uploads media_uploads_part_size_check CHECK ((part_size > 0))',
+    'catalog.media_uploads media_uploads_parts_total_check CHECK (((parts_total >= 1) AND (parts_total <= 10000)))',
+    'catalog.media_uploads media_uploads_size_bytes_check CHECK ((size_bytes > 0))',
+    "catalog.media_uploads media_uploads_status_check CHECK ((status = ANY (ARRAY['open'::text, 'complete'::text])))",
+    'catalog.provider_key_check provider_key_check_id_check CHECK ((id = 1))',
+    'catalog.session_audio_seams session_audio_seams_offset_ms_check CHECK ((offset_ms >= 0))',
+    'catalog.session_audio_segments session_audio_segments_duration_ms_check CHECK ((duration_ms >= 0))',
+    'catalog.session_audio_segments session_audio_segments_media_error_check CHECK ((char_length(media_error) <= 64))',
+    "catalog.session_audio_segments session_audio_segments_media_status_check CHECK ((media_status = ANY (ARRAY['pending'::text, 'done'::text, 'failed'::text])))",
     "catalog.session_leases session_leases_client_check CHECK (((holder_client_id <> ''::text) AND (length(holder_client_id) <= 256)))",
     "catalog.session_leases session_leases_kind_check CHECK ((kind = ANY (ARRAY['recording'::text, 'ai-turn'::text, 'transcript-generation'::text, 'youtube-import'::text])))",
     "catalog.session_overwrites session_overwrites_table_name_check CHECK ((table_name = ANY (ARRAY['session_events'::text, 'session_transcript_words'::text, 'session_topics'::text])))",
+    'catalog.user_provider_credentials user_provider_credentials_base_url_check CHECK ((char_length(base_url) <= 2048))',
+    "catalog.user_provider_credentials user_provider_credentials_claude_cli_check CHECK ((((provider = 'claude-cli'::text) AND (kind = 'llm'::text) AND (base_url IS NULL) AND (key_nonce IS NULL) AND (key_ciphertext IS NULL) AND (key_tag IS NULL) AND (key_version IS NULL) AND (key_last4 IS NULL)) OR ((provider <> 'claude-cli'::text) AND (key_nonce IS NOT NULL) AND (key_ciphertext IS NOT NULL) AND (key_tag IS NOT NULL) AND (key_version IS NOT NULL) AND (key_last4 IS NOT NULL))))",
+    'catalog.user_provider_credentials user_provider_credentials_key_last4_check CHECK (((char_length(key_last4) >= 1) AND (char_length(key_last4) <= 4)))',
+    "catalog.user_provider_credentials user_provider_credentials_kind_check CHECK ((kind = ANY (ARRAY['llm'::text, 'stt'::text])))",
+    'catalog.user_provider_credentials user_provider_credentials_model_check CHECK (((char_length(model) >= 1) AND (char_length(model) <= 200)))',
+    'catalog.user_provider_credentials user_provider_credentials_origin_check CHECK (((base_url IS NULL) = (base_origin IS NULL)))',
+    'catalog.user_provider_credentials user_provider_credentials_provider_check CHECK (((char_length(provider) >= 1) AND (char_length(provider) <= 64)))',
     "catalog.user_studio_memberships user_studio_memberships_role_check CHECK ((role = ANY (ARRAY['owner'::text, 'admin'::text, 'member'::text])))",
+    // show-wiki D1: the kinds, the session coupling and the length limits.
+    'catalog.wiki_aliases wiki_aliases_alias_check CHECK (((char_length(btrim(alias)) >= 1) AND (char_length(btrim(alias)) <= 200)))',
+    'catalog.wiki_pages wiki_pages_body_md_check CHECK ((char_length(body_md) <= 100000))',
+    "catalog.wiki_pages wiki_pages_kind_check CHECK ((kind = ANY (ARRAY['person'::text, 'topic'::text, 'bit'::text, 'session'::text])))",
+    "catalog.wiki_pages wiki_pages_session_kind_check CHECK (((kind = 'session'::text) = (session_id IS NOT NULL)))",
+    'catalog.wiki_pages wiki_pages_title_check CHECK (((char_length(btrim(title)) >= 1) AND (char_length(btrim(title)) <= 200)))',
+    // show-wiki-ai D1: kinds, statuses, the page/base pairing, resolution fields and length limits.
+    'catalog.wiki_suggestions wiki_suggestions_body_md_check CHECK ((char_length(body_md) <= 100000))',
+    "catalog.wiki_suggestions wiki_suggestions_kind_check CHECK ((kind = ANY (ARRAY['person'::text, 'topic'::text, 'bit'::text, 'session'::text])))",
+    'catalog.wiki_suggestions wiki_suggestions_rationale_check CHECK ((char_length(rationale) <= 500))',
+    "catalog.wiki_suggestions wiki_suggestions_resolved_check CHECK ((((status = ANY (ARRAY['accepted'::text, 'dismissed'::text])) = (resolved_by IS NOT NULL)) AND ((status = ANY (ARRAY['accepted'::text, 'dismissed'::text])) = (resolved_at_utc IS NOT NULL)) AND ((status = 'accepted'::text) = (resolved_revision IS NOT NULL))))",
+    "catalog.wiki_suggestions wiki_suggestions_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'accepted'::text, 'dismissed'::text, 'superseded'::text])))",
+    'catalog.wiki_suggestions wiki_suggestions_target_check CHECK (((page_id IS NULL) = (base_revision IS NULL)))',
+    'catalog.wiki_suggestions wiki_suggestions_title_check CHECK (((char_length(btrim(title)) >= 1) AND (char_length(btrim(title)) <= 200)))',
   ],
   $indexes: [
     'CREATE INDEX idx_companion_devices_user ON catalog.companion_devices USING btree (user_id)',
     'CREATE INDEX idx_companion_presence_user ON catalog.companion_presence USING btree (user_id, updated_at_ms)',
+    // media-worker D2, D12, D7.
+    "CREATE INDEX idx_media_jobs_due ON catalog.media_jobs USING btree (run_after_ms, created_at_ms) WHERE (status = 'queued'::text)",
+    "CREATE UNIQUE INDEX idx_media_jobs_live ON catalog.media_jobs USING btree (kind, session_id, target) WHERE (status = ANY (ARRAY['queued'::text, 'running'::text, 'done'::text]))",
+    'CREATE INDEX idx_media_jobs_status ON catalog.media_jobs USING btree (status, updated_at_ms)',
+    'CREATE INDEX idx_media_uploads_expiry ON catalog.media_uploads USING btree (expires_at_ms)',
+    'CREATE INDEX idx_media_uploads_user ON catalog.media_uploads USING btree (created_by_user_id, status)',
     'CREATE INDEX idx_session_audio_ordinal ON catalog.session_audio_segments USING btree (session_id, ordinal)',
     'CREATE INDEX idx_session_audio_r2_key ON catalog.session_audio_segments USING btree (session_id, r2_key)',
+    'CREATE INDEX idx_session_audio_seams_segment ON catalog.session_audio_seams USING btree (session_id, segment_id)',
+    // catalog-search D3: the search indexes.
+    // catalog-search D11: the phrase trigram indexes.
+    'CREATE INDEX idx_session_chunks_phrase_trgm ON catalog.session_transcript_chunks USING gin (catalog.search_phrase_norm(text) gin_trgm_ops)',
+    'CREATE INDEX idx_session_chunks_search ON catalog.session_transcript_chunks USING gin (search_tsv)',
     'CREATE INDEX idx_session_dashboards_created ON catalog.session_dashboards USING btree (session_id, created_at_utc)',
+    'CREATE INDEX idx_session_events_phrase_trgm ON catalog.session_events USING gin (catalog.search_phrase_norm(message) gin_trgm_ops)',
+    'CREATE INDEX idx_session_events_search ON catalog.session_events USING gin (search_tsv)',
     'CREATE INDEX idx_session_events_wall ON catalog.session_events USING btree (session_id, wall_time_utc, id)',
     'CREATE INDEX idx_session_paragraphs_ordinal ON catalog.session_transcript_paragraphs USING btree (session_id, ordinal)',
     'CREATE INDEX idx_session_sentiment_ordinal ON catalog.session_transcript_sentiment USING btree (session_id, ordinal)',
     'CREATE INDEX idx_session_topics_ordinal ON catalog.session_topics USING btree (session_id, ordinal)',
+    'CREATE INDEX idx_session_topics_phrase_trgm ON catalog.session_topics USING gin (catalog.search_phrase_norm(summary) gin_trgm_ops)',
+    'CREATE INDEX idx_session_topics_search ON catalog.session_topics USING gin (search_tsv)',
     'CREATE INDEX idx_session_words_ordinal ON catalog.session_transcript_words USING btree (session_id, ordinal)',
+    'CREATE INDEX idx_sessions_search_meta ON catalog.sessions USING gin (search_meta)',
+    'CREATE INDEX idx_sessions_search_notes ON catalog.sessions USING gin (search_notes)',
     'CREATE INDEX idx_sessions_show ON catalog.sessions USING btree (show_id)',
+    'CREATE INDEX idx_sessions_title_trgm ON catalog.sessions USING gin (catalog.search_norm(title) gin_trgm_ops)',
     'CREATE INDEX idx_show_grants_show ON catalog.show_grants USING btree (show_id)',
+    'CREATE INDEX idx_shows_name_trgm ON catalog.shows USING gin (catalog.search_norm(name) gin_trgm_ops)',
     'CREATE INDEX idx_shows_studio ON catalog.shows USING btree (studio_id)',
+    'CREATE INDEX idx_studio_definitions_name_trgm ON catalog.studio_definitions USING gin (catalog.search_norm(display_name) gin_trgm_ops)',
     "CREATE UNIQUE INDEX idx_user_studio_memberships_one_owner ON catalog.user_studio_memberships USING btree (studio_id) WHERE (role = 'owner'::text)",
     'CREATE INDEX idx_user_studio_memberships_studio ON catalog.user_studio_memberships USING btree (studio_id)',
     'CREATE INDEX idx_users_email ON catalog.users USING btree (email)',
+    // show-wiki D1: live names are unique per show; the show listing.
+    'CREATE UNIQUE INDEX idx_wiki_aliases_name ON catalog.wiki_aliases USING btree (show_id, catalog.search_norm(alias))',
+    'CREATE UNIQUE INDEX idx_wiki_pages_live_session ON catalog.wiki_pages USING btree (show_id, session_id) WHERE ((session_id IS NOT NULL) AND (merged_into IS NULL) AND (deleted_at_utc IS NULL))',
+    "CREATE UNIQUE INDEX idx_wiki_pages_live_title ON catalog.wiki_pages USING btree (show_id, catalog.search_norm(title)) WHERE ((kind <> 'session'::text) AND (merged_into IS NULL) AND (deleted_at_utc IS NULL))",
+    'CREATE INDEX idx_wiki_pages_show ON catalog.wiki_pages USING btree (show_id)',
+    // show-wiki-ai D1: one pending suggestion per page and per new-page title; the show listing.
+    "CREATE UNIQUE INDEX idx_wiki_suggestions_pending_page ON catalog.wiki_suggestions USING btree (show_id, page_id) WHERE ((status = 'pending'::text) AND (page_id IS NOT NULL))",
+    "CREATE UNIQUE INDEX idx_wiki_suggestions_pending_title ON catalog.wiki_suggestions USING btree (show_id, catalog.search_norm(title)) WHERE ((status = 'pending'::text) AND (page_id IS NULL))",
+    'CREATE INDEX idx_wiki_suggestions_show ON catalog.wiki_suggestions USING btree (show_id)',
   ],
 };
 const EXPECTED_SHOWS: unknown[] = [
@@ -614,11 +950,46 @@ describe('the app role (design D3)', () => {
               values ('d', 'u', 'n', 'h', ${t})`;
     await sql`insert into companion_presence (client_id, user_id, session_id, visible, is_playing,
                 updated_at_ms) values ('c', 'u', 'se', true, false, 1)`;
+    // byo-ai-providers D1.
+    await sql`insert into user_provider_credentials (user_id, kind, provider, model, key_nonce,
+                key_ciphertext, key_tag, key_version, key_last4, created_at_utc, updated_at_utc)
+              values ('u', 'stt', 'deepgram', 'nova-3', '\\x00', '\\x01', '\\x02', 1, 'abcd', ${t}, ${t})`;
+    await sql`insert into provider_key_check (id, check_value, created_at_utc) values (1, 'c', ${t})`;
+    await sql`insert into provider_test_windows (user_id, window_start_ms, test_count) values ('u', 1, 1)`;
+    // catalog-search D4: a chunk row in a bucket no word of `se` falls in, so no rebuild touches it.
+    await sql`insert into session_transcript_chunks (session_id, bucket, text) values ('se', 9, 't')`;
+    // show-wiki D1, D2: a session page with an alias and its first revision.
+    await sql`insert into wiki_pages (id, show_id, kind, title, body_md, session_id, revision,
+                created_by, created_by_name, created_at_utc, updated_by, updated_by_name,
+                updated_at_utc)
+              values ('wp', 'sh', 'session', 'W', '', 'se', 1, 'u', 'U', ${t}, 'u', 'U', ${t})`;
+    await sql`insert into wiki_aliases (page_id, show_id, alias) values ('wp', 'sh', 'a')`;
+    await sql`insert into wiki_revisions (page_id, revision, title, kind, body_md, aliases_json,
+                author_user_id, author_name, at_utc) values ('wp', 1, 'W', 'session', '', '[]', 'u', 'U', ${t})`;
+    // show-wiki-ai D1: a pending suggestion for that page.
+    await sql`insert into wiki_suggestions (id, show_id, session_id, run_id, page_id, base_revision,
+                kind, title, body_md, aliases_json, rationale, status, created_by, created_by_name,
+                created_at_utc)
+              values ('ws', 'sh', 'se', 'r', 'wp', 1, 'session', 'W', '', '[]', '', 'pending', 'u',
+                'U', ${t})`;
+    // media-worker D2, D12, D7.
+    await sql`insert into media_jobs (id, kind, session_id, target, input_bytes, run_after_ms,
+                created_at_ms, updated_at_ms) values ('j', 'ingest', 'se', 'a', 1, 1, 1, 1)`;
+    await sql`insert into media_uploads (id, session_id, created_by_user_id, content_type,
+                size_bytes, part_size, parts_total, part_sha256_json, expires_at_ms, created_at_ms)
+              values ('up', 'se', 'u', 'audio/wav', 1, 1, 1, '[]', 1, 1)`;
+    await sql`insert into session_audio_seams (session_id, recording_ordinal, started_at_utc,
+                segment_id, source_key) values ('se', 1, ${t}, 'a', 'k')`;
+    // closed-signups D2: only postgres writes an approval; catalog_system reads and deletes it.
+    await connect(db.admin)`select catalog.approve_account('e@example.com')`;
     for (const table of TABLES) {
       const n = await sql.unsafe(`select count(*)::int as n from ${table}`);
       expect(n[0]?.n, table).toBeGreaterThan(0);
       const target = KEY_COLUMN[table];
-      await sql.unsafe(`update ${table} set ${target} = ${target}`);
+      const update = sql.unsafe(`update ${table} set ${target} = ${target}`);
+      if (table === 'account_approvals')
+        await expect(update).rejects.toMatchObject({ code: '42501' });
+      else await update;
     }
     for (const table of [...TABLES].reverse()) await sql.unsafe(`delete from ${table}`);
   });
@@ -751,8 +1122,16 @@ describe('row-level security on every catalog table (catalog-roles D1, D2; catal
       // show_grants (D2's naming).
       // session-content-policies D1: so does each session table's.
       const session = SESSION_TABLES.includes(t.relname);
+      // show-wiki D1: so do wiki_pages and wiki_aliases.
+      // media-worker D7, D12: so do the seams and the uploads.
       expect(byName[`${t.relname}_user_all`] !== undefined, t.relname).toBe(
-        t.relname === 'user_prefs' || t.relname === 'show_grants' || session,
+        t.relname === 'user_prefs' ||
+          t.relname === 'show_grants' ||
+          session ||
+          t.relname === 'session_audio_seams' ||
+          t.relname === 'media_uploads' ||
+          t.relname === 'wiki_pages' ||
+          t.relname === 'wiki_aliases',
       );
       // session-content-policies D1 (inverting session-tables D1's 7b-1 rule): each session table
       // has exactly the system policy and the one `_user_all` content policy, and catalog_user
@@ -795,11 +1174,63 @@ describe('row-level security on every catalog table (catalog-roles D1, D2; catal
           expect(r[0]?.p, `session_leases ${priv}`).toBe(true);
         }
       }
-      if (session) {
-        expect(policies.map((p) => p.policyname).sort(), t.relname).toEqual([
-          `${t.relname}_system_all`,
-          `${t.relname}_user_all`,
+      // catalog-search D4: chunks have the system policy and one user select policy, and
+      // catalog_user holds the select privilege only.
+      if (t.relname === 'session_transcript_chunks') {
+        const cmds = await sql`select policyname, cmd, roles::text[] as roles from pg_policies
+                               where schemaname = 'catalog' and tablename = 'session_transcript_chunks'
+                               order by policyname`;
+        expect(cmds.map((p) => [p.policyname, p.cmd, p.roles])).toEqual([
+          ['session_transcript_chunks_system_all', 'ALL', ['catalog_system']],
+          ['session_transcript_chunks_user_select', 'SELECT', ['catalog_user']],
         ]);
+        for (const priv of ['select', 'insert', 'update', 'delete']) {
+          const r =
+            await sql`select has_table_privilege('catalog_user', 'catalog.session_transcript_chunks', ${priv}) as p`;
+          expect(r[0]?.p, `session_transcript_chunks ${priv}`).toBe(priv === 'select');
+        }
+      }
+      // show-wiki-ai D1: suggestions have the system policy and user select, insert and update
+      // policies; catalog_user holds select and insert, and update on the resolution columns only.
+      if (t.relname === 'wiki_suggestions') {
+        const cmds = await sql`select policyname, cmd, roles::text[] as roles from pg_policies
+                               where schemaname = 'catalog' and tablename = 'wiki_suggestions'
+                               order by policyname`;
+        expect(cmds.map((p) => [p.policyname, p.cmd, p.roles])).toEqual([
+          ['wiki_suggestions_system_all', 'ALL', ['catalog_system']],
+          ['wiki_suggestions_user_insert', 'INSERT', ['catalog_user']],
+          ['wiki_suggestions_user_select', 'SELECT', ['catalog_user']],
+          ['wiki_suggestions_user_update', 'UPDATE', ['catalog_user']],
+        ]);
+        for (const priv of ['select', 'insert', 'update', 'delete']) {
+          const r =
+            await sql`select has_table_privilege('catalog_user', 'catalog.wiki_suggestions', ${priv}) as p`;
+          expect(r[0]?.p, `wiki_suggestions ${priv}`).toBe(priv === 'select' || priv === 'insert');
+        }
+        const cols = await sql`select column_name from information_schema.columns
+                               where table_schema = 'catalog' and table_name = 'wiki_suggestions'
+                                 and has_column_privilege('catalog_user', 'catalog.wiki_suggestions',
+                                                          column_name, 'update')
+                               order by ordinal_position`;
+        expect(cols.map((c) => c.column_name)).toEqual([
+          'status',
+          'resolved_by',
+          'resolved_by_name',
+          'resolved_at_utc',
+          'resolved_revision',
+        ]);
+      }
+      if (session) {
+        // media-worker D1: the worker role reads the segments through its own select policy.
+        expect(policies.map((p) => p.policyname).sort(), t.relname).toEqual(
+          t.relname === 'session_audio_segments'
+            ? [
+                'session_audio_segments_media_select',
+                'session_audio_segments_system_all',
+                'session_audio_segments_user_all',
+              ]
+            : [`${t.relname}_system_all`, `${t.relname}_user_all`],
+        );
         expect(byName[`${t.relname}_user_all`], t.relname).toEqual(['catalog_user']);
         for (const priv of ['select', 'insert', 'update', 'delete']) {
           const r =
@@ -898,6 +1329,7 @@ describe('row-level security on every catalog table (catalog-roles D1, D2; catal
         insert into catalog.kv (key, value) values ('k-o', 'v');
         insert into catalog.team_invites (studio_id, email_norm, invited_by_user_id, invited_at_utc) values ('st-o', 'e', 'other', '${t}');
         insert into catalog.show_grants (user_id, show_id, granted_at_utc) values ('other', 'sh-o', '${t}');
+        select catalog.approve_account('o@example.com');
       `);
     const counts: Record<string, number> = {};
     for (const table of TABLES) {
@@ -912,6 +1344,9 @@ describe('row-level security on every catalog table (catalog-roles D1, D2; catal
       for (const table of TABLES) {
         const sel = await tx.unsafe(`select count(*)::int as n from ${table}`);
         expect(sel[0]?.n, `select ${table}`).toBe(counts[table]);
+        // closed-signups D2: catalog_system holds no update on account_approvals (its 42501:
+        // accountApprovals.pg.test.ts).
+        if (table === 'account_approvals') continue;
         const key = KEY_COLUMN[table];
         const upd = await tx.unsafe(`update ${table} set ${key} = ${key}`);
         expect(upd.count, `update ${table}`).toBe(counts[table]);
@@ -1340,5 +1775,60 @@ describe("the app role's password (design D4)", () => {
     const logs = spawnSync('docker', ['logs', testPg().container], { encoding: 'utf8' });
     expect(logs.status).toBe(0);
     expect(`${logs.stdout}${logs.stderr}`).not.toContain(pw);
+  });
+});
+
+describe('the claude-cli provider migration (ai-sdk-agent-harness D2)', () => {
+  it('relaxes the key columns, adds the claude_cli check, and changes no existing keyed row', async () => {
+    const CLAUDE_CLI_MIGRATION = '20261018000000_claude_cli_provider.sql';
+    const name = `t_cli_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    // The replay runs the role guards, which a parallel scratch role would trip (roleGuardLock.ts).
+    await holdRoleGuardLock(connect(connOptions('postgres', 'postgres')));
+    const root = connect(connOptions('postgres', 'postgres'));
+    await root.unsafe(`create database ${name} template template0`);
+    const sql = connect(connOptions('postgres', name));
+    const earlier = readdirSync(MIGRATIONS)
+      .filter((f) => f.endsWith('.sql') && f < CLAUDE_CLI_MIGRATION)
+      .sort();
+    expect(earlier.at(-1)).toBe('20261017000000_provider_test_windows.sql');
+    for (const f of earlier) {
+      const text = readFileSync(resolve(MIGRATIONS, f), 'utf8');
+      await sql.begin((tx) => tx.unsafe(text));
+    }
+    const t = '2026-10-18T00:00:00.000Z';
+    await sql.unsafe(`
+      insert into catalog.users (id, google_sub, email, created_at_utc)
+        values ('u', 'u-sub', 'u@example.com', '${t}');
+      insert into catalog.user_provider_credentials
+        (user_id, kind, provider, base_url, base_origin, model, key_nonce, key_ciphertext, key_tag,
+         key_version, key_last4, created_at_utc, updated_at_utc)
+        values
+        ('u', 'llm', 'openai-compatible', 'https://llm.example/v1', 'https://llm.example', 'm',
+         '\\x00', '\\x01', '\\x02', 1, 'abcd', '${t}', '${t}'),
+        ('u', 'stt', 'deepgram', null, null, 'nova-3', '\\x03', '\\x04', '\\x05', 1, 'wxyz',
+         '${t}', '${t}');`);
+    const rows = () =>
+      sql`select row_to_json(c) as r from catalog.user_provider_credentials c order by kind`;
+    const before = await rows();
+    const text = readFileSync(resolve(MIGRATIONS, CLAUDE_CLI_MIGRATION), 'utf8');
+    await sql.begin((tx) => tx.unsafe(text));
+    const after = await rows();
+    expect(after.map((r) => r.r)).toEqual(before.map((r) => r.r));
+    expect(after).toHaveLength(2);
+    const nullable = await sql`select column_name::text as c, is_nullable::text as n
+        from information_schema.columns
+       where table_schema = 'catalog' and table_name = 'user_provider_credentials'
+         and column_name like 'key\\_%' order by column_name`;
+    expect(nullable.map((r) => `${r.c}:${r.n}`)).toEqual([
+      'key_ciphertext:YES',
+      'key_last4:YES',
+      'key_nonce:YES',
+      'key_tag:YES',
+      'key_version:YES',
+    ]);
+    const checks = await sql`select conname::text as n from pg_constraint
+       where conrelid = 'catalog.user_provider_credentials'::regclass
+         and conname = 'user_provider_credentials_claude_cli_check'`;
+    expect(checks).toHaveLength(1);
   });
 });

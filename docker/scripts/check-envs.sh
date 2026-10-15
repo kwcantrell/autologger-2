@@ -1,7 +1,8 @@
 #!/bin/sh
 # docker/scripts/check-envs.sh -- static invariant check for the dev / stage / prod compose
 # projects (containerized-dev-env, design D11; infisical-secrets D5; spec "Static invariant
-# check", 16 invariants; supabase-db D7).
+# check", 16 invariants; supabase-db D7; drop-unused-supabase-services D4: db, migrate and auth
+# are the only Supabase services).
 #
 #   docker/scripts/check-envs.sh [dev|stage|prod|all]      (default: all)
 #
@@ -26,15 +27,18 @@ cd "$ROOT"
 # The caller's shell must not influence the result: every interpolated variable falls back to
 # its compose default, and the placeholder env files below supply any non-default value.
 unset DEV_PORT DEV_COMPANION_PORT STAGE_PORT ROUTER_PORT ROUTER_FRONT_GW ROUTER_BACK_GW \
-  STAGE_WEB_IMAGE STAGE_API_IMAGE STAGE_PUBLIC_BASE_URL STAGE_COOKIE_SECURE STAGE_IMAGE_TAG \
-  WEB_TAG API_TAG PUBLIC_BASE_URL HOST TRUST_PROXY \
-  IP_ALLOWLIST DATA_DIR PORT 2>/dev/null || true
+  STAGE_WEB_IMAGE STAGE_API_IMAGE STAGE_MEDIA_IMAGE STAGE_PUBLIC_BASE_URL STAGE_COOKIE_SECURE STAGE_IMAGE_TAG \
+  WEB_TAG API_TAG MEDIA_TAG PUBLIC_BASE_URL HOST TRUST_PROXY \
+  IP_ALLOWLIST DATA_DIR BLOB_DIR PORT 2>/dev/null || true
 # supabase-db D4, supabase-services D4: one sentinel per Supabase secret, so invariant 16 can find
 # each value anywhere; SB_SCOPE is the services each may appear in (same table as compose-run.mjs).
-SB_SECRETS="POSTGRES_PASSWORD SUPABASE_ROLES_PASSWORD APP_DB_PASSWORD JWT_SECRET ANON_KEY SERVICE_ROLE_KEY SECRET_KEY_BASE REALTIME_DB_ENC_KEY"
-for k in $SB_SECRETS; do eval "$k=sbsentinel_${k}_z; export $k"; done
-SUPABASE_PORT=18790; export SUPABASE_PORT
-SB_SCOPE='{"POSTGRES_PASSWORD":["db","migrate","realtime"],"APP_DB_PASSWORD":{"dev":["app","migrate"],"stage":["api","migrate"],"prod":["api","migrate"]},"SUPABASE_ROLES_PASSWORD":["db","auth","rest","storage"],"JWT_SECRET":["auth","rest","realtime","storage"],"ANON_KEY":["supabase-gw","realtime","storage"],"SERVICE_ROLE_KEY":["supabase-gw","storage"],"SECRET_KEY_BASE":["realtime"],"REALTIME_DB_ENC_KEY":["realtime"]}'
+# drop-unused-supabase-services D4: SB_RETIRED are the removed services' keys; compose-run.mjs never
+# passes them on, so their sentinel may appear in no service at all.
+# media-worker D15: MEDIA_DB_PASSWORD reaches only media-worker and migrate.
+SB_SECRETS="POSTGRES_PASSWORD SUPABASE_ROLES_PASSWORD APP_DB_PASSWORD MEDIA_DB_PASSWORD JWT_SECRET"
+SB_RETIRED="ANON_KEY SERVICE_ROLE_KEY SECRET_KEY_BASE REALTIME_DB_ENC_KEY SUPABASE_PORT"
+for k in $SB_SECRETS $SB_RETIRED; do eval "$k=sbsentinel_${k}_z; export $k"; done
+SB_SCOPE='{"POSTGRES_PASSWORD":["db","migrate"],"APP_DB_PASSWORD":{"dev":["app","migrate"],"stage":["api","migrate"],"prod":["api","migrate"]},"MEDIA_DB_PASSWORD":["media-worker","migrate"],"SUPABASE_ROLES_PASSWORD":["db","auth"],"JWT_SECRET":["auth"]}'
 
 # The shared allowlist (infisical-secrets D2; secrets now come from OpenBao, openbao-secrets): every key a container may receive, one null
 # passthrough per line. Those keys must not leak the caller's values into the resolved JSON, and
@@ -110,6 +114,7 @@ HOST=0.0.0.0
 TRUST_PROXY=1
 IP_ALLOWLIST=0.0.0.0/0
 DATA_DIR=/x
+BLOB_DIR=/x
 PORT=1
 EOF
 printf 'STAGE_PORT=18788\n' >"$TMP/stage-custom.env"
@@ -118,10 +123,11 @@ cat >"$TMP/stage-public.env" <<'EOF'
 STAGE_PORT=18788
 STAGE_WEB_IMAGE=ghcr.io/kwcantrell/autologger-web:0000000000000000000000000000000000000000
 STAGE_API_IMAGE=ghcr.io/kwcantrell/autologger-api:0000000000000000000000000000000000000000
+STAGE_MEDIA_IMAGE=ghcr.io/kwcantrell/autologger-media-worker:0000000000000000000000000000000000000000
 STAGE_PUBLIC_BASE_URL=https://stage.example.invalid
 STAGE_COOKIE_SECURE=1
 EOF
-printf 'WEB_TAG=abcdef123456\nAPI_TAG=abcdef123456\nPUBLIC_BASE_URL=https://example.invalid\n' >"$TMP/prod.env"
+printf 'WEB_TAG=0000000000aa\nAPI_TAG=0000000000aa\nMEDIA_TAG=0000000000aa\nPUBLIC_BASE_URL=https://example.invalid\n' >"$TMP/prod.env"
 
 # ---------------------------------------------------------------- shared assertions -----------
 # Invariant 1 (any project): every published port is on the literal 127.0.0.1.
@@ -142,6 +148,14 @@ check_no_8080_numeric() { # json label
 # Invariant 7 (stage, prod): the api posture pins survive.
 check_posture_prodlike() { # json label
   jq_ok 7 "$2: api TRUST_PROXY is not \"1\"" "$1" '.services.api.environment.TRUST_PROXY=="1"'
+}
+
+# Invariant 7 (stage, prod; shared-blob-volume D6): the audio root is the literal /blobs, on a
+# single named volume of its own (every server process of the stack mounts it).
+check_blob_volume() { # json label
+  jq_ok 7 "$2: api BLOB_DIR is not \"/blobs\"" "$1" '.services.api.environment.BLOB_DIR=="/blobs"'
+  jq_ok 7 "$2: api /blobs is not a single named-volume mount (autologger-blobs)" "$1" \
+    '(.services.api.volumes//[])|map(select(.target=="/blobs"))|length==1 and .[0].type=="volume" and .[0].source=="autologger-blobs"'
 }
 
 # Invariant 6 (dev, stage): no service uses the host network namespace or runs privileged.
@@ -191,34 +205,34 @@ check_gw_values() { # json label
     "[.services[]|(.environment//{})|to_entries[]|select(.key|test(\"^ROUTER_(FRONT|BACK)_GW\$\"))|.value]|all(type==\"string\" and test(\"$IPV4\") and .!=\"0.0.0.0\")"
 }
 
-# Invariant 16 (dev, stage, prod; supabase-db D1-D4, supabase-services D1-D4, catalog-pg-schema D5):
-# Postgres and the Supabase services are reachable only through the gateway, the app reaches only
-# Postgres over the two-member catalog network and GoTrue over the two-member auth-app network
-# (gotrue-sign-in D6), only GoTrue has egress (auth-egress), and each secret stays in its services. The value
-# check covers every string in a service (env, command, labels, healthcheck, build args).
-check_supabase() { # json label db-subnet supabase-subnet edge-subnet catalog-subnet auth-egress-subnet auth-app-subnet
+# Invariant 16 (dev, stage, prod; supabase-db D1-D4, supabase-services D1-D4, catalog-pg-schema D5,
+# drop-unused-supabase-services D4): the Supabase services are db, migrate and auth; Postgres is
+# reachable only by them and, over the two-member catalog network, the app; the app reaches GoTrue
+# over the two-member auth-app network (gotrue-sign-in D6); only GoTrue has egress (auth-egress);
+# no retired service (rest, realtime, storage, supabase-gw) or network (supabase, edge) is back; and
+# each secret stays in its services, a retired key in none. The value check covers every string in
+# a service (env, command, labels, healthcheck, build args).
+check_supabase() { # json label db-subnet catalog-subnet auth-egress-subnet auth-app-subnet media-subnet
   [ "$2" = dev ] && app=app || app=api
-  jq_ok 16 "$2: db or migrate is missing, publishes a port, or joins other networks than db (migrate) or db and catalog (db)" "$1" \
+  jq_ok 16 "$2: db or migrate is missing, publishes a port, or joins other networks than db (migrate) or db, catalog and media (db)" "$1" \
     '(.services.db and .services.migrate)
      and ([.services.db,.services.migrate]|all((.ports//[])|length==0))
-     and ((.services.migrate.networks//{})|keys==["db"]) and ((.services.db.networks//{})|keys==["catalog","db"])'
+     and ((.services.migrate.networks//{})|keys==["db"]) and ((.services.db.networks//{})|keys==["catalog","db","media"])'
   jq_ok 16 "$2: the catalog network's members are not exactly db and $app" "$1" \
     '[.services|to_entries[]|select((.value.networks//{})|has("catalog"))|.key]|sort==(["db",$app]|sort)' --arg app "$app"
-  jq_ok 16 "$2: a service shares the network namespace of $app or of a Supabase service (only app-gate may share app's, in dev)" "$1" \
+  jq_ok 16 "$2: a service shares the network namespace of $app, db, migrate or auth (only app-gate may share app's, in dev)" "$1" \
     '[.services|to_entries[]|select((.value.network_mode//"")|startswith("service:"))
-      |select(.value.network_mode|ltrimstr("service:") as $t|["db","migrate","auth","rest","realtime","storage","supabase-gw",$app]|index($t))|.key]
+      |select(.value.network_mode|ltrimstr("service:") as $t|["db","migrate","auth",$app]|index($t))|.key]
      ==(if $app=="app" then ["app-gate"] else [] end)' --arg app "$app"
-  jq_ok 16 "$2: auth, rest, realtime or storage is missing, publishes a port, or joins networks other than db and supabase (auth: also auth-app and auth-egress)" "$1" \
-    '([.services.rest,.services.realtime,.services.storage]
-      |all(. != null and ((.ports//[])|length==0) and ((.networks//{})|keys==["db","supabase"])))
-     and (.services.auth|. != null and ((.ports//[])|length==0) and ((.networks//{})|keys==["auth-app","auth-egress","db","supabase"]))'
-  jq_ok 16 "$2: supabase-gw does not publish exactly one 127.0.0.1 port to 8000, or joins networks other than edge and supabase" "$1" \
-    '.services["supabase-gw"]|((.networks//{})|keys==["edge","supabase"])
-     and ((.ports//[])|length==1 and .[0].host_ip=="127.0.0.1" and .[0].target==8000)'
-  jq_ok 16 "$2: a service outside db, migrate, auth, rest, realtime and storage joins the db network; or outside supabase-gw and those four joins supabase; or one other than supabase-gw joins edge" "$1" \
-    '([.services|to_entries[]|select((.value.networks//{})|has("db"))|.key] - ["db","migrate","auth","rest","realtime","storage"] == [])
-     and ([.services|to_entries[]|select((.value.networks//{})|has("supabase"))|.key] - ["supabase-gw","auth","rest","realtime","storage"] == [])
-     and ([.services|to_entries[]|select((.value.networks//{})|has("edge"))|.key] == ["supabase-gw"])'
+  jq_ok 16 "$2: auth is missing, publishes a port, or joins networks other than exactly auth-app, auth-egress and db" "$1" \
+    '.services.auth|. != null and ((.ports//[])|length==0) and ((.networks//{})|keys==["auth-app","auth-egress","db"])'
+  jq_ok 16 "$2: a service outside db, migrate and auth joins the db network" "$1" \
+    '[.services|to_entries[]|select((.value.networks//{})|has("db"))|.key] - ["db","migrate","auth"] == []'
+  jq_ok 16 "$2: a retired Supabase service (rest, realtime, storage or supabase-gw) is defined" "$1" \
+    '[.services|keys[]|select(. as $k|["rest","realtime","storage","supabase-gw"]|index($k))]|length==0'
+  # compose drops a declared network no service joins, so this sees one only when a service joins it.
+  jq_ok 16 "$2: a supabase or edge network is in the resolved config (the retired gateway's networks)" "$1" \
+    '(.networks//{})|(has("supabase") or has("edge"))|not'
   # gotrue-sign-in D6: auth-egress is GoTrue's alone; auth-app joins exactly auth and the app.
   jq_ok 16 "$2: a service other than auth joins auth-egress, or auth-app's members are not exactly auth and $app" "$1" \
     '([.services|to_entries[]|select((.value.networks//{})|has("auth-egress"))|.key] == ["auth"])
@@ -227,23 +241,53 @@ check_supabase() { # json label db-subnet supabase-subnet edge-subnet catalog-su
     jq_ok 16 "$2: api joins networks other than back, catalog and auth-app" "$1" \
       '(.services.api.networks//{})|keys==["auth-app","back","catalog"]'
   fi
-  jq_ok 16 "$2: the auth-egress network is not on $7" "$1" '.networks["auth-egress"].ipam.config==[{"subnet":$sn}]' --arg sn "$7"
-  for n in db supabase catalog auth-app; do
-    case $n in db) sn=$3 ;; supabase) sn=$4 ;; catalog) sn=$6 ;; *) sn=$8 ;; esac
+  jq_ok 16 "$2: the auth-egress network is not on $5" "$1" '.networks["auth-egress"].ipam.config==[{"subnet":$sn}]' --arg sn "$5"
+  for n in db catalog auth-app media; do
+    case $n in db) sn=$3 ;; catalog) sn=$4 ;; media) sn=$7 ;; *) sn=$6 ;; esac
     jq_ok 16 "$2: the $n network is not internal, not host-isolated (gateway_mode_ipv4/ipv6 isolated), or not on $sn" "$1" \
       '.networks[$n]|.internal==true
        and .driver_opts["com.docker.network.bridge.gateway_mode_ipv4"]=="isolated"
        and .driver_opts["com.docker.network.bridge.gateway_mode_ipv6"]=="isolated"
        and .ipam.config==[{"subnet":$sn}]' --arg n "$n" --arg sn "$sn"
   done
-  jq_ok 16 "$2: the edge network is not on $5" "$1" '.networks.edge.ipam.config==[{"subnet":$sn}]' --arg sn "$5"
-  jq_ok 16 "$2: a Supabase image (db, migrate, auth, rest, realtime, storage, supabase-gw) is not pinned by @sha256: digest" "$1" \
-    '[.services|(.db,.migrate,.auth,.rest,.realtime,.storage,.["supabase-gw"])|.image]|all(type=="string" and test("@sha256:[0-9a-f]{64}$"))'
+  check_media "$1" "$2" "$app"
+  jq_ok 16 "$2: a Supabase image (db, migrate, auth) is not pinned by @sha256: digest" "$1" \
+    '[.services|(.db,.migrate,.auth)|.image]|all(type=="string" and test("@sha256:[0-9a-f]{64}$"))'
   for k in $SB_SECRETS; do
     jq_ok 16 "$2: the $k value appears in a service outside its allowed set" "$1" \
       '($scope[$k]|if type=="object" then .[$env] else . end) as $ok | [.services|to_entries[]|select(.key as $n|$ok|index($n)|not)|select([.value|..|strings|contains($v)]|any)]|length==0' \
       --arg k "$k" --arg v "sbsentinel_${k}_z" --argjson scope "$SB_SCOPE" --arg env "$2"
   done
+  for k in $SB_RETIRED; do
+    jq_ok 16 "$2: the retired $k value appears in a service (nothing reads a retired key)" "$1" \
+      '[.services[]|select([..|strings|contains($v)]|any)]|length==0' --arg v "sbsentinel_${k}_z"
+  done
+}
+
+# Invariant 16 (dev, stage, prod; media-worker D1, D4, D15): the media worker reaches only Postgres,
+# over the two-member media network, as autologger_media; it runs confined (read-only root, a uid
+# that is neither root nor the app's node user, every capability dropped, no-new-privileges, no
+# published port), its environment is exactly the five connection literals plus BLOB_DIR (no
+# allowlist passthrough, no other secret), and it mounts only the stack's blob volume at /blobs.
+check_media() { # json label app-service
+  [ "$2" = dev ] && vol=dev-blobs || vol=autologger-blobs
+  jq_ok 16 "$2: the media network's members are not exactly db and media-worker" "$1" \
+    '[.services|to_entries[]|select((.value.networks//{})|has("media"))|.key]|sort==["db","media-worker"]'
+  jq_ok 16 "$2: media-worker is missing, joins networks other than exactly media, or publishes a port" "$1" \
+    '.services["media-worker"]|. != null and ((.networks//{})|keys==["media"]) and ((.ports//[])|length==0) and (.network_mode==null)'
+  jq_ok 16 "$2: media-worker does not run read_only as a numeric uid other than 0 and the app's (1000), with cap_drop [ALL], no cap_add and no-new-privileges" "$1" \
+    '.services["media-worker"]
+     | .read_only==true and ((.cap_drop//[])==["ALL"]) and ((.cap_add//[])==[])
+       and ((.security_opt//[])|index("no-new-privileges:true")!=null) and ((.privileged//false)|not)
+       and ((.user//"")|test("^[0-9]+(:[0-9]+)?$") and ((split(":")[0]|tonumber) as $u|$u!=0 and $u!=1000))'
+  jq_ok 16 "$2: media-worker mounts something other than exactly the $vol volume at /blobs" "$1" \
+    '(.services["media-worker"].volumes//[])|length==1 and .[0].type=="volume" and .[0].source==$vol and .[0].target=="/blobs"' --arg vol "$vol"
+  jq_ok 16 "$2: media-worker's environment is not exactly PGHOST=db PGPORT=5432 PGDATABASE=postgres PGUSER=autologger_media PGPASSWORD=\${MEDIA_DB_PASSWORD} BLOB_DIR=/blobs" "$1" \
+    '(.services["media-worker"].environment//{})
+     | (keys==["BLOB_DIR","PGDATABASE","PGHOST","PGPASSWORD","PGPORT","PGUSER"])
+       and .PGHOST=="db" and .PGPORT=="5432" and .PGDATABASE=="postgres" and .PGUSER=="autologger_media"
+       and .PGPASSWORD==$pw and .BLOB_DIR=="/blobs"' --arg pw "sbsentinel_MEDIA_DB_PASSWORD_z"
+  jq_ok 16 "$2: $3 joins the media network" "$1" '(.services[$app].networks//{})|has("media")|not' --arg app "$3"
 }
 
 # ---------------------------------------------------------------- DEV ------------------------
@@ -264,21 +308,20 @@ check_dev() {
   # 3: ports appear only on app/companion, one each, targeting the gate ports 8787/8001 (never
   # the app's 8786 or Companion's ungated 8000); the raw mapping pins the env var AND default.
   for f in "$D" "$C"; do
-    jq_ok 3 "dev: published ports are not exactly app->8787, companion->8001 and supabase-gw->8000 (a published port is not a gate port)" "$f" \
-      '([.services|to_entries[]|select((.value.ports//[])|length>0)|.key]|sort)==["app","companion","supabase-gw"]
+    jq_ok 3 "dev: published ports are not exactly app->8787 and companion->8001 (a published port is not a gate port)" "$f" \
+      '([.services|to_entries[]|select((.value.ports//[])|length>0)|.key]|sort)==["app","companion"]
        and (.services.app.ports|length==1 and .[0].target==8787)
        and (.services.companion.ports|length==1 and .[0].target==8001)'
   done
   jq_ok 3 "dev: raw published-port mappings are not exactly 127.0.0.1:\${DEV_PORT:-8787}:8787 / 127.0.0.1:\${DEV_COMPANION_PORT:-8000}:8001" "$R" \
     '(.services.app.ports==["127.0.0.1:${DEV_PORT:-8787}:8787"])
-     and (.services.companion.ports==["127.0.0.1:${DEV_COMPANION_PORT:-8000}:8001"])
-     and (.services["supabase-gw"].ports==["127.0.0.1:${SUPABASE_PORT}:8000"])'
+     and (.services.companion.ports==["127.0.0.1:${DEV_COMPANION_PORT:-8000}:8001"])'
   jq_ok 3 "dev: the gates do not share their gated service's network namespace, or app joins networks other than dev, catalog and auth-app, or companion one other than dev" "$D" \
     '.services["app-gate"].network_mode=="service:app" and .services["companion-gate"].network_mode=="service:companion"
      and ((.services.app.networks//{})|keys)==["auth-app","catalog","dev"] and ((.services.companion.networks//{})|keys)==["dev"]'
   # Port variables: numeric 1-65535 when they resolve, distinct, defaults distinct.
   jq_ok 2 "dev: DEV_PORT / DEV_COMPANION_PORT do not resolve to numbers 1-65535, or are equal (custom or default)" "$C" \
-    '[.services.app.ports[0].published,.services.companion.ports[0].published,.services["supabase-gw"].ports[0].published]|all(test("^[1-9][0-9]{0,4}$") and (tonumber<=65535)) and (unique|length==3)'
+    '[.services.app.ports[0].published,.services.companion.ports[0].published]|all(test("^[1-9][0-9]{0,4}$") and (tonumber<=65535)) and (unique|length==2)'
   jq_ok 2 "dev: default DEV_PORT equals default DEV_COMPANION_PORT" "$D" \
     '.services.app.ports[0].published!=.services.companion.ports[0].published'
   # Gate coupling (seam S1): GATE_PORT is the browser-facing published port; LISTEN_PORT the
@@ -298,9 +341,9 @@ check_dev() {
   jq_ok 6 "dev: companion command is not exactly [\"--admin-address\",\"127.0.0.1\"]" "$D" \
     '.services.companion.command==["--admin-address","127.0.0.1"]'
   # 6: the dev service set is exactly the four expected services (no extra/privileged sidecar).
-  jq_ok 6 "dev: the service set is not exactly app, app-gate, auth, companion, companion-gate, db, migrate, realtime, rest, storage, supabase-gw" "$D" \
-    '(.services|keys|sort)==["app","app-gate","auth","companion","companion-gate","db","migrate","realtime","rest","storage","supabase-gw"]'
-  check_supabase "$D" dev 172.28.31.0/24 172.28.32.0/24 172.28.33.0/24 172.28.34.0/24 172.28.35.0/24 172.28.36.0/24 # 16
+  jq_ok 6 "dev: the service set is not exactly app, app-gate, auth, companion, companion-gate, db, media-worker, migrate" "$D" \
+    '(.services|keys|sort)==["app","app-gate","auth","companion","companion-gate","db","media-worker","migrate"]'
+  check_supabase "$D" dev 172.28.31.0/24 172.28.34.0/24 172.28.35.0/24 172.28.36.0/24 172.28.37.0/24 # 16
   jq_ok 16 "dev: app-gate does not refuse exactly the catalog and auth-app subnets (GATE_DENY_SUBNET), so db or auth could reach the app" "$D" \
     '.services["app-gate"].environment.GATE_DENY_SUBNET==(.networks.catalog.ipam.config[0].subnet+" "+.networks["auth-app"].ipam.config[0].subnet)'
   check_no_host_priv "$D" dev
@@ -317,36 +360,36 @@ check_dev() {
   # 6: dev posture pins are literals in the raw file (only PUBLIC_BASE_URL and the D4
   # AUTOLOGGER_STACK sentinel and the catalog's PGPASSWORD, catalog-pg-schema D5, may hold a variable),
   # and the resolved values match (the custom env file tries to flip every one of them).
-  jq_ok 6 "dev: a posture pin (HOST/TRUST_PROXY/IP_ALLOWLIST/DATA_DIR/PORT) is not a literal in the raw file, or another app env value contains a variable" "$R" \
+  jq_ok 6 "dev: a posture pin (HOST/TRUST_PROXY/IP_ALLOWLIST/DATA_DIR/BLOB_DIR/PORT) is not a literal in the raw file, or another app env value contains a variable" "$R" \
     '.services.app.environment|envmap
-     | .HOST=="127.0.0.1" and .TRUST_PROXY=="0" and .IP_ALLOWLIST=="" and .DATA_DIR=="/data" and .PORT=="8786"
+     | .HOST=="127.0.0.1" and .TRUST_PROXY=="0" and .IP_ALLOWLIST=="" and .DATA_DIR=="/data" and .BLOB_DIR=="/blobs" and .PORT=="8786"
        and .PUBLIC_BASE_URL=="http://localhost:${DEV_PORT:-8787}"
        and (.AUTOLOGGER_STACK//""|startswith("${AUTOLOGGER_STACK:?"))
        and (.PGPASSWORD|startswith("${APP_DB_PASSWORD:?")) and .PGUSER=="autologger_app" and .PGHOST=="db"
        and ([to_entries[]|select(.key!="PUBLIC_BASE_URL" and .key!="AUTOLOGGER_STACK" and .key!="PGPASSWORD")|.value|tostring|contains("$")]|any|not)'
   for f in "$D" "$C"; do
-    jq_ok 6 "dev: a resolved posture pin differs from HOST=127.0.0.1 TRUST_PROXY=0 IP_ALLOWLIST= DATA_DIR=/data PORT=8786" "$f" \
+    jq_ok 6 "dev: a resolved posture pin differs from HOST=127.0.0.1 TRUST_PROXY=0 IP_ALLOWLIST= DATA_DIR=/data BLOB_DIR=/blobs PORT=8786" "$f" \
       '.services.app.environment
-       | .HOST=="127.0.0.1" and .TRUST_PROXY=="0" and .IP_ALLOWLIST=="" and .DATA_DIR=="/data" and .PORT=="8786"'
+       | .HOST=="127.0.0.1" and .TRUST_PROXY=="0" and .IP_ALLOWLIST=="" and .DATA_DIR=="/data" and .BLOB_DIR=="/blobs" and .PORT=="8786"'
   done
   jq_ok 6 "dev: resolved PUBLIC_BASE_URL is not http://localhost:<published DEV_PORT>" "$C" \
     '.services.app.environment.PUBLIC_BASE_URL==("http://localhost:"+.services.app.ports[0].published)'
 
   # 4: bind mounts. Read-only sources must sit under an allowed source subtree (or be the gate
   # Caddyfile), never repo root / a data segment / a .env file; the ONLY rw bind is the Claude
-  # credentials file. DATA_DIR and the runtime home are named volumes.
+  # credentials file. DATA_DIR, BLOB_DIR and the runtime home are named volumes.
   BINDS='[.services|to_entries[]|.key as $s|(.value.volumes//[])[]|select(.type=="bind")|{s:$s,src:(.source|norm),tgt:.target,ro:(.read_only//false),cp:(.bind.create_host_path)}]'
   jq_ok 4 "dev: the read-write bind mounts are not exactly app's \${HOME}/.claude/.credentials.json -> /home/node/.claude/.credentials.json with create_host_path false" "$D" \
     "$BINDS | map(select(.ro|not)) == [{s:\"app\",src:(\$home+\"/.claude/.credentials.json\"),tgt:\"/home/node/.claude/.credentials.json\",ro:false,cp:false}]"
-  ALLOW='^(server/(src|scripts)|web/(src|public)|packages/[a-z0-9-]+/src|docker/dev-gate\\.Caddyfile|docker/supabase/migrate\\.sh|supabase/migrations|docker/supabase-gw\\.Caddyfile|docker/supabase/init/[a-z]+\\.sql)(/.*)?$'
-  jq_ok 4 "dev: a read-only bind source is not under server/src, server/scripts, web/src, web/public, packages/*/src, docker/dev-gate.Caddyfile, docker/supabase/migrate.sh, supabase/migrations, docker/supabase-gw.Caddyfile or docker/supabase/init/*.sql (or names repo root, a data segment, .. or a .env file)" "$D" \
+  ALLOW='^(server/(src|scripts)|web/(src|public)|packages/[a-z0-9-]+/src|docker/dev-gate\\.Caddyfile|docker/supabase/migrate\\.sh|supabase/migrations|docker/supabase/init/[a-z]+\\.sql)(/.*)?$'
+  jq_ok 4 "dev: a read-only bind source is not under server/src, server/scripts, web/src, web/public, packages/*/src, docker/dev-gate.Caddyfile, docker/supabase/migrate.sh, supabase/migrations or docker/supabase/init/*.sql (or names repo root, a data segment, .. or a .env file)" "$D" \
     "$BINDS | map(select(.ro)) | all(.src | startswith(\$root+\"/\") and (ltrimstr(\$root+\"/\") | test(\"$ALLOW\") and (test(\"(^|/)(data|\\\\.\\\\.|\\\\.)(/|\$)\")|not) and (test(\"(^|/)\\\\.env[^/]*\$\")|not)))"
   jq_ok 4 "dev: the gate Caddyfile bind is not read-only" "$D" \
     "$BINDS | map(select(.src|endswith(\"/docker/dev-gate.Caddyfile\"))) | length==2 and all(.ro)"
   jq_ok 4 "dev: docker/supabase/migrate.sh or supabase/migrations is mounted into a service other than migrate" "$D" \
     "$BINDS | map(select(.src==(\$root+\"/docker/supabase/migrate.sh\") or (.src|startswith(\$root+\"/supabase/migrations\")))) | all(.s==\"migrate\")"
-  jq_ok 4 "dev: docker/supabase-gw.Caddyfile is mounted into a service other than supabase-gw, or docker/supabase/init into one other than db" "$D" \
-    "($BINDS | map(select(.src==(\$root+\"/docker/supabase-gw.Caddyfile\"))) | all(.s==\"supabase-gw\")) and ($BINDS | map(select(.src|startswith(\$root+\"/docker/supabase/init/\"))) | all(.s==\"db\"))"
+  jq_ok 4 "dev: docker/supabase/init is mounted into a service other than db" "$D" \
+    "$BINDS | map(select(.src|startswith(\$root+\"/docker/supabase/init/\"))) | all(.s==\"db\")"
   jq -r --arg root "$ROOT" --arg home "$HOME" "$JQ_NORM $BINDS | map(select(.ro)) | .[].src" "$D" >"$TMP/ro-sources.txt"
   while IFS= read -r p; do
     [ -e "$p" ] || fail 4 "dev: read-only source mount names a path that does not exist: ${p#"$ROOT"/}"
@@ -355,6 +398,8 @@ check_dev() {
     '.services.app.volumes as $v
      | ($v|map(select(.target=="/data"))|length==1 and .[0].type=="volume" and .[0].source=="dev-data")
        and ($v|map(select(.target=="/home/node"))|length==1 and .[0].type=="volume" and .[0].source=="dev-home")'
+  jq_ok 4 "dev: BLOB_DIR (/blobs) is not the dev-blobs named volume" "$D" \
+    '.services.app.volumes|map(select(.target=="/blobs"))|length==1 and .[0].type=="volume" and .[0].source=="dev-blobs"'
 
   # 5: every packages/* directory has its src mounted.
   for d in packages/*/; do
@@ -400,14 +445,15 @@ check_stage() {
   check_no_host_priv "$S" stage                                        # 6
   check_no_env_file "$S" stage                                         # 14
   check_container_name "$S" stage api autologger-stage-api            # 6 (container name pinned)
-  check_supabase "$S" stage 172.28.22.0/24 172.28.23.0/24 172.28.24.0/24 172.28.25.0/24 172.28.27.0/24 172.28.28.0/24 # 16
+  check_supabase "$S" stage 172.28.22.0/24 172.28.25.0/24 172.28.27.0/24 172.28.28.0/24 172.28.29.0/24 # 16
   for f in "$S" "$SC" "$SP"; do
     check_loopback_ports "$f" stage                                    # 1
     check_no_8080_numeric "$f" stage                                   # 2
     check_posture_prodlike "$f" stage                                  # 7
+    check_blob_volume "$f" stage                                       # 7
     check_gw_values "$f" stage                                         # 10
-    jq_ok 3 "stage: published ports are not exactly the router's and supabase-gw's (web/api must publish none)" "$f" \
-      '([.services|to_entries[]|select((.value.ports//[])|length>0)|.key]|sort)==["router","supabase-gw"] and (.services.router.ports|length==1 and .[0].target==8080)'
+    jq_ok 3 "stage: published ports are not exactly the router's (web/api must publish none)" "$f" \
+      '([.services|to_entries[]|select((.value.ports//[])|length>0)|.key]|sort)==["router"] and (.services.router.ports|length==1 and .[0].target==8080)'
   done
   jq_ok 2 "stage: raw router mapping is not exactly 127.0.0.1:\${STAGE_PORT:-8788}:8080" "$SR" \
     '.services.router.ports==["127.0.0.1:${STAGE_PORT:-8788}:8080"]'
@@ -421,11 +467,13 @@ check_stage() {
   # 7 (stage-public-https): unset, stage is the local one (:local images, plain-http cookie); the
   # public mode swaps only the images, the origin and COOKIE_SECURE=1, and keeps the loopback port.
   for f in "$S" "$SC"; do
-    jq_ok 7 "stage: without the public variables, web/api are not the :local images or COOKIE_SECURE is not \"0\"" "$f" \
-      '.services.web.image=="autologger-stage-web:local" and .services.api.image=="autologger-stage-api:local" and .services.api.environment.COOKIE_SECURE=="0"'
+    jq_ok 7 "stage: without the public variables, web/api/media-worker are not the :local images or COOKIE_SECURE is not \"0\"" "$f" \
+      '.services.web.image=="autologger-stage-web:local" and .services.api.image=="autologger-stage-api:local"
+       and .services["media-worker"].image=="autologger-stage-media-worker:local" and .services.api.environment.COOKIE_SECURE=="0"'
   done
   jq_ok 7 "stage: the public variables do not set the ghcr images, the https PUBLIC_BASE_URL and COOKIE_SECURE=1 (on the loopback STAGE_PORT)" "$SP" \
     '.services.web.image=="ghcr.io/kwcantrell/autologger-web:0000000000000000000000000000000000000000" and .services.api.image=="ghcr.io/kwcantrell/autologger-api:0000000000000000000000000000000000000000"
+     and .services["media-worker"].image=="ghcr.io/kwcantrell/autologger-media-worker:0000000000000000000000000000000000000000"
      and .services.api.environment.PUBLIC_BASE_URL=="https://stage.example.invalid" and .services.api.environment.COOKIE_SECURE=="1"
      and .services.router.ports[0].published=="18788"'
 
@@ -460,11 +508,15 @@ check_prod() {
   resolve "$TMP/prod.json" "prod" compose_prod "$TMP/prod.env" || return 0
   resolve "$TMP/prod-raw.json" "prod (raw, --no-interpolate)" compose_prod "$TMP/prod.env" --no-interpolate || return 0
   check_allowlist "$TMP/prod-raw.json" prod api                        # 15
-  check_supabase "$TMP/prod.json" prod 172.28.12.0/24 172.28.13.0/24 172.28.14.0/24 172.28.15.0/24 172.28.16.0/24 172.28.17.0/24 # 16
+  check_supabase "$TMP/prod.json" prod 172.28.12.0/24 172.28.15.0/24 172.28.16.0/24 172.28.17.0/24 172.28.18.0/24 # 16
+  # 7 (media-worker D13, D15): the worker image is the registry image at the OpenBao MEDIA_TAG.
+  jq_ok 7 "prod: media-worker image is not ghcr.io/kwcantrell/autologger-media-worker:\${MEDIA_TAG}" "$TMP/prod.json" \
+    '.services["media-worker"].image=="ghcr.io/kwcantrell/autologger-media-worker:0000000000aa"'
   f=$TMP/prod.json
   check_name "$f" prod autologger                                      # 9
   check_loopback_ports "$f" prod                                       # 1
   check_posture_prodlike "$f" prod                                     # 7
+  check_blob_volume "$f" prod                                          # 7
   check_gw_values "$f" prod                                            # 10
   check_no_env_file "$f" prod                                          # 14
   jq_ok 10 "prod: compose.yaml must never set ROUTER_FRONT_GW/ROUTER_BACK_GW: the resolved router environment is not empty" "$f" \

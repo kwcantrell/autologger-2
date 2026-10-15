@@ -16,6 +16,14 @@ import { LeaseStore } from '@autologger/session-core/leaseStore';
 import { TRANSCRIPTION_FIXTURES_DIR, transcriptGenerationLock } from '@autologger/transcription';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Bindings } from '../appEnv';
+import {
+  answer,
+  callTools,
+  type FakeLlm,
+  type FakeScript,
+  sse,
+  startFakeLlm,
+} from '../test/fakeLlm';
 import { app, env, envWith } from '../test/harness';
 import {
   catalogFor,
@@ -29,6 +37,7 @@ import {
   seedUser,
   testDb,
 } from '../test/helpers';
+import { CLI_TEST_EMAILS, chooseClaudeCliForAll, saveSdkCredential } from '../test/llmRoutes';
 import {
   expiredLeaseOfAnotherProcess,
   failNextRunLeaseClaim,
@@ -58,15 +67,17 @@ describe('unavailable endpoints (503)', () => {
   });
 
   it('unconfigured generate is byte-identical to the pre-change frozen response', async () => {
+    // byo-ai-providers D7 category 1: "unconfigured" is now a caller without a speech-to-text
+    // key in production mode, where DEEPGRAM_API_KEY is never used; the detail names Settings.
     const s = (await seededSession()).sessionId;
     const res = await app.request(
       `/api/sessions/${s}/transcript-words/generate`,
       { method: 'POST' },
-      { ...env }, // DEEPGRAM_API_KEY unset in the base test env
+      envWith({ PROVIDER_DEV_MODE: false, DEEPGRAM_API_KEY: 'operator-key' }),
     );
     expect(res.status).toBe(503);
     expect(await res.json()).toEqual({
-      detail: 'Transcription is unavailable on this deployment.',
+      detail: 'Add a speech-to-text key in Settings → Advanced to generate transcripts.',
     });
   });
 
@@ -84,7 +95,7 @@ describe('unavailable endpoints (503)', () => {
     );
     expect(res.status).toBe(503);
     expect(await res.json()).toEqual({
-      detail: 'Transcription is unavailable on this deployment.',
+      detail: 'Add a language model in Settings → Advanced to generate topics.',
     });
   });
 
@@ -169,6 +180,9 @@ describe('topics/generate — configured behavior (topic-generation)', () => {
     return envWith(
       {
         CLAUDE_CLI_PATH: cliPath,
+        // ai-sdk-agent-harness D9 category 1: the callers are listed, and `generateReq` saves
+        // their `claude-cli` choice.
+        CLAUDE_CLI_EMAILS: CLI_TEST_EMAILS,
         HOST: '127.0.0.1',
         ...overrides,
       },
@@ -176,7 +190,8 @@ describe('topics/generate — configured behavior (topic-generation)', () => {
     );
   }
 
-  function generateReq(sessionId: string, envOverride: ReturnType<typeof envWith>) {
+  async function generateReq(sessionId: string, envOverride: ReturnType<typeof envWith>) {
+    await chooseClaudeCliForAll();
     return app.request(
       `/api/sessions/${sessionId}/topics/generate`,
       { method: 'POST' },
@@ -247,7 +262,7 @@ describe('topics/generate — configured behavior (topic-generation)', () => {
     const res = await generateReq(s, envWith({ CLAUDE_CLI_PATH: '' }));
     expect(res.status).toBe(503);
     expect(await res.json()).toEqual({
-      detail: 'Transcription is unavailable on this deployment.',
+      detail: 'Add a language model in Settings → Advanced to generate topics.',
     });
     expect(neverSpawned(s)).toBe(true);
   });
@@ -628,12 +643,15 @@ describe('topics/generate — page-coverage gate on the crash-safe swap', () => 
     return { sessionId, priorIds };
   }
 
-  const generateReq = async (sessionId: string): Promise<Response> =>
-    app.request(
+  const generateReq = async (sessionId: string): Promise<Response> => {
+    // ai-sdk-agent-harness D9 category 1: the caller is listed and chose the Claude CLI.
+    await chooseClaudeCliForAll();
+    return app.request(
       `/api/sessions/${sessionId}/topics/generate`,
       { method: 'POST' },
-      envWith({ CLAUDE_CLI_PATH: CLI, HOST: '127.0.0.1' }),
+      envWith({ CLAUDE_CLI_PATH: CLI, CLAUDE_CLI_EMAILS: CLI_TEST_EMAILS, HOST: '127.0.0.1' }),
     );
+  };
 
   // Every strict subset of the snapshot's pages, including the two the gate
   // exists for: the page-0-only prefix read (the motivating hazard) and the
@@ -1724,7 +1742,9 @@ describe('topics/generate and transcript-words/generate — approved users only 
 
   const neverSpawned = (s: string) => !existsSync(join(stableSessionCwd(s), '.fixture-argv.json'));
 
-  function topics(s: string, cookie: string, e: Bindings) {
+  async function topics(s: string, cookie: string, e: Bindings) {
+    // ai-sdk-agent-harness D9 category 1: the caller chose the Claude CLI.
+    await chooseClaudeCliForAll();
     return app.request(
       `/api/sessions/${s}/topics/generate`,
       { method: 'POST', headers: { cookie } },
@@ -1756,7 +1776,11 @@ describe('topics/generate and transcript-words/generate — approved users only 
       const res = await topics(
         s,
         cookie,
-        envWith({ CLAUDE_CLI_PATH: TOPICS_CLI, HOST: '127.0.0.1' }),
+        envWith({
+          CLAUDE_CLI_PATH: TOPICS_CLI,
+          CLAUDE_CLI_EMAILS: CLI_TEST_EMAILS,
+          HOST: '127.0.0.1',
+        }),
       );
       expect(res.status).toBe(403);
       expect(await res.json()).toEqual(FORBIDDEN);
@@ -1774,7 +1798,7 @@ describe('topics/generate and transcript-words/generate — approved users only 
     const res = await topics(s, cookie, envWith({ CLAUDE_CLI_PATH: '' }));
     expect(res.status).toBe(503);
     expect(await res.json()).toEqual({
-      detail: 'Transcription is unavailable on this deployment.',
+      detail: 'Add a language model in Settings → Advanced to generate topics.',
     });
   });
 
@@ -1785,6 +1809,7 @@ describe('topics/generate and transcript-words/generate — approved users only 
       cookie,
       envWith({
         CLAUDE_CLI_PATH: TOPICS_CLI,
+        CLAUDE_CLI_EMAILS: CLI_TEST_EMAILS,
         HOST: '127.0.0.1',
         RUN_FEATURE_EMAILS: 'approved.member@example.com',
       }),
@@ -1817,8 +1842,9 @@ describe('topics/generate and transcript-words/generate — approved users only 
     const { s, cookie } = await sessionWithMember(NOT_APPROVED_EMAIL);
     const res = await generate(s, { headers: { cookie } }, envWith({}));
     expect(res.status).toBe(503);
+    // byo-ai-providers D7 category 1: the unconfigured detail now names Settings → Advanced.
     expect(await res.json()).toEqual({
-      detail: 'Transcription is unavailable on this deployment.',
+      detail: 'Add a speech-to-text key in Settings → Advanced to generate transcripts.',
     });
   });
 
@@ -1834,5 +1860,465 @@ describe('topics/generate and transcript-words/generate — approved users only 
     );
     expect(res.status).toBe(200);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+// byo-ai-providers task 5.2 (design D3; provider-credentials "Work runs on its user's credentials",
+// api-contract-freeze "Transcript generation endpoint behavior"): the caller's own DeepGram key and
+// model, no operator key in production mode, the operator key as the fallback in development mode.
+describe("transcript generation on the caller's own speech-to-text key (byo-ai-providers D3)", () => {
+  const NEEDS_KEY = {
+    detail: 'Add a speech-to-text key in Settings → Advanced to generate transcripts.',
+  };
+  const FORBIDDEN = { detail: 'This feature is limited to approved users on this server.' };
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    transcriptGenerationLock.reset();
+  });
+
+  async function memberSession(email?: string) {
+    const { sessionId, studioId } = await seededSession();
+    const id = await seedUser({ ...(email ? { email } : {}), studios: [studioId], role: 'admin' });
+    await logRecordingStarted(sessionId, 1);
+    await uploadSegment(sessionId, SEG1, { recordingOrdinal: 1 });
+    return { s: sessionId, studioId, id, cookie: await loginCookie(id) };
+  }
+
+  async function saveStt(userId: string, key: string, model = 'nova-2') {
+    await env.ports.providerCredentials.put(userId, 'stt', {
+      provider: 'deepgram',
+      base_url: null,
+      base_origin: null,
+      model,
+      key: env.ports.providerKeys.encrypt(key, {
+        userId,
+        kind: 'stt',
+        provider: 'deepgram',
+        origin: null,
+      }),
+    });
+  }
+
+  function stubDeepgram() {
+    const fetchMock = vi.fn(
+      async (_url: unknown, _init?: unknown) =>
+        new Response(
+          JSON.stringify(deepgramResponse([{ word: 'hi', start: 0.5, end: 0.9, speaker: 0 }])),
+          {
+            status: 200,
+          },
+        ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    return fetchMock;
+  }
+  const authOf = (call: unknown[] | undefined) =>
+    new Headers((call?.[1] as RequestInit | undefined)?.headers).get('authorization');
+
+  function gen(s: string, cookie: string, e: Bindings) {
+    return app.request(
+      `/api/sessions/${s}/transcript-words/generate`,
+      { method: 'POST', headers: { cookie } },
+      e,
+    );
+  }
+  const prod = () =>
+    envWith({
+      PROVIDER_DEV_MODE: false,
+      DEEPGRAM_API_KEY: 'operator-key',
+      DEEPGRAM_MODEL: 'nova-3',
+    });
+  const dev = () =>
+    envWith({
+      PROVIDER_DEV_MODE: true,
+      DEEPGRAM_API_KEY: 'operator-key',
+      DEEPGRAM_MODEL: 'nova-3',
+    });
+
+  it('production mode: a caller without a key gets the Settings 503, and no DeepGram request is made', async () => {
+    const { s, cookie } = await memberSession();
+    const fetchMock = stubDeepgram();
+    const res = await gen(s, cookie, prod());
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual(NEEDS_KEY);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("production mode: the caller's own key and model go to DeepGram", async () => {
+    const { s, id, cookie } = await memberSession();
+    await saveStt(id, 'dg-user-key-0001', 'nova-2');
+    const fetchMock = stubDeepgram();
+    const res = await gen(s, cookie, prod());
+    expect(res.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalled();
+    expect(authOf(fetchMock.mock.calls[0])).toBe('Token dg-user-key-0001');
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain('model=nova-2');
+  });
+
+  it('development mode: the operator key is the fallback for a caller without one', async () => {
+    const { s, cookie } = await memberSession();
+    const fetchMock = stubDeepgram();
+    const res = await gen(s, cookie, dev());
+    expect(res.status).toBe(200);
+    expect(authOf(fetchMock.mock.calls[0])).toBe('Token operator-key');
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain('model=nova-3');
+  });
+
+  it("another user's key is never used", async () => {
+    const owner = await memberSession();
+    await saveStt(owner.id, 'dg-owner-key-0001');
+    // A second admin of the same team, with no key of their own, generates on the same session.
+    const memberId = await seedUser({ studios: [owner.studioId], role: 'admin' });
+    const fetchMock = stubDeepgram();
+    const res = await gen(owner.s, await loginCookie(memberId), prod());
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual(NEEDS_KEY);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('a row that no longer decrypts answers as unconfigured', async () => {
+    const { s, id, cookie } = await memberSession();
+    await saveStt(id, 'dg-user-key-0001');
+    await testDb().run(
+      "UPDATE user_provider_credentials SET key_tag = '\\x00000000000000000000000000000000' WHERE user_id = ?",
+      id,
+    );
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const fetchMock = stubDeepgram();
+    const res = await gen(s, cookie, prod());
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual(NEEDS_KEY);
+    expect(fetchMock).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it('the approval 403 still comes after the configuration 503', async () => {
+    const { s, id, cookie } = await memberSession(NOT_APPROVED_EMAIL);
+    const fetchMock = stubDeepgram();
+    const unconfigured = await gen(s, cookie, prod());
+    expect(unconfigured.status).toBe(503);
+    await saveStt(id, 'dg-user-key-0001');
+    const configured = await gen(s, cookie, prod());
+    expect(configured.status).toBe(403);
+    expect(await configured.json()).toEqual(FORBIDDEN);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+// ── ai-sdk-agent-harness task 7.2: topics/generate on the caller's route (D1, D3) ──────────────
+describe('topics/generate on the AI SDK route (ai-sdk-agent-harness task 7.2)', () => {
+  const ADD_LLM = 'Add a language model in Settings → Advanced to generate topics.';
+  const FAILURE = { detail: 'Topic generation failed.' };
+  const fakes: FakeLlm[] = [];
+  const cwds: string[] = [];
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    aiChatTurns.reset();
+    await __resetAiMcpListenerForTests();
+    await Promise.all(fakes.splice(0).map((f) => f.close()));
+    for (const id of cwds.splice(0)) rmSync(stableSessionCwd(id), { recursive: true, force: true });
+  });
+  async function fakeProvider(script: FakeScript): Promise<FakeLlm> {
+    const f = await startFakeLlm(script);
+    fakes.push(f);
+    return f;
+  }
+  /** CLAUDE_CLI_PATH set and the caller listed: only the saved credential decides the route. */
+  const sdkEnv = (o: Record<string, unknown> = {}) =>
+    envWith({
+      CLAUDE_CLI_PATH: join(AI_RUNTIME_FIXTURES_DIR, 'fake-claude.mjs'),
+      CLAUDE_CLI_EMAILS: CLI_TEST_EMAILS,
+      HOST: '127.0.0.1',
+      ...o,
+    });
+  const req = (s: string, e: Bindings = sdkEnv()) =>
+    app.request(`/api/sessions/${s}/topics/generate`, { method: 'POST' }, e);
+
+  async function seeded(): Promise<{ s: string; prior: Array<{ id: string; summary: string }> }> {
+    const s = (await seededSession()).sessionId;
+    cwds.push(s);
+    const hub = await harnessHub(s);
+    await hub.insertTranscriptWord({ session_time: '00:00:01', speaker: 'Host', word: 'hello' });
+    for (const summary of ['Old topic A', 'Old topic B']) {
+      await hub.insertTopic({
+        session_time: '00:00:00',
+        duration_sec: 10,
+        topic_level: 1,
+        summary,
+      });
+    }
+    return { s, prior: await hub.listTopics() };
+  }
+  const topicsOf = async (s: string) => (await harnessHub(s)).listTopics();
+  const create = (summary: string) => ({
+    name: 'create_topic',
+    args: { session_time: '00:00:01', duration_sec: 5, topic_level: 1, summary },
+  });
+  /** Read page 0, create two topics, then answer: the success path. */
+  const success: FakeScript = (n) =>
+    n === 1
+      ? callTools(1, [{ name: 'get_transcript_words', args: { page: 0 } }])
+      : n === 2
+        ? callTools(2, [create('Fresh SDK topic 0'), create('Fresh SDK topic 1')])
+        : answer('done');
+
+  it('with no route, the new 503 and no model request', async () => {
+    const llm = await fakeProvider(success);
+    const { s, prior } = await seeded();
+    const res = await req(s);
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ detail: ADD_LLM });
+    expect(llm.requests).toHaveLength(0);
+    expect(await topicsOf(s)).toEqual(prior);
+  });
+
+  it('the fake model creates topics through the tools, and the replace-all matches the CLI path', async () => {
+    const llm = await fakeProvider(success);
+    const { s, prior } = await seeded();
+    await saveSdkCredential(llm.baseURL);
+    const res = await req(s);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { topics: Array<{ id: string; summary: string }> };
+    expect(body.topics.map((t) => t.summary)).toEqual(['Fresh SDK topic 0', 'Fresh SDK topic 1']);
+    for (const p of prior) expect(body.topics.map((t) => t.id)).not.toContain(p.id);
+    expect(await topicsOf(s)).toEqual(body.topics);
+    // The generation tool set: no list_topics.
+    const tools = ((llm.requests[0]?.tools ?? []) as Array<{ function: { name: string } }>).map(
+      (t) => t.function.name,
+    );
+    expect(tools.sort()).toEqual(['create_topic', 'get_transcript_words']);
+    expect(aiChatTurns.isSessionInFlight(s)).toBe(false);
+  });
+
+  it('a provider error maps to the existing 502, with prior topics unchanged', async () => {
+    const llm = await fakeProvider(() => ({ status: 401, body: '{"error":"no"}' }));
+    const { s, prior } = await seeded();
+    await saveSdkCredential(llm.baseURL);
+    const res = await req(s);
+    expect(res.status).toBe(502);
+    expect(await res.json()).toEqual(FAILURE);
+    expect(await topicsOf(s)).toEqual(prior);
+  });
+
+  it('a run stopped by the step cap maps to the 502, prior topics unchanged and its new topics removed; GENERATE_MAX_STEPS applies', async () => {
+    // Reads the page, creates a topic, then keeps calling tools until the cap.
+    const llm = await fakeProvider((n) =>
+      n === 2
+        ? callTools(2, [create('Capped topic')])
+        : callTools(n, [{ name: 'get_transcript_words' }]),
+    );
+    const { s, prior } = await seeded();
+    await saveSdkCredential(llm.baseURL);
+    const res = await req(s, sdkEnv({ GENERATE_MAX_STEPS: '3' }));
+    expect(res.status).toBe(502);
+    expect(await res.json()).toEqual(FAILURE);
+    expect(llm.requests).toHaveLength(3);
+    expect(await topicsOf(s)).toEqual(prior);
+  });
+
+  it('a run stopped by the token budget maps to the 502, prior topics unchanged; GENERATE_MAX_TOKENS applies', async () => {
+    // 15 tokens a step (the fake's usage); a budget of 40 stops after the third step.
+    const llm = await fakeProvider((n) =>
+      n === 2
+        ? callTools(2, [create('Budget topic')])
+        : callTools(n, [{ name: 'get_transcript_words' }]),
+    );
+    const { s, prior } = await seeded();
+    await saveSdkCredential(llm.baseURL);
+    const res = await req(s, sdkEnv({ GENERATE_MAX_TOKENS: '40' }));
+    expect(res.status).toBe(502);
+    expect(llm.requests).toHaveLength(3);
+    expect(await topicsOf(s)).toEqual(prior);
+  });
+
+  it('the failure line names only the classification and status=429 or breach=tool-calls, with no prompt, body or key', {
+    timeout: 60_000,
+  }, async () => {
+    const lines: string[] = [];
+    const grab = (...a: unknown[]) => {
+      lines.push(a.map((x) => (typeof x === 'string' ? x : JSON.stringify(x))).join(' '));
+    };
+    const spies = [
+      vi.spyOn(console, 'warn').mockImplementation(grab),
+      vi.spyOn(console, 'error').mockImplementation(grab),
+      vi.spyOn(console, 'log').mockImplementation(grab),
+    ];
+    const sixteen = Array.from({ length: 16 }, () => ({ name: 'get_transcript_words' }));
+    for (const [script, suffix] of [
+      [
+        () => ({
+          status: 429,
+          body: '{"error":{"message":"RATE-BODY-MARKER"}}',
+          headers: { 'retry-after-ms': '5' },
+        }),
+        '(status=429)',
+      ],
+      [(n: number) => callTools(n, sixteen), '(breach=tool-calls)'],
+    ] as Array<[FakeScript, string]>) {
+      lines.length = 0;
+      const llm = await fakeProvider(script);
+      const { s, prior } = await seeded();
+      await (await harnessHub(s)).insertTranscriptWord({
+        session_time: '00:00:02',
+        speaker: 'Host',
+        word: 'TRANSCRIPT-MARKER',
+      });
+      await saveSdkCredential(llm.baseURL, { apiKey: 'sk-KEY-MARKER-1234' });
+      const res = await req(s);
+      expect(res.status).toBe(502);
+      expect(await res.json()).toEqual(FAILURE);
+      expect(await topicsOf(s)).toEqual(prior);
+      const failure = lines.filter((l) => l.startsWith('[topics/generate]'));
+      expect(failure).toHaveLength(1);
+      expect(failure[0]?.endsWith(suffix)).toBe(true);
+      expect(lines.join('\n')).not.toMatch(/MARKER/);
+    }
+    for (const sp of spies) sp.mockRestore();
+  });
+
+  it('a capped, an incomplete or a status-less failure logs its ending, step count and last finish, with no content', {
+    timeout: 60_000,
+  }, async () => {
+    const lines: string[] = [];
+    const grab = (...a: unknown[]) => {
+      lines.push(a.map((x) => (typeof x === 'string' ? x : JSON.stringify(x))).join(' '));
+    };
+    const spies = [
+      vi.spyOn(console, 'warn').mockImplementation(grab),
+      vi.spyOn(console, 'error').mockImplementation(grab),
+      vi.spyOn(console, 'log').mockImplementation(grab),
+    ];
+    for (const [script, cfg, suffix] of [
+      [
+        (n: number) => callTools(n, [{ name: 'get_transcript_words' }]),
+        { GENERATE_MAX_STEPS: '3' },
+        'AI turn failed (upstream-failed) (ending=capped, steps=3, last=tool-calls)',
+      ],
+      [
+        () => ({
+          frames: [sse.text('REPLY-MARKER'), sse.finish('length', { prompt: 1, completion: 1 })],
+        }),
+        {},
+        'AI turn failed (upstream-failed) (ending=incomplete, steps=1, last=length)',
+      ],
+      [
+        () => ({ reset: true }),
+        {},
+        'AI turn failed (upstream-failed) (ending=error, steps=0, last=none)',
+      ],
+    ] as Array<[FakeScript, Record<string, unknown>, string]>) {
+      lines.length = 0;
+      const llm = await fakeProvider(script);
+      const { s, prior } = await seeded();
+      await (await harnessHub(s)).insertTranscriptWord({
+        session_time: '00:00:02',
+        speaker: 'Host',
+        word: 'TRANSCRIPT-MARKER',
+      });
+      await saveSdkCredential(llm.baseURL, { apiKey: 'sk-KEY-MARKER-1234' });
+      const res = await req(s, sdkEnv(cfg));
+      expect(res.status).toBe(502);
+      expect(await topicsOf(s)).toEqual(prior);
+      const failure = lines.filter((l) => l.startsWith('[topics/generate]'));
+      expect(failure).toHaveLength(1);
+      expect(failure[0]?.endsWith(suffix), failure[0]).toBe(true);
+      expect(lines.join('\n')).not.toMatch(/MARKER/);
+    }
+    for (const sp of spies) sp.mockRestore();
+  });
+
+  it('sends GENERATE_MAX_OUTPUT_TOKENS, and a first-request 400 restarts once at 4000 with the content-free note (task 6.7)', {
+    timeout: 60_000,
+  }, async () => {
+    const lines: string[] = [];
+    const grab = (...a: unknown[]) => {
+      lines.push(a.map((x) => (typeof x === 'string' ? x : JSON.stringify(x))).join(' '));
+    };
+    const spies = [
+      vi.spyOn(console, 'warn').mockImplementation(grab),
+      vi.spyOn(console, 'info').mockImplementation(grab),
+      vi.spyOn(console, 'error').mockImplementation(grab),
+      vi.spyOn(console, 'log').mockImplementation(grab),
+    ];
+    const tokens = (llm: FakeLlm) => llm.requests.map((r) => r.max_tokens);
+    // The configured cap reaches the request; an out-of-range value falls back to 16 000.
+    for (const [cfg, want] of [
+      [{ GENERATE_MAX_OUTPUT_TOKENS: '9000' }, 9000],
+      [{ GENERATE_MAX_OUTPUT_TOKENS: '500' }, 16_000],
+    ] as Array<[Record<string, unknown>, number]>) {
+      const llm = await fakeProvider(success);
+      const { s } = await seeded();
+      await saveSdkCredential(llm.baseURL);
+      expect((await req(s, sdkEnv(cfg))).status).toBe(200);
+      expect(tokens(llm)).toEqual([want, want, want]);
+    }
+    // A model that refuses the larger cap: one restart at 4000, which succeeds, noted in the log.
+    lines.length = 0;
+    const refusing: FakeScript = (n, body) =>
+      Number(body.max_tokens) > 4000
+        ? { status: 400, body: '{"error":{"message":"max_tokens BODY-MARKER"}}' }
+        : success(n - 1, body);
+    const llm = await fakeProvider(refusing);
+    const { s } = await seeded();
+    await saveSdkCredential(llm.baseURL, { apiKey: 'sk-KEY-MARKER-1234' });
+    const res = await req(s);
+    expect(res.status).toBe(200);
+    expect(tokens(llm)).toEqual([16_000, 4000, 4000, 4000]);
+    expect((await topicsOf(s)).map((t) => t.summary)).toEqual([
+      'Fresh SDK topic 0',
+      'Fresh SDK topic 1',
+    ]);
+    const ok = lines.filter((l) => l.startsWith('[topics/generate]'));
+    expect(ok).toHaveLength(1);
+    expect(ok[0]?.endsWith('AI turn succeeded (output-cap fallback 4000)'), ok[0]).toBe(true);
+    // A second 400 fails as usual; the line names the status and the restart.
+    lines.length = 0;
+    const always = await fakeProvider(() => ({ status: 400, body: '{"error":"BODY-MARKER"}' }));
+    const second = await seeded();
+    await saveSdkCredential(always.baseURL, { apiKey: 'sk-KEY-MARKER-1234' });
+    expect((await req(second.s)).status).toBe(502);
+    expect(tokens(always)).toEqual([16_000, 4000]);
+    expect(await topicsOf(second.s)).toEqual(second.prior);
+    const failed = lines.filter((l) => l.startsWith('[topics/generate]'));
+    expect(failed).toHaveLength(1);
+    expect(
+      failed[0]?.endsWith(
+        'AI turn failed (upstream-failed) (status=400) (output-cap fallback 4000)',
+      ),
+      failed[0],
+    ).toBe(true);
+    expect(lines.join('\n')).not.toMatch(/MARKER/);
+    for (const sp of spies) sp.mockRestore();
+  });
+
+  it('a slow tool body still running at the route timeout finishes before the route removes the run’s new topics and frees the slot and lease', {
+    timeout: 30_000,
+  }, async () => {
+    const realInsert = SessionHubView.prototype.insertTopic;
+    let bodyDone = false;
+    vi.spyOn(SessionHubView.prototype, 'insertTopic').mockImplementation(async function (
+      this: SessionHubView,
+      ...a: Parameters<SessionHubView['insertTopic']>
+    ) {
+      await new Promise((r) => setTimeout(r, 1500));
+      const row = await realInsert.apply(this, a);
+      bodyDone = true;
+      return row;
+    });
+    const llm = await fakeProvider((n) =>
+      n === 1 ? callTools(1, [create('Late topic')]) : answer('done'),
+    );
+    const { s, prior } = await seeded();
+    await saveSdkCredential(llm.baseURL);
+    const started = Date.now();
+    const res = await req(s, sdkEnv({ TOPIC_GENERATE_TIMEOUT_SEC: '0.5' }));
+    expect(res.status).toBe(502);
+    expect(bodyDone).toBe(true);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(1400);
+    expect(aiChatTurns.isSessionInFlight(s)).toBe(false);
+    vi.restoreAllMocks();
+    await new Promise((r) => setTimeout(r, 500));
+    // No stray topic after the cleanup.
+    expect(await topicsOf(s)).toEqual(prior);
   });
 });

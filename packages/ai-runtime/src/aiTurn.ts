@@ -41,13 +41,21 @@ import {
   type AiMcpTurnContext,
   getAiMcpListener,
 } from './aiMcpServer';
+import {
+  runSdkTurn,
+  type SdkTurnEnding,
+  SdkTurnFailure,
+  type SdkTurnSpec,
+  type SdkTurnSummary,
+} from './sdkTurn';
 
 /** What a turn reports when its registration never carried a transcript word
  * snapshot — and what a turn that failed BEFORE registering reports: no
  * snapshot, no pages, hence no coverage claim to fail (D6). */
 const NO_PAGE_COVERAGE: AiMcpPageCoverage = { totalPages: 0, servedPages: 0 };
 
-export interface DriveAiTurnOptions {
+/** The fields both strategies take. */
+interface DriveAiTurnCommon {
   /** Required (design D3, ruling E3) — threaded into the kill ladder via
    * `killAiChatProcessGroup` in this function's `finally`. Production
    * callers pass `c.env.ports.clock`; never a freshly constructed clock. */
@@ -56,20 +64,9 @@ export interface DriveAiTurnOptions {
   registry: SessionHubRegistryFacade;
   /** Who the turn's tool bodies run for: the route's caller (session-content-policies D7). */
   caller: SessionCaller;
-  /** `CLAUDE_CLI_PATH`, already trimmed. */
-  cliPath: string;
   sessionId: string;
   /** The user message, delivered on the child's stdin (never argv). */
   message: string;
-  /** Restrict the `--allowedTools` set for this turn. As of
-   * auto-generate-event-logs task 3.4 EVERY caller passes this explicitly —
-   * `ai/chat` passes `AI_CHAT_ALLOWED_TOOLS` (the three chat tools) and
-   * `topics/generate` withholds `list_topics` so the model cannot dedup
-   * against the topics it is about to replace (topic-generation D3/D5). The
-   * omit path still exists and falls back to the CHAT default pinned in
-   * `aiChatRunner.ts` (deliberately narrower than `AI_MCP_TOOL_NAMES` now
-   * that the registry also carries `create_event`; D7). */
-  allowedTools?: readonly AiMcpToolName[];
   /** Per-turn MCP registration context, passed VERBATIM to
    * `AiMcpListener#registerTurn` (auto-generate-event-logs D6/D7): the turn's
    * server-side tool set, plus — on event-generation turns (task 4.3) — the
@@ -85,12 +82,7 @@ export interface DriveAiTurnOptions {
    * `topics/generate` passes a generate-specific prompt (no `list_topics`
    * dedup instruction, since that tool is withheld). */
   systemPrompt?: string;
-  maxBudgetUsd: number;
   timeoutMs: number;
-  /** A `claude_session_id` already validated by the caller as issued for
-   * THIS :sessionId — omit for a fresh CLI session (`ai/chat` multi-turn
-   * continuity; `topics/generate` never passes this). */
-  resumeSessionId?: string;
   /** Forwarded to the caller as SSE-shaped events. `ai/chat` writes these to
    * its SSE stream; `topics/generate` (task 2.3) passes a no-op — it reads
    * the returned `AiChatTurnOutcome` instead. */
@@ -100,6 +92,41 @@ export interface DriveAiTurnOptions {
    * POST runs to completion, deterministically). */
   abortSignal?: AbortSignal;
 }
+
+/** The CLI strategy: spawn the locked-down `claude` CLI against the MCP listener. */
+interface DriveCliTurn {
+  /** `CLAUDE_CLI_PATH`, already trimmed. */
+  cliPath: string;
+  /** Restrict the `--allowedTools` set for this turn. As of
+   * auto-generate-event-logs task 3.4 EVERY caller passes this explicitly —
+   * `ai/chat` passes `AI_CHAT_ALLOWED_TOOLS` (the three chat tools) and
+   * `topics/generate` withholds `list_topics` so the model cannot dedup
+   * against the topics it is about to replace (topic-generation D3/D5). The
+   * omit path still exists and falls back to the CHAT default pinned in
+   * `aiChatRunner.ts` (deliberately narrower than `AI_MCP_TOOL_NAMES` now
+   * that the registry also carries `create_event`; D7). */
+  allowedTools?: readonly AiMcpToolName[];
+  maxBudgetUsd: number;
+  /** A `claude_session_id` already validated by the caller as issued for
+   * THIS :sessionId — omit for a fresh CLI session (`ai/chat` multi-turn
+   * continuity; `topics/generate` never passes this). */
+  resumeSessionId?: string;
+  sdk?: undefined;
+}
+
+/** The AI SDK strategy (ai-sdk-agent-harness D3): an in-process `streamText` turn on the
+ * caller's own credential, with the same registration, tool bodies, timeout and abort. */
+interface DriveSdkTurn {
+  sdk: SdkTurnSpec;
+  /** The CLI-only fields are absent (declared so either member reads them as `undefined`). */
+  cliPath?: undefined;
+  allowedTools?: undefined;
+  maxBudgetUsd?: undefined;
+  resumeSessionId?: undefined;
+}
+
+/** `driveAiTurn`'s options: the shared fields, plus one strategy's (`sdk` selects the AI SDK). */
+export type DriveAiTurnOptions = DriveAiTurnCommon & (DriveCliTurn | DriveSdkTurn);
 
 /** `driveAiTurn`'s outcome (auto-generate-event-logs task 4.3): the turn
  * outcome PLUS the turn's `createdEvents` count, read from the MCP turn
@@ -119,9 +146,24 @@ export interface DriveAiTurnOptions {
 type WithTurnBookkeeping<T> = T & {
   createdEvents: number;
   pageCoverage: AiMcpPageCoverage;
+  /** AI SDK turns only (D3): how the turn ended. */
+  ending?: SdkTurnEnding;
+  /** AI SDK turns only (D3 "Draining tool bodies"): resolves once no tool body of the turn is
+   * running. The route awaits it before acting on a result or releasing the slot and lease. */
+  toolsDrained?: () => Promise<void>;
+  /** AI SDK turns only (D5 diagnostic): a failed turn's kind plus status or breach name, which
+   * the route appends to its failure line (`sdkFailureSuffix`). */
+  failure?: SdkTurnFailure;
+  /** AI SDK turns only (D5 diagnostic): the step count and last finish reason. */
+  summary?: SdkTurnSummary;
+  /** AI SDK generation turns only (D3 "A smaller-model fallback"): the smaller output cap the
+   * turn restarted at after its first request got `400`; the route notes it (`sdkFallbackSuffix`). */
+  outputCapFallback?: number;
 };
 export type DriveAiTurnResult =
   | WithTurnBookkeeping<Extract<AiChatTurnOutcome, { ok: true }>>
+  /** An AI SDK turn's success carries no CLI session id (D6). */
+  | WithTurnBookkeeping<{ ok: true; claudeSessionId: null }>
   | WithTurnBookkeeping<Extract<AiChatTurnOutcome, { ok: false }>>;
 
 /**
@@ -132,6 +174,43 @@ export type DriveAiTurnResult =
  * pre-extraction catch-clause exactly.
  */
 export async function driveAiTurn(opts: DriveAiTurnOptions): Promise<DriveAiTurnResult> {
+  if (opts.sdk !== undefined) return driveSdkTurn(opts, opts.sdk);
+  return driveCliTurn(opts);
+}
+
+/** The AI SDK strategy. Never throws: a construction failure (bad deps) or any other throw is
+ * the same single scrubbed `internal-error` as the CLI path's setup failures. */
+async function driveSdkTurn(
+  opts: DriveAiTurnCommon,
+  spec: SdkTurnSpec,
+): Promise<DriveAiTurnResult> {
+  try {
+    return await runSdkTurn({
+      registry: opts.registry,
+      caller: opts.caller,
+      sessionId: opts.sessionId,
+      message: opts.message,
+      mcpContext: opts.mcpContext,
+      systemPrompt: opts.systemPrompt,
+      timeoutMs: opts.timeoutMs,
+      emit: opts.emit,
+      abortSignal: opts.abortSignal,
+      spec,
+    });
+  } catch {
+    await opts.emit({ event: 'error', data: { detail: 'internal-error' } });
+    return {
+      ok: false,
+      detail: 'internal-error',
+      createdEvents: 0,
+      pageCoverage: NO_PAGE_COVERAGE,
+      failure: new SdkTurnFailure('internal'),
+    };
+  }
+}
+
+/** The CLI strategy (unchanged). */
+async function driveCliTurn(opts: DriveAiTurnCommon & DriveCliTurn): Promise<DriveAiTurnResult> {
   let mcpTurn: AiMcpTurn | null = null;
   let spawned: AiChatSpawnResult | null = null;
   try {

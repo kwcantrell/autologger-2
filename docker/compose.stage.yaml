@@ -5,9 +5,9 @@
 # STAGE_PUBLIC_BASE_URL=https://<host> to make (the tunnel connector proxies to 127.0.0.1:STAGE_PORT).
 #
 # Always invoked from the repo root through the Makefile (docker/scripts/compose-run.mjs), as:
-#   WEB_TAG=stage API_TAG=stage PUBLIC_BASE_URL=http://localhost:8788 \
+#   WEB_TAG=stage API_TAG=stage MEDIA_TAG=stage PUBLIC_BASE_URL=http://localhost:8788 \
 #   docker compose -f compose.yaml -f docker/compose.stage.yaml --env-file /dev/null ...
-# The three exported placeholders only satisfy compose.yaml's `${...:?}` guards, which compose
+# The four exported placeholders only satisfy compose.yaml's `${...:?}` guards, which compose
 # interpolates before merging; the overlay's own image, PUBLIC_BASE_URL etc. are what take effect.
 # Secrets come from the OpenBao `stage` secret (kv/autologger/stage) through prod's allowlist (docker/secrets-env.yaml).
 #
@@ -19,7 +19,7 @@
 #   * The router publishes ONLY STAGE_PORT on the literal 127.0.0.1; ROUTER_PORT is never used.
 #   * ROUTER_FRONT_GW / ROUTER_BACK_GW must equal the network gateways below (single IPv4 each).
 #   * No Companion service (the scoped token is tested with curl through the router).
-#   * STAGE_WEB_IMAGE, STAGE_API_IMAGE, STAGE_PUBLIC_BASE_URL and STAGE_COOKIE_SECURE are set ONLY
+#   * STAGE_WEB_IMAGE, STAGE_API_IMAGE, STAGE_MEDIA_IMAGE, STAGE_PUBLIC_BASE_URL and STAGE_COOKIE_SECURE are set ONLY
 #     by compose-run.mjs from the validated make variables STAGE_IMAGE_TAG / STAGE_PUBLIC_BASE_URL
 #     (never from OpenBao: they are not in any allowlist). Unset, they fall back to today's stage:
 #     local :local images, http://localhost:STAGE_PORT and COOKIE_SECURE=0.
@@ -45,6 +45,9 @@ services:
       COOKIE_SECURE: ${STAGE_COOKIE_SECURE:-0}
       SESSION_COOKIE: autologger_stage_sid
 
+  media-worker:
+    image: ${STAGE_MEDIA_IMAGE:-autologger-stage-media-worker:local}
+
 networks:
   front:
     ipam: !override
@@ -60,14 +63,6 @@ networks:
     ipam: !override
       config:
         - subnet: 172.28.22.0/24
-  supabase:
-    ipam: !override
-      config:
-        - subnet: 172.28.23.0/24
-  edge:
-    ipam: !override
-      config:
-        - subnet: 172.28.24.0/24
   catalog:
     ipam: !override
       config:
@@ -80,3 +75,7 @@ networks:
     ipam: !override
       config:
         - subnet: 172.28.28.0/24
+  media:
+    ipam: !override
+      config:
+        - subnet: 172.28.29.0/24

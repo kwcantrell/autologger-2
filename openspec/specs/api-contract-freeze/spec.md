@@ -65,6 +65,7 @@ is the stable identifier for the failure class:
 | Authorization-code token exchange failed | `exchange_failed` |
 | Missing `id_token`, id_token verification failed (including a failed JWKS fetch), or missing `sub` claim | `token_invalid` |
 | The verified id_token's `email_verified` claim is not `true`, or its email is empty | `email_unverified` |
+| Sign-ups are closed, no account exists for the verified `sub`, and the email is neither the bootstrap owner's nor approved (api-contract-freeze "Closed sign-up redirect"); checked before the Supabase Auth exchange | `signup_closed` |
 | Supabase Auth unreachable, timed out, or refused the verified Google ID token; its user does not hold exactly one Google identity with the verified `sub`; or its user id differs from the account's id for this `sub`, or belongs to an account with another `sub` | `identity_unavailable` |
 
 Frozen surface: the redirect mechanism (`302`, `Location: /?login_error=<code>`, empty
@@ -91,9 +92,11 @@ request/provider-derived values are normative in the change's design and tests, 
 this contract.
 
 The success path SHALL remain byte-identical in behavior: set the session cookie and
-`302` to `/` with no query parameters. Before any account is read or created, the verified
+`302` to `/` with no query parameters. Before any account is created or changed, the verified
 Google ID token SHALL be exchanged with Supabase Auth, and the account's id SHALL be the
-Supabase Auth user id.
+Supabase Auth user id. While sign-ups are closed, the closed sign-up check (api-contract-freeze
+"Closed sign-up redirect") SHALL run before the exchange; it only reads (the account by the
+verified `sub`, the approval by email), so a refused sign-in never reaches Supabase Auth.
 
 #### Scenario: User cancels at Google
 - **WHEN** Google redirects to `/auth/google/callback?error=access_denied`
@@ -492,12 +495,14 @@ the redaction and the status codes are unchanged.
 - **THEN** B responds `200` with `in_flight` true, `session_id` S and S's start time
 
 ### Requirement: Transcript generation endpoint behavior
-`POST /api/sessions/:sessionId/transcript-words/generate` SHALL move from unconditional
-`503` to configuration-dependent behavior, which becomes frozen surface on shipping:
+`POST /api/sessions/:sessionId/transcript-words/generate` SHALL behave as the table below
+specifies. "Configured" means the caller has a usable speech-to-text credential, as
+provider-credentials "Work runs on its user's credentials" resolves it, including the fallback to
+`DEEPGRAM_API_KEY` in development mode:
 
 | Condition | Response |
 |---|---|
-| `DEEPGRAM_API_KEY` unset/blank | `503 {detail}` — identical to the current unavailable response |
+| not configured for the caller | `503 {"detail": "Add a speech-to-text key in Settings → Advanced to generate transcripts."}`; no provider request issued |
 | configured, requester not an approved user (see "Run features are limited to approved users") | `403 {"detail": "This feature is limited to approved users on this server."}`; checked before every row below, no provider request issued |
 | configured, success | `200 {words: [...]}` — each word in the same trimmed wire shape `GET …/transcript-words` returns, namely exactly the seven keys `{id, session_time, speaker, word, start_sec, end_sec, ordinal}`; `start_sec`/`end_sec` carry remapped session-timeline seconds (`0` for anchorless words) rounded to 3 decimals; the array is the complete post-replace list in ordinal order |
 | configured, session has no audio segments | `400 {detail}` |
@@ -523,9 +528,11 @@ keep their current frozen behavior, except that `GET /api/transcript-generation/
 an additional authorized surface (see above).
 
 #### Scenario: Unconfigured deployments are byte-for-byte unchanged
-- **WHEN** a deployment without `DEEPGRAM_API_KEY` receives `POST
+- **WHEN** in production mode a user without a speech-to-text credential sends `POST
   /api/sessions/:id/transcript-words/generate`
-- **THEN** the response status and body match the pre-change `503 {detail}` exactly
+- **THEN** the response is `503 {"detail": "Add a speech-to-text key in Settings → Advanced to
+  generate transcripts."}`, byte-for-byte for every unconfigured caller, and no provider request
+  is made
 
 #### Scenario: Configured success returns the list shape
 - **WHEN** a configured deployment successfully generates a transcript
@@ -611,36 +618,50 @@ configuration-dependent behavior, which becomes frozen surface on shipping:
 
 | Condition | Response |
 |---|---|
-| `CLAUDE_CLI_PATH` unset/blank | `503 {detail}` — identical to the current unavailable response |
-| configured, requester not an approved user (see "Run features are limited to approved users") | `403 {"detail": "This feature is limited to approved users on this server."}`; checked before every row below, no subprocess |
-| configured, another AI turn (chat, AI v2 design, event generation or topic generation) holds the session slot, in this or another process | `409 {detail}`; no subprocess. On `AI_PROVIDER=claude_cli` there is no global ceiling, so turns for other sessions never cause this `409` (run-status-and-sweeper D2) |
-| configured, session has no transcript words | `400 {detail}`; no subprocess |
-| configured, success | `200 {topics: [...]}` — the session's topics after a crash-safe replace-all generation (prior topics deleted only after the fresh set is created), in the same shape `GET …/topics` returns |
-| configured, CLI turn failure (spawn/timeout/CLI error/zero topics created) | `502 {detail}`; the session's prior topics are **unchanged, byte-for-byte** (never modified — the fresh topics this run created are removed) |
+| caller has no AI route (provider-credentials) | `503 {"detail": "Add a language model in Settings → Advanced to generate topics."}`; no subprocess, no model request |
+| caller has a route, requester not an approved user (see "Run features are limited to approved users") | `403 {"detail": "This feature is limited to approved users on this server."}`; checked before every row below, no subprocess |
+| caller has a route, another AI turn (chat, AI v2 design, event generation or topic generation) holds the session slot, in this or another process | `409 {detail}`; no subprocess. On `AI_PROVIDER=claude_cli` there is no global ceiling, so turns for other sessions never cause this `409` (run-status-and-sweeper D2) |
+| caller has a route, session has no transcript words | `400 {detail}`; no subprocess |
+| caller has a route, success | `200 {topics: [...]}` — the session's topics after a crash-safe replace-all generation (prior topics deleted only after the fresh set is created), in the same shape `GET …/topics` returns |
+| caller has a route, AI turn failure on either route (spawn/timeout/CLI or provider error/zero topics created; on the AI SDK route also a passed per-turn tool-call, request or byte cap, and a capped or incomplete ending: the step count reached the step cap, the token budget fired, the last step still had tool calls, or the last step finished for output length, content filter, error or another reason, decided from the turn's own step records and not the provider's finish reason alone) | `502 {detail}`; the session's prior topics are **unchanged, byte-for-byte** (never modified — the fresh topics this run created are removed) |
 
 Existing route semantics are otherwise unchanged: an unknown/inaccessible session → the
 existing `requireSession` behavior. No other stubbed surface changes — `transcribe.csv` keeps
 its frozen `503`. The topics CRUD routes (`GET/POST/PATCH/DELETE …/topics`) are unchanged.
 
-#### Scenario: Unconfigured deployments are byte-for-byte unchanged
+#### Scenario: A caller with no AI route gets the language-model 503
 
-- **WHEN** a deployment with no `CLAUDE_CLI_PATH` receives `POST
-  /api/sessions/:id/topics/generate`
-- **THEN** the response status and body match the pre-change `503 {detail}` exactly, and no
-  subprocess is spawned
+- **WHEN** a caller with no AI route (no `llm` credential, and not resolving to the Claude CLI)
+  sends `POST /api/sessions/:id/topics/generate`
+- **THEN** the response is `503 {"detail": "Add a language model in Settings → Advanced to
+  generate topics."}`, no longer the transcription unavailable detail, and no subprocess is
+  spawned
 
 #### Scenario: Configured success returns the topics list shape
 
-- **WHEN** a configured deployment successfully generates topics
+- **WHEN** a caller with an AI route successfully generates topics
 - **THEN** the response is `200` with `{topics}` whose entries match
   `GET /api/sessions/:id/topics` entries
 
 #### Scenario: No-transcript maps to 400, concurrency to 409, CLI failure to 502
 
-- **WHEN** a configured request has no transcript / finds the session's turn slot held / the CLI
-  turn fails
+- **WHEN** a request from a caller with an AI route has no transcript / finds the session's turn
+  slot held / the AI turn fails on either route
 - **THEN** the response is `400` / `409` / `502` respectively (each `{detail}`-shaped),
-  distinct from the unconfigured `503`
+  distinct from the no-route `503`
+
+#### Scenario: A generation stopped by its step cap is a 502
+- **WHEN** a caller's AI SDK topic generation creates topics and is stopped by the generation step
+  cap or token budget while the model still wanted to call tools
+- **THEN** the response is `502 {detail}` and the session's prior topics are unchanged
+  byte-for-byte
+
+#### Scenario: A generation whose provider reports stop at the step cap is a 502
+- **WHEN** a caller's AI SDK topic generation reaches the generation step cap while its provider
+  reports the finish reason `stop` on steps that still carry tool calls, or its last step
+  finishes for output length with an unexecuted tool call
+- **THEN** the response is `502 {detail}` and the session's prior topics are unchanged
+  byte-for-byte
 
 #### Scenario: transcribe.csv stays frozen
 
@@ -886,7 +907,15 @@ Malformed bodies SHALL yield `400`, including bound violations. Combining
 `regenerate: true` with a non-empty `selection` SHALL yield `400`. Success
 response SHALL remain JSON `{ created: number, cap_hit: boolean }` and SHALL
 include `deleted: number` when the request regenerated. When `regenerate` is
-false/absent, `deleted` MAY be omitted. The regenerate delete
+false/absent, `deleted` MAY be omitted. Here "the CLI turn" means the generation
+turn on the caller's AI route, the Claude CLI or the AI SDK route alike
+(auto-event-generation "Single orchestrator turn over all instructions"). On the
+AI SDK route a turn that ends capped (the step count reached the step cap, the
+token budget fired, or the last step still had tool calls) or incomplete (the
+last step finished for output length, content filter, error or another reason),
+or that passes the per-turn tool-call cap or a request or byte cap, has failed:
+it answers the `502` and performs no delete. A call past 16 in one step gets a
+tool error and does not by itself fail the turn. The regenerate delete
 is **after-success**: prior auto rows are snapshotted by id pre-spawn, stay
 readable (and keep appearing in `GET …/events`) for the whole run, and are
 deleted in one transaction — emitting one existing `event.changed` broadcast
@@ -906,20 +935,23 @@ previously frozen unless superseded by the `auto-event-generation` delta.
 
 #### Scenario: Regenerate success includes deleted
 
-- **WHEN** a client POSTs `{ "regenerate": true }` and the run succeeds
+- **WHEN** a client POSTs `{ "regenerate": true }` and the run succeeds, on either route
 - **THEN** the `200` body includes `deleted` as a non-negative integer plus
   `created` and `cap_hit`
 
 #### Scenario: Zero-created regenerate success deletes nothing
 
-- **WHEN** a client POSTs `{ "regenerate": true }` and the CLI turn succeeds
-  without creating any event
+- **WHEN** a client POSTs `{ "regenerate": true }` and the generation turn succeeds,
+  on either route, without creating any event
 - **THEN** the response is `200 { created: 0, cap_hit: false, deleted: 0 }`
   and a subsequent `GET …/events` still returns the prior auto rows
 
 #### Scenario: Regenerate failure leaves the contract surface truthful
 
-- **WHEN** a client POSTs `{ "regenerate": true }` and the CLI turn fails
+- **WHEN** a client POSTs `{ "regenerate": true }` and the generation turn fails on
+  either route, including an AI SDK turn stopped by the step cap or the token
+  budget while the model still wanted to call tools, or whose last step finished
+  for output length with an unexecuted tool call
 - **THEN** the response is the fixed opaque `502 {detail}`, no `event.changed`
   broadcasts were emitted beyond those of the run's own inserts, and a
   subsequent `GET …/events` still returns the prior auto rows
@@ -1380,7 +1412,10 @@ validation-error body, instead of failing on storage.
 
 ### Requirement: Concurrent first sign-in succeeds
 Two OAuth callbacks for the same Google subject, carrying different valid states, that both find
-no existing user SHALL both complete sign-in to the one user created. Neither SHALL get a `500`.
+no existing user and may both create an account (sign-ups open, the email approved, or the
+bootstrap owner's; api-contract-freeze "Closed sign-up redirect") SHALL both complete sign-in to
+the one user created, and an approval SHALL be consumed once. While sign-ups are closed and the
+email is neither approved nor the bootstrap owner's, both SHALL get `signup_closed`. Neither SHALL get a `500`.
 The second follows the existing-user path, including its disabled-account redirect. This replaces
 the latent `500` that the unique Google-subject constraint gave the loser.
 
@@ -1391,6 +1426,12 @@ still gives `500`.
 #### Scenario: Two tabs sign in for the first time
 - **WHEN** two first sign-in callbacks for one Google subject run at the same time with different valid states
 - **THEN** both redirect to `/` with a session cookie, and exactly one user exists for that subject
+
+#### Scenario: Two tabs of an approved email sign in for the first time while closed
+- **WHEN** sign-ups are closed, the email is approved, and two first sign-in callbacks for one
+  Google subject run at the same time
+- **THEN** both redirect to `/` with a session cookie, exactly one user exists for that subject,
+  and the approval row is gone
 
 ### Requirement: Log-import job lines carry no internal error text
 The lines and `error` field of a log-import job SHALL keep showing the operator-readable message
@@ -2345,3 +2386,793 @@ inserts that user id. These predicates are the only isolation between users.
 - **WHEN** `GET /api/companion-devices` is sent with no session cookie, and again with only a live
   device's token as a `Bearer`
 - **THEN** both answer `401` `{"detail": "Login required."}`
+
+### Requirement: Provider credential routes
+Each user SHALL manage their own provider credentials (provider-credentials) through four routes.
+They SHALL be listed in the README endpoint table and in `packages/contract`.
+
+**Access**
+- The routes SHALL accept only a session cookie. A request without one SHALL get
+  `401 {"detail": "Login required."}`. A Companion device token is never a credential for them.
+- They use a system store, and every statement SHALL carry the caller's user id. These predicates
+  are the only isolation between users.
+- `:kind` SHALL be `llm` or `stt`. Any other value SHALL get `404 {"detail": "Not found."}`.
+
+**A credential's wire shape** is `{kind, provider, base_url, model, key_last4, updated_at}`:
+- `base_url` is `null` for every provider but `openai-compatible`;
+- `key_last4` is `string | null`: the key's last four characters, and `null` for the keyless
+  `claude-cli` provider;
+- `model` is the fixed value `"claude-cli"` for the `claude-cli` provider;
+- `updated_at` is ISO-8601 UTC.
+
+No route SHALL return a key or its ciphertext.
+
+**Claude CLI access.** A caller *may use the Claude CLI* when `CLAUDE_CLI_PATH` is set and the
+caller's verified login email is on `CLAUDE_CLI_EMAILS` (provider-credentials; matched like
+`RUN_FEATURE_EMAILS`, but the bootstrap owner is not implicitly on it).
+
+- **`GET /api/me/providers`** SHALL return `200 {llm, stt, run_features_allowed,
+  claude_cli_allowed}`:
+  - `llm` and `stt` are each the caller's credential of that kind, or `null`;
+  - `run_features_allowed` is whether the caller is an approved user for run features ("Run
+    features are limited to approved users");
+  - `claude_cli_allowed` is whether the caller may use the Claude CLI now.
+- **`PUT /api/me/providers/:kind`** with body `{provider, base_url?, model, api_key?}` SHALL
+  create or replace the caller's credential of that kind:
+  - `provider` SHALL be `openai-compatible`, `anthropic`, `openai`, `google` or `claude-cli` for
+    `llm`, and `deepgram` for `stt`;
+  - for `claude-cli` the body SHALL be exactly `{provider: "claude-cli"}`: any `api_key`,
+    `base_url` or `model` field, `null` included, SHALL get `422`. A well-formed `claude-cli`
+    save from a caller who may not use the Claude CLI SHALL get
+    `403 {"detail": "The Claude CLI is limited to approved operator accounts."}`. In both cases
+    nothing is stored. Otherwise the save stores a keyless credential and answers its wire shape
+    (`key_last4: null`, `model: "claude-cli"`, `base_url: null`);
+  - `base_url` is required for `openai-compatible` and SHALL be absent or `null` for every other
+    key provider, and SHALL follow provider-credentials "LLM base URLs are restricted in
+    production mode";
+  - `model` is required for every provider but `claude-cli`, and SHALL be 1 to 200 printable
+    ASCII characters other than space, after trimming;
+  - `api_key` SHALL be 8 to 4096 printable ASCII characters other than space, after trimming:
+    - it is required when the caller has no credential of this kind, and when the save changes
+      the provider (including from `claude-cli` to a key provider) or the `openai-compatible`
+      base URL origin (provider-credentials "A stored key is bound to its destination");
+    - otherwise, when absent, the stored key is kept;
+  - a value containing NUL SHALL get the existing NUL `400`; any other invalid body SHALL get `422`
+    with the existing validation-error body; in both cases nothing is stored;
+  - success SHALL answer `200` with the credential's wire shape.
+- **`DELETE /api/me/providers/:kind`** SHALL delete the caller's credential of that kind and
+  answer `204` with no body. When the caller has none, it SHALL answer
+  `404 {"detail": "Provider not set up."}`.
+- **`POST /api/me/providers/:kind/test`** with an empty body SHALL test the caller's stored
+  credential of that kind, as provider-credentials "The connection test reports without leaking"
+  defines:
+  - it SHALL answer `200 {ok, detail}`, where `ok` is a boolean and `detail` is one of the fixed
+    result strings;
+  - for a `claude-cli` credential it SHALL make no outbound request, and SHALL answer
+    `{"ok": true, "detail": "Connected."}` when the caller would resolve to the Claude CLI now,
+    and otherwise `{"ok": false, "detail": "The Claude CLI isn't available to this account."}`;
+    it still counts toward the per-user limit;
+  - when the caller has no credential of that kind, it SHALL answer
+    `404 {"detail": "Provider not set up."}`;
+  - past the per-user limit, it SHALL answer
+    `429 {"detail": "Too many connection tests. Try again in a minute."}`.
+
+Saving and deleting SHALL write one audit log line naming the user id, the kind and the action,
+never the key.
+
+#### Scenario: Save, read, replace and delete a credential
+- **WHEN** a signed-in user saves an `stt` credential with key `dg_secret_abcd`, reads their
+  providers, saves again with model `nova-2` and no `api_key`, then deletes it
+- **THEN**:
+  - the first save answers `200` with `key_last4` `abcd` and no key;
+  - the read returns that `stt` credential, `llm: null`, `run_features_allowed` and
+    `claude_cli_allowed`;
+  - the second save keeps the stored key and changes the model;
+  - the delete answers `204`;
+  - a later read returns `stt: null`
+
+#### Scenario: The first save needs a key
+- **WHEN** a user with no `llm` credential saves one without `api_key`
+- **THEN** the response is `422` and nothing is stored
+
+#### Scenario: A new base URL host needs a new key
+- **WHEN** a user with an `llm` credential for `https://api.openai.com/v1` saves base URL
+  `https://other.example/v1` without `api_key`
+- **THEN** the response is `422` naming `api_key`, and the stored credential is unchanged
+
+#### Scenario: A new provider needs a new key
+- **WHEN** a user with an `openai-compatible` credential saves `{provider: "openai", model:
+  "gpt-5.5"}` without `api_key`
+- **THEN** the response is `422` naming `api_key`, and the stored credential is unchanged
+
+#### Scenario: A fixed-host provider takes no base URL
+- **WHEN** a user saves an `llm` credential with provider `anthropic` and a `base_url`
+- **THEN** the response is `422` and nothing is stored
+
+#### Scenario: A key with a control character is refused
+- **WHEN** a user saves an `stt` credential whose `api_key` contains a line feed or a space
+- **THEN** the response is `422` and nothing is stored
+
+#### Scenario: Users cannot see each other's credentials
+- **WHEN** user A has an `llm` credential and user B reads their providers and deletes `llm`
+- **THEN** B reads `llm: null`, the delete answers `404`, and A's credential is unchanged
+
+#### Scenario: Signed-out and device callers are refused
+- **WHEN** `GET /api/me/providers` is sent with no session cookie, and again with only a live
+  Companion device token as a `Bearer`
+- **THEN** both answer `401` `{"detail": "Login required."}`
+
+#### Scenario: An unknown kind is not found
+- **WHEN** a user sends `PUT /api/me/providers/tts`
+- **THEN** the response is `404 {"detail": "Not found."}`
+
+#### Scenario: Tests past the limit are refused
+- **WHEN** a user sends a sixth `POST /api/me/providers/stt/test` within a minute
+- **THEN** the response is `429` with the try-again detail and no outbound request is made
+
+#### Scenario: An allowlisted caller saves the Claude CLI
+- **WHEN** `CLAUDE_CLI_PATH` is set, a caller on `CLAUDE_CLI_EMAILS` saves
+  `PUT /api/me/providers/llm` with `{provider: "claude-cli"}`, then reads their providers
+- **THEN** the save answers `200` with `{kind: "llm", provider: "claude-cli", base_url: null,
+  model: "claude-cli", key_last4: null, updated_at}`, and the read returns that credential and
+  `claude_cli_allowed: true`
+
+#### Scenario: A caller who is not allowlisted cannot save the Claude CLI
+- **WHEN** a caller not on `CLAUDE_CLI_EMAILS` saves `{provider: "claude-cli"}`, and again when an
+  allowlisted caller saves it while `CLAUDE_CLI_PATH` is blank
+- **THEN** both answer `403 {"detail": "The Claude CLI is limited to approved operator
+  accounts."}`, nothing is stored, and `GET /api/me/providers` reports
+  `claude_cli_allowed: false`
+
+#### Scenario: The Claude CLI takes no key, base URL or model
+- **WHEN** an allowlisted caller saves `{provider: "claude-cli", model: "opus"}`, or the same
+  body with an `api_key` or a `base_url`
+- **THEN** the response is `422` and nothing is stored
+
+#### Scenario: Leaving the Claude CLI needs a key
+- **WHEN** a caller with a `claude-cli` credential saves `{provider: "anthropic", model:
+  "claude-sonnet-4-5"}` without `api_key`
+- **THEN** the response is `422` naming `api_key`, and the stored `claude-cli` credential is
+  unchanged
+
+#### Scenario: Testing the Claude CLI makes no outbound request
+- **WHEN** a caller with a saved `claude-cli` credential tests `llm` while allowlisted, then is
+  removed from `CLAUDE_CLI_EMAILS` and tests again
+- **THEN** the first test answers `200 {"ok": true, "detail": "Connected."}`, the second answers
+  `200 {"ok": false, "detail": "The Claude CLI isn't available to this account."}`, neither
+  makes an outbound request, and both count toward the per-user test limit
+
+### Requirement: AI chat request and done event
+
+The `POST /api/sessions/:sessionId/ai/chat` contract owned by ai-topics-chat ("Chat request
+contract", "SSE reply stream shape") SHALL change in exactly these observable ways, which become
+frozen surface on shipping:
+
+- the JSON body SHALL accept an optional `history`, an array of at most 40 entries
+  `{role: "user" | "assistant", text: string}`, each `text` 1 to 8000 characters after trimming,
+  and at most 64 000 characters of `text` in total. A violation of these bounds or of the entry
+  shape SHALL get the existing `422` validation-error body, and a value containing NUL the
+  existing NUL `400`; in both cases no subprocess is spawned and no model request is made.
+  `message` is unchanged;
+- `claude_session_id?` SHALL also accept `null`, which SHALL be treated exactly as an absent id on
+  both routes, so a client that echoes a `done` event's value verbatim never gets `422` for it. A
+  string id's handling on the Claude CLI route is unchanged (a foreign, expired or unresumable id
+  is `422`). On the AI SDK route its handling changes: it SHALL be ignored, its binding SHALL NOT be
+  checked, and it SHALL NOT cause a `422`;
+- the terminal `done` event SHALL be `{"claude_session_id": string | null}`: a non-empty string
+  on a Claude CLI turn, exactly as before, and `null` on an AI SDK turn. **BREAKING** for a
+  strict client that requires a string; the web client changes in the same change;
+- the configuration `503` SHALL answer a caller with no AI route (provider-credentials), with
+  `{"detail": "Add a language model in Settings → Advanced to use the assistant."}`, replacing
+  "AI chat is not configured on this deployment. Set CLAUDE_CLI_PATH to the claude CLI to enable
+  it." It keeps its place in the frozen check order.
+
+`POST /api/sessions/:sessionId/events/generate`'s configuration `503` detail SHALL likewise
+become `Add a language model in Settings → Advanced to generate events.` (auto-event-generation
+"Generation endpoint guard ladder runs before any spawn"), replacing "Event generation is not
+configured on this deployment. Set CLAUDE_CLI_PATH to the claude CLI to enable it." No other
+status code, check order, SSE event meaning or route changes, apart from the AI SDK route not
+answering `422` for a `claude_session_id` and `null` being accepted as described above.
+
+#### Scenario: A bounded history is accepted
+- **WHEN** a caller with an AI route posts a chat message with a `history` of 40 entries whose
+  texts total 64 000 characters
+- **THEN** the request passes body validation and the response is `200` with an SSE stream
+
+#### Scenario: An oversized history is refused before any spawn
+- **WHEN** a caller posts a chat message with 41 `history` entries, or an entry whose `role` is
+  `system`, or entries whose texts total more than 64 000 characters
+- **THEN** the response is `422` with the existing validation-error body, no subprocess is
+  spawned and no model request is made
+
+#### Scenario: An AI SDK turn ends with a null session id
+- **WHEN** a chat turn on the AI SDK route completes normally
+- **THEN** the stream ends with exactly one `done` event whose `claude_session_id` is `null`
+
+#### Scenario: A CLI turn still returns a session id
+- **WHEN** a chat turn on the Claude CLI route completes normally
+- **THEN** the stream ends with exactly one `done` event whose `claude_session_id` is a
+  non-empty string the client may echo next turn
+
+#### Scenario: A stale session id is ignored on the AI SDK route
+- **WHEN** a caller whose route is the AI SDK route posts a chat message with a `claude_session_id` that
+  was issued for another session or user
+- **THEN** the response is `200` with an SSE stream, not `422`, and `done` carries
+  `claude_session_id: null`
+
+#### Scenario: A null session id is accepted on both routes
+- **WHEN** a caller posts a chat message with `claude_session_id: null`, once on the Claude CLI
+  route and once on the AI SDK route
+- **THEN** neither response is `422`; both are `200` with an SSE stream, and the CLI turn starts a
+  fresh CLI session
+
+#### Scenario: A foreign session id is still refused on the CLI route
+- **WHEN** a caller whose route is the Claude CLI posts a chat message with a
+  `claude_session_id` that was issued for another session
+- **THEN** the response is `422` and no subprocess is spawned
+
+#### Scenario: A caller with no AI route is pointed to Settings
+- **WHEN** a caller with no AI route posts a chat message, and again posts to `events/generate`
+- **THEN** the responses are `503 {"detail": "Add a language model in Settings → Advanced to
+  use the assistant."}` and `503 {"detail": "Add a language model in Settings → Advanced to
+  generate events."}`, no subprocess is spawned and no model request is made
+
+### Requirement: Search endpoint
+`GET /api/search` SHALL search what the caller can see (catalog-search). Query parameters:
+
+| Parameter | Rule |
+| --- | --- |
+| `q` | required; 2–200 characters after trimming whitespace |
+| `studio_id` | optional; narrows every group to that studio |
+| `show_id` | optional; narrows every group to that show |
+| `session_id` | optional; returns only that session's moments, with no per-session cap, and empty `studios`, `shows` and `sessions` |
+| `limit` | optional decimal integer 1–25, default 5; the maximum per group |
+
+Unknown parameters SHALL be ignored.
+
+Responses:
+
+| Status | When | Body |
+| --- | --- | --- |
+| `200` | the search ran | the result object below |
+| `401` | not logged in | `{"detail":"Login required."}` |
+| `422` | `q` missing or out of range, or `limit` not an integer 1–25 | `{"detail":[…zod issues]}` |
+| `503` | the search exceeded its time budget | `{"detail":"Search timed out; try a more specific query."}` |
+| `503` | too many searches are already running | `{"detail":"Search is busy; try again."}` |
+
+The `200` body SHALL be exactly:
+
+```
+{ "q": string,
+  "studios":  [{ "id": string, "name": string }],
+  "shows":    [{ "id": string, "name": string, "studio_id": string }],
+  "sessions": [{ "id": string, "title": string, "episode": string, "show_id": string,
+                 "studio_id": string, "started_at_utc": string, "archived": boolean,
+                 "match": "title" | "notes", "snippet": string | null }],
+  "moments":  [{ "session_id": string, "session_title": string, "show_id": string,
+                 "kind": "transcript" | "topic" | "event", "id": string,
+                 "sec": number | null, "speaker": string, "snippet": string }],
+  "moment_sessions": [{ "session_id": string, "total": number }] }
+```
+
+- `q` echoes the trimmed query.
+- `moments[].id` is:
+  - the topic id or event id for `topic` and `event`;
+  - `<bucket>` (decimal) for `transcript`.
+- `speaker` is `""` when not applicable.
+- `sec` is a number only for `transcript` moments with timing; it is `null` for `topic` and `event`.
+- `moment_sessions` has one entry for each session that appears in `moments`: the session's total number of matching moments, at most 1000.
+- A `studio_id`, `show_id` or `session_id` the caller can't see SHALL give `200` with every group empty, the same as an id that doesn't exist.
+- The endpoint SHALL set no cookies and SHALL make no writes.
+
+#### Scenario: Search answers grouped results
+- **WHEN** a logged-in member requests `GET /api/search?q=budget`
+- **THEN** the response is `200` with keys `q`, `studios`, `shows`, `sessions`, `moments` and `moment_sessions`; `studios`, `shows`, `sessions` and `moments` each hold at most 5 entries
+
+#### Scenario: One session's moments
+- **WHEN** a logged-in member requests `GET /api/search?q=divorce&session_id=<id>&limit=25` for a session they can access with 12 matching moments
+- **THEN** the response is `200` with 12 `moments` from that session, `moment_sessions` `[{"session_id":"<id>","total":12}]`, and `studios`, `shows` and `sessions` empty
+
+#### Scenario: Anonymous search is refused
+- **WHEN** an anonymous client requests `GET /api/search?q=budget`
+- **THEN** the response is `401` `{"detail":"Login required."}`
+
+#### Scenario: Query bounds
+- **WHEN** a logged-in member requests `q=a`, then `q` of 201 characters, then `limit=0`, then `limit=26`
+- **THEN** each response is `422`
+
+#### Scenario: Busy is a 503
+- **WHEN** a search can't start within 1 second because 2 searches are already running in the process
+- **THEN** the response is `503` `{"detail":"Search is busy; try again."}`
+
+#### Scenario: Timeout is a 503
+- **WHEN** the search's database work exceeds its time budget
+- **THEN** the response is `503` `{"detail":"Search timed out; try a more specific query."}`
+
+### Requirement: Search page HTML route
+`GET /search` SHALL respond `200` with the index shell HTML: the same page identity served at `/`, `/sessions/:id` and `/teams`.
+- It SHALL respond whether or not the request is authenticated; the login gate renders client-side.
+- It SHALL set no cookies.
+- It SHALL take no query-parameter semantics on the server.
+- Paths below it (`/search/<more>`) and `/search/` SHALL remain outside the inventory and keep responding `404` when no static asset matches.
+
+#### Scenario: Search deep link serves the shell
+- **WHEN** `GET /search?q=budget` is requested by an anonymous client
+- **THEN** the server responds `200` with the index shell HTML and no `Set-Cookie`
+
+#### Scenario: Nested search path is not a route
+- **WHEN** `GET /search/extra` is requested
+- **THEN** the server responds `404`
+
+### Requirement: Wiki page object
+Every wiki endpoint that returns a page SHALL return exactly this object:
+
+```
+{ "id": string, "show_id": string,
+  "kind": "person" | "topic" | "bit" | "session",
+  "title": string, "body_md": string, "aliases": [string],
+  "session_id": string | null, "revision": number,
+  "merged_into": string | null, "deleted": boolean,
+  "created_at_utc": string, "created_by_name": string,
+  "updated_at_utc": string, "updated_by_name": string }
+```
+
+- **`aliases`** is in the order saved. For a merged or deleted page, it is the aliases of the page's newest revision.
+- **`*_by_name`** is the writer's given and family name, joined by a space, as recorded at the time of that write. It is `""` when neither was set, and never an email address.
+- **Times** are ISO-8601 UTC strings.
+
+Every wiki endpoint SHALL follow these rules:
+- **`401`** `{"detail":"Login required."}` when not logged in.
+- **`404`** when a show or page doesn't exist or the caller can't access it under show access. The body is the same in both cases: `{"detail":"Show not found."}` for show-scoped routes, `{"detail":"Page not found."}` for page-scoped routes.
+- **`422 {"detail":[…zod issues]}`** when a body or query fails its schema.
+- **`422 {"detail":"<message>"}`** for a rule the schema can't check:
+  - a bad `cite:` or `wiki:` link (the message names the link);
+  - a session outside the show;
+  - a `kind` change to or from `session`;
+  - a merge into itself or involving a `session` page;
+  - a merge whose result would exceed the body or alias limits;
+  - a `session` kind in a split.
+- **No cookies** are set.
+
+#### Scenario: Unauthenticated wiki request
+- **WHEN** an anonymous client requests `GET /api/wiki/pages/<id>`
+- **THEN** the response is `401 {"detail":"Login required."}`
+
+### Requirement: Wiki page list and create endpoints
+**`GET /api/shows/:showId/wiki/pages`** SHALL list the show's pages. Query parameters:
+
+| Parameter | Rule |
+| --- | --- |
+| `kind` | optional; one of the four kinds |
+| `session_id` | optional; keeps the session page of that session |
+| `deleted` | optional `1`; lists deleted pages instead of live ones |
+
+Unknown parameters SHALL be ignored. Merged pages SHALL NOT be listed.
+
+The `200` body SHALL be exactly:
+
+```
+{ "pages": [{ "id": string, "kind": string, "title": string, "aliases": [string],
+              "session_id": string | null, "revision": number,
+              "updated_at_utc": string, "updated_by_name": string }],
+  "truncated": boolean }
+```
+
+- Pages are sorted by title, ignoring case and accents.
+- At most 2000 pages are returned, and `truncated` says whether more matched.
+
+**`POST /api/shows/:showId/wiki/pages`** takes `{ "kind", "title", "body_md"?, "aliases"?, "session_id"? }`. `session_id` is required exactly when `kind` is `session`.
+
+| Status | When | Body |
+| --- | --- | --- |
+| `201` | created | the page object |
+| `409` | a live page holds the title or an alias | `{"detail":"Title already used.","page_id":string}` |
+| `409` | the session already has a page | `{"detail":"Session already has a page.","page_id":string}` |
+| `422` | schema or rule failure | as for every wiki endpoint |
+
+#### Scenario: Create then list
+- **WHEN** a user with show access posts `{"kind":"person","title":"Christina Ramos"}` and then lists `?kind=person`
+- **THEN** the post answers `201` with `revision` 1, and the list contains that page with `truncated` false
+
+### Requirement: Wiki page read, edit, delete and restore endpoints
+**`GET /api/wiki/pages/:pageId`** SHALL answer `200` with the page object, including merged and deleted pages.
+
+**`PUT /api/wiki/pages/:pageId`** takes `{ "expected_revision": number, "title"?, "kind"?, "body_md"?, "aliases"?, "restored_from"? }`.
+- Fields not sent stay unchanged, and `aliases` replaces the whole list.
+- `restored_from` is a revision number below the current one. It only labels the new revision as a restore of that revision.
+- A `PUT` that changes nothing answers `200` with the unchanged page.
+
+**`DELETE /api/wiki/pages/:pageId?expected_revision=<n>`** soft-deletes the page.
+
+**`POST /api/wiki/pages/:pageId/restore`** takes `{ "expected_revision": number }` and makes a deleted page live again.
+
+| Status | When | Body |
+| --- | --- | --- |
+| `200` | done | the page object after the change |
+| `409` | `expected_revision` isn't current | `{"detail":"Version conflict.","current":<page object>}` |
+| `409` | the page was merged | `{"detail":"Page was merged.","merged_into":string}` |
+| `409` | edit or delete of a deleted page | `{"detail":"Page is deleted."}` |
+| `409` | restore of a live page | `{"detail":"Page is not deleted."}` |
+| `409` | a title or alias clash | `{"detail":"Title already used.","page_id":string}` |
+| `409` | restore when the session already has another page | `{"detail":"Session already has a page.","page_id":string}` |
+
+#### Scenario: Stale edit
+- **WHEN** a client sends `PUT` with `expected_revision` 3 to a page at revision 4
+- **THEN** the response is `409` with `detail` `Version conflict.` and `current.revision` 4
+
+### Requirement: Wiki revision endpoints
+**`GET /api/wiki/pages/:pageId/revisions`** SHALL answer `200` with the page's revisions, newest first. Query parameters:
+
+| Parameter | Rule |
+| --- | --- |
+| `limit` | optional integer 1–100; default 50 |
+| `before` | optional revision number; returns only revisions below it |
+
+The `200` body is:
+
+```
+{ "revisions": [{ "revision": number, "title": string, "kind": string,
+                  "author_name": string, "at_utc": string, "note": string }],
+  "next_before": number | null }
+```
+
+`next_before` is the cursor for the next older page, or `null` when there are no more.
+
+**`GET /api/wiki/pages/:pageId/revisions/:rev`** SHALL answer `200` with one revision. It has the same fields plus `"body_md": string` and `"aliases": [string]`. A revision number that doesn't exist answers `404 {"detail":"Revision not found."}`.
+
+#### Scenario: Read an old revision
+- **WHEN** a user requests revision 1 of a page now at revision 3
+- **THEN** the response is `200` with revision 1's title and body and the note `created`
+
+#### Scenario: Revisions page backwards
+- **WHEN** a page has 120 revisions and a client requests `?limit=50`, then `?limit=50&before=<next_before>`
+- **THEN** the first answer holds revisions 120–71 with `next_before` 71, and the second holds 70–21
+
+### Requirement: Wiki merge and split endpoints
+**`POST /api/wiki/pages/:pageId/merge`** SHALL merge the page into another page. It takes `{ "into_page_id": string, "expected_revision": number, "into_expected_revision": number }`.
+
+| Status | When | Body |
+| --- | --- | --- |
+| `200` | merged | `{ "page": <the target page> }` |
+| `409` | either page is stale | `Version conflict.`, with `current` set to the stale page |
+| `404` | `into_page_id` is missing, in another show, or not accessible | `Page not found.` |
+| `422` | the two pages are the same page, either is a `session` page, or the result would exceed the limits | as for every wiki endpoint |
+| `409` | the target was merged or deleted | as for `PUT` |
+
+**`POST /api/wiki/pages/:pageId/split`** takes `{ "expected_revision": number, "remaining_body_md": string, "new_page": { "kind", "title", "body_md", "aliases"? } }`.
+
+| Status | When | Body |
+| --- | --- | --- |
+| `201` | split | `{ "page": <the source page>, "new_page": <the new page> }` |
+| `422` | `new_page.kind` is `session` | as for every wiki endpoint |
+| `409` | a conflict | as for `PUT` |
+
+#### Scenario: Merge answers the target
+- **WHEN** a client merges page A (revision 2) into page B (revision 5) with matching expected revisions
+- **THEN** the response is `200` with `page.id` B, `page.revision` 6, and A's title among `page.aliases`
+
+### Requirement: Wiki page HTML routes
+`GET /wiki` and `GET /wiki/<id>` SHALL respond `200` with the index shell HTML: the same page served at `/`, `/sessions/:id`, `/teams` and `/search`.
+- They SHALL respond whether or not the request is authenticated; the login gate renders client-side.
+- They SHALL set no cookies.
+- They SHALL give query parameters no meaning on the server.
+- `/wiki/`, `/wiki/<id>/` and any deeper path (`/wiki/<id>/<more>`) SHALL remain outside the inventory, and SHALL keep responding `404` when no static asset matches.
+
+#### Scenario: Wiki deep link serves the shell
+- **WHEN** `GET /wiki/abc` is requested by an anonymous client
+- **THEN** the server responds `200` with the index shell HTML and no `Set-Cookie`
+
+#### Scenario: Nested wiki path is not a route
+- **WHEN** `GET /wiki/abc/history` is requested
+- **THEN** the server responds `404`
+
+### Requirement: Wiki suggestion object
+Every wiki suggestion endpoint that returns a suggestion SHALL return exactly this object, and the read endpoint SHALL add `"body_md": string`:
+
+```
+{ "id": string, "show_id": string, "session_id": string,
+  "status": "pending" | "accepted" | "dismissed" | "superseded",
+  "page_id": string | null, "base_revision": number | null,
+  "kind": "person" | "topic" | "bit" | "session",
+  "title": string, "aliases": [string], "rationale": string,
+  "page": { "title": string, "revision": number,
+            "state": "live" | "merged" | "deleted" } | null,
+  "stale": boolean,
+  "created_at_utc": string, "created_by_name": string,
+  "resolved_at_utc": string | null, "resolved_by_name": string | null,
+  "resolved_revision": number | null }
+```
+
+- **`page_id` null** means the suggestion proposes a new page of `kind` and `title`; `base_revision` and `page` are then null and `stale` is false.
+- **`page`** describes the target page now: its current title, revision and state.
+- **`stale`** is true when the target page's current revision differs from `base_revision`.
+- **`*_by_name`** follows the wiki page object's rule: given and family name, recorded at the time of the write, never an email.
+
+Every wiki suggestion endpoint SHALL follow the wiki endpoints' rules for `401`, `422` and cookies. A suggestion that doesn't exist or that the caller can't access under show access SHALL answer `404 {"detail":"Suggestion not found."}`.
+
+#### Scenario: Unauthenticated suggestion request
+- **WHEN** an anonymous client requests `GET /api/wiki/suggestions/<id>`
+- **THEN** the response is `401 {"detail":"Login required."}`
+
+### Requirement: Wiki update endpoint
+**`POST /api/sessions/:sessionId/wiki/generate`** takes no body and SHALL run the wiki-generation turn for the session (wiki-generation capability). The checks run in this order:
+
+| Status | When | Body |
+| --- | --- | --- |
+| `401` | not logged in | `{"detail":"Login required."}` |
+| `404` | the session doesn't exist, has no show, or the caller can't access it | the session routes' masked 404 |
+| `503` | the caller has no AI route | `{"detail":"Add a language model in Settings → Advanced to update the wiki."}` |
+| `403` | the caller isn't an approved user | the existing run-feature 403 |
+| `400` | the session has no transcript words | `{"detail":"This session has no transcript words to update the wiki from."}` |
+| `409` | another AI turn holds the session's slot | `{"detail":"A turn (AI chat, AI v2, topic generation, event generation, or wiki update) is already in progress for this session; wait for it to finish before updating the wiki again. These features share one per-session AI slot by design."}` |
+| `502` | the run failed | `{"detail":"Wiki update failed."}` |
+| `200` | the run succeeded | `{"suggestions": [<suggestion object>]}` |
+
+- The `200` list holds the suggestions this run stored, in the order they were proposed. It MAY be empty.
+- No cookies are set.
+
+#### Scenario: Update wiki returns the stored suggestions
+- **WHEN** a caller with an AI route and show access posts to `wiki/generate` for a session with a transcript, and the model proposes one new person page
+- **THEN** the response is `200` with one suggestion whose `status` is `pending`, `page_id` is null and `kind` is `person`
+
+#### Scenario: A session without transcript words
+- **WHEN** the session has no transcript words
+- **THEN** the response is `400 {"detail":"This session has no transcript words to update the wiki from."}` and no model request is made
+
+### Requirement: Wiki suggestion list, read, accept and dismiss endpoints
+**`GET /api/shows/:showId/wiki/suggestions`** SHALL list the show's suggestions. Query parameters:
+
+| Parameter | Rule |
+| --- | --- |
+| `status` | optional; one of the four statuses; default `pending` |
+| `page_id` | optional; keeps the suggestions for that page |
+
+Unknown parameters SHALL be ignored. The `200` body SHALL be `{"suggestions": [<suggestion object>], "truncated": boolean}`, newest first, at most 500. A show the caller can't access answers `404 {"detail":"Show not found."}`.
+
+**`GET /api/wiki/suggestions/:suggestionId`** SHALL answer `200` with the suggestion object plus `body_md`.
+
+**`POST /api/wiki/suggestions/:suggestionId/accept`** takes `{ "expected_revision"?: number, "title"?, "body_md"?, "aliases"? }`:
+- `expected_revision` is required when the suggestion targets an existing page and is the revision the reviewer saw. It is ignored for a new page.
+- `title`, `body_md` and `aliases` are optional overrides ("edit, then accept"), with the wiki page limits. Fields not sent take the suggestion's value. The kind can't be changed on accept.
+
+| Status | When | Body |
+| --- | --- | --- |
+| `200` | an existing page was updated | `{"page": <page object>, "suggestion": <suggestion object>}` |
+| `201` | a new page was created | `{"page": <page object>, "suggestion": <suggestion object>}` |
+| `409` | `expected_revision` isn't current | `{"detail":"Version conflict.","current":<page object>}` |
+| `409` | the target page was merged | `{"detail":"Page was merged.","merged_into":string}` |
+| `409` | the target page is deleted | `{"detail":"Page is deleted."}` |
+| `409` | a title or alias clash | `{"detail":"Title already used.","page_id":string}` |
+| `409` | a new session page when the session already has one | `{"detail":"Session already has a page.","page_id":string}` |
+| `409` | the suggestion isn't pending | `{"detail":"Suggestion already resolved.","status":string}` |
+| `422` | `expected_revision` missing for an existing page | `{"detail":"expected_revision is required."}` |
+| `422` | schema or rule failure | as for every wiki endpoint |
+
+**`POST /api/wiki/suggestions/:suggestionId/dismiss`** takes no body:
+
+| Status | When | Body |
+| --- | --- | --- |
+| `200` | dismissed | the suggestion object |
+| `409` | the suggestion isn't pending | `{"detail":"Suggestion already resolved.","status":string}` |
+
+#### Scenario: Accept a stale suggestion against the current revision
+- **WHEN** a suggestion has `base_revision` 3, the page is now at revision 4, and the reviewer accepts with `expected_revision` 4
+- **THEN** the response is `200`, `page.revision` is 5, and `suggestion.status` is `accepted` with `resolved_revision` 5
+
+#### Scenario: Accept twice
+- **WHEN** a reviewer accepts a suggestion that another reviewer already accepted
+- **THEN** the response is `409 {"detail":"Suggestion already resolved.","status":"accepted"}` and the page is unchanged
+
+### Requirement: Recording finalize endpoint
+The published inventory SHALL include
+`POST /api/sessions/:sessionId/audio/recordings/:recordingOrdinal/finalize`. It is additive. It
+SHALL require login and session access like the audio segment routes. `:recordingOrdinal` SHALL be
+a positive safe integer, else `400 { detail }`; an unknown session SHALL be `404 { detail }`. The
+JSON body `{ chunks: [started_at_utc, …] }` lists the windows the client recorded (1 to 1000
+timestamps, else `400 { detail }`). On success it SHALL answer `200 { ok: true, merge: "queued" |
+"not-needed" | "already-queued" | "waiting" }`: `not-needed` when the recording has fewer than
+two segments, `already-queued` when a live merge job exists, `waiting` when a listed window is not
+yet held by a segment or a seam, `queued` when it enqueued one. It SHALL not check the recording
+lease. It SHALL change no segment row itself.
+
+#### Scenario: Finalize queues one merge
+- **WHEN** a client calls finalize twice for a recording with three segments, listing their three
+  windows
+- **THEN** the first answer is `200 { ok: true, merge: "queued" }`, the second
+  `200 { ok: true, merge: "already-queued" }`, and one merge job exists
+
+#### Scenario: Finalize waits for a straggler
+- **WHEN** finalize lists four windows and the session holds three of them
+- **THEN** the answer is `200 { ok: true, merge: "waiting" }` and no merge job exists
+
+#### Scenario: A single-segment recording needs no merge
+- **WHEN** a client finalizes a recording with one segment
+- **THEN** the answer is `200 { ok: true, merge: "not-needed" }` and no job is created
+
+### Requirement: Resumable audio upload endpoints
+The published inventory SHALL include, all additive, under
+`/api/sessions/:sessionId/audio/uploads`, requiring login and session access:
+- `POST` with JSON `{ content_type, size_bytes, part_sha256 }`: `content_type` non-blank,
+  `size_bytes` a positive integer not over 1500 MiB (else `413 { detail }`), `part_sha256` an
+  array of exactly `ceil(size_bytes / part_size)` strings of 64 lowercase hex (else
+  `400 { detail }`); answers `201 { upload_id, part_size, parts_total, expires_at_utc }` where
+  `part_size` is the server's constant (32 MiB); a caller with 2 open uploads, or whose staged
+  bytes would exceed 3 GiB, gets `429 { detail }`; a blob volume below the free-disk floor gets
+  `507 { detail }`;
+- `PUT /:uploadId/parts/:n` with a raw body: `n` is 1-based; every part except the last SHALL be
+  exactly `part_size` bytes and the last exactly the remainder, else `400 { detail }`; a body
+  whose sha256 differs from `part_sha256[n−1]` is `400 { detail }` and is not recorded; a body
+  over `part_size` is `413 { detail }`; a part MAY be re-sent; an unknown, expired, aborted or
+  completed upload is `404 { detail }`; low disk is `507 { detail }`; success is `204`;
+- `GET /:uploadId`: `200 { upload_id, status, size_bytes, part_size, parts_total, received,
+  expires_at_utc }` where `received` is the sorted array of part numbers stored;
+- `POST /:uploadId/complete` in one of two modes, chosen by the query: **import mode** with the
+  same `duration_s` query parameter and optional `X-Audio-Seam-Parts` header as
+  `local-audio-import`, and the same `400` rules for them, attaching and anchoring one take and
+  appending the seam parts; or **segment mode** with `recording_ordinal`, `started_at_utc` and
+  `ended_at_utc`, storing one segment exactly as `POST …/audio/segments` does ("Segment upload is
+  idempotent per recording window" included). In both: a missing part is `409 { detail,
+  missing_parts }`; a size mismatch or a part whose re-hash differs from the declared list is
+  `400 { detail }` and aborts the upload; in import mode a session that is actively recording is
+  `409 { detail }`, checked before attach and re-checked after the file is placed (the re-check
+  rolls the attempt back as `local-audio-import` does); success is `200 { ok: true, segment_id }`;
+- `DELETE /:uploadId`: `204`, the staging removed; unknown is `404 { detail }`.
+
+`local-audio-import` is unchanged.
+
+#### Scenario: Inventory lists the upload family
+- **WHEN** a client creates an upload, PUTs every part and completes it with a valid `duration_s`
+- **THEN** every call is in-contract and the completion answers `200 { ok: true, segment_id }`
+
+#### Scenario: A missing part blocks completion
+- **WHEN** completion is requested with part 3 of 4 never received
+- **THEN** the answer is `409 { detail, missing_parts: [3] }` and no segment is attached
+
+#### Scenario: Oversized declarations are refused at creation
+- **WHEN** `size_bytes` exceeds 1500 MiB
+- **THEN** the answer is `413 { detail }` and no upload exists
+
+#### Scenario: A part that does not match its hash is not kept
+- **WHEN** part 2's body hashes to a value other than `part_sha256[1]`
+- **THEN** the answer is `400 { detail }`, `GET` does not list part 2, and it can be re-sent
+
+#### Scenario: An oversize live chunk completes in segment mode
+- **WHEN** a client completes an upload with `recording_ordinal=3`, `started_at_utc` and
+  `ended_at_utc` and no `duration_s`
+- **THEN** one segment with `recording_ordinal` 3 exists, no take is anchored, and the answer is
+  `200 { ok: true, segment_id }`
+
+#### Scenario: Caps and low disk refuse before any byte is staged
+- **WHEN** a user with two open uploads creates another, or the blob volume is below its
+  free-disk floor
+- **THEN** the answer is `429 { detail }` or `507 { detail }` respectively and no staging file
+  exists for the request
+
+### Requirement: Audio segments carry duration, media status and seams
+Every audio segment dict returned by `GET` and `POST /api/sessions/:sessionId/audio/segments` SHALL
+carry three additive fields: `duration_ms` (a non-negative integer, or `null` while unknown),
+`media_status` (`"pending"`, `"done"`, `"failed"`, or `null` for rows that predate server-side
+processing) and `seams` (`null`, or for a merged segment the array of `{ offset_ms,
+started_at_utc, ended_at_utc }` in media order, one per original chunk). No existing field's
+shape, order dependence or semantics changes; clients MUST tolerate the three fields. The
+`audio.changed` WebSocket message keeps its shape and additionally fires when the server applies
+a worker result (peaks, duration, a FLAC swap or a merge), so a client re-reads the list then;
+its other emission points are unchanged.
+
+#### Scenario: A fresh segment is pending, then done
+- **WHEN** a chunk is uploaded and listed at once, then listed again after the worker processed it
+- **THEN** the first dict has `media_status: "pending"`, `duration_ms: null` and `seams: null`, the
+  second `media_status: "done"` and an integer `duration_ms`, and an `audio.changed` message was
+  emitted between them
+
+#### Scenario: A merged segment lists its seams
+- **WHEN** a three-chunk recording has been merged and the list is read
+- **THEN** the merged dict's `seams` has three entries whose `offset_ms` ascend from 0 and whose
+  `started_at_utc` are the three chunks' windows
+
+#### Scenario: Legacy rows are null
+- **WHEN** a segment that predates this change is listed
+- **THEN** its dict carries `duration_ms: null`, `media_status: null` and `seams: null` and every
+  pre-existing field unchanged
+
+### Requirement: Segment upload is idempotent per recording window
+`POST /api/sessions/:sessionId/audio/segments` with a `recording_ordinal` and a parseable
+`started_at_utc` SHALL store at most one segment per `(session, recording_ordinal,
+started_at_utc)` window: when the session already holds that window, as a segment row or as a
+seam of a merged segment, the request SHALL answer exactly as a successful upload does with the
+dict of the segment that holds the window (the chunk, or the merged segment) and SHALL store no
+bytes and no row; two concurrent uploads of the same window SHALL converge on one stored copy.
+Uploads without a `recording_ordinal` are unchanged. The status code and the dict shape are the
+same as for a new segment (clients cannot tell a replay from the first upload, and need not).
+
+#### Scenario: A replayed chunk is not stored twice
+- **WHEN** a chunk upload succeeds and the same bytes are posted again with the same
+  `recording_ordinal` and `started_at_utc`
+- **THEN** the second answer carries the first segment's dict, the list still has one segment for
+  that window, and the blob directory holds one file for it
+
+#### Scenario: A chunk already merged away answers with the merged segment
+- **WHEN** a recovered chunk is posted after its window was merged into one segment
+- **THEN** the answer carries the merged segment's dict and no new row or blob is created
+
+#### Scenario: Two tabs race on one window
+- **WHEN** two uploads of the same window arrive at once
+- **THEN** one row and one blob exist afterwards and both answers carry that segment's dict
+
+### Requirement: Closed sign-up redirect
+While sign-ups are closed, the OAuth callback SHALL create a catalog account for a Google subject
+that has none only when the verified token email is the bootstrap owner's (matched under the
+bootstrap owner's exact-ASCII rule) or holds a usable approval in `catalog.account_approvals`.
+An approval is usable for 7 days from its `approved_at_utc`, read against the server's Clock, and
+is consumed in the transaction that creates the account; an account that is not created consumes
+nothing. A token email with any character above U+007F is never approved.
+
+The check SHALL run after the verified-email check and before the Supabase Auth exchange, and
+SHALL only read: the account by the verified `sub` (any state) and, when there is none, the
+approval by email. When the subject has no account and the email is neither the bootstrap owner's
+nor approved, the server SHALL respond `302` with `Location: /?login_error=signup_closed`, set no
+cookie, not call Supabase Auth, and create or change no catalog account. A subject that already
+has an account, enabled or disabled, is handled exactly as before. When the approval is gone by
+the time the account would be created (revoked, expired, or consumed by a concurrent first
+sign-in of the same subject), the callback SHALL look the subject up once more and continue as an
+existing account if one now exists, else respond `signup_closed`.
+
+Sign-ups are closed when the `SIGNUPS` setting (trimmed, `A`-`Z` folded) is `closed`, or when it
+is unset or blank and `AUTOLOGGER_STACK` is not `dev`; `open` opens them. Any other value SHALL
+refuse boot with a message naming `SIGNUPS` and its two values and not printing the value, and
+the compose wrapper SHALL refuse such a KV secret the same way before compose starts. The server
+SHALL log the effective mode once at boot (`sign-ups: open` or `sign-ups: closed`). While sign-ups
+are open, the callback SHALL behave exactly as before this change.
+
+`signup_closed` joins the login-error code set under its existing additive-open rule (clients
+treat unrecognized codes as a generic sign-in failure).
+
+#### Scenario: A new, unapproved email is refused while closed
+- **WHEN** sign-ups are closed and a Google account with no catalog account and an unapproved
+  email completes the OAuth flow
+- **THEN** the callback responds `302` to `/?login_error=signup_closed` with no cookie, Supabase
+  Auth is not called, and no catalog account, membership or invite changes
+
+#### Scenario: An approved email gets its account
+- **WHEN** sign-ups are closed, `someone@example.com` was approved a day ago, and a new Google
+  account with the verified email `Someone@Example.com` completes the OAuth flow
+- **THEN** its account is created as on an open sign-up (session cookie, `302` to `/`, pending
+  invites materialized), and the approval row is gone
+
+#### Scenario: An expired approval is refused
+- **WHEN** sign-ups are closed and the email's approval is 8 days old
+- **THEN** the callback responds `302` to `/?login_error=signup_closed`, Supabase Auth is not
+  called, and the approval row stays
+
+#### Scenario: Revoked between the check and the account
+- **WHEN** sign-ups are closed and the approval is revoked after the check passed but before the
+  account is created
+- **THEN** no account is created and the callback responds `302` to `/?login_error=signup_closed`
+
+#### Scenario: The bootstrap owner always signs in
+- **WHEN** sign-ups are closed, nothing is approved, and the bootstrap owner's Google account
+  signs in for the first time
+- **THEN** its account is created and the bootstrap claim runs as before
+
+#### Scenario: Existing accounts are unaffected
+- **WHEN** sign-ups are closed and a Google subject with an enabled account signs in
+- **THEN** the sign-in succeeds as before; a disabled account still gets `account_disabled`
+
+#### Scenario: A non-ASCII email is never approved
+- **WHEN** sign-ups are closed and a new Google account's verified email contains a character
+  above U+007F
+- **THEN** the callback responds `302` to `/?login_error=signup_closed` and reads no approval
+
+#### Scenario: Open sign-ups are unchanged
+- **WHEN** sign-ups are open and a new Google account completes the OAuth flow
+- **THEN** its account is created exactly as before this change, whether or not its email is
+  approved, and an approval row for that email is left in place
+
+#### Scenario: A mistyped setting refuses to start
+- **WHEN** the KV secret holds `SIGNUPS=opne`
+- **THEN** the compose wrapper refuses before compose starts, and a server started with it refuses
+  to boot; both messages name `SIGNUPS` and neither contains `opne`
+
+#### Scenario: The default follows the stack
+- **WHEN** `SIGNUPS` is unset and the stack is `dev`, `stage` or `prod`
+- **THEN** sign-ups are open on `dev` and closed on `stage` and `prod`, and the boot log says which

@@ -26,6 +26,7 @@ const CONTENT_TYPE_BY_FAMILY: Record<CodecFamily, string> = {
   opus: 'audio/webm',
   aac: 'audio/mp4',
   pcm: 'audio/wav',
+  flac: 'audio/flac',
   mp3: 'audio/mpeg',
 };
 

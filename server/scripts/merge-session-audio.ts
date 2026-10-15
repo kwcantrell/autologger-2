@@ -1,16 +1,17 @@
 // CLI: merge a session's recorded audio segments into one group file per
 // probed codec family.
 //
-//   npm run merge-audio -w server -- <sessionId> [--data-dir <dir>] [--out <dir>]
+//   npm run merge-audio -w server -- <sessionId> [--blob-dir <dir>] [--out <dir>]
 //
 // Run it in the dev stack (`make dev-shell`, then `cd server`), with `--out /tmp/<name>` so the
-// output stays off the data volume; copy it out with `docker cp`. DATA_DIR (or --data-dir) is
-// required: there is no default data directory (retire-host-dev D3). The process's PG* settings
-// name the database (the dev shell has them).
+// output stays off the data and blob volumes; copy it out with `docker cp`. BLOB_DIR (or
+// --blob-dir) is required, as an absolute path: there is no default blob directory
+// (shared-blob-volume D1, D5). The process's PG* settings name the database (the dev shell has
+// them).
 //
 // Reads segment order from the session's rows in `catalog.session_audio_segments` (one read-only
 // snapshot through the Postgres session adapter, session-tables D10), maps
-// each row's r2_key to its blob under DATA_DIR/blobs/, and packet-copies each
+// each row's r2_key to its blob under BLOB_DIR/, and packet-copies each
 // codec-family run into its own container (Opus->WebM, AAC->MP4, PCM->WAVE)
 // via @autologger/transcription's audioMerge.ts. Read-only over server state; the merged files
 // are written outside the blob store.
@@ -19,7 +20,7 @@ import { systemCaller } from '@autologger/session-core';
 import { PostgresCatalogDb, PostgresSessionDb } from '@autologger/storage';
 import { mergeAudioSegments } from '@autologger/transcription';
 import { existsSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { isAbsolute, join, resolve } from 'node:path';
 import { CATALOG_PG_VARS } from '../src/bootGuard';
 
 function fail(msg: string): never {
@@ -29,10 +30,10 @@ function fail(msg: string): never {
 
 const args = process.argv.slice(2);
 const positional: string[] = [];
-let dataDirArg: string | undefined;
+let blobDirArg: string | undefined;
 let outArg: string | undefined;
 for (let i = 0; i < args.length; i += 1) {
-  if (args[i] === '--data-dir') dataDirArg = args[++i];
+  if (args[i] === '--blob-dir') blobDirArg = args[++i];
   else if (args[i] === '--out') outArg = args[++i];
   else if (args[i].startsWith('--')) fail(`unknown flag ${args[i]}`);
   else positional.push(args[i]);
@@ -40,14 +41,17 @@ for (let i = 0; i < args.length; i += 1) {
 const sessionId = positional[0];
 if (!sessionId || positional.length > 1) {
   console.error(
-    'usage: npm run merge-audio -w server -- <sessionId> [--data-dir <dir>] [--out <dir>]',
+    'usage: npm run merge-audio -w server -- <sessionId> [--blob-dir <dir>] [--out <dir>]',
   );
   process.exit(2);
 }
 
-const dataDirIn = dataDirArg ?? process.env.DATA_DIR;
-if (!dataDirIn) fail('set DATA_DIR or pass --data-dir (there is no default data directory)');
-const dataDir = resolve(dataDirIn);
+// shared-blob-volume D5: audio lives under BLOB_DIR, not DATA_DIR/blobs.
+const blobDirIn = blobDirArg ?? process.env.BLOB_DIR;
+if (!blobDirIn || !isAbsolute(blobDirIn)) {
+  fail('set BLOB_DIR or pass --blob-dir, as an absolute path (there is no default blob directory)');
+}
+const blobDir = resolve(blobDirIn);
 const missingPg = CATALOG_PG_VARS.filter((k) => !process.env[k]);
 if (missingPg.length) fail(`database settings missing: ${missingPg.join(', ')}`);
 
@@ -77,7 +81,7 @@ if (rows.length === 0) fail(`session ${sessionId} has no audio segments`);
 
 const inputs: string[] = [];
 for (const row of rows) {
-  const blobPath = join(dataDir, 'blobs', row.r2_key);
+  const blobPath = join(blobDir, row.r2_key);
   if (!existsSync(blobPath)) {
     console.warn(`warning: skipping segment ${row.ordinal} — missing blob ${blobPath}`);
     continue;

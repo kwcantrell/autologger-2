@@ -14,6 +14,12 @@ export interface Config {
   /** The approved users for the run features (run-status-and-sweeper D9): comma-separated
    * emails, optional; the bootstrap owner is always approved in addition. */
   RUN_FEATURE_EMAILS: string;
+  /** Sign-ups (closed-signups D1): `open` or `closed` (trimmed, `A`-`Z` folded); unset or blank
+   * follows the stack (open only on `dev`). Optional so test Config literals need no edit; absent is
+   * closed. Read through `signupsMode()` in server/src/env.ts. */
+  SIGNUPS?: string;
+  /** The compose stack (`dev`, `stage` or `prod`) the server runs in; absent outside one. */
+  AUTOLOGGER_STACK?: string;
   SESSION_COOKIE: string;
   SESSION_DAYS: string;
   NEW_USER_ALL_TEAMS: string;
@@ -23,9 +29,26 @@ export interface Config {
   ADMIN_TOKEN: string;
   DEEPGRAM_API_KEY: string;
   DEEPGRAM_MODEL: string;
+  /** Provider development mode (byo-ai-providers D3; provider-credentials "Development mode is
+   * explicit"), decided once at boot: true only when `NODE_ENV` is exactly `development` or
+   * `test`. Absent or false is production mode, the default, which keeps every provider protection
+   * on and never falls back to `DEEPGRAM_API_KEY`. Nothing reads `NODE_ENV` at request time. */
+  PROVIDER_DEV_MODE?: boolean;
   /** AI topics chat (ai-topics-chat). Unset/blank/whitespace CLAUDE_CLI_PATH ⇒
    * feature off (503). The rest tune spend/lifecycle bounds. */
   CLAUDE_CLI_PATH: string;
+  /** The Claude CLI allowlist (ai-sdk-agent-harness D1): comma-separated emails who may save the
+   * keyless `claude-cli` provider and run turns on the operator's CLI. Absent or blank: nobody.
+   * The bootstrap owner is not implicitly listed. */
+  CLAUDE_CLI_EMAILS?: string;
+  /** AI SDK turn bounds (ai-sdk-agent-harness D3): steps and the per-turn token budget for chat,
+   * and for topic and event generation, plus generation's per-step output cap. Absent, invalid or
+   * out of range gives the defaults. */
+  AI_CHAT_MAX_STEPS?: string;
+  AI_CHAT_MAX_TOKENS?: string;
+  GENERATE_MAX_STEPS?: string;
+  GENERATE_MAX_TOKENS?: string;
+  GENERATE_MAX_OUTPUT_TOKENS?: string;
   AI_CHAT_TIMEOUT_SEC: string;
   /** The AI provider (run-status-and-sweeper D1): `'claude_cli'` is the only one; `createBindings`
    * refuses any other `AI_PROVIDER` at boot. */
@@ -61,6 +84,15 @@ export interface Config {
    * failure). */
   EVENT_GENERATE_MAX_INSTRUCTION_BYTES: string;
   EVENT_GENERATE_MAX_INSTRUCTION_ENTRIES: string;
+  /** The wiki update (show-wiki-ai, wiki-generation "Wiki update bounds"): its own bounds, since a
+   * run reads pages as well as the transcript and writes whole pages. The timeout (default 900 s)
+   * bounds both routes; the budget (default 5.0 USD) is the CLI turn's; the steps (default 80,
+   * valid 1-200) and tokens (default 6 000 000) are the AI SDK turn's. Absent, invalid or out of
+   * range gives the defaults. */
+  WIKI_GENERATE_TIMEOUT_SEC?: string;
+  WIKI_GENERATE_MAX_BUDGET_USD?: string;
+  WIKI_GENERATE_MAX_STEPS?: string;
+  WIKI_GENERATE_MAX_TOKENS?: string;
   /** AI v2 dashboards (ai-v2-dashboards). Off by default: unlike the AI chat's
    * implicit gate (any non-blank CLAUDE_CLI_PATH enables it), AI v2 ALSO
    * requires this EXPLICIT flag (spec "Configuration-gated AI v2 endpoints")

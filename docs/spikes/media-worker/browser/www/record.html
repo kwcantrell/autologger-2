@@ -1,0 +1,63 @@
+<!doctype html><meta charset="utf-8"><title>Timeslice spike</title>
+<body><h1>MediaRecorder timeslice spike (0.2)</h1>
+<p>Click Start, allow the microphone, speak/keep sound for ~25 s. Results appear below; files download when done.</p>
+<button id="go">Start (25 s)</button><pre id="log"></pre>
+<script>
+const log = (...a) => { document.getElementById('log').textContent += a.join(' ') + '\n'; console.log(...a); };
+const q = new URLSearchParams(location.search);
+const DUR = Number(q.get('dur') ?? 25000), TAG = q.get('tag') ?? 'manual', UPLOAD = q.has('upload');
+async function decode(blob) {
+  try { const ctx = new (window.OfflineAudioContext)(1, 1, 48000);
+    const buf = await ctx.decodeAudioData(await blob.arrayBuffer());
+    return { ok: true, duration: +buf.duration.toFixed(3), sampleRate: buf.sampleRate, channels: buf.numberOfChannels };
+  } catch (e) { return { ok: false, error: String(e && (e.name + ': ' + e.message)) }; }
+}
+function head(bytes) { return Array.from(bytes.slice(0, 12)).map(b => b.toString(16).padStart(2, '0')).join(' '); }
+function mp4Atoms(u8) { // top-level atom list
+  const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength); const atoms = []; let o = 0;
+  while (o + 8 <= u8.length && atoms.length < 50) { let size = dv.getUint32(o); const type = String.fromCharCode(...u8.slice(o + 4, o + 8));
+    if (size === 1 && o + 16 <= u8.length) size = Number(dv.getBigUint64(o + 8)); if (size === 0) size = u8.length - o;
+    atoms.push(type + ':' + size); if (size < 8) break; o += size; }
+  return atoms;
+}
+async function probeDuration(blob) { return new Promise(r => { const a = new Audio(); const url = URL.createObjectURL(blob);
+  const t = setTimeout(() => r('timeout'), 5000);
+  a.onloadedmetadata = () => { clearTimeout(t); r(a.duration); }; a.onerror = () => { clearTimeout(t); r('error ' + (a.error && a.error.code)); }; a.preload = 'metadata'; a.src = url; }); }
+async function save(name, blob) {
+  if (UPLOAD) { await fetch('/upload?name=' + encodeURIComponent(TAG + '-' + name), { method: 'POST', body: blob }); return; }
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; a.click();
+}
+async function run() {
+  const res = { ua: navigator.userAgent, isTypeSupported: {} };
+  for (const t of ['audio/webm;codecs=opus', 'audio/ogg;codecs=opus', 'audio/mp4', 'audio/mp4;codecs=mp4a.40.2', 'audio/mp4;codecs=opus'])
+    res.isTypeSupported[t] = MediaRecorder.isTypeSupported(t);
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  const MIME = q.get('mime'); const mo = MIME ? { mimeType: MIME } : undefined; res.requestedMime = MIME;
+  const sliced = new MediaRecorder(stream, mo), whole = new MediaRecorder(stream, mo);
+  const slices = [], sliceLog = [], wholeParts = []; const t0 = performance.now();
+  sliced.ondataavailable = e => { slices.push(e.data); sliceLog.push({ at: Math.round(performance.now() - t0), bytes: e.data.size, type: e.data.type }); };
+  whole.ondataavailable = e => { wholeParts.push(e.data); };
+  const stopped = Promise.all([sliced, whole].map(r => new Promise(ok => r.onstop = ok)));
+  sliced.start(5000); whole.start(); log('recording', DUR, 'ms; mimeType', sliced.mimeType);
+  await new Promise(r => setTimeout(r, DUR)); sliced.stop(); whole.stop(); await stopped;
+  stream.getTracks().forEach(t => t.stop());
+  res.mimeType = sliced.mimeType || slices[0]?.type; res.wholeMimeType = whole.mimeType;
+  res.sliceLog = sliceLog; res.wholeParts = wholeParts.length;
+  const type = res.mimeType; const cat = new Blob(slices, { type }); const wh = new Blob(wholeParts, { type: whole.mimeType });
+  const pre3 = new Blob(slices.slice(0, 3), { type });
+  res.bytes = { concat: cat.size, whole: wh.size, prefix3: pre3.size };
+  const cu8 = new Uint8Array(await cat.arrayBuffer()), wu8 = new Uint8Array(await wh.arrayBuffer());
+  res.head = { concat: head(cu8), whole: head(wu8), slice1: head(new Uint8Array(await slices[1]?.arrayBuffer?.() ?? new ArrayBuffer(0))) };
+  if (/mp4/.test(type)) { res.atoms = { concat: mp4Atoms(cu8), whole: mp4Atoms(wu8), slices: [] };
+    for (const s of slices) res.atoms.slices.push(mp4Atoms(new Uint8Array(await s.arrayBuffer()))); }
+  res.decode = { concat: await decode(cat), whole: await decode(wh), prefix3: await decode(pre3) };
+  res.elementDuration = { concat: await probeDuration(cat), whole: await probeDuration(wh), prefix3: await probeDuration(pre3) };
+  const ext = /mp4/.test(type) ? 'mp4' : /ogg/.test(type) ? 'ogg' : 'webm';
+  await save('concat.' + ext, cat); await save('whole.' + ext, wh); await save('prefix3.' + ext, pre3);
+  for (let i = 0; i < slices.length; i++) await save(`slice${i}.${ext}`, slices[i]);
+  log(JSON.stringify(res, null, 1)); if (!UPLOAD) await save('result.json', new Blob([JSON.stringify(res, null, 1)]));
+  window.__result = res; return res;
+}
+document.getElementById('go').onclick = () => run().catch(e => { log('ERROR', e); window.__result = { error: String(e) }; });
+window.runSpike = run;
+</script>

@@ -1,0 +1,20 @@
+{
+  "llm": {
+    "kind": "llm",
+    "provider": "openai-compatible",
+    "base_url": "https://api.example.com/v1",
+    "model": "gpt-4o-mini",
+    "key_last4": "9f2c",
+    "updated_at": "####-##-##T##:##:##.###Z"
+  },
+  "stt": {
+    "kind": "stt",
+    "provider": "deepgram",
+    "base_url": null,
+    "model": "nova-3",
+    "key_last4": "abcd",
+    "updated_at": "####-##-##T##:##:##.###Z"
+  },
+  "run_features_allowed": false,
+  "claude_cli_allowed": false
+}

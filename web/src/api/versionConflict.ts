@@ -40,18 +40,19 @@ export function versionQuery(g?: VersionGuard): string {
 /**
  * The typed 409 body when `e` is a version conflict, else `null` (the caller rethrows). One
  * discriminator on the error path, not runtime shape checking: `C` must be a type the
- * conformance file covers from captured fixtures (Detector 8 `errorBody`).
+ * conformance file covers from captured fixtures (Detector 8 `errorBody`). `field` names the
+ * row's version number: `version` for session rows, `revision` for wiki pages (show-wiki D7).
  */
-export function versionConflictOf<C extends VersionConflict<{ version: number }>>(
-  e: unknown,
-): C | null {
+export function versionConflictOf<
+  C extends VersionConflict<{ version: number }> | VersionConflict<{ revision: number }>,
+>(e: unknown, field: 'version' | 'revision' = 'version'): C | null {
   if (!(e instanceof ApiError) || e.status !== 409) return null;
   const body = e.body;
   if (typeof body !== 'object' || body === null) return null;
   const { detail, current } = body as { detail?: unknown; current?: unknown };
   if (detail !== VERSION_CONFLICT_DETAIL) return null;
   if (typeof current !== 'object' || current === null) return null;
-  const version = (current as { version?: unknown }).version;
+  const version = (current as Record<string, unknown>)[field];
   if (typeof version !== 'number' || !Number.isFinite(version)) return null;
   return body as C;
 }

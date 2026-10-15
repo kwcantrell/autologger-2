@@ -42,6 +42,12 @@ function probeSegmentDuration(url: string, signal?: AbortSignal): Promise<number
   });
 }
 
+/** The server's decoded length in seconds (`duration_ms`, media-worker D16), or null. */
+function serverDurationSec(s: AudioSegment): number | null {
+  const ms = s.duration_ms;
+  return typeof ms === 'number' && Number.isFinite(ms) && ms > 0 ? ms / 1000 : null;
+}
+
 export interface AudioClipsLayout {
   clips: AudioClipLite[];
   totalSec: number;
@@ -80,10 +86,11 @@ export function useAudioClips(
       .catch(() => undefined);
   }, [sessionId, qc]);
 
-  // Probe durations. The server emits no duration for a segment (`segmentApiDict`
-  // has no such field — web-api-shape-conformance audit CW-5), so the
-  // HTMLAudioElement metadata probe is the only source of a decoded media length.
-  // Cache keyed by segment id; survives across re-renders within a session.
+  // Durations: the server's `duration_ms` when present (media-worker D16: the worker decodes
+  // every new segment; a Chromium WebM joined from timeslices has no duration header, so the
+  // probe would report Infinity there), else the HTMLAudioElement metadata probe, run only for
+  // segments whose `duration_ms` is null (legacy rows, or a segment still pending).
+  // Probe cache keyed by segment id; survives across re-renders within a session.
   const durationsRef = useRef<Map<string, number>>(new Map());
   const [durationsTick, setDurationsTick] = useState(0);
 
@@ -100,6 +107,7 @@ export function useAudioClips(
     const controller = new AbortController();
     const pending = segments.filter((s) => {
       if (!s.id || !s.url) return false;
+      if (serverDurationSec(s) != null) return false;
       return !durationsRef.current.has(s.id);
     });
     // No tick bump on the empty case: nothing was added to the duration cache,
@@ -134,7 +142,9 @@ export function useAudioClips(
 
   const layout = useMemo<AudioClipsLayout>(() => {
     void durationsTick; // recompute when probes complete
-    const segmentDurations = segments.map((s) => durationsRef.current.get(s.id) ?? null);
+    const segmentDurations = segments.map(
+      (s) => serverDurationSec(s) ?? durationsRef.current.get(s.id) ?? null,
+    );
     const clips = rebuildAudioClips(segments, segmentDurations, events, status ?? null);
     const totalSec = computeTotalSec(status ?? null, events, clips);
     return { clips, totalSec };

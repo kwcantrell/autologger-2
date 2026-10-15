@@ -66,10 +66,18 @@ Postgres as the source of truth. Build it in slices on an integration branch, th
   Realtime is deferred, not planned.
 - **Blobs:** audio moves to Supabase Storage. Consumers that need a real file path spool the
   audio to scratch first.
+  **Amended by slice 10 (owner, 2026-10-08):** audio stays on the filesystem, on its own volume
+  (`BLOB_DIR`, `/blobs`) that every server process of a stack mounts. Object storage (Supabase
+  Storage, S3 or MinIO) waits until the server runs on more than one host, as a new
+  implementation behind the unchanged `BlobStore` port. The app uses no Supabase Storage: it holds
+  no Storage key, has no network path to it, and Storage caps a file at 50 MB while imports reach
+  2 GB.
 - **Operations:**
   - Dev, stage and prod run only through the compose stacks; native `npm run dev` is retired.
   - Backups: a nightly `pg_dump -Fc` plus the Storage volume, shipped offsite with restic and
-    restore-tested monthly. Up to 24 hours of data loss is accepted.
+    restore-tested monthly. Up to 24 hours of data loss is accepted. **Amended by slice 10
+    (owner, 2026-10-08):** the blob volume (`autologger-blobs`) instead of the Storage volume,
+    which holds no app data.
   - Secrets live in a shared Infisical instance, with a separate machine identity per environment.
 - **Tests:** tests run against the `supabase/postgres` image (it provides `auth.uid()` and the
   `anon` and `authenticated` roles), with rollback per test. `e2e:container` is set aside during
@@ -79,7 +87,10 @@ Postgres as the source of truth. Build it in slices on an integration branch, th
     for the duration. One exception so far (owner, 2026-10-02): the security hotfix
     `gate-decoded-path` (PR #32). The login gate judged the raw path while Hono routed the
     decoded one, so `/%61pi/...` skipped login. It merged into `main` first (prod not deployed),
-    then into this branch.
+    then into this branch. A second (owner, 2026-10-07): `prod-migrate` (PR #100), so the first
+    prod deploy from `main` migrates its database (`make prod-up` runs the migrations runner). It
+    merged into `main` first, then into this branch on 2026-10-15 with its steps on
+    `--remove-orphans`.
   - Cutover is one PR into `main` with a whole-branch audit, followed by a downtime window.
   - The SQLite-to-Postgres import and parity check are rehearsed on dev against the disposable
     `server/data` copy (ADR 0022). At cutover, the owner runs them on the deploy host against
@@ -100,9 +111,11 @@ Slice order:
        - The service roles get their own password, separate from the superuser's.
        - Studio and postgres-meta are deferred to a later slice (owner, 2026-09-30, after the
          panel);
-   - 1.3 `postgres-backups`. Not built yet, and a **cutover blocker** (owner, 2026-10-03): from
-     slice 7b-1 session content lives in Postgres too, and nothing backs it up. It is done as its
-     own change before slice 11;
+   - 1.3 `postgres-backups`. A **cutover blocker** (owner, 2026-10-03): from slice 7b-1 session
+     content lives in Postgres too. **Built (2026-10-15):** in `~/spark-infra`, not this
+     repository: a nightly `pg_dumpall` of stage and prod pulled to Spark (`stage_db_backup` role,
+     `spark-stage-db-backup.timer`, 14 kept), plus a dump right before each prod migration
+     (`make prod-up` in the spark-infra deploy). The blob and data volumes are being added;
    - 1.4, run before 1.3 (owner, 2026-09-30), split into:
      - 1.4a `retire-e2e`: retire the Playwright e2e harness; the router's security cases are
        kept as `docker/scripts/test_router.sh`. **Size exception:** 1,410 counted lines,
@@ -270,6 +283,15 @@ Slice order:
        source whose `_migrations` set differs (a file below 0005 lacks the 0004 admin backfill and
        the 0005 `title_suffix` backfill), and must copy every column explicitly, so Postgres's
        `title_suffix` default `'date'` never replaces a backfilled `'episode'`;
+       **Amended by slice 11a (2026-10-11):** the disposable `server/data` copy (ADR 0022) holds
+       0001-0005 plus `0006_supabase_identity.sql` (applied 2026-08-17). That file is in no
+       branch of this repo; it isn't the indexes-only 0006 above. Its only visible effect is on
+       `users`: `google_sub` became `supabase_user_id`, and `email_norm` was added with its index.
+       The import never reads `users` (slice 5a), and it checks that the four tables it does read
+       (`studio_definitions`, `shows`, `app_settings`, `sessions`) have exactly the 0005 columns.
+       So the import accepts exactly {0001, …, 0005, 0006_supabase_identity} and refuses any other
+       set. A source with only 0001-0005 is refused too, until a real prod file shows it exists;
+       accepting it is a one-line change to `EXPECTED_LEGACY_MIGRATIONS`;
      - the Postgres-versus-SQLite parity test became a recorded expectation of the catalog
        schema (full foreign keys and index definitions, seed shows), captured while parity still
        passed; a schema migration updates it in the same change;
@@ -837,8 +859,8 @@ Slice order:
       order across processes; the FIFO lock stays for in-process serialization);
    3. **start empty,** as 4c did: the `sessions/*.db` files stay untouched for slice 11's
       import, and every existing session's live projection resets to an empty session's;
-   4. **backups** (1.3) were never built: a cutover blocker, done as their own change before
-      slice 11, not in 7b.
+   4. **backups** (1.3) were not built in 7b: a cutover blocker, done as their own change before
+      slice 11. **Amended (2026-10-15):** built in spark-infra (slice 1.3 above).
 
    After the adversarial panel (owner, 2026-10-03):
    - **session calls get their own pool** of 4 connections beside the catalog's 3 root and 5
@@ -1156,9 +1178,57 @@ Slice order:
      script. Every Companion install must be re-paired after deploy. `API_TOKEN` stays on
      `docker/secrets-env.yaml`, ignored, until every OpenBao secret drops it. **Deferred:** Realtime
      for Companion (ADR 0023) and refresh tokens (ADR 0023's GoTrue-per-device option).
-10. Blobs to Supabase Storage.
+10. `shared-blob-volume` (renamed from "Blobs to Supabase Storage"; owner decisions,
+    2026-10-08):
+    1. **audio stays on the filesystem, on a shared volume:** a new required `BLOB_DIR` (the
+       stacks pin `/blobs`, its own named volume) that every server process of a stack mounts.
+       `DATA_DIR` stays per process (the lock, the scratch root, the legacy files);
+    2. **object storage when multi-host:** Supabase Storage, S3 or MinIO waits until the server
+       runs on more than one machine, as a new implementation behind the unchanged `BlobStore`
+       port;
+    3. **dropping the unused Supabase services** (PostgREST, Realtime, Storage, the gateway) is a
+       separate follow-up change, which also decides on GoTrue. Slice 10 doesn't touch them.
+       **Done (`drop-unused-supabase-services`, owner 2026-10-08):** PostgREST, Realtime, Storage
+       and the gateway are gone from every stack, with the `supabase` and `edge` networks, the
+       gateway's published port and the storage volume declaration; GoTrue stays, for the planned
+       username-and-password sign-in, on internal URLs (`http://auth:9999`); the five retired
+       keys (`ANON_KEY`, `SERVICE_ROLE_KEY`, `SECRET_KEY_BASE`, `REALTIME_DB_ENC_KEY`,
+       `SUPABASE_PORT`) are accepted and ignored with a warning until no checkout runs the old
+       stack; the dev and stage leftovers (the `supabase-storage` volume, the `_realtime` schema,
+       storage-api's tables) stay, with the cleanup in the README; every `compose up` and `down`
+       passes `--remove-orphans`;
+    4. (after the panel) **no copy tool:** existing audio is moved additively (`cp -a` as `node` in
+       the dev app; `rsync -a --chown=1000:1000` on the host for stage and prod), never with
+       `--delete`, by the README section "Moving audio into BLOB_DIR", which slice 11's cutover
+       reuses.
+
+    **Shipped:** `BLOB_DIR`, required and absolute, refused when it overlaps `DATA_DIR`, by the
+    boot guard and `createBindings`; the blob store on a shared root, with put temps in
+    `BLOB_DIR/.tmp` named `put-<uuid>` (same filesystem, so the rename stays atomic; no pid
+    collisions across containers) and a boot sweep of `put-` files older than 24 h; scratch stays
+    in `DATA_DIR/tmp`; a boot warning while `DATA_DIR/blobs` still holds files; the `dev-blobs`
+    and `autologger-blobs` volumes, `BLOB_DIR: /blobs` as a compose literal, the image's `/blobs`
+    owned by `node`, and the `check-envs` invariants pinning them; `copyDataDir.ts` no longer
+    prints a blob command, and `merge-session-audio.ts` reads `BLOB_DIR`; a two-process test in
+    which a segment uploaded through one process plays, with Range, through the other. The
+    topology stays one `api` replica. **Deferred:** object storage (decision 2); the unused
+    Supabase services and GoTrue (decision 3); deleting dev's `/data/blobs`, the owner's step once
+    playback is confirmed.
 11. The import script, parity check, cutover runbook and rollback plan. It must not import users,
     memberships, prefs, invites or login sessions (slice 5a above).
+    - 11a `supabase-11a-legacy-import` (2026-10-11; reviewed and merged, #107, 2026-10-14): the
+      tool emits a single `psql` transaction per team, carrying values only as `COPY` data, a read-only parity file
+      (per-table counts and content hashes) and the audio manifest. The runbook is
+      `docs/legacy-import.md`. It was rehearsed on `server/data` for the `ymhs` team (274
+      sessions) against a throwaway Postgres: parity OK; then on the `autologger-import` VM
+      (dev stack, `kv/autologger-import/dev`).
+    - **Release audit (2026-10-15):** a whole-branch audit of `supabase-migration` before the
+      release found no critical findings; its runbook and doc gaps are fixed in the README section
+      "Upgrading prod in place" and `docs/legacy-import.md` ("Prod disk budget and transfer").
+
+**Status (2026-10-15):** the cutover release, `supabase-migration` into `main`, is PR #130; the
+deploy and audio move follow README "Upgrading prod in place (first deploy of the Postgres-era
+release)", and the slice 11 import runs after it.
 
 ## Evidence
 
@@ -1181,7 +1251,8 @@ Slice order:
 - The dev loop gains roughly 10 containers per stack. Offline native dev goes away.
 - Self-hosting makes backups, upgrades and secret rotation the owner's job.
 - Backups are a cutover blocker (owner, 2026-10-03): from slice 7b-1 session content is in
-  Postgres and nothing backs it up yet; slice 1.3 is done as its own change before slice 11.
+  Postgres. **Amended (2026-10-15):** built in spark-infra (slice 1.3): nightly `pg_dumpall` of
+  stage and prod to Spark (14 kept) and a dump right before each prod migration.
 - Main is frozen until cutover, and the only prod feedback comes at cutover.
 - Revisit if:
   - the Companion spike fails and a relay would keep the old WebSocket protocol alive anyway; or

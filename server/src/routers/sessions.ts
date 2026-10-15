@@ -333,11 +333,11 @@ const LOCAL_AUDIO_IMPORT_MAX_DURATION_S = 86_400; // 24 hours
 const LOCAL_AUDIO_IMPORT_DURATION_EXCEEDS_MAX_DETAIL = `duration_s exceeds the maximum supported duration of ${LOCAL_AUDIO_IMPORT_MAX_DURATION_S} seconds (24 hours).`;
 const LOCAL_AUDIO_IMPORT_MISSING_CONTENT_TYPE_DETAIL =
   'Content-Type header is required and must be non-empty.';
-const LOCAL_AUDIO_IMPORT_ROLLING_DETAIL =
+export const LOCAL_AUDIO_IMPORT_ROLLING_DETAIL =
   'Local audio import is refused while this session is actively recording; stop the recording and try again.';
 
 /** batch-audio-import design D11 — positive finite `duration_s` query param. */
-function parseLocalAudioImportDurationS(raw: string | undefined): number {
+export function parseLocalAudioImportDurationS(raw: string | undefined): number {
   if (raw === undefined || raw === '') {
     throw new ApiError(400, LOCAL_AUDIO_IMPORT_INVALID_DURATION_DETAIL);
   }
@@ -369,13 +369,40 @@ function requireLocalAudioImportContentType(raw: string | undefined): string {
  * the blob delete is best-effort (`.catch`) so rollback can never mask the
  * original failure — its residue is a plain orphan file, cleaned up by any
  * later successful rollback or operator sweep, never a dangling row. */
-async function rollbackLocalAudioImportSegment(
+export async function rollbackLocalAudioImportSegment(
   c: Context<AppEnv>,
   sessionId: string,
   seg: { id: string; r2_key: string },
 ): Promise<void> {
   await (await undoHub(c, sessionId)).deleteAudioSegment(seg.id);
   await c.env.ports.audio.delete(seg.r2_key).catch(() => {});
+}
+
+/** An imported take's row over a blob already written under `plan.r2Key` (media-worker,
+ * coordinator decision 2026-10-12): the row, its recording ordinal and its ingest job commit in one
+ * hub transaction; if that fails, the blob no row names is deleted (best-effort). */
+export async function addImportedAfterBlob(
+  c: Context<AppEnv>,
+  sessionId: string,
+  plan: { segmentId: string; r2Key: string },
+  input: {
+    sessionId: string;
+    mimeType: string;
+    startedAtUtc: string | null;
+    endedAtUtc: string | null;
+    inputBytes: number;
+  },
+): ReturnType<SessionHubFacade['addImportedAudioSegment']> {
+  try {
+    return await (await getSessionHub(c, sessionId)).addImportedAudioSegment({
+      ...input,
+      segmentId: plan.segmentId,
+      r2Key: plan.r2Key,
+    });
+  } catch (err) {
+    await c.env.ports.audio.delete(plan.r2Key).catch(() => {});
+    throw err;
+  }
 }
 
 sessionsRouter.post('/api/sessions/:sessionId/local-audio-import', async (c) => {
@@ -410,20 +437,19 @@ sessionsRouter.post('/api/sessions/:sessionId/local-audio-import', async (c) => 
   const nowMs = c.env.ports.clock.now();
   const startedAtUtc = isoZ(new Date(nowMs));
   const endedAtUtc = isoZ(new Date(nowMs + durationS * 1000));
-  const { segment: seg, recordingOrdinal } = await (
-    await getSessionHub(c, sessionId)
-  ).addImportedAudioSegment({
+  // media-worker (coordinator decision 2026-10-12): the blob lands under its final key before the
+  // row commits, so a listed row always has its bytes; a row that fails to commit leaves its blob
+  // deleted.
+  const plan = await (await getSessionHub(c, sessionId)).planAudioSegment(mimeType);
+  await c.env.ports.audio.put(plan.r2Key, payload, { contentType: mimeType });
+  const { segment: seg, recordingOrdinal } = await addImportedAfterBlob(c, sessionId, plan, {
     sessionId,
     mimeType,
     startedAtUtc,
     endedAtUtc,
+    // media-worker D2: the ingest job's lane.
+    inputBytes: payload.byteLength,
   });
-  try {
-    await c.env.ports.audio.put(seg.r2_key, payload, { contentType: mimeType });
-  } catch (err) {
-    await (await undoHub(c, sessionId)).deleteAudioSegment(seg.id);
-    throw err;
-  }
 
   if ((await (await getSessionHub(c, sessionId)).statusLive(ctx)).is_rolling) {
     await rollbackLocalAudioImportSegment(c, sessionId, seg);
@@ -543,22 +569,18 @@ sessionsRouter.post('/api/sessions/:sessionId/youtube-import', async (c) => {
     const nowMs = c.env.ports.clock.now();
     const startedAtUtc = isoZ(new Date(nowMs));
     const endedAtUtc = isoZ(new Date(nowMs + fetched.duration * 1000));
-    const { segment: seg, recordingOrdinal } = await (
-      await getSessionHub(c, sessionId)
-    ).addImportedAudioSegment({
+    // media-worker (coordinator decision 2026-10-12): blob first under its final key, then the
+    // row; a put failure leaves no row at all (D7's "never a row pointing at a missing blob").
+    const plan = await (await getSessionHub(c, sessionId)).planAudioSegment(fetched.contentType);
+    await c.env.ports.audio.put(plan.r2Key, bytes, { contentType: fetched.contentType });
+    const { segment: seg, recordingOrdinal } = await addImportedAfterBlob(c, sessionId, plan, {
       sessionId,
       mimeType: fetched.contentType,
       startedAtUtc,
       endedAtUtc,
+      // media-worker D2: the ingest job's lane.
+      inputBytes: bytes.byteLength,
     });
-    try {
-      await c.env.ports.audio.put(seg.r2_key, bytes, { contentType: fetched.contentType });
-    } catch (err) {
-      // Atomic rollback (D7): a put failure must never leave a metadata row
-      // pointing at a missing blob — mirrors audio.ts's own rollback.
-      await (await undoHub(c, sessionId)).deleteAudioSegment(seg.id);
-      throw err;
-    }
 
     // Final rolling guard (design D13, race): re-read right before synthesis
     // — protects a live take that started DURING the download from being

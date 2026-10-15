@@ -575,6 +575,18 @@ export interface ShowCategoriesResponse {
  * probe, which is the only source of a real decoded media length the client
  * has; do not reintroduce `duration_sec` here without the server emitting it.
  */
+/** Server-side media processing state of a segment (media-worker D5); `null` on rows that predate
+ * it, which the browser keeps decoding for peaks as before. */
+export type AudioMediaStatus = 'pending' | 'done' | 'failed';
+
+/** One original chunk inside a merged segment, in media order (media-worker D7/D16). */
+export interface AudioSegmentSeam {
+  /** Offset of the chunk's first sample in the merged file, milliseconds. */
+  offset_ms: number;
+  started_at_utc: string;
+  ended_at_utc: string | null;
+}
+
 export interface AudioSegment {
   id: string;
   ordinal: number;
@@ -585,6 +597,50 @@ export interface AudioSegment {
   url: string;
   waveform_peaks: number[] | null;
   waveform_db_floor: number | null;
+  // media-worker D16: the server emits all three on every dict (12 keys; the conformance test
+  // pins the captured fixtures). Optional here only so hand-built test segments elsewhere in the
+  // tree that predate the fields keep compiling; every consumer treats absent as `null`.
+  /** Decoded media length, `null` while unknown (then the browser probes). */
+  duration_ms?: number | null;
+  media_status?: AudioMediaStatus | null;
+  /** A merged segment's chunks, `null` for a segment with a single seam at offset 0 or none. */
+  seams?: AudioSegmentSeam[] | null;
+}
+
+/** `201` of `POST /api/sessions/:id/audio/uploads` (media-worker D12). */
+export interface AudioUploadCreated {
+  upload_id: string;
+  part_size: number;
+  parts_total: number;
+  expires_at_utc: string;
+}
+
+/** `200` of `GET /api/sessions/:id/audio/uploads/:uploadId` (media-worker D12). */
+export interface AudioUploadStatus {
+  upload_id: string;
+  status: string;
+  size_bytes: number;
+  part_size: number;
+  parts_total: number;
+  /** Part numbers (1-based) stored, ascending. */
+  received: number[];
+  expires_at_utc: string;
+}
+
+/** `200` of `POST /api/sessions/:id/audio/uploads/:uploadId/complete` (media-worker D12). */
+export interface AudioUploadCompleted {
+  ok: true;
+  segment_id: string;
+}
+
+/** How a finalize call left the recording's merge (media-worker D6). */
+export type RecordingFinalizeMerge = 'queued' | 'not-needed' | 'already-queued' | 'waiting';
+
+/** `200` of `POST /api/sessions/:id/audio/recordings/:ordinal/finalize` (media-worker D6;
+ * `audioFinalizeResponseSchema`). */
+export interface RecordingFinalizeResponse {
+  ok: true;
+  merge: RecordingFinalizeMerge;
 }
 
 export interface AudioSegmentsResponse {
@@ -736,4 +792,302 @@ export interface CompanionDeviceCreatedResponse {
   name: string;
   created_at: string;
   token: string;
+}
+
+// --- Provider credentials (byo-ai-providers D4, D6; api-contract-freeze "Provider credential
+// routes") ---
+
+export type ProviderKind = 'llm' | 'stt';
+/** `openai-compatible` (with a base URL), a fixed-host provider, or the keyless `claude-cli`
+ * (allowlisted operators only; ai-sdk-agent-harness D2) for `llm`; `deepgram` for `stt`. */
+export type ProviderId =
+  | 'openai-compatible'
+  | 'anthropic'
+  | 'openai'
+  | 'google'
+  | 'claude-cli'
+  | 'deepgram';
+
+/** A saved credential: never the key, only its last four characters. */
+export interface ProviderCredential {
+  /** A `ProviderKind` on the wire. */
+  kind: string;
+  /** A `ProviderId` on the wire. */
+  provider: string;
+  /** Only `openai-compatible` has one. */
+  base_url: string | null;
+  model: string;
+  /** Null for the keyless `claude-cli` provider (ai-sdk-agent-harness D2). */
+  key_last4: string | null;
+  updated_at: string;
+}
+
+export interface ProvidersResponse {
+  llm: ProviderCredential | null;
+  stt: ProviderCredential | null;
+  /** Whether the caller may run transcription and AI features ("Run features are limited to approved users"). */
+  run_features_allowed: boolean;
+  /** Whether the caller may choose the Claude CLI now (ai-sdk-agent-harness D2). */
+  claude_cli_allowed: boolean;
+}
+
+/** The `PUT /api/me/providers/:kind` body. `api_key` is omitted to keep the saved key. The keyless
+ * `claude-cli` body is exactly `{provider}` (ai-sdk-agent-harness D2). */
+export type ProviderSaveBody =
+  | {
+      provider: Exclude<ProviderId, 'claude-cli'>;
+      base_url?: string | null;
+      model: string;
+      api_key?: string;
+    }
+  | { provider: 'claude-cli' };
+
+/** A connection test result: one of the server's fixed strings. */
+export interface ProviderTestResponse {
+  ok: boolean;
+  detail: string;
+}
+
+// -- Catalog search (catalog-search D5; api-contract-freeze "Search endpoint") ------------------
+// `GET /api/search?q=…[&studio_id][&show_id][&session_id][&limit]`. Snippets carry U+E000/U+E001
+// around each hit; the web renders them as `<mark>` text, never as HTML. `session_id` (D11) returns
+// that session's moments only, with the other groups empty.
+
+export interface SearchStudioHit {
+  id: string;
+  name: string;
+}
+
+export interface SearchShowHit {
+  id: string;
+  name: string;
+  studio_id: string;
+}
+
+export interface SearchSessionHit {
+  id: string;
+  title: string;
+  episode: string;
+  show_id: string;
+  studio_id: string;
+  started_at_utc: string;
+  archived: boolean;
+  /** `notes` only for a caller with access to the show. */
+  match: 'title' | 'notes';
+  /** Null for a title match. */
+  snippet: string | null;
+}
+
+interface SearchMomentBase {
+  session_id: string;
+  session_title: string;
+  show_id: string;
+  /** The topic or event id, or the transcript chunk's bucket as a decimal string. */
+  id: string;
+  /** `""` when not applicable. */
+  speaker: string;
+  snippet: string;
+}
+
+/** A transcript moment carries its start in seconds when timed; topics and events never do (the
+ * web places them with its feed rules). */
+export type SearchMoment =
+  | (SearchMomentBase & { kind: 'transcript'; sec: number | null })
+  | (SearchMomentBase & { kind: 'topic' | 'event'; sec: null });
+
+/** A session in `moments`, with its total matching moments, at most 1000 (D11). */
+export interface SearchMomentSession {
+  session_id: string;
+  total: number;
+}
+
+export interface SearchResponse {
+  q: string;
+  studios: SearchStudioHit[];
+  shows: SearchShowHit[];
+  sessions: SearchSessionHit[];
+  moments: SearchMoment[];
+  /** Each session in `moments` with its total matches (D11); the strict contract requires it. */
+  moment_sessions: SearchMomentSession[];
+}
+
+// -- Show wiki (show-wiki D6; api-contract-freeze "Wiki page object" and the wiki endpoints) ---
+
+export type WikiKind = 'person' | 'topic' | 'bit' | 'session';
+
+/** The page object every page-returning wiki route answers, merged and deleted pages included. */
+export interface WikiPage {
+  id: string;
+  show_id: string;
+  kind: WikiKind;
+  title: string;
+  body_md: string;
+  aliases: string[];
+  session_id: string | null;
+  revision: number;
+  merged_into: string | null;
+  deleted: boolean;
+  created_at_utc: string;
+  created_by_name: string;
+  updated_at_utc: string;
+  updated_by_name: string;
+}
+
+/** `GET /api/shows/:showId/wiki/pages` — one row of the list. */
+export interface WikiPageListItem {
+  id: string;
+  kind: WikiKind;
+  title: string;
+  aliases: string[];
+  session_id: string | null;
+  revision: number;
+  updated_at_utc: string;
+  updated_by_name: string;
+}
+
+export interface WikiPageListResponse {
+  pages: WikiPageListItem[];
+  /** More than 2000 pages matched. */
+  truncated: boolean;
+}
+
+/** `GET /api/wiki/pages/:pageId/revisions` — one row, newest first. */
+export interface WikiRevisionListItem {
+  revision: number;
+  title: string;
+  kind: WikiKind;
+  author_name: string;
+  at_utc: string;
+  note: string;
+}
+
+export interface WikiRevisionListResponse {
+  revisions: WikiRevisionListItem[];
+  /** The `before` cursor for the next older page; `null` when there are none. */
+  next_before: number | null;
+}
+
+/** `GET /api/wiki/pages/:pageId/revisions/:rev`. */
+export interface WikiRevision extends WikiRevisionListItem {
+  body_md: string;
+  aliases: string[];
+}
+
+/** `POST /api/wiki/pages/:pageId/merge` — the target page after the merge. */
+export interface WikiMergeResponse {
+  page: WikiPage;
+}
+
+/** `POST /api/wiki/pages/:pageId/split` — the source page and the new one. */
+export interface WikiSplitResponse {
+  page: WikiPage;
+  new_page: WikiPage;
+}
+
+/** The wiki's `409 Version conflict.`: `current` is the stale page at its current revision. */
+export type WikiVersionConflict = VersionConflict<WikiPage>;
+
+export interface WikiPageCreateBody {
+  kind: WikiKind;
+  title: string;
+  body_md?: string;
+  aliases?: string[];
+  /** Required exactly when `kind` is `session`. */
+  session_id?: string;
+}
+
+export interface WikiPageUpdateBody {
+  expected_revision: number;
+  title?: string;
+  kind?: WikiKind;
+  body_md?: string;
+  /** Replaces the whole list. */
+  aliases?: string[];
+  /** Labels the new revision as a restore of this (older) revision. */
+  restored_from?: number;
+}
+
+export interface WikiMergeBody {
+  into_page_id: string;
+  expected_revision: number;
+  into_expected_revision: number;
+}
+
+export interface WikiSplitBody {
+  expected_revision: number;
+  remaining_body_md: string;
+  new_page: {
+    kind: Exclude<WikiKind, 'session'>;
+    title: string;
+    body_md: string;
+    aliases?: string[];
+  };
+}
+
+// -- Show wiki AI suggestions (show-wiki-ai D6; api-contract-freeze "Wiki suggestion object" and
+// the suggestion endpoints). Mirrors `packages/contract`'s suggestion schemas, which the web may
+// not import; `types.conformance.test.ts` checks these against the captured responses. ---
+
+export type WikiSuggestionStatus = 'pending' | 'accepted' | 'dismissed' | 'superseded';
+
+/** The suggestion object every suggestion-returning route answers. */
+export interface WikiSuggestion {
+  id: string;
+  show_id: string;
+  session_id: string;
+  status: WikiSuggestionStatus;
+  /** `null`: the suggestion proposes a new page of `kind` and `title`. */
+  page_id: string | null;
+  /** The page revision the run read; `null` for a new page. */
+  base_revision: number | null;
+  kind: WikiKind;
+  title: string;
+  aliases: string[];
+  rationale: string;
+  /** The target page now; `null` for a new page. */
+  page: { title: string; revision: number; state: 'live' | 'merged' | 'deleted' } | null;
+  /** The target page's current revision differs from `base_revision`. */
+  stale: boolean;
+  created_at_utc: string;
+  created_by_name: string;
+  resolved_at_utc: string | null;
+  resolved_by_name: string | null;
+  resolved_revision: number | null;
+}
+
+/** `GET /api/wiki/suggestions/:suggestionId`: the suggestion plus its proposed body. */
+export interface WikiSuggestionDetail extends WikiSuggestion {
+  body_md: string;
+}
+
+/** `GET /api/shows/:showId/wiki/suggestions`: newest first, at most 500. */
+export interface WikiSuggestionListResponse {
+  suggestions: WikiSuggestion[];
+  truncated: boolean;
+}
+
+/** `POST /api/sessions/:sessionId/wiki/generate` `200`: what the run stored, in proposal order. */
+export interface WikiGenerateResponse {
+  suggestions: WikiSuggestion[];
+}
+
+/** `POST /api/wiki/suggestions/:suggestionId/accept`. Fields not sent take the suggestion's value. */
+export interface WikiSuggestionAcceptBody {
+  /** Required for an existing page: the revision the reviewer saw. Ignored for a new page. */
+  expected_revision?: number;
+  title?: string;
+  body_md?: string;
+  aliases?: string[];
+}
+
+/** The accept `200` (page updated) and `201` (page created). */
+export interface WikiSuggestionAcceptResponse {
+  page: WikiPage;
+  suggestion: WikiSuggestion;
+}
+
+/** `409` for a suggestion that isn't pending. */
+export interface WikiSuggestionResolvedConflict {
+  detail: 'Suggestion already resolved.';
+  status: WikiSuggestionStatus;
 }

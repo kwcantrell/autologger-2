@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { clipIsFinalizing, clipMediaStatus } from '../../../../shared/utils/audioClips';
 import type { AudioClipLite } from '../../../../shared/utils/waveformMerge';
 import {
   clipIndexContainingTimelineSec,
@@ -9,7 +10,7 @@ import {
 
 // --- converted class strings (were Timeline.module.css) ---
 // The `timelineWaveforms` / `timelineWaveformFill` / `timelineWaveformProgress` literals
-// are retained for the perf-debug @layer rules that target them. The unplayed body is a flat
+// are kept as stable hooks. The unplayed body is a flat
 // on-palette wash (`--si-wave-body`; 11.4 cleanup retired the V5 slate gradient). The decoding
 // label folds Timeline's former hash-scoped keyframe into the shared wf-label-pulse token.
 const WAVEFORMS = 'timelineWaveforms absolute inset-0 h-full pointer-events-none z-[1]';
@@ -25,10 +26,15 @@ const WAVEFORM_PROGRESS =
   'timelineWaveformProgress [fill:var(--tx-wave-progress)] stroke-none [transition:fill_var(--tx-dur)_var(--tx-ease)] motion-reduce:transition-none';
 const WAVEFORM_DECODING_LABEL =
   'absolute inset-0 flex items-center justify-center pointer-events-none z-[2] text-[2rem] font-medium tracking-[0.06em] uppercase text-[rgba(229,238,252,0.42)] animate-wf-label-pulse motion-reduce:animate-none motion-reduce:opacity-85';
+// Same slot as the decoding label, quieter: static, smaller, dimmer.
+const WAVEFORM_UNAVAILABLE_LABEL =
+  'absolute inset-0 flex items-center justify-center pointer-events-none z-[2] text-[1rem] font-medium tracking-[0.06em] uppercase text-[rgba(229,238,252,0.28)]';
 
 interface Props {
   mergedPeaks: Float32Array | null;
   isDecoding?: boolean;
+  /** Decoding finished and at least one segment has no peaks (failed or skipped). */
+  unavailable?: boolean;
   activeSec: number;
   totalSec: number;
   clips: AudioClipLite[];
@@ -52,7 +58,14 @@ function WaveformDefs({ progRect }: { progRect: WaveformProgressRect | null }) {
   );
 }
 
-export function TimelineWaveform({ mergedPeaks, isDecoding, activeSec, totalSec, clips }: Props) {
+export function TimelineWaveform({
+  mergedPeaks,
+  isDecoding,
+  unavailable,
+  activeSec,
+  totalSec,
+  clips,
+}: Props) {
   const { w, pathD } = useMemo(() => waveformSvgSpec(mergedPeaks), [mergedPeaks]);
   const progRect = useMemo(() => {
     if (!mergedPeaks || mergedPeaks.length === 0) return null;
@@ -60,13 +73,37 @@ export function TimelineWaveform({ mergedPeaks, isDecoding, activeSec, totalSec,
     return timelineWaveformProgressClipRect(w, activeSec, totalSec, idx, clips);
   }, [mergedPeaks, w, activeSec, totalSec, clips]);
 
+  // media-worker D16: the server's processing state of the laid-out segments. "Finalizing
+  // recording…" while a recording with two or more segments has a pending one (its merge is due),
+  // "Generating waveform…" while a segment is pending (no browser decode runs for it) or a legacy
+  // segment decodes, "Waveform unavailable" when a segment failed (server or browser) and nothing
+  // could be drawn.
+  const { finalizing, pending, failed } = useMemo(
+    () => ({
+      finalizing: clips.some((c) => clipIsFinalizing(c)),
+      pending: clips.some((c) => clipMediaStatus(c) === 'pending'),
+      failed: clips.some((c) => clipMediaStatus(c) === 'failed'),
+    }),
+    [clips],
+  );
+  const busyLabel = finalizing
+    ? 'Finalizing recording…'
+    : pending || isDecoding
+      ? 'Generating waveform…'
+      : null;
+
   if (!mergedPeaks || mergedPeaks.length === 0) {
     return (
       <div className={WAVEFORMS} id="timeline-waveforms" aria-hidden={true}>
         <div className={WAVEFORM_FULL} aria-hidden={true} />
-        {clips.length > 0 && (
+        {clips.length > 0 && busyLabel && (
           <div className={WAVEFORM_DECODING_LABEL} aria-hidden={true}>
-            Generating waveform…
+            {busyLabel}
+          </div>
+        )}
+        {clips.length > 0 && !busyLabel && (unavailable || failed) && (
+          <div className={WAVEFORM_UNAVAILABLE_LABEL} aria-hidden={true}>
+            Waveform unavailable
           </div>
         )}
       </div>
@@ -89,9 +126,9 @@ export function TimelineWaveform({ mergedPeaks, isDecoding, activeSec, totalSec,
           )}
         </svg>
       </div>
-      {isDecoding && (
+      {busyLabel && (
         <div className={WAVEFORM_DECODING_LABEL} aria-hidden={true}>
-          Generating waveform…
+          {busyLabel}
         </div>
       )}
     </div>

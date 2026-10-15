@@ -9,6 +9,7 @@
 
 import { aiChatTurns } from '@autologger/ai-runtime/aiChatRegistry';
 import { allTranscriptPagesServed } from '@autologger/ai-runtime/aiMcpServer';
+import { sdkFailureSuffix, sdkFallbackSuffix } from '@autologger/ai-runtime/sdkTurn';
 import { generateTopicsTurn } from '@autologger/ai-runtime/topicGenerate';
 import {
   deleteVersionQuerySchema,
@@ -20,17 +21,19 @@ import {
 import type { TranscriptWord } from '@autologger/session-core';
 import {
   DEEPGRAM_MAX_GROUP_BYTES,
-  deepgramConfigured,
   exceedsGroupSizeLimit,
   GENERATION_IN_FLIGHT_DETAIL,
   generateTranscriptWords,
+  TRANSCRIPT_NEEDS_KEY,
   TRANSCRIPT_UNAVAILABLE,
   TranscriptGenerateError,
 } from '@autologger/transcription';
 import { Hono } from 'hono';
 import type { AppEnv } from '../appEnv';
-import { aiChatConfigured, topicGenerateMaxBudgetUsd, topicGenerateTimeoutSec } from '../env';
+import { resolveSttCredential } from '../auth/providerResolve';
+import { generateSdkLimits, topicGenerateMaxBudgetUsd, topicGenerateTimeoutSec } from '../env';
 import { ApiError } from '../httpError';
+import { callerLlmRoute, sdkTurnSpec } from './_aiRoute';
 import { claimAiLease } from './_aiSlot';
 import {
   canAccessSession,
@@ -38,6 +41,7 @@ import {
   getSessionHub,
   requireRunFeature,
   requireSession,
+  requireUser,
   sessionCaller,
   timecodeCtx,
   versionConflict,
@@ -84,14 +88,16 @@ export function enforceGroupSizeLimit(bytes: number): void {
   }
 }
 
-function mapGenerateError(err: unknown): never {
+/** Maps a generation error to its HTTP status. `missing_blob` (media-worker D9: a listed segment's
+ * blob is gone, a restore in progress or a bug) is `502` like an upstream failure. */
+export function mapGenerateError(err: unknown): never {
   if (err instanceof TranscriptGenerateError) {
     const status =
       err.code === 'unavailable'
         ? 503
         : err.code === 'in_flight'
           ? 409
-          : err.code === 'upstream' || err.code === 'oversize'
+          : err.code === 'upstream' || err.code === 'oversize' || err.code === 'missing_blob'
             ? 502
             : 400;
     throw new ApiError(status, err.message);
@@ -154,15 +160,18 @@ transcribeRouter.post('/api/sessions/:sessionId/transcript-words/generate', asyn
   const sessionId = c.req.param('sessionId');
   const row = await requireSession(c, sessionId);
 
-  if (!deepgramConfigured(c.env.config)) {
-    throw new ApiError(503, UNAVAILABLE);
+  // byo-ai-providers D3: the caller's own speech-to-text key (the operator's only in development
+  // mode); none answers the unconfigured 503 before the approval 403 (frozen order).
+  const stt = await resolveSttCredential(c.env, requireUser(c).id);
+  if (stt === null) {
+    throw new ApiError(503, TRANSCRIPT_NEEDS_KEY);
   }
   // Approved users only (run-status-and-sweeper D9) — 403, before the lock, the lease and DeepGram.
   requireRunFeature(c);
 
   try {
     const words = await generateTranscriptWords({
-      config: c.env.config,
+      stt,
       audio: c.env.ports.audio,
       getHub: () => getSessionHub(c, sessionId),
       ctx: timecodeCtx(row),
@@ -249,6 +258,9 @@ transcribeRouter.get('/api/sessions/:sessionId/topics', async (c) => {
 // `ai.ts`'s per-endpoint slot lifecycle (409 wording is generate-specific).
 
 const NO_TRANSCRIPT_DETAIL = 'This session has no transcript words to generate topics from.';
+// ai-sdk-agent-harness D1: the caller has no usable language model route.
+const TOPIC_GENERATE_NOT_CONFIGURED_DETAIL =
+  'Add a language model in Settings → Advanced to generate topics.';
 // Names EVERY possible slot holder (the registry is shared with AI chat,
 // AI v2, and event generation; wording change authorized by the
 // auto-event-generation delta).
@@ -263,10 +275,11 @@ transcribeRouter.post('/api/sessions/:sessionId/topics/generate', async (c) => {
   const sessionId = c.req.param('sessionId');
   await requireSession(c, sessionId);
 
-  // Configuration gate — 503, before any spawn, byte-identical unconfigured
-  // detail to the pre-change stub (task 1.1).
-  if (!aiChatConfigured(c.env.config)) {
-    throw new ApiError(503, UNAVAILABLE);
+  // Configuration gate — 503, before any spawn or model request: the caller's route
+  // (ai-sdk-agent-harness D1), the Claude CLI or the AI SDK on the caller's own credential.
+  const route = await callerLlmRoute(c);
+  if (route === null) {
+    throw new ApiError(503, TOPIC_GENERATE_NOT_CONFIGURED_DETAIL);
   }
   // Approved users only (run-status-and-sweeper D9) — 403, before any slot, lease or spawn.
   requireRunFeature(c);
@@ -295,15 +308,26 @@ transcribeRouter.post('/api/sessions/:sessionId/topics/generate', async (c) => {
       (await (await getSessionHub(c, sessionId)).listTopics()).map((t) => t.id),
     );
 
-    const outcome = await generateTopicsTurn({
+    const common = {
       clock: c.env.ports.clock,
       registry: c.env.ports.sessions,
       caller: sessionCaller(c),
-      cliPath: c.env.config.CLAUDE_CLI_PATH.trim(),
       sessionId,
-      maxBudgetUsd: topicGenerateMaxBudgetUsd(c.env.config),
       timeoutMs: topicGenerateTimeoutSec(c.env.config) * 1000,
-    });
+    };
+    const outcome = await generateTopicsTurn(
+      route.kind === 'cli'
+        ? {
+            ...common,
+            cliPath: c.env.config.CLAUDE_CLI_PATH.trim(),
+            maxBudgetUsd: topicGenerateMaxBudgetUsd(c.env.config),
+          }
+        : { ...common, sdk: sdkTurnSpec(c, route, 'topics', generateSdkLimits(c.env.config)) },
+    );
+    // An AI SDK run's tool bodies may still be running after a timeout: wait for them before
+    // reading the run's topics, so none lands after the cleanup below (D3 "Draining tool
+    // bodies"). The lease keeps renewing meanwhile.
+    await outcome.toolsDrained?.();
 
     // Re-acquire the hub after the async, potentially multi-minute turn
     // above — the idle sweeper may have closed the prior handle in the
@@ -323,6 +347,13 @@ transcribeRouter.post('/api/sessions/:sessionId/topics/generate', async (c) => {
     const fullyRead = allTranscriptPagesServed(outcome.pageCoverage);
 
     if (outcome.ok && newIds.length >= 1 && fullyRead) {
+      // A run that restarted at the smaller output cap (D3 "A smaller-model fallback") is noted,
+      // content-free, so an operator can see the model rejected the larger cap.
+      if (outcome.outputCapFallback !== undefined) {
+        console.info(
+          `[topics/generate] session=${sessionId}: AI turn succeeded${sdkFallbackSuffix(outcome)}`,
+        );
+      }
       // Success: delete the pre-run topics, leaving only the fresh set.
       await hub.deleteTopics([...preRunIds]);
       return c.json({ topics: await hub.listTopics() });
@@ -344,12 +375,15 @@ transcribeRouter.post('/api/sessions/:sessionId/topics/generate', async (c) => {
     console.warn(
       `[topics/generate] session=${sessionId}: generation failed — ` +
         (!outcome.ok
-          ? `CLI turn failed (${outcome.detail})`
+          ? `AI turn failed (${outcome.detail})` +
+            sdkFailureSuffix(outcome.failure, outcome.ending, outcome.summary) +
+            sdkFallbackSuffix(outcome)
           : newIds.length === 0
-            ? 'CLI turn succeeded but created 0 topics'
-            : `CLI turn created ${newIds.length} topic(s) after reading only ` +
+            ? 'AI turn succeeded but created 0 topics'
+            : `AI turn created ${newIds.length} topic(s) after reading only ` +
               `${outcome.pageCoverage.servedPages} of ${outcome.pageCoverage.totalPages} ` +
-              'transcript page(s)'),
+              'transcript page(s)') +
+        (outcome.ok ? sdkFallbackSuffix(outcome) : ''),
     );
     throw new ApiError(502, TOPIC_GENERATE_FAILURE_DETAIL);
   } finally {

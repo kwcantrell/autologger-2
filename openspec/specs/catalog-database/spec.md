@@ -138,13 +138,13 @@ the cluster.
 
 ### Requirement: The catalog is not exposed through the Supabase API roles
 The roles `anon`, `authenticated` and `service_role`, and the `public` pseudo-role, SHALL have
-no privilege on schema `catalog` or on any table in it, so neither PostgREST nor pg_graphql can
-serve catalog rows. No role other than `autologger_app` and `postgres` (which created them)
+no privilege on schema `catalog` or on any table in it. The Postgres image still creates these
+roles, although no stack runs PostgREST any more, so neither PostgREST, if it is added back, nor
+pg_graphql can serve catalog rows. No role other than `autologger_app` and `postgres` (which created them)
 SHALL be a member of `catalog_user` or `catalog_system`, so `authenticator` and the API roles
 cannot switch to them. `public` SHALL NOT be able to execute any function in schema `catalog`.
 (The `postgres` role reads every table through its `pg_read_all_data` membership and owns the
-tables with `BYPASSRLS`; that reach, held by `db`, `migrate` and `realtime`, is out of slice 6's
-scope.)
+tables with `BYPASSRLS`; that reach, held by `db` and `migrate`, is out of slice 6's scope.)
 
 #### Scenario: The anon role cannot read users
 - **WHEN** a session in the `postgres` database runs `set role anon` and selects from
@@ -352,13 +352,15 @@ rolls back or fails, the connection is back to `autologger_app` with no user id.
 
 ### Requirement: Row-level security is enabled on every catalog table
 Every table in schema `catalog` SHALL have row-level security enabled. Every catalog table SHALL
-have at least one policy for `catalog_system`. Every table except `kv`, `companion_devices` and
-`companion_presence` SHALL also have at least one policy for `catalog_user`, the nine session
+have at least one policy for `catalog_system`. Every table except `kv`, `companion_devices`,
+`companion_presence` and `account_approvals` SHALL also have at least one policy for `catalog_user`, the nine session
 tables included (ADR 0021 slice 7b-2): a user binding reads and writes session content only as
-"User policies enforce the team permission model" allows. Those three tables are system-only:
+"User policies enforce the team permission model" allows. Those four tables are system-only:
 they have no `catalog_user` policy and `catalog_user` SHALL have no privilege on them.
 `companion_devices` is read and written only by the reviewed system task `companion-device`, and
-`companion_presence` only by `companion-presence` (ADR 0021 slice 9d).
+`companion_presence` only by `companion-presence` (ADR 0021 slice 9d), and `account_approvals`
+is written only by `postgres` and read and deleted only by the OAuth callback's system task
+`oauth-callback` (closed-signups).
 
 The `catalog_system` policies SHALL be permissive and allow every row for reading and writing.
 
@@ -374,8 +376,9 @@ A migration that creates a catalog table SHALL, in the same migration:
 - **WHEN** the tables of schema `catalog` are listed with their row-level security flag and the
   roles their policies apply to
 - **THEN** every table has row-level security enabled and a policy for `catalog_system`; every
-  table other than `kv`, `companion_devices` and `companion_presence` has at least one policy for
-  `catalog_user`, each session table exactly one; and those three have no `catalog_user` policy
+  table other than `kv`, `companion_devices`, `companion_presence` and `account_approvals` has at
+  least one policy for `catalog_user`, each session table exactly one; and those four have no
+  `catalog_user` policy
 
 #### Scenario: No user policy allows everything
 - **WHEN** the `catalog_user` policies of schema `catalog` are listed with their `USING` and
@@ -559,8 +562,9 @@ with these changes only:
   cascade, so a content row for a session that does not exist is refused (`23503`);
 - every primary key SHALL lead with `session_id` (`(session_id, id)`; `session_meta`'s
   `(session_id, key)`), `session_transport` SHALL hold at most one row per session, keyed by
-  `session_id`, and every index SHALL lead with `session_id`;
+  `session_id`, and every index SHALL lead with `session_id`, except the four search indexes below;
 - `session_audio_segments` SHALL have an index on `(session_id, r2_key)`;
+- `session_topics` and `session_events` SHALL have a stored generated `search_tsv` column (catalog-search), each with a GIN index on that column alone, and a trigram GIN index on the phrase-normalised `summary` and `message` respectively. These four indexes are the only content-table indexes that don't lead with `session_id`;
 - `session_events`, `session_transcript_words` and `session_topics` SHALL have a non-null
   `version bigint` column with default 1 (ADR 0021 slice 7c-1); every statement that updates one
   of their rows SHALL set its version to the stored version plus one in that same statement.
@@ -585,6 +589,10 @@ the values of an empty session: `event_count` 0, `max_timecode_total_frames` nul
 SHALL set each session's `revision` to its `events_stream_revision` meta value (0 when it has
 none or the value is not a non-negative integer), SHALL leave those meta rows unchanged, and SHALL
 give every existing row of the three versioned tables version 1.
+
+#### Scenario: Search columns are the only additions
+- **WHEN** the columns and indexes of `session_topics` and `session_events` are listed after the catalog-search migration
+- **THEN** each table has exactly one column more than before, `search_tsv`, and exactly two indexes more: a GIN index on `search_tsv` and a trigram GIN index on the phrase-normalised text
 
 #### Scenario: A content row needs its session
 - **WHEN** `catalog_system` inserts an event row whose `session_id` names no session
@@ -820,3 +828,409 @@ Rollback drops both tables after the code is reverted; device tokens are then lo
 #### Scenario: A token hash is unique
 - **WHEN** `catalog_system` inserts a second device with an existing `token_hash`
 - **THEN** the insert fails with a unique violation (`23505`)
+
+### Requirement: Provider credentials are stored in the catalog
+The migration `20261016000000_user_provider_credentials.sql` SHALL create
+`catalog.user_provider_credentials`. The recorded schema expectation of "The catalog schema lives
+in Postgres schema `catalog`" SHALL gain it in the same change. Every text column SHALL be `text`
+with `COLLATE "C"`.
+
+**Columns:**
+- `user_id`, non-null, referencing `catalog.users (id)` `on delete cascade`;
+- `kind`, non-null, checked to `llm` or `stt`;
+- the primary key `(user_id, kind)`;
+- `provider`, non-null, checked to 1 to 64 characters;
+- `base_url`, nullable, checked to at most 2048 characters;
+- `base_origin`, nullable, the normalized origin of `base_url`, checked to be null exactly when
+  `base_url` is null;
+- `model`, non-null, checked to 1 to 200 characters;
+- `key_nonce`, `key_ciphertext` and `key_tag`, `bytea`;
+- `key_version`, a `smallint`;
+- `key_last4`, checked to 1 to 4 characters when present;
+- `created_at_utc` and `updated_at_utc`, non-null ISO-8601 text.
+
+The API key in plaintext SHALL NOT be stored in any column.
+
+**Keyless `claude-cli` rows.** The migration `20261018000000_claude_cli_provider.sql` SHALL:
+- drop `not null` from `key_nonce`, `key_ciphertext`, `key_tag`, `key_version` and `key_last4`;
+- add the check constraint `user_provider_credentials_claude_cli_check`, under which:
+  - when `provider = 'claude-cli'`: all five of those columns are null, `kind = 'llm'` and
+    `base_url` is null;
+  - for every other provider: **each** of the five columns is non-null, so a keyed row can never
+    be partly null (which the dropped `not null` constraints used to guarantee).
+
+It SHALL leave `model` non-null; a `claude-cli` row stores the fixed model `claude-cli`. Every
+existing row already satisfies the constraint and is unchanged. Rolling it back requires deleting
+the `claude-cli` rows first, then restoring `not null` and dropping the constraint.
+
+The migration `20261017000000_provider_test_windows.sql` SHALL drop the two connection-test
+window columns the first migration added to `user_provider_credentials`, and SHALL create
+`catalog.provider_test_windows`, one row per user, so deleting a credential does not reset the
+window:
+- `user_id`, the primary key, referencing `catalog.users (id)` `on delete cascade`;
+- `window_start_ms`, a non-null `bigint` of epoch milliseconds from the Clock port;
+- `test_count`, a non-null `smallint`.
+
+It gets the same access rules as the credentials table.
+
+The first migration SHALL also create `catalog.provider_key_check`, which holds the master-key check
+value (provider-credentials "Provider keys are encrypted at rest and write-only"):
+- a single row, with `id` a `smallint` primary key checked to equal 1;
+- `check_value`, non-null text;
+- `created_at_utc`, non-null ISO-8601 text.
+
+It is never the secret itself. It gets the same access rules as the credentials table.
+
+**Access.** Row-level security SHALL be enabled on all three tables, and all three SHALL be system-only, like
+`companion_devices`:
+- `catalog_system` SHALL have a permissive policy allowing every command;
+- no table SHALL have a `catalog_user` policy, and `catalog_user`'s privileges on each SHALL be
+  revoked;
+- `anon`, `authenticated` and `public` SHALL have no privileges on any of them.
+
+**Rollback** drops the three tables after the code is reverted. Stored keys are then lost and users
+re-enter them.
+
+#### Scenario: Credentials are invisible to users
+- **WHEN** a `catalog_user` binding selects from, inserts into or deletes from
+  `user_provider_credentials`, `provider_key_check` or `provider_test_windows`
+- **THEN** each is refused with `42501`
+
+#### Scenario: One credential per user and kind
+- **WHEN** `catalog_system` inserts a second row with an existing `(user_id, kind)`
+- **THEN** the insert fails with a unique violation (`23505`)
+
+#### Scenario: A deleted user takes their credentials
+- **WHEN** a user with an `llm` and an `stt` credential is deleted
+- **THEN** both rows are gone
+
+#### Scenario: A keyless Claude CLI row is accepted
+- **WHEN** `catalog_system` inserts an `llm` row with provider `claude-cli`, model `claude-cli`, a
+  null `base_url` and all five key columns null
+- **THEN** the insert succeeds
+
+#### Scenario: A keyless row for another provider is refused
+- **WHEN** `catalog_system` inserts an `llm` row with provider `anthropic` and null key columns
+- **THEN** the insert fails with a check violation (`23514`)
+
+#### Scenario: A keyed row with one key column null is refused
+- **WHEN** `catalog_system` inserts an `llm` row with provider `anthropic` whose nonce,
+  ciphertext, tag and key version are set but whose `key_last4` is null (or any other single key
+  column null)
+- **THEN** the insert fails with a check violation (`23514`)
+
+#### Scenario: A Claude CLI row with a key is refused
+- **WHEN** `catalog_system` inserts a `claude-cli` row with a nonce, ciphertext, tag, key version
+  and last four characters, or a `claude-cli` row of kind `stt`, or one with a base URL
+- **THEN** the insert fails with a check violation (`23514`)
+
+#### Scenario: Existing rows survive the migration
+- **WHEN** the migration `20261018000000_claude_cli_provider.sql` runs on a catalog that holds
+  `llm` and `stt` rows with keys
+- **THEN** it succeeds and every row is unchanged
+
+### Requirement: Search extensions, normaliser and indexes
+- **Extensions:** the catalog SHALL use the `pg_trgm` and `unaccent` extensions, installed in schema `extensions` and referenced schema-qualified.
+- **Schema access:** `catalog_user` and `catalog_system` SHALL have `USAGE` on schema `extensions`, so writes whose index expressions call extension functions succeed.
+- **Text-search configuration:** `catalog.search_english` SHALL be English stemming with accent folding. Every search vector and query SHALL use it.
+- **Normaliser:** `catalog.search_norm(text)` SHALL return its input with accents removed and lowercased (non-ASCII letters included), and SHALL be immutable.
+- **Function privileges:** every function this change adds SHALL be not executable by `public`, as "Catalog functions are not executable by public" requires.
+  - `search_norm` SHALL be executable by `catalog_user` and `catalog_system`.
+  - The search function SHALL be executable by `catalog_user` only.
+  - The chunk refresh and trigger functions SHALL be executable by no application role.
+- **Generated search columns:** the following columns SHALL exist, each with a GIN index, and their values SHALL always reflect the current row:
+  - `sessions.search_meta` (title and episode);
+  - `sessions.search_notes` (notes);
+  - `session_topics.search_tsv` (summary);
+  - `session_events.search_tsv` (message);
+  - `session_transcript_chunks.search_tsv` (text).
+- **Trigram indexes:** the normalised session title, show name and studio display name SHALL each have a trigram GIN index.
+- **Phrase normaliser:** `catalog.search_phrase_norm(text)` SHALL return `search_norm` of its input with every whitespace run (tabs and newlines included) turned into one space, then characters other than letters, digits and spaces removed, then spaces collapsed and trimmed. It SHALL be immutable, and executable by `catalog_user` and `catalog_system` only.
+- **Phrase indexes:** the phrase-normalised text of transcript chunks, topic summaries and event messages SHALL each have a trigram GIN index.
+
+#### Scenario: The normaliser folds accents and case
+- **WHEN** `catalog.search_norm('Ångström CAFÉ Straße')` is evaluated
+- **THEN** it returns `angstrom cafe strasse`
+
+#### Scenario: The phrase normaliser drops punctuation
+- **WHEN** `catalog.search_phrase_norm('I''m like, Why did he   DO that?')` is evaluated
+- **THEN** it returns `im like why did he do that`
+
+#### Scenario: Whitespace separates words before punctuation is removed
+- **WHEN** `catalog.search_phrase_norm(E'tab\there — now')` is evaluated
+- **THEN** it returns `tab here now`
+
+#### Scenario: Ordinary writes still succeed
+- **WHEN** an owner, as `catalog_user`, updates a session's title and notes, a topic's summary, an event's message, a show's name and a studio's name
+- **THEN** every statement succeeds
+
+#### Scenario: New functions are not public
+- **WHEN** `has_function_privilege` is checked for `public`, `catalog_user` and `catalog_system` on each function this change adds
+- **THEN** `public` has none, and the other roles have exactly the grants listed above
+
+#### Scenario: Search columns follow edits
+- **WHEN** a topic's summary is updated from "budget talk" to "wedding plans"
+- **THEN** a full-text match for `wedding` finds the topic and a match for `budget` no longer does
+
+### Requirement: Transcript chunks
+`catalog.session_transcript_chunks` SHALL hold each session's transcript in blocks of 40 words.
+
+- **Membership:** a block `b` holds the non-empty words whose `ordinal` is in `[40b, 40b+40)`, joined by single spaces in ordinal order.
+- **Per-block values:**
+  - `start_sec` is the smallest positive word `start_sec` in the block, or null if none is positive;
+  - `end_sec` is the largest word `end_sec`;
+  - `speaker` is the speaker of the block's first word.
+- **Empty blocks:** a block with no non-empty words SHALL have no row.
+- **References:** the table SHALL reference `catalog.sessions (id)` with no cascade, and its primary key SHALL be `(session_id, bucket)`.
+
+The database SHALL keep the chunks equal to that rule after every committed statement that inserts, updates or deletes `session_transcript_words`. Only the affected blocks SHALL be rebuilt, and rebuilds of one session's chunks SHALL be serialised, so concurrent word writes in the same block can't fail or leave a stale chunk. The migration SHALL backfill every existing session's chunks.
+
+Row-level security:
+- **Read:** `catalog_user` SHALL be able to read a chunk only when the session's show is in `accessible_shows(app_user_id())`, as for the other session content tables.
+- **Write:** `catalog_user` SHALL have no insert, update or delete privilege on chunks, so a direct write fails with `42501`.
+- **System role:** `catalog_system` SHALL have the usual allow-all policy.
+
+#### Scenario: Bulk replace rebuilds chunks
+- **WHEN** a session's 90 words are replaced through the bulk transcript write
+- **THEN** the session has exactly 3 chunks, holding words 0–39, 40–79 and 80–89 in order
+
+#### Scenario: A single-word edit rebuilds one chunk
+- **WHEN** word 45 of that session is changed from "cat" to "dog"
+- **THEN** chunk 1's text has "dog" in place of "cat", and the rows for chunks 0 and 2 are unchanged
+
+#### Scenario: Chunks follow the content policy
+- **WHEN** an owner, a granted member and an ungranted member of the session's team each select from `session_transcript_chunks` as `catalog_user`
+- **THEN** the owner and granted member see the session's chunks, and the ungranted member sees none
+
+#### Scenario: Users can't write chunks directly
+- **WHEN** an owner, as `catalog_user`, inserts or updates a row in `session_transcript_chunks`
+- **THEN** each statement fails with `42501`, and the chunks are unchanged
+
+#### Scenario: Concurrent edits in one block
+- **WHEN** two transactions each update a different word of the same 40-word block of a session and both commit
+- **THEN** neither fails, and the chunk's text holds both new words
+
+#### Scenario: The backfill matches the rule
+- **WHEN** the migration is applied to a database with existing transcript words
+- **THEN** each session's chunks equal the chunks the rule produces from its words
+
+### Requirement: Wiki tables
+The catalog SHALL hold the show wiki in three tables, plus one supporting constraint on `catalog.sessions`.
+
+**`catalog.sessions`** SHALL gain `unique (id, show_id)`. `id` is already the key, so this changes no existing row and exists only as the target of a composite foreign key.
+
+**`catalog.wiki_pages`**, one row per page:
+- **Columns:** `id`, `show_id` (references `catalog.shows`), `kind`, `title`, `body_md`, `session_id`, `revision`, `merged_into`, `deleted_at_utc` (nullable), `created_by`, `created_by_name`, `created_at_utc`, `updated_by`, `updated_by_name`, `updated_at_utc`.
+- **Composite keys:**
+  - `unique (id, show_id)`;
+  - `(session_id, show_id)` references `catalog.sessions (id, show_id)`, so a session page's session is always in the page's show;
+  - `(merged_into, show_id)` references `catalog.wiki_pages (id, show_id)`, so a merge redirect stays in the show.
+- **Checks:**
+  - `kind` in (`person`, `topic`, `bit`, `session`);
+  - `session_id` is not null exactly when `kind` is `session`;
+  - the length limits of the show-wiki capability.
+- **Unique indexes**, where "live" means `merged_into is null and deleted_at_utc is null`:
+  - live session pages on `(show_id, session_id)`;
+  - live non-session pages on `(show_id, catalog.search_norm(title))`.
+
+**`catalog.wiki_aliases`**, one row per alias of a live non-session page:
+- **Columns:** `page_id`, `show_id`, `alias`;
+- `(page_id, show_id)` references `catalog.wiki_pages (id, show_id)`;
+- unique on `(show_id, catalog.search_norm(alias))`.
+
+**`catalog.wiki_revisions`**:
+- **Columns:** `page_id`, `revision`, `title`, `kind`, `body_md`, `aliases_json`, `author_user_id`, `author_name`, `at_utc`, `note`;
+- **Primary key:** `(page_id, revision)`.
+
+No wiki table SHALL cascade deletes from shows or sessions.
+
+#### Scenario: Session page in the wrong show
+- **WHEN** a row is inserted into `wiki_pages` with `show_id` A and a `session_id` whose session belongs to show B
+- **THEN** the insert fails on the foreign key and no row is written
+
+#### Scenario: Alias in the wrong show
+- **WHEN** a user who can access shows A and B inserts, as `catalog_user`, a `wiki_aliases` row for a page of show A with `show_id` B
+- **THEN** the insert fails on the foreign key and no row is written
+
+### Requirement: Wiki row-level security
+Row-level security SHALL be enabled on all three wiki tables.
+
+**`catalog_user` on `wiki_pages` and `wiki_aliases`:** reads and writes only rows whose `show_id` is in `catalog.accessible_shows(catalog.app_user_id())`.
+
+**`catalog_user` on `wiki_revisions`:**
+- reads a revision only when its page's show is accessible;
+- inserts a revision only when its page's show is accessible and `author_user_id = catalog.app_user_id()`;
+- has no update or delete privilege, so those statements fail with `42501`.
+
+**`catalog_system`** has the usual allow-all policy on each table.
+
+#### Scenario: Ungranted member reads no wiki rows
+- **WHEN** an owner, a granted member, an ungranted member and an outsider each select from `wiki_pages`, `wiki_aliases` and `wiki_revisions` as `catalog_user`
+- **THEN** the owner and granted member see the show's rows, and the ungranted member and outsider see none
+
+#### Scenario: Revisions are append-only for users
+- **WHEN** an owner, as `catalog_user`, updates or deletes a `wiki_revisions` row
+- **THEN** the statement fails with `42501`
+
+#### Scenario: Revisions carry their real author
+- **WHEN** a granted member, as `catalog_user`, inserts a revision whose `author_user_id` is another user
+- **THEN** the insert is refused by the policy
+
+### Requirement: Wiki suggestions table
+The catalog SHALL hold AI wiki suggestions in **`catalog.wiki_suggestions`**, one row per suggestion:
+- **Columns:**
+  - `id` (primary key), `show_id` (references `catalog.shows`), `session_id`, `run_id`;
+  - `page_id` (nullable), `base_revision` (nullable);
+  - `kind`, `title`, `body_md`, `aliases_json`, `rationale`;
+  - `status`, `created_by`, `created_by_name`, `created_at_utc`;
+  - `resolved_by` (nullable), `resolved_by_name` (nullable), `resolved_at_utc` (nullable), `resolved_revision` (nullable).
+- **Composite keys:**
+  - `(session_id, show_id)` references `catalog.sessions (id, show_id)`, so a suggestion's session is always in its show;
+  - `(page_id, show_id)` references `catalog.wiki_pages (id, show_id)`, so a suggestion's target page is always in its show.
+- **Checks:**
+  - `status` in (`pending`, `accepted`, `dismissed`, `superseded`);
+  - `kind` in (`person`, `topic`, `bit`, `session`);
+  - `page_id` and `base_revision` are both null (a new page) or both set (an existing page);
+  - title 1–200 characters after trimming, `body_md` at most 100,000 characters, `rationale` at most 500 characters;
+  - `resolved_by`, `resolved_at_utc` are set exactly when `status` is `accepted` or `dismissed`; `resolved_revision` is set exactly when `status` is `accepted`.
+- **Unique indexes on pending rows** (`status = 'pending'`):
+  - `(show_id, page_id)` where `page_id` is not null;
+  - `(show_id, catalog.search_norm(title))` where `page_id` is null.
+- No suggestion row SHALL cascade deletes from shows, sessions or pages.
+
+#### Scenario: Suggestion for a page in another show
+- **WHEN** a user who can access shows A and B inserts, as `catalog_user`, a `wiki_suggestions` row with `show_id` B and a `page_id` of a page in show A
+- **THEN** the insert fails on the foreign key and no row is written
+
+#### Scenario: Two pending suggestions for one page
+- **WHEN** a second `pending` row is inserted for the same `(show_id, page_id)` while the first is still `pending`
+- **THEN** the insert fails on the unique index
+
+### Requirement: Wiki suggestions row-level security
+Row-level security SHALL be enabled on `catalog.wiki_suggestions`, and `catalog_user` SHALL be able to insert suggestions and resolve them, but never rewrite what a suggestion proposed or who wrote it.
+
+- **Select:** `catalog_user` reads only rows whose `show_id` is in `catalog.accessible_shows(catalog.app_user_id())`.
+- **Insert:** `catalog_user` inserts only rows of an accessible show with `created_by = catalog.app_user_id()` and `status = 'pending'`.
+- **Update:** `catalog_user` holds the update privilege only on `status`, `resolved_by`, `resolved_by_name`, `resolved_at_utc` and `resolved_revision`. It may update only a row that is `pending` and in an accessible show, and the new row SHALL be either `superseded`, or `accepted` or `dismissed` with `resolved_by = catalog.app_user_id()`. So a resolved row can't be reopened, and a suggestion's target, title, aliases, body and rationale can't change after it was checked.
+- **Delete:** `catalog_user` has no delete privilege, so a delete fails with `42501`.
+- **`catalog_system`** has the usual allow-all policy.
+
+The `*_by_name` snapshots are written by the store, as on wiki pages and revisions; the policy pins the user ids, not the names.
+
+#### Scenario: Ungranted member reads no suggestions
+- **WHEN** an owner, a granted member, an ungranted member and an outsider each select from `wiki_suggestions` as `catalog_user`
+- **THEN** the owner and granted member see the show's rows, and the ungranted member and outsider see none
+
+#### Scenario: Suggestions are never deleted by users
+- **WHEN** an owner, as `catalog_user`, deletes a `wiki_suggestions` row
+- **THEN** the statement fails with `42501`
+
+#### Scenario: A checked suggestion can't be rewritten
+- **WHEN** a granted member, as `catalog_user`, updates the `body_md` of a pending suggestion
+- **THEN** the statement fails with `42501` and the body is unchanged
+
+#### Scenario: A resolved suggestion can't be reopened
+- **WHEN** a granted member, as `catalog_user`, sets an `accepted` suggestion back to `pending`
+- **THEN** no row is updated
+
+#### Scenario: Suggestions carry their real author
+- **WHEN** a granted member, as `catalog_user`, inserts a suggestion whose `created_by` is another user, or resolves one with another user's `resolved_by`
+- **THEN** the statement is refused by the policy
+
+### Requirement: The media worker connects as its own read-mostly role
+The migration SHALL create the role `autologger_media` for the media worker, `NOLOGIN` until the
+migrations runner grants it `LOGIN` with its password (as it does for `autologger_app`), and SHALL
+always reset it to no `CREATEDB`, `CREATEROLE`, `BYPASSRLS`, `REPLICATION` or superuser, a connection limit
+of 4, a `statement_timeout` of 30 seconds, an `idle_in_transaction_session_timeout` of 15 seconds
+and `search_path = catalog`. It SHALL be a member of no role, and the catalog roles' membership
+check ("only `autologger_app` and `postgres`") SHALL still hold. Its privileges SHALL be exactly:
+`USAGE` on schema `catalog`; `SELECT` on `catalog.media_jobs` and `UPDATE` of its columns `status`,
+`locked_by`, `locked_until_ms`, `attempts`, `run_after_ms`, `result_json`, `error` and
+`updated_at_ms` only; `SELECT` on `catalog.session_audio_segments` and `catalog.session_audio_seams`.
+A `BEFORE UPDATE` trigger on `media_jobs` SHALL, for that role, allow only the transitions
+`queued → running` while the lease is free or expired and `running → queued`, `done` or `failed`
+with the lease holder unchanged, and raise on any other change; `result_json` SHALL be checked to
+at most 262 144 bytes. Row-level security on those three tables SHALL have a permissive policy
+for `autologger_media` allowing every row for those commands. The migration SHALL hold no
+password; the migrations runner sets it from `MEDIA_DB_PASSWORD`, as it sets the app role's. The
+tables `catalog.media_jobs`, `catalog.media_uploads` and `catalog.session_audio_seams` (one row per
+accepted chunk window, primary key `(session_id, recording_ordinal, started_at_utc)`, pointing at
+the segment that holds the window with its media offset and the original chunk's key) SHALL be
+created with row-level security, a `catalog_system` allow-all policy, and `catalog_user` policies
+scoped by the same session-access rule as the session tables (`media_jobs`: `INSERT` and `SELECT`
+only; `media_uploads`: rows of accessible sessions the user created; `session_audio_seams`: like
+the session tables).
+
+#### Scenario: The worker role reads jobs and segments and nothing else
+- **WHEN** `autologger_media` selects and updates `catalog.media_jobs`, selects
+  `catalog.session_audio_segments` and `catalog.session_audio_seams`, then inserts into or
+  deletes from `media_jobs`, updates `kind`, `session_id` or `target` of a job, updates or inserts
+  into `session_audio_segments`, selects from `sessions`, `session_events` or `kv`, or runs
+  `set role catalog_system`
+- **THEN** the first four statements succeed and every other one is refused with `42501`
+
+#### Scenario: The guard trigger bounds the worker's transitions
+- **WHEN** `autologger_media` sets a `queued` job to `applied`, re-queues a `running` job held by
+  another worker, or claims a `running` job whose lease has not expired
+- **THEN** each update raises and changes no row, while claiming a `queued` job and finishing its
+  own `running` job succeed
+
+#### Scenario: A user transaction can enqueue but not steer jobs
+- **WHEN** a `catalog_user` binding for a user with access to session S inserts a `media_jobs` row
+  for S, then one for a session it cannot access, then updates a row
+- **THEN** the first insert succeeds, the second fails with `42501`, and the update affects no row
+
+#### Scenario: The role check still passes
+- **WHEN** the catalog migrations are applied with `autologger_media` present
+- **THEN** the roles migration's membership guard passes, and `autologger_media` is a member of no
+  role
+
+### Requirement: Account approvals are stored in the catalog
+The migration `20261024000000_account_approvals.sql` SHALL create `catalog.account_approvals`,
+and the recorded schema expectation of "The catalog schema lives in Postgres schema `catalog`"
+SHALL gain it in the same change. Its columns:
+- `email_norm`, `text COLLATE "C"`, the primary key, checked to be printable ASCII without
+  spaces, of the shape `local@domain`, and equal to its own `lower()`;
+- `approved_at_utc`, non-null ISO-8601 UTC text in the server's format
+  (`YYYY-MM-DDTHH:MM:SS.sssZ`), so it compares as text against the Clock;
+- `note`, nullable text of at most 200 characters.
+
+Row-level security SHALL be enabled; `catalog_system` SHALL have a permissive policy allowing
+every command, but only `select` and `delete` privileges (its `insert`, `update` and `truncate`
+are revoked), so the app can read and consume approvals and never create one; there SHALL be no
+`catalog_user` policy and `catalog_user`'s privileges SHALL be revoked; `anon`, `authenticated`
+and `public` SHALL have no privileges.
+
+The same migration SHALL create two functions that only `postgres` may execute (`execute`
+revoked from `public`; `security invoker`; `search_path` fixed to `catalog, pg_temp`):
+- `catalog.approve_account(email text, note text default null) returns text` trims ASCII spaces,
+  refuses with SQLSTATE `22023` an email with any character outside `!`..`~` or not of the shape
+  `local@domain`, folds `A`-`Z` to lowercase, inserts or refreshes the row (`approved_at_utc`
+  now, `note` replaced, a blank note stored as null), and returns the normalized email;
+- `catalog.revoke_account_approval(email text) returns boolean` applies the same normalization,
+  deletes the row and returns whether one was deleted.
+
+Rollback drops both functions and the table after the code is reverted; approvals are lost and
+no account changes.
+
+#### Scenario: Approving normalizes the email
+- **WHEN** `postgres` runs `select catalog.approve_account('  Someone@Example.COM ')`
+- **THEN** it returns `someone@example.com` and that row exists
+
+#### Scenario: Approving twice refreshes the row
+- **WHEN** an approved email is approved again with another note
+- **THEN** one row remains, with the new note and a new `approved_at_utc`
+
+#### Scenario: A malformed or non-ASCII email is refused
+- **WHEN** `postgres` approves `no-at-sign`, `a b@example.com` or `ké@example.com`
+- **THEN** each call fails with SQLSTATE `22023` and no row is written
+
+#### Scenario: Revoking reports whether a row went
+- **WHEN** `postgres` revokes an approved email, then revokes it again
+- **THEN** the first call returns `true` and removes the row, the second returns `false`
+
+#### Scenario: App roles can neither create approvals nor run the functions
+- **WHEN** a `catalog_user` binding selects from `account_approvals`, a `catalog_system` binding
+  inserts or updates a row, or `autologger_app` (under either catalog role) executes
+  `catalog.approve_account`
+- **THEN** each is refused with `42501`, while a `catalog_system` binding can select and delete

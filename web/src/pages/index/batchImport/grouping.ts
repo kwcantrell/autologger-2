@@ -1,6 +1,16 @@
-const SUPPORTED_EXTENSIONS = new Set(['mp3', 'wav', 'aiff', 'aif', 'm4a', 'mp4', 'ogg', 'webm']);
+const SUPPORTED_EXTENSIONS = new Set([
+  'mp3',
+  'wav',
+  'aiff',
+  'aif',
+  'm4a',
+  'mp4',
+  'ogg',
+  'webm',
+  'flac',
+]);
 
-const AUDIO_EXT_RE = /\.(mp3|wav|aiff|aif|m4a|mp4|ogg|webm)$/i;
+const AUDIO_EXT_RE = /\.(mp3|wav|aiff|aif|m4a|mp4|ogg|webm|flac)$/i;
 const SEGMENT_SUFFIX_RE = /-(\d+)$/;
 
 export interface BatchAudioFileEntry {

@@ -1,0 +1,11 @@
+{
+  "upload_id": "########-####-####-####-############",
+  "status": "open",
+  "size_bytes": 5,
+  "part_size": 33554432,
+  "parts_total": 1,
+  "received": [
+    1
+  ],
+  "expires_at_utc": "####-##-##T##:##:##.###Z"
+}

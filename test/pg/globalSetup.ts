@@ -63,7 +63,13 @@ export async function startTestPostgres(d: StartDeps): Promise<TestPg> {
   await reapStale(d);
   const superPassword = d.randomHex(16);
   const appPassword = d.randomHex(16);
-  const secrets = { POSTGRES_PASSWORD: superPassword, APP_DB_PASSWORD: appPassword };
+  // media-worker D1: the worker role's password, set by migrate.sh's password phase.
+  const mediaPassword = d.randomHex(16);
+  const secrets = {
+    POSTGRES_PASSWORD: superPassword,
+    APP_DB_PASSWORD: appPassword,
+    MEDIA_DB_PASSWORD: mediaPassword,
+  };
   const pull = await d.docker(['pull', '--quiet', d.image]);
   if (pull.code !== 0) throw new Error(`docker pull ${d.image} failed: ${pull.stderr.trim()}`);
   const run = await d.docker(
@@ -81,6 +87,8 @@ export async function startTestPostgres(d: StartDeps): Promise<TestPg> {
       'POSTGRES_PASSWORD',
       '-e',
       'APP_DB_PASSWORD',
+      '-e',
+      'MEDIA_DB_PASSWORD',
       '-v',
       `${join(d.repoRoot, 'supabase/migrations')}:/migrations:ro`,
       '-v',
@@ -129,11 +137,21 @@ export async function startTestPostgres(d: StartDeps): Promise<TestPg> {
     ]);
     for (const db of ['postgres', 'autologger_template']) {
       await exec(
-        ['-e', `PGDATABASE=${db}`, '-e', 'APP_DB_PASSWORD', container, 'sh', '/migrate.sh'],
+        [
+          '-e',
+          `PGDATABASE=${db}`,
+          '-e',
+          'APP_DB_PASSWORD',
+          '-e',
+          'MEDIA_DB_PASSWORD',
+          container,
+          'sh',
+          '/migrate.sh',
+        ],
         secrets,
       );
     }
-    return { host: '127.0.0.1', port, superPassword, appPassword, container };
+    return { host: '127.0.0.1', port, superPassword, appPassword, mediaPassword, container };
   } catch (e) {
     await d.docker(['rm', '-f', container]);
     throw e;

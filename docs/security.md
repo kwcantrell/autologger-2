@@ -12,7 +12,7 @@ agent writes code in this repo. Review this table in the quarterly rule review.
 | ASI03 Identity & Privilege Abuse | Agent uses the developer's credentials beyond the task | Secrets unreadable (`Read(**/.env)` denied); workflows default to `contents: read`; no push to main; stack secrets come from OpenBao KV v2 (`kv/autologger/<env>`), read with one AppRole per environment whose policy is `read` on its own `kv/data/autologger/<env>` only; the secret_id is CIDR-bound to the VM's IP (90-day TTL, rotated by Ansible), held in an untracked mode-600 `.env.openbao.<env>` file, and the short-lived token is revoked right after the read; nothing is put on argv, disk or output by `docker/scripts/compose-run.mjs` ([docs/openbao-secrets.md](openbao-secrets.md)). **Residuals:** the Read deny rule is not the boundary. An agent's `Bash` `cat`, `docker inspect`, `docker exec … env` and `/proc/*/environ` can still read the credentials file and container environments (the secret_id only works from its bound CIDR, so a copied one is useless elsewhere, but on the VM itself it reads that environment's secrets). The owner's admin userpass token (`~/.vault-token` after `bao login`) can read and write every path; an agent running as the owner can use it while it is valid, so keep its TTL short and don't leave a session open on a VM where agents run. `~/.docker` (plugins, `currentContext`) is trusted as the operator's own |
 | ASI04 Agentic Supply Chain Vulnerabilities | Agent adds a malicious or vulnerable package, or a workflow uses a moved tag | Dependency review; `lifecycle.commands.audit`; SHA-pinned actions; Dependabot |
 | ASI05 Unexpected Code Execution | Agent runs untrusted code from a dependency or a fetched script | Sandbox filesystem and network isolation; CI in ephemeral runners |
-| ASI06 Memory & Context Poisoning | A poisoned spec, ADR or skill steers future changes; attacker-controlled text in container logs (request paths, emails, failed-auth names in the Supabase services) read as evidence | CODEOWNERS on openspec/, docs/decisions/, .claude/; generated skills can't be edited; container logs are untrusted data: log checks count values with `grep -cF` instead of reading the logs |
+| ASI06 Memory & Context Poisoning | A poisoned spec, ADR or skill steers future changes; attacker-controlled text in container logs (request paths, emails, failed-auth names in GoTrue's logs) read as evidence | CODEOWNERS on openspec/, docs/decisions/, .claude/; generated skills can't be edited; container logs are untrusted data: log checks count values with `grep -cF` instead of reading the logs |
 | ASI07 Insecure Inter-Agent Communication | A subagent's report carries injected instructions to the parent | Panel reviewers return findings, not actions; the parent treats reports as data |
 | ASI08 Cascading Failures | One bad change propagates through many files or services | Tier 2 for contracts; CI required before merge |
 | ASI09 Human-Agent Trust Exploitation | A confident summary gets approved without reading | Evidence rule (command + output); human reviews the diff, not the summary |
@@ -82,7 +82,7 @@ These live in the forge, not the repo, so the template can't apply them:
 - **NOTIFY forgery on the session frame bus** (session-frame-bus D2, ADR 0021 slice 9a). Every
   server process delivers session frames, Companion record/play commands and access-loss closes
   from one `NOTIFY` channel, and `pg_notify` is executable by every role, even in a read-only
-  transaction. Any database login (a Supabase service role, a leaked `autologger_app` password,
+  transaction. Any database login (a Supabase role login, a leaked `autologger_app` password,
   an agent with `psql`) could otherwise forge a frame, start a recording on someone's session, or
   keep a revoked user's socket open. The defence: every message is HMAC-SHA256-signed with
   `FRAME_BUS_SECRET`, a server-only secret of at least 32 characters held in OpenBao, and
@@ -101,6 +101,82 @@ These live in the forge, not the repo, so the template can't apply them:
   **Residuals:** the secret sits in the app process's environment, readable like `PGPASSWORD`
   above, and anything holding it can forge messages; a flood of forged notifications costs each process a signature check per message and can fill the
   notification queue, which fails writes. Rotation needs every process restarted together.
+- **Users' provider keys at rest and in use** (byo-ai-providers, ADR 0027). Each user's own
+  language-model and speech-to-text API keys (Settings → Advanced) are stored only as AES-256-GCM
+  ciphertext in the system-only `catalog.user_provider_credentials`, under a key derived (HKDF) from
+  `PROVIDER_KEYS_SECRET`, a 32-byte server-only secret held in OpenBao. The additional data binds
+  each ciphertext to its user, kind, provider and (OpenAI-compatible) base URL origin, so a row
+  copied to another user, or a key pointed at another provider or host, does not decrypt; changing
+  the provider or host needs the key entered again, so a stolen session can't redirect a stored
+  key. No response, log line or error carries a key: only its last four characters are shown, and
+  provider errors are classified, never logged or forwarded (Node's `fetch` puts a whole invalid
+  header value in its error message). A boot with a different secret is refused against a stored
+  check value, so a wrong secret never silently strands every key.
+  **User-directed egress:** the connection test sends one request to a user-chosen OpenAI-compatible
+  host. In production mode it must be `https` on port 443 with no query, and any host resolving to a
+  loopback, private, link-local, CGNAT, multicast or reserved address (IPv4, IPv6, mapped and
+  NAT64 forms) is refused, with the vetted address pinned on the connection (no DNS rebinding), no
+  redirects followed, and a refused host answering like an unreachable one. Tests are limited to 5 a
+  minute per user, across processes and deleted credentials. The fixed hosts (OpenAI, Anthropic,
+  Google, DeepGram) are frozen constants no environment or request can change.
+  **Residuals:** the server must decrypt keys to use them, so a compromised app process (or anyone
+  holding `PROVIDER_KEYS_SECRET` and a database dump) can read every key; a stolen session can still
+  use the victim's key against its saved host, bounded by the test limit and the run features'
+  approval; development mode (`NODE_ENV` exactly `development` or `test`) lifts the address rules
+  for local model servers and must never be set on a shared host.
+- **AI turns on users' keys, in the API process** (ai-sdk-agent-harness, ADR
+  [0028](decisions/0028-ai-sdk-agent-harness.md)). AI chat, topic and event generation run
+  `streamText` from the AI SDK in the API process on the caller's own language-model key, or the
+  operator's `claude` CLI for the accounts on `CLAUDE_CLI_EMAILS` only (the bootstrap owner is not
+  implicitly listed; anyone else gets `403` on choosing it).
+  **Prompt injection** through a transcript, topic or chat history is limited to the turn's tools
+  (`get_transcript_words`, `list_topics`, `create_topic`, `create_event`, per turn kind), which act
+  on the caller's own session through the existing validated bodies; the model drives no process
+  with shell, file or network access. Calls are capped (16 per step softly; 32 per chat turn and 300
+  per generation, past which the turn ends), run one at a time, and are refused once the turn ends.
+  **The key leaves the server only in the request header to its own provider:** every model request
+  goes through a guarded fetch that allows only the credential's origin and API path, pins the
+  vetted address, follows no redirect, and caps requests and bytes per turn; the SDK is never left
+  to fall back to `globalThis.fetch`, environment keys or the Vercel gateway (a repo test).
+  **Scrubbed errors:** an AI SDK error carries the whole prompt and the provider's body, so every
+  one becomes `upstream-failed`, none leaves `ai-runtime` (only a property-free `SdkTurnFailure`),
+  the SDK's own error output is silenced, a tool failure reaches the model as a fixed string, and
+  the global error log prints an SDK error as its class name only. No process-level handler is
+  added, because Next.js's own handlers already keep the API alive.
+  **Residuals:** there is no deployment-wide ceiling on concurrent AI turns or their spend (owner
+  deferred); each turn is bounded by its steps, token budget, timeout and byte caps, but many turns
+  share the API's memory and CPU. A turn's tools can still write wrong but valid topics or events
+  to the caller's own session. A provider sees the transcript and history it is sent (OpenAI with
+  `store: false`). An OpenAI-compatible server whose template opens `<think>` in the prompt leaks
+  its reasoning as text unless its reasoning parser is enabled. A CLI turn spends the operator's
+  quota, so keep `CLAUDE_CLI_EMAILS` short.
+- **Untrusted media in the worker** (media-worker D1-D4, D20, ADR
+  [0032](decisions/0032-media-worker.md)). Uploaded audio is attacker-shaped input to `ffmpeg`, so
+  decoding runs in its own `media-worker` container, never in the API. **ffmpeg never opens a
+  path:** the worker opens each input itself (`O_RDONLY | O_NOFOLLOW`, a regular file under
+  `/blobs/audio/` or `/blobs/.trash/`), sniffs the container from its first bytes, forces the
+  demuxer from an allowlist (Matroska/WebM, Ogg, MP4/MOV, WAV, FLAC, MP3) and streams the file on
+  stdin with `-protocol_whitelist pipe`, so no playlist, concat script or external reference is
+  followed (the one exception, an MP4 whose `moov` follows its data, is read by `file:` path with
+  `-f mov` forced and the demuxer's default `use_absolute_path 0`); `-xerror` makes any decode
+  error fatal, exit codes and sample counts are both checked, argv only (no shell), a 30 min
+  wall-clock limit with `SIGKILL`. **The container:** uid 10001, read-only root, every capability
+  dropped, `no-new-privileges`, 2 CPUs, 1 GiB, 128 pids, and the internal two-member `media`
+  network (no route, no external DNS). **The database role:** `autologger_media` holds only
+  `MEDIA_DB_PASSWORD`, may `UPDATE` eight columns of `catalog.media_jobs` and read the segment and
+  seam rows, and a guard trigger allows it only `queued → running` on a free or expired lease and
+  `running → queued | done | failed` by the holder, with `result_json` capped at 256 KiB. **The
+  worker writes no segment row and no file under `audio/`**: it writes `media/<job>/` and its
+  result row; the API validates the result and adopts the file by handle (`O_NOFOLLOW`, `fstat` of
+  the open handle for type, size and owner uid, an `lstat` of the job directory), copying it into
+  its own temporary file before the rename, and re-reads the rows to choose what to trash.
+  **Residuals:** a decoder exploit runs as uid 10001 and can read every blob on the volume (and the
+  trash), write under `media/` and make bounded, trigger-checked writes to `media_jobs` (a forged
+  result is validated, but can fail or delay jobs). The worker's login can `LISTEN` on the frame
+  bus channel and flood `pg_notify` like any database login (see "NOTIFY forgery" above): it cannot
+  forge a signed frame, and the flood is bounded by the role's connection limit (4) and statement
+  timeout; the API's sweep reads `pg_notification_queue_usage()` every minute and logs a warning
+  above 0.5, which is the monitoring for it.
 - PUBLIC keeps `CONNECT` on every database and `TEMP` on `postgres`, so `autologger_app` can
   connect to databases where it has no grants and create session-local temp tables. Revoking
-  them from PUBLIC would change what the Supabase services get; slice 6 revisits it.
+  them from PUBLIC would change what GoTrue (`supabase_auth_admin`) gets; slice 6 revisits it.

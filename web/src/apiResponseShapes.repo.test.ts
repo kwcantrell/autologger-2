@@ -1346,9 +1346,19 @@ const EXEMPTIONS: readonly Exemption[] = [
     reason: 'audit §5 row 20 CONFORMS — emits `{ok: true}` (404 for an unknown segment).',
   },
   {
-    key: 'pages/index/components/AudioRecorder.tsx :: apiFetch<OkResponse>(`sessions/<var>/audio/segments/<var>/waveform`) [PUT]',
+    key: 'api/uploads.ts :: apiFetch<>(uploadsPath(sessionId, `/<var>/parts/<var>`)) [PUT]',
     reason:
-      'Same endpoint as audit §5 row 20 (CONFORMS — emits `{ok: true}`, 404 for an unknown segment), called from the chunk pipeline’s per-chunk waveform PUT (chunked-live-recording task 4.2) instead of the useUploadWaveform hook. Result discarded; best-effort by spec.',
+      'media-worker D12: `PUT …/audio/uploads/:uploadId/parts/:n` answers 204 with no body (api-contract-freeze "Resumable audio upload endpoints"); there is no response shape to capture, and the untyped call reads none.',
+  },
+  {
+    key: 'api/uploads.ts :: apiFetch<>(uploadsPath(sessionId, `/<var>`)) [DELETE]',
+    reason:
+      'media-worker D12: `DELETE …/audio/uploads/:uploadId` answers 204 with no body (404 `{detail}` when unknown); there is no response shape to capture, and the untyped call reads none.',
+  },
+  {
+    key: 'pages/index/utils/chunkStore/opfsWorker.ts :: out.push(JSON.parse(text) as ChunkManifest);',
+    reason:
+      'media-worker D10: parses the chunk store’s own `manifest.json`, written by this worker into the origin-private file system; local data, not an API response.',
   },
   {
     key: 'api/hooks/useEvents.ts :: apiFetch<OkResponse>(`sessions/<var>/events/<var><var>`) [DELETE]',
@@ -1410,6 +1420,12 @@ const EXEMPTIONS: readonly Exemption[] = [
     key: 'api/hooks/useCompanionDevices.ts :: apiFetch<void>(`companion-devices/<var>`) [DELETE]',
     reason:
       "companion-devices D5/D6 — revoke a Companion device: `c.body(null, 204)` (server/src/routers/companionDevices.ts), an empty body with no content-type, so `apiFetch` returns `''` as `void`. No JSON payload exists to check; the 404 is an `ApiError` carrying `detail`. The list and create sites in the same file are fixture-checked.",
+  },
+
+  {
+    key: 'api/hooks/useProviders.ts :: apiFetch<void>(`me/providers/<var>`) [DELETE]',
+    reason:
+      "byo-ai-providers D4/D6 — delete a provider credential: `c.body(null, 204)` (server/src/routers/providers.ts), an empty body with no content-type, so `apiFetch` returns `''` as `void`. No JSON payload exists to check; the 404 is an `ApiError` carrying `detail`. The list, save and test sites in the same file are fixture-checked.",
   },
 
   // --- `apiFetch<EventsGenerateResponse>` — auto-generate-event-logs task 5.1.
@@ -1575,11 +1591,6 @@ const EXEMPTIONS: readonly Exemption[] = [
     key: 'pages/index/components/aiV2/dashboardPersistence.ts :: const parsed = JSON.parse(raw) as unknown;',
     reason:
       "audit §8.8 — a DELIBERATE exclusion, not an oversight. `localStorageDashboardPersistence.load` parses browser localStorage (which this client itself wrote), not a server response; the audit's universe is the server↔client wire. It does re-assert `parsed as DashboardConfig` two lines later after an `Array.isArray(...widgets)` check — that second assertion is downstream of this parse and is not separately detected, which §8.8 predicted and this entry is the named exemption for.",
-  },
-  {
-    key: 'shared/utils/perfDebug.ts :: const o = JSON.parse(raw);',
-    reason:
-      "Parses a localStorage-backed debug-flag record (`FlagState`), not an API response. Guarded by `o && typeof o === 'object'` before the cast.",
   },
 
   // --- `navigator.sendBeacon` — fire-and-forget, no Response object exists.

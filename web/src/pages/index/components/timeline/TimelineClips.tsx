@@ -6,7 +6,7 @@ import type { AudioClipLite } from '../../../../shared/utils/waveformMerge';
 // TWO-MODE: base = standalone clip strips; `[#v4-log-session_&]:` = the session-context
 // look, which hides clips entirely (the former !important flags become utilities that
 // win by layer order). --timeline-clip-strip-h is a local prop set per state. The
-// literal `timelineClipActive` is retained for the perf-debug @layer rule.
+// literal `timelineClipActive` is kept as a stable hook.
 const CLIPS = 'absolute inset-0 h-full pointer-events-none z-[4]';
 // .timelineClip base + #v4-log-session hide.
 const CLIP =
@@ -14,7 +14,7 @@ const CLIP =
 // .timelineClipMissingAudio (base + the .active.missing base is the same red).
 const CLIP_MISSING =
   '[--timeline-clip-strip-h:max(4px,0.25rem)] [background:rgba(220,60,60,0.3)] shadow-none';
-// .timelineClipActive — retained literal for perf-debug targeting. Geometry (strip-h,
+// .timelineClipActive — retained literal hook. Geometry (strip-h,
 // height) applies whenever active; the accent background is applied only when NOT missing,
 // so `.timelineClipActive.timelineClipMissingAudio` keeps the red bg (source-order match).
 const CLIP_ACTIVE =
@@ -44,7 +44,14 @@ export function TimelineClips({ clips, totalSec, activeClipIdx }: Props) {
       const wPct = Math.max(0.2, ePct - sPct);
       const missing = c.missingAudio || !c.url;
       const title = missing ? 'No audio file for this log interval' : `Audio clip ${i + 1}`;
-      return { i, sPct, wPct, missing, title, key: c.segmentId ?? `idx-${i}` };
+      // Seam clips of a merged segment share its id (media-worker D16); the media offset tells them apart.
+      const seam = (c as { mediaOffsetSec?: number }).mediaOffsetSec;
+      const key = c.segmentId
+        ? seam === undefined
+          ? c.segmentId
+          : `${c.segmentId}@${seam}`
+        : `idx-${i}`;
+      return { i, sPct, wPct, missing, title, key };
     });
   }, [clips, totalSec]);
 

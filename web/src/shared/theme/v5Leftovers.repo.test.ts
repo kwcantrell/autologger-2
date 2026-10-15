@@ -77,7 +77,10 @@ describe('V5 leftovers (11.4 cleanup)', () => {
 
   it('the category strip scrollbar thumb takes the themed scrollbar palette', () => {
     const thumb = compact(
-      ruleBody(CSS.slice(CSS.indexOf('@utility cat-strip-scrollbar')), /&::-webkit-scrollbar-thumb/),
+      ruleBody(
+        CSS.slice(CSS.indexOf('@utility cat-strip-scrollbar')),
+        /&::-webkit-scrollbar-thumb/,
+      ),
     );
     expect(thumb).not.toContain('legacy');
     expect(thumb).toContain('var(--si-line-strong)');
@@ -89,9 +92,9 @@ describe('V5 leftovers (11.4 cleanup)', () => {
   it('no production component under pages/ keeps the V5 cyan or a sky-* utility', () => {
     const PAGES = path.join(SRC, 'pages');
     const walk = (d: string): string[] =>
-      fs.readdirSync(d, { withFileTypes: true }).flatMap((e) =>
-        e.isDirectory() ? walk(path.join(d, e.name)) : [path.join(d, e.name)],
-      );
+      fs
+        .readdirSync(d, { withFileTypes: true })
+        .flatMap((e) => (e.isDirectory() ? walk(path.join(d, e.name)) : [path.join(d, e.name)]));
     const hits = walk(PAGES)
       .filter((f) => /\.tsx?$/.test(f) && !/\.test\.tsx?$/.test(f))
       .filter((f) => {

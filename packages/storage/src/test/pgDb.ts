@@ -12,6 +12,7 @@ interface TestPg {
   port: number;
   superPassword: string;
   appPassword: string;
+  mediaPassword: string;
   container: string;
 }
 
@@ -35,6 +36,8 @@ export interface TestDatabase {
   app: ConnOptions;
   /** As `postgres`, the migrations user (not a superuser). */
   admin: ConnOptions;
+  /** As `autologger_media`, the media worker's role (media-worker D1). */
+  media: ConnOptions;
 }
 
 export async function createTestDatabase(): Promise<TestDatabase> {
@@ -57,5 +60,6 @@ export async function createTestDatabase(): Promise<TestDatabase> {
     name,
     app: conn('autologger_app', pg.appPassword, name),
     admin: conn('postgres', pg.superPassword, name),
+    media: conn('autologger_media', pg.mediaPassword, name),
   };
 }

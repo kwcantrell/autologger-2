@@ -1,10 +1,8 @@
-import { useQueryClient } from '@tanstack/react-query';
-import { ChevronDownIcon, ChevronRightIcon } from 'lucide-react';
+import { BookOpenIcon, ChevronDownIcon, ChevronRightIcon } from 'lucide-react';
 import { useMemo, useSyncExternalStore } from 'react';
-import { useProfile, useProfileMutation } from '../../../api/hooks/useProfile';
-import { sessionStatusKeys } from '../../../api/hooks/useSessionStatus';
+import { useProfile } from '../../../api/hooks/useProfile';
 import { showAccessFrom } from '../../../api/hooks/useShowAccess';
-import type { ProfileUpdateBody, TeamRole } from '../../../api/types';
+import type { TeamRole } from '../../../api/types';
 import { Badge } from '../../../shared/components/ui/badge';
 import { Button } from '../../../shared/components/ui/button';
 import {
@@ -24,7 +22,9 @@ import {
   subscribeTransportStatus,
   TRANSPORT_STATUS_LABEL,
 } from '../coordination/transportStatus';
-import { showToast } from '../utils/toast';
+import { useSwitchActive } from '../hooks/useSwitchActive';
+import { SearchPalette } from './search/SearchPalette';
+import { openInPlace } from './wiki/WikiPageLink';
 
 // --- The shell's top bar (redesign-show-ignition D5, D10; web-ui-system "Top bar names the
 // active team, show and transport state") ---
@@ -33,17 +33,10 @@ import { showToast } from '../utils/toast';
 // No wordmark and no Team/Show labels. The bar's tint is pure CSS on the shell's
 // `data-transport` attribute (`[data-slot='topbar']` in tailwind.css).
 //
-// Switching writes `PUT /api/profile` immediately (D5):
-//   - a team sends `{ active_studio_id }` with `active_show_id` omitted, so the server picks the
-//     new team's first show (the Settings modal's mid-switch rule), then follows the
-//     close-session path;
-//   - a show sends `{ active_studio_id, active_show_id }` — the server 400s without the team
-//     (`server/src/routers/profile.ts`), so the current team is echoed.
-// Either then refetches the session list, events, session status and show categories, as the
-// modal's save did (web-coordination-seam "The settings modal still refetches the session list").
-// A failure leaves the cache — and so the shown selection — untouched and names the failure.
-// With Settings open and holding unsaved edits, a switch first asks through the view's discard
-// guard (`confirmSwitch`); declining keeps the edits and the selection.
+// Switching goes through `useSwitchActive` (catalog-search D9, extracted from here so search
+// results share it): a team sends `{ active_studio_id }` and follows the close-session path; a show
+// sends `{ active_studio_id, active_show_id }` with the current team echoed. With Settings open and
+// holding unsaved edits, a switch first asks through the view's discard guard (`confirmSwitch`).
 
 const ROLE_LABEL: Record<TeamRole, string> = { owner: 'Owner', admin: 'Admin', member: 'Member' };
 
@@ -73,8 +66,7 @@ interface Props {
 
 export function TopBar({ onCloseSession, onReturnToSession, confirmSwitch }: Props) {
   const { data: profile } = useProfile();
-  const mutation = useProfileMutation();
-  const queryClient = useQueryClient();
+  const { switchActive, isPending } = useSwitchActive({ onCloseSession, confirmSwitch });
   const status = useSyncExternalStore(
     subscribeTransportStatus,
     getTransportStatus,
@@ -91,36 +83,14 @@ export function TopBar({ onCloseSession, onReturnToSession, confirmSwitch }: Pro
   const teamShows = shows.filter((s) => s.studio_id === activeStudioId);
   const activeShowName = teamShows.find((s) => s.id === activeShowId)?.name ?? '';
 
-  // `what` names the switch in a failure ("Couldn't switch the team: …"); `closesSession` is true for
-  // a team switch only.
-  async function switchTo(what: string, closesSession: boolean, body: ProfileUpdateBody) {
-    const allowed = confirmSwitch?.() ?? true;
-    if (allowed !== true && !(await allowed)) return;
-    try {
-      await mutation.mutateAsync(body);
-    } catch (err) {
-      const detail = err instanceof Error ? err.message : 'The change was not saved.';
-      showToast(`Couldn't switch ${what}: ${detail}`, true);
-      return;
-    }
-    if (closesSession) onCloseSession();
-    queryClient.invalidateQueries({ queryKey: ['sessions'] });
-    queryClient.invalidateQueries({ queryKey: ['events'] });
-    queryClient.invalidateQueries({ queryKey: sessionStatusKeys.all() });
-    queryClient.invalidateQueries({ queryKey: ['show-categories'] });
-  }
-
   function chooseTeam(studioId: string) {
-    if (!studioId || studioId === activeStudioId || mutation.isPending) return;
-    void switchTo('the team', true, { active_studio_id: studioId });
+    if (!studioId || studioId === activeStudioId || isPending) return;
+    void switchActive({ studioId });
   }
 
   function chooseShow(showId: string) {
-    if (!showId || showId === activeShowId || mutation.isPending) return;
-    void switchTo('the show', false, {
-      active_studio_id: activeStudioId,
-      active_show_id: showId,
-    });
+    if (!showId || showId === activeShowId || isPending) return;
+    void switchActive({ studioId: activeStudioId, showId });
   }
 
   const label = TRANSPORT_STATUS_LABEL[status.state];
@@ -234,6 +204,20 @@ export function TopBar({ onCloseSession, onReturnToSession, confirmSwitch }: Pro
           </div>
         )}
       </nav>
+
+      {/* Search (catalog-search D9): the button opens the palette, as Cmd/Ctrl-K does. A result
+          that switches the team or show goes through the same guard and close-session path. */}
+      <SearchPalette onCloseSession={onCloseSession} confirmSwitch={confirmSwitch} />
+
+      {/* Wiki (show-wiki D7): the active show's wiki. Icon-only below `md`, so the bar keeps to
+          one line at 390px (web-ui-system "Phone width keeps one line"); named "Wiki" at every
+          width. A plain click opens it in place through the navigation funnel. */}
+      <Button asChild variant="ghost" size="icon" className="shrink-0 md:w-auto md:px-2.5">
+        <a href="/wiki" aria-label="Wiki" title="Wiki" onClick={(e) => openInPlace(e, '/wiki')}>
+          <BookOpenIcon aria-hidden="true" />
+          <span className="max-md:hidden">Wiki</span>
+        </a>
+      </Button>
 
       {/* The transport's status for assistive technology: announced when the state changes,
           never on a timecode tick (the store only changes on transitions). */}

@@ -20,11 +20,14 @@ interface Props {
   totalSec: number;
   mergedPeaks: Float32Array | null;
   isWaveformDecoding?: boolean;
+  waveformUnavailable?: boolean;
   audioPlaybackSec: number | null;
   onSeekAudio: (sec: number) => void;
   onAudioRecord: () => void;
   onAudioPlay: () => void;
   ytImportPending?: boolean;
+  /** The recorder is still scanning for unsent audio; Record is held (media-worker D10). */
+  recordRecovering?: boolean;
   isPlaying: boolean;
   onOpenShortcuts: () => void;
   /** Rolling or audio-recording — replace scrubber with category buttons. */
@@ -32,8 +35,7 @@ interface Props {
   onOffState: Map<string, 'on' | 'off'>;
   onToggle: (categoryId: string) => void;
   /**
-   * The shell transport state SessionWorkspace publishes to the top bar (perf override
-   * included): the pill reads the top bar's label for it. Recording comes from the session-wide
+   * The shell transport state SessionWorkspace publishes to the top bar: the pill reads the top bar's label for it. Recording comes from the session-wide
    * lease ("Truthful recording indication"), so a remote client's recording reads REC here too.
    */
   transport: ShellTransportState;
@@ -59,11 +61,13 @@ export function MaximizeLogStrip({
   totalSec,
   mergedPeaks,
   isWaveformDecoding,
+  waveformUnavailable,
   audioPlaybackSec,
   onSeekAudio,
   onAudioRecord,
   onAudioPlay,
   ytImportPending,
+  recordRecovering,
   isPlaying,
   onOpenShortcuts,
   liveDock,
@@ -206,6 +210,7 @@ export function MaximizeLogStrip({
         onAudioRecord={onAudioRecord}
         onAudioPlay={onAudioPlay}
         ytImportPending={controlsLocked || ytImportPending}
+        recordRecovering={recordRecovering}
         isPlaying={isPlaying}
         compact
       />
@@ -268,6 +273,7 @@ export function MaximizeLogStrip({
         totalSec={totalSec}
         mergedPeaks={mergedPeaks}
         isWaveformDecoding={isWaveformDecoding}
+        waveformUnavailable={waveformUnavailable}
         audioPlaybackSec={audioPlaybackSec}
         onSeekAudio={onSeekAudio}
         stripOnly

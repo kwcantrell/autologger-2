@@ -57,10 +57,6 @@ vi.mock('../../shared/utils/loadingVideo', () => ({
   freezeAutologgerLoadingVideos: () => {},
 }));
 
-vi.mock('../../shared/utils/perfDebug', () => ({
-  initPerfDebugUI: () => {},
-}));
-
 // The rail mock reads the shell's real `SidebarProvider` (redesign-show-ignition D8): it reports
 // the sidebar state and holds a search input, for the `[` shortcut tests.
 vi.mock('./components/V6Rail', async () => {
@@ -169,6 +165,31 @@ function chunkLoadError() {
   err.name = 'ChunkLoadError';
   return err;
 }
+
+// The `/search` page (catalog-search task 5.6): this file pins only that the route mounts it in
+// place of the session route, with the shell's close-session path and Settings guard. The page
+// itself is SearchRoute.test.tsx's.
+const searchRouteProbe = vi.hoisted(() => ({
+  renders: [] as Array<{ onCloseSession: () => void; confirmSwitch?: unknown }>,
+}));
+vi.mock('./components/search/SearchRoute', () => ({
+  SearchRoute: (props: { onCloseSession: () => void; confirmSwitch?: unknown }) => {
+    searchRouteProbe.renders.push(props);
+    return <div data-testid="search-route" />;
+  },
+}));
+
+// The wiki screens (show-wiki task 5.4, D8 category 2): this file pins only that `/wiki` and
+// `/wiki/:pageId` mount them in place of the session route. The screens are WikiRoute.test.tsx's
+// and WikiPageView.test.tsx's.
+vi.mock('./components/wiki/WikiRoute', () => ({
+  WikiRoute: () => <div data-testid="wiki-route" />,
+}));
+vi.mock('./components/wiki/WikiPageView', () => ({
+  WikiPageView: (props: { pageId: string }) => (
+    <div data-testid="wiki-page-view" data-page-id={props.pageId} />
+  ),
+}));
 
 vi.mock('./components/settings/SettingsView', async () => {
   const { useEffect } = await import('react');
@@ -332,6 +353,15 @@ afterEach(() => {
   window.history.replaceState(null, '', '/');
   resetOriginationForTesting();
   vi.clearAllMocks();
+});
+
+// The removed Perf button and its panel stay gone from every build.
+describe('AppShell debug chrome', () => {
+  it('renders no performance-debug control', () => {
+    renderShell();
+    expect(screen.queryByRole('button', { name: /^perf$/i })).toBeNull();
+    expect(document.querySelector('[id^="perf"]')).toBeNull();
+  });
 });
 
 describe('AppShell routing (URL-addressed session state)', () => {
@@ -1184,5 +1214,68 @@ describe('AppShell sidebar shortcut', () => {
       if (own) Object.defineProperty(window, 'localStorage', own);
       else delete (window as unknown as Record<string, unknown>).localStorage;
     }
+  });
+});
+
+// web-session-routing "Search route is a first-class app route" (catalog-search task 5.6): the
+// fourth wouter pattern, mirroring the shared route module's `/search`.
+describe('AppShell search route (catalog-search 5.6)', () => {
+  it('/search renders the search page with no session selected', () => {
+    const { memory } = renderShell('/search?q=budget');
+    expect(screen.getByTestId('search-route')).not.toBeNull();
+    expect(screen.queryByTestId('session-route')).toBeNull();
+    expect(memory.history).toEqual(['/search?q=budget']);
+    const props = searchRouteProbe.renders.at(-1);
+    expect(typeof props?.onCloseSession).toBe('function');
+    expect(typeof props?.confirmSwitch).toBe('function');
+  });
+
+  it('navigating to /search pushes an entry and leaves the session; browser Back returns', async () => {
+    window.history.replaceState(null, '', '/');
+    renderStrict(<AppShell />);
+    fireEvent.click(screen.getByTestId('rail-select-s1'));
+    expect(workspaceSessionId()).toBe('sess-1');
+
+    navigate('/search?q=budget');
+    await waitFor(() => expect(window.location.pathname).toBe('/search'));
+    expect(window.location.search).toBe('?q=budget');
+    expect(await screen.findByTestId('search-route')).not.toBeNull();
+    expect(screen.queryByTestId('session-route')).toBeNull();
+
+    window.history.back();
+    await waitFor(() => expect(window.location.pathname).toBe('/sessions/sess-1'));
+    await waitFor(() => expect(workspaceSessionId()).toBe('sess-1'));
+    expect(screen.queryByTestId('search-route')).toBeNull();
+  });
+
+  it('a path under /search is not the search route', () => {
+    renderShell('/search/x');
+    expect(screen.queryByTestId('search-route')).toBeNull();
+    expect(workspaceSessionId()).toBe('');
+  });
+});
+
+// show-wiki D7 (task 5.4; D8 category 2): `/wiki` and `/wiki/:pageId` are routes, and nothing
+// deeper is.
+describe('AppShell wiki routes (show-wiki 5.4)', () => {
+  it('/wiki renders the wiki list with no session selected', () => {
+    renderShell('/wiki');
+    expect(screen.getByTestId('wiki-route')).not.toBeNull();
+    expect(screen.queryByTestId('wiki-page-view')).toBeNull();
+    expect(screen.queryByTestId('session-route')).toBeNull();
+  });
+
+  it('/wiki/:pageId renders the page view for that page', () => {
+    renderShell('/wiki/page-1');
+    expect(screen.getByTestId('wiki-page-view').getAttribute('data-page-id')).toBe('page-1');
+    expect(screen.queryByTestId('wiki-route')).toBeNull();
+    expect(screen.queryByTestId('session-route')).toBeNull();
+  });
+
+  it('a path two segments under /wiki is not a wiki route', () => {
+    renderShell('/wiki/page-1/x');
+    expect(screen.queryByTestId('wiki-route')).toBeNull();
+    expect(screen.queryByTestId('wiki-page-view')).toBeNull();
+    expect(workspaceSessionId()).toBe('');
   });
 });

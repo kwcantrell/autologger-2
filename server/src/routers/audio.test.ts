@@ -1,13 +1,16 @@
+import { AUDIO_SEGMENT_DICT_KEYS, audioSegmentDictSchema } from '@autologger/contract';
 import { COMPRESSIBLE_CONTENT_TYPE_REGEX } from 'hono/compress';
 import { describe, expect, it } from 'vitest';
 import { isCompressibleResponseType } from '../compressibleTypes';
 import { ApiError } from '../httpError';
+import { parseOptionalMarkedAt } from './_helpers';
 import {
   enforceAudioByteLimit,
   enforceLocalAudioImportByteLimit,
   MAX_AUDIO_BYTES,
   MAX_LOCAL_AUDIO_IMPORT_BYTES,
   normalizeAudioMimeType,
+  segmentApiDict,
 } from './audio';
 
 describe('enforceAudioByteLimit', () => {
@@ -65,6 +68,7 @@ describe('normalizeAudioMimeType', () => {
     'audio/mpeg', // BatchImportModal mp3 files
     'audio/wav', // BatchImportModal wav files / yt-dlp wav / DeepGram pcm
     'audio/aiff', // audioStore's mime<->ext table
+    'audio/flac', // converted WAV blobs (follow-up C) / batch-import .flac
   ])('passes %s through verbatim', (mime) => {
     expect(normalizeAudioMimeType(mime)).toBe(mime);
   });
@@ -156,5 +160,56 @@ describe('normalizeAudioMimeType', () => {
       // the invariant survives an extension of the app-level filter.
       expect(COMPRESSIBLE_CONTENT_TYPE_REGEX.test(out)).toBe(false);
     }
+  });
+});
+
+// media-worker B.3 (design D16, D18): the segment dict's 12 keys and the window key's normalisation.
+describe('segmentApiDict (D16)', () => {
+  const meta = {
+    id: 'seg-1',
+    ordinal: 2,
+    started_at_utc: '2026-10-12T10:00:00.000Z',
+    ended_at_utc: null,
+    mime_type: 'audio/webm',
+    r2_key: 'audio/s/0002_seg-1.webm',
+    recording_ordinal: 1,
+    waveform_peaks: null,
+    waveform_db_floor: null,
+  };
+
+  it('has exactly the 12 contract keys in order, and matches the contract schema', () => {
+    const d = segmentApiDict('s', {
+      ...meta,
+      duration_ms: 600000,
+      media_status: 'done',
+      media_error: null,
+      seams: [{ offset_ms: 0, started_at_utc: meta.started_at_utc, ended_at_utc: null }],
+    });
+    expect(Object.keys(d)).toEqual([...AUDIO_SEGMENT_DICT_KEYS]);
+    expect(audioSegmentDictSchema.safeParse(d).success).toBe(true);
+    expect(d).toMatchObject({ duration_ms: 600000, media_status: 'done' });
+  });
+
+  it('a meta without the media fields (a hand-built literal) answers nulls; media_error never leaks', () => {
+    const d = segmentApiDict('s', meta);
+    expect(d).toMatchObject({ duration_ms: null, media_status: null, seams: null });
+    expect('media_error' in d).toBe(false);
+    expect(audioSegmentDictSchema.safeParse(d).success).toBe(true);
+  });
+});
+
+// The window key of the idempotent POST (D18) is the server's normalisation of `started_at_utc`;
+// the client's dedupe uses the same rule (hand-off to A: fixtures/audioWindowNormalisation.json
+// lists the pairs, asserted here).
+describe('window key normalisation (D18, parseOptionalMarkedAt)', () => {
+  it('maps every fixture input to its stored key', async () => {
+    const { readFile } = await import('node:fs/promises');
+    const { fileURLToPath } = await import('node:url');
+    const path = fileURLToPath(
+      new URL('../../../fixtures/audioWindowNormalisation.json', import.meta.url),
+    );
+    const pairs = JSON.parse(await readFile(path, 'utf8')) as { input: string; key: string }[];
+    expect(pairs.length).toBeGreaterThan(3);
+    for (const p of pairs) expect(parseOptionalMarkedAt(p.input), p.input).toBe(p.key);
   });
 });

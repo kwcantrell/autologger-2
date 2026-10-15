@@ -48,6 +48,7 @@ function stackEnv(extra: Record<string, string>): Record<string, string> {
     HOST: '127.0.0.1',
     PORT: '0',
     DATA_DIR: join(dir, 'data'),
+    BLOB_DIR: join(dir, 'blobs'), // shared-blob-volume D8 category 1: a sibling of DATA_DIR
     PGHOST: db.host,
     PGPORT: String(db.port),
     PGUSER: db.user,
@@ -58,6 +59,8 @@ function stackEnv(extra: Record<string, string>): Record<string, string> {
     PUBLIC_BASE_URL: 'http://localhost:8787',
     BOOTSTRAP_OWNER_EMAIL: 'bootstrap-owner@example.com',
     SESSION_COOKIE: 'autologger_sid',
+    // byo-ai-providers D2: required by main.ts; the refusal cases still fail on the bus secret first.
+    PROVIDER_KEYS_SECRET: Buffer.alloc(32, 3).toString('base64'),
     ...extra,
   };
 }

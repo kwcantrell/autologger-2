@@ -14,6 +14,7 @@ import { conflictPromptCopy } from '../../../shared/hooks/conflictPromptCopy';
 import { useVersionedSave } from '../../../shared/hooks/useVersionedSave';
 import { useIsMobile } from '../../../shared/ui/breakpoints';
 import { useTranscriptWordsGate } from '../hooks/TranscriptWordsGateContext';
+import { useClearOnLanguageModelSave } from '../hooks/useClearOnLanguageModelSave';
 import { useGatedGenerate } from '../hooks/useGatedGenerate';
 import { useTimelineSeek } from '../hooks/useTimelineSeek';
 import { useRowSeeds } from '../utils/rowHolds';
@@ -144,7 +145,12 @@ export const TopicsFeed = memo(function TopicsFeed({ sessionId }: Props) {
   // Latched on the first 503 (ui-refresh D9: honest capability gate — topic
   // generation has no external integration wired up on this deployment); see
   // `useGatedGenerate` for the full rationale.
-  const { genError, genUnavailable, handleGenerate } = useGatedGenerate(generate.mutate);
+  // ai-sdk-agent-harness D8: the 503 means the caller has no language model route, so saving one
+  // in Settings › Advanced clears the latch without a reload.
+  const { genError, genUnavailable, handleGenerate, resetUnavailable } = useGatedGenerate(
+    generate.mutate,
+  );
+  useClearOnLanguageModelSave(genUnavailable, resetUnavailable);
   // Default direction is oldest-first across all three feeds (owner decision
   // 2026-08-06, PR#4 review) — the log reads top-down like a sheet.
   const [sort, dispatchSort] = useReducer(sortReducer, { key: 'session_time', dir: 'asc' });
@@ -245,9 +251,7 @@ export const TopicsFeed = memo(function TopicsFeed({ sessionId }: Props) {
       onGenerate={handleGenerate}
       generatePending={generate.isPending}
       reasonId={genReasonId}
-      reason={
-        <>Topic generation isn&apos;t available on this server (no integration configured).</>
-      }
+      reason={<>Add a language model in Settings → Advanced to generate topics.</>}
       onInsert={handleInsert}
       insertPending={insert.isPending}
     />
@@ -283,9 +287,9 @@ export const TopicsFeed = memo(function TopicsFeed({ sessionId }: Props) {
         emptyMessage={
           genUnavailable ? (
             <>
-              Topic generation isn&apos;t available on this server — no topic-generation integration
-              is configured. You can still add topics by hand with <strong>Insert</strong>, or
-              design a dashboard from the <strong>Dashboards</strong> tab.
+              Add a language model in Settings → Advanced to generate topics. You can still add
+              topics by hand with <strong>Insert</strong>, or design a dashboard from the{' '}
+              <strong>Dashboards</strong> tab.
             </>
           ) : (
             <>

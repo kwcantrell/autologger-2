@@ -41,10 +41,11 @@ describe('main.ts boot order', () => {
     expect(r.stderr).toMatch(/DATA_DIR/);
     expect(r.files).toEqual([]);
   }, 40_000);
-  it('with the sentinel and DATA_DIR but no PGPASSWORD: exits 1 naming it, creating nothing (catalog-on-postgres D2)', () => {
+  it('with the sentinel, DATA_DIR and BLOB_DIR but no PGPASSWORD: exits 1 naming it, creating nothing (catalog-on-postgres D2)', () => {
     const r = boot((dir) => ({
       AUTOLOGGER_STACK: 'dev',
       DATA_DIR: join(dir, 'data'),
+      BLOB_DIR: join(dir, 'blobs'), // shared-blob-volume D8 category 1: a sibling of DATA_DIR
       PGHOST: '127.0.0.1',
       PGPORT: '1',
       PGUSER: 'autologger_app',
@@ -59,6 +60,7 @@ describe('main.ts boot order', () => {
       (dir) => ({
         AUTOLOGGER_STACK: 'dev',
         DATA_DIR: join(dir, 'data'),
+        BLOB_DIR: join(dir, 'blobs'), // shared-blob-volume D8 category 1: a sibling of DATA_DIR
         PORT: '0',
         PGHOST: '127.0.0.1',
         PGPORT: '1', // nothing listens on port 1
@@ -72,6 +74,8 @@ describe('main.ts boot order', () => {
         // owner-bootstrap D8: also required before the catalog wait.
         BOOTSTRAP_OWNER_EMAIL: 'bootstrap-owner@example.com',
         FRAME_BUS_SECRET: 'b'.repeat(40),
+        // byo-ai-providers D2: also required before the catalog wait.
+        PROVIDER_KEYS_SECRET: Buffer.alloc(32, 3).toString('base64'),
       }),
       45_000,
     );

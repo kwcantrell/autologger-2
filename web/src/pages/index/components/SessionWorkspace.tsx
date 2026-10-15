@@ -8,7 +8,6 @@ import { useSessionStatus } from '../../../api/hooks/useSessionStatus';
 import type { CompanionCommandType } from '../../../api/types';
 import { showToast } from '../../../shared/components/Toast';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../../shared/components/ui/tabs';
-import { useDebugTransportOverride } from '../../../shared/hooks/useDebugTransportOverride';
 import { ConfirmDialog } from '../../../shared/ui/ConfirmDialog';
 import { isOverlayOpen } from '../../../shared/ui/overlayOpen';
 import { AUTOLOGGER_LOADING_VIDEO_SRC } from '../../../shared/utils/loadingVideo';
@@ -36,9 +35,12 @@ import { ChunkRescueBanner } from './ChunkRescueBanner';
 import { EventLogSheet } from './EventLogSheet';
 import { ExportFeed } from './ExportFeed';
 import { MaximizeLogStrip } from './MaximizeLogStrip';
+import { MomentDeepLink } from './MomentDeepLink';
 import { isTypingTarget, ShortcutsDialog } from './ShortcutsDialog';
 import { TopicsFeed } from './TopicsFeed';
 import { TranscribeFeed } from './TranscribeFeed';
+import { SessionWikiButton } from './wiki/SessionWikiButton';
+import { UpdateWikiButton } from './wiki/UpdateWikiButton';
 
 // Feed tab inventory — one source for the tablist buttons AND the tabpanel
 // wrappers below (code-health-tail 4.8). `label` doubles as each panel's
@@ -103,14 +105,13 @@ export function SessionWorkspace({ sessionId, ytImportPending }: Props) {
 
   const { clips: audioClips, totalSec: audioTotalSec, segments } = useAudioClips(sessionId, events);
 
-  const debugOverride = useDebugTransportOverride();
   const blocksMedia = useRemoteRecordingGate(sessionId || null);
   const recoveryStopPending = useRecoveryStopWarning(sessionId || null, blocksMedia);
-  const { mergedPeaks, isDecoding: isWaveformDecoding } = useWaveforms(
-    sessionId,
-    audioClips,
-    audioTotalSec,
-  );
+  const {
+    mergedPeaks,
+    isDecoding: isWaveformDecoding,
+    unavailable: waveformUnavailable,
+  } = useWaveforms(sessionId, audioClips, audioTotalSec);
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [audioPlaybackSec, setAudioPlaybackSec] = useState<number | null>(null);
@@ -124,7 +125,7 @@ export function SessionWorkspace({ sessionId, ytImportPending }: Props) {
       : isPlaying
         ? 'play'
         : 'stop';
-  const effectiveTransport = debugOverride ?? intrinsicState;
+  const effectiveTransport = intrinsicState;
   const liveDock = effectiveTransport === 'rolling' || effectiveTransport === 'audio-recording';
 
   // Set body.dataset.v4Transport — CSS reads this to swap capture/playback panels.
@@ -249,6 +250,8 @@ export function SessionWorkspace({ sessionId, ytImportPending }: Props) {
   const audioRecorderRef = useRef<AudioRecorderHandle>(null);
   const audioPlayerRef = useRef<AudioPlayerHandle>(null);
   const [isUploadingAudio, setIsUploadingAudio] = useState(false);
+  // media-worker D10: the recorder's recovery scan holds Record; the control says so.
+  const [recordRecovering, setRecordRecovering] = useState(false);
 
   const handleAudioRecord = useCallback(() => {
     audioRecorderRef.current?.toggle();
@@ -436,13 +439,21 @@ export function SessionWorkspace({ sessionId, ytImportPending }: Props) {
             />
           )}
           <ShortcutsDialog open={showShortcuts} onClose={() => setShowShortcuts(false)} />
+          {/* `?t=` / `?topic=` / `?event=` (catalog-search D8): applied once the status and
+              timeline are ready, never while rolling, then removed with a replace. It watches the
+              URL's search string, so a moment in this already-open session applies without a
+              remount. Renders nothing. */}
+          <MomentDeepLink sessionId={sessionId} />
           {/* Headless audio components */}
           {sessionId && (
             <>
               <AudioRecorder
                 ref={audioRecorderRef}
                 sessionId={sessionId}
-                onPhaseChange={(phase) => setIsUploadingAudio(phase === 'uploading')}
+                onPhaseChange={(phase) => {
+                  setIsUploadingAudio(phase === 'uploading');
+                  setRecordRecovering(phase === 'scanning');
+                }}
               />
               <AudioPlayer
                 ref={audioPlayerRef}
@@ -503,7 +514,7 @@ export function SessionWorkspace({ sessionId, ytImportPending }: Props) {
               className="v4-session-workspace flex flex-col flex-1 w-full min-w-0 items-stretch min-h-0 max-h-none [overflow-x:clip] overflow-y-visible max-md:block max-md:h-auto"
             >
               {/* #v4-log-session — ancestor id retained (drives descendant
-                [#v4-log-session_&] variants; perfDebug/e2e hooks target it).
+                [#v4-log-session_&] variants).
                 is-visible is always present here so display resolves to flex. min-h-0
                 !important quintet member; max-md reflows to block. */}
               <section
@@ -524,11 +535,13 @@ export function SessionWorkspace({ sessionId, ytImportPending }: Props) {
                     totalSec={audioTotalSec}
                     mergedPeaks={mergedPeaks}
                     isWaveformDecoding={isWaveformDecoding}
+                    waveformUnavailable={waveformUnavailable}
                     audioPlaybackSec={audioPlaybackSec}
                     onSeekAudio={handleSeekAudio}
                     onAudioRecord={handleAudioRecord}
                     onAudioPlay={handleAudioPlay}
                     ytImportPending={ytImportPending}
+                    recordRecovering={recordRecovering}
                     isPlaying={isPlaying}
                     onOpenShortcuts={() => setShowShortcuts(true)}
                     liveDock={liveDock}
@@ -552,13 +565,23 @@ export function SessionWorkspace({ sessionId, ytImportPending }: Props) {
                     {/* Line tabs (redesign-show-ignition task 5.2; preview `.tabs`) on the sheet's
                         mx-4 edge, a short gap above the feed card. */}
                     <div className="relative z-0 mx-4 mb-3 max-md:mx-3 flex shrink-0 items-end pt-[0.3rem] max-md:overflow-x-auto max-md:overflow-y-hidden max-md:[-webkit-overflow-scrolling:touch] max-md:[scrollbar-width:none]">
-                      <TabsList variant="line" aria-label="Feed tabs">
+                      {/* `max-md:flex-none`: on phones the tabs keep their width and the row scrolls, so the
+                          wiki button after them sits at the row's end instead of over a tab. */}
+                      <TabsList variant="line" aria-label="Feed tabs" className="max-md:flex-none">
                         {FEED_TABS.map((tab) => (
                           <TabsTrigger key={tab.id} value={tab.id}>
                             {tab.label}
                           </TabsTrigger>
                         ))}
                       </TabsList>
+                      {/* "Update wiki" (show-wiki-ai D6), then the session's wiki page
+                          (show-wiki D7), which stays at the end of the row. */}
+                      <UpdateWikiButton sessionId={sessionId} />
+                      <SessionWikiButton
+                        sessionId={sessionId}
+                        showId={status?.show_id ?? null}
+                        title={status?.title ?? ''}
+                      />
                     </div>
                     {/* All six top-level panels stay mounted (hidden via the
                       `hidden` attribute) — memoized above, so mounted no longer

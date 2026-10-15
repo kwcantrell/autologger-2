@@ -42,7 +42,7 @@ export function oauthConfigured(env: Config): boolean {
 
 /** Trim, then fold only `A`-`Z`: JS `toLowerCase` is Unicode-aware (U+212A KELVIN SIGN folds to
  * `k`), so it must not be used for the bootstrap match (D16). */
-function asciiEmailNorm(v: string): string {
+export function asciiEmailNorm(v: string): string {
   return v.trim().replace(/[A-Z]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) + 32));
 }
 
@@ -70,6 +70,24 @@ export function maskBootstrapOwnerEmail(value: string): string {
   return `${domain || '(no domain)'} #${hash}`;
 }
 
+// ── Sign-ups (closed-signups D1) ───────────────────────────────────────────
+
+/** The effective sign-up mode: `SIGNUPS` trimmed and `A`-`Z` folded is `open` or `closed`; blank
+ * or unset is open only when `AUTOLOGGER_STACK` is `dev` (no stack is closed: fail closed);
+ * anything else is `'invalid'`, which the boot guard and the compose wrapper refuse. */
+export function signupsMode(env: Config): 'open' | 'closed' | 'invalid' {
+  const v = asciiEmailNorm(env.SIGNUPS ?? '');
+  if (v === 'open' || v === 'closed') return v;
+  if (v !== '') return 'invalid';
+  return env.AUTOLOGGER_STACK === 'dev' ? 'open' : 'closed';
+}
+
+/** Whether sign-ups are closed: true unless the mode is `open` (an invalid value fails closed,
+ * though boot refuses it). */
+export function signupsClosed(env: Config): boolean {
+  return signupsMode(env) !== 'open';
+}
+
 // ── Approved users for run features (run-status-and-sweeper D9) ────────────
 
 /** The approved users' emails, ASCII-normalized: the bootstrap owner first (a grant never locks
@@ -89,6 +107,58 @@ export function runFeatureEmails(env: Config): string[] {
  * match. */
 export function runFeatureAllowed(env: Config, user: { email: string }): boolean {
   return runFeatureEmails(env).some((e) => bootstrapEmailMatch(user.email, e) === true);
+}
+
+// ── Claude CLI allowlist (ai-sdk-agent-harness D1, D2) ─────────────────────
+
+/** Whether `user` may use the operator's Claude CLI now: `CLAUDE_CLI_PATH` is set and their email
+ * matches a `CLAUDE_CLI_EMAILS` entry (comma-separated, each trimmed, blanks dropped) under the
+ * bootstrap owner's exact-ASCII rule. Unlike `RUN_FEATURE_EMAILS`, the bootstrap owner is NOT
+ * implicitly listed: the list names exactly who may use the operator's subscription. */
+export function claudeCliAllowed(env: Config, user: { email: string }): boolean {
+  if (!aiChatConfigured(env)) return false;
+  return (env.CLAUDE_CLI_EMAILS || '')
+    .split(',')
+    .some((e) => bootstrapEmailMatch(user.email, e) === true);
+}
+
+/** An integer from `raw` within `[min, max]`, else `fallback` (blank, non-numeric, non-integer or
+ * out of range; ai-sdk-agent-harness D3 "Valid ranges"). */
+function intInRange(raw: string | undefined, min: number, max: number, fallback: number): number {
+  const text = (raw || '').trim();
+  if (!/^\d+$/.test(text)) return fallback;
+  const n = Number(text);
+  return Number.isSafeInteger(n) && n >= min && n <= max ? n : fallback;
+}
+
+/** A positive integer from `raw`, else `fallback` (blank, non-numeric, non-integer, ≤ 0). */
+function positiveInt(raw: string | undefined, fallback: number): number {
+  const n = Number((raw || '').trim());
+  return Number.isInteger(n) && n > 0 ? n : fallback;
+}
+
+/** AI SDK chat turn limits (ai-sdk-agent-harness D3 "Limits"): steps (default 8, valid 1–50) and
+ * the per-turn token budget (default 400 000). Chat's per-step output cap is fixed at 4000. */
+export function aiChatSdkLimits(env: Config): { maxSteps: number; maxTotalTokens: number } {
+  return {
+    maxSteps: intInRange(env.AI_CHAT_MAX_STEPS, 1, 50, 8),
+    maxTotalTokens: positiveInt(env.AI_CHAT_MAX_TOKENS, 400_000),
+  };
+}
+
+/** AI SDK generation turn limits (topics and events; D3 "Limits"): steps (default 40, valid
+ * 1–100), the per-turn token budget (default 3 000 000) and the per-step output cap
+ * `GENERATE_MAX_OUTPUT_TOKENS` (default 16 000, valid 1 000–128 000). */
+export function generateSdkLimits(env: Config): {
+  maxSteps: number;
+  maxTotalTokens: number;
+  maxOutputTokens: number;
+} {
+  return {
+    maxSteps: intInRange(env.GENERATE_MAX_STEPS, 1, 100, 40),
+    maxTotalTokens: positiveInt(env.GENERATE_MAX_TOKENS, 3_000_000),
+    maxOutputTokens: intInRange(env.GENERATE_MAX_OUTPUT_TOKENS, 1000, 128_000, 16_000),
+  };
 }
 
 export function sessionTtlDays(env: Config): number {
@@ -251,6 +321,40 @@ export function eventGenerateMaxInstructionBytes(env: Config): number {
 export function eventGenerateMaxInstructionEntries(env: Config): number {
   const n = Number((env.EVENT_GENERATE_MAX_INSTRUCTION_ENTRIES || '').trim());
   return Number.isInteger(n) && n > 0 ? n : 50;
+}
+
+// ── Wiki update (show-wiki-ai, wiki-generation "Wiki update bounds") ───────
+// `wiki/generate` shares the AI gates and the per-session slot, but a run reads wiki pages as well
+// as the whole transcript and writes whole pages, so it has bounds of its own. The defaults equal
+// ai-runtime's `WIKI_GENERATE_DEFAULTS` (pinned by env.test.ts).
+
+/** Per-turn timeout in seconds for a wiki update, on both routes (default 900). Non-numeric or
+ * non-positive falls back to the default. */
+export function wikiGenerateTimeoutSec(env: Config): number {
+  const n = Number((env.WIKI_GENERATE_TIMEOUT_SEC || '').trim());
+  return Number.isFinite(n) && n > 0 ? n : 900;
+}
+
+/** Per-turn CLI cost ceiling in USD for a wiki update (default 5.0). Non-numeric or non-positive
+ * falls back to the default. */
+export function wikiGenerateMaxBudgetUsd(env: Config): number {
+  const n = Number((env.WIKI_GENERATE_MAX_BUDGET_USD || '').trim());
+  return Number.isFinite(n) && n > 0 ? n : 5.0;
+}
+
+/** AI SDK wiki turn limits: steps (`WIKI_GENERATE_MAX_STEPS`, default 80, valid 1–200), the
+ * per-turn token budget (`WIKI_GENERATE_MAX_TOKENS`, default 6 000 000), and generation's per-step
+ * output cap (`GENERATE_MAX_OUTPUT_TOKENS`, as `generateSdkLimits`). */
+export function wikiSdkLimits(env: Config): {
+  maxSteps: number;
+  maxTotalTokens: number;
+  maxOutputTokens: number;
+} {
+  return {
+    maxSteps: intInRange(env.WIKI_GENERATE_MAX_STEPS, 1, 200, 80),
+    maxTotalTokens: positiveInt(env.WIKI_GENERATE_MAX_TOKENS, 6_000_000),
+    maxOutputTokens: generateSdkLimits(env).maxOutputTokens,
+  };
 }
 
 // ── AI v2 dashboards (ai-v2-dashboards, design D9) ──────────────────────────

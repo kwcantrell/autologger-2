@@ -2,11 +2,12 @@
 // container files via mediabunny (pure TS, no ffmpeg/WebCodecs). Packets are
 // copied — never decoded or re-encoded. Each segment is probed by bytes
 // (never trusted by mime_type/extension) and classified into one of four
-// families: Opus, AAC, PCM, MP3. Segments are grouped in input order; a family
+// families: Opus, AAC, PCM, FLAC, MP3. Segments are grouped in input order; a family
 // or stream-parameter (sample rate / channel count) change starts a new
 // sub-group rather than failing the run. Unreadable/unparseable/unsupported
 // segments are skipped, not fatal. Opus groups write WebM, AAC groups write
-// MP4, PCM groups write WAVE — one packet loop shared by those three, spooled
+// MP4, PCM groups write WAVE, FLAC groups write FLAC (the lossless storage
+// format WAV blobs are converted to) — one packet loop shared by those four, spooled
 // through temp files (FilePathSource/FilePathTarget) — no BufferTarget, so
 // callers never hold a whole session's audio in memory. MP3 cannot be
 // packet-concatenated here (no container remux target); each MP3 segment is
@@ -15,7 +16,7 @@
 // Consumed by scripts/merge-session-audio.ts and (transcript generation) the
 // transcribe router; not part of the HTTP surface itself.
 
-import { mkdir } from 'node:fs/promises';
+import { mkdir, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   ALL_FORMATS,
@@ -24,6 +25,7 @@ import {
   EncodedPacketSink,
   FilePathSource,
   FilePathTarget,
+  FlacOutputFormat,
   Input,
   type InputAudioTrack,
   Mp4OutputFormat,
@@ -33,8 +35,9 @@ import {
   WavOutputFormat,
   WebMOutputFormat,
 } from 'mediabunny';
+import { parseFlacFrameHeader, renumberFlacFrame } from './flacFrames';
 
-export type CodecFamily = 'opus' | 'aac' | 'pcm' | 'mp3';
+export type CodecFamily = 'opus' | 'aac' | 'pcm' | 'flac' | 'mp3';
 
 /** One input segment's position within its group's output file. */
 export interface SegmentOffset {
@@ -54,7 +57,22 @@ export interface MergedGroup {
 
 export interface SkippedSegment {
   path: string;
+  /** `missing`: no file at the path (a listed row without bytes; transcript generation fails the
+   * run on it, media-worker D9). `unreadable`: present but unparseable, trackless or outside the
+   * supported families (skipped, the reconciliation posture). */
+  kind: 'missing' | 'unreadable';
   reason: string;
+}
+
+/** True when `path` names no file (`ENOENT`/`ENOTDIR`); other stat errors are left to the probe. */
+async function isMissingPath(path: string): Promise<boolean> {
+  try {
+    await stat(path);
+    return false;
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    return code === 'ENOENT' || code === 'ENOTDIR';
+  }
 }
 
 export interface MergeAudioSegmentsResult {
@@ -74,12 +92,14 @@ const FAMILY_CONTAINER: Record<
   opus: { ext: 'webm', makeFormat: () => new WebMOutputFormat() },
   aac: { ext: 'mp4', makeFormat: () => new Mp4OutputFormat() },
   pcm: { ext: 'wav', makeFormat: () => new WavOutputFormat() },
+  flac: { ext: 'flac', makeFormat: () => new FlacOutputFormat() },
 };
 
 function classifyFamily(codec: AudioCodec): CodecFamily | null {
   if (codec === 'opus') return 'opus';
   if (codec === 'aac') return 'aac';
   if (codec === 'mp3') return 'mp3';
+  if (codec === 'flac') return 'flac';
   if (PCM_CODECS.includes(codec)) return 'pcm';
   return null;
 }
@@ -89,36 +109,94 @@ interface ProbedSegment {
   codec: AudioCodec;
   family: CodecFamily;
   config: DecoderConfig;
+  /** FLAC only (from STREAMINFO), else null. */
+  bitsPerSample: number | null;
+  /** FLAC only: STREAMINFO total samples (0 = unknown), else null. */
+  totalSamples: number | null;
+}
+
+/** Sample numbers in a FLAC frame header must stay below 2^31 (see ./flacFrames.ts). */
+export const FLAC_MAX_GROUP_SAMPLES = 2 ** 31 - 1;
+
+function descriptionBytes(config: DecoderConfig): Uint8Array | null {
+  const d = config.description;
+  if (!d) return null;
+  return ArrayBuffer.isView(d)
+    ? new Uint8Array(d.buffer, d.byteOffset, d.byteLength)
+    : new Uint8Array(d);
+}
+
+/** FLAC STREAMINFO total samples (36 bits after the bit depth), 0 when unknown. */
+function flacTotalSamples(config: DecoderConfig): number | null {
+  const bytes = descriptionBytes(config);
+  if (!bytes || bytes.length < 26) return null;
+  return (
+    (bytes[21] & 0x0f) * 2 ** 32 +
+    ((bytes[22] << 24) >>> 0) +
+    (bytes[23] << 16) +
+    (bytes[24] << 8) +
+    bytes[25]
+  );
+}
+
+/** FLAC bits per sample from the decoder config's STREAMINFO description (`fLaC`, block
+ * header, then STREAMINFO: 167 bits precede the 5-bit field), or null when absent. The codec
+ * string is `flac` for every bit depth, so the run partition compares this too. */
+function flacBitsPerSample(config: DecoderConfig): number | null {
+  const bytes = descriptionBytes(config);
+  if (!bytes || bytes.length < 22) return null;
+  // Bits 167..171: the low bit of byte 20 and the top 4 bits of byte 21.
+  return (((bytes[20] & 0x01) << 4) | (bytes[21] >> 4)) + 1;
 }
 
 /** Probe one file's primary audio track. Returns null (with a skip reason
  * pushed to `skipped`) for anything unreadable, unparseable, trackless, or
- * outside the three supported families — the caller's mime_type/extension is
+ * outside the supported families — the caller's mime_type/extension is
  * never trusted. */
 async function probeSegment(
   path: string,
   skipped: SkippedSegment[],
 ): Promise<ProbedSegment | null> {
+  if (await isMissingPath(path)) {
+    skipped.push({ path, kind: 'missing', reason: 'blob missing from the blob store' });
+    return null;
+  }
   const input = new Input({ formats: ALL_FORMATS, source: new FilePathSource(path) });
   try {
     const track = await input.getPrimaryAudioTrack();
     if (!track) {
-      skipped.push({ path, reason: 'no audio track found' });
+      skipped.push({ path, kind: 'unreadable', reason: 'no audio track found' });
       return null;
     }
     const config = await track.getDecoderConfig();
     if (!config || !track.codec) {
-      skipped.push({ path, reason: 'unsupported or unknown codec' });
+      skipped.push({ path, kind: 'unreadable', reason: 'unsupported or unknown codec' });
       return null;
     }
     const family = classifyFamily(track.codec);
     if (!family) {
-      skipped.push({ path, reason: `unsupported codec family (${track.codec})` });
+      skipped.push({
+        path,
+        kind: 'unreadable',
+        reason: `unsupported codec family (${track.codec})`,
+      });
       return null;
     }
-    return { path, codec: track.codec, family, config };
+    const isFlac = family === 'flac';
+    return {
+      path,
+      codec: track.codec,
+      family,
+      config,
+      bitsPerSample: isFlac ? flacBitsPerSample(config) : null,
+      totalSamples: isFlac ? flacTotalSamples(config) : null,
+    };
   } catch (err) {
-    skipped.push({ path, reason: err instanceof Error ? err.message : String(err) });
+    skipped.push({
+      path,
+      kind: 'unreadable',
+      reason: err instanceof Error ? err.message : String(err),
+    });
     return null;
   } finally {
     input.dispose();
@@ -126,10 +204,12 @@ async function probeSegment(
 }
 
 /** Partition probed segments into contiguous runs (input order preserved)
- * sharing family + codec + sample rate + channel count. A change in any of
- * those starts a new sub-group instead of failing the run. */
-function partitionRuns(probed: ProbedSegment[]): ProbedSegment[][] {
+ * sharing family + codec + sample rate + channel count (+ FLAC bit depth). A
+ * change in any of those starts a new sub-group instead of failing the run, as
+ * does a FLAC run that would reach {@link FLAC_MAX_GROUP_SAMPLES}. Exported for tests. */
+export function partitionRuns(probed: ProbedSegment[]): ProbedSegment[][] {
   const runs: ProbedSegment[][] = [];
+  let flacSamples = 0;
   for (const seg of probed) {
     const run = runs[runs.length - 1];
     const last = run?.[run.length - 1];
@@ -138,11 +218,60 @@ function partitionRuns(probed: ProbedSegment[]): ProbedSegment[][] {
       last.family === seg.family &&
       last.codec === seg.codec &&
       last.config.sampleRate === seg.config.sampleRate &&
-      last.config.numberOfChannels === seg.config.numberOfChannels;
+      last.config.numberOfChannels === seg.config.numberOfChannels &&
+      (seg.family !== 'flac' ||
+        (last.bitsPerSample === seg.bitsPerSample &&
+          flacSamples + (seg.totalSamples ?? 0) <= FLAC_MAX_GROUP_SAMPLES));
     if (run && sameParams) run.push(seg);
-    else runs.push([seg]);
+    else {
+      runs.push([seg]);
+      flacSamples = 0;
+    }
+    flacSamples += seg.totalSamples ?? 0;
   }
   return runs;
+}
+
+/** Samples (at 48 kHz) in one Opus packet, from its TOC byte (RFC 6716 §3.1); null when the
+ * packet is too short to tell. */
+export function opusPacketSamples(data: Uint8Array): number | null {
+  if (data.length < 1) return null;
+  const config = data[0] >> 3;
+  // Frame size in 48 kHz samples: SILK 10/20/40/60 ms, hybrid 10/20 ms, CELT 2.5/5/10/20 ms.
+  const frame =
+    config < 12
+      ? [480, 960, 1920, 2880][config % 4]
+      : config < 16
+        ? [480, 960][config % 2]
+        : [120, 240, 480, 960][config % 4];
+  const code = data[0] & 0x03;
+  let frames: number;
+  if (code === 0) frames = 1;
+  else if (code === 1 || code === 2) frames = 2;
+  else {
+    if (data.length < 2) return null;
+    frames = data[1] & 0x3f;
+  }
+  return frames * frame;
+}
+
+/** A packet's exact duration in seconds: Opus from its TOC (Opus timestamps are 48 kHz), else the
+ * container's duration, else (an undurationed last block) the previous packet's, else an AAC
+ * frame. */
+function exactPacketDuration(
+  family: Exclude<CodecFamily, 'mp3' | 'flac'>,
+  data: Uint8Array,
+  containerDuration: number,
+  previous: number,
+  sampleRate: number,
+): number {
+  if (family === 'opus') {
+    const samples = opusPacketSamples(data);
+    if (samples !== null && samples > 0) return samples / 48_000;
+  }
+  if (containerDuration > 0) return containerDuration;
+  if (previous > 0) return previous;
+  return family === 'aac' ? 1024 / sampleRate : 0;
 }
 
 /** Packet-copy one param-homogeneous run into a single output file. The
@@ -153,38 +282,87 @@ async function mergeGroup(
   run: ProbedSegment[],
   family: Exclude<CodecFamily, 'mp3'>,
   outPath: string,
-): Promise<MergedGroup> {
+  skipped: SkippedSegment[],
+): Promise<MergedGroup | null> {
   const { makeFormat } = FAMILY_CONTAINER[family];
   const output = new Output({ format: makeFormat(), target: new FilePathTarget(outPath) });
   const source = new EncodedAudioPacketSource(run[0].codec);
   output.addAudioTrack(source);
 
   const segments: SegmentOffset[] = [];
+  const sampleRate = run[0].config.sampleRate;
   let packets = 0;
   let offset = 0;
   let firstPacketOfGroup = true;
+  // FLAC frames carry their stream position; see ./flacFrames.ts.
+  let flacSampleNumber = 0;
 
   try {
     await output.start();
     for (const seg of run) {
       const input = new Input({ formats: ALL_FORMATS, source: new FilePathSource(seg.path) });
       try {
-        const track = await input.getPrimaryAudioTrack();
-        if (!track) throw new Error(`${seg.path}: no audio track found on merge pass.`);
-        const sink = new EncodedPacketSink(track);
-        let firstTimestamp: number | null = null;
+        const packetsBefore = packets;
         const segmentStart = offset;
         let end = offset;
-        for await (const packet of sink.packets()) {
-          firstTimestamp ??= packet.timestamp;
-          const timestamp = packet.timestamp - firstTimestamp + offset;
-          await source.add(
-            packet.clone({ timestamp }),
-            firstPacketOfGroup ? { decoderConfig: run[0].config } : undefined,
-          );
-          firstPacketOfGroup = false;
-          end = Math.max(end, timestamp + packet.duration);
-          packets += 1;
+        try {
+          const track = await input.getPrimaryAudioTrack();
+          if (!track) throw new Error('no audio track found on merge pass');
+          const sink = new EncodedPacketSink(track);
+          // media-worker D.8: each packet is placed at the running end of what was written, by
+          // its exact sample duration, never by the input's container times. Chrome's
+          // MediaRecorder WebM leaves its last block without a duration and rounds block times to
+          // whole milliseconds, so container times made the next input start on (or before) the
+          // previous one's last packet: non-monotonic timestamps at every seam. The inputs are
+          // continuous streams, so the running sum is also what a decoder plays.
+          let lastDuration = 0;
+          for await (const packet of sink.packets()) {
+            const timestamp = end;
+            let data: Uint8Array | undefined;
+            let duration: number;
+            if (family === 'flac') {
+              const { blockSize } = parseFlacFrameHeader(packet.data);
+              data = renumberFlacFrame(packet.data, flacSampleNumber);
+              flacSampleNumber += blockSize;
+              duration = blockSize / sampleRate;
+            } else {
+              duration = exactPacketDuration(
+                family,
+                packet.data,
+                packet.duration,
+                lastDuration,
+                sampleRate,
+              );
+            }
+            lastDuration = duration;
+            await source.add(
+              packet.clone(data ? { timestamp, duration, data } : { timestamp, duration }),
+              firstPacketOfGroup ? { decoderConfig: run[0].config } : undefined,
+            );
+            firstPacketOfGroup = false;
+            end = timestamp + duration;
+            packets += 1;
+          }
+        } catch (err) {
+          // Nothing of this segment written yet: skip it like any unreadable segment. Once
+          // some of its packets are in the output it cannot be taken back: fail the group
+          // (mergeAudioSegments then retries its segments one by one).
+          if (packets !== packetsBefore) throw err;
+          skipped.push({
+            path: seg.path,
+            kind: 'unreadable',
+            reason: err instanceof Error ? err.message : String(err),
+          });
+          continue;
+        }
+        if (packets === packetsBefore) {
+          // e.g. mediabunny 1.50.8 misreads the FLAC "rate in kHz" frame-header code (12, 64 kHz)
+          skipped.push({
+            path: seg.path,
+            kind: 'unreadable',
+            reason: 'no audio packets could be read',
+          });
+          continue;
         }
         segments.push({
           path: seg.path,
@@ -196,10 +374,16 @@ async function mergeGroup(
         input.dispose();
       }
     }
+    if (packets === 0) {
+      await output.cancel();
+      await rm(outPath, { force: true });
+      return null;
+    }
     source.close();
     await output.finalize();
   } catch (err) {
     await output.cancel();
+    await rm(outPath, { force: true });
     throw err;
   }
 
@@ -228,7 +412,7 @@ async function passThroughMp3Group(seg: ProbedSegment): Promise<MergedGroup> {
 
 /** Probe, classify, and packet-copy-concatenate `inputPaths` (in ordinal
  * order) into one output file per codec-family+params run, written under
- * `outDir` as `group-<index>-<family>.<ext>` (webm/mp4/wav). MP3 segments
+ * `outDir` as `group-<index>-<family>.<ext>` (webm/mp4/wav/flac). MP3 segments
  * pass through as one group per file (source path). Unreadable or
  * unsupported segments are skipped rather than failing the run; a
  * stream-parameter change within a family starts a new group instead of
@@ -260,7 +444,38 @@ export async function mergeAudioSegments(
     }
     const outPath = join(outDir, `group-${mergeIndex}-${family}.${FAMILY_CONTAINER[family].ext}`);
     mergeIndex += 1;
-    groups.push(await mergeGroup(run, family, outPath));
+    const runSkipped: SkippedSegment[] = [];
+    try {
+      const group = await mergeGroup(run, family, outPath, runSkipped);
+      if (group) groups.push(group);
+      skipped.push(...runSkipped);
+    } catch (err) {
+      if (run.length === 1) {
+        skipped.push({
+          path: run[0].path,
+          kind: 'unreadable',
+          reason: err instanceof Error ? err.message : String(err),
+        });
+        continue;
+      }
+      // A segment failed part-way: merge each segment of the run on its own instead.
+      for (const seg of run) {
+        const one = join(outDir, `group-${mergeIndex}-${family}.${FAMILY_CONTAINER[family].ext}`);
+        mergeIndex += 1;
+        const oneSkipped: SkippedSegment[] = [];
+        try {
+          const group = await mergeGroup([seg], family, one, oneSkipped);
+          if (group) groups.push(group);
+          skipped.push(...oneSkipped);
+        } catch (e) {
+          skipped.push({
+            path: seg.path,
+            kind: 'unreadable',
+            reason: e instanceof Error ? e.message : String(e),
+          });
+        }
+      }
+    }
   }
 
   return { groups, skipped };

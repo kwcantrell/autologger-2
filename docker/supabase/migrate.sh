@@ -28,6 +28,12 @@ case ${APP_DB_PASSWORD-} in
   '' | *[!0-9a-f]*) refuse "APP_DB_PASSWORD is unset or not lowercase hexadecimal (create it with docker/scripts/supabase-keys.mjs)" ;;
 esac
 [ "${#APP_DB_PASSWORD}" -ge 32 ] || refuse "APP_DB_PASSWORD is shorter than 32 characters"
+# The media worker role's password (media-worker D1), checked the same way: a stack whose
+# MEDIA_DB_PASSWORD is missing is refused before anything is applied.
+case ${MEDIA_DB_PASSWORD-} in
+  '' | *[!0-9a-f]*) refuse "MEDIA_DB_PASSWORD is unset or not lowercase hexadecimal (create it with docker/scripts/supabase-keys.mjs)" ;;
+esac
+[ "${#MEDIA_DB_PASSWORD}" -ge 32 ] || refuse "MEDIA_DB_PASSWORD is shorter than 32 characters"
 
 # Phase 2: the history table (Supabase CLI shape), then one transaction per unrecorded file.
 psql -X -q -v ON_ERROR_STOP=1 -c 'create schema if not exists supabase_migrations' \
@@ -60,11 +66,13 @@ for f in $files; do
 done
 echo "$n applied"
 
-# Phase 3: the app role's LOGIN and password, from the environment (never argv). Statement logging
+# Phase 3: the app role's and the media worker role's LOGIN and password, from the environment
+# (never argv), in one transaction. Statement logging
 # (log_statement is `ddl` for postgres on this image) and pg_stat_statements utility tracking are
 # off for this transaction, so the plaintext reaches neither the log nor the stats view.
 cat >/tmp/approle.sql <<'SQL'
 \set apppw `printf %s "$APP_DB_PASSWORD"`
+\set mediapw `printf %s "$MEDIA_DB_PASSWORD"`
 set local log_statement = 'none';
 set local pg_stat_statements.track_utility = off;
 select exists (select from pg_roles where rolname = 'autologger_app') as has_role \gset
@@ -74,6 +82,13 @@ alter role autologger_app with login password :'apppw';
 \else
 \echo app role absent; password not set
 \endif
+select exists (select from pg_roles where rolname = 'autologger_media') as has_media \gset
+\if :has_media
+alter role autologger_media with login password :'mediapw';
+\echo media role password set
+\else
+\echo media role absent; password not set
+\endif
 SQL
 psql -X -q -v ON_ERROR_STOP=1 --single-transaction -f /tmp/approle.sql ||
-  { echo "migrate: setting the app role's password failed" >&2; exit 1; }
+  { echo "migrate: setting the role passwords failed" >&2; exit 1; }

@@ -1,4 +1,4 @@
-import { type MutableRefObject, useState } from 'react';
+import { type MutableRefObject, useCallback, useState } from 'react';
 import { Button } from '../../../shared/components/ui/button';
 
 // Shared SSE-turn machinery for the two AI rails (AiChat.tsx and
@@ -241,7 +241,11 @@ export function useSseTurn<Extra extends { id: string; role: string } = never>({
     abortControllerRef.current?.abort();
   }
 
-  return { input, setInput, notConfigured, sendMessage, stop };
+  /** Leaves the not-configured state (ai-sdk-agent-harness D8: AiChat calls it once the user
+   * saves a language model, without a reload). */
+  const resetNotConfigured = useCallback(() => setNotConfigured(false), []);
+
+  return { input, setInput, notConfigured, resetNotConfigured, sendMessage, stop };
 }
 
 export interface SseTurnComposerProps {

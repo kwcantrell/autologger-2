@@ -8,14 +8,18 @@
 
 import type { CatalogRoot } from '@autologger/ports';
 import { Catalog, type CatalogFacade, UNBOUND_DB } from './catalog';
+import type { WikiLinksParser } from './wikiStore';
 
 export * from './authStore';
 export * from './catalog';
 export * from './profileAssembler';
+export * from './searchStore';
 export * from './sessionIndexStore';
 export * from './sessionTitleDerivation';
 export * from './showsStore';
 export * from './studioRegistry';
+export * from './wikiStore';
+export * from './wikiSuggestionStore';
 
 /**
  * Sanctioned non-composition-root construction path (design D3): `Catalog`
@@ -24,7 +28,12 @@ export * from './studioRegistry';
  * (catalog-roles D7): every store call, `tx` and `init()` reject with
  * `CatalogUnboundError` until `forUser(id)` or `system(reason)` derives a
  * bound catalog from it (`unbound()` derives another unbound one).
+ * `wikiLinks` is the wiki link parser (show-wiki D4), carried to every
+ * catalog derived from this one.
  */
-export function createCatalog(root: CatalogRoot): CatalogFacade {
-  return new Catalog(UNBOUND_DB, { root });
+export function createCatalog(
+  root: CatalogRoot,
+  opts: { wikiLinks?: WikiLinksParser } = {},
+): CatalogFacade {
+  return new Catalog(UNBOUND_DB, { root, wikiLinks: opts.wikiLinks });
 }

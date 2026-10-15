@@ -131,6 +131,70 @@ export const audioSegmentWaveformBodySchema = z.object({
 });
 export type AudioSegmentWaveformBody = z.infer<typeof audioSegmentWaveformBodySchema>;
 
+// -- media-worker (design D6, D12, D16) --------------------------------------
+
+/** The largest resumable upload (D12): equal to the local-audio-import cap. The server's own
+ * constant (`UPLOAD_MAX_BYTES` in `@autologger/storage/mediaLimits`) is the same value; the route
+ * answers `413` above it before this schema runs. */
+export const AUDIO_UPLOAD_MAX_BYTES = 1500 * 1024 * 1024;
+
+/** `POST /api/sessions/:sessionId/audio/uploads` (D12). The route checks the exact part count
+ * (`ceil(size_bytes / part_size)`) against its own part size. */
+export const audioUploadCreateBodySchema = z.object({
+  content_type: z.string().trim().min(1).max(255),
+  size_bytes: z.number().int().min(1).max(AUDIO_UPLOAD_MAX_BYTES),
+  part_sha256: z
+    .array(z.string().regex(/^[0-9a-f]{64}$/))
+    .min(1)
+    .max(10000),
+});
+export type AudioUploadCreateBody = z.infer<typeof audioUploadCreateBodySchema>;
+
+/** `POST /api/sessions/:sessionId/audio/recordings/:recordingOrdinal/finalize` (D6): the windows
+ * (`started_at_utc`) the client recorded. */
+export const audioFinalizeBodySchema = z.object({
+  chunks: z.array(z.string().min(1).max(64)).min(1).max(1000),
+});
+export type AudioFinalizeBody = z.infer<typeof audioFinalizeBodySchema>;
+
+/** The finalize route's answer (D6); a response shape, for the web client's type. */
+export const audioFinalizeResponseSchema = z.strictObject({
+  ok: z.literal(true),
+  merge: z.enum(['queued', 'not-needed', 'already-queued', 'waiting']),
+});
+export type AudioFinalizeResponse = z.infer<typeof audioFinalizeResponseSchema>;
+
+/** One seam of a merged segment in the segment dict (D7, D16). */
+export const audioSegmentSeamSchema = z.strictObject({
+  offset_ms: z.number().int().min(0),
+  started_at_utc: z.string(),
+  ended_at_utc: z.string().nullable(),
+});
+
+/** The audio segment dict (`GET`/`POST …/audio/segments`, D16): the 9 frozen keys plus
+ * `duration_ms`, `media_status` and `seams`. A response shape, pinned for the server's dict and
+ * the captured fixtures. */
+export const audioSegmentDictSchema = z.strictObject({
+  id: z.string(),
+  ordinal: z.number().int(),
+  started_at_utc: z.string().nullable(),
+  ended_at_utc: z.string().nullable(),
+  mime_type: z.string(),
+  recording_ordinal: z.number().int().nullable(),
+  url: z.string(),
+  waveform_peaks: z.array(z.number()).nullable(),
+  waveform_db_floor: z.number().nullable(),
+  duration_ms: z.number().int().min(0).nullable(),
+  media_status: z.enum(['pending', 'done', 'failed']).nullable(),
+  seams: z.array(audioSegmentSeamSchema).nullable(),
+});
+export type AudioSegmentDict = z.infer<typeof audioSegmentDictSchema>;
+
+/** The segment dict's keys, in the server's order. */
+export const AUDIO_SEGMENT_DICT_KEYS = Object.keys(
+  audioSegmentDictSchema.shape,
+) as readonly (keyof AudioSegmentDict)[];
+
 export const adminStudioCreateBodySchema = z.object({
   id: z.string().min(2).max(63),
   display_name: z.string().min(1).max(200),
@@ -202,12 +266,43 @@ export type DeleteVersionQuery = z.infer<typeof deleteVersionQuerySchema>;
 // `message` is 1–8000 chars AFTER trimming (whitespace-only ⇒ invalid); the
 // trimmed value is what the turn runner delivers to the CLI via stdin.
 // `claude_session_id`, when present, is a non-empty string (ownership is checked
-// against the per-session issued-id set in the turn runner — Phase 3).
+// against the per-session issued-id set in the turn runner — Phase 3). `null` is
+// accepted and means absent, so a client that echoes an AI SDK turn's `done` value
+// verbatim never gets 422 (ai-sdk-agent-harness D6).
+// `history` (ai-sdk-agent-harness D6): the earlier conversation for the AI SDK
+// route, at most 40 user/assistant entries, each 1-8000 characters after trimming,
+// at most 64 000 characters in total. The CLI route ignores it.
+export const CHAT_HISTORY_MAX_ENTRIES = 40;
+export const CHAT_HISTORY_MAX_CHARS = 64_000;
+export const chatHistoryEntrySchema = z.object({
+  role: z.enum(['user', 'assistant']),
+  text: z.string().trim().min(1).max(8000),
+});
 export const chatRequestSchema = z.object({
   message: z.string().trim().min(1).max(8000),
-  claude_session_id: z.string().min(1).optional(),
+  claude_session_id: z
+    .string()
+    .min(1)
+    .nullish()
+    .transform((v) => v ?? undefined),
+  history: z
+    .array(chatHistoryEntrySchema)
+    .max(CHAT_HISTORY_MAX_ENTRIES)
+    .refine(
+      (h) => h.reduce((n, e) => n + e.text.length, 0) <= CHAT_HISTORY_MAX_CHARS,
+      `history must hold at most ${CHAT_HISTORY_MAX_CHARS} characters in total`,
+    )
+    .optional(),
 });
 export type ChatRequest = z.infer<typeof chatRequestSchema>;
+export type ChatHistoryEntry = z.infer<typeof chatHistoryEntrySchema>;
+
+// The chat stream's terminal `done` payload (ai-sdk-agent-harness D6): the CLI
+// session id on a Claude CLI turn, null on an AI SDK turn.
+export const chatDoneEventSchema = z.strictObject({
+  claude_session_id: z.string().min(1).nullable(),
+});
+export type ChatDoneEvent = z.infer<typeof chatDoneEventSchema>;
 
 // -- ai-v2-dashboards: the design-turn request body ---------------------------
 // Deliberately mirrors chatRequestSchema's shape: `message` is 1-8000 chars
@@ -321,6 +416,150 @@ export const companionDeviceCreatedResponseSchema = z.strictObject({
 });
 export type CompanionDeviceCreatedResponse = z.infer<typeof companionDeviceCreatedResponseSchema>;
 
+// -- byo-ai-providers (design D4; api-contract-freeze "Provider credential routes") -------------
+// `PUT /api/me/providers/:kind` bodies and the response shapes. The base URL rules depend on the
+// server's provider mode (provider-credentials "LLM base URLs are restricted in production mode"),
+// so the body schema is built per kind and mode. A key or model is printable ASCII without spaces
+// (provider-credentials), so it can never form an invalid header. A NUL anywhere in the body is
+// answered by the route with the existing NUL `400` before this schema runs.
+
+export const providerKindSchema = z.enum(['llm', 'stt']);
+/** The language model providers with a fixed API host (owner decision 10). */
+export const LLM_FIXED_HOST_PROVIDERS = ['anthropic', 'openai', 'google'] as const;
+export const LLM_PROVIDERS = ['openai-compatible', ...LLM_FIXED_HOST_PROVIDERS] as const;
+export type LlmProvider = (typeof LLM_PROVIDERS)[number];
+/** The keyless `llm` provider: the operator's Claude CLI, for allowlisted accounts only
+ * (ai-sdk-agent-harness D2). Its stored model is the fixed value of the same name. */
+export const CLAUDE_CLI_PROVIDER = 'claude-cli' as const;
+export type ProviderKindWire = z.infer<typeof providerKindSchema>;
+
+export const PROVIDER_BASE_URL_MAX = 2048;
+export const PROVIDER_MODEL_MAX = 200;
+export const PROVIDER_KEY_MIN = 8;
+export const PROVIDER_KEY_MAX = 4096;
+const PRINTABLE_NO_SPACE = /^[\x21-\x7E]+$/;
+const printable = 'must be printable ASCII without spaces';
+
+const providerModelSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(PROVIDER_MODEL_MAX)
+  .regex(PRINTABLE_NO_SPACE, printable);
+const providerApiKeySchema = z
+  .string()
+  .trim()
+  .min(PROVIDER_KEY_MIN)
+  .max(PROVIDER_KEY_MAX)
+  .regex(PRINTABLE_NO_SPACE, printable);
+
+/** Why a base URL is refused, or null when it is acceptable in this mode. */
+export function providerBaseUrlProblem(raw: string, production: boolean): string | null {
+  if (raw.length > PROVIDER_BASE_URL_MAX)
+    return `must be at most ${PROVIDER_BASE_URL_MAX} characters`;
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    return 'must be an absolute http or https URL';
+  }
+  if (u.protocol !== 'https:' && u.protocol !== 'http:')
+    return 'must be an absolute http or https URL';
+  if (u.username || u.password) return 'must not contain a user name or password';
+  if (u.search || raw.includes('?')) return 'must not contain a query string';
+  if (u.hash || raw.includes('#')) return 'must not contain a fragment';
+  if (production && u.protocol !== 'https:') return 'must use https';
+  if (production && u.port !== '') return 'must use the default https port (443)';
+  return null;
+}
+
+/** The `PUT` body for `kind`, under the server's provider mode. `api_key` is optional here; the
+ * route decides when it is required (no stored key, a new provider, or a new base URL origin). */
+export function providerPutBodySchema(kind: ProviderKindWire, mode: { production: boolean }) {
+  if (kind === 'stt') {
+    return z.object({
+      provider: z.literal('deepgram'),
+      base_url: z.null().optional(),
+      model: providerModelSchema,
+      api_key: providerApiKeySchema.optional(),
+    });
+  }
+  return z.discriminatedUnion('provider', [
+    z.object({
+      provider: z.literal('openai-compatible'),
+      base_url: z
+        .string()
+        .trim()
+        .superRefine((v, ctx) => {
+          const problem = providerBaseUrlProblem(v, mode.production);
+          if (problem) ctx.addIssue({ code: 'custom', message: `base_url ${problem}` });
+        }),
+      model: providerModelSchema,
+      api_key: providerApiKeySchema.optional(),
+    }),
+    // Fixed-host providers (owner decision 10): the key goes only to the provider's own API host.
+    z.object({
+      provider: z.enum(LLM_FIXED_HOST_PROVIDERS),
+      base_url: z.null().optional(),
+      model: providerModelSchema,
+      api_key: providerApiKeySchema.optional(),
+    }),
+    // The operator's Claude CLI (ai-sdk-agent-harness D2): exactly `{provider}`; any `api_key`,
+    // `base_url` or `model`, null included, is refused. The route checks the allowlist.
+    // The three fields are typed as always-absent, so every variant reads them alike.
+    z.strictObject({
+      provider: z.literal(CLAUDE_CLI_PROVIDER),
+      base_url: z.never().optional(),
+      model: z.never().optional(),
+      api_key: z.never().optional(),
+    }),
+  ]);
+}
+export type ProviderPutBody =
+  | { provider: string; base_url?: string | null; model: string; api_key?: string }
+  | { provider: typeof CLAUDE_CLI_PROVIDER };
+
+/** A stored credential on the wire. Never the key or its ciphertext; only its last four. */
+export const providerCredentialSchema = z.strictObject({
+  kind: providerKindSchema,
+  provider: z.string().min(1),
+  base_url: z.string().nullable(),
+  model: z.string().min(1),
+  /** Null only for the keyless `claude-cli` provider (ai-sdk-agent-harness D2). */
+  key_last4: z.string().min(1).max(4).nullable(),
+  updated_at: z.iso.datetime(),
+});
+export type ProviderCredentialWire = z.infer<typeof providerCredentialSchema>;
+
+export const providersResponseSchema = z.strictObject({
+  llm: providerCredentialSchema.nullable(),
+  stt: providerCredentialSchema.nullable(),
+  run_features_allowed: z.boolean(),
+  /** Whether the caller may use the Claude CLI now (ai-sdk-agent-harness D2). */
+  claude_cli_allowed: z.boolean(),
+});
+export type ProvidersResponse = z.infer<typeof providersResponseSchema>;
+
+export const providerTestResponseSchema = z.strictObject({
+  ok: z.boolean(),
+  detail: z.string().min(1),
+});
+export type ProviderTestResponse = z.infer<typeof providerTestResponseSchema>;
+
+/** The fixed connection-test results (provider-credentials "The connection test reports without
+ * leaking"; design D5). `unexpected` takes the HTTP status. */
+export const PROVIDER_TEST_DETAIL = {
+  connected: 'Connected.',
+  rejected: 'The provider rejected the API key.',
+  modelNotFound: "Connected, but the model wasn't found.",
+  unreachable: "Couldn't reach the provider.",
+  timeout: "The provider didn't answer in time.",
+  unexpected: (status: number) => `The provider answered unexpectedly (HTTP ${status}).`,
+  unreadable: "The saved key can't be read. Enter it again.",
+  /** A `claude-cli` credential whose caller can't use the Claude CLI now (ai-sdk-agent-harness). */
+  claudeCliUnavailable: "The Claude CLI isn't available to this account.",
+} as const;
+
 // -- teams-self-serve (design D4): the /api/teams family bodies ---------------
 
 export const teamCreateBodySchema = z.object({
@@ -404,3 +643,444 @@ export const profileUpdateBodySchema = z.object({
   family_name: z.string().max(200).nullish(),
 });
 export type ProfileUpdateBody = z.infer<typeof profileUpdateBodySchema>;
+
+// -- catalog-search: GET /api/search (design D7; api-contract-freeze "Search endpoint") ---------
+// `q` is 2–200 characters after trimming, and the trimmed value is what is searched and echoed.
+// `limit` is a decimal integer 1–25 (default 5), the maximum per group. `studio_id` and `show_id`
+// narrow every group; an id the caller can't see gives empty groups, like an unknown one.
+// `session_id` (D11) returns that session's moments only, with no per-session cap, and empty
+// studios, shows and sessions; a session the caller can't see, hidden or unknown, gives the same
+// empty result. Unknown query parameters are ignored (a plain, non-strict object strips them).
+export const SEARCH_LIMIT_DEFAULT = 5;
+export const SEARCH_LIMIT_MAX = 25;
+export const SEARCH_TIMEOUT_DETAIL = 'Search timed out; try a more specific query.';
+export const SEARCH_BUSY_DETAIL = 'Search is busy; try again.';
+
+export const searchQuerySchema = z.object({
+  q: z.string().trim().min(2).max(200),
+  studio_id: z.string().optional(),
+  show_id: z.string().optional(),
+  session_id: z.string().optional(),
+  limit: z
+    .string()
+    .regex(/^(?:[1-9]|1[0-9]|2[0-5])$/)
+    .transform(Number)
+    .optional()
+    .transform((n) => n ?? SEARCH_LIMIT_DEFAULT),
+});
+export type SearchQuery = z.infer<typeof searchQuerySchema>;
+
+const searchMomentBase = {
+  session_id: z.string(),
+  session_title: z.string(),
+  show_id: z.string(),
+  id: z.string(),
+  speaker: z.string(),
+  snippet: z.string(),
+};
+
+/** The `200` body: four groups, each at most `limit` long. Snippets carry U+E000/U+E001 around
+ * hits; `sec` is a number only for a timed transcript moment, and null for topics and events.
+ * `moment_sessions` (D11) gives each session in `moments` its total matching moments, at most
+ * 1000. */
+export const searchResponseSchema = z.strictObject({
+  q: z.string(),
+  studios: z.array(z.strictObject({ id: z.string(), name: z.string() })),
+  shows: z.array(z.strictObject({ id: z.string(), name: z.string(), studio_id: z.string() })),
+  sessions: z.array(
+    z.strictObject({
+      id: z.string(),
+      title: z.string(),
+      episode: z.string(),
+      show_id: z.string(),
+      studio_id: z.string(),
+      started_at_utc: z.string(),
+      archived: z.boolean(),
+      match: z.enum(['title', 'notes']),
+      snippet: z.string().nullable(),
+    }),
+  ),
+  moments: z.array(
+    z.union([
+      z.strictObject({
+        ...searchMomentBase,
+        kind: z.literal('transcript'),
+        sec: z.number().nullable(),
+      }),
+      z.strictObject({ ...searchMomentBase, kind: z.enum(['topic', 'event']), sec: z.null() }),
+    ]),
+  ),
+  moment_sessions: z.array(
+    z.strictObject({ session_id: z.string(), total: z.number().int().min(0).max(1000) }),
+  ),
+});
+export type SearchResponseWire = z.infer<typeof searchResponseSchema>;
+
+// -- show-wiki: wiki page routes (design D6; api-contract-freeze "Wiki …" requirements) ---------
+// Limits (show-wiki "Wiki pages belong to one show"): a title is 1–200 characters after trimming;
+// a body is at most 100 000 characters; at most 50 aliases, each 1–200 characters after trimming,
+// and a `session` page has none; a title or alias holds no control character (U+0000–U+001F,
+// U+007F), checked before trimming so a trailing newline is refused too; a body holds no NUL.
+// Request bodies and queries are plain objects, so unknown keys are stripped (ignored); response
+// bodies are strict. Rules the schema can't check (a session of another show, a kind change to or
+// from `session`, merge rules, bad links) are the router's 422s.
+export const WIKI_KINDS = ['person', 'topic', 'bit', 'session'] as const;
+export const WIKI_TITLE_MAX = 200;
+export const WIKI_ALIAS_MAX = 200;
+export const WIKI_ALIASES_MAX = 50;
+export const WIKI_BODY_MAX = 100_000;
+export const WIKI_LIST_MAX = 2000;
+export const WIKI_REVISIONS_LIMIT_DEFAULT = 50;
+export const WIKI_REVISIONS_LIMIT_MAX = 100;
+
+/** The fixed `detail` strings of the wiki routes. */
+export const WIKI_DETAIL = {
+  showNotFound: 'Show not found.',
+  pageNotFound: 'Page not found.',
+  revisionNotFound: 'Revision not found.',
+  versionConflict: 'Version conflict.',
+  merged: 'Page was merged.',
+  deleted: 'Page is deleted.',
+  notDeleted: 'Page is not deleted.',
+  titleUsed: 'Title already used.',
+  sessionHasPage: 'Session already has a page.',
+} as const;
+
+export const wikiKindSchema = z.enum(WIKI_KINDS);
+export type WikiKind = z.infer<typeof wikiKindSchema>;
+
+// biome-ignore lint/suspicious/noControlCharactersInRegex: refusing control characters is the point (D6).
+const WIKI_NO_CONTROL = /^[^\u0000-\u001f\u007f]*$/;
+const wikiLineSchema = (max: number) =>
+  z
+    .string()
+    .regex(WIKI_NO_CONTROL, { message: 'must not contain control characters' })
+    .trim()
+    .min(1)
+    .max(max);
+const wikiTitleSchema = wikiLineSchema(WIKI_TITLE_MAX);
+const wikiAliasesSchema = z.array(wikiLineSchema(WIKI_ALIAS_MAX)).max(WIKI_ALIASES_MAX);
+const wikiBodySchema = z
+  .string()
+  .max(WIKI_BODY_MAX)
+  .refine((s) => !s.includes('\u0000'), { message: 'must not contain NUL' });
+/** A JSON revision number: a positive safe integer. */
+const wikiRevisionNumberSchema = z.number().int().min(1).max(Number.MAX_SAFE_INTEGER);
+/** A query revision number: decimal, 1 to `Number.MAX_SAFE_INTEGER`, no leading zero. */
+const wikiRevisionQueryParam = z
+  .string()
+  .regex(/^[1-9][0-9]{0,15}$/)
+  .transform(Number)
+  .refine((n) => n <= Number.MAX_SAFE_INTEGER, { message: 'revision is too large' });
+
+/** `POST /api/shows/:showId/wiki/pages`. `session_id` is required exactly when `kind` is
+ * `session`, and a `session` page takes no aliases. */
+export const wikiCreatePageBodySchema = z
+  .object({
+    kind: wikiKindSchema,
+    title: wikiTitleSchema,
+    body_md: wikiBodySchema.default(''),
+    aliases: wikiAliasesSchema.default([]),
+    session_id: z.string().min(1).optional(),
+  })
+  .superRefine((b, ctx) => {
+    if (b.kind === 'session' && b.session_id === undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['session_id'],
+        message: 'required for a session page',
+      });
+    }
+    if (b.kind !== 'session' && b.session_id !== undefined) {
+      ctx.addIssue({ code: 'custom', path: ['session_id'], message: 'only for a session page' });
+    }
+    if (b.kind === 'session' && b.aliases.length > 0) {
+      ctx.addIssue({ code: 'custom', path: ['aliases'], message: 'a session page has none' });
+    }
+  });
+export type WikiCreatePageBody = z.infer<typeof wikiCreatePageBodySchema>;
+
+/** `PUT /api/wiki/pages/:pageId`. Fields not sent stay unchanged; `aliases` replaces the list. */
+export const wikiUpdatePageBodySchema = z.object({
+  expected_revision: wikiRevisionNumberSchema,
+  title: wikiTitleSchema.optional(),
+  kind: wikiKindSchema.optional(),
+  body_md: wikiBodySchema.optional(),
+  aliases: wikiAliasesSchema.optional(),
+  restored_from: wikiRevisionNumberSchema.optional(),
+});
+export type WikiUpdatePageBody = z.infer<typeof wikiUpdatePageBodySchema>;
+
+/** `POST /api/wiki/pages/:pageId/restore`. */
+export const wikiRestoreBodySchema = z.object({ expected_revision: wikiRevisionNumberSchema });
+export type WikiRestoreBody = z.infer<typeof wikiRestoreBodySchema>;
+
+/** `DELETE /api/wiki/pages/:pageId?expected_revision=<n>`; other parameters are ignored. */
+export const wikiDeleteQuerySchema = z.object({ expected_revision: wikiRevisionQueryParam });
+export type WikiDeleteQuery = z.infer<typeof wikiDeleteQuerySchema>;
+
+/** `POST /api/wiki/pages/:pageId/merge`. */
+export const wikiMergeBodySchema = z.object({
+  into_page_id: z.string().min(1),
+  expected_revision: wikiRevisionNumberSchema,
+  into_expected_revision: wikiRevisionNumberSchema,
+});
+export type WikiMergeBody = z.infer<typeof wikiMergeBodySchema>;
+
+/** `POST /api/wiki/pages/:pageId/split`. A `session` kind for the new page is refused here (422). */
+export const wikiSplitBodySchema = z.object({
+  expected_revision: wikiRevisionNumberSchema,
+  remaining_body_md: wikiBodySchema,
+  new_page: z.object({
+    // Any kind parses: a `session` kind is a rule 422 with a message (api-contract-freeze delta).
+    kind: wikiKindSchema,
+    title: wikiTitleSchema,
+    body_md: wikiBodySchema,
+    aliases: wikiAliasesSchema.default([]),
+  }),
+});
+export type WikiSplitBody = z.infer<typeof wikiSplitBodySchema>;
+
+/** `GET /api/shows/:showId/wiki/pages` query; `deleted=1` lists deleted pages instead. */
+export const wikiListQuerySchema = z.object({
+  kind: wikiKindSchema.optional(),
+  session_id: z.string().optional(),
+  deleted: z
+    .literal('1')
+    .transform(() => true)
+    .optional(),
+});
+export type WikiListQuery = z.infer<typeof wikiListQuerySchema>;
+
+/** `GET /api/wiki/pages/:pageId/revisions` query: `limit` a decimal 1–100 (default 50), and
+ * `before` an optional revision number. */
+export const wikiRevisionsQuerySchema = z.object({
+  limit: z
+    .string()
+    .regex(/^(?:[1-9]|[1-9][0-9]|100)$/)
+    .transform(Number)
+    .optional()
+    .transform((n) => n ?? WIKI_REVISIONS_LIMIT_DEFAULT),
+  before: wikiRevisionQueryParam.optional(),
+});
+export type WikiRevisionsQuery = z.infer<typeof wikiRevisionsQuerySchema>;
+
+/** The page object every page-returning wiki route answers with. */
+export const wikiPageSchema = z.strictObject({
+  id: z.string(),
+  show_id: z.string(),
+  kind: wikiKindSchema,
+  title: z.string(),
+  body_md: z.string(),
+  aliases: z.array(z.string()),
+  session_id: z.string().nullable(),
+  revision: wikiRevisionNumberSchema,
+  merged_into: z.string().nullable(),
+  deleted: z.boolean(),
+  created_at_utc: z.string(),
+  created_by_name: z.string(),
+  updated_at_utc: z.string(),
+  updated_by_name: z.string(),
+});
+export type WikiPageWire = z.infer<typeof wikiPageSchema>;
+
+export const wikiPageListItemSchema = z.strictObject({
+  id: z.string(),
+  kind: wikiKindSchema,
+  title: z.string(),
+  aliases: z.array(z.string()),
+  session_id: z.string().nullable(),
+  revision: wikiRevisionNumberSchema,
+  updated_at_utc: z.string(),
+  updated_by_name: z.string(),
+});
+export type WikiPageListItemWire = z.infer<typeof wikiPageListItemSchema>;
+
+export const wikiPageListResponseSchema = z.strictObject({
+  pages: z.array(wikiPageListItemSchema).max(WIKI_LIST_MAX),
+  truncated: z.boolean(),
+});
+export type WikiPageListResponse = z.infer<typeof wikiPageListResponseSchema>;
+
+const wikiRevisionItemShape = {
+  revision: wikiRevisionNumberSchema,
+  title: z.string(),
+  kind: wikiKindSchema,
+  author_name: z.string(),
+  at_utc: z.string(),
+  note: z.string(),
+};
+export const wikiRevisionListItemSchema = z.strictObject(wikiRevisionItemShape);
+export type WikiRevisionListItemWire = z.infer<typeof wikiRevisionListItemSchema>;
+
+export const wikiRevisionListResponseSchema = z.strictObject({
+  revisions: z.array(wikiRevisionListItemSchema),
+  next_before: wikiRevisionNumberSchema.nullable(),
+});
+export type WikiRevisionListResponse = z.infer<typeof wikiRevisionListResponseSchema>;
+
+/** `GET /api/wiki/pages/:pageId/revisions/:rev`: the list item plus the body and aliases. */
+export const wikiRevisionSchema = z.strictObject({
+  ...wikiRevisionItemShape,
+  body_md: z.string(),
+  aliases: z.array(z.string()),
+});
+export type WikiRevisionWire = z.infer<typeof wikiRevisionSchema>;
+
+export const wikiMergeResponseSchema = z.strictObject({ page: wikiPageSchema });
+export type WikiMergeResponse = z.infer<typeof wikiMergeResponseSchema>;
+
+export const wikiSplitResponseSchema = z.strictObject({
+  page: wikiPageSchema,
+  new_page: wikiPageSchema,
+});
+export type WikiSplitResponse = z.infer<typeof wikiSplitResponseSchema>;
+
+/** `409` when `expected_revision` isn't current; `current` is the stale page as it is now. */
+export const wikiVersionConflictSchema = z.strictObject({
+  detail: z.literal(WIKI_DETAIL.versionConflict),
+  current: wikiPageSchema,
+});
+export type WikiVersionConflict = z.infer<typeof wikiVersionConflictSchema>;
+
+/** `409` naming the page that holds the title or alias, or the session's page. */
+export const wikiPageIdConflictSchema = z.strictObject({
+  detail: z.enum([WIKI_DETAIL.titleUsed, WIKI_DETAIL.sessionHasPage]),
+  page_id: z.string(),
+});
+export type WikiPageIdConflict = z.infer<typeof wikiPageIdConflictSchema>;
+
+/** `409` for a page that was merged. */
+export const wikiMergedConflictSchema = z.strictObject({
+  detail: z.literal(WIKI_DETAIL.merged),
+  merged_into: z.string(),
+});
+export type WikiMergedConflict = z.infer<typeof wikiMergedConflictSchema>;
+
+// -- show-wiki-ai: AI wiki suggestions (design D4/D5; api-contract-freeze "Wiki suggestion …",
+// "Wiki update endpoint"; wiki-generation "Proposals are checked when they are made") ------------
+// A proposal is a whole page version written by the model: the page limits of a manual save, a
+// body of at most 30 000 characters (so one rewrite fits in one model step) and a 1–500 character
+// rationale. Response bodies are strict; the accept body and the list query strip unknown keys.
+export const WIKI_PROPOSAL_BODY_MAX = 30_000;
+export const WIKI_RATIONALE_MAX = 500;
+export const WIKI_SUGGESTION_STATUSES = ['pending', 'accepted', 'dismissed', 'superseded'] as const;
+
+/** The fixed `detail` strings of the suggestion and wiki-update routes. */
+export const WIKI_SUGGESTION_DETAIL = {
+  suggestionNotFound: 'Suggestion not found.',
+  resolved: 'Suggestion already resolved.',
+  expectedRevisionRequired: 'expected_revision is required.',
+  noLanguageModel: 'Add a language model in Settings → Advanced to update the wiki.',
+  noTranscript: 'This session has no transcript words to update the wiki from.',
+  busy:
+    'A turn (AI chat, AI v2, topic generation, event generation, or wiki update) is already ' +
+    'in progress for this session; wait for it to finish before updating the wiki again. ' +
+    'These features share one per-session AI slot by design.',
+  failed: 'Wiki update failed.',
+} as const;
+
+export const wikiSuggestionStatusSchema = z.enum(WIKI_SUGGESTION_STATUSES);
+export type WikiSuggestionStatusWire = z.infer<typeof wikiSuggestionStatusSchema>;
+
+const wikiSuggestionShape = {
+  id: z.string(),
+  show_id: z.string(),
+  session_id: z.string(),
+  status: wikiSuggestionStatusSchema,
+  page_id: z.string().nullable(),
+  base_revision: wikiRevisionNumberSchema.nullable(),
+  kind: wikiKindSchema,
+  title: z.string(),
+  aliases: z.array(z.string()),
+  rationale: z.string(),
+  page: z
+    .strictObject({
+      title: z.string(),
+      revision: wikiRevisionNumberSchema,
+      state: z.enum(['live', 'merged', 'deleted']),
+    })
+    .nullable(),
+  stale: z.boolean(),
+  created_at_utc: z.string(),
+  created_by_name: z.string(),
+  resolved_at_utc: z.string().nullable(),
+  resolved_by_name: z.string().nullable(),
+  resolved_revision: wikiRevisionNumberSchema.nullable(),
+};
+
+/** The suggestion object every suggestion-returning route answers with. */
+export const wikiSuggestionSchema = z.strictObject(wikiSuggestionShape);
+export type WikiSuggestionWire = z.infer<typeof wikiSuggestionSchema>;
+
+/** `GET /api/wiki/suggestions/:suggestionId`: the suggestion plus its proposed body. */
+export const wikiSuggestionDetailSchema = z.strictObject({
+  ...wikiSuggestionShape,
+  body_md: z.string(),
+});
+export type WikiSuggestionDetailWire = z.infer<typeof wikiSuggestionDetailSchema>;
+
+/** `GET /api/shows/:showId/wiki/suggestions`: newest first, at most 500. */
+export const wikiSuggestionListSchema = z.strictObject({
+  suggestions: z.array(wikiSuggestionSchema),
+  truncated: z.boolean(),
+});
+export type WikiSuggestionListResponse = z.infer<typeof wikiSuggestionListSchema>;
+
+/** `GET /api/shows/:showId/wiki/suggestions` query: `status` (default `pending`) and `page_id`. */
+export const wikiSuggestionListQuerySchema = z.object({
+  status: wikiSuggestionStatusSchema.default('pending'),
+  page_id: z.string().min(1).optional(),
+});
+export type WikiSuggestionListQuery = z.infer<typeof wikiSuggestionListQuerySchema>;
+
+/** `POST /api/sessions/:sessionId/wiki/generate` `200`: the suggestions the run stored. */
+export const wikiGenerateResponseSchema = z.strictObject({
+  suggestions: z.array(wikiSuggestionSchema),
+});
+export type WikiGenerateResponse = z.infer<typeof wikiGenerateResponseSchema>;
+
+/** `POST /api/wiki/suggestions/:suggestionId/accept`. `expected_revision` is required for an
+ * existing page (the router's 422); the overrides have the wiki page limits; the kind can't change. */
+export const wikiSuggestionAcceptSchema = z.object({
+  expected_revision: wikiRevisionNumberSchema.optional(),
+  title: wikiTitleSchema.optional(),
+  body_md: wikiBodySchema.optional(),
+  aliases: wikiAliasesSchema.optional(),
+});
+export type WikiSuggestionAcceptBody = z.infer<typeof wikiSuggestionAcceptSchema>;
+
+/** The accept `200` (page updated) and `201` (page created) body. */
+export const wikiSuggestionAcceptResponseSchema = z.strictObject({
+  page: wikiPageSchema,
+  suggestion: wikiSuggestionSchema,
+});
+export type WikiSuggestionAcceptResponse = z.infer<typeof wikiSuggestionAcceptResponseSchema>;
+
+/** `409` for a suggestion that isn't pending. */
+export const wikiSuggestionResolvedConflictSchema = z.strictObject({
+  detail: z.literal(WIKI_SUGGESTION_DETAIL.resolved),
+  status: wikiSuggestionStatusSchema,
+});
+export type WikiSuggestionResolvedConflict = z.infer<typeof wikiSuggestionResolvedConflictSchema>;
+
+/** `propose_page`'s shape check (design D4 step 1). Whether `kind` is required, and whether it
+ * matches the target page, depends on the target, so the tool checks it. */
+export const wikiProposalSchema = z
+  .object({
+    page_id: z.string().min(1).optional(),
+    kind: wikiKindSchema.optional(),
+    title: wikiTitleSchema,
+    aliases: wikiAliasesSchema.default([]),
+    body_md: z
+      .string()
+      .max(WIKI_PROPOSAL_BODY_MAX)
+      .refine((s) => !s.includes('\u0000'), { message: 'must not contain NUL' }),
+    rationale: z.string().trim().min(1).max(WIKI_RATIONALE_MAX),
+  })
+  .superRefine((p, ctx) => {
+    if (p.kind === 'session' && p.aliases.length > 0) {
+      ctx.addIssue({ code: 'custom', path: ['aliases'], message: 'a session page has none' });
+    }
+  });
+export type WikiProposalInput = z.infer<typeof wikiProposalSchema>;

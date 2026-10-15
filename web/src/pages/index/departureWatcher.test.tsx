@@ -53,10 +53,6 @@ vi.mock('../../shared/utils/loadingVideo', () => ({
   freezeAutologgerLoadingVideos: () => {},
 }));
 
-vi.mock('../../shared/utils/perfDebug', () => ({
-  initPerfDebugUI: () => {},
-}));
-
 vi.mock('./components/V6Rail', () => ({
   V6Rail: (props: {
     activeSessionId: string;

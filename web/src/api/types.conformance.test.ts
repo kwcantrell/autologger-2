@@ -51,8 +51,12 @@
 // remain the only hand-written values in this file.
 
 import { describe, expect, it } from 'vitest';
-import audioSegmentCreate from '../../../fixtures/api-responses/audioSegmentCreate.json';
-import audioSegmentsList from '../../../fixtures/api-responses/audioSegmentsList.json';
+import { audioRecordingFinalize } from '../../../fixtures/api-responses/audioRecordingFinalize';
+import { audioSegmentCreate } from '../../../fixtures/api-responses/audioSegmentCreate';
+import { audioSegmentsList } from '../../../fixtures/api-responses/audioSegmentsList';
+import { audioUploadComplete } from '../../../fixtures/api-responses/audioUploadComplete';
+import audioUploadCreate from '../../../fixtures/api-responses/audioUploadCreate.json';
+import audioUploadStatus from '../../../fixtures/api-responses/audioUploadStatus.json';
 import companionDeviceCreate from '../../../fixtures/api-responses/companionDeviceCreate.json';
 import companionDevicesList from '../../../fixtures/api-responses/companionDevicesList.json';
 import eventCreate from '../../../fixtures/api-responses/eventCreate.json';
@@ -64,6 +68,11 @@ import logImportJobCreate from '../../../fixtures/api-responses/logImportJobCrea
 import { logImportJobStatus } from '../../../fixtures/api-responses/logImportJobStatus';
 import { profileAuthenticated } from '../../../fixtures/api-responses/profileAuthenticated';
 import { profileLoggedOutOauth } from '../../../fixtures/api-responses/profileLoggedOutOauth';
+import providerSave from '../../../fixtures/api-responses/providerSave.json';
+import providerSaveClaudeCli from '../../../fixtures/api-responses/providerSaveClaudeCli.json';
+import providersList from '../../../fixtures/api-responses/providersList.json';
+import providerTest from '../../../fixtures/api-responses/providerTest.json';
+import { search } from '../../../fixtures/api-responses/search';
 import sessionCreate from '../../../fixtures/api-responses/sessionCreate.json';
 import { sessionDetail } from '../../../fixtures/api-responses/sessionDetail';
 import sessionStatus from '../../../fixtures/api-responses/sessionStatus.json';
@@ -96,6 +105,25 @@ import transcriptWordUpdate from '../../../fixtures/api-responses/transcriptWord
 import transcriptWordUpdateConflict from '../../../fixtures/api-responses/transcriptWordUpdateConflict.json';
 import transportStart from '../../../fixtures/api-responses/transportStart.json';
 import transportStop from '../../../fixtures/api-responses/transportStop.json';
+import { wikiMerge } from '../../../fixtures/api-responses/wikiMerge';
+import { wikiPage } from '../../../fixtures/api-responses/wikiPage';
+import { wikiPageCreate } from '../../../fixtures/api-responses/wikiPageCreate';
+import { wikiPageDelete } from '../../../fixtures/api-responses/wikiPageDelete';
+import { wikiPageList } from '../../../fixtures/api-responses/wikiPageList';
+import { wikiPageRestore } from '../../../fixtures/api-responses/wikiPageRestore';
+import { wikiPageUpdate } from '../../../fixtures/api-responses/wikiPageUpdate';
+import { wikiPageUpdateConflict } from '../../../fixtures/api-responses/wikiPageUpdateConflict';
+import { wikiRevision } from '../../../fixtures/api-responses/wikiRevision';
+import { wikiRevisionList } from '../../../fixtures/api-responses/wikiRevisionList';
+import { wikiSplit } from '../../../fixtures/api-responses/wikiSplit';
+import { wikiSuggestion } from '../../../fixtures/api-responses/wikiSuggestion';
+import { wikiSuggestionAccept } from '../../../fixtures/api-responses/wikiSuggestionAccept';
+import { wikiSuggestionAcceptConflict } from '../../../fixtures/api-responses/wikiSuggestionAcceptConflict';
+import { wikiSuggestionAcceptCreate } from '../../../fixtures/api-responses/wikiSuggestionAcceptCreate';
+import { wikiSuggestionDismiss } from '../../../fixtures/api-responses/wikiSuggestionDismiss';
+import { wikiSuggestionGenerate } from '../../../fixtures/api-responses/wikiSuggestionGenerate';
+import { wikiSuggestionList } from '../../../fixtures/api-responses/wikiSuggestionList';
+import { wikiSuggestionResolved } from '../../../fixtures/api-responses/wikiSuggestionResolved';
 import type { LogImportJobStatus } from '../pages/index/batchImport/logImportClient';
 import { fmtDateOnly } from '../shared/utils/fmtDateOnly';
 import type {
@@ -107,6 +135,9 @@ import type {
   ActiveStudioCategory,
   AudioSegment,
   AudioSegmentsResponse,
+  AudioUploadCompleted,
+  AudioUploadCreated,
+  AudioUploadStatus,
   Category,
   CompanionDeviceCreatedResponse,
   CompanionDeviceListResponse,
@@ -115,6 +146,13 @@ import type {
   LogEvent,
   ProfilePayload,
   ProfileShow,
+  ProviderCredential,
+  ProvidersResponse,
+  ProviderTestResponse,
+  RecordingFinalizeResponse,
+  SearchMoment,
+  SearchMomentSession,
+  SearchResponse,
   Session,
   SessionCreateResponse,
   SessionStatus,
@@ -137,6 +175,21 @@ import type {
   TransportStartResponse,
   TransportStateSnapshot,
   TransportStopResponse,
+  WikiGenerateResponse,
+  WikiMergeResponse,
+  WikiPage,
+  WikiPageListItem,
+  WikiPageListResponse,
+  WikiRevision,
+  WikiRevisionListItem,
+  WikiRevisionListResponse,
+  WikiSplitResponse,
+  WikiSuggestion,
+  WikiSuggestionAcceptResponse,
+  WikiSuggestionDetail,
+  WikiSuggestionListResponse,
+  WikiSuggestionResolvedConflict,
+  WikiVersionConflict,
 } from './types';
 
 describe('CW-1 — transport start/stop emit the transport state, not `{ok}`', () => {
@@ -309,6 +362,99 @@ describe('CW-5 — AudioSegment declared three fields `segmentApiDict` never emi
       expect(key in audioSegmentCreate).toBe(false);
       expect(key in audioSegmentsList.segments[0]).toBe(false);
     }
+  });
+});
+
+// media-worker D16 (api-contract-freeze "Audio segments carry duration, media status and seams"):
+// `segmentApiDict` gains `duration_ms`, `media_status` and `seams`, for 12 keys. The captured
+// fixtures are regenerated by B.3 (`npm run fixtures:capture -w server`); until then the key-list
+// assertions below are red by design.
+const AUDIO_SEGMENT_KEYS = [
+  'id',
+  'ordinal',
+  'started_at_utc',
+  'ended_at_utc',
+  'mime_type',
+  'recording_ordinal',
+  'url',
+  'waveform_peaks',
+  'waveform_db_floor',
+  'duration_ms',
+  'media_status',
+  'seams',
+] as const;
+
+describe('media-worker D16 — AudioSegment carries duration, media status and seams', () => {
+  it('the captured upload body has exactly the 12 segment keys', () => {
+    expect(Object.keys(audioSegmentCreate).sort()).toEqual([...AUDIO_SEGMENT_KEYS].sort());
+  });
+
+  it('every captured list row has exactly the 12 segment keys', () => {
+    for (const row of audioSegmentsList.segments) {
+      expect(Object.keys(row).sort()).toEqual([...AUDIO_SEGMENT_KEYS].sort());
+    }
+  });
+
+  it('the client type declares the three fields with their wire shapes', () => {
+    // `satisfies`, not an annotated `const`: the repo guard reads every annotated declaration in
+    // this module as a fixture check, and these literals are not captures.
+    const merged = {
+      id: 'm',
+      ordinal: 0,
+      recording_ordinal: 3,
+      started_at_utc: '2026-10-12T10:00:00.000Z',
+      ended_at_utc: '2026-10-12T10:30:00.000Z',
+      mime_type: 'audio/webm',
+      url: '/api/sessions/s/audio/segments/m',
+      waveform_peaks: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8],
+      waveform_db_floor: -60,
+      duration_ms: 1_812_345,
+      media_status: 'done',
+      seams: [
+        {
+          offset_ms: 0,
+          started_at_utc: '2026-10-12T10:00:00.000Z',
+          ended_at_utc: '2026-10-12T10:10:00.000Z',
+        },
+      ],
+    } satisfies AudioSegment;
+    const legacy = {
+      ...merged,
+      duration_ms: null,
+      media_status: null,
+      seams: null,
+    } satisfies AudioSegment;
+    const statuses = ['pending', 'done', 'failed'] satisfies NonNullable<
+      AudioSegment['media_status']
+    >[];
+    expect(Object.keys(merged).sort()).toEqual([...AUDIO_SEGMENT_KEYS].sort());
+    expect(legacy.seams).toBeNull();
+    expect(statuses).toHaveLength(3);
+  });
+});
+
+// media-worker D6/D12 (api-contract-freeze "Recording finalize endpoint", "Resumable audio upload
+// endpoints"): the captured upload and finalize responses against the client types `uploads.ts`
+// and the chunk queue name.
+describe('media-worker — upload and finalize responses', () => {
+  it('the captured upload create body is assignable to AudioUploadCreated', () => {
+    const check: AudioUploadCreated = audioUploadCreate;
+    expect(check.part_size).toBe(32 * 1024 * 1024);
+  });
+
+  it('the captured upload status is assignable to AudioUploadStatus', () => {
+    const check: AudioUploadStatus = audioUploadStatus;
+    expect(check.received).toEqual([1]);
+  });
+
+  it('the captured completion is assignable to AudioUploadCompleted', () => {
+    const check: AudioUploadCompleted = audioUploadComplete;
+    expect(check.ok).toBe(true);
+  });
+
+  it('the captured finalize answer is assignable to RecordingFinalizeResponse', () => {
+    const check: RecordingFinalizeResponse = audioRecordingFinalize;
+    expect(check.merge).toBe('queued');
   });
 });
 
@@ -777,6 +923,176 @@ describe('Companion devices — the responses `useCompanionDevices.ts` types (co
   it('the POST capture is assignable to CompanionDeviceCreatedResponse, the one body with the token', () => {
     const check: CompanionDeviceCreatedResponse = companionDeviceCreate;
     expect(check.token).toMatch(/^ald_#{43}$/);
+  });
+});
+
+describe('provider credentials — the responses `useProviders.ts` types (byo-ai-providers D6)', () => {
+  it('the GET capture is assignable to ProvidersResponse, with both kinds and no key', () => {
+    const check: ProvidersResponse = providersList;
+    expect(check.llm?.provider).toBe('openai-compatible');
+    expect(check.llm?.base_url).toBe('https://api.example.com/v1');
+    expect(check.stt?.base_url).toBeNull();
+    expect(typeof check.run_features_allowed).toBe('boolean');
+    expect(JSON.stringify(check)).not.toMatch(/api_key|ciphertext/);
+  });
+
+  it('the PUT capture is assignable to ProviderCredential, and the test capture to ProviderTestResponse', () => {
+    const saved: ProviderCredential = providerSave;
+    expect(saved.key_last4).toHaveLength(4);
+    const test: ProviderTestResponse = providerTest;
+    expect(test).toEqual({ ok: true, detail: 'Connected.' });
+  });
+
+  // ai-sdk-agent-harness D2: `key_last4` may be null, and the list carries `claude_cli_allowed`.
+  it('the claude-cli PUT capture is assignable to ProviderCredential, with key_last4 null', () => {
+    const cli: ProviderCredential = providerSaveClaudeCli;
+    expect(cli).toMatchObject({ provider: 'claude-cli', model: 'claude-cli', key_last4: null });
+  });
+
+  it('the GET capture carries claude_cli_allowed', () => {
+    const check: ProvidersResponse = providersList;
+    const allowed: boolean = check.claude_cli_allowed;
+    expect(allowed).toBe(false);
+  });
+});
+
+describe('catalog search — the response `GET /api/search` answers (catalog-search D5)', () => {
+  it('the capture is assignable to SearchResponse, with every group and moment kind', () => {
+    const check: SearchResponse = search;
+    expect(check.q).toBe('beacon');
+    expect(check.studios).toHaveLength(1);
+    expect(check.shows).toHaveLength(1);
+    const [session] = check.sessions;
+    const match: 'title' | 'notes' = session.match;
+    expect(match).toBe('title');
+    expect(session.snippet).toBeNull();
+    expect(check.moments.map((m) => m.kind).sort()).toEqual(['event', 'topic', 'transcript']);
+  });
+
+  it('moment_sessions gives each moment session its total (catalog-search D11)', () => {
+    const totals: SearchMomentSession[] = search.moment_sessions;
+    expect(totals).toHaveLength(1);
+    const total: number = totals[0].total;
+    expect(total).toBe(3);
+    expect(new Set(search.moments.map((m) => m.session_id))).toEqual(
+      new Set(totals.map((t) => t.session_id)),
+    );
+  });
+
+  it('moment_sessions is required on SearchResponse, as in the strict contract (catalog-search 7.5)', () => {
+    // Compiles only while the field is required: `{}` extends a Pick of an optional key.
+    type IsRequired<T, K extends keyof T> = Record<never, never> extends Pick<T, K> ? false : true;
+    const required: IsRequired<SearchResponse, 'moment_sessions'> = true;
+    expect(required).toBe(true);
+  });
+
+  it('a transcript moment carries sec as a number; topic and event moments carry null', () => {
+    const moments: SearchMoment[] = search.moments;
+    for (const m of moments) {
+      if (m.kind === 'transcript') expect(typeof m.sec).toBe('number');
+      else {
+        const sec: null = m.sec;
+        expect(sec).toBeNull();
+      }
+    }
+  });
+});
+
+describe('show wiki — the bodies the wiki routes answer (show-wiki D6, D8 category 5)', () => {
+  it('every page-returning capture is assignable to WikiPage', () => {
+    const read: WikiPage = wikiPage;
+    const created: WikiPage = wikiPageCreate;
+    const updated: WikiPage = wikiPageUpdate;
+    const deleted: WikiPage = wikiPageDelete;
+    const restored: WikiPage = wikiPageRestore;
+    const pages: [string, WikiPage][] = [
+      ['wikiPage', read],
+      ['wikiPageCreate', created],
+      ['wikiPageUpdate', updated],
+      ['wikiPageDelete', deleted],
+      ['wikiPageRestore', restored],
+    ];
+    for (const [name, p] of pages) {
+      expect(Object.keys(p).sort(), name).toEqual(Object.keys(wikiPage).sort());
+    }
+    expect(wikiPageDelete.deleted).toBe(true);
+    expect(wikiPageRestore.deleted).toBe(false);
+  });
+
+  it('the list capture is assignable to WikiPageListResponse', () => {
+    const check: WikiPageListResponse = wikiPageList;
+    const items: WikiPageListItem[] = wikiPageList.pages;
+    expect(items.map((p) => p.kind)).toEqual(['person', 'topic', 'session']);
+    expect(check.truncated).toBe(false);
+  });
+
+  it('the stale-revision 409 is assignable to WikiVersionConflict, current a whole page', () => {
+    const check: WikiVersionConflict = wikiPageUpdateConflict;
+    expect(check.detail).toBe('Version conflict.');
+    expect(Object.keys(check.current).sort()).toEqual(Object.keys(wikiPage).sort());
+  });
+
+  it('the revision captures are assignable to WikiRevisionListResponse and WikiRevision', () => {
+    const list: WikiRevisionListResponse = wikiRevisionList;
+    const items: WikiRevisionListItem[] = wikiRevisionList.revisions;
+    const next: number | null = list.next_before;
+    expect(items[0].note).toBe('edited');
+    expect(next).toBe(2);
+    const one: WikiRevision = wikiRevision;
+    expect(one.note).toBe('created');
+    expect(one.aliases).toEqual(['Tina', 'C. Ramos']);
+  });
+
+  it('the merge and split captures are assignable to their responses', () => {
+    const merged: WikiMergeResponse = wikiMerge;
+    expect(merged.page.aliases).toContain('Cold opens');
+    const split: WikiSplitResponse = wikiSplit;
+    expect(split.new_page.kind).toBe('bit');
+    expect(split.page.revision).toBe(2);
+  });
+});
+
+describe('show wiki AI — the bodies the suggestion routes answer (show-wiki-ai D6, D7 category 3)', () => {
+  const SUGGESTION_KEYS = Object.keys(wikiSuggestionDismiss).sort();
+
+  it('the read capture is assignable to WikiSuggestionDetail: the suggestion object plus body_md', () => {
+    const check: WikiSuggestionDetail = wikiSuggestion;
+    expect(Object.keys(check).sort()).toEqual([...SUGGESTION_KEYS, 'body_md'].sort());
+    expect(check.page?.state).toBe('live');
+  });
+
+  it('the list and generate captures are assignable to their responses', () => {
+    const list: WikiSuggestionListResponse = wikiSuggestionList;
+    const items: WikiSuggestion[] = wikiSuggestionList.suggestions;
+    expect(list.truncated).toBe(false);
+    for (const s of items) expect(Object.keys(s).sort()).toEqual(SUGGESTION_KEYS);
+    expect(items[0].page_id).toBeNull();
+    expect(items[0].page).toBeNull();
+    const generated: WikiGenerateResponse = wikiSuggestionGenerate;
+    expect(generated.suggestions[0].status).toBe('pending');
+  });
+
+  it('the accept captures (200 and 201) are assignable to WikiSuggestionAcceptResponse', () => {
+    const updated: WikiSuggestionAcceptResponse = wikiSuggestionAccept;
+    const created: WikiSuggestionAcceptResponse = wikiSuggestionAcceptCreate;
+    for (const r of [updated, created]) {
+      expect(Object.keys(r.page).sort()).toEqual(Object.keys(wikiPage).sort());
+      expect(Object.keys(r.suggestion).sort()).toEqual(SUGGESTION_KEYS);
+      expect(r.suggestion.status).toBe('accepted');
+    }
+  });
+
+  it('the accept 409s are assignable to WikiVersionConflict and WikiSuggestionResolvedConflict', () => {
+    const stale: WikiVersionConflict = wikiSuggestionAcceptConflict;
+    expect(stale.detail).toBe('Version conflict.');
+    expect(Object.keys(stale.current).sort()).toEqual(Object.keys(wikiPage).sort());
+    const resolved: WikiSuggestionResolvedConflict = wikiSuggestionResolved;
+    expect(resolved.detail).toBe('Suggestion already resolved.');
+  });
+
+  it('the dismiss capture is assignable to WikiSuggestion', () => {
+    const check: WikiSuggestion = wikiSuggestionDismiss;
+    expect(check.status).toBe('dismissed');
   });
 });
 

@@ -33,9 +33,12 @@ recorded (one per team+email; re-inviting is idempotent). **Pending-invite cap (
 control, gate ruling 2026-07-14):** a team SHALL hold at most 200 pending invites;
 further invites are rejected `400`. Admins and the owner SHALL be able to list and revoke their
 team's pending invites; revocation is idempotent (`200` whether or not the invite
-existed); a revoked invite never materializes.
+existed); a revoked invite never materializes. A pending invite does not let a new email create
+an account while sign-ups are closed.
 
-At first Google sign-in, the OAuth callback's new-user branch SHALL materialize
+At first Google sign-in that creates an account (while sign-ups are closed, only for an approved
+email or the bootstrap owner's; api-contract-freeze "Closed sign-up redirect"), the OAuth
+callback's new-user branch SHALL materialize
 pending invites matching the new user's normalized email into `member` memberships
 — **only when the presented id_token carries `email_verified: true`** (the email
 claim is an authorization join key here; unverified emails SHALL NOT match
@@ -75,6 +78,12 @@ the admin's remedy is to re-invite the address the account actually uses.
 - **WHEN** an admin revokes a pending invite before the invitee's first sign-in,
   and the invitee then signs in
 - **THEN** the new user has no membership of that team
+
+#### Scenario: An invite does not open closed sign-ups
+- **WHEN** sign-ups are closed, an admin invites `new.person@example.com`, and a Google account
+  with that verified email but no approval signs in for the first time
+- **THEN** the callback responds `302` to `/?login_error=signup_closed`, no account is created,
+  and the pending invite remains
 
 ### Requirement: NEW_USER_ALL_TEAMS deprecated
 The server SHALL ignore the `NEW_USER_ALL_TEAMS` environment variable: new users

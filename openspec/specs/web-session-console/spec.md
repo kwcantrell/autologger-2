@@ -179,22 +179,44 @@ static under reduced motion.
   deliberate divergence
 
 ### Requirement: Honest capability gating on generation features
-When transcript, topic, or event generation returns HTTP 503 (feature not configured on
-this deployment), the panel SHALL latch that state **per mounted panel** (persisting
-across session switches within the mount; cleared by reload — the copy SHALL tell the
-operator to reload after configuring): the generate control becomes non-actionable with
-the reason reachable by keyboard and assistive technology (visible text or
-`aria-describedby` on a focusable `aria-disabled` control — not solely a mouse `title`),
-and the empty-state copy names the cause and the remedy (transcription: DeepGram API key
-on the server, with the audio-egress consequence; topics and event generation: no
-integration configured) plus the manual alternative. Generation errors SHALL render in
-exactly one channel (inline in the panel), not duplicated as toasts.
+When transcript, topic, or event generation returns HTTP 503 (feature not configured for this
+caller), the panel SHALL latch that state **per mounted panel**, persisting across session switches
+within the mount:
+- the generate control becomes non-actionable, with the reason reachable by keyboard and assistive
+  technology (visible text or `aria-describedby` on a focusable `aria-disabled` control, not solely
+  a mouse `title`);
+- the empty-state copy names the cause and the remedy, plus the manual alternative.
+
+**Transcription.** The cause and remedy are the caller's own speech-to-text key: "Add a
+speech-to-text key in Settings → Advanced", with the audio-egress consequence. The copy SHALL link
+or point to that section.
+
+**Topic and event generation.** The cause and remedy are the caller's own language model: "Add a
+language model in Settings → Advanced to generate topics." on the topics panel, and "Add a
+language model in Settings → Advanced to generate events." on the event feed. The copy SHALL link
+or point to that section, and SHALL NOT name a server setting or tell anyone to reload.
+
+**Clearing the latch.**
+- The transcription latch SHALL clear without a reload when the user saves a speech-to-text
+  credential in this page load.
+- The topic and event generation latches SHALL clear without a reload when the user saves a
+  language model credential in this page load.
+
+Generation errors SHALL render in exactly one channel (inline in the panel), not duplicated as
+toasts.
 
 #### Scenario: Unconfigured transcription discovered once
 - **WHEN** Auto Generate returns 503 on the Transcript tab
-- **THEN** the control becomes non-actionable with a keyboard-reachable reason, the empty
-  state explains the DEEPGRAM_API_KEY requirement (and reload-after-configuring) and points
-  at Insert, and no toast duplicates the message
+- **THEN**:
+  - the control becomes non-actionable with a keyboard-reachable reason;
+  - the empty state says to add a speech-to-text key in Settings → Advanced and points at Insert;
+  - no copy names `DEEPGRAM_API_KEY` or a server setting;
+  - no toast duplicates the message
+
+#### Scenario: Saving a key clears the transcription latch
+- **WHEN** the Transcript tab is latched unavailable and the user saves a speech-to-text credential
+  in Settings → Advanced without reloading
+- **THEN** the Transcript tab's generate control is actionable again
 
 #### Scenario: Non-503 generation failure
 - **WHEN** generation fails with a non-503 error
@@ -202,9 +224,20 @@ exactly one channel (inline in the panel), not duplicated as toasts.
 
 #### Scenario: Unconfigured event generation latches
 - **WHEN** AUTO GENERATE on the event feed returns 503
-- **THEN** the control latches non-actionable for the mounted panel with a
-  keyboard-reachable reason naming the missing integration and the reload-after-configuring
-  remedy, and manual logging remains available unchanged
+- **THEN** the control latches non-actionable for the mounted panel with a keyboard-reachable
+  reason saying to add a language model in Settings → Advanced, no copy names `CLAUDE_CLI_PATH`,
+  a server setting or a reload, and manual logging remains available unchanged
+
+#### Scenario: Unconfigured topic generation names the language model
+- **WHEN** topic generation returns 503 on the Topics tab
+- **THEN** the control becomes non-actionable with a keyboard-reachable reason, the empty state
+  says to add a language model in Settings → Advanced and points to that section, and no toast
+  duplicates the message
+
+#### Scenario: Saving a language model clears the topic and event latches
+- **WHEN** the Topics tab and the event feed's AUTO GENERATE are latched unavailable and the user
+  saves a language model credential in Settings → Advanced without reloading
+- **THEN** both generate controls are actionable again
 
 ### Requirement: AUTO GENERATE affordance on the event feed
 The event feed tab SHALL provide an AUTO GENERATE control that starts one generation run for the open session through the `auto-event-generation` endpoint (synchronous POST).
@@ -772,6 +805,23 @@ event's wall time) the derived delta is 0, and the clip width matches the pre-ch
 `Math.max(intervalEnd, startSec + d)` floor exactly, so layout SHALL be exactly as
 before this change.
 
+A segment's clip duration SHALL come from the server's `duration_ms` when it is present,
+and from the media-element metadata probe only when it is `null`; the 1 s placeholder
+applies only when both are missing. A recording the server has merged into one segment
+(media-processing "A stopped recording is merged into one verified segment") SHALL lay out
+as **one clip per seam**: each clip plays the merged segment's URL from its seam's
+`offset_ms`, is positioned from that seam's own `started_at_utc` exactly as a chunk was, and
+extends to the next seam's position (the last to the interval end or its remaining
+duration), so a merged recording renders, seeks and plays exactly as its chunks did and no
+drift accumulates across the rollover gaps. While a recording still has
+two or more segments and any of them has `media_status: "pending"`, the interval's
+waveform slot SHALL show "Finalizing recording…" in place of "Generating waveform…"; the
+clip layout is the chunk layout above until the merged segment arrives through
+`audio.changed`. The browser SHALL NOT decode a segment for waveform peaks while its
+`media_status` is `"pending"`; it keeps decoding segments whose `media_status` is `null`
+(rows that predate server-side processing) and shows "Waveform unavailable" for
+`"failed"` as for a failed decode.
+
 #### Scenario: A three-chunk recording renders inside one interval
 - **WHEN** a recording interval has three segments sharing its `recording_ordinal`, each
   with sequential `started_at_utc` values
@@ -811,6 +861,30 @@ before this change.
 - **WHEN** a feed-row jump resolves to a second covered by a follow-on chunk's clip
 - **THEN** playback starts within that chunk at the correct offset, using the existing
   jump/seek requirements without modification
+
+#### Scenario: A merged recording lays out by its seams
+- **WHEN** a recording's three chunks have been merged by the server into one segment with
+  three seams and `duration_ms = 1 812 345`
+- **THEN** the interval shows three clips at the seams' wall-clock positions, each playing
+  the merged segment from its seam's `offset_ms`, with no media-element probe and no 1 s
+  placeholder, and a feed-row jump into the third clip starts playback at the same media
+  position it did when the chunk was a separate segment
+
+#### Scenario: Seam clips do not drift over a long recording
+- **WHEN** a three-hour recording with eighteen seams whose rollover gaps sum to 1.1 s is laid
+  out
+- **THEN** the eighteenth clip starts at its seam's wall-clock position, not 1.1 s early
+
+#### Scenario: Finalizing is shown while the merge is pending
+- **WHEN** a recording has three segments and the client has just finalized it
+- **THEN** the interval's waveform slot reads "Finalizing recording…" until the
+  `audio.changed` message delivers the merged segment, and the clips stay laid out as
+  chunks meanwhile
+
+#### Scenario: Pending segments are not decoded in the browser
+- **WHEN** a freshly uploaded chunk lists `media_status: "pending"` and no peaks
+- **THEN** the browser does not fetch and decode its audio; the slot shows "Generating
+  waveform…" and the server's peaks replace it on `audio.changed`
 
 ### Requirement: The event feed renders a windowed row set
 
@@ -1362,8 +1436,6 @@ The shell SHALL reflect the open session's transport state, using the same sourc
 
 The label SHALL always be present, so colour is never the only channel. It SHALL be exposed to assistive technology as the transport's status, announced when the state changes and not on every timecode tick.
 
-When the performance-debug transport override is active, the tint and label SHALL follow the overridden state, as the strip does.
-
 Under `prefers-reduced-motion: reduce` the tint SHALL change instantly and the live indicator SHALL NOT blink. The tint SHALL follow the open session even while the Settings view is shown over it. The state SHALL be derived from those existing sources; this requirement adds no request and no WebSocket message.
 
 #### Scenario: Recording tints the shell and says REC
@@ -1390,6 +1462,10 @@ Under `prefers-reduced-motion: reduce` the tint SHALL change instantly and the l
 - **WHEN** the Settings view is open over a session that is recording or rolling
 - **THEN** the top bar and rail keep the full tint and the REC or ROLLING status
 
+#### Scenario: No client-side override of the transport state
+- **WHEN** the browser still holds a value saved by the removed performance-debug panel
+- **THEN** the tint and status label follow only the sources above, and no performance-debug control is shown anywhere in the app
+
 ### Requirement: Feed count matches the rows shown
 The event feed's heading count SHALL equal the number of events the feed's active filters (including whether internal events are shown) select from the session's fetched events — the whole filtered set, not the portion of it currently paged into the windowed list. When the session has more events than the workspace fetches, the count SHALL be shown with a trailing `+` rather than as an exact figure. It SHALL NOT be taken from a count that covers a different row set; the session's `logged_event_count`, which excludes internal events, is one such count. A filter change SHALL update the count in the same render. The workspace tab strip carries no count. The server's `logged_event_count` field and its meaning are unchanged.
 
@@ -1408,3 +1484,29 @@ The event feed's heading count SHALL equal the number of events the feed's activ
 #### Scenario: More events than the workspace fetches
 - **WHEN** a session has more events than the workspace's fetch limit
 - **THEN** the heading shows the fetched filtered count followed by `+`
+
+### Requirement: Missing waveform peaks can be backfilled offline
+An operator CLI (`server/scripts/backfillWaveforms.ts`) SHALL compute waveform peaks for audio
+segments whose `waveform_peaks_json` is `NULL` and SHALL emit them as SQL for the operator to apply.
+The stored values SHALL be what the browser would store for that segment decoded on its own: the
+same bucket-count rule (`segmentWaveformDecodeBucketCount(duration, duration)`), the same
+max-abs-across-channels bucket peak, the same dB envelope and `-48` floor, values in `[0, 1]`, and
+the same JSON number array; the bucket computation SHALL be one shared pure function pinned to the
+web's copy by a test. Decoding SHALL stream (memory independent of file size). Each `UPDATE` SHALL
+match only its `(session_id, id)` row while `waveform_peaks_json` is still `NULL`, so a re-run, or a
+browser that stored peaks meanwhile, is never overwritten. Segment ids and blob keys SHALL be
+validated (`audio/<session id>/<file>`, no `..`, no leading `-`, resolved inside the blob directory)
+before any path is opened or any SQL is written. A segment that fails SHALL be reported and SHALL NOT
+stop the others; the CLI SHALL exit non-zero when any segment was not filled.
+
+#### Scenario: Backfilled peaks equal the browser's
+- **WHEN** the same PCM is given to the web's `computeDbPeaks01` and to the backfill's accumulator
+- **THEN** the two peak arrays are bit-identical
+
+#### Scenario: A re-run changes nothing
+- **WHEN** the emitted SQL is applied twice, or after a browser stored peaks for one of the rows
+- **THEN** only rows that were `NULL` at apply time change, and existing peaks are untouched
+
+#### Scenario: One bad file does not stop the run
+- **WHEN** the segment list holds a missing blob, an undecodable blob and a valid one
+- **THEN** the valid one gets an `UPDATE`, the other two are reported, and the exit code is 1

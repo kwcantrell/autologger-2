@@ -14,7 +14,7 @@
 #   make-guards.sh reset dev|stage        CONFIRM=yes + resolved project name check; prints the env
 #                                         file to pass to `down -v` (the real one, else /dev/null)
 #   make-guards.sh prod-git               clean working tree AND branch main
-#   make-guards.sh prod-tags              WEB_TAG and API_TAG set (non-empty, not latest) in root .env
+#   make-guards.sh prod-tags              WEB_TAG, API_TAG and MEDIA_TAG set (non-empty, not latest) in root .env
 #   make-guards.sh prod-builder BUILDER   buildx builder lists linux/amd64 and linux/arm64
 #   make-guards.sh stage-git TAG          clean working tree AND TAG is HEAD's full 40-hex SHA
 #   make-guards.sh stage-platforms LIST   LIST is linux/amd64, linux/arm64 or both (comma-separated)
@@ -182,7 +182,7 @@ stage_platforms() {
 
 prod_tags() {
   [ -f .env ] || die "root .env is missing: cp docker/.env.example .env (README: Container deployment)"
-  for k in WEB_TAG API_TAG; do
+  for k in WEB_TAG API_TAG MEDIA_TAG; do
     v=$(key_of .env "$k")
     [ -n "$v" ] || die "$k is unset or empty in .env (a git-SHA tag is required)"
     [ "$v" != latest ] || die "$k=latest is refused; pin a git-SHA tag"

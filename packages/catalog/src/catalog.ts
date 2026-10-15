@@ -7,9 +7,12 @@
 import type { CatalogDb, CatalogRoot } from '@autologger/ports';
 import { AuthStore, type AuthStoreFacade } from './authStore';
 import { ProfileAssembler, type ProfileAssemblerFacade } from './profileAssembler';
+import { type CatalogSearchResult, type SearchParams, SearchStore } from './searchStore';
 import { SessionIndexStore, type SessionIndexStoreFacade } from './sessionIndexStore';
 import { ShowsStore, type ShowsStoreFacade } from './showsStore';
 import { StudioRegistry, type StudioRegistryFacade } from './studioRegistry';
+import type { WikiLinksParser } from './wikiStore';
+import { type WikiFacade, WikiSuggestionStore } from './wikiSuggestionStore';
 
 export type { AuthUser, ProfileCtx, Row } from '@autologger/domain';
 export type { AuthStoreFacade } from './authStore';
@@ -18,6 +21,8 @@ export type { SessionIndexStoreFacade } from './sessionIndexStore';
 export type { ShowsStoreFacade } from './showsStore';
 export { showApiDict, showCategoriesApiShape } from './showsStore';
 export type { StudioRegistryFacade } from './studioRegistry';
+export type { WikiStoreFacade } from './wikiStore';
+export type { WikiFacade, WikiSuggestionStoreFacade } from './wikiSuggestionStore';
 
 /** Facade interface for `Catalog` (persistence-package-extraction design D3 /
  * spec "Persistence facades are consumed through package-exported
@@ -33,6 +38,8 @@ export interface CatalogFacade {
   readonly auth: AuthStoreFacade;
   readonly sessions: SessionIndexStoreFacade;
   readonly profile: ProfileAssemblerFacade;
+  /** The show wiki (show-wiki design D1-D4) and its AI suggestions (show-wiki-ai D2). */
+  readonly wiki: WikiFacade;
   init: () => Promise<void>;
   /** Runs `fn` on a Catalog bound to one catalog transaction (async-catalog-stores D3). */
   tx: <T>(fn: (cat: CatalogFacade) => Promise<T>) => Promise<T>;
@@ -45,6 +52,10 @@ export interface CatalogFacade {
   /** `pg_notify(channel, payload)` under this catalog's binding; inside `tx`, on the transaction,
    * so it is delivered only if the transaction commits (session-frame-bus D5). */
   notify: (channel: string, payload: string) => Promise<void>;
+  /** One search under this catalog's binding, in its own catalog transaction with a 3 s statement
+   * budget, at most 2 per process (catalog-search D7). Rejects with `SearchTimeoutError` or
+   * `SearchBusyError`. */
+  search: (params: SearchParams) => Promise<CatalogSearchResult>;
 }
 
 /** A catalog call with neither a user nor a system binding: a programming error, refused before
@@ -65,26 +76,41 @@ export const UNBOUND_DB: CatalogDb = {
   tx: unboundCall,
 };
 
+/** `Catalog` construction options. `wikiLinks` is the wiki link parser (the server passes
+ * `parseWikiLinks` from `@autologger/contract`; show-wiki D4); derived catalogs carry it on, and
+ * without it every wiki write that sets a body fails. */
+export interface CatalogOptions {
+  root?: CatalogRoot;
+  studios?: StudioRegistry;
+  wikiLinks?: WikiLinksParser;
+}
+
 export class Catalog implements CatalogFacade {
   readonly shows: ShowsStore;
   readonly studios: StudioRegistry;
   readonly auth: AuthStore;
   readonly sessions: SessionIndexStore;
   readonly profile: ProfileAssembler;
+  readonly wiki: WikiSuggestionStore;
   /** Private (`#`), so the stores stay the only enumerable fields. */
   readonly #db: CatalogDb;
   readonly #root: CatalogRoot | undefined;
+  readonly #search: SearchStore;
+  readonly #wikiLinks: WikiLinksParser | undefined;
 
   /** `root` hands out the bound handles `forUser`/`system` use; `studios` lets a derived Catalog
    * carry this one's registry snapshot. */
-  constructor(db: CatalogDb, opts: { root?: CatalogRoot; studios?: StudioRegistry } = {}) {
+  constructor(db: CatalogDb, opts: CatalogOptions = {}) {
     this.#db = db;
     this.#root = opts.root;
+    this.#wikiLinks = opts.wikiLinks;
+    this.#search = new SearchStore(db);
     this.studios = opts.studios ?? new StudioRegistry(db);
     this.shows = new ShowsStore(db);
     this.auth = new AuthStore(db);
     this.sessions = new SessionIndexStore(db, this.studios, this.shows);
     this.profile = new ProfileAssembler(this.studios, this.auth, this.shows);
+    this.wiki = new WikiSuggestionStore(db, opts.wikiLinks);
   }
 
   /** Refresh the studio registry; must run once per request before registry reads. */
@@ -119,8 +145,17 @@ export class Catalog implements CatalogFacade {
     await this.#db.all('SELECT pg_notify(?, ?)', channel, payload);
   }
 
+  /** A method over a private store, so the stores stay the only enumerable members. */
+  search(params: SearchParams): Promise<CatalogSearchResult> {
+    return this.#search.search(params);
+  }
+
   #derive(db: CatalogDb): Catalog {
-    return new Catalog(db, { root: this.#root, studios: this.studios.withDb(db) });
+    return new Catalog(db, {
+      root: this.#root,
+      studios: this.studios.withDb(db),
+      wikiLinks: this.#wikiLinks,
+    });
   }
 
   #needRoot(): CatalogRoot {

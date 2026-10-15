@@ -22,6 +22,7 @@ describe('Catalog facade', () => {
       'sessions',
       'shows',
       'studios',
+      'wiki',
     ]);
     for (const legacy of [
       'getShowRow',

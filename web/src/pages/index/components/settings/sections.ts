@@ -5,6 +5,7 @@
 export type SettingsSectionId =
   | 'account'
   | 'companion-devices'
+  | 'advanced'
   | 'members'
   | 'shows'
   | 'team-details'
@@ -27,6 +28,8 @@ export const SETTINGS_SECTION_GROUPS: readonly SettingsSectionGroup[] = [
     sections: [
       { id: 'account', label: 'Account' },
       { id: 'companion-devices', label: 'Companion devices' },
+      // byo-ai-providers D6: the user's own AI and transcription provider credentials.
+      { id: 'advanced', label: 'Advanced' },
     ],
   },
   {

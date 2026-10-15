@@ -12,6 +12,8 @@ import { Toaster } from '@/shared/components/ui/sonner';
  */
 interface ShowOpts {
   persistent?: boolean;
+  /** A button in the toast (sonner's action), e.g. "Review" opening a screen. */
+  action?: { label: string; onClick: () => void };
 }
 
 /** Non-persistent toasts auto-dismiss after this long (the legacy store's value). */
@@ -23,12 +25,33 @@ let _nextId = 1;
 /** Facade id → sonner id, for persistent toasts still on screen (insertion order = age). */
 const _persistent = new Map<number, SonnerId>();
 
-function push(message: string, isError: boolean, persistent: boolean): number {
+/** Development builds also log every toast, so one that auto-dismissed can still be read. */
+export function _devLogToast(
+  message: string,
+  isError: boolean,
+  nodeEnv: string | undefined = process.env.NODE_ENV,
+): void {
+  if (nodeEnv !== 'development') return;
+  if (isError) console.warn(`[toast:error] ${message}`);
+  else console.info(`[toast] ${message}`);
+}
+
+function push(
+  message: string,
+  isError: boolean,
+  persistent: boolean,
+  action?: ShowOpts['action'],
+): number {
+  _devLogToast(message, isError);
   const id = _nextId++;
   const duration = persistent ? Number.POSITIVE_INFINITY : AUTO_DISMISS_MS;
   // A persistent toast the user swipes away must leave the map too, so hideToast() never
   // targets a toast that is already gone.
-  const opts = persistent ? { duration, onDismiss: () => _persistent.delete(id) } : { duration };
+  const opts = {
+    duration,
+    ...(persistent ? { onDismiss: () => _persistent.delete(id) } : {}),
+    ...(action ? { action } : {}),
+  };
   const sonnerId = isError ? sonner.error(message, opts) : sonner(message, opts);
   if (persistent) _persistent.set(id, sonnerId);
   return id;
@@ -43,7 +66,7 @@ function dismiss(id: number): void {
 
 /** Backwards-compatible API used by every page. */
 export function showToast(message: string, isError = false, opts: ShowOpts = {}): void {
-  push(message, isError, Boolean(opts.persistent));
+  push(message, isError, Boolean(opts.persistent), opts.action);
 }
 
 /** Dismiss the most recent persistent toast (legacy single-toast contract).

@@ -36,6 +36,7 @@ vi.mock('./SettingsSections', async () => {
   const ids = [
     'account',
     'companion-devices',
+    'advanced',
     'members',
     'shows',
     'team-details',
@@ -123,6 +124,7 @@ describe('Settings modal defers inactive tab content', () => {
     for (const id of [
       'account',
       'companion-devices',
+      'advanced',
       'members',
       'shows',
       'team-details',
@@ -135,6 +137,7 @@ describe('Settings modal defers inactive tab content', () => {
     expect(tabs.map((t) => t.textContent)).toEqual([
       'Account',
       'Companion devices',
+      'Advanced',
       'Members',
       'Shows',
       'Team details',

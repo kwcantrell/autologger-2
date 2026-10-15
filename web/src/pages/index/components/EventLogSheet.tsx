@@ -38,6 +38,7 @@ import { useIsMobile } from '../../../shared/ui/breakpoints';
 import { useConfirm } from '../../../shared/ui/ConfirmDialog';
 import { eventTimelineSec } from '../../../shared/utils/audioClips';
 import { formatWallUtcYmdHms, isAutomaticLogEvent } from '../../../shared/utils/timecode';
+import { useClearOnLanguageModelSave } from '../hooks/useClearOnLanguageModelSave';
 import { useGatedGenerate } from '../hooks/useGatedGenerate';
 import { useTimelineSeek } from '../hooks/useTimelineSeek';
 import { useDraftStore } from '../utils/draftStore';
@@ -500,10 +501,14 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
   // --- AUTO GENERATE (auto-generate-event-logs design D9) ---
   // Same machinery as Transcribe/Topics: `useGatedGenerate` owns the 503
   // latch (per MOUNTED panel — this sheet is mounted-hidden and unkeyed, so
-  // the latch deliberately persists across session switches and clears only
-  // on reload) and the single inline non-503 error channel.
+  // the latch deliberately persists across session switches and clears on
+  // reload, or when the user saves a language model, ai-sdk-agent-harness D8)
+  // and the single inline non-503 error channel.
   const generateEvents = useGenerateEvents(sessionId);
-  const { genError, genUnavailable, handleGenerate } = useGatedGenerate(generateEvents.mutate);
+  const { genError, genUnavailable, handleGenerate, resetUnavailable } = useGatedGenerate(
+    generateEvents.mutate,
+  );
+  useClearOnLanguageModelSave(genUnavailable, resetUnavailable);
   // Run/outcome state is KEYED BY THE SESSION THE RUN STARTED FOR (spec
   // "Session switch mid-run does not leak state" — the AiV2Panel lesson for
   // this unkeyed panel): `genRunSessionId` records the starting session, and
@@ -1254,7 +1259,7 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
   // Shared aria-disabled toolbar fragment (the a11y rationale — focusable
   // aria-disabled button + `aria-describedby` reason span — lives on
   // GenerateToolbar). Two distinct non-actionable reasons share the one
-  // reason span: the 503 latch (integration missing; reload to re-check)
+  // reason span: the 503 latch (no language model; Settings → Advanced)
   // takes precedence over the live no-instructions gate (point at Settings).
   // Presentation differs by cause: the latch keeps the always-visible span
   // (a discovered outage), while the AT-REST no-instructions gate — the
@@ -1263,10 +1268,7 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
   // FEED_TOOLBAR row; see GenerateToolbar's `reasonVisuallyHidden` doc).
   const genReasonId = 'v5-event-feed-gen-reason';
   const genLatchedReason = (
-    <>
-      Event generation isn&apos;t available on this server (no integration configured). Reload after
-      configuring to enable it — manual logging still works.
-    </>
+    <>Add a language model in Settings → Advanced to generate events. Manual logging still works.</>
   );
   const genNoInstructionsReason = (
     <>
@@ -1465,9 +1467,8 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
               // Honest-capability empty state (delta spec, MODIFIED "Honest
               // capability gating"): cause + remedy + the manual alternative.
               <>
-                No logged items yet. Event generation isn&apos;t available on this server — no
-                integration is configured (reload after configuring). You can still log events
-                manually with the event buttons.
+                No logged items yet. Add a language model in Settings → Advanced to generate events.
+                You can still log events manually with the event buttons.
               </>
             ) : (
               '— No logged items yet.'

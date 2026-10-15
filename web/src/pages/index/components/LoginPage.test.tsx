@@ -70,6 +70,20 @@ describe('LoginPage anchors', () => {
     expect(retry?.getAttribute('data-slot')).toBe('button');
   });
 
+  it('signup_closed shows the no-access message with the retry control and no config terms', () => {
+    setLocation('/?login_error=signup_closed');
+    renderStrict(<LoginPage />);
+
+    const message =
+      "This Google account doesn't have access yet. Ask the person who gave you the link to set it up.";
+    const banner = document.getElementById('login-error-banner');
+    expect(banner?.textContent).toContain(message);
+    expect(screen.getByText(message).textContent).not.toMatch(/SIGNUPS|closed|stage|prod/i);
+    expect(document.getElementById('login-error-retry')?.getAttribute('href')).toBe(
+      '/auth/google/start',
+    );
+  });
+
   it('create-account is an outline Button rendered as the same <a>; the divider uses Separators', () => {
     renderStrict(<LoginPage />);
 

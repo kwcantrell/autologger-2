@@ -26,7 +26,8 @@
 
 import { describe, expect, it, vi } from 'vitest';
 import { expectCapturedResponse } from '../test/apiFixtures';
-import { anonApp, app, env, envWith } from '../test/harness';
+import { answer, callTools, type FakeLlm, startFakeLlm } from '../test/fakeLlm';
+import { anonApp, app, defaultUser, env, envWith } from '../test/harness';
 import {
   adminHeader,
   catalogFor,
@@ -38,7 +39,9 @@ import {
   seedUser,
   testDb,
 } from '../test/helpers';
+import { saveSdkCredential } from '../test/llmRoutes';
 import { liveLeaseOfAnotherProcess } from '../test/runLeases';
+import { harnessHub } from '../test/session/sessionRows';
 
 const JSON_HEADERS = { 'content-type': 'application/json' };
 
@@ -702,7 +705,9 @@ describe('audio segments', () => {
       {
         name: 'audioSegmentCreate',
         endpoint: 'POST /api/sessions/:id/audio/segments',
-        format: 'json',
+        // media-worker D16: `media_status` is a literal union, which a JSON import widens.
+        format: 'ts',
+        exportName: 'audioSegmentCreate',
       },
       res,
     );
@@ -728,9 +733,120 @@ describe('audio segments', () => {
       {
         name: 'audioSegmentsList',
         endpoint: 'GET /api/sessions/:id/audio/segments',
-        format: 'json',
+        // media-worker D16: `media_status` is a literal union, which a JSON import widens.
+        format: 'ts',
+        exportName: 'audioSegmentsList',
       },
       res,
+    );
+  });
+});
+
+describe('audio media-worker routes (finalize, resumable uploads)', () => {
+  const sha = async (b: Uint8Array) =>
+    (await import('node:crypto')).createHash('sha256').update(b).digest('hex');
+
+  it('POST …/audio/recordings/:ord/finalize matches the captured fixture', async () => {
+    const { sessionId } = await seedActiveChain();
+    for (const [started, ended] of [
+      ['2026-10-12T10:00:00.000Z', '2026-10-12T10:10:00.000Z'],
+      ['2026-10-12T10:10:00.000Z', '2026-10-12T10:20:00.000Z'],
+    ] as const) {
+      const q = new URLSearchParams({
+        recording_ordinal: '1',
+        started_at_utc: started,
+        ended_at_utc: ended,
+      });
+      await app.request(
+        `/api/sessions/${sessionId}/audio/segments?${q.toString()}`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'audio/webm' },
+          body: new Uint8Array([1, 2, 3]),
+        },
+        { ...env },
+      );
+    }
+    const res = await app.request(
+      `/api/sessions/${sessionId}/audio/recordings/1/finalize`,
+      {
+        method: 'POST',
+        headers: JSON_HEADERS,
+        body: JSON.stringify({ chunks: ['2026-10-12T10:00:00.000Z', '2026-10-12T10:10:00.000Z'] }),
+      },
+      { ...env },
+    );
+    await expectCapturedResponse(
+      {
+        name: 'audioRecordingFinalize',
+        endpoint: 'POST /api/sessions/:id/audio/recordings/:recordingOrdinal/finalize',
+        format: 'ts',
+        exportName: 'audioRecordingFinalize',
+      },
+      res,
+    );
+  });
+
+  it('the upload create, status and complete bodies match the captured fixtures', async () => {
+    const { sessionId } = await seedActiveChain();
+    const file = new Uint8Array([4, 5, 6, 7, 8]);
+    const created = await app.request(
+      `/api/sessions/${sessionId}/audio/uploads`,
+      {
+        method: 'POST',
+        headers: JSON_HEADERS,
+        body: JSON.stringify({
+          content_type: 'audio/wav',
+          size_bytes: file.length,
+          part_sha256: [await sha(file)],
+        }),
+      },
+      { ...env },
+    );
+    await expectCapturedResponse(
+      {
+        name: 'audioUploadCreate',
+        endpoint: 'POST /api/sessions/:id/audio/uploads',
+        format: 'json',
+        status: 201,
+      },
+      created,
+    );
+    // The capture redacts the id; read the real one from the database.
+    const [row] = await testDb().all<{ id: string }>(
+      'SELECT id FROM catalog.media_uploads WHERE session_id = ? ORDER BY created_at_ms DESC LIMIT 1',
+      sessionId,
+    );
+    const id = String(row?.id);
+    await app.request(
+      `/api/sessions/${sessionId}/audio/uploads/${id}/parts/1`,
+      { method: 'PUT', headers: { 'content-type': 'application/octet-stream' }, body: file },
+      { ...env },
+    );
+    await expectCapturedResponse(
+      {
+        name: 'audioUploadStatus',
+        endpoint: 'GET /api/sessions/:id/audio/uploads/:uploadId',
+        format: 'json',
+      },
+      await app.request(
+        `/api/sessions/${sessionId}/audio/uploads/${id}`,
+        { method: 'GET' },
+        { ...env },
+      ),
+    );
+    await expectCapturedResponse(
+      {
+        name: 'audioUploadComplete',
+        endpoint: 'POST /api/sessions/:id/audio/uploads/:uploadId/complete',
+        format: 'ts',
+        exportName: 'audioUploadComplete',
+      },
+      await app.request(
+        `/api/sessions/${sessionId}/audio/uploads/${id}/complete?duration_s=1`,
+        { method: 'POST' },
+        { ...env },
+      ),
     );
   });
 });
@@ -1413,5 +1529,620 @@ describe('companion devices', () => {
         { name: 'Booth A', expired: true },
       ],
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Provider credentials (byo-ai-providers task 6.1, design D6): the list with both kinds, one save
+// and one connection-test result, as `useProviders.ts` types them. The key never appears; only
+// its last four characters do.
+// ---------------------------------------------------------------------------
+
+describe('provider credentials', () => {
+  it('GET, PUT and POST test on /api/me/providers match the captured fixtures', async () => {
+    const cookie = await loginCookie(await seedUser({ email: 'pat@example.com', sub: 'sub-pat' }));
+    const put = (kind: string, body: unknown) =>
+      app.request(
+        `/api/me/providers/${kind}`,
+        { method: 'PUT', headers: { ...JSON_HEADERS, Cookie: cookie }, body: JSON.stringify(body) },
+        envWith({ PROVIDER_DEV_MODE: false }),
+      );
+    const saved = await put('stt', {
+      provider: 'deepgram',
+      model: 'nova-3',
+      api_key: 'dg_secret_abcd',
+    });
+    await expectCapturedResponse(
+      { name: 'providerSave', endpoint: 'PUT /api/me/providers/:kind', format: 'json' },
+      saved,
+    );
+    expect(
+      (
+        await put('llm', {
+          provider: 'openai-compatible',
+          base_url: 'https://api.example.com/v1',
+          model: 'gpt-4o-mini',
+          api_key: 'sk-test-0123456789-9f2c',
+        })
+      ).status,
+    ).toBe(200);
+
+    const list = await app.request(
+      '/api/me/providers',
+      { method: 'GET', headers: { Cookie: cookie } },
+      { ...env },
+    );
+    const body = await expectCapturedResponse(
+      { name: 'providersList', endpoint: 'GET /api/me/providers', format: 'json' },
+      list,
+    );
+    expect(JSON.stringify(body)).not.toMatch(/dg_secret|sk-test/);
+
+    // A connection-test result, against a local fake standing in for DeepGram.
+    const { createServer } = await import('node:http');
+    const { ProviderTester } = await import('../auth/providerTester');
+    const fake = createServer((_req, res) => {
+      _req.resume();
+      _req.on('end', () => res.end('{}'));
+    });
+    await new Promise<void>((r) => fake.listen(0, '127.0.0.1', r));
+    const origin = `http://127.0.0.1:${(fake.address() as { port: number }).port}`;
+    try {
+      const test = await app.request(
+        '/api/me/providers/stt/test',
+        { method: 'POST', headers: { Cookie: cookie } },
+        envWith(
+          { PROVIDER_DEV_MODE: false },
+          {
+            providerTester: new ProviderTester({
+              openai: origin,
+              anthropic: origin,
+              google: origin,
+              deepgram: origin,
+            }),
+          },
+        ),
+      );
+      await expectCapturedResponse(
+        { name: 'providerTest', endpoint: 'POST /api/me/providers/:kind/test', format: 'json' },
+        test,
+      );
+    } finally {
+      await new Promise((r) => fake.close(r));
+    }
+  });
+  // ai-sdk-agent-harness D2: the keyless claude-cli save, by an allowlisted caller.
+  it('PUT of the claude-cli provider matches the captured fixture (key_last4 null)', async () => {
+    const cookie = await loginCookie(
+      await seedUser({ email: 'cli-dev@example.com', sub: 'sub-cli-dev' }),
+    );
+    const saved = await app.request(
+      '/api/me/providers/llm',
+      {
+        method: 'PUT',
+        headers: { ...JSON_HEADERS, Cookie: cookie },
+        body: JSON.stringify({ provider: 'claude-cli' }),
+      },
+      envWith({
+        PROVIDER_DEV_MODE: false,
+        CLAUDE_CLI_PATH: '/fake/claude',
+        CLAUDE_CLI_EMAILS: 'cli-dev@example.com',
+      }),
+    );
+    const body = await expectCapturedResponse(
+      {
+        name: 'providerSaveClaudeCli',
+        endpoint: 'PUT /api/me/providers/:kind',
+        format: 'json',
+      },
+      saved,
+    );
+    expect(body).toMatchObject({ provider: 'claude-cli', model: 'claude-cli', key_last4: null });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Catalog search (catalog-search task 4.4, design D5): one result with every group filled, so the
+// fixture carries a studio, a show, a session (`match` title, `snippet` null) and the three moment
+// kinds (`sec` a number for the transcript moment, null for the topic and the event). A `.ts`
+// fixture: `match` and `kind` are string-literal unions.
+// ---------------------------------------------------------------------------
+
+describe('catalog search', () => {
+  it('GET /api/search matches the captured fixture', async () => {
+    const at = '2026-10-12T10:00:00.000Z';
+    const studioId = await seedMemberStudio({ id: 'search-studio', name: 'Beacon Studio' });
+    const showId = await seedShow({ studioId, name: 'Beacon Show', code: 'BS' });
+    const sessionId = await catalogFor().sessions.createSessionIndex({
+      showId,
+      title: 'Beacon session',
+      frameRate: 24,
+      startOffsetFrames: 0,
+      episode: '007',
+      notes: 'notes about the beacon',
+      startedAtUtc: at,
+      createdAtUtc: at,
+    });
+    const db = testDb();
+    for (const [i, word] of ['we', 'lit', 'the', 'beacon', 'tonight'].entries()) {
+      await db.run(
+        `INSERT INTO session_transcript_words
+           (session_id, id, session_time, speaker, word, start_sec, end_sec, ordinal, created_at_utc)
+         VALUES (?, ?, '', 'Ann', ?, ?, ?, ?, ?)`,
+        sessionId,
+        `w${i}`,
+        word,
+        12 + i,
+        12.5 + i,
+        i,
+        at,
+      );
+    }
+    await db.run(
+      `INSERT INTO session_topics (session_id, id, summary, ordinal, created_at_utc)
+       VALUES (?, 'topic-1', 'Talk about the beacon', 0, ?)`,
+      sessionId,
+      at,
+    );
+    await db.run(
+      `INSERT INTO session_events (session_id, id, wall_time_utc, frame_rate, category, message)
+       VALUES (?, 'event-1', ?, 24, 'cam', 'beacon on camera')`,
+      sessionId,
+      at,
+    );
+    const res = await app.request('/api/search?q=beacon', {}, { ...env });
+    const body = await expectCapturedResponse(
+      { name: 'search', endpoint: 'GET /api/search', format: 'ts' },
+      res,
+    );
+    expect(body).toMatchObject({ q: 'beacon', studios: [{ name: 'Beacon Studio' }] });
+    const kinds = (body as { moments: { kind: string }[] }).moments.map((m) => m.kind).sort();
+    expect(kinds).toEqual(['event', 'topic', 'transcript']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Show wiki (show-wiki task 4.3, design D6, D8 category 5): one capture per wiki route, plus the
+// version-conflict branch of `PUT`. The default member (an admin of the seeded team) writes, so
+// every `*_by_name` is "Default User". `.ts` fixtures: `kind` is a string-literal union in every
+// page, list item and revision (design D4's rule, as for `search`).
+// ---------------------------------------------------------------------------
+
+describe('show wiki', () => {
+  async function wikiSend(method: string, path: string, body?: unknown): Promise<Response> {
+    return app.request(
+      path,
+      body === undefined
+        ? { method }
+        : { method, headers: JSON_HEADERS, body: JSON.stringify(body) },
+      { ...env },
+    );
+  }
+
+  /** A show with a person page (body, two aliases, revision 2), a topic page, and a session page;
+   * the default member administers its team. */
+  async function seedWiki() {
+    const studioId = await seedMemberStudio();
+    const showId = await seedShow({ studioId, name: 'Wiki Show', code: 'WS' });
+    const sessionId = await seedSession({ showId, episode: '003', title: 'WS - 3' });
+    const create = async (body: unknown) => {
+      const res = await wikiSend('POST', `/api/shows/${showId}/wiki/pages`, body);
+      expect(res.status).toBe(201);
+      return (await res.json()) as { id: string; revision: number };
+    };
+    const person = await create({
+      kind: 'person',
+      title: 'Christina Ramos',
+      body_md: 'Co-host.',
+      aliases: ['Tina', 'C. Ramos'],
+    });
+    const edited = await wikiSend('PUT', `/api/wiki/pages/${person.id}`, {
+      expected_revision: 1,
+      body_md: `Co-host. See [the cold open](cite:${sessionId}@12.5).`,
+    });
+    expect(edited.status).toBe(200);
+    const topic = await create({ kind: 'topic', title: 'Cold opens', body_md: 'Running list.' });
+    const session = await create({ kind: 'session', title: 'WS - 3', session_id: sessionId });
+    return { showId, sessionId, person, topic, session };
+  }
+
+  it('GET /api/shows/:showId/wiki/pages matches the captured fixture', async () => {
+    const { showId } = await seedWiki();
+    const res = await wikiSend('GET', `/api/shows/${showId}/wiki/pages`);
+    const body = await expectCapturedResponse(
+      {
+        name: 'wikiPageList',
+        endpoint: 'GET /api/shows/:showId/wiki/pages',
+        format: 'ts',
+      },
+      res,
+    );
+    expect(body).toMatchObject({ truncated: false });
+    expect((body as { pages: unknown[] }).pages).toHaveLength(3);
+  });
+
+  it('POST /api/shows/:showId/wiki/pages matches the captured fixture', async () => {
+    const studioId = await seedMemberStudio();
+    const showId = await seedShow({ studioId, name: 'Wiki Show', code: 'WS' });
+    const res = await wikiSend('POST', `/api/shows/${showId}/wiki/pages`, {
+      kind: 'bit',
+      title: 'The Ladder',
+      body_md: 'A running bit.',
+      aliases: ['Step Ladder'],
+    });
+    const body = await expectCapturedResponse(
+      {
+        name: 'wikiPageCreate',
+        endpoint: 'POST /api/shows/:showId/wiki/pages',
+        format: 'ts',
+        status: 201,
+      },
+      res,
+    );
+    expect(body).toMatchObject({ revision: 1, deleted: false, merged_into: null });
+  });
+
+  it('GET /api/wiki/pages/:pageId matches the captured fixture', async () => {
+    const { person } = await seedWiki();
+    const res = await wikiSend('GET', `/api/wiki/pages/${person.id}`);
+    const body = await expectCapturedResponse(
+      { name: 'wikiPage', endpoint: 'GET /api/wiki/pages/:pageId', format: 'ts' },
+      res,
+    );
+    expect(body).toMatchObject({ title: 'Christina Ramos', revision: 2 });
+  });
+
+  it('PUT /api/wiki/pages/:pageId matches the captured fixture', async () => {
+    const { person } = await seedWiki();
+    const res = await wikiSend('PUT', `/api/wiki/pages/${person.id}`, {
+      expected_revision: 2,
+      title: 'Christina R. Ramos',
+      aliases: ['Tina'],
+    });
+    const body = await expectCapturedResponse(
+      { name: 'wikiPageUpdate', endpoint: 'PUT /api/wiki/pages/:pageId', format: 'ts' },
+      res,
+    );
+    expect(body).toMatchObject({ revision: 3, aliases: ['Tina'] });
+  });
+
+  it('PUT /api/wiki/pages/:pageId with a stale revision (409) matches the captured fixture', async () => {
+    const { person } = await seedWiki();
+    const res = await wikiSend('PUT', `/api/wiki/pages/${person.id}`, {
+      expected_revision: 1,
+      body_md: 'late',
+    });
+    const body = await expectCapturedResponse(
+      {
+        name: 'wikiPageUpdateConflict',
+        endpoint: 'PUT /api/wiki/pages/:pageId (stale revision)',
+        format: 'ts',
+        status: 409,
+      },
+      res,
+    );
+    expect(body).toMatchObject({ detail: 'Version conflict.', current: { revision: 2 } });
+  });
+
+  it('DELETE /api/wiki/pages/:pageId?expected_revision= matches the captured fixture', async () => {
+    const { topic } = await seedWiki();
+    const res = await wikiSend('DELETE', `/api/wiki/pages/${topic.id}?expected_revision=1`);
+    const body = await expectCapturedResponse(
+      {
+        name: 'wikiPageDelete',
+        endpoint: 'DELETE /api/wiki/pages/:pageId?expected_revision=',
+        format: 'ts',
+      },
+      res,
+    );
+    expect(body).toMatchObject({ deleted: true, revision: 2 });
+  });
+
+  it('POST /api/wiki/pages/:pageId/restore matches the captured fixture', async () => {
+    const { topic } = await seedWiki();
+    const del = await wikiSend('DELETE', `/api/wiki/pages/${topic.id}?expected_revision=1`);
+    expect(del.status).toBe(200);
+    const res = await wikiSend('POST', `/api/wiki/pages/${topic.id}/restore`, {
+      expected_revision: 2,
+    });
+    const body = await expectCapturedResponse(
+      {
+        name: 'wikiPageRestore',
+        endpoint: 'POST /api/wiki/pages/:pageId/restore',
+        format: 'ts',
+      },
+      res,
+    );
+    expect(body).toMatchObject({ deleted: false, revision: 3 });
+  });
+
+  it('GET /api/wiki/pages/:pageId/revisions matches the captured fixture', async () => {
+    const { person } = await seedWiki();
+    const res = await wikiSend('GET', `/api/wiki/pages/${person.id}/revisions?limit=1`);
+    const body = await expectCapturedResponse(
+      {
+        name: 'wikiRevisionList',
+        endpoint: 'GET /api/wiki/pages/:pageId/revisions',
+        format: 'ts',
+      },
+      res,
+    );
+    expect(body).toMatchObject({ next_before: 2, revisions: [{ revision: 2, note: 'edited' }] });
+  });
+
+  it('GET /api/wiki/pages/:pageId/revisions/:rev matches the captured fixture', async () => {
+    const { person } = await seedWiki();
+    const res = await wikiSend('GET', `/api/wiki/pages/${person.id}/revisions/1`);
+    const body = await expectCapturedResponse(
+      {
+        name: 'wikiRevision',
+        endpoint: 'GET /api/wiki/pages/:pageId/revisions/:rev',
+        format: 'ts',
+      },
+      res,
+    );
+    expect(body).toMatchObject({ revision: 1, note: 'created', body_md: 'Co-host.' });
+  });
+
+  it('POST /api/wiki/pages/:pageId/merge matches the captured fixture', async () => {
+    const { person, topic } = await seedWiki();
+    const res = await wikiSend('POST', `/api/wiki/pages/${topic.id}/merge`, {
+      into_page_id: person.id,
+      expected_revision: 1,
+      into_expected_revision: 2,
+    });
+    const body = await expectCapturedResponse(
+      { name: 'wikiMerge', endpoint: 'POST /api/wiki/pages/:pageId/merge', format: 'ts' },
+      res,
+    );
+    expect(body).toMatchObject({
+      page: { revision: 3, aliases: ['Tina', 'C. Ramos', 'Cold opens'] },
+    });
+  });
+
+  it('POST /api/wiki/pages/:pageId/split matches the captured fixture', async () => {
+    const { topic } = await seedWiki();
+    const res = await wikiSend('POST', `/api/wiki/pages/${topic.id}/split`, {
+      expected_revision: 1,
+      remaining_body_md: 'Running list.',
+      new_page: { kind: 'bit', title: 'The Ladder', body_md: 'Moved here.', aliases: ['Ladder'] },
+    });
+    const body = await expectCapturedResponse(
+      {
+        name: 'wikiSplit',
+        endpoint: 'POST /api/wiki/pages/:pageId/split',
+        format: 'ts',
+        status: 201,
+      },
+      res,
+    );
+    expect(body).toMatchObject({ page: { revision: 2 }, new_page: { revision: 1, kind: 'bit' } });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Wiki suggestions (show-wiki-ai task 5.2, design D5, D7 category 3): one capture per suggestion
+// route, plus the version-conflict branch of accept and the already-resolved 409. The default
+// member (an admin of the seeded team) writes and reviews, so every `*_by_name` is "Default User".
+// `wiki/generate` runs on the AI SDK route against the local fake provider. `.ts` fixtures: `kind`
+// and `status` are string-literal unions.
+// ---------------------------------------------------------------------------
+
+describe('wiki suggestions', () => {
+  async function send(method: string, path: string, body?: unknown, on = env): Promise<Response> {
+    return app.request(
+      path,
+      body === undefined
+        ? { method }
+        : { method, headers: JSON_HEADERS, body: JSON.stringify(body) },
+      { ...on },
+    );
+  }
+
+  /** A show with a person page (revision 1), a pending edit of it, and a pending new topic page,
+   * stored as two runs of the default member, oldest first. */
+  async function seedSuggestions() {
+    const studioId = await seedMemberStudio();
+    const showId = await seedShow({ studioId, name: 'Wiki Show', code: 'WS' });
+    const sessionId = await seedSession({ showId, episode: '003', title: 'WS - 3' });
+    const created = await send('POST', `/api/shows/${showId}/wiki/pages`, {
+      kind: 'person',
+      title: 'Christina Ramos',
+      body_md: 'Co-host.',
+      aliases: ['Tina'],
+    });
+    expect(created.status).toBe(201);
+    const page = (await created.json()) as { id: string };
+    const wiki = catalogFor().forUser((await defaultUser()).id).wiki;
+    const [edit] = await wiki.saveRun(showId, sessionId, crypto.randomUUID(), [
+      {
+        target: { type: 'page', pageId: page.id, baseRevision: 1 },
+        kind: 'person',
+        title: 'Christina Ramos',
+        aliases: ['Tina'],
+        bodyMd: `Co-host. [She opens the show](cite:${sessionId}@12).`,
+        rationale: 'She opens this session.',
+      },
+    ]);
+    await new Promise((r) => setTimeout(r, 5));
+    const [fresh] = await wiki.saveRun(showId, sessionId, crypto.randomUUID(), [
+      {
+        target: { type: 'new' },
+        kind: 'topic',
+        title: 'Cold opens',
+        aliases: ['Openers'],
+        bodyMd: 'A running list.',
+        rationale: 'A recurring segment.',
+      },
+    ]);
+    if (!edit || !fresh) throw new Error('seeding the suggestions failed');
+    return { showId, sessionId, page, edit, fresh };
+  }
+
+  it('GET /api/shows/:showId/wiki/suggestions matches the captured fixture', async () => {
+    const { showId } = await seedSuggestions();
+    const res = await send('GET', `/api/shows/${showId}/wiki/suggestions`);
+    const body = await expectCapturedResponse(
+      {
+        name: 'wikiSuggestionList',
+        endpoint: 'GET /api/shows/:showId/wiki/suggestions',
+        format: 'ts',
+      },
+      res,
+    );
+    expect(body).toMatchObject({ truncated: false });
+    expect(
+      (body as { suggestions: Array<{ title: string }> }).suggestions.map((x) => x.title),
+    ).toEqual(['Cold opens', 'Christina Ramos']);
+  });
+
+  it('GET /api/wiki/suggestions/:suggestionId matches the captured fixture', async () => {
+    const { edit } = await seedSuggestions();
+    const res = await send('GET', `/api/wiki/suggestions/${edit.id}`);
+    const body = await expectCapturedResponse(
+      { name: 'wikiSuggestion', endpoint: 'GET /api/wiki/suggestions/:suggestionId', format: 'ts' },
+      res,
+    );
+    expect(body).toMatchObject({ status: 'pending', base_revision: 1, stale: false });
+  });
+
+  it('POST /api/wiki/suggestions/:suggestionId/accept (existing page, 200) matches the captured fixture', async () => {
+    const { edit } = await seedSuggestions();
+    const res = await send('POST', `/api/wiki/suggestions/${edit.id}/accept`, {
+      expected_revision: 1,
+    });
+    const body = await expectCapturedResponse(
+      {
+        name: 'wikiSuggestionAccept',
+        endpoint: 'POST /api/wiki/suggestions/:suggestionId/accept',
+        format: 'ts',
+      },
+      res,
+    );
+    expect(body).toMatchObject({
+      page: { revision: 2 },
+      suggestion: { status: 'accepted', resolved_revision: 2 },
+    });
+  });
+
+  it('POST /api/wiki/suggestions/:suggestionId/accept (new page, 201) matches the captured fixture', async () => {
+    const { fresh } = await seedSuggestions();
+    const res = await send('POST', `/api/wiki/suggestions/${fresh.id}/accept`, {});
+    const body = await expectCapturedResponse(
+      {
+        name: 'wikiSuggestionAcceptCreate',
+        endpoint: 'POST /api/wiki/suggestions/:suggestionId/accept (new page)',
+        format: 'ts',
+        status: 201,
+      },
+      res,
+    );
+    expect(body).toMatchObject({
+      page: { kind: 'topic', revision: 1 },
+      suggestion: { status: 'accepted', resolved_revision: 1 },
+    });
+  });
+
+  it('POST /api/wiki/suggestions/:suggestionId/accept with a stale revision (409) matches the captured fixture', async () => {
+    const { page, edit } = await seedSuggestions();
+    const bumped = await send('PUT', `/api/wiki/pages/${page.id}`, {
+      expected_revision: 1,
+      body_md: 'Co-host and producer.',
+    });
+    expect(bumped.status).toBe(200);
+    const res = await send('POST', `/api/wiki/suggestions/${edit.id}/accept`, {
+      expected_revision: 1,
+    });
+    const body = await expectCapturedResponse(
+      {
+        name: 'wikiSuggestionAcceptConflict',
+        endpoint: 'POST /api/wiki/suggestions/:suggestionId/accept (stale revision)',
+        format: 'ts',
+        status: 409,
+      },
+      res,
+    );
+    expect(body).toMatchObject({ detail: 'Version conflict.', current: { revision: 2 } });
+  });
+
+  it('POST /api/wiki/suggestions/:suggestionId/dismiss matches the captured fixture', async () => {
+    const { fresh } = await seedSuggestions();
+    const res = await send('POST', `/api/wiki/suggestions/${fresh.id}/dismiss`);
+    const body = await expectCapturedResponse(
+      {
+        name: 'wikiSuggestionDismiss',
+        endpoint: 'POST /api/wiki/suggestions/:suggestionId/dismiss',
+        format: 'ts',
+      },
+      res,
+    );
+    expect(body).toMatchObject({ status: 'dismissed', resolved_by_name: 'Default User' });
+  });
+
+  it('POST /api/wiki/suggestions/:suggestionId/dismiss when already resolved (409) matches the captured fixture', async () => {
+    const { fresh } = await seedSuggestions();
+    expect((await send('POST', `/api/wiki/suggestions/${fresh.id}/dismiss`)).status).toBe(200);
+    const res = await send('POST', `/api/wiki/suggestions/${fresh.id}/dismiss`);
+    const body = await expectCapturedResponse(
+      {
+        name: 'wikiSuggestionResolved',
+        endpoint: 'POST /api/wiki/suggestions/:suggestionId/dismiss (already resolved)',
+        format: 'ts',
+        status: 409,
+      },
+      res,
+    );
+    expect(body).toEqual({ detail: 'Suggestion already resolved.', status: 'dismissed' });
+  });
+
+  it('POST /api/sessions/:sessionId/wiki/generate matches the captured fixture', async () => {
+    const studioId = await seedMemberStudio();
+    const showId = await seedShow({ studioId, name: 'Wiki Show', code: 'WS' });
+    const sessionId = await seedSession({ showId, episode: '003', title: 'WS - 3' });
+    const hub = await harnessHub(sessionId);
+    for (const word of ['She', 'opens', 'the', 'show']) {
+      await hub.insertTranscriptWord({ session_time: '00:00:12:00', speaker: 'Host', word });
+    }
+    let llm: FakeLlm | null = null;
+    try {
+      llm = await startFakeLlm((n) =>
+        n === 1
+          ? callTools(1, [{ name: 'get_transcript_words', args: { page: 0 } }])
+          : n === 2
+            ? callTools(2, [
+                {
+                  name: 'propose_page',
+                  args: {
+                    kind: 'person',
+                    title: 'Christina Ramos',
+                    aliases: ['Tina'],
+                    body_md: `Co-host. [She opens the show](cite:${sessionId}@12).`,
+                    rationale: 'She opens this session.',
+                  },
+                },
+              ])
+            : answer('done'),
+      );
+      await saveSdkCredential(llm.baseURL);
+      const res = await send(
+        'POST',
+        `/api/sessions/${sessionId}/wiki/generate`,
+        undefined,
+        envWith({ HOST: '127.0.0.1' }),
+      );
+      const body = await expectCapturedResponse(
+        {
+          name: 'wikiSuggestionGenerate',
+          endpoint: 'POST /api/sessions/:sessionId/wiki/generate',
+          format: 'ts',
+        },
+        res,
+      );
+      expect(body).toMatchObject({
+        suggestions: [{ status: 'pending', page_id: null, kind: 'person' }],
+      });
+    } finally {
+      await llm?.close();
+    }
   });
 });

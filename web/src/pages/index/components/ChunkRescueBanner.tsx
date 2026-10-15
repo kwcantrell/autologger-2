@@ -11,7 +11,6 @@ import { useConfirm } from '../../../shared/ui/ConfirmDialog';
 import '../utils/chunkLeaveWarning';
 import {
   type ChunkUploadQueue,
-  type ChunkUploadQueueDeps,
   getChunkUploadQueue,
   type QueuedChunk,
 } from '../utils/chunkUploadQueue';
@@ -33,7 +32,12 @@ import {
  * of their own do not render.
  */
 function hasFailed(chunk: QueuedChunk): boolean {
-  return chunk.classification === 'permanent' || chunk.lastError !== null;
+  return chunk.classification !== 'queued' || chunk.lastError !== null;
+}
+
+/** Shown on the surface: failed chunks, and every chunk recovered from a previous page (D10). */
+function isShown(chunk: QueuedChunk): boolean {
+  return chunk.recovered || hasFailed(chunk);
 }
 
 /**
@@ -81,10 +85,8 @@ export function chunkDownloadFilename(chunk: QueuedChunk): string {
   return `autologger_${safeSession}_rec${chunk.recordingOrdinal}_chunk${chunk.chunkIndex}_${safeStart}.${ext}`;
 }
 
-/** Trigger a browser download of one chunk's blob, then revoke the object
- *  URL (spec: "object URL revoked after the download click"). */
-function downloadChunk(chunk: QueuedChunk): void {
-  const url = URL.createObjectURL(chunk.blob);
+function saveBlob(chunk: QueuedChunk, blob: Blob): void {
+  const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
   a.download = chunkDownloadFilename(chunk);
@@ -92,6 +94,21 @@ function downloadChunk(chunk: QueuedChunk): void {
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
+}
+
+/** Trigger a browser download of one chunk's bytes, then revoke the object URL (spec). In-memory
+ *  bytes download synchronously; stored bytes are read back from the chunk store first. */
+function downloadChunk(chunk: QueuedChunk, queue: ChunkUploadQueue): void {
+  if (chunk.blob) {
+    saveBlob(chunk, chunk.blob);
+    return;
+  }
+  void queue
+    .readChunk(chunk.key)
+    .then((b) => saveBlob(chunk, b))
+    .catch(() => {
+      /* best-effort — the chunk stays in the queue either way */
+    });
 }
 
 /** Duration in whole seconds spanned by a chunk, or null when either
@@ -167,17 +184,18 @@ interface ChunkRowProps {
 function ChunkRow({ chunk, queue, confirm }: ChunkRowProps) {
   const handleDownload = useCallback(() => {
     try {
-      downloadChunk(chunk);
+      downloadChunk(chunk, queue);
     } catch {
       /* best-effort — the chunk stays in the queue either way */
     }
-  }, [chunk]);
+  }, [chunk, queue]);
 
+  // One attempt for this chunk whatever its class (media-worker D11: Retry reaches every class).
   const handleRetry = useCallback(() => {
-    void queue.pump().catch(() => {
-      /* pump() reflects failures via the snapshot; nothing to do with the rejection itself */
+    void queue.retryChunk(chunk.key).catch(() => {
+      /* the snapshot reflects the outcome */
     });
-  }, [queue]);
+  }, [queue, chunk.key]);
 
   const handleDiscard = useCallback(async () => {
     const ok = await confirm({
@@ -187,21 +205,34 @@ function ChunkRow({ chunk, queue, confirm }: ChunkRowProps) {
       danger: true,
     });
     if (!ok) return;
-    queue.discard(chunk.recordingOrdinal, chunk.chunkIndex);
+    void queue.discardChunk(chunk.key);
   }, [chunk, confirm, queue]);
 
   const detail = chunk.lastError ? chunk.lastError : null;
-  const statusLabel = chunk.classification === 'permanent' ? 'Failed permanently' : 'Retrying…';
+  const statusLabel =
+    chunk.classification === 'permanent'
+      ? 'Failed permanently'
+      : chunk.classification === 'blocked'
+        ? 'Signed out'
+        : chunk.lastError !== null
+          ? 'Retrying…'
+          : 'Recovered';
 
   return (
     <li className="flex flex-col gap-1 rounded-v5-sm border border-v5-border px-3 py-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <span className="text-[0.82rem] font-medium text-v5-text">
           Recording {chunk.recordingOrdinal} · chunk {chunk.chunkIndex + 1}
+          {chunk.partial ? ' (partial)' : ''}
         </span>
         <span className="text-[0.72rem] text-[#ffb4b4]">{statusLabel}</span>
       </div>
       {detail && <p className="m-0 text-[0.76rem] text-v5-muted wrap-break-word">{detail}</p>}
+      {chunk.classification === 'blocked' && (
+        <p className="m-0 text-[0.76rem] text-v5-muted">
+          Sign in again in another tab, then press Retry.
+        </p>
+      )}
       <div className="flex flex-wrap gap-2 pt-1">
         <Button variant="outline" size="sm" onClick={handleDownload}>
           Download
@@ -217,39 +248,9 @@ function ChunkRow({ chunk, queue, confirm }: ChunkRowProps) {
   );
 }
 
-/**
- * `getChunkUploadQueue`'s `deps` are consulted only on the singleton's FIRST
- * construction anywhere in the tab (module doc comment) — real
- * upload/listSegments deps come from `AudioRecorder.tsx`'s `buildQueueDeps`.
- * These placeholders are a landmine-avoidance fallback only, never expected to
- * run: `SessionWorkspace` renders `<AudioRecorder>` before
- * `<ChunkRescueBanner>` in the same JSX parent, and React renders siblings in
- * document order within one commit, so `AudioRecorder`'s render always
- * constructs the singleton (with real deps) first. If that ordering were ever
- * violated, failing loudly here (rather than silently swallowing uploads) is
- * deliberate — an unexpected pump() rejection surfaces via the Retry button's
- * own catch below, not a data-loss no-op.
- *
- * Hoisted to module scope rather than built per render: the object is inert
- * after first construction, so allocating a fresh literal on every render of a
- * component that re-renders with playback was pure garbage.
- */
-const FALLBACK_QUEUE_DEPS: ChunkUploadQueueDeps = {
-  upload: async () => {
-    throw new Error(
-      'chunkUploadQueue: ChunkRescueBanner constructed the singleton before AudioRecorder',
-    );
-  },
-  listSegments: async () => {
-    throw new Error(
-      'chunkUploadQueue: ChunkRescueBanner constructed the singleton before AudioRecorder',
-    );
-  },
-  clock: { now: () => Date.now() },
-};
-
 export function ChunkRescueBanner() {
-  const queue = getChunkUploadQueue(FALLBACK_QUEUE_DEPS);
+  // Built with its real deps by the provider whichever component renders first (media-worker A.3).
+  const queue = getChunkUploadQueue();
   const snapshot = useQueueSnapshot(queue);
   const { confirm, confirmElement } = useConfirm();
 
@@ -257,11 +258,38 @@ export function ChunkRescueBanner() {
   // actually FAILED (visual-gate finding, U9) — a healthy chunk mid-first-
   // attempt, or one merely queued behind a failed head with no failure of
   // its own, is neither shown nor swept up by "Discard remaining".
-  const failedChunks = snapshot.chunks.filter(hasFailed);
+  // Only the signed-in user's chunks (a shared machine never shows another user's audio, A.8).
+  // The recorder tells the queue who is signed in; until then every chunk held is this tab's own.
+  const { currentUser } = snapshot;
+  const mine = snapshot.chunks.filter(
+    (c) => currentUser === undefined || c.userId === null || c.userId === currentUser,
+  );
+  const failedChunks = mine.filter(isShown);
+  const recovered = mine.filter((c) => c.recovered);
+  const recoveredMin = Math.max(
+    1,
+    Math.round(recovered.reduce((t, c) => t + (chunkDurationSec(c) ?? 0), 0) / 60),
+  );
+  const safariNote = recovered.some((c) => c.safari);
 
   const handleRetryAll = useCallback(() => {
-    void queue.pump().catch(() => {});
+    void queue.retryAll().catch(() => {});
   }, [queue]);
+
+  const handleDownloadRecovered = useCallback(() => {
+    for (const c of recovered) downloadChunk(c, queue);
+  }, [queue, recovered]);
+
+  const handleDiscardRecovered = useCallback(async () => {
+    const ok = await confirm({
+      title: 'Discard the recovered recording audio?',
+      message: `This will permanently discard ${describeAmount(recovered)}. This cannot be undone.`,
+      confirmLabel: 'Discard',
+      danger: true,
+    });
+    if (!ok) return;
+    for (const c of recovered) void queue.discardChunk(c.key);
+  }, [confirm, queue, recovered]);
 
   const handleDiscardAll = useCallback(async () => {
     const ok = await confirm({
@@ -279,11 +307,16 @@ export function ChunkRescueBanner() {
     // never named in this confirmation's amount, never shown in the list
     // above it.
     for (const chunk of failedChunks) {
-      queue.discard(chunk.recordingOrdinal, chunk.chunkIndex);
+      void queue.discardChunk(chunk.key);
     }
   }, [confirm, queue, failedChunks]);
 
   if (failedChunks.length === 0) return null;
+
+  // A chunk that is only retrying on its backoff is not an error yet (A.9): the surface keeps its
+  // actions but reads as a neutral status. It turns into the error alert once a chunk is blocked,
+  // permanent, or recovered from a previous page.
+  const terminal = failedChunks.some((c) => c.classification !== 'queued' || c.recovered);
 
   return (
     <>
@@ -291,15 +324,25 @@ export function ChunkRescueBanner() {
           surface; never a toast, never auto-dismissed). `block` replaces Alert's icon grid so the
           header row + chunk list lay out as before. */}
       <Alert
-        variant="destructive"
-        aria-live="assertive"
+        variant={terminal ? 'destructive' : 'default'}
+        role={terminal ? 'alert' : 'status'}
+        aria-live={terminal ? 'assertive' : 'polite'}
         className="fixed inset-x-0 top-0 z-(--z-toast) mx-auto mt-2 block w-[min(640px,94vw)] shadow-[0_8px_32px_rgba(0,0,0,0.35)]"
       >
         <div className="flex flex-wrap items-center justify-between gap-2">
           <AlertDescription className="m-0 block font-medium">
-            {failedChunks.length} recorded audio {failedChunks.length === 1 ? 'chunk' : 'chunks'}{' '}
-            could not be uploaded. Keep this tab open until they are retried, downloaded, or
-            discarded.
+            {terminal ? (
+              <>
+                {failedChunks.length} recorded audio{' '}
+                {failedChunks.length === 1 ? 'chunk' : 'chunks'} could not be uploaded. Keep this
+                tab open until they are retried, downloaded, or discarded.
+              </>
+            ) : (
+              <>
+                Uploading {failedChunks.length} recorded audio{' '}
+                {failedChunks.length === 1 ? 'chunk' : 'chunks'}… retrying. Keep this tab open.
+              </>
+            )}
           </AlertDescription>
           <div className="flex gap-2">
             <Button variant="outline" size="sm" onClick={handleRetryAll}>
@@ -310,14 +353,30 @@ export function ChunkRescueBanner() {
             </Button>
           </div>
         </div>
+        {recovered.length > 0 && (
+          <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+            <p className="m-0 text-[0.82rem]">
+              Recovered {recovered.length} {recovered.length === 1 ? 'chunk' : 'chunks'} (≈
+              {recoveredMin} min) from a previous session.
+              {safariNote &&
+                ' Safari keeps unsent recordings for 7 days without a visit; upload them before then.'}
+            </p>
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" onClick={handleRetryAll}>
+                Upload all
+              </Button>
+              <Button variant="outline" size="sm" onClick={handleDownloadRecovered}>
+                Download all
+              </Button>
+              <Button variant="destructive" size="sm" onClick={handleDiscardRecovered}>
+                Discard recovered
+              </Button>
+            </div>
+          </div>
+        )}
         <ul className="m-0 mt-2 flex list-none flex-col gap-2 p-0">
           {failedChunks.map((chunk) => (
-            <ChunkRow
-              key={`${chunk.recordingOrdinal}:${chunk.chunkIndex}`}
-              chunk={chunk}
-              queue={queue}
-              confirm={confirm}
-            />
+            <ChunkRow key={chunk.key} chunk={chunk} queue={queue} confirm={confirm} />
           ))}
         </ul>
       </Alert>

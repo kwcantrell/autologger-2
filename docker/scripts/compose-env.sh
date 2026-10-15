@@ -19,7 +19,7 @@
 #   * compose_dev   ENVFILE ARGS...   project autologger-dev
 #       docker compose --project-directory . --env-file ENVFILE -f docker/compose.dev.yaml ARGS
 #   * compose_stage ENVFILE ARGS...   project autologger-stage (the overlay's `name:` wins)
-#       WEB_TAG=stage API_TAG=stage PUBLIC_BASE_URL=http://localhost:8788 (placeholders that only
+#       WEB_TAG=stage API_TAG=stage MEDIA_TAG=stage PUBLIC_BASE_URL=http://localhost:8788 (placeholders that only
 #       satisfy compose.yaml's `${...:?}` guards, which compose interpolates BEFORE the merge)
 #       docker compose -f compose.yaml -f docker/compose.stage.yaml --env-file ENVFILE ARGS
 #   * compose_prod  ENVFILE ARGS...   project autologger; exactly README "Container deployment"
@@ -33,9 +33,10 @@
 #     ambient overrides such as `DEV_PORT=9000 make dev-up` no longer apply: set the value in
 #     OpenBao. check-envs.sh strips the caller's variables itself.
 #   * All three also add -f docker/supabase-db.yaml (supabase-db D1: db and migrate) and
-#     -f docker/supabase-services.yaml (supabase-services D1: auth, rest, realtime, storage, gateway).
+#     -f docker/supabase-services.yaml (supabase-services D1; drop-unused-supabase-services D1:
+#     auth only).
 #   * Variables (for callers that need the raw pieces): AL_DEV_FILE, AL_DB_FILE, AL_STAGE_FILES,
-#     AL_PROD_FILE, AL_STAGE_WEB_TAG, AL_STAGE_API_TAG, AL_STAGE_PUBLIC_BASE_URL.
+#     AL_PROD_FILE, AL_STAGE_WEB_TAG, AL_STAGE_API_TAG, AL_STAGE_MEDIA_TAG, AL_STAGE_PUBLIC_BASE_URL.
 
 # shellcheck disable=SC2034  # the AL_* variables are consumed by the sourcing script
 AL_DEV_FILE=docker/compose.dev.yaml
@@ -46,6 +47,7 @@ AL_STAGE_OVERLAY=docker/compose.stage.yaml
 AL_STAGE_FILES="$AL_PROD_FILE $AL_STAGE_OVERLAY"
 AL_STAGE_WEB_TAG=stage
 AL_STAGE_API_TAG=stage
+AL_STAGE_MEDIA_TAG=stage
 AL_STAGE_PUBLIC_BASE_URL=http://localhost:8788
 
 al_compose_guard() {
@@ -75,7 +77,7 @@ compose_dev() {
 compose_stage() {
   al_compose_guard || return $?
   _al_env=$1; shift
-  al_compose env WEB_TAG="$AL_STAGE_WEB_TAG" API_TAG="$AL_STAGE_API_TAG" \
+  al_compose env WEB_TAG="$AL_STAGE_WEB_TAG" API_TAG="$AL_STAGE_API_TAG" MEDIA_TAG="$AL_STAGE_MEDIA_TAG" \
     PUBLIC_BASE_URL="$AL_STAGE_PUBLIC_BASE_URL" \
     docker compose -f "$AL_PROD_FILE" -f "$AL_DB_FILE" -f "$AL_SB_FILE" -f "$AL_STAGE_OVERLAY" --env-file "$_al_env" "$@"
 }

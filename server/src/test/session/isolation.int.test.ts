@@ -20,6 +20,8 @@ const TABLES: Record<string, string> = {
   session_dashboards: 'id',
   session_meta: 'key',
   session_leases: 'kind',
+  // catalog-search D4: the transcript chunks the database derives from the words.
+  session_transcript_chunks: 'bucket',
 };
 
 /** Every row of the session in every session table, read on its own connection. */

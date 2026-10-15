@@ -10,7 +10,6 @@ const useCompanionPresenceMock = vi.fn();
 const useSessionSocketMock = vi.fn();
 const useRecoveryStopWarningMock = vi.fn();
 const useRemoteRecordingGateMock = vi.fn();
-const useDebugTransportOverrideMock = vi.fn();
 
 vi.mock('../../../api/hooks/useSessionStatus', () => ({
   useSessionStatus: (...args: unknown[]) => useSessionStatusMock(...args),
@@ -38,9 +37,6 @@ vi.mock('../hooks/useRecoveryStopWarning', () => ({
 vi.mock('../hooks/useRemoteRecordingGate', () => ({
   useRemoteRecordingGate: (...args: unknown[]) => useRemoteRecordingGateMock(...args),
 }));
-vi.mock('../../../shared/hooks/useDebugTransportOverride', () => ({
-  useDebugTransportOverride: (...args: unknown[]) => useDebugTransportOverrideMock(...args),
-}));
 vi.mock('../../../api/client', () => ({ apiFetch: vi.fn() }));
 vi.mock('../../../shared/components/Toast', () => ({ showToast: vi.fn() }));
 vi.mock('../../../shared/ui/Tooltip', () => ({
@@ -53,9 +49,18 @@ vi.mock('../hooks/AudioClipsContext', () => ({
 
 vi.mock('./AiPanel', () => ({ AiPanel: () => null }));
 vi.mock('./AiV2Panel', () => ({ AiV2Panel: () => null }));
-vi.mock('./AudioPlayer', () => ({
-  AudioPlayer: () => null,
-}));
+const audioPlayer = vi.hoisted(() => ({ playing: false }));
+vi.mock('./AudioPlayer', async () => {
+  const { useEffect } = await import('react');
+  return {
+    AudioPlayer: ({ onPlayingChange }: { onPlayingChange?: (playing: boolean) => void }) => {
+      useEffect(() => {
+        if (audioPlayer.playing) onPlayingChange?.(true);
+      }, [onPlayingChange]);
+      return null;
+    },
+  };
+});
 vi.mock('./AudioRecorder', () => ({
   AudioRecorder: () => null,
 }));
@@ -139,7 +144,7 @@ describe('SessionWorkspace fused strip layout', () => {
     useSessionSocketMock.mockReturnValue(undefined);
     useRecoveryStopWarningMock.mockReturnValue({ open: false, confirm: vi.fn(), cancel: vi.fn() });
     useRemoteRecordingGateMock.mockReturnValue(false);
-    useDebugTransportOverrideMock.mockReturnValue(null);
+    audioPlayer.playing = false;
   });
 
   afterEach(() => {
@@ -175,9 +180,9 @@ describe('SessionWorkspace fused strip layout', () => {
   });
 
   // Fix round 1 (finish review): the card's pill follows the shell state the top bar reads, so
-  // playback (this client playing, or the perf override) reads PLAY on both.
+  // playback (this client playing its recorded audio) reads PLAY on both.
   it('reads PLAY in playback, as the top bar does', () => {
-    useDebugTransportOverrideMock.mockReturnValue('play');
+    audioPlayer.playing = true;
     renderWorkspace();
     expect(document.getElementById('v5-controls-status-value')?.textContent).toBe('PLAY');
   });

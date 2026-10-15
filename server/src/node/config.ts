@@ -1,7 +1,8 @@
 // src/node/config.ts — the composition root: constructs the Ports (services)
 // and Config (plain strings) the app runs on, from process env.
 
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, readdirSync } from 'node:fs';
+import { stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { AiV2PendingQuestionRegistry } from '@autologger/ai-runtime/aiV2PendingQuestions';
@@ -23,16 +24,23 @@ import {
   PostgresFrameBus,
   PostgresLeaseDirectory,
   PostgresPresence,
+  PostgresProviderCredentialStore,
   PostgresSessionDb,
+  sweepStaleBlobPutTemps,
 } from '@autologger/storage';
+import { audioSeams } from '@autologger/storage/audioSeams';
+import { mediaJobs } from '@autologger/storage/mediaJobs';
 import type { Bindings } from '../appEnv';
 import { GoogleIdentityVerifier } from '../auth/oauth_google';
-import { CATALOG_PG_VARS } from '../bootGuard';
+import { ProviderKeyCipher, parseProviderKeysSecret } from '../auth/providerKeyCrypto';
+import { ProviderTester } from '../auth/providerTester';
+import { blobDirRefusal, CATALOG_PG_VARS } from '../bootGuard';
 import {
   aiV2UsesLoginFallback,
   newUserAllTeamsEnabled,
   parseAiProvider,
   resolveYtDlpPath,
+  signupsClosed,
 } from '../env';
 import { systemClock } from './systemClock';
 
@@ -44,6 +52,37 @@ export interface CreateBindingsOptions {
   /** The Postgres bus's clock for its send times and replay checks (session-frame-bus D2); the
    * system clock unless a test injects one. */
   frameBusClock?: Clock;
+  /** byo-ai-providers D2: `'required'` refuses a missing or malformed PROVIDER_KEYS_SECRET before
+   * the lock. Only `main.ts` passes it; elsewhere an unset secret becomes a per-process random one. */
+  providerKeys?: 'required';
+}
+
+function optionalProviderKeys(secret: string | undefined): ProviderKeyCipher {
+  try {
+    return new ProviderKeyCipher(parseProviderKeysSecret(secret));
+  } catch {
+    return ProviderKeyCipher.random();
+  }
+}
+
+/** shared-blob-volume D4: one warning line when DATA_DIR/blobs still holds files the server no
+ * longer reads. A count and fixed text only; it never opens or changes a file, and an error while
+ * counting is ignored, so it can't block boot. */
+function warnLegacyBlobs(dataDir: string): void {
+  let n = 0;
+  try {
+    for (const e of readdirSync(join(dataDir, 'blobs'), { withFileTypes: true, recursive: true })) {
+      if (e.isFile()) n += 1;
+    }
+  } catch {
+    return;
+  }
+  if (n > 0) {
+    console.warn(
+      `autologger: DATA_DIR/blobs holds ${n} legacy audio file(s) the server no longer reads; ` +
+        'move them into BLOB_DIR (README "Moving audio into BLOB_DIR")',
+    );
+  }
 }
 
 export function createBindings(
@@ -57,26 +96,43 @@ export function createBindings(
   /** Starts the Postgres bus's listener and resolves after its first LISTEN; `main.ts` awaits it
    * before `listen()` (session-frame-bus D1). Resolves at once on the local bus. */
   startFrameBus(): Promise<void>;
+  /** Resolves once `BLOB_DIR/media/` exists with mode 1777 (media-worker D4); rejects with the
+   * error that prevented it. */
+  ensureMediaDir(): Promise<void>;
 } {
   // retire-host-dev D1: no default data directory (never server/data by accident).
   const dataDir = procEnv.DATA_DIR ?? '';
   if (!dataDir || !isAbsolute(dataDir)) throw new Error('DATA_DIR must be set to an absolute path');
+  // shared-blob-volume D1: BLOB_DIR required, absolute and disjoint from DATA_DIR; the boot guard's
+  // check, repeated because tests and main.ts reach here without it. Before the lock.
+  const blobRefusal = blobDirRefusal(procEnv);
+  if (blobRefusal) throw new Error(blobRefusal);
+  const blobDir = procEnv.BLOB_DIR as string;
+  const putTmpDir = join(blobDir, '.tmp');
   // Checked before the lock, so a refusal never holds it. Names only, never values.
   const missing = CATALOG_PG_VARS.filter((k) => !procEnv[k]);
   if (missing.length) throw new Error(`catalog connection settings missing: ${missing.join(', ')}`);
   // session-frame-bus D2: the Postgres bus signs with FRAME_BUS_SECRET; refused before the lock.
   const busSecret =
     options.frameBus === 'postgres' ? checkFrameBusSecret(procEnv.FRAME_BUS_SECRET) : null;
+  // byo-ai-providers D2: the provider-key cipher. A required secret is refused before the lock;
+  // elsewhere a valid secret is used and anything else becomes a per-process random one.
+  const providerKeys =
+    options.providerKeys === 'required'
+      ? new ProviderKeyCipher(parseProviderKeysSecret(procEnv.PROVIDER_KEYS_SECRET))
+      : optionalProviderKeys(procEnv.PROVIDER_KEYS_SECRET);
   // run-status-and-sweeper D1: an unknown AI_PROVIDER is refused before the lock.
   const aiProvider = parseAiProvider(procEnv.AI_PROVIDER);
   // retire-host-dev D2: one server per DATA_DIR. Taken before anything is created or swept; a
   // second server refuses here (DataDirLockedError). Released by close().
   const lock = acquireDataDirLock(dataDir);
-  // r2_key values already start with "audio/", so the blob root is a sibling dir:
-  // bytes land at DATA_DIR/blobs/audio/<sid>/…  tmp stays OUTSIDE the root
-  // so listings/reconciliation never see partial writes.
-  mkdirSync(join(dataDir, 'blobs'), { recursive: true });
+  // shared-blob-volume D2, D3: DATA_DIR stays per process (the lock, the scratch root DATA_DIR/tmp,
+  // legacy files); DATA_DIR/blobs is no longer created. The audio lives under BLOB_DIR, shared by
+  // every server process (r2_key values start with "audio/": BLOB_DIR/audio/<sid>/…), and puts
+  // write their temp files in BLOB_DIR/.tmp, on the same filesystem, so the rename is atomic.
   mkdirSync(join(dataDir, 'tmp'), { recursive: true });
+  mkdirSync(putTmpDir, { recursive: true });
+  warnLegacyBlobs(dataDir);
 
   const clock = systemClock;
   // One adapter for the catalog stores and KV (catalog-on-postgres D1). It connects lazily, so
@@ -110,17 +166,39 @@ export function createBindings(
           commands: SESSION_COMMANDS,
           clock: options.frameBusClock ?? clock,
         });
+  const audioBlobStore = new BlobStore(blobDir, { putTmpDir, scratchDir: join(dataDir, 'tmp') });
   const registry = new SessionHubRegistry({
     storage: (id) => sessions.forSession(id),
     clock,
     bus: frameBus ?? undefined,
+    // media-worker D2, D18: segments get their seam and ingest job in the hub's transaction; a
+    // merge job's input size is its inputs' blob sizes.
+    media: {
+      jobs: mediaJobs,
+      seams: audioSeams,
+      blobBytes: async (key) => {
+        try {
+          return (await stat(audioBlobStore.resolveKeyPath(key))).size;
+        } catch {
+          return 0;
+        }
+      },
+    },
   });
-  const audioBlobStore = new BlobStore(join(dataDir, 'blobs'), join(dataDir, 'tmp'));
+  // media-worker D4: `media/` mode 1777 for the worker's job directories. Started here, awaited by
+  // `ensureMediaDir()` (main.ts awaits it before listening); a failure is reported there.
+  const mediaDirReady = audioBlobStore.ensureMediaDir().then(
+    () => null,
+    (err: unknown) => err,
+  );
   // Startup hygiene (design D6, task 5.4): remove any youtube-import per-request
   // temp dir orphaned by a crash/kill that skipped the route handler's own
   // `finally` cleanup. Prefix-scoped — never touches other scratch-root users
   // (e.g. transcript generation) or the blob store's real audio prefix.
   sweepStaleYoutubeImportTempDirs(audioBlobStore.scratchRoot());
+  // shared-blob-volume D3: once at boot, drop put- temp files a crash orphaned (older than 24 h,
+  // so never another process's write in flight). The system clock: these are filesystem mtimes.
+  sweepStaleBlobPutTemps(putTmpDir, Date.now());
 
   const bindings: Bindings = {
     ports: {
@@ -131,6 +209,7 @@ export function createBindings(
       sessions: registry,
       frameBus: registry.bus,
       audio: audioBlobStore,
+      mediaBlobs: audioBlobStore,
       // companion-devices D4: binds its own reviewed reason, system:companion-presence.
       presence: new PostgresPresence(catalogDb, clock),
       logImportJobs: createLogImportJobStore(kv, clock),
@@ -139,6 +218,11 @@ export function createBindings(
       leases: new PostgresLeaseDirectory(catalogDb),
       // companion-devices D2: binds its own reviewed reason, system:companion-device.
       companionDevices: new PostgresCompanionDeviceStore(catalogDb, clock),
+      // byo-ai-providers D1: binds its own reviewed reason, system:provider-credentials.
+      providerCredentials: new PostgresProviderCredentialStore(catalogDb, clock),
+      providerKeys,
+      // byo-ai-providers D5: always the frozen constant hosts; no environment or config is read.
+      providerTester: new ProviderTester(),
     },
     config: {
       PUBLIC_BASE_URL: procEnv.PUBLIC_BASE_URL || '',
@@ -148,6 +232,9 @@ export function createBindings(
       GOOGLE_CLIENT_SECRET: procEnv.GOOGLE_CLIENT_SECRET || '',
       BOOTSTRAP_OWNER_EMAIL: procEnv.BOOTSTRAP_OWNER_EMAIL || '',
       RUN_FEATURE_EMAILS: procEnv.RUN_FEATURE_EMAILS || '',
+      // closed-signups D1: the sign-up setting and the stack its blank default follows.
+      SIGNUPS: procEnv.SIGNUPS || '',
+      AUTOLOGGER_STACK: procEnv.AUTOLOGGER_STACK || '',
       SESSION_COOKIE: procEnv.SESSION_COOKIE || '',
       SESSION_DAYS: procEnv.SESSION_DAYS || '14',
       NEW_USER_ALL_TEAMS: procEnv.NEW_USER_ALL_TEAMS || '0',
@@ -157,7 +244,16 @@ export function createBindings(
       ADMIN_TOKEN: procEnv.ADMIN_TOKEN || '',
       DEEPGRAM_API_KEY: procEnv.DEEPGRAM_API_KEY || '',
       DEEPGRAM_MODEL: procEnv.DEEPGRAM_MODEL || '',
+      // byo-ai-providers D3: production mode unless NODE_ENV is exactly development or test.
+      PROVIDER_DEV_MODE: procEnv.NODE_ENV === 'development' || procEnv.NODE_ENV === 'test',
       CLAUDE_CLI_PATH: procEnv.CLAUDE_CLI_PATH || '',
+      // ai-sdk-agent-harness D1, D3: the CLI allowlist and the AI SDK turn bounds.
+      CLAUDE_CLI_EMAILS: procEnv.CLAUDE_CLI_EMAILS || '',
+      AI_CHAT_MAX_STEPS: procEnv.AI_CHAT_MAX_STEPS || '',
+      AI_CHAT_MAX_TOKENS: procEnv.AI_CHAT_MAX_TOKENS || '',
+      GENERATE_MAX_STEPS: procEnv.GENERATE_MAX_STEPS || '',
+      GENERATE_MAX_TOKENS: procEnv.GENERATE_MAX_TOKENS || '',
+      GENERATE_MAX_OUTPUT_TOKENS: procEnv.GENERATE_MAX_OUTPUT_TOKENS || '',
       AI_CHAT_TIMEOUT_SEC: procEnv.AI_CHAT_TIMEOUT_SEC || '',
       AI_PROVIDER: aiProvider,
       AI_CHAT_MAX_BUDGET_USD: procEnv.AI_CHAT_MAX_BUDGET_USD || '',
@@ -168,6 +264,11 @@ export function createBindings(
       EVENT_GENERATE_MAX_CREATED_EVENTS: procEnv.EVENT_GENERATE_MAX_CREATED_EVENTS || '',
       EVENT_GENERATE_MAX_INSTRUCTION_BYTES: procEnv.EVENT_GENERATE_MAX_INSTRUCTION_BYTES || '',
       EVENT_GENERATE_MAX_INSTRUCTION_ENTRIES: procEnv.EVENT_GENERATE_MAX_INSTRUCTION_ENTRIES || '',
+      // show-wiki-ai: the wiki update's own bounds.
+      WIKI_GENERATE_TIMEOUT_SEC: procEnv.WIKI_GENERATE_TIMEOUT_SEC || '',
+      WIKI_GENERATE_MAX_BUDGET_USD: procEnv.WIKI_GENERATE_MAX_BUDGET_USD || '',
+      WIKI_GENERATE_MAX_STEPS: procEnv.WIKI_GENERATE_MAX_STEPS || '',
+      WIKI_GENERATE_MAX_TOKENS: procEnv.WIKI_GENERATE_MAX_TOKENS || '',
       AI_V2_ENABLED: procEnv.AI_V2_ENABLED || '',
       AI_V2_API_KEY: procEnv.AI_V2_API_KEY || '',
       AI_V2_MAX_BUDGET_USD: procEnv.AI_V2_MAX_BUDGET_USD || '',
@@ -212,12 +313,19 @@ export function createBindings(
         'variable from your environment.',
     );
   }
+  // closed-signups D1: the effective mode, once at boot; never the raw value (an invalid one is
+  // refused by the boot guard, and fails closed here).
+  console.info(`sign-ups: ${signupsClosed(bindings.config) ? 'closed' : 'open'}`);
 
   return {
     bindings,
     frameBus,
     startFrameBus: async () => {
       await frameBus?.start(registry);
+    },
+    ensureMediaDir: async () => {
+      const err = await mediaDirReady;
+      if (err !== null) throw err;
     },
     close: async () => {
       await registry.closeAll();

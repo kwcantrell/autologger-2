@@ -49,6 +49,7 @@ const SESSION_STATUS = ['session', 'status'].join('-');
 const AUDIO_SEGMENTS = ['audio', 'segments'].join('-');
 const STUDIO_SHOWS = ['studio', 'shows'].join('-');
 const SHOW = ['sh', 'ow'].join('');
+const WIKI_PAGES = ['wiki', 'Pages'].join('');
 
 /** file (relative to the scan root, posix separators) allowed to hold each literal. */
 const FACTORY_MODULE: Record<string, string> = {
@@ -56,6 +57,7 @@ const FACTORY_MODULE: Record<string, string> = {
   [AUDIO_SEGMENTS]: 'api/hooks/useAudio.ts',
   [STUDIO_SHOWS]: 'api/hooks/useShows.ts',
   [SHOW]: 'api/hooks/useShows.ts',
+  [WIKI_PAGES]: 'api/hooks/useWiki.ts',
 };
 
 function quotedPattern(literal: string): RegExp {
@@ -169,6 +171,26 @@ describe('scanForBareKeyLiterals — end-to-end mutation check on a real filesys
       `// the ${SESSION_STATUS} and ${AUDIO_SEGMENTS} caches are factory-keyed\n`,
     );
     expect(scanForBareKeyLiterals(tmpRoot)).toEqual([]);
+  });
+});
+
+describe('the wiki suggestion keys (show-wiki-ai D6): built through wikiKeys, under its root', () => {
+  it('useWikiSuggestions.ts holds no quoted root and keys every query through wikiKeys', () => {
+    const src = fs.readFileSync(
+      path.join(WEB_SRC, 'api', 'hooks', 'useWikiSuggestions.ts'),
+      'utf8',
+    );
+    expect(quotedPattern(WIKI_PAGES).test(src)).toBe(false);
+    expect(src).toMatch(/wikiKeys\.suggestions\(/);
+    expect(src).toMatch(/wikiKeys\.suggestion\(/);
+    expect(src).toMatch(/wikiKeys\.allSuggestions\(/);
+  });
+
+  it('the factory module defines the suggestion entries on wikiKeys', () => {
+    const src = fs.readFileSync(path.join(WEB_SRC, FACTORY_MODULE[WIKI_PAGES]), 'utf8');
+    for (const entry of ['allSuggestions', 'suggestions', 'suggestion']) {
+      expect(src).toMatch(new RegExp(`^  ${entry}: \\(`, 'm'));
+    }
   });
 });
 

@@ -1,9 +1,11 @@
 import { AuthStore } from '@autologger/catalog';
+import postgres from 'postgres';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { connOptions } from '../../../test/pg/testDb';
 import type { Bindings } from '../appEnv';
 import { putOauthState } from '../auth/identity';
 import { GatedCatalog } from '../test/gatedCatalog';
-import { anonApp, env, envWith } from '../test/harness';
+import { anonApp, env, envWith, testDatabase } from '../test/harness';
 import { catalogFor, loginCookie, seedStudio, seedUser, testDb } from '../test/helpers';
 import {
   makeKeypair,
@@ -14,12 +16,17 @@ import {
   pendingMocks,
   resetMockAgent,
 } from '../test/oauth';
+import { RetryCountingRoot } from '../test/retryCounter';
 
 const CLIENT = 'test-client';
+// closed-signups D1: a test config with no SIGNUPS and no stack is closed, so the suites below
+// that create accounts through the callback open sign-ups; the closed describe at the end uses
+// CLOSED_ENV.
 const OAUTH_ENV = envWith({
   GOOGLE_CLIENT_ID: CLIENT,
   GOOGLE_CLIENT_SECRET: 'secret',
   PUBLIC_BASE_URL: 'http://127.0.0.1:8787',
+  SIGNUPS: 'open',
 });
 
 // test/oauth.ts prescribes this: it queues fake Google responses on global
@@ -494,6 +501,7 @@ describe('callback -- invite materialization (task 3.1, design D2)', () => {
       GOOGLE_CLIENT_SECRET: 'secret',
       PUBLIC_BASE_URL: 'http://127.0.0.1:8787',
       NEW_USER_ALL_TEAMS: '1',
+      SIGNUPS: 'open',
     });
     await seedStudio(); // a studio exists -- the deprecated grant, if it fired, would add it
     const res = await runCallback(
@@ -690,6 +698,7 @@ describe('callback -- concurrent first sign-in for one sub', () => {
           GOOGLE_CLIENT_ID: CLIENT,
           GOOGLE_CLIENT_SECRET: 'secret',
           PUBLIC_BASE_URL: 'http://127.0.0.1:8787',
+          SIGNUPS: 'open',
         },
         { catalog: gated },
       ),
@@ -803,6 +812,7 @@ describe('callback -- bootstrap owner claim (owner-bootstrap 7.1)', () => {
       GOOGLE_CLIENT_SECRET: 'secret',
       PUBLIC_BASE_URL: 'http://127.0.0.1:8787',
       BOOTSTRAP_OWNER_EMAIL: 'kalen@gmail.com',
+      SIGNUPS: 'open',
     });
     const logs = captureLogs();
     let res: Response;
@@ -949,5 +959,298 @@ describe('callback -- bootstrap owner claim (owner-bootstrap 7.1)', () => {
     expect(logs.lines().join('\n')).not.toContain(BOOT);
     for (const team of FORMER_BUILTINS) expect(await ownerOf(team)).toBeNull();
     expect(await catalogFor().auth.authGetUserByGoogleSub('sub-boot-fail')).not.toBeNull();
+  });
+});
+
+// closed-signups D3, D4 (api-contract-freeze "Closed sign-up redirect", team-management "An invite
+// does not open closed sign-ups"): with no SIGNUPS and no stack the test config is closed. A new
+// Google subject gets an account only with the bootstrap owner's email or an approval younger than
+// 7 days, which the account's transaction consumes; a refused sign-in never reaches Supabase Auth.
+describe('callback -- closed sign-ups (closed-signups 3.1)', () => {
+  const BASE = {
+    GOOGLE_CLIENT_ID: CLIENT,
+    GOOGLE_CLIENT_SECRET: 'secret',
+    PUBLIC_BASE_URL: 'http://127.0.0.1:8787',
+  };
+  const CLOSED_ENV = envWith(BASE);
+  const GOTRUE = 'POST http://auth:9999/token';
+  const DAY_MS = 86_400_000;
+
+  /** Run `fn` as `postgres`, the migrations owner and the operator's role (design D2, D7): the
+   * only role that may write `account_approvals`. */
+  async function asPostgres<T>(fn: (sql: postgres.Sql) => Promise<T>): Promise<T> {
+    const sql = postgres({
+      ...connOptions('postgres', testDatabase().database),
+      max: 1,
+      onnotice: () => {},
+    });
+    try {
+      return await fn(sql);
+    } finally {
+      await sql.end();
+    }
+  }
+  const approve = (email: string) =>
+    asPostgres((sql) => sql`select catalog.approve_account(${email}, ${'test'})`);
+  const approveAt = (emailNorm: string, at: Date) =>
+    asPostgres(
+      (sql) => sql`insert into catalog.account_approvals (email_norm, approved_at_utc)
+                   values (${emailNorm}, ${at.toISOString()})`,
+    );
+  const revoke = (email: string) =>
+    asPostgres((sql) => sql`select catalog.revoke_account_approval(${email})`);
+  const approvals = () =>
+    asPostgres(async (sql) =>
+      (await sql`select email_norm from catalog.account_approvals order by email_norm`).map((r) =>
+        String(r.email_norm),
+      ),
+    );
+  async function userCount(sub: string): Promise<number> {
+    const n = await testDb().first<{ n: number }>(
+      'SELECT COUNT(*) AS n FROM users WHERE google_sub = ?',
+      sub,
+    );
+    return Number(n?.n);
+  }
+  function expectRefused(res: Response): void {
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toBe('/?login_error=signup_closed');
+    expect(res.headers.get('set-cookie')).toBeNull();
+  }
+  function expectSignedIn(res: Response): void {
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toBe('/');
+    expect(res.headers.get('set-cookie')).toContain('autologger_sid=');
+  }
+  /** `console.warn` lines written while `fn` runs. */
+  async function warnings<T>(fn: () => Promise<T>): Promise<{ value: T; lines: string[] }> {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const value = await fn();
+      return { value, lines: warn.mock.calls.map((args) => args.map(String).join(' ')) };
+    } finally {
+      warn.mockRestore();
+    }
+  }
+  const refusalLines = (lines: string[]) => lines.filter((l) => /sign-ups are closed/.test(l));
+
+  it('an unapproved new email is refused before Supabase Auth; no user, the invite stays', async () => {
+    const teamId = await seedStudio();
+    await catalogFor().auth.authUpsertInvite(teamId, 'new.person@example.com', 'seed-inviter');
+    const res = await runCallback(
+      { sub: 'sub-closed-new', email: 'new.person@example.com', state: 'state-closed-new' },
+      CLOSED_ENV,
+    );
+    expectRefused(res);
+    expect(pendingMocks()).toEqual([GOTRUE]);
+    expect(await userCount('sub-closed-new')).toBe(0);
+    expect(await catalogFor().auth.authListInvitesForTeam(teamId)).toHaveLength(1);
+  });
+
+  it('an email approved a day ago gets its account, its invites, and the approval is consumed', async () => {
+    const teamId = await seedStudio();
+    await catalogFor().auth.authUpsertInvite(teamId, 'someone@example.com', 'seed-inviter');
+    await approveAt('someone@example.com', new Date(Date.now() - DAY_MS));
+    const res = await runCallback(
+      { sub: 'sub-closed-ok', email: 'Someone@Example.com', state: 'state-closed-ok' },
+      CLOSED_ENV,
+    );
+    expectSignedIn(res);
+    const uid = String((await catalogFor().auth.authGetUserByGoogleSub('sub-closed-ok'))?.id);
+    expect(uid).toBe('gt-sub-closed-ok');
+    expect(await catalogFor().auth.authGetMembershipRole(uid, teamId)).toBe('member');
+    expect(await catalogFor().auth.authListInvitesForTeam(teamId)).toHaveLength(0);
+    expect(await approvals()).toEqual([]);
+  });
+
+  it('an approval 8 days old (by the Clock) is refused before Supabase Auth and stays', async () => {
+    await approve('late@example.com');
+    const later = Date.now() + 8 * DAY_MS;
+    const res = await runCallback(
+      { sub: 'sub-closed-late', email: 'late@example.com', state: 'state-closed-late' },
+      envWith(BASE, { clock: { now: () => later } }),
+    );
+    expectRefused(res);
+    expect(pendingMocks()).toEqual([GOTRUE]);
+    expect(await userCount('sub-closed-late')).toBe(0);
+    expect(await approvals()).toEqual(['late@example.com']);
+  });
+
+  it('an approval written 8 days ago is refused', async () => {
+    await approveAt('old@example.com', new Date(Date.now() - 8 * DAY_MS));
+    const res = await runCallback(
+      { sub: 'sub-closed-old', email: 'old@example.com', state: 'state-closed-old' },
+      CLOSED_ENV,
+    );
+    expectRefused(res);
+    expect(pendingMocks()).toEqual([GOTRUE]);
+    expect(await approvals()).toEqual(['old@example.com']);
+  });
+
+  it('an approval revoked between the check and the account gives signup_closed and no account', async () => {
+    await approve('revoked-late@example.com');
+    const gated = new GatedCatalog(env.ports.catalog);
+    const h = gated.holdAfter(/^SELECT 1 FROM account_approvals/);
+    const pending = warnings(() =>
+      runCallback(
+        { sub: 'sub-closed-revoked', email: 'revoked-late@example.com', state: 'state-revoked' },
+        envWith(BASE, { catalog: gated }),
+      ),
+    );
+    await h.reached;
+    await revoke('revoked-late@example.com');
+    h.release();
+    const { value: res, lines } = await pending;
+    expectRefused(res);
+    expect(await userCount('sub-closed-revoked')).toBe(0);
+    expect(gated.count(/^DELETE FROM account_approvals/)).toBe(1);
+    expect(refusalLines(lines)).toHaveLength(1);
+  });
+
+  it('the bootstrap owner signs in with nothing approved, and the claim runs', async () => {
+    const res = await runCallback(
+      { sub: 'sub-closed-boot', email: 'bootstrap-owner@example.com', state: 'state-closed-boot' },
+      CLOSED_ENV,
+    );
+    expectSignedIn(res);
+    const owner = (await catalogFor().auth.authListTeamMembers('test-studios')).find(
+      (m) => m.role === 'owner',
+    );
+    expect(owner?.id).toBe('gt-sub-closed-boot');
+  });
+
+  it('an existing enabled account with no approval signs in', async () => {
+    const sub = 'sub-closed-existing';
+    const id = await seedUser({ sub, email: 'existing-closed@example.com' });
+    const res = await runCallback(
+      {
+        sub,
+        email: 'existing-closed@example.com',
+        state: 'state-closed-existing',
+        gotrue: { id, sub },
+      },
+      CLOSED_ENV,
+    );
+    expectSignedIn(res);
+  });
+
+  it('an existing disabled account still gets account_disabled', async () => {
+    const sub = 'sub-closed-disabled';
+    const id = await seedUser({ sub, email: 'disabled-closed@example.com' });
+    await catalogFor().auth.authSetUserDisabled(id, true);
+    const res = await runCallback(
+      {
+        sub,
+        email: 'disabled-closed@example.com',
+        state: 'state-closed-disabled',
+        gotrue: { id, sub },
+      },
+      CLOSED_ENV,
+    );
+    expect(res.headers.get('location')).toBe('/?login_error=account_disabled');
+    expect(res.headers.get('set-cookie')).toBeNull();
+  });
+
+  it('a non-ASCII email is refused without reading any approval', async () => {
+    // U+212A KELVIN SIGN: JS toLowerCase would fold it to `k`.
+    await approve('kalen@example.com');
+    const gated = new GatedCatalog(env.ports.catalog);
+    const res = await runCallback(
+      { sub: 'sub-closed-kelvin', email: 'Kalen@example.com', state: 'state-closed-kelvin' },
+      envWith(BASE, { catalog: gated }),
+    );
+    expectRefused(res);
+    expect(pendingMocks()).toEqual([GOTRUE]);
+    expect(gated.count(/account_approvals/)).toBe(0);
+    expect(await approvals()).toEqual(['kalen@example.com']);
+  });
+
+  it('open: a new unapproved email gets its account as before', async () => {
+    const res = await runCallback(
+      { sub: 'sub-open-new', email: 'open-new@example.com', state: 'state-open-new' },
+      envWith({ ...BASE, SIGNUPS: 'open' }),
+    );
+    expectSignedIn(res);
+    expect(await userCount('sub-open-new')).toBe(1);
+  });
+
+  it('open: an approved email signs in and its approval row stays', async () => {
+    await approve('open-approved@example.com');
+    const res = await runCallback(
+      { sub: 'sub-open-approved', email: 'open-approved@example.com', state: 'state-open-appr' },
+      envWith({ ...BASE, SIGNUPS: 'open' }),
+    );
+    expectSignedIn(res);
+    expect(await approvals()).toEqual(['open-approved@example.com']);
+  });
+
+  it('two concurrent first sign-ins of one approved subject: one user, two cookies, approval gone', async () => {
+    await approve('twin-closed@example.com');
+    const counting = new RetryCountingRoot(env.ports.catalog);
+    const gated = new GatedCatalog(counting);
+    const gatedEnv = envWith(BASE, { catalog: gated });
+    // A holds after its approval DELETE: its user insert and the consume are done, uncommitted.
+    const h = gated.holdAfter(/^DELETE FROM account_approvals/);
+    const a = runCallback(
+      { sub: 'sub-twin-closed', email: 'twin-closed@example.com', state: 'state-twin-ca' },
+      gatedEnv,
+    );
+    await h.reached;
+    // B passes the pre-check (A's delete is not visible), exchanges, finds no user, and its own
+    // user insert waits on A's uncommitted row.
+    const b = runCallback(
+      { sub: 'sub-twin-closed', email: 'twin-closed@example.com', state: 'state-twin-cb' },
+      gatedEnv,
+    );
+    const inserts = /^INSERT INTO users/;
+    for (let i = 0; i < 500 && gated.count(inserts) < 2; i++) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    expect(gated.count(inserts)).toBe(2);
+    await new Promise((r) => setTimeout(r, 50)); // let B's insert reach the server and block
+    h.release();
+    for (const res of await Promise.all([a, b])) expectSignedIn(res);
+    expect(await userCount('sub-twin-closed')).toBe(1);
+    expect(await approvals()).toEqual([]);
+    // B either saw 40001 (its body re-ran and the insert returned null) or the insert returned
+    // null at once; neither exhausted its retries.
+    const sawSerialization = counting.calls.some((c) => c.codes.includes('40001'));
+    expect(counting.calls.every((c) => !c.exhausted)).toBe(true);
+    expect(counting.calls.flatMap((c) => c.codes).every((c) => c === '40001')).toBe(true);
+    // The pre-check SELECT ran once per callback; the approval was deleted once (B's re-run, if
+    // any, stopped at its user insert).
+    expect(gated.count(/^SELECT 1 FROM account_approvals/)).toBe(2);
+    expect(gated.count(/^DELETE FROM account_approvals/)).toBe(1);
+    process.stdout.write(`closed-signups concurrent: B saw 40001 = ${sawSerialization}\n`);
+  });
+
+  it('two concurrent first sign-ins of one unapproved subject: both signup_closed', async () => {
+    const both = await Promise.all([
+      runCallback(
+        { sub: 'sub-twin-none', email: 'twin-none@example.com', state: 'state-twin-na' },
+        CLOSED_ENV,
+      ),
+      runCallback(
+        { sub: 'sub-twin-none', email: 'twin-none@example.com', state: 'state-twin-nb' },
+        CLOSED_ENV,
+      ),
+    ]);
+    for (const res of both) expectRefused(res);
+    expect(pendingMocks().filter((m) => m === GOTRUE)).toHaveLength(2);
+    expect(await userCount('sub-twin-none')).toBe(0);
+  });
+
+  it('the refusal log line holds no email and is written once per refusal', async () => {
+    const email = 'Log.Me@Example.com';
+    const { value: res, lines } = await warnings(() =>
+      runCallback({ sub: 'sub-closed-log', email, state: 'state-closed-log' }, CLOSED_ENV),
+    );
+    expectRefused(res);
+    const refusals = refusalLines(lines);
+    expect(refusals).toHaveLength(1);
+    expect(refusals[0]).toContain('sub-closed-log');
+    const all = lines.join('\n').toLowerCase();
+    expect(all).not.toContain('log.me');
+    expect(all).not.toContain('example.com');
   });
 });

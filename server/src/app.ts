@@ -22,6 +22,7 @@ import { adminRouter } from './routers/admin';
 import { aiRouter } from './routers/ai';
 import { aiV2Router } from './routers/aiV2';
 import { audioRouter } from './routers/audio';
+import { audioUploadsRouter } from './routers/audioUploads';
 import { authRouter } from './routers/auth';
 import { companionRouter } from './routers/companion';
 import { companionDevicesRouter } from './routers/companionDevices';
@@ -29,11 +30,15 @@ import { eventsRouter } from './routers/events';
 import { exportsRouter } from './routers/exports';
 import { logImportRouter } from './routers/logImport';
 import { profileRouter } from './routers/profile';
+import { providersRouter } from './routers/providers';
+import { searchRouter } from './routers/search';
 import { sessionsRouter } from './routers/sessions';
 import { mountSessionWs } from './routers/sessionWs';
 import { showsRouter } from './routers/shows';
 import { teamsRouter } from './routers/teams';
 import { transcribeRouter } from './routers/transcribe';
+import { wikiRouter } from './routers/wiki';
+import { wikiSuggestionsRouter } from './routers/wikiSuggestions';
 
 /** The Next.js frontend bridge (nextjs-frontend-migration, design D1) — the
  * minimal seam app.ts's catch-all consumes: given the raw Node req/res pair
@@ -135,10 +140,26 @@ const measureCompressibleBody: MiddlewareHandler<AppEnv> = async (c, next) => {
   c.res = measured;
 };
 
+/** The marker every AI SDK `AISDKError` carries, which `AISDKError.isInstance` checks. `ai` is not
+ * a server dependency, so the marker is read directly instead of importing the class. */
+const AI_SDK_ERROR_MARKER = Symbol.for('vercel.ai.error');
+
+/** An AI SDK error, or any error carrying its content fields (ai-sdk-agent-harness D5). */
+function isAiSdkError(err: unknown): err is object {
+  if (err === null || (typeof err !== 'object' && typeof err !== 'function')) return false;
+  const e = err as Record<string | symbol, unknown>;
+  return e[AI_SDK_ERROR_MARKER] === true || 'requestBodyValues' in e || 'responseBody' in e;
+}
+
 /** A Postgres error's message, `detail` and `where` can echo the values involved (an email, a
  * Google subject id), so it is logged by code, constraint and table only (catalog-on-postgres D8).
- * Anything else is logged whole, as before. */
+ * An AI SDK error carries the whole prompt and the provider's body, so it is logged as its class
+ * name only (ai-sdk-agent-harness D5). Anything else is logged whole, as before. */
 function redactDatabaseError(err: unknown): unknown[] {
+  if (isAiSdkError(err)) {
+    const ctor = (err as { constructor?: { name?: unknown } }).constructor?.name;
+    return [{ name: typeof ctor === 'string' && ctor !== '' ? ctor : 'Error' }];
+  }
   const e = err as Record<string, unknown> | null;
   // catalog-roles D8: a refused bound statement, by name, code, table and binding only.
   if (e?.name === 'CatalogForbiddenError') {
@@ -241,13 +262,20 @@ export function wireApp(
   app.route('/', authRouter);
   app.route('/', profileRouter);
   app.route('/', showsRouter);
+  app.route('/', searchRouter);
+  app.route('/', wikiRouter);
+  app.route('/', wikiSuggestionsRouter);
   app.route('/', teamsRouter);
   app.route('/', sessionsRouter);
   app.route('/', logImportRouter);
   app.route('/', eventsRouter);
   app.route('/', audioRouter);
+  // media-worker D12: the resumable upload routes, beside the segment routes.
+  app.route('/', audioUploadsRouter);
   app.route('/', companionRouter);
   app.route('/', companionDevicesRouter);
+  // byo-ai-providers D4: the signed-in user's own provider credentials.
+  app.route('/', providersRouter);
   app.route('/', transcribeRouter);
   app.route('/', aiRouter);
   app.route('/', aiV2Router);

@@ -1,19 +1,24 @@
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { sdkResponseByteCap } from '@autologger/ai-runtime/sdkTurn';
+import { WIKI_GENERATE_DEFAULTS } from '@autologger/ai-runtime/wikiGenerate';
 import type { Config } from '@autologger/ports';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   adminMeta,
   adminTokenConfigured,
+  aiChatSdkLimits,
   bootstrapEmailMatch,
   bootstrapOwnerEmail,
+  claudeCliAllowed,
   cookieSecureForRequest,
   eventGenerateMaxBudgetUsd,
   eventGenerateMaxCreatedEvents,
   eventGenerateMaxInstructionBytes,
   eventGenerateMaxInstructionEntries,
   eventGenerateTimeoutSec,
+  generateSdkLimits,
   maskBootstrapOwnerEmail,
   newUserAllTeamsEnabled,
   oauthConfigured,
@@ -24,8 +29,13 @@ import {
   runFeatureEmails,
   sessionCookieName,
   sessionTtlDays,
+  signupsClosed,
+  signupsMode,
   topicGenerateMaxBudgetUsd,
   topicGenerateTimeoutSec,
+  wikiGenerateMaxBudgetUsd,
+  wikiGenerateTimeoutSec,
+  wikiSdkLimits,
   ytDlpConfigured,
 } from './env';
 
@@ -337,5 +347,179 @@ describe('approved users for run features (run-status-and-sweeper D9)', () => {
   });
   it('runFeatureAllowed is false for everyone when no owner and no list are set', () => {
     expect(runFeatureAllowed(E({}), { email: 'a@example.com' })).toBe(false);
+  });
+});
+
+describe('Claude CLI allowlist (ai-sdk-agent-harness D1, D2)', () => {
+  const CLI = '/usr/local/bin/claude';
+  it('matches a listed email after trimming and folding ASCII case only', () => {
+    const env = E({
+      CLAUDE_CLI_PATH: CLI,
+      CLAUDE_CLI_EMAILS: '  Dev@Example.com , other@example.com,,',
+    });
+    expect(claudeCliAllowed(env, { email: 'dev@example.com' })).toBe(true);
+    expect(claudeCliAllowed(env, { email: ' DEV@EXAMPLE.COM ' })).toBe(true);
+    expect(claudeCliAllowed(env, { email: 'other@example.com' })).toBe(true);
+    expect(claudeCliAllowed(env, { email: 'third@example.com' })).toBe(false);
+    expect(claudeCliAllowed(env, { email: '' })).toBe(false);
+  });
+  it('never matches a non-ASCII email (U+212A KELVIN SIGN does not fold to k)', () => {
+    const env = E({ CLAUDE_CLI_PATH: CLI, CLAUDE_CLI_EMAILS: 'kalen@gmail.com' });
+    expect(claudeCliAllowed(env, { email: '\u212Aalen@gmail.com' })).toBe(false);
+    expect(claudeCliAllowed(env, { email: 'kalen@gmail.com' })).toBe(true);
+  });
+  it('does not implicitly list the bootstrap owner', () => {
+    const env = E({
+      CLAUDE_CLI_PATH: CLI,
+      BOOTSTRAP_OWNER_EMAIL: 'owner@example.com',
+      CLAUDE_CLI_EMAILS: 'dev@example.com',
+    });
+    expect(claudeCliAllowed(env, { email: 'owner@example.com' })).toBe(false);
+    expect(
+      claudeCliAllowed(E({ CLAUDE_CLI_PATH: CLI, BOOTSTRAP_OWNER_EMAIL: 'owner@example.com' }), {
+        email: 'owner@example.com',
+      }),
+    ).toBe(false);
+  });
+  it('is false for everyone when the list is unset or blank, or CLAUDE_CLI_PATH is blank', () => {
+    expect(claudeCliAllowed(E({ CLAUDE_CLI_PATH: CLI }), { email: 'a@example.com' })).toBe(false);
+    expect(
+      claudeCliAllowed(E({ CLAUDE_CLI_PATH: CLI, CLAUDE_CLI_EMAILS: ' , ' }), { email: '' }),
+    ).toBe(false);
+    for (const path of ['', '   ', undefined]) {
+      expect(
+        claudeCliAllowed(E({ CLAUDE_CLI_PATH: path, CLAUDE_CLI_EMAILS: 'a@example.com' }), {
+          email: 'a@example.com',
+        }),
+      ).toBe(false);
+    }
+  });
+});
+
+describe('AI SDK turn limits and their ranges (ai-sdk-agent-harness D3 Limits, D4, task 6.7)', () => {
+  it('default to 8 steps / 400 000 for chat and 40 steps / 3 000 000 / 16 000 output for generation', () => {
+    expect(aiChatSdkLimits(E({}))).toEqual({ maxSteps: 8, maxTotalTokens: 400_000 });
+    expect(generateSdkLimits(E({}))).toEqual({
+      maxSteps: 40,
+      maxTotalTokens: 3_000_000,
+      maxOutputTokens: 16_000,
+    });
+  });
+
+  it('GENERATE_MAX_OUTPUT_TOKENS takes 1 000–128 000; blank, non-numeric and out-of-range fall back', () => {
+    const out = (v: string | undefined) =>
+      generateSdkLimits(E({ GENERATE_MAX_OUTPUT_TOKENS: v })).maxOutputTokens;
+    expect(out('1000')).toBe(1000);
+    expect(out(' 32000 ')).toBe(32_000);
+    expect(out('128000')).toBe(128_000);
+    for (const bad of [undefined, '', '  ', 'abc', '12.5', '999', '0', '-5', '128001', '1e9']) {
+      expect(out(bad)).toBe(16_000);
+    }
+  });
+
+  it('AI_CHAT_MAX_STEPS takes 1–50 and GENERATE_MAX_STEPS 1–100; outside them the default', () => {
+    const chat = (v: string) => aiChatSdkLimits(E({ AI_CHAT_MAX_STEPS: v })).maxSteps;
+    const gen = (v: string) => generateSdkLimits(E({ GENERATE_MAX_STEPS: v })).maxSteps;
+    expect([chat('1'), chat('50'), chat('51'), chat('0'), chat('x')]).toEqual([1, 50, 8, 8, 8]);
+    expect([gen('1'), gen('100'), gen('101'), gen('0'), gen('')]).toEqual([1, 100, 40, 40, 40]);
+  });
+
+  it('the response-byte cap is computed from the validated values only', () => {
+    expect(sdkResponseByteCap('chat', aiChatSdkLimits(E({})))).toBe(12_800_000);
+    expect(sdkResponseByteCap('topics', generateSdkLimits(E({})))).toBe(256_000_000);
+    const huge = E({ GENERATE_MAX_STEPS: '1000000', GENERATE_MAX_OUTPUT_TOKENS: '99999999' });
+    expect(sdkResponseByteCap('events', generateSdkLimits(huge))).toBe(256_000_000);
+    expect(sdkResponseByteCap('chat', aiChatSdkLimits(E({ AI_CHAT_MAX_STEPS: '5000' })))).toBe(
+      12_800_000,
+    );
+    const max = E({ GENERATE_MAX_STEPS: '100', GENERATE_MAX_OUTPUT_TOKENS: '128000' });
+    expect(sdkResponseByteCap('topics', generateSdkLimits(max))).toBe(5_120_000_000);
+  });
+});
+
+describe('wiki update bounds (show-wiki-ai; wiki-generation "Wiki update bounds")', () => {
+  it('default to 900 s, $5.0, 80 steps and 6 000 000 tokens, equal to WIKI_GENERATE_DEFAULTS', () => {
+    expect(wikiGenerateTimeoutSec(E({}))).toBe(900);
+    expect(wikiGenerateMaxBudgetUsd(E({}))).toBe(5.0);
+    expect(wikiSdkLimits(E({}))).toEqual({
+      maxSteps: 80,
+      maxTotalTokens: 6_000_000,
+      maxOutputTokens: 16_000,
+    });
+    expect({
+      timeoutSec: wikiGenerateTimeoutSec(E({})),
+      maxBudgetUsd: wikiGenerateMaxBudgetUsd(E({})),
+      maxSteps: wikiSdkLimits(E({})).maxSteps,
+      maxTotalTokens: wikiSdkLimits(E({})).maxTotalTokens,
+    }).toEqual({ ...WIKI_GENERATE_DEFAULTS });
+  });
+
+  it('WIKI_GENERATE_TIMEOUT_SEC and WIKI_GENERATE_MAX_BUDGET_USD take positive numbers, else the default', () => {
+    expect(wikiGenerateTimeoutSec(E({ WIKI_GENERATE_TIMEOUT_SEC: '1200' }))).toBe(1200);
+    expect(wikiGenerateTimeoutSec(E({ WIKI_GENERATE_TIMEOUT_SEC: ' 0.5 ' }))).toBe(0.5);
+    for (const bad of ['', 'abc', '0', '-1']) {
+      expect(wikiGenerateTimeoutSec(E({ WIKI_GENERATE_TIMEOUT_SEC: bad }))).toBe(900);
+      expect(wikiGenerateMaxBudgetUsd(E({ WIKI_GENERATE_MAX_BUDGET_USD: bad }))).toBe(5.0);
+    }
+    expect(wikiGenerateMaxBudgetUsd(E({ WIKI_GENERATE_MAX_BUDGET_USD: '2.5' }))).toBe(2.5);
+  });
+
+  it('WIKI_GENERATE_MAX_STEPS takes 1–200 and WIKI_GENERATE_MAX_TOKENS a positive integer; the output cap is GENERATE_MAX_OUTPUT_TOKENS', () => {
+    const steps = (v: string) => wikiSdkLimits(E({ WIKI_GENERATE_MAX_STEPS: v })).maxSteps;
+    expect([steps('1'), steps('200'), steps('201'), steps('0'), steps('x'), steps('')]).toEqual([
+      1, 200, 80, 80, 80, 80,
+    ]);
+    const tokens = (v: string) => wikiSdkLimits(E({ WIKI_GENERATE_MAX_TOKENS: v })).maxTotalTokens;
+    expect([tokens('40'), tokens('0'), tokens('-3'), tokens('1.5'), tokens('abc')]).toEqual([
+      40, 6_000_000, 6_000_000, 6_000_000, 6_000_000,
+    ]);
+    // The generation knobs don't move the wiki's steps or tokens.
+    expect(
+      wikiSdkLimits(
+        E({
+          GENERATE_MAX_STEPS: '3',
+          GENERATE_MAX_TOKENS: '9',
+          GENERATE_MAX_OUTPUT_TOKENS: '9000',
+        }),
+      ),
+    ).toEqual({ maxSteps: 80, maxTotalTokens: 6_000_000, maxOutputTokens: 9000 });
+    expect(sdkResponseByteCap('wiki', wikiSdkLimits(E({})))).toBe(80 * 16_000 * 400);
+  });
+});
+
+// closed-signups D1: SIGNUPS is open or closed (trimmed, A-Z folded); blank follows the stack
+// (open only on dev; no stack is closed); anything else is invalid, and invalid fails closed.
+describe('SIGNUPS (closed-signups D1)', () => {
+  it('signupsMode reads open and closed, trimmed and A-Z folded', () => {
+    expect(signupsMode(E({ SIGNUPS: 'open', AUTOLOGGER_STACK: 'prod' }))).toBe('open');
+    expect(signupsMode(E({ SIGNUPS: 'closed', AUTOLOGGER_STACK: 'dev' }))).toBe('closed');
+    expect(signupsMode(E({ SIGNUPS: ' Closed ', AUTOLOGGER_STACK: 'dev' }))).toBe('closed');
+    expect(signupsMode(E({ SIGNUPS: 'OPEN', AUTOLOGGER_STACK: 'stage' }))).toBe('open');
+  });
+  it('signupsMode: blank or unset is open on dev, closed on stage, prod and with no stack', () => {
+    for (const v of [undefined, '', '  ']) {
+      expect(signupsMode(E({ SIGNUPS: v, AUTOLOGGER_STACK: 'dev' })), JSON.stringify(v)).toBe(
+        'open',
+      );
+      for (const stack of ['stage', 'prod', '', undefined]) {
+        expect(signupsMode(E({ SIGNUPS: v, AUTOLOGGER_STACK: stack })), `${v} ${stack}`).toBe(
+          'closed',
+        );
+      }
+    }
+    expect(signupsMode(E({}))).toBe('closed');
+  });
+  it('signupsMode: anything else is invalid (no Unicode folding)', () => {
+    for (const v of ['opne', 'yes', '1', 'open,closed', '\u212Alosed', 'clos\u0130d']) {
+      expect(signupsMode(E({ SIGNUPS: v, AUTOLOGGER_STACK: 'dev' })), v).toBe('invalid');
+    }
+  });
+  it('signupsClosed is true for closed and invalid, false only for open', () => {
+    expect(signupsClosed(E({ SIGNUPS: 'open' }))).toBe(false);
+    expect(signupsClosed(E({ AUTOLOGGER_STACK: 'dev' }))).toBe(false);
+    expect(signupsClosed(E({ SIGNUPS: 'closed', AUTOLOGGER_STACK: 'dev' }))).toBe(true);
+    expect(signupsClosed(E({ AUTOLOGGER_STACK: 'stage' }))).toBe(true);
+    expect(signupsClosed(E({}))).toBe(true);
+    expect(signupsClosed(E({ SIGNUPS: 'opne', AUTOLOGGER_STACK: 'dev' }))).toBe(true);
   });
 });

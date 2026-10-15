@@ -89,15 +89,22 @@ A secret may hold only these keys:
   | --- | --- |
   | `dev` | `DEV_PORT`, `DEV_COMPANION_PORT`, plus the Supabase keys |
   | `stage` | `STAGE_PORT`, plus the Supabase keys |
-  | `prod` | `ROUTER_PORT`, `WEB_TAG`, `API_TAG`, `PUBLIC_BASE_URL`, plus the Supabase keys |
+  | `prod` | `ROUTER_PORT`, `WEB_TAG`, `API_TAG`, `MEDIA_TAG`, `PUBLIC_BASE_URL`, plus the Supabase keys |
+
+  Every environment also accepts the retired Supabase keys (see "Retired keys" below), and
+  ignores them.
 
 Any other name is refused before anything runs, and the error names the key without printing its
 value. That includes `LD_PRELOAD`, `DOCKER_HOST`, any `COMPOSE_*` name, any `BAO_*` name, and a key
 meant for another service.
 
 Other rules:
-- **Tags.** `WEB_TAG` and `API_TAG` are the 12-character git SHA that `make prod-push` prints.
-  `latest` is refused.
+- **Tags.** `WEB_TAG`, `API_TAG` and `MEDIA_TAG` (the `media-worker` image, media-worker D15)
+  are the 12-character git SHA that `make prod-push` prints, normally all three the same.
+  `make prod-up`, `prod-pull`, `prod-down`, `prod-logs` and `prod-check` refuse an unset or empty
+  tag and `latest`. Add `MEDIA_TAG` before the first prod deploy that carries the worker; the
+  full key list for that deploy (and the KV version to record for rollback) is README
+  "Upgrading prod in place".
 - **Required prod keys.** `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `BOOTSTRAP_OWNER_EMAIL` and
   `ADMIN_TOKEN`. `API_TOKEN` is no longer required: it is ignored since ADR 0021 slice 9d
   (companion-devices), and you may leave it or delete it. A Companion uses a device token created
@@ -118,6 +125,17 @@ Other rules:
   value refuses `make <env>-up` (`compose-run`) and refuses the server's boot; a non-ASCII value
   also refuses boot. At boot the server logs a masked form, `bootstrap owner: <domain> #<8 hex>`,
   never the local part, so you can check the value for a typo.
+- **Every stack needs `PROVIDER_KEYS_SECRET`** (byo-ai-providers D2). It is base64 of exactly
+  32 bytes and encrypts users' provider API keys (Settings → Advanced) at rest. Generate one per
+  environment with `openssl rand -base64 32`; never reuse prod's in dev or stage. A missing or
+  malformed value refuses `make <env>-up` (`compose-run`) and the server's boot. The first boot
+  records a check value derived from it, and a later boot with a different secret refuses, so a
+  typo can't silently make every stored key unreadable.
+  - **If the secret is lost**, the stored keys can't be recovered. To reset: delete every row of
+    `catalog.user_provider_credentials` and the row of `catalog.provider_key_check`, boot with the
+    new secret, and ask users to re-enter their keys in Settings → Advanced.
+  - **`DEEPGRAM_API_KEY` is not used in production mode** (stage and prod): each user's own key is.
+    In dev it remains the fallback for a user without a key.
 - **`RUN_FEATURE_EMAILS` is optional** (run-status-and-sweeper D9). It lists, comma-separated, the
   users approved for the run features: the AI chat, AI v2 design, topic and event generation,
   YouTube import and transcript generation (including the log import's). The bootstrap owner is
@@ -126,6 +144,33 @@ Other rules:
   someone, add their email to the key in the stack's KV secret and restart the stack
   (`make <env>-up`). At boot the server logs `run-feature users: <count> (<masked forms>)`, never
   the addresses.
+- **`CLAUDE_CLI_EMAILS` is optional** (ai-sdk-agent-harness). It lists, comma-separated, the
+  accounts that may choose "Claude CLI (operator)" in Settings → Advanced. A CLI turn runs on the
+  operator's `claude` login and quota, so the list names exactly who may spend it: the bootstrap
+  owner is not implicitly listed, and an empty or missing key means nobody. Entries match like the
+  bootstrap owner (trimmed, ASCII case-insensitive). Anyone else does not see the option, and a
+  save of it gets `403`. Add or remove an email in the stack's KV secret and restart the stack
+  (`make <env>-up`). See [ADR 0028](decisions/0028-ai-sdk-agent-harness.md).
+- **`SIGNUPS` is optional** (closed-signups). `open` or `closed`; unset is `open` on dev and
+  `closed` on stage and prod. While closed, only existing accounts, the bootstrap owner and emails
+  approved in the last 7 days can sign in (operator commands: README, "Closed sign-ups"). Any other
+  value is refused by `make <env>-up` before compose starts and by the server at boot. On rollback,
+  remove the key from every KV secret before reverting the code.
+- **The AI SDK turn limits are optional** (ai-sdk-agent-harness). `AI_CHAT_MAX_STEPS` and
+  `AI_CHAT_MAX_TOKENS` (defaults 8 and 400000) cap one chat turn's model steps and tokens;
+  `GENERATE_MAX_STEPS` and `GENERATE_MAX_TOKENS` (defaults 40 and 3000000) cap one topic or event
+  generation, and `GENERATE_MAX_OUTPUT_TOKENS` (default 16000) its output tokens per model step
+  (chat's stays 4000). Each is a positive integer, and `AI_CHAT_MAX_STEPS` must be 1–50,
+  `GENERATE_MAX_STEPS` 1–100 and `GENERATE_MAX_OUTPUT_TOKENS` 1000–128000; anything else falls
+  back to the default. A turn's response bytes are capped at steps × output tokens × 400, from
+  these validated values. The caller's own provider key pays, so these are per-turn caps, not a
+  deployment-wide ceiling.
+- **The wiki update bounds are optional** (show-wiki-ai). `WIKI_GENERATE_TIMEOUT_SEC` (default
+  900) bounds one wiki update on both routes, and `WIKI_GENERATE_MAX_BUDGET_USD` (default 5.0) is
+  its Claude CLI cost ceiling. On the AI SDK route, `WIKI_GENERATE_MAX_STEPS` (default 80, valid
+  1–200) and `WIKI_GENERATE_MAX_TOKENS` (default 6000000) cap its model steps and tokens, with
+  `GENERATE_MAX_OUTPUT_TOKENS` per step. Anything invalid falls back to the default. A run that
+  reaches a bound fails and stores nothing.
 - **Never reuse prod secrets in dev or stage.** Use separate, low-limit keys and separate OAuth
   clients.
 - **Ports are set in OpenBao.** `DEV_PORT=9000 make dev-up` does not override them, because the
@@ -139,19 +184,25 @@ where a value appears in any other service.
 
 | Key | Format | Services |
 | --- | --- | --- |
-| `POSTGRES_PASSWORD` (superuser) | at least 32 lowercase hex characters | `db`, `migrate`, `realtime` |
-| `SUPABASE_ROLES_PASSWORD` (`authenticator`, `supabase_auth_admin`, `supabase_storage_admin`) | at least 32 lowercase hex characters | `db`, `auth`, `rest`, `storage` |
+| `POSTGRES_PASSWORD` (superuser) | at least 32 lowercase hex characters | `db`, `migrate` |
+| `SUPABASE_ROLES_PASSWORD` (`supabase_auth_admin`) | at least 32 lowercase hex characters | `db`, `auth` |
 | `APP_DB_PASSWORD` (`autologger_app`, the catalog's app role) | at least 32 lowercase hex characters | dev: `app`, `migrate`; stage and prod: `api`, `migrate` |
-| `JWT_SECRET` | at least 40 characters of `A-Za-z0-9_-` | `auth`, `rest`, `realtime`, `storage` |
-| `ANON_KEY` | HS256 JWT signed with `JWT_SECRET`, `role` `anon` | `supabase-gw`, `realtime`, `storage` |
-| `SERVICE_ROLE_KEY` | HS256 JWT signed with `JWT_SECRET`, `role` `service_role` | `supabase-gw`, `storage` |
-| `SECRET_KEY_BASE` | at least 64 characters of `A-Za-z0-9_-` | `realtime` |
-| `REALTIME_DB_ENC_KEY` | exactly 16 characters of `A-Za-z0-9_-` | `realtime` |
-| `SUPABASE_PORT` | port 1024-65535, distinct from every other published port (dev 8790, stage 8791) | compose (the gateway's published port) |
+| `MEDIA_DB_PASSWORD` (`autologger_media`, the media worker's role) | at least 32 lowercase hex characters | `media-worker`, `migrate` (every stack) |
+| `JWT_SECRET` (signs GoTrue's tokens) | at least 40 characters of `A-Za-z0-9_-` | `auth` |
 
-Any value outside its format is refused, and so is a pair of API keys that isn't consistent:
-swapped, signed with another secret, the same value twice, or expired. The wrapper warns when an
-API key expires within 90 days.
+Any value outside its format is refused.
+
+- **`MEDIA_DB_PASSWORD` must exist before the migration runs** (media-worker D1, D15). The
+  migrations runner (`docker/supabase/migrate.sh`) refuses to connect without it, the same way
+  it refuses without `APP_DB_PASSWORD`, and compose refuses to resolve `migrate` and
+  `media-worker` without it. So before the first `make dev-up`, `make stage-up` or prod deploy
+  that carries the media worker, run the generator for that stack (below): it creates only the
+  missing `MEDIA_DB_PASSWORD` and reports the other keys as kept. This applies to each of
+  `kv/autologger/dev`, `kv/autologger/stage` and `kv/autologger/prod`, and to any other KV path a
+  stack of this repository reads (for example the legacy-import rehearsal's
+  `kv/autologger-import/dev`). The runner gives `autologger_media` `LOGIN` and sets its
+  password in the same phase as `autologger_app`'s; a database never migrated by the runner has
+  no login for it.
 
 - **Create the keys with the generator,** never by hand. It needs an admin token (the AppRole
   can only read), from a file or from `BAO_TOKEN`:
@@ -166,18 +217,42 @@ API key expires within 90 days.
   line. `BAO_ADDR`, `BAO_CACERT` and `BAO_KV_PATH` come from `.env.openbao.<env>`.
 
   The generator reads the secret's key names (values are discarded), then writes every missing
-  key except `SUPABASE_PORT` in one request: a KV v2 `PATCH` (`application/merge-patch+json`)
+  one of the five keys in one request: a KV v2 `PATCH` (`application/merge-patch+json`)
   with `options.cas` set to the version it read, or a `POST` with `cas: 0` if the path doesn't
   exist yet. A concurrent write makes the whole request fail, and nothing is retried. An existing
-  key is never overwritten. It prints `created` or `kept` for each key and never shows a value.
-  `JWT_SECRET`, `ANON_KEY` and `SERVICE_ROLE_KEY` are created together. If only some of the three
-  exist, it refuses. If the path's current version is deleted (`bao kv delete`) or destroyed, it
+  key is never overwritten. It prints `created` or `kept` for each of the five keys and never
+  shows a value. It never reads, reports, writes or deletes a retired key. If the path's current
+  version is deleted (`bao kv delete`) or destroyed, it
   refuses and writes nothing: restore a deleted version with `bao kv undelete` or
   `bao kv rollback`, a destroyed one with `bao kv rollback` only. A future `deletion_time` (set on
   live versions when `delete_version_after` is configured) is not a deletion.
-- **Set `SUPABASE_PORT` yourself:** `bao kv patch kv/autologger/dev SUPABASE_PORT=8790`.
 - **Changing a password or `JWT_SECRET` after the database exists** needs more than a KV write.
   See "Rotation" in [supabase.md](supabase.md).
+
+### Retired keys
+
+`drop-unused-supabase-services` (ADR 0021 slice 10) removed PostgREST, Realtime, Storage and the
+gateway. Their five keys are retired: `ANON_KEY`, `SERVICE_ROLE_KEY`, `SECRET_KEY_BASE`,
+`REALTIME_DB_ENC_KEY` and `SUPABASE_PORT`.
+- **The tooling accepts and ignores them.** A secret that still holds any of them isn't refused,
+  their values aren't format-checked, and `compose-run` passes them to no container. It prints one
+  warning naming the ones present (names only):
+  `compose-run: warning: the OpenBao <env> secret holds retired keys <names>; …`.
+- **Keep them while any checkout runs the old stack.** `kv/autologger/dev` is shared with
+  `~/autologger-ui`, whose branch still starts the old services and needs these keys.
+- **Then remove them,** with a KV v2 merge patch whose values are `null` (it removes those keys
+  and keeps the rest), or in the OpenBao UI:
+
+  ```sh
+  echo '{"ANON_KEY":null,"SERVICE_ROLE_KEY":null,"SECRET_KEY_BASE":null,"REALTIME_DB_ENC_KEY":null,"SUPABASE_PORT":null}' \
+    | bao kv patch kv/autologger/<env> -
+  ```
+
+- **Then rotate `JWT_SECRET`.** The retired `SERVICE_ROLE_KEY` is a `service_role` JWT signed
+  with the `JWT_SECRET` the stack still uses (5-year expiry), so it stays a GoTrue admin
+  credential until `JWT_SECRET` changes. Rotate it only after the retired keys are gone: an older
+  `compose-run.mjs` refuses a `JWT_SECRET` its stored `ANON_KEY` and `SERVICE_ROLE_KEY` don't
+  verify against. See "Rotation" in [supabase.md](supabase.md).
 
 To add a container key:
 1. Add a line `KEY:` to `docker/secrets-env.yaml`. `make check` invariant 15 keeps compose in

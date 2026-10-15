@@ -148,13 +148,12 @@ describe('Settings › Account', () => {
     expect(within(panel).queryByRole('button', { name: 'Open previous Settings' })).toBeNull();
   });
 
-  it('keeps the save bar\'s action clear of the bottom-right corner, where the Perf toggle sits', () => {
-    // Same reservation as SidePanel's actions row: the perf-debug toggle (every build) is fixed
-    // in the bottom-right corner and the sticky bar reaches it at phone width (11.3).
+  it("keeps the save bar's action flush right, with no reserved bottom-right corner", () => {
+    // The corner was reserved only for the removed Perf toggle.
     renderAccount();
     const row = save().parentElement as HTMLElement;
     expect(row.closest('[data-slot="settings-save-bar"]')).not.toBeNull();
-    expect(row.className.split(/\s+/)).toContain('pr-16');
+    expect(row.className.split(/\s+/)).not.toContain('pr-16');
   });
 
   it('an edit arms Save, and undoing it disarms it again', () => {

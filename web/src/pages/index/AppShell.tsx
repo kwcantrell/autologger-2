@@ -7,11 +7,11 @@ import { Toast, toast } from '../../shared/components/Toast';
 import { SidebarProvider, useSidebar } from '../../shared/components/ui/sidebar';
 import { isOverlayOpen } from '../../shared/ui/overlayOpen';
 import { freezeAutologgerLoadingVideos } from '../../shared/utils/loadingVideo';
-import { initPerfDebugUI } from '../../shared/utils/perfDebug';
 import { LazyChunk } from './components/ChunkLoadBoundary';
 import { OnboardingPanel } from './components/OnboardingPanel';
 import { SessionRoute } from './components/SessionRoute';
 import { isTypingTarget } from './components/ShortcutsDialog';
+import { SearchRoute } from './components/search/SearchRoute';
 import {
   DEFAULT_SETTINGS_SECTION,
   SETTINGS_VIEW_SELECTOR,
@@ -20,6 +20,8 @@ import {
 } from './components/settings/sections';
 import { TopBar } from './components/TopBar';
 import { V6Rail } from './components/V6Rail';
+import { WikiPageView } from './components/wiki/WikiPageView';
+import { WikiRoute } from './components/wiki/WikiRoute';
 import { getTransportStatus, subscribeTransportStatus } from './coordination/transportStatus';
 import { navigate } from './navigation';
 import { useLoginReturnConsume } from './useLoginReturnConsume';
@@ -112,6 +114,14 @@ export function AppShell() {
   // this is a plain boolean read off the URL, same idiom as onSessionRoute.
   // It renders the home view and opens Settings on Members (redesign-show-ignition D3).
   const [onTeamsRoute] = useRoute('/teams');
+  // Search route (catalog-search D9): the fourth wouter pattern, mirroring the shared route
+  // module's `/search`. It renders the results page in place of the session route; no session is
+  // selected there, so `activeSessionId` stays empty.
+  const [onSearchRoute] = useRoute('/search');
+  // Wiki routes (show-wiki D7): the list and one page, mirroring the shared route module's
+  // `isWikiRoutePathname`. Like search, they render in place of the session route.
+  const [onWikiRoute] = useRoute('/wiki');
+  const [onWikiPageRoute, wikiPageParams] = useRoute('/wiki/:pageId');
   const [showNewSession, setShowNewSession] = useState(false);
   const [showBatchImport, setShowBatchImport] = useState(false);
   // The Settings view's open state and section (redesign-show-ignition D3; web-ui-system "The
@@ -180,7 +190,6 @@ export function AppShell() {
     document.addEventListener('click', handleModalDismiss);
 
     freezeAutologgerLoadingVideos(document);
-    initPerfDebugUI();
 
     return () => document.removeEventListener('click', handleModalDismiss);
   }, []);
@@ -380,7 +389,7 @@ export function AppShell() {
                   war vs .v4-top-bar min-height is resolved here by writing the winning
                   values directly — both rules were AppShell's own and now live as
                   utilities on this one element, so the flags are dropped (layer order
-                  suffices). v4-top-bar string retained (perfDebug shadow toggle). */}
+                  suffices). */}
               <header
                 className="v4-top-bar w-full max-w-full flex-shrink-0 box-border h-0 min-h-0 max-h-0 p-0 m-0 border-none overflow-hidden opacity-0 pointer-events-none"
                 id="v4-app-top-bar"
@@ -482,11 +491,22 @@ export function AppShell() {
                 workspace mount on it (task 4.2, design D5); the empty id renders
                 the dedicated home route component (design D10) — on `/` and, under
                 the Settings view, on `/teams`. */}
-            <SessionRoute
-              sessionId={activeSessionId}
-              ytImportPending={ytImportPending}
-              onNewSession={handleOpenNewSession}
-            />
+            {onSearchRoute ? (
+              <SearchRoute
+                onCloseSession={handleCloseSession}
+                confirmSwitch={confirmSettingsDiscard}
+              />
+            ) : onWikiRoute ? (
+              <WikiRoute />
+            ) : onWikiPageRoute && wikiPageParams?.pageId ? (
+              <WikiPageView pageId={wikiPageParams.pageId} />
+            ) : (
+              <SessionRoute
+                sessionId={activeSessionId}
+                ytImportPending={ytImportPending}
+                onNewSession={handleOpenNewSession}
+              />
+            )}
           </main>
         </div>
       </SidebarProvider>

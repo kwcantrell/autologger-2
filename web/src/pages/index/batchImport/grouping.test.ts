@@ -27,6 +27,8 @@ describe('isSupportedAudioFileName', () => {
     'mp4',
     'ogg',
     'webm',
+    'flac',
+    'FLAC',
   ])('accepts .%s', (ext) => {
     expect(isSupportedAudioFileName(`clip.${ext}`)).toBe(true);
   });
@@ -54,6 +56,11 @@ describe('groupAudioFiles', () => {
     expect(groups).toHaveLength(1);
     expect(groups[0].baseName).toBe('YMH_001');
     expect(groups[0].segments.map((s) => s.name)).toEqual(['YMH_001-1.mp3', 'YMH_001-2.mp3']);
+  });
+
+  it('strips the .flac extension from the stem', () => {
+    const groups = groupAudioFiles([entry('YMH_002-1.flac'), entry('YMH_002-2.flac')]);
+    expect(groups.map((g) => g.baseName)).toEqual(['YMH_002']);
   });
 
   it('ignores notes.txt', () => {

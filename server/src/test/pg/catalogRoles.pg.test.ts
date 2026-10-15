@@ -65,6 +65,24 @@ describe('the catalog roles (catalog-roles D1)', () => {
     }
   });
 
+  // media-worker D1: the worker role sits outside the catalog roles, so their membership rule
+  // ("only autologger_app and postgres") and the 6b-1 guard still hold with it present.
+  it('exclude the media worker role, and the 6b-1 guard passes with it present', async () => {
+    const sql = connect(connOptions('postgres', 'postgres'));
+    const [r] =
+      await sql`select count(*)::int as n from pg_roles where rolname = 'autologger_media'`;
+    expect(r?.n).toBe(1);
+    const m = await sql`select roleid::regrole::text as r from pg_auth_members
+                        where member = 'autologger_media'::regrole`;
+    expect(m.map((x) => x.r)).toEqual([]);
+    for (const role of ROLES) {
+      const [x] = await sql`select pg_has_role('autologger_media', ${role}, 'MEMBER') as m`;
+      expect(x?.m, role).toBe(false);
+    }
+    await holdRoleGuardLock(connect(connOptions('postgres', 'postgres')));
+    await sql.unsafe(guardBlock(ROLES_6B1, 'autologger_app'));
+  });
+
   it('cannot be assumed by authenticator or the API roles', async () => {
     const sql = connect(connOptions('postgres', 'postgres'));
     for (const api of API_ROLES) {
@@ -145,6 +163,14 @@ describe('catalog.app_user_id() and the per-transaction role (catalog-roles D1, 
         'catalog.co_members(text)',
         'catalog.studio_exists(text)',
         'catalog.show_exists(text)',
+        // catalog-search D2: the normaliser, the search, and the chunk refresh and trigger
+        // functions (their grants: catalogSearch.pg.test.ts).
+        'catalog.search_norm(text)',
+        // catalog-search D11: the phrase normaliser, and the search gains `p_session`.
+        'catalog.search_phrase_norm(text)',
+        'catalog.search(text,text,text,integer,text)',
+        'catalog.refresh_transcript_chunks(text,bigint[])',
+        'catalog.sync_transcript_chunks()',
       ]),
     );
     for (const { f } of fns) {

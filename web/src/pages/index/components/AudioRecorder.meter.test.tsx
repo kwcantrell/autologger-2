@@ -2,6 +2,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, cleanup, render } from '@testing-library/react';
 import { createRef } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createChunkStore, setChunkStoreForTesting } from '../utils/chunkStore';
+import { createMemoryBackend } from '../utils/chunkStore/memoryBackend';
 import { resetChunkUploadQueueForTesting } from '../utils/chunkUploadQueue';
 import type { AudioRecorderHandle } from './AudioRecorder';
 import { AudioRecorder } from './AudioRecorder';
@@ -34,6 +36,11 @@ vi.mock('../../../api/hooks/useEvents', () => ({
   useLogEvent: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(async () => ({})) }),
 }));
 vi.mock('../../../shared/components/Toast', () => ({ showToast: vi.fn() }));
+// media-worker A.5: Record waits for the per-user storage scan; a signed-in user with an empty
+// in-memory chunk store makes that scan immediate.
+vi.mock('../../../api/hooks/useProfile', () => ({
+  useProfile: () => ({ data: { auth: { user: { id: 'user-1' } } } }),
+}));
 
 let analyserByte = 128;
 
@@ -77,7 +84,7 @@ function fill(): HTMLElement {
   return document.getElementById('top-bar-mic-level-fill') as HTMLElement;
 }
 
-const fakeStream = { getTracks: () => [] } as unknown as MediaStream;
+const fakeStream = { getTracks: () => [], getAudioTracks: () => [] } as unknown as MediaStream;
 
 beforeEach(() => {
   analyserByte = 128;
@@ -86,6 +93,7 @@ beforeEach(() => {
   // The chunk upload queue is a module-scope singleton whose deps are
   // consulted on first acquire — reset so each test's render builds it fresh.
   resetChunkUploadQueueForTesting();
+  setChunkStoreForTesting(createChunkStore({ backends: [() => createMemoryBackend()] }));
   vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
   vi.stubGlobal('AudioContext', FakeAudioContext);
   vi.stubGlobal('MediaRecorder', FakeMediaRecorder);
@@ -123,6 +131,12 @@ async function startRecording() {
       <AudioRecorder ref={ref} sessionId="sess-rec-1" />
     </QueryClientProvider>,
   );
+  // The storage scan completes before Record is enabled (media-worker D10).
+  for (let i = 0; i < 4; i += 1) {
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+  }
   await act(async () => {
     await ref.current?.toggle();
   });

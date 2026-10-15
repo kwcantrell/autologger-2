@@ -22,13 +22,15 @@ import { stashLoginReturnPathIfDeepLink } from '../../../shared/utils/loginRetur
 // the browser navigates.
 
 /**
- * `?login_error=<code>` copy, grouped per design D5: three messages, not six.
+ * `?login_error=<code>` copy, grouped per design D5: four messages, not one per server code.
  * Unrecognized codes (the server may add codes over time) fall through to the
  * generic message; none of the copy may disclose deployment configuration.
  */
 const LOGIN_ERROR_MESSAGES: Record<string, string> = {
   state_invalid: 'This sign-in attempt expired.',
   provider_error: 'Sign-in was cancelled or refused.',
+  signup_closed:
+    "This Google account doesn't have access yet. Ask the person who gave you the link to set it up.",
 };
 
 const LOGIN_ERROR_GENERIC = "Sign-in didn't complete.";

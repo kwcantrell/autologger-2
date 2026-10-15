@@ -15,24 +15,32 @@ keep the frozen `503` unchanged.
 ## Requirements
 
 ### Requirement: Configuration-gated generation
-Transcript generation SHALL be gated on a `DEEPGRAM_API_KEY` environment variable. When
-the key is unset or blank, `POST /api/sessions/:sessionId/transcript-words/generate` SHALL
-retain its current behavior — `503` with the existing unavailable detail — byte-for-byte,
-so unconfigured deployments are unchanged. When the key is set, the endpoint SHALL run the
-generation pipeline. The DeepGram model SHALL default to `nova-3` and be overridable via a
-`DEEPGRAM_MODEL` environment variable. The API key MUST NOT appear in any response body,
-log line, or stored artifact, and MUST be sent only in the `Authorization` request header
-(never in a URL) so no error path can stringify it.
+Transcript generation SHALL be gated on the caller having a usable speech-to-text credential, as
+provider-credentials "Work runs on its user's credentials" resolves it. In development mode, a
+caller without one SHALL fall back to `DEEPGRAM_API_KEY` when it is set.
+
+When neither applies, `POST /api/sessions/:sessionId/transcript-words/generate` SHALL answer `503`
+with the detail `Add a speech-to-text key in Settings → Advanced to generate transcripts.`
+(api-contract-freeze "Transcript generation endpoint behavior"). Otherwise the endpoint SHALL run
+the generation pipeline:
+- with the credential's model;
+- for the fallback, with `DEEPGRAM_MODEL`, which defaults to `nova-3`.
+
+The API key MUST NOT appear in any response body, log line, or stored artifact other than its
+encrypted credential row. It MUST be sent only in the `Authorization` request header, never in a
+URL, so no error path can stringify it.
 
 #### Scenario: Unconfigured deployment keeps the frozen 503
-- **WHEN** `DEEPGRAM_API_KEY` is unset and a client calls `POST
+- **WHEN** in production mode a user without a speech-to-text credential calls `POST
   /api/sessions/:id/transcript-words/generate`
-- **THEN** the response is the same `503 {detail}` the endpoint returns today
+- **THEN** the response is `503` with the Settings → Advanced detail and no DeepGram request is
+  made
 
 #### Scenario: Configured deployment generates
-- **WHEN** `DEEPGRAM_API_KEY` is set and the session has at least one readable audio
-  segment
-- **THEN** the endpoint responds `200 {words}` with the generated transcript words
+- **WHEN** a user with a speech-to-text credential calls the endpoint and the session has at least
+  one readable audio segment
+- **THEN** the DeepGram request carries that user's key and model, and the endpoint responds
+  `200 {words}` with the generated transcript words
 
 ### Requirement: Generation lock status is observable
 The deployment SHALL expose `GET /api/transcript-generation/status` that reports whether
@@ -176,15 +184,22 @@ a hint only, since the upload path constrains it solely to keep audio responses 
 every other client-supplied type, including `application/octet-stream` and `video/*`, is
 stored verbatim), and other segment writers persist their own producer-supplied types. No
 stored `mime_type` therefore identifies the actual codec. Segments SHALL be
-grouped by probed codec + stream parameters — Opus, AAC, PCM families — and, per group,
+grouped by probed codec + stream parameters — Opus, AAC, PCM, FLAC families — and, per group,
 concatenated by **packet copy without re-encoding** into a single container the provider
-accepts: Opus groups into WebM, AAC groups into MP4, PCM groups into WAVE. Segments within
+accepts: Opus groups into WebM, AAC groups into MP4, PCM groups into WAVE, FLAC groups into
+FLAC (each copied frame's header renumbered to the variable-block-size form with its running
+sample number and its CRCs recomputed, the audio bytes unchanged, so the file is conformant
+RFC 9639 and decodes to exactly the concatenated samples). Segments within
 a group SHALL be ordered by segment ordinal, and each segment's cumulative time offset
 within the group file SHALL be recorded for timestamp remapping. Segments that are
-missing from the blob store, unreadable, unparseable, or whose probed codec is outside the
-supported families SHALL be **skipped** (the reconciliation posture used elsewhere); a
-stream-parameter mismatch within a codec family splits into a further sub-group rather
-than failing the run. One STT request SHALL be issued per resulting group. Concatenation
+unreadable, unparseable, or whose probed codec is outside the
+supported families SHALL be **skipped** (the reconciliation posture used elsewhere), but a
+segment whose blob is **missing** from the blob store SHALL fail the run with `502` and a
+detail naming the segment (a listed row without bytes means a swap or restore is in
+progress, never a stale legacy row, now that the media worker replaces rows only in one
+transaction); a
+stream-parameter mismatch within a codec family (sample rate, channel count, or a FLAC
+bit depth) splits into a further sub-group rather than failing the run. One STT request SHALL be issued per resulting group. Concatenation
 SHALL be spooled through temporary files (not held wholly in memory), and a group file
 exceeding the provider's documented size limit SHALL fail the run with `502` and a detail
 naming the limit.
@@ -215,11 +230,33 @@ naming the limit.
   type was compressible, but its bytes are actually AAC
 - **THEN** the segment is grouped by its probed codec (AAC), not by the stored hint
 
+#### Scenario: FLAC session transcribes without re-encoding
+- **WHEN** a session's segments are FLAC files (for example legacy WAVs converted to FLAC) with
+  identical stream parameters
+- **THEN** one combined FLAC file is produced by frame copy, it decodes to exactly the
+  concatenation of the segments' samples, and it is sent with content type `audio/flac`
+
+#### Scenario: A FLAC parameter change starts a new group
+- **WHEN** consecutive FLAC segments differ in sample rate, channel count or bit depth
+- **THEN** each run of identical parameters becomes its own group and request
+
+#### Scenario: A missing blob fails the run instead of silently dropping audio
+- **WHEN** a listed segment's blob is absent from the blob store
+- **THEN** generation fails with `502` and a detail naming that segment, and no transcript
+  is replaced
+
 ### Requirement: Timeline remapping of word timestamps
 Each returned word's provider timestamp (time within the combined group file) SHALL be
 remapped to the session timeline: group-file time minus the owning segment's group offset
 gives the within-segment offset; the segment's session-timeline anchor plus that offset
-gives the timeline position. For anchor resolution, segments sharing a
+gives the timeline position. A **merged segment** (one produced by the media worker from
+a recording's chunks, carrying `seams`: for each original chunk its media offset in the
+merged file and its `started_at_utc`) SHALL be remapped seam by seam: the word's owning
+seam is the last seam whose offset is at or before the within-segment offset; that seam's
+anchor is derived from the segment's resolved anchor exactly as a chunk's would be
+(`A + max(0, (started_at_utc(seam) − wall_time_utc(E)) / 1000)`), and the position is the
+seam anchor plus the offset within the seam. A segment without seams is remapped as
+before. For anchor resolution, segments sharing a
 `recording_ordinal` form a **chunk group** whose base is its lowest-ordinal member
 (segments with a null `recording_ordinal` are each their own group, as are all
 pre-existing single-segment recordings); when multiple `Recording N Started` anchors
@@ -304,6 +341,17 @@ end. Anchorless words SHALL still be stored, with empty `session_time` and `star
 - **THEN** the paragraph's `start_sec`/`end_sec` are remapped through that derived anchor
   (the enrichment requirements' "same anchor chain" language now includes derivation),
   not `null`
+
+#### Scenario: A merged recording places words as its chunks did
+- **WHEN** a three-chunk recording is merged into one segment with three seams and the
+  transcript is regenerated
+- **THEN** every word's `start_sec` equals, within 1 ms, the value it had when the three
+  chunks were separate segments: words of the third chunk are anchored at that chunk's
+  wall-clock delta from the start event, not at the merged file's running time
+
+#### Scenario: A segment without seams is unchanged
+- **WHEN** a session has only single-segment recordings and no `seams`
+- **THEN** every word's position is identical to the output before this change
 
 ### Requirement: Word content, ordering, and provider parameters
 Provider requests SHALL set `diarize=true`, `smart_format=true`, `paragraphs=true`,

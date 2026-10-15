@@ -23,10 +23,10 @@ import {
   checkCredFile,
   checkNodeVersion,
   checkResolved,
-  checkSupabaseKeys,
   httpsJson,
   parseAddr,
   parseKvPath,
+  retiredKeyWarning,
   sanitizeMessage,
   splitStep,
   validateSecrets,
@@ -38,15 +38,14 @@ const REAL_DOCKER = spawnSync('sh', ['-c', 'command -v docker'], { encoding: 'ut
 const SECRET = 'csec-SHOULD-NOT-LEAK';
 const TOKEN = 'tok-SHOULD-NOT-LEAK';
 const PGPW = '0123456789abcdef0123456789abcdef'; // a valid POSTGRES_PASSWORD (supabase-db D4)
-// supabase-services: the compose files interpolate every Supabase key, so resolve needs them all.
+// supabase-services: the compose files interpolate every Supabase key, so resolve needs them all
+// (drop-unused-supabase-services D3: the four that remain).
 const SB_JS = 'j'.repeat(43);
-const sbJwt = (role) => {
-  const p = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
-  const hp = `${p({ alg: 'HS256', typ: 'JWT' })}.${p({ role, iss: 'supabase', exp: Math.floor(Date.now() / 1000) + 365 * 86400 })}`;
-  return `${hp}.${createHmac('sha256', SB_JS).update(hp).digest('base64url')}`;
-};
-const sbSecrets = () => [secret('POSTGRES_PASSWORD', PGPW), secret('SUPABASE_ROLES_PASSWORD', 'f'.repeat(32)), secret('APP_DB_PASSWORD', 'e'.repeat(32)), secret('JWT_SECRET', SB_JS),
-  secret('ANON_KEY', sbJwt('anon')), secret('SERVICE_ROLE_KEY', sbJwt('service_role')), secret('SECRET_KEY_BASE', 's'.repeat(64)),
+// byo-ai-providers D2: a valid 32-byte provider-keys secret.
+const PKS = Buffer.alloc(32, 5).toString('base64');
+const sbSecrets = () => [secret('POSTGRES_PASSWORD', PGPW), secret('SUPABASE_ROLES_PASSWORD', 'f'.repeat(32)), secret('APP_DB_PASSWORD', 'e'.repeat(32)), secret('MEDIA_DB_PASSWORD', 'd'.repeat(32)), secret('JWT_SECRET', SB_JS)];
+// drop-unused-supabase-services D3: the retired keys as the old generator wrote them.
+const retiredSecrets = () => [secret('ANON_KEY', 'aaa.bbb.ccc-anon-value'), secret('SERVICE_ROLE_KEY', 'aaa.bbb.ccc-service-value'), secret('SECRET_KEY_BASE', 's'.repeat(64)),
   secret('REALTIME_DB_ENC_KEY', 'r'.repeat(16)), secret('SUPABASE_PORT', '18790')];
 
 let T; // temp dir
@@ -199,7 +198,7 @@ after(() => {
 });
 beforeEach(() => {
   seen = [];
-  handler = standIn([secret('GOOGLE_CLIENT_ID', 'gid'), secret('GOOGLE_CLIENT_SECRET', 'gsecret'), secret('BOOTSTRAP_OWNER_EMAIL', 'owner@example.com'), secret('DEV_PORT', '18787'), ...sbSecrets()]);
+  handler = standIn([secret('GOOGLE_CLIENT_ID', 'gid'), secret('GOOGLE_CLIENT_SECRET', 'gsecret'), secret('BOOTSTRAP_OWNER_EMAIL', 'owner@example.com'), secret('PROVIDER_KEYS_SECRET', PKS), secret('DEV_PORT', '18787'), ...sbSecrets()]);
   rmSync(join(T, 'log'), { recursive: true, force: true });
   rmSync(join(T, 'cred'), { recursive: true, force: true });
 });
@@ -491,7 +490,7 @@ describe('start-up checks (H1, H10, H11)', () => {
 describe('success path (D1 steps 5-6, H12)', () => {
   it('logs in once, reads the KV path, revokes the token, and spawns docker with only the clean env', async () => {
     writeCreds('dev');
-    handler = standIn([secret('GOOGLE_CLIENT_ID', `a'b"c$d\`e\nf`), secret('GOOGLE_CLIENT_SECRET', 'gsecret'), secret('BOOTSTRAP_OWNER_EMAIL', 'owner@example.com'), secret('DEV_PORT', '18787'), ...sbSecrets()]);
+    handler = standIn([secret('GOOGLE_CLIENT_ID', `a'b"c$d\`e\nf`), secret('GOOGLE_CLIENT_SECRET', 'gsecret'), secret('BOOTSTRAP_OWNER_EMAIL', 'owner@example.com'), secret('PROVIDER_KEYS_SECRET', PKS), secret('DEV_PORT', '18787'), ...sbSecrets(), ...retiredSecrets()]);
     const r = await run(['dev', 'compose version']);
     assert.equal(r.code, 0, r.out);
     assert.deepEqual(seen.map((q) => `${q.method} ${q.url}`), ['POST /v1/auth/approle/login', 'GET /v1/kv/data/autologger/dev', 'POST /v1/auth/token/revoke-self']);
@@ -502,7 +501,10 @@ describe('success path (D1 steps 5-6, H12)', () => {
     assert.equal(fetch.headers.authorization, undefined);
     assert.equal(fetch.body, '');
     assert.equal(revoke.headers['x-vault-token'], TOKEN);
-    assert.doesNotMatch(r.out, /warning/);
+    // drop-unused-supabase-services D3: the fixture still holds the retired keys; one warning names them.
+    assert.equal(r.out.match(/warning/g)?.length, 1, r.out);
+    assert.match(r.out, /^compose-run: warning: the OpenBao dev secret holds retired keys ANON_KEY, REALTIME_DB_ENC_KEY, SECRET_KEY_BASE, SERVICE_ROLE_KEY, SUPABASE_PORT; /m);
+    for (const [k, v] of retiredSecrets()) if (v.length > 5) assert.ok(!r.out.includes(v), k);
     const argv = log('argv');
     assert.match(argv, /--env-file \/dev\/null/);
     assert.doesNotMatch(argv, new RegExp(`${SECRET}|${TOKEN}`));
@@ -513,12 +515,12 @@ describe('success path (D1 steps 5-6, H12)', () => {
     assert.match(env, /^TERM=xterm$/m);
     assert.ok(env.includes(`GOOGLE_CLIENT_ID=a'b"c$d\`e\nf`));
     const names = env.split('\n').filter((l) => /^[A-Za-z_][A-Za-z0-9_]*=/.test(l)).map((l) => l.split('=')[0]).sort();
-    assert.deepEqual(names, ['ANON_KEY', 'APP_DB_PASSWORD', 'AUTOLOGGER_STACK', 'BOOTSTRAP_OWNER_EMAIL', 'DEV_PORT', 'GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'HOME', 'JWT_SECRET', 'PATH', 'POSTGRES_PASSWORD', 'PWD', 'REALTIME_DB_ENC_KEY', 'SECRET_KEY_BASE', 'SERVICE_ROLE_KEY', 'SUPABASE_PORT', 'SUPABASE_ROLES_PASSWORD', 'TERM']);
+    assert.deepEqual(names, ['APP_DB_PASSWORD', 'AUTOLOGGER_STACK', 'BOOTSTRAP_OWNER_EMAIL', 'DEV_PORT', 'GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'HOME', 'JWT_SECRET', 'MEDIA_DB_PASSWORD', 'PATH', 'POSTGRES_PASSWORD', 'PROVIDER_KEYS_SECRET', 'PWD', 'SUPABASE_ROLES_PASSWORD', 'TERM']);
     assert.match(env, new RegExp(`^POSTGRES_PASSWORD=${PGPW}$`, 'm'));
   });
   it('a failed revoke only warns; the token expires with its TTL', async () => {
     writeCreds('dev');
-    handler = standIn([secret('GOOGLE_CLIENT_ID', 'gid'), secret('GOOGLE_CLIENT_SECRET', 'gsecret'), secret('BOOTSTRAP_OWNER_EMAIL', 'owner@example.com'), secret('DEV_PORT', '18787'), ...sbSecrets()], { revoke: 403 });
+    handler = standIn([secret('GOOGLE_CLIENT_ID', 'gid'), secret('GOOGLE_CLIENT_SECRET', 'gsecret'), secret('BOOTSTRAP_OWNER_EMAIL', 'owner@example.com'), secret('PROVIDER_KEYS_SECRET', PKS), secret('DEV_PORT', '18787'), ...sbSecrets()], { revoke: 403 });
     const r = await run(['dev', 'compose version']);
     assert.equal(r.code, 0, r.out);
     assert.match(r.out, /warning: could not revoke the OpenBao token \(OpenBao answered HTTP 403\)/);
@@ -585,12 +587,12 @@ describe('guard steps (resolved, urls, prod-tags, reset; H8)', () => {
     const r = await run(['dev', 'resolved', 'urls']);
     assert.equal(r.code, 0, r.out);
     assert.match(r.out, /127\.0\.0\.1:18787/);
-    assert.match(r.out, /Supabase: +http:\/\/localhost:18790/);
+    assert.doesNotMatch(r.out, /Supabase:/); // drop-unused-supabase-services D3
   });
   it('resolved refuses 8080, 80/443 in dev, and a non-numeric port', async () => {
     writeCreds('dev');
     for (const p of ['8080', '443', 'abc']) {
-      handler = standIn([secret('GOOGLE_CLIENT_ID', 'gid'), secret('GOOGLE_CLIENT_SECRET', 'gsecret'), secret('BOOTSTRAP_OWNER_EMAIL', 'owner@example.com'), secret('DEV_PORT', p), ...sbSecrets()]);
+      handler = standIn([secret('GOOGLE_CLIENT_ID', 'gid'), secret('GOOGLE_CLIENT_SECRET', 'gsecret'), secret('BOOTSTRAP_OWNER_EMAIL', 'owner@example.com'), secret('PROVIDER_KEYS_SECRET', PKS), secret('DEV_PORT', p), ...sbSecrets()]);
       const r = await run(['dev', 'resolved', 'compose up -d']);
       assert.notEqual(r.code, 0, p);
       assert.doesNotMatch(log('argv'), / up /, p);
@@ -600,7 +602,12 @@ describe('guard steps (resolved, urls, prod-tags, reset; H8)', () => {
     const { checkProdTags } = await import('./compose-run.mjs');
     assert.throws(() => checkProdTags(new Map([['WEB_TAG', 'aaaaaaaaaaaa'], ['API_TAG', 'latest']])), /API_TAG/);
     assert.throws(() => checkProdTags(new Map([['WEB_TAG', 'aaaaaaaaaaaa']])), /API_TAG/);
-    assert.doesNotThrow(() => checkProdTags(new Map([['WEB_TAG', 'aaaaaaaaaaaa'], ['API_TAG', 'aaaaaaaaaaaa']])));
+    // media-worker D15: the worker image is pinned like the other two.
+    const tags = [['WEB_TAG', 'aaaaaaaaaaaa'], ['API_TAG', 'aaaaaaaaaaaa']];
+    assert.throws(() => checkProdTags(new Map(tags)), /MEDIA_TAG/);
+    assert.throws(() => checkProdTags(new Map([...tags, ['MEDIA_TAG', '']])), /MEDIA_TAG/);
+    assert.throws(() => checkProdTags(new Map([...tags, ['MEDIA_TAG', 'latest']])), /MEDIA_TAG=latest/);
+    assert.doesNotThrow(() => checkProdTags(new Map([...tags, ['MEDIA_TAG', 'aaaaaaaaaaaa']])));
   });
   it('reset needs CONFIRM=yes before any request, and is refused for prod', async () => {
     writeCreds('dev');
@@ -621,7 +628,7 @@ describe('guard steps (resolved, urls, prod-tags, reset; H8)', () => {
   });
   it('a failing guard stops before the destructive step', async () => {
     writeCreds('dev');
-    handler = standIn([secret('GOOGLE_CLIENT_ID', 'gid'), secret('GOOGLE_CLIENT_SECRET', 'gsecret'), secret('BOOTSTRAP_OWNER_EMAIL', 'owner@example.com'), secret('DEV_PORT', '8080'), ...sbSecrets()]);
+    handler = standIn([secret('GOOGLE_CLIENT_ID', 'gid'), secret('GOOGLE_CLIENT_SECRET', 'gsecret'), secret('BOOTSTRAP_OWNER_EMAIL', 'owner@example.com'), secret('PROVIDER_KEYS_SECRET', PKS), secret('DEV_PORT', '8080'), ...sbSecrets()]);
     const r = await run(['dev', 'reset', 'resolved', 'compose down -v'], { env: { CONFIRM: 'yes' } });
     assert.notEqual(r.code, 0);
     assert.doesNotMatch(log('argv'), /down/);
@@ -661,7 +668,7 @@ describe('Postgres password and prod run/exec (supabase-db D4, D6)', () => {
     assert.equal(r.code, 0, r.out);
   });
   it('resolved refuses a config where the password value appears outside db and migrate', () => {
-    const ok = { name: 'autologger', services: { router: { ports: [{ host_ip: '127.0.0.1', published: '8080' }] }, 'supabase-gw': { ports: [{ host_ip: '127.0.0.1', published: '8790' }] }, db: { environment: { POSTGRES_PASSWORD: PGPW } }, migrate: { environment: { PGPASSWORD: PGPW } } } };
+    const ok = { name: 'autologger', services: { router: { ports: [{ host_ip: '127.0.0.1', published: '8080' }] }, db: { environment: { POSTGRES_PASSWORD: PGPW } }, migrate: { environment: { PGPASSWORD: PGPW } } } };
     const secrets = new Map([['POSTGRES_PASSWORD', PGPW]]);
     assert.doesNotThrow(() => checkResolved('prod', ok, secrets));
     for (const leak of [{ labels: { x: `pw=${PGPW}` } }, { environment: { DATABASE_URL: `postgres://u:${PGPW}@db/x` } }, { build: { args: { P: PGPW } } }]) {
@@ -695,7 +702,7 @@ describe('APP_DB_PASSWORD (catalog-pg-schema D4, D5)', () => {
     const ports = env === 'dev'
       ? { app: { ports: [{ host_ip: '127.0.0.1', published: '8787' }] }, companion: { ports: [{ host_ip: '127.0.0.1', published: '8000' }] } }
       : { router: { ports: [{ host_ip: '127.0.0.1', published: env === 'prod' ? '8080' : '8788' }] } };
-    return { name: { dev: 'autologger-dev', stage: 'autologger-stage', prod: 'autologger' }[env], services: { ...ports, 'supabase-gw': { ports: [{ host_ip: '127.0.0.1', published: '8790' }] }, migrate: { environment: { APP_DB_PASSWORD: APW } } } };
+    return { name: { dev: 'autologger-dev', stage: 'autologger-stage', prod: 'autologger' }[env], services: { ...ports, migrate: { environment: { APP_DB_PASSWORD: APW } } } };
   };
   const secrets = new Map([['APP_DB_PASSWORD', APW]]);
   const refusal = (env, svc) => {
@@ -717,29 +724,19 @@ describe('APP_DB_PASSWORD (catalog-pg-schema D4, D5)', () => {
   });
 });
 
-// supabase-services D4: formats, JWT consistency, per-secret confinement.
-const b64u = (x) => Buffer.from(typeof x === 'string' ? x : JSON.stringify(x)).toString('base64url');
-function jwt(secret, payload, header = { alg: 'HS256', typ: 'JWT' }) {
-  const hp = `${b64u(header)}.${b64u(payload)}`;
-  return `${hp}.${createHmac('sha256', secret).update(hp).digest('base64url')}`;
-}
+// supabase-services D4: formats and per-secret confinement (drop-unused-supabase-services D3: the
+// anon/service-role JWT check is gone with the services that used the keys).
 const JS = 'j'.repeat(43);
-const now = Math.floor(Date.now() / 1000);
-const ANON = jwt(JS, { role: 'anon', iss: 'supabase', iat: now, exp: now + 5 * 365 * 86400 });
-const SVC = jwt(JS, { role: 'service_role', iss: 'supabase', iat: now, exp: now + 5 * 365 * 86400 });
+const RPW = 'f'.repeat(32);
 
 describe('Supabase keys (supabase-services D4)', () => {
-  const keys = ['POSTGRES_PASSWORD', 'SUPABASE_ROLES_PASSWORD', 'JWT_SECRET', 'SECRET_KEY_BASE', 'REALTIME_DB_ENC_KEY', 'ANON_KEY', 'SERVICE_ROLE_KEY', 'SUPABASE_PORT'];
+  const keys = ['POSTGRES_PASSWORD', 'SUPABASE_ROLES_PASSWORD', 'JWT_SECRET'];
   const allowed = new Set(keys);
   it('each format refuses a bad value without printing it', () => {
+    // drop-unused-supabase-services D3: the retired keys have no format any more (see below).
     const bad = {
       SUPABASE_ROLES_PASSWORD: 'A'.repeat(32), // uppercase is refused
       JWT_SECRET: 'short-secret-value',
-      SECRET_KEY_BASE: 'k'.repeat(63),
-      REALTIME_DB_ENC_KEY: 'k'.repeat(15),
-      ANON_KEY: 'not-a-jwt-value',
-      SERVICE_ROLE_KEY: 'a.b.c.d',
-      SUPABASE_PORT: '80',
     };
     for (const [k, v] of Object.entries(bad)) {
       let msg = '';
@@ -747,35 +744,27 @@ describe('Supabase keys (supabase-services D4)', () => {
       assert.match(msg, new RegExp(`${k}.*bad-format`), k);
       assert.ok(!msg.includes(v), k);
     }
-    for (const v of ['99999', '1023', '8790x']) assert.throws(() => validateSecrets(kv([secret('SUPABASE_PORT', v)]), allowed), /bad-format/, v);
-    const ok = validateSecrets(kv([secret('SUPABASE_ROLES_PASSWORD', PGPW), secret('JWT_SECRET', JS), secret('SECRET_KEY_BASE', 'k'.repeat(64)), secret('REALTIME_DB_ENC_KEY', 'k'.repeat(16)), secret('ANON_KEY', ANON), secret('SERVICE_ROLE_KEY', SVC), secret('SUPABASE_PORT', '8790')]), allowed);
-    assert.equal(ok.size, 7);
+    const ok = validateSecrets(kv([secret('SUPABASE_ROLES_PASSWORD', PGPW), secret('JWT_SECRET', JS)]), allowed);
+    assert.equal(ok.size, 2);
   });
-  it('the anon and service-role keys must verify against JWT_SECRET with the right roles', () => {
-    const m = (o) => new Map(Object.entries({ JWT_SECRET: JS, ANON_KEY: ANON, SERVICE_ROLE_KEY: SVC, ...o }));
-    assert.deepEqual(checkSupabaseKeys(m({})), []);
-    const refused = (o, re) => {
-      let msg = '';
-      try { checkSupabaseKeys(m(o)); } catch (e) { msg = e.message; }
-      assert.match(msg, re, JSON.stringify(Object.keys(o)));
-      for (const v of Object.values(o)) if (v && v.length > 8) assert.ok(!msg.includes(v));
-    };
-    refused({ ANON_KEY: SVC, SERVICE_ROLE_KEY: ANON }, /ANON_KEY/);
-    refused({ ANON_KEY: jwt('x'.repeat(43), { role: 'anon', exp: now + 999999 }) }, /ANON_KEY/);
-    refused({ SERVICE_ROLE_KEY: jwt(JS, { role: 'service_role', exp: now - 10 }) }, /SERVICE_ROLE_KEY/);
-    refused({ ANON_KEY: jwt(JS, { role: 'anon', exp: now + 999999 }, { alg: 'none' }) }, /ANON_KEY/);
-    refused({ SERVICE_ROLE_KEY: ANON }, /SERVICE_ROLE_KEY/);
-    refused({ ANON_KEY: undefined }, /ANON_KEY/);
-    const warn = checkSupabaseKeys(m({ ANON_KEY: jwt(JS, { role: 'anon', exp: now + 30 * 86400 }) }));
-    assert.equal(warn.length, 1);
-    assert.match(warn[0], /ANON_KEY.*expires/);
-    assert.deepEqual(checkSupabaseKeys(new Map([['POSTGRES_PASSWORD', PGPW]])), []);
+  it('an ANON_KEY signed with another secret is not refused (drop-unused-supabase-services D3)', async () => {
+    writeCreds('dev');
+    const p = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
+    const hp = `${p({ alg: 'HS256', typ: 'JWT' })}.${p({ role: 'anon', exp: Math.floor(Date.now() / 1000) + 86400 })}`;
+    const foreign = `${hp}.${createHmac('sha256', 'x'.repeat(43)).update(hp).digest('base64url')}`;
+    handler = standIn([secret('GOOGLE_CLIENT_ID', 'gid'), secret('GOOGLE_CLIENT_SECRET', 'gsecret'), secret('BOOTSTRAP_OWNER_EMAIL', 'owner@example.com'), secret('PROVIDER_KEYS_SECRET', PKS), secret('DEV_PORT', '18787'), ...sbSecrets(), secret('ANON_KEY', foreign)]);
+    const r = await run(['dev', 'compose version']);
+    assert.equal(r.code, 0, r.out);
+    assert.match(r.out, /retired keys ANON_KEY;/);
+    assert.ok(!r.out.includes(foreign));
   });
   it('resolved refuses a secret value outside its allowed services', () => {
-    const base = { name: 'autologger', services: { router: { ports: [{ host_ip: '127.0.0.1', published: '8080' }] }, realtime: { environment: { ANON: ANON, DB: PGPW } }, storage: { environment: { A: ANON, S: SVC } }, 'supabase-gw': { environment: { A: ANON, S: SVC }, ports: [{ host_ip: '127.0.0.1', published: '8790' }] } } };
-    const secrets = new Map([['POSTGRES_PASSWORD', PGPW], ['ANON_KEY', ANON], ['SERVICE_ROLE_KEY', SVC]]);
+    // drop-unused-supabase-services D3: db, migrate and auth hold the Supabase keys; rest, realtime
+    // and storage are fixture services that no longer exist.
+    const base = { name: 'autologger', services: { router: { ports: [{ host_ip: '127.0.0.1', published: '8080' }] }, db: { environment: { P: PGPW, R: RPW } }, migrate: { environment: { P: PGPW } }, auth: { environment: { R: RPW, J: JS } } } };
+    const secrets = new Map([['POSTGRES_PASSWORD', PGPW], ['SUPABASE_ROLES_PASSWORD', RPW], ['JWT_SECRET', JS]]);
     assert.doesNotThrow(() => checkResolved('prod', base, secrets));
-    for (const [svc, k, v] of [['api', 'ANON_KEY', ANON], ['rest', 'POSTGRES_PASSWORD', PGPW], ['realtime', 'SERVICE_ROLE_KEY', SVC]]) {
+    for (const [svc, k, v] of [['api', 'JWT_SECRET', JS], ['rest', 'JWT_SECRET', JS], ['storage', 'JWT_SECRET', JS], ['realtime', 'POSTGRES_PASSWORD', PGPW], ['rest', 'SUPABASE_ROLES_PASSWORD', RPW], ['auth', 'POSTGRES_PASSWORD', PGPW]]) {
       const cfg = structuredClone(base);
       cfg.services[svc] = { ...(cfg.services[svc] ?? {}), labels: { x: v } };
       let msg = '';
@@ -786,14 +775,38 @@ describe('Supabase keys (supabase-services D4)', () => {
   });
 });
 
-describe('published ports with the Supabase gateway (supabase-services D4)', () => {
+// drop-unused-supabase-services D3: the five retired keys are accepted, never format-checked, never
+// passed to compose, and named (never their values) in one warning.
+describe('retired Supabase keys (drop-unused-supabase-services D3)', () => {
+  const RETIRED = { ANON_KEY: 'not-a-jwt', SECRET_KEY_BASE: 'k'.repeat(10), REALTIME_DB_ENC_KEY: 'k'.repeat(40), SERVICE_ROLE_KEY: 'a.b.c.d', SUPABASE_PORT: '80' };
+  it('are accepted in every environment, whatever their format', () => {
+    for (const env of ['dev', 'stage', 'prod']) {
+      const got = validateSecrets(kv(Object.entries(RETIRED)), allowedNames(env));
+      assert.equal(got.size, 5, env);
+    }
+  });
+  it('the warning names exactly the retired keys present, sorted, and no value', () => {
+    assert.equal(retiredKeyWarning(new Map([['POSTGRES_PASSWORD', PGPW], ['JWT_SECRET', JS]]), 'dev'), undefined);
+    const all = retiredKeyWarning(new Map([['POSTGRES_PASSWORD', PGPW], ...Object.entries(RETIRED)]), 'stage');
+    assert.equal(all, 'compose-run: warning: the OpenBao stage secret holds retired keys ANON_KEY, REALTIME_DB_ENC_KEY, SECRET_KEY_BASE, SERVICE_ROLE_KEY, SUPABASE_PORT; nothing reads them, and they can be removed once no checkout runs the old Supabase services (docs/openbao-secrets.md)');
+    const two = retiredKeyWarning(new Map([['SUPABASE_PORT', '8790'], ['ANON_KEY', 'not-a-jwt']]), 'dev');
+    assert.match(two, /OpenBao dev secret holds retired keys ANON_KEY, SUPABASE_PORT; /);
+    assert.doesNotMatch(two, /SERVICE_ROLE_KEY|SECRET_KEY_BASE|REALTIME_DB_ENC_KEY|not-a-jwt|8790/);
+    for (const v of Object.values(RETIRED)) if (v.length > 3) assert.ok(!all.includes(v), v);
+  });
+});
+
+describe('published ports without the Supabase gateway (drop-unused-supabase-services D3)', () => {
   const port = (n) => ({ ports: [{ host_ip: '127.0.0.1', published: String(n) }] });
-  it('dev needs app, Companion and the gateway on distinct ports; stage and prod the router and the gateway', () => {
-    assert.doesNotThrow(() => checkResolved('dev', { name: 'autologger-dev', services: { app: port(8787), companion: port(8000), 'supabase-gw': port(8790) } }));
-    assert.throws(() => checkResolved('dev', { name: 'autologger-dev', services: { app: port(8787), companion: port(8000) } }), /expected set/);
-    assert.throws(() => checkResolved('dev', { name: 'autologger-dev', services: { app: port(8787), companion: port(8000), 'supabase-gw': port(8787) } }), /expected set/);
-    assert.doesNotThrow(() => checkResolved('stage', { name: 'autologger-stage', services: { router: port(8788), 'supabase-gw': port(8791) } }));
-    assert.throws(() => checkResolved('stage', { name: 'autologger-stage', services: { router: port(8788) } }), /expected set/);
+  it('dev needs exactly app and Companion on distinct ports; stage and prod exactly the router', () => {
+    assert.doesNotThrow(() => checkResolved('dev', { name: 'autologger-dev', services: { app: port(8787), companion: port(8000) } }));
+    assert.throws(() => checkResolved('dev', { name: 'autologger-dev', services: { app: port(8787), companion: port(8000), 'supabase-gw': port(8790) } }), /expected set/);
+    assert.throws(() => checkResolved('dev', { name: 'autologger-dev', services: { app: port(8787), companion: port(8787) } }), /expected set/);
+    assert.throws(() => checkResolved('dev', { name: 'autologger-dev', services: { app: port(8787) } }), /expected set/);
+    for (const [env, name, p] of [['stage', 'autologger-stage', 8788], ['prod', 'autologger', 8080]]) {
+      assert.doesNotThrow(() => checkResolved(env, { name, services: { router: port(p) } }), env);
+      assert.throws(() => checkResolved(env, { name, services: { router: port(p), 'supabase-gw': port(8791) } }), /expected set/, env);
+    }
   });
 });
 
@@ -842,13 +855,104 @@ describe('sign-in client and bootstrap owner (gotrue-sign-in D3, require-login D
   });
 });
 
+// byo-ai-providers D2: the server refuses to boot without a 32-byte PROVIDER_KEYS_SECRET, so every
+// stack refuses before compose starts.
+describe('provider keys secret (byo-ai-providers D2)', () => {
+  it('every stack refuses a missing, blank or non-32-byte PROVIDER_KEYS_SECRET, without printing it', async () => {
+    const { checkProviderKeysSecret } = await import('./compose-run.mjs');
+    const short = Buffer.alloc(16, 9).toString('base64');
+    for (const env of ['dev', 'stage', 'prod']) {
+      for (const v of [undefined, '', '  ', short, Buffer.alloc(33, 9).toString('base64'), 'not base64!!']) {
+        const m = v === undefined ? new Map() : new Map([['PROVIDER_KEYS_SECRET', v]]);
+        let msg = '';
+        try { checkProviderKeysSecret(env, m); } catch (err) { msg = err.message; }
+        assert.match(msg, /PROVIDER_KEYS_SECRET/, `${env} ${v}`);
+        if (v && v.trim()) assert.ok(!msg.includes(v.trim()), `${env} ${v} printed`);
+      }
+      assert.doesNotThrow(() => checkProviderKeysSecret(env, new Map([['PROVIDER_KEYS_SECRET', PKS]])), env);
+    }
+  });
+  it('a dev run without PROVIDER_KEYS_SECRET in OpenBao refuses before docker runs', async () => {
+    writeCreds('dev');
+    handler = standIn([secret('GOOGLE_CLIENT_ID', 'gid'), secret('GOOGLE_CLIENT_SECRET', 'gsecret'), secret('BOOTSTRAP_OWNER_EMAIL', 'owner@example.com'), secret('DEV_PORT', '18787'), ...sbSecrets()]);
+    const r = await run(['dev', 'compose up -d']);
+    assert.notEqual(r.code, 0);
+    assert.match(r.out, /PROVIDER_KEYS_SECRET/);
+    assert.equal(log('argv'), '');
+  });
+});
+
+// closed-signups D1: SIGNUPS is open or closed (trimmed, A-Z folded), or blank/absent (the stack
+// default); anything else is refused before compose starts, never printing the value.
+describe('SIGNUPS setting (closed-signups D1)', () => {
+  const base = () => [secret('GOOGLE_CLIENT_ID', 'gid'), secret('GOOGLE_CLIENT_SECRET', 'gsecret'), secret('BOOTSTRAP_OWNER_EMAIL', 'owner@example.com'), secret('PROVIDER_KEYS_SECRET', PKS), secret('DEV_PORT', '18787'), ...sbSecrets()];
+  it('every stack refuses an invalid SIGNUPS, naming SIGNUPS, open and closed, without the value', async () => {
+    const { checkSignupsSetting } = await import('./compose-run.mjs');
+    for (const env of ['dev', 'stage', 'prod']) {
+      for (const v of ['opne', 'yes', ' clsoed ', '\u212Alosed']) {
+        let msg = '';
+        try { checkSignupsSetting(env, new Map([['SIGNUPS', v]])); } catch (err) { msg = err.message; }
+        assert.match(msg, /SIGNUPS/, `${env} ${v}`);
+        assert.match(msg, /open/, `${env} ${v}`);
+        assert.match(msg, /closed/, `${env} ${v}`);
+        assert.ok(!msg.includes(v.trim()), `${env} ${v}`);
+      }
+    }
+  });
+  it('every stack accepts open, closed, Closed, blank and absent', async () => {
+    const { checkSignupsSetting } = await import('./compose-run.mjs');
+    for (const env of ['dev', 'stage', 'prod']) {
+      for (const v of ['open', 'closed', 'Closed', ' OPEN ', '', '  ']) {
+        assert.doesNotThrow(() => checkSignupsSetting(env, new Map([['SIGNUPS', v]])), `${env} ${v}`);
+      }
+      assert.doesNotThrow(() => checkSignupsSetting(env, new Map()), env);
+    }
+  });
+  it('a dev run with SIGNUPS=opne refuses before docker runs, without printing the value', async () => {
+    writeCreds('dev');
+    handler = standIn([...base(), secret('SIGNUPS', 'opne')]);
+    const r = await run(['dev', 'compose up -d']);
+    assert.notEqual(r.code, 0);
+    assert.match(r.out, /SIGNUPS/);
+    assert.doesNotMatch(r.out, /not-allowed/);
+    assert.doesNotMatch(r.out, /opne/);
+    assert.equal(log('argv'), '');
+  });
+  it('a dev run with SIGNUPS=Closed passes it to compose', async () => {
+    writeCreds('dev');
+    handler = standIn([...base(), secret('SIGNUPS', 'Closed')]);
+    const r = await run(['dev', 'compose version']);
+    assert.equal(r.code, 0, r.out);
+    assert.ok(log('env').split('\n').includes('SIGNUPS=Closed'));
+  });
+});
+
+// ai-sdk-agent-harness: the CLI allowlist and the AI SDK turn limits come from the OpenBao secret.
+describe('AI SDK harness keys (ai-sdk-agent-harness)', () => {
+  const AI_KEYS = { CLAUDE_CLI_EMAILS: 'owner@example.com, b@example.com', AI_CHAT_MAX_STEPS: '8', AI_CHAT_MAX_TOKENS: '400000', GENERATE_MAX_STEPS: '40', GENERATE_MAX_TOKENS: '3000000', GENERATE_MAX_OUTPUT_TOKENS: '16000' };
+  it('are accepted from the OpenBao secret in every stack', () => {
+    for (const env of ['dev', 'stage', 'prod']) {
+      const got = validateSecrets(kv(Object.entries(AI_KEYS)), allowedNames(env));
+      for (const [k, v] of Object.entries(AI_KEYS)) assert.equal(got.get(k), v, `${env} ${k}`);
+    }
+  });
+  it('a dev run passes them to compose', async () => {
+    writeCreds('dev');
+    handler = standIn([secret('GOOGLE_CLIENT_ID', 'gid'), secret('GOOGLE_CLIENT_SECRET', 'gsecret'), secret('BOOTSTRAP_OWNER_EMAIL', 'owner@example.com'), secret('PROVIDER_KEYS_SECRET', PKS), secret('DEV_PORT', '18787'), ...sbSecrets(), ...Object.entries(AI_KEYS).map(([k, v]) => secret(k, v))]);
+    const r = await run(['dev', 'compose version']);
+    assert.equal(r.code, 0, r.out);
+    const env = log('env');
+    for (const [k, v] of Object.entries(AI_KEYS)) assert.ok(env.split('\n').includes(`${k}=${v}`), k);
+  });
+});
+
 // stage-public-https: the stage operator values (STAGE_IMAGE_TAG, STAGE_PUBLIC_BASE_URL, DOCKER_CONFIG).
 describe('stage public mode (stage-public-https)', () => {
   const SHA = 'a'.repeat(40);
   const URL1 = 'https://stage.example.com';
   // The tagged end-to-end runs need the tree to be the tagged commit (checkStageTree): use HEAD.
   const HEAD = spawnSync('git', ['-C', ROOT, 'rev-parse', 'HEAD'], { encoding: 'utf8', env: gitEnv() }).stdout.trim();
-  const stageSecrets = () => [secret('GOOGLE_CLIENT_ID', 'gid'), secret('GOOGLE_CLIENT_SECRET', 'gsecret'), secret('BOOTSTRAP_OWNER_EMAIL', 'owner@example.com'), secret('STAGE_PORT', '18788'), ...sbSecrets()];
+  const stageSecrets = () => [secret('GOOGLE_CLIENT_ID', 'gid'), secret('GOOGLE_CLIENT_SECRET', 'gsecret'), secret('BOOTSTRAP_OWNER_EMAIL', 'owner@example.com'), secret('PROVIDER_KEYS_SECRET', PKS), secret('STAGE_PORT', '18788'), ...sbSecrets()];
   it('STAGE_PUBLIC_BASE_URL accepts only a bare https DNS origin', async () => {
     const { parseStagePublicUrl } = await import('./compose-run.mjs');
     assert.equal(parseStagePublicUrl(undefined), '');
@@ -865,7 +969,7 @@ describe('stage public mode (stage-public-https)', () => {
   it('STAGE_IMAGE_TAG must be a full 40-hex SHA (never prod-push\'s 12-char tag); it selects the ghcr images; https sets COOKIE_SECURE=1', async () => {
     const { parseStageOptions, stageComposeEnv } = await import('./compose-run.mjs');
     const local = parseStageOptions({});
-    assert.deepEqual(local.images, { web: 'autologger-stage-web:local', api: 'autologger-stage-api:local' });
+    assert.deepEqual(local.images, { web: 'autologger-stage-web:local', api: 'autologger-stage-api:local', media: 'autologger-stage-media-worker:local' });
     assert.equal(local.cookieSecure, '0');
     assert.deepEqual(stageComposeEnv(local), {});
     for (const bad of ['latest', 'stage', 'A'.repeat(40), 'a'.repeat(12), 'a'.repeat(13), 'a'.repeat(41), `${'a'.repeat(40)} `, '-x']) {
@@ -877,6 +981,7 @@ describe('stage public mode (stage-public-https)', () => {
     assert.deepEqual(stageComposeEnv(pub), {
       STAGE_WEB_IMAGE: `ghcr.io/kwcantrell/autologger-web:${SHA}`,
       STAGE_API_IMAGE: `ghcr.io/kwcantrell/autologger-api:${SHA}`,
+      STAGE_MEDIA_IMAGE: `ghcr.io/kwcantrell/autologger-media-worker:${SHA}`,
       STAGE_PUBLIC_BASE_URL: 'https://stage.example.com',
       STAGE_COOKIE_SECURE: '1',
     });
@@ -1012,14 +1117,17 @@ describe('stage public mode (stage-public-https)', () => {
   });
   it('the resolved stage config must carry the expected images, origin and cookie posture', async () => {
     const { checkStageResolved, parseStageOptions } = await import('./compose-run.mjs');
-    const cfg = (web, api, url, cs) => ({ services: { router: { ports: [{ published: '8788' }] }, web: { image: web }, api: { image: api, environment: { PUBLIC_BASE_URL: url, COOKIE_SECURE: cs, TRUST_PROXY: '1' } } } });
+    const cfg = (web, api, url, cs, media = web.startsWith('ghcr') ? web.replace('autologger-web', 'autologger-media-worker') : 'autologger-stage-media-worker:local') => ({ services: { router: { ports: [{ published: '8788' }] }, web: { image: web }, api: { image: api, environment: { PUBLIC_BASE_URL: url, COOKIE_SECURE: cs, TRUST_PROXY: '1' } }, 'media-worker': { image: media } } });
     const local = parseStageOptions({});
     assert.doesNotThrow(() => checkStageResolved(cfg('autologger-stage-web:local', 'autologger-stage-api:local', 'http://localhost:8788', '0'), local));
+    // media-worker D15: the third image is checked too.
+    assert.throws(() => checkStageResolved(cfg('autologger-stage-web:local', 'autologger-stage-api:local', 'http://localhost:8788', '0', 'ghcr.io/kwcantrell/autologger-media-worker:latest'), local), /media-worker/);
     assert.throws(() => checkStageResolved(cfg('autologger-stage-web:local', 'autologger-stage-api:local', 'http://localhost:8788', '1'), local), /COOKIE_SECURE/);
     const pub = parseStageOptions({ STAGE_IMAGE_TAG: SHA, STAGE_PUBLIC_BASE_URL: 'https://stage.example.com' });
     const g = (n) => `ghcr.io/kwcantrell/autologger-${n}:${SHA}`;
     assert.doesNotThrow(() => checkStageResolved(cfg(g('web'), g('api'), 'https://stage.example.com', '1'), pub));
     assert.throws(() => checkStageResolved(cfg('autologger-stage-web:local', g('api'), 'https://stage.example.com', '1'), pub), /images/);
+    assert.throws(() => checkStageResolved(cfg(g('web'), g('api'), 'https://stage.example.com', '1', 'autologger-stage-media-worker:local'), pub), /media-worker/);
     assert.throws(() => checkStageResolved(cfg(g('web'), g('api'), 'http://localhost:8788', '1'), pub), /PUBLIC_BASE_URL/);
     assert.throws(() => checkStageResolved(cfg(g('web'), g('api'), 'https://stage.example.com', '0'), pub), /COOKIE_SECURE/);
     assert.throws(() => checkStageResolved(cfg('autologger-stage-web:local', 'autologger-stage-api:local', 'http://localhost:9999', '0'), local), /PUBLIC_BASE_URL/);
@@ -1069,15 +1177,16 @@ describe('stage public mode (stage-public-https)', () => {
     const auths = { 'ghcr.io': { auth: Buffer.from('u:tok').toString('base64') } };
     writeFileSync(join(dc, 'config.json'), JSON.stringify({ auths, cliPluginsExtraDirs: [evil], currentContext: 'evil' }));
     chmodSync(join(dc, 'config.json'), 0o600);
-    const r = await run(['stage', 'resolved', 'compose pull web api', 'compose up -d --no-build', 'urls'], {
+    const r = await run(['stage', 'resolved', 'compose pull web api media-worker', 'compose up -d --no-build', 'urls'], {
       env: { STAGE_IMAGE_TAG: HEAD, STAGE_PUBLIC_BASE_URL: 'https://stage.example.com', DOCKER_CONFIG: dc },
     });
     assert.equal(r.code, 0, r.out);
     assert.match(r.out, /stage: +https:\/\/stage\.example\.com +\(the HTTPS edge proxies to http:\/\/127\.0\.0\.1:18788\)/);
-    assert.match(log('argv'), /pull web api/);
+    assert.match(log('argv'), /pull web api media-worker/);
     const env = log('env');
     assert.match(env, new RegExp(`^STAGE_WEB_IMAGE=ghcr\\.io/kwcantrell/autologger-web:${HEAD}$`, 'm'));
     assert.match(env, new RegExp(`^STAGE_API_IMAGE=ghcr\\.io/kwcantrell/autologger-api:${HEAD}$`, 'm'));
+    assert.match(env, new RegExp(`^STAGE_MEDIA_IMAGE=ghcr\\.io/kwcantrell/autologger-media-worker:${HEAD}$`, 'm'));
     const childDc = /^DOCKER_CONFIG=(.*)$/m.exec(env)?.[1];
     assert.ok(childDc && childDc !== dc && /\/compose-run-docker-[^/]+$/.test(childDc), childDc);
     assert.equal(log('dockerls').trim(), 'config.json');
@@ -1096,7 +1205,7 @@ describe('stage public mode (stage-public-https)', () => {
     const r = await run(['stage', 'resolved', 'compose up -d --build', 'urls'], { env: { DOCKER_CONFIG: '/tmp' } });
     assert.equal(r.code, 0, r.out);
     assert.match(r.out, /stage: +http:\/\/localhost:18788/);
-    assert.doesNotMatch(log('env'), /^STAGE_(WEB_IMAGE|API_IMAGE|PUBLIC_BASE_URL|COOKIE_SECURE)=/m);
+    assert.doesNotMatch(log('env'), /^STAGE_(WEB_IMAGE|API_IMAGE|MEDIA_IMAGE|PUBLIC_BASE_URL|COOKIE_SECURE)=/m);
     assert.doesNotMatch(log('env'), /^DOCKER_(CONFIG|CONTEXT)=/m);
   });
   it('the temporary DOCKER_CONFIG is removed when a step fails and on SIGTERM', async () => {
@@ -1126,8 +1235,83 @@ describe('stage public mode (stage-public-https)', () => {
     assert.equal(existsSync(childDc), false, 'removed after SIGTERM');
   });
   it('the stage values cannot come from OpenBao', () => {
-    for (const k of ['STAGE_IMAGE_TAG', 'STAGE_WEB_IMAGE', 'STAGE_API_IMAGE', 'STAGE_PUBLIC_BASE_URL', 'STAGE_COOKIE_SECURE', 'DOCKER_CONFIG']) {
+    for (const k of ['STAGE_IMAGE_TAG', 'STAGE_WEB_IMAGE', 'STAGE_API_IMAGE', 'STAGE_MEDIA_IMAGE', 'STAGE_PUBLIC_BASE_URL', 'STAGE_COOKIE_SECURE', 'DOCKER_CONFIG']) {
       assert.throws(() => validateSecrets(kv([secret(k, 'x')]), allowedNames('stage')), /not-allowed/, k);
+    }
+  });
+});
+
+// drop-unused-supabase-services D5: every compose up and down the Makefile runs removes orphans, so
+// the retired Supabase containers another checkout started are gone after the next up, down or reset.
+describe('Makefile compose steps remove orphans (drop-unused-supabase-services D5)', () => {
+  const make = readFileSync(join(ROOT, 'Makefile'), 'utf8');
+  const steps = (verb) => [...make.matchAll(new RegExp(`'compose ${verb}\\b[^']*'`, 'g'))].map((m) => m[0]);
+  it('holds four compose up and five compose down steps, each with --remove-orphans', () => {
+    const ups = steps('up');
+    const downs = steps('down');
+    assert.equal(ups.length, 4, ups.join(' '));
+    assert.equal(downs.length, 5, downs.join(' '));
+    for (const s of [...ups, ...downs]) assert.match(s, / --remove-orphans\b/, s);
+  });
+  it('the tagged stage up still passes --no-build', async () => {
+    const { checkStagePlan, parseStageOptions } = await import('./compose-run.mjs');
+    const plan = (...s) => s.map((x) => ({ kind: 'compose', args: splitStep(x) }));
+    const tagged = parseStageOptions({ STAGE_IMAGE_TAG: 'a'.repeat(40), STAGE_PUBLIC_BASE_URL: 'https://stage.example.com' });
+    assert.ok(steps('up').includes("'compose up -d --no-build --remove-orphans'"));
+    assert.doesNotThrow(() => checkStagePlan(tagged, plan('compose pull web api media-worker', 'compose run --rm migrate', 'compose up -d --no-build --remove-orphans')));
+  });
+  it('the tagged stage up pulls web, api and media-worker (media-worker D15)', () => {
+    assert.match(make, /^STAGE_UP_STEPS = 'compose pull web api media-worker' 'compose run --rm migrate' 'compose up -d --no-build --remove-orphans'$/m);
+  });
+  it('prod-build loads the default bake group, so the media-worker image too (media-worker D13)', () => {
+    const line = make.split('\n').find((l) => l.startsWith('prod-build:'));
+    assert.match(line ?? '', /media-worker/);
+  });
+});
+
+// media-worker D1, D15: the worker's database password, its format and its two services.
+describe('MEDIA_DB_PASSWORD (media-worker D15)', () => {
+  const MPW = 'fedcba9876543210fedcba9876543210';
+  it('must be at least 32 lowercase hex characters; the value is never printed', () => {
+    for (const v of ['-e', 'A'.repeat(32), 'a'.repeat(31), `${MPW}\n${MPW}`, `${MPW} `]) {
+      let msg = '';
+      try { validateSecrets(kv([secret('MEDIA_DB_PASSWORD', v)]), new Set(['MEDIA_DB_PASSWORD'])); } catch (e) { msg = e.message; }
+      assert.match(msg, /MEDIA_DB_PASSWORD.*bad-format/, JSON.stringify(v));
+      if (v.length > 2) assert.ok(!msg.includes(v.trim()));
+    }
+  });
+  it('is an allowed name in every environment; MEDIA_TAG only in prod', () => {
+    for (const env of ['dev', 'stage', 'prod']) {
+      assert.equal(validateSecrets(kv([secret('MEDIA_DB_PASSWORD', MPW)]), allowedNames(env)).get('MEDIA_DB_PASSWORD'), MPW, env);
+    }
+    assert.equal(validateSecrets(kv([secret('MEDIA_TAG', 'aaaaaaaaaaaa')]), allowedNames('prod')).get('MEDIA_TAG'), 'aaaaaaaaaaaa');
+    for (const env of ['dev', 'stage']) {
+      assert.throws(() => validateSecrets(kv([secret('MEDIA_TAG', 'aaaaaaaaaaaa')]), allowedNames(env)), /MEDIA_TAG.*not-allowed/, env);
+    }
+  });
+  const base = (env) => {
+    const ports = env === 'dev'
+      ? { app: { ports: [{ host_ip: '127.0.0.1', published: '8787' }] }, companion: { ports: [{ host_ip: '127.0.0.1', published: '8000' }] } }
+      : { router: { ports: [{ host_ip: '127.0.0.1', published: env === 'prod' ? '8080' : '8788' }] } };
+    return { name: { dev: 'autologger-dev', stage: 'autologger-stage', prod: 'autologger' }[env], services: { ...ports, migrate: { environment: { MEDIA_DB_PASSWORD: MPW } }, 'media-worker': { environment: { PGPASSWORD: MPW } } } };
+  };
+  const secrets = new Map([['MEDIA_DB_PASSWORD', MPW]]);
+  const refusal = (env, svc) => {
+    const cfg = base(env);
+    cfg.services[svc] = { ...(cfg.services[svc] ?? {}), labels: { x: MPW } };
+    try { checkResolved(env, cfg, secrets); return ''; } catch (e) { return e.message; }
+  };
+  it('is allowed in media-worker and migrate in every environment', () => {
+    for (const env of ['dev', 'stage', 'prod']) {
+      assert.equal(refusal(env, 'media-worker'), '', env);
+      assert.equal(refusal(env, 'migrate'), '', env);
+    }
+  });
+  it('is refused in the app, auth and db, without printing it', () => {
+    for (const [env, svc] of [['dev', 'app'], ['stage', 'api'], ['prod', 'api'], ['prod', 'auth'], ['dev', 'db'], ['stage', 'web']]) {
+      const msg = refusal(env, svc);
+      assert.match(msg, new RegExp(`MEDIA_DB_PASSWORD value appears in ${svc}`), `${env} ${svc}`);
+      assert.ok(!msg.includes(MPW));
     }
   });
 });
@@ -1139,14 +1323,16 @@ describe('prod plan and tree (prod-migrate D2, D5)', () => {
     for (const p of [
       plan('resolved', 'prod-tags', 'compose config --quiet'),
       plan('prod-tags', 'compose pull'),
-      plan('prod-tags', 'resolved', 'compose run --rm migrate', 'compose up -d'),
-      plan('prod-tags', 'compose down'),
+      plan('prod-tags', 'resolved', 'compose run --rm migrate', 'compose up -d --remove-orphans'),
+      plan('prod-tags', 'compose down --remove-orphans'),
       plan('prod-tags', 'compose logs -f --tail=200'),
     ]) assert.doesNotThrow(() => checkProdPlan(p), JSON.stringify(p));
     for (const step of [
       'compose exec db psql -U postgres', 'compose run migrate', 'compose run --rm migrate sh', 'compose run --rm db',
       'compose --profile tools run migrate', 'compose run --rm -e X=1 migrate', 'compose -f x.yaml up -d',
       'compose up -d migrate', 'compose cp evil.sql db:/tmp/x', 'compose --project-directory /tmp up -d', 'compose up',
+      // drop-unused-supabase-services D5: prod's up and down always remove orphans.
+      'compose up -d', 'compose down',
     ]) {
       assert.throws(() => checkProdPlan(plan('prod-tags', 'resolved', step)), /refused for prod/, step);
     }
@@ -1155,7 +1341,7 @@ describe('prod plan and tree (prod-migrate D2, D5)', () => {
     // The migrate step needs both guards before it.
     for (const p of [
       plan('compose run --rm migrate'),
-      plan('prod-tags', 'compose run --rm migrate', 'compose up -d'),
+      plan('prod-tags', 'compose run --rm migrate', 'compose up -d --remove-orphans'),
       plan('resolved', 'compose run --rm migrate'),
       plan('compose run --rm migrate', 'prod-tags', 'resolved'),
     ]) assert.throws(() => checkProdPlan(p), /prod-tags and resolved/, JSON.stringify(p));
@@ -1186,7 +1372,7 @@ describe('prod plan and tree (prod-migrate D2, D5)', () => {
     const mk = readFileSync(join(ROOT, 'Makefile'), 'utf8');
     const recipe = (t) => mk.split(/\n(?=[a-z][a-z-]*:)/).find((b) => b.startsWith(`${t}:`)) ?? '';
     const up = recipe('prod-up');
-    assert.match(up, /\n\t@\$\(G\) prod-git\n\t\$\(RUN\) prod prod-tags resolved 'compose run --rm migrate' 'compose up -d'\n/);
+    assert.match(up, /\n\t@\$\(G\) prod-git\n\t\$\(RUN\) prod prod-tags resolved 'compose run --rm migrate' 'compose up -d --remove-orphans'\n/);
     for (const t of ['prod-check', 'prod-pull', 'prod-down', 'prod-logs']) {
       assert.ok(recipe(t).includes('$(RUN) prod'), t);
       assert.doesNotMatch(recipe(t), /'compose [^']*\b(run|exec)\b/, t);

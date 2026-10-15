@@ -69,14 +69,13 @@ describe('SidePanel', () => {
     expect(dialog?.textContent).toContain('Changes apply when you save.');
   });
 
-  it('keeps Cancel and Save clear of the bottom-right corner, where the Perf toggle sits', () => {
-    // The perf-debug toggle (`shared/utils/perfDebug.ts`, every build) is fixed 10px from the
-    // bottom-right corner; the actions row reserves that corner instead of moving the tool.
+  it('sits flush right, with no reserved bottom-right corner', () => {
+    // The corner was reserved only for the removed Perf toggle.
     renderStrict(<Harness />);
     openPanel();
     const actions = save().parentElement as HTMLElement;
     expect(actions.getAttribute('data-slot')).toBe('side-panel-actions');
-    expect(actions.className.split(/\s+/)).toContain('pr-16');
+    expect(actions.className.split(/\s+/)).not.toContain('pr-16');
   });
 
   it('Save is disabled until a change, and again when the change is undone', () => {

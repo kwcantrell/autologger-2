@@ -23,18 +23,21 @@ module consume (see Endpoints below; the contract is frozen).
   (the session tables) on self-hosted Supabase Postgres (ADR 0021)
 - **better-sqlite3** — the `DATA_DIR` single-server lock, and the copier for the legacy SQLite
   files (`catalog.db`, `sessions/*.db`), kept for the slice 11 import
-- **filesystem blobs** — audio bytes (replaces R2)
+- **filesystem blobs** — audio bytes under `BLOB_DIR`, a volume every server process of a stack
+  mounts (replaces R2)
 - **in-process SessionHub per session** — replaces the Durable Object; live spine for events,
   transport, audio metadata, recording lease, transcript words, topics, and WebSocket fan-out
 - **`@hono/node-ws`** — WebSocket upgrades, served by **`@hono/node-server`**
 
 > Runs anywhere Node 22 runs. No Cloudflare account, no login, no remote provisioning. A
-> single Node process serves HTTP + WebSocket; state lives under `DATA_DIR` on local disk.
+> single Node process serves HTTP + WebSocket; audio lives under `BLOB_DIR` on local disk, and
+> the per-process lock and scratch under `DATA_DIR`.
 
 ## Architecture
 
 Everything runs in **one Node process**; the browser and Companion are thin clients that
-fetch over HTTP/WS and hold no session state. All storage lives on local disk under `DATA_DIR`;
+fetch over HTTP/WS and hold no session state. Audio lives on local disk under `BLOB_DIR`, and the
+per-process lock and scratch under `DATA_DIR`;
 the config-gated integrations (DeepGram, `yt-dlp`, the `claude` CLI, the Claude Agent SDK) are
 spawned or called *by the server*, never by a client.
 
@@ -51,8 +54,8 @@ spawned or called *by the server*, never by a client.
 ├──────────────┤        │   │   └─ SessionHub per session ──────┼───┐    │   topics, audio,  │
 │ stale/ext.   │────────┘   │      (events, transport, lease,   │   │    │   transcript…)    │
 │ clients      │            │       transcript, topics, WS fan) │   │    ├───────────────────┤
-└──────────────┘            └─────────────┬────────────────────┘   └───▶│  blobs/audio/…    │
-                                          │ spawn / fetch (server-side)  │  tmp/ (staging)   │
+└──────────────┘            └─────────────┬────────────────────┘   └───▶│ BLOB_DIR/audio/…  │
+                                          │ spawn / fetch (server-side)  │ DATA_DIR/tmp/     │
                        ┌──────────────────┼───────────────────┐         └───────────────────┘
                        ▼                  ▼                   ▼
               ┌─────────────────┐ ┌───────────────┐ ┌───────────────────────┐
@@ -70,7 +73,7 @@ spawned or called *by the server*, never by a client.
   native binaries a browser can't run: no process model, no `PATH`, no spawn. (The one integration that is *just* a `fetch`, DeepGram, could run in a
   browser, but see the next point.) The pure-TS `mediabunny` audio merge is the exception that
   proves the rule: it needs no binary, so it is the only piece that *could* run either side.
-- **Secret custody.** `DEEPGRAM_API_KEY` and Anthropic credentials must never ship to a client
+- **Secret custody.** `DEEPGRAM_API_KEY`, users' provider keys and Anthropic credentials must never ship to a client
   — a browser bundle is world-readable, so client-side calls would leak billable keys to every
   user. The server holds them and is the only caller.
 - **Shared live state.** One `SessionHub` per session with WebSocket fan-out is what lets the
@@ -120,16 +123,21 @@ refactor of this one.
 - **Connections per process: 14** — the catalog pool's 12 (3 root, 5 transaction, 4 session) plus
   the frame bus's listener and publisher. The `autologger_app` role's limit, 45, counts every
   process together, so it fits **three processes (42 of 45)**; a fourth needs the limit raised in
-  its own change. Postgres's 100 connections stay shared with the Supabase services and `migrate`.
-- **Filesystem blobs** = audio bytes under `DATA_DIR/blobs/audio/<session_id>/<ordinal>_<uuid>.<ext>`;
-  the hub holds only metadata + relative keys. Download streams bytes back with HTTP range
+  its own change. Postgres's 100 connections stay shared with GoTrue and `migrate`.
+- **Filesystem blobs** = audio bytes under `BLOB_DIR/audio/<session_id>/<ordinal>_<uuid>.<ext>`;
+  the hub holds only metadata + relative keys. `BLOB_DIR` is its own volume, which every server
+  process of a stack mounts, so a segment recorded through one process plays through another.
+  Puts stage in `BLOB_DIR/.tmp/put-<uuid>` (same filesystem, so the rename is atomic); `put-`
+  files older than 24 h are swept at boot. Audio from before this layout sits in `DATA_DIR/blobs`
+  until it is moved (see "Moving audio into BLOB_DIR"). Download streams bytes back with HTTP range
   support (416 on unsatisfiable ranges).
 - **Transcript generation, YouTube audio import, Google Sheets log import, topic generation,
   and event auto-generation are configuration-gated; `transcribe.csv` stays unavailable.**
   `POST …/transcript-words/generate`
-  returns a clean `503 {detail}` (the frontend toasts it) unless `DEEPGRAM_API_KEY` is set, in
-  which case it combines the session's recorded audio and returns `200 {words}` from
-  DeepGram's speech-to-text API — see "Transcript generation (DeepGram)" below.
+  returns a clean `503 {detail}` naming Settings → Advanced unless the caller has saved a
+  speech-to-text key there (in development mode, `DEEPGRAM_API_KEY` is the fallback), in which
+  case it combines the session's recorded audio and returns `200 {words}` from DeepGram's
+  speech-to-text API — see "Transcript generation (DeepGram)" below.
   `POST …/youtube-import` returns the same frozen `503 {detail}` unless an operator-provided
   `yt-dlp` binary is configured (or resolvable on `PATH`), in which case it downloads a
   video's audio and attaches it to the session — see "YouTube audio import" below.
@@ -137,16 +145,50 @@ refactor of this one.
   `SHEETS_LOG_IMPORT_ENABLED=1`, in which case it downloads a public Google Sheets workbook
   and imports its log rows into the show's sessions as events — see "Google Sheets log
   import" below.
-  `POST …/topics/generate` returns the same frozen `503 {detail}` unless `CLAUDE_CLI_PATH`
-  is set (the AI chat's gate), in which case it runs a single, non-conversational `claude`
-  CLI turn against the session's transcript and returns `200 {topics}` — a crash-safe
-  replace-all of the session's topics — see "AI chat (Claude CLI)" below.
-  `POST …/events/generate` shares that `CLAUDE_CLI_PATH` gate: configured, it runs a single
-  orchestrator CLI turn that appends transcript-derived log events per user-authored
-  per-button instructions and returns `200 {created, cap_hit}` — see "Event auto-generation
-  (AUTO GENERATE)" below. `transcribe.csv`
+  `POST …/topics/generate` runs on the caller's language model route (the AI chat's gate):
+  with none it answers `503 {"detail": "Add a language model in Settings → Advanced to
+  generate topics."}`; otherwise it runs a single, non-conversational turn (AI SDK or Claude
+  CLI) against the session's transcript and returns `200 {topics}` — a crash-safe
+  replace-all of the session's topics — see "AI chat (AI SDK or Claude CLI)" below.
+  `POST …/events/generate` shares that gate (its `503` detail ends "…to generate events."):
+  it runs a single orchestrator turn that appends transcript-derived log events per
+  user-authored per-button instructions and returns `200 {created, cap_hit}` — see "Event
+  auto-generation (AUTO GENERATE)" below. `transcribe.csv`
   remains unconditional `503 {detail}` (no external integration wired up). Manual
   transcript-word/topic CRUD still works.
+
+### Closed sign-ups
+
+`SIGNUPS=closed` (the default on stage and prod; dev is open unless set) stops new accounts.
+- **Who can sign in:** existing accounts (enabled or disabled, as before), the bootstrap owner, and
+  emails a developer approved in the last 7 days. Anyone else gets `/?login_error=signup_closed`
+  (the no-access message): no cookie, nothing written, no Supabase Auth record.
+- **Invites do not approve.** An invite waits until the email is approved, then applies on the first
+  sign-in as usual.
+- **Approvals** are consumed by the first sign-in; approving again restarts the 7 days. Approve
+  shortly before sending the link: an approval for a non-Gmail address can be used by any Google
+  account that verified that address.
+- **Commands** run as `postgres` in the stack's db container: dev `autologger-dev-db-1`, stage
+  `autologger-stage-db-1`, prod `autologger-db-1`. The statement goes on stdin (psql variables do not
+  interpolate under `-c`); always pass `-v note=...` for approve and `ON_ERROR_STOP`. A malformed or
+  non-ASCII email fails with SQLSTATE 22023.
+
+```sh
+DB=autologger-dev-db-1   # or autologger-stage-db-1, autologger-db-1
+echo "select catalog.approve_account(:'email', :'note');" \
+  | docker exec -i $DB psql -X -U postgres -At -v ON_ERROR_STOP=1 -v email=someone@example.com -v note='for X'
+echo "select catalog.revoke_account_approval(:'email');" \
+  | docker exec -i $DB psql -X -U postgres -At -v ON_ERROR_STOP=1 -v email=someone@example.com
+echo "select email_norm, approved_at_utc, note from catalog.account_approvals order by approved_at_utc;" \
+  | docker exec -i $DB psql -X -U postgres -At
+```
+
+- **Deploy:** on stage and prod the deploy that adds `catalog.account_approvals` also closes
+  sign-ups; approve new people right after it. Existing accounts keep working.
+- **Rollback**, in this order: (1) remove `SIGNUPS` from every KV secret that holds it (reverted code
+  refuses an unknown KV key); (2) revert the code; (3) `drop function
+  catalog.approve_account(text, text); drop function catalog.revoke_account_approval(text); drop
+  table catalog.account_approvals;`. Approvals are lost; accounts are untouched.
 
 ### Run features: approved users only
 
@@ -168,8 +210,12 @@ Only approved users may start them (run-status-and-sweeper, ADR 0021 slice 9c):
 
 ### Transcript generation (DeepGram)
 
-`POST …/transcript-words/generate` is gated by `DEEPGRAM_API_KEY` (see
-`server/.env.example`): unset/blank keeps the endpoint's frozen `503`. When set, the server
+`POST …/transcript-words/generate` runs on **the caller's own DeepGram key**, saved in
+Settings → Advanced (byo-ai-providers; `GET|PUT|DELETE /api/me/providers/stt`). Without one it
+answers `503` with "Add a speech-to-text key in Settings → Advanced to generate transcripts."
+In production mode (any `NODE_ENV` other than exactly `development` or `test`, so stage and prod)
+`DEEPGRAM_API_KEY` is never used; in development mode it is the fallback for a caller without a
+key (see `server/.env.example`). With a key, the server
 groups the session's recorded audio segments by probed codec (Opus/AAC/PCM), concatenates
 each group without re-encoding, sends each group to DeepGram's pre-recorded speech-to-text
 API (`DEEPGRAM_MODEL`, default `nova-3`), and — only once every group succeeds — replaces the
@@ -182,10 +228,11 @@ number of sessions can generate at once, but only one run per session, in this o
 process. The `409` names the session and its run's start time, or gives a generic detail when the
 run's lease row is gone (see "Run leases" below).
 
-**Setting `DEEPGRAM_API_KEY` sends recorded session audio to DeepGram's cloud API and enables
-billed, metered calls — every generate request is a paid request.** Only approved users can
-trigger those calls (see "Run features: approved users only" above). Only
-set the key on a box you operate and are prepared to pay for.
+**Generating a transcript sends recorded session audio to DeepGram's cloud API, billed to the
+key's owner — every generate request is a paid request.** Only approved users can trigger those
+calls (see "Run features: approved users only" above), and the approval check still comes after
+the unconfigured `503`. Users' keys are stored encrypted (AES-256-GCM under
+`PROVIDER_KEYS_SECRET`; see `docs/security.md` and ADR 0027) and are never shown again.
 
 ### YouTube audio import
 
@@ -226,8 +273,9 @@ key, so the gate is an explicit boolean opt-in (the `AI_V2_ENABLED` style) rathe
 key's presence. When enabled, the endpoint starts a detached job that downloads the public
 Google Sheets workbook named in the request, matches each sheet's name against the show's
 session titles, aligns each sheet's log rows to the matched session's transcript (generating
-a transcript first when the session has none — billed DeepGram spend when `DEEPGRAM_API_KEY`
-is set), and writes the resulting events into those sessions. The POST is scoped to members
+a transcript first when the session has none — billed DeepGram spend on the **job creator's**
+own speech-to-text key; a creator without one gets the progress line "Skipped transcript
+generation: add a speech-to-text key in Settings → Advanced." and that session fails), and writes the resulting events into those sessions. The POST is scoped to members
 of the show's studio (a non-member gets the same `404` as a nonexistent show). `GET
 /api/log-import/:jobId` polls the job (`{status, lines, error}`); it is **not** egress-gated
 (it only reads the job record) and answers only the job's creator — any other authenticated
@@ -242,21 +290,80 @@ elsewhere. A finished job's record expires about an hour after it finishes.
 only (the workbook-export endpoint); the downloaded workbook is processed locally. When: only
 when an operator has set `SHEETS_LOG_IMPORT_ENABLED` **and** a user starts an import — an
 unconfigured deployment never contacts Google. Note the DeepGram interaction above: on a
-deployment with `DEEPGRAM_API_KEY` set, an import over sessions without transcripts triggers
-billed transcript generation. Only enable this on a box you operate and are prepared to have
+import by a creator with a speech-to-text key, over sessions without transcripts, triggers
+transcript generation billed to that key. Only enable this on a box you operate and are prepared to have
 make Google requests on your behalf.
 
-### AI chat (Claude CLI)
+### AI chat (AI SDK or Claude CLI)
 
 `POST /api/sessions/:sessionId/ai/chat` turns a session's transcript into topics
-conversationally. A chat panel in the session workspace drives the operator's local `claude`
-CLI, which reads the session's transcript and creates topics through a locked-down,
-session-scoped toolset.
+conversationally. A chat panel in the session workspace runs a model that reads the session's
+transcript and creates topics through a locked-down, session-scoped toolset.
+
+**The caller's language model route** (ai-sdk-agent-harness). Chat, topic generation and event
+generation run on the signed-in caller's own `llm` choice from Settings → Advanced, resolved on
+every request:
+
+- **AI SDK** — a saved OpenAI-compatible, Anthropic, OpenAI or Google credential. The server runs
+  the turn in process with the Vercel AI SDK (`ai` and the four `@ai-sdk/*` providers, pinned
+  exactly) on the caller's decrypted key. The model can only call the turn's tools
+  (`get_transcript_words`, `list_topics`, `create_topic` for chat; `get_transcript_words` with
+  `create_topic` or `create_event` for generation); nothing it drives can run commands or read
+  files.
+- **Claude CLI** — the provider "Claude CLI (operator)" (`{provider: "claude-cli"}`, no key, base
+  URL or model), offered only to the accounts on `CLAUDE_CLI_EMAILS` (comma-separated, matched
+  trimmed and ASCII case-insensitive; the bootstrap owner is **not** implicitly listed) while
+  `CLAUDE_CLI_PATH` is set. Anyone else saving it gets
+  `403 {"detail": "The Claude CLI is limited to approved operator accounts."}`;
+  `GET /api/me/providers` reports `claude_cli_allowed` for the caller. A caller removed from the
+  list loses the CLI on the next turn.
+- **None** — no saved `llm` credential (in every mode; there is no operator fallback), a
+  `claude-cli` choice that is no longer allowed, or a key that no longer decrypts. Chat answers
+  `503 {"detail": "Add a language model in Settings → Advanced to use the assistant."}`, topic
+  generation `…to generate topics."` and event generation `…to generate events."`, with nothing
+  run. `CLAUDE_CLI_PATH` alone enables nothing.
+
+**Egress on the AI SDK route.** Each turn sends the transcript, topics (or the event
+instructions) and the chat history to the caller's own provider, on the caller's key and bill.
+Every model request goes through the server's guarded fetch: the key goes only to the
+credential's fixed host (`api.anthropic.com`, `api.openai.com`,
+`generativelanguage.googleapis.com`) or saved OpenAI-compatible origin, on the provider's path;
+DNS is pinned and, in production, private, loopback and link-local addresses are refused per
+connection; redirects are never followed; a 120 s wait for response headers; and per turn at most
+60 requests, 4 MB per request body, 48 MB of request bodies, and response bytes of steps × output
+tokens per step × 400 (12.8 MB for chat, 256 MB for generation at the defaults). OpenAI requests
+carry `store: false`, so OpenAI does not retain the prompt. Provider errors are classified to the
+fixed `upstream-failed` and never logged or forwarded (they carry the whole prompt).
+
+**Spend bounds on the AI SDK route** (the user pays their own provider): a step cap
+(`AI_CHAT_MAX_STEPS`, default `8`, valid 1–50; `GENERATE_MAX_STEPS`, default `40`, valid 1–100), a per-turn token budget
+(`AI_CHAT_MAX_TOKENS`, default `400000`; `GENERATE_MAX_TOKENS`, default `3000000`; a provider that
+reports no usage is counted at request plus response bytes ÷ 4), output tokens per step (`4000`
+for chat; `GENERATE_MAX_OUTPUT_TOKENS`, default `16000`, for generation, and a generation whose
+first request is answered `400` restarts once at `4000`, logged as `(output-cap fallback 4000)`),
+the response-byte cap above, `2` retries per request, 16 tool calls per step (more get a tool error) and 32 (chat) or 300
+(generation) per turn (more end the turn), one tool body at a time, and the route's existing
+timeout. A chat turn stopped by the step cap or budget ends `done` with the text so far; a
+generation run stopped that way fails with its `502`, leaving prior topics or events untouched.
+There is no deployment-wide ceiling across sessions.
+
+**OpenAI-compatible servers: enable the reasoning parser.** Servers that inline reasoning as
+`<think>…</think>` in the content have it stripped (it is never relayed), but a server whose chat
+template opens `<think>` inside the prompt emits only the closing tag, and its reasoning would
+pass through as reply text. Enable the server's reasoning parser (for example SGLang's
+`--reasoning-parser qwen3`), so reasoning arrives in its own field.
+
+**Chat history.** On the AI SDK route the client re-sends the conversation as `history`
+(`[{role: "user" | "assistant", text}]`, at most 40 entries, each 1–8000 characters after
+trimming, 64 000 in total; a violation is `422` before any model request), which reaches the
+model as real roles before the new message. The AI SDK route ignores `claude_session_id`, and its
+`done` carries `claude_session_id: null`; `claude_session_id: null` in a request means absent.
+Nothing of an AI SDK turn is stored on the server.
 
 **Topic generation (`…/topics/generate`), the one-shot sibling.** The "Generate topics"
-button is a separate, **non-conversational** consumer of the same CLI/MCP machinery: gated on
-the same `CLAUDE_CLI_PATH` (unset/blank keeps the endpoint's frozen `503`, byte-for-byte
-unchanged for unconfigured deployments) and the same
+button is a separate, **non-conversational** consumer of the same turn machinery (AI SDK or
+CLI, with the same tool bodies): gated on the same caller route (none answers the "…to generate
+topics." `503`) and the same
 per-session single-flight as
 the chat — a generate and a chat turn on the same session are mutually exclusive, since both
 spend the operator's Anthropic budget on that session. Unlike the chat — whose toolset has no
@@ -293,15 +400,15 @@ degradation, not data loss, and it is not enforced by a new error status. The AI
 remains the conversational path; `transcribe.csv` keeps its own, unrelated, unconditional
 `503`.
 
-Gated by `CLAUDE_CLI_PATH` (see `server/.env.example`): unset/blank/whitespace-only keeps
-the endpoint's frozen `503 {detail}` and leaves unconfigured deployments byte-for-byte
-unchanged. When set, the endpoint spawns `claude -p --output-format stream-json` per turn
-and responds `200 Content-Type: text/event-stream`, relaying the CLI's reply as SSE events:
+Gated by the caller's route (above; see `server/.env.example`). On the Claude CLI route the
+endpoint spawns `claude -p --output-format stream-json` per turn; on either route it responds
+`200 Content-Type: text/event-stream`, relaying the reply as SSE events:
 `delta {text}` (assistant text fragments only — model reasoning/thinking is never relayed),
 `tool {name}` (an MCP tool invocation, short name only — one of `get_transcript_words`,
 `list_topics`, `create_topic`), and exactly one terminal event per server-completed
-stream — `done {claude_session_id}` (echo this back as `claude_session_id` on the next turn
-to resume the conversation) or `error {detail}`, where `detail` is one of a fixed,
+stream — `done {claude_session_id}` (on the CLI route, echo this back as `claude_session_id`
+on the next turn to resume the conversation; on the AI SDK route it is `null`) or
+`error {detail}`, where `detail` is one of a fixed,
 secret-free set (`upstream-failed`, `not-logged-in`, `timeout`, `internal-error`) — never
 raw CLI stdout/stderr, environment values, credentials, or device-login URLs. The event
 vocabulary is additive-open: new event types or payload fields may appear without a further
@@ -318,9 +425,10 @@ process's disk — gets the existing `422` before anything is spawned. Whether s
 different containers share one CLI home (and so can resume each other's chats) is a deployment
 topology decision, not something this endpoint arranges.
 
-**Egress and spend disclosure.** Enabling this feature sends the session's transcript and
-topic content to Anthropic, over the operator's own `claude login` credentials — every chat
-turn is a real, billed Anthropic API call against the operator's account/quota. Spend is
+**Egress and spend disclosure (Claude CLI route).** The AI SDK route's egress and bounds are
+described above. On the CLI route, a turn sends the session's transcript and topic content to
+Anthropic, over the operator's own `claude login` credentials — every chat turn is a real,
+billed Anthropic API call against the operator's account/quota. Spend is
 bounded three ways: only approved users can start a turn (see "Run features" above), at most
 one turn is in flight per autologger session (a second concurrent request for the same session
 gets `409`, spawning nothing), and a per-turn CLI cost ceiling (`AI_CHAT_MAX_BUDGET_USD`, default
@@ -328,7 +436,7 @@ gets `409`, spawning nothing), and a per-turn CLI cost ceiling (`AI_CHAT_MAX_BUD
 `AI_PROVIDER` (default `claude_cli`, today the only accepted value; any other value refuses boot)
 selects the operator's development CLI, which runs without ceilings.
 `AI_CHAT_MAX_CONCURRENT` is ignored: the process-wide limit is gone. A deployment-wide ceiling,
-counting live run leases under a per-kind advisory lock, returns with the providers change. A turn
+counting live run leases under a per-kind advisory lock, is deferred to a later change. A turn
 that runs long is killed after `AI_CHAT_TIMEOUT_SEC` (default `300` seconds) — the
 guaranteed backstop; a client disconnect (Stop button or closed tab) also kills the
 subprocess but is best-effort only.
@@ -391,12 +499,13 @@ shapes — the boolean plus the `auto_instruction` fields on the full show seria
 `categories[*]` and their `dropdown_options[*]` — are authorized by the `auto-event-generation`
 delta.
 
-The feed tab's AUTO GENERATE button starts one **synchronous** run: gated on the same
-`CLAUDE_CLI_PATH` as the AI chat (unset/blank keeps the endpoint's frozen `503`) and the same
-per-session single-flight. The server snapshots the session's frame rate, transcript, and
+The feed tab's AUTO GENERATE button starts one **synchronous** run: gated on the same caller
+route as the AI chat (none answers
+`503 {"detail": "Add a language model in Settings → Advanced to generate events."}`) and the
+same per-session single-flight. The server snapshots the session's frame rate, transcript, and
 instruction-bearing categories at run start (mid-run edits affect the next run, not this
-one), then drives a **single orchestrator CLI turn** through the same locked-down one-shot
-machinery as `topics/generate` — no built-in tools, strict per-turn MCP config, loopback +
+one), then drives a **single orchestrator turn** (AI SDK or CLI) through the same locked-down
+one-shot machinery as `topics/generate` — no built-in tools, strict per-turn MCP config, loopback +
 bearer, and **no abort signal**, so a run always completes server-side regardless of the
 initiating client's connection. The prompt enumerates every instruction-bearing button and
 option (instruction text rendered as clearly-delimited untrusted data that cannot alter the
@@ -436,14 +545,16 @@ in the feed. Timecodes are transcript-derived, never the run-time clock: the sto
 existing timecode↔wall anchor pairs, so a generated event at timecode T sorts between the
 manual events that bracket T even across recording pauses.
 
-**Statuses.** `503 {detail}` unconfigured (nothing spawned); `400 {detail}`
+**Statuses.** `503 {detail}` with no caller route (nothing run); `400 {detail}`
 pre-spawn when the session has no transcript words, no words with session-time anchors, no
 instruction-bearing button, or the instructions exceed the aggregate pre-spawn bound
 (`EVENT_GENERATE_MAX_INSTRUCTION_BYTES`, default `24576` total instruction bytes /
 `EVENT_GENERATE_MAX_INSTRUCTION_ENTRIES`, default `50` instruction-bearing entries);
 `403 {detail}` for a user who is not approved; `409 {detail}` when the session's shared AI
 slot is held; `200 {created,
-cap_hit}` on success; `502 {detail}` for a CLI-turn failure after spawn — a fixed opaque
+cap_hit}` on success; `502 {detail}` for a turn failure after the turn started (on the AI SDK
+route, also a run stopped by the step cap or token budget — never followed by a regenerate
+delete) — a fixed opaque
 detail carrying no raw subprocess output, with events inserted before the failure remaining
 persisted (and reported nowhere in the error body). **The shared AI-slot `409` busy details
 are reworded** (authorized by the same delta) to name event generation among the possible
@@ -453,9 +564,11 @@ the ceiling). The shared slot is also held as the
 session's `ai-turn` run lease, so a turn running in another server process gets the same
 session-busy `409` (see "Run leases" below).
 
-**Egress and spend disclosure.** Like `topics/generate`, a run is a real, billed Anthropic
-API call over the operator's own `claude login` credentials — the transcript and the
-configured instructions are sent to Anthropic. Its workload is likewise far past what the chat
+**Egress and spend disclosure.** On the AI SDK route a run sends the transcript and the
+configured instructions to the caller's own provider under the bounds in "AI chat" above. On
+the CLI route, like `topics/generate`, a run is a real, billed Anthropic API call over the
+operator's own `claude login` credentials — the transcript and the configured instructions are
+sent to Anthropic. Its workload is likewise far past what the chat
 ceilings are sized for (full transcript at generation density, a sweep per instruction, a
 `create_event` round trip per hit), so it gets its own ceilings — separately tunable from the
 topic-generation knobs, but defaulted to the same values, since topic generation pages that
@@ -464,7 +577,9 @@ same full transcript at generation density:
 `--max-budget-usd`) and `EVENT_GENERATE_TIMEOUT_SEC` (default `600`, the server-side
 timeout backstop) — see `server/.env.example`. Concurrency exposure is bounded together
 with the other paid AI features by the shared per-session slot and the approved users; there is
-no limit across sessions on `AI_PROVIDER=claude_cli`.
+no limit across sessions on `AI_PROVIDER=claude_cli`. The budget and timeout knobs above apply
+to the CLI route; the AI SDK route uses `GENERATE_MAX_STEPS` / `GENERATE_MAX_TOKENS` /
+`GENERATE_MAX_OUTPUT_TOKENS` and the same timeout.
 
 ### AI v2 dashboards
 
@@ -536,8 +651,8 @@ As with the AI chat, no agent-authored markup is ever rendered anywhere in this 
 dashboard is validated against the same whole-config schema a user's own PUT is held to before it
 is ever shown.
 
-`restart_supported` is unaffected by this feature (still `false`); the `CLAUDE_CLI_PATH` gate
-on `…/topics/generate` and `…/events/generate` (see "AI chat (Claude CLI)" and "Event
+`restart_supported` is unaffected by this feature (still `false`); the caller-route gate
+on `…/topics/generate` and `…/events/generate` (see "AI chat (AI SDK or Claude CLI)" and "Event
 auto-generation" above) and `transcribe.csv`'s unconditional
 `503` are all unaffected by `AI_V2_ENABLED`; `…/youtube-import` is likewise unaffected by
 `AI_V2_ENABLED` — it has its own `yt-dlp` configuration gate (see "YouTube audio import"
@@ -553,8 +668,26 @@ DATA_DIR/
   sessions/<id>.db      Legacy SQLite file per session: no longer opened or written (session
                         content is in the Postgres session tables), kept for the slice 11
                         import
-  blobs/audio/…         Audio bytes (r2_key-shaped relative paths)
-  tmp/                  Atomic-put staging (outside blobs/, so listings never see partials)
+  tmp/                  Scratch: YouTube import temp dirs and transcript spooling (swept at
+                        boot, per process)
+  blobs/                Legacy audio from before BLOB_DIR: no longer read; move it into
+                        BLOB_DIR (see "Moving audio into BLOB_DIR"). A boot warning counts it
+BLOB_DIR/               Shared by every server process of a stack and the media worker (its
+                        own volume; the worker mounts it too, see "Volumes")
+  audio/…               Audio bytes (r2_key-shaped relative paths); owned by the API's uid,
+                        mode 0755: the worker reads, never writes
+  .tmp/                 Atomic-put staging, put-<uuid> (outside audio/, so listings never see
+                        partials); put- files older than 24 h are swept at boot
+  .tmp/upload-<id>      A resumable upload's staging file (sparse, preallocated, API-owned,
+                        mode 0600); renamed into audio/ on completion, deleted with the upload
+                        24 h after its last part or on DELETE
+  media/                Mode 1777 (created by the API at boot): the worker's output, one
+  media/<job id>/…      directory per job (mode 0777, worker-owned files); the API copies a
+                        result out by handle and removes the directory; leftovers of finished
+                        or vanished jobs are removed by the 10-minute sweep
+  .trash/<yyyy-mm-dd>/… Blobs replaced by a merge or a FLAC conversion, under their r2_key
+                        path, kept 7 days (less in low-disk mode); never listed or re-adopted
+                        by sync-from-disk. Restore: README "Media jobs"
 ```
 
 ### Invariants (spec)
@@ -626,8 +759,8 @@ server/src/
                           root rather than under routers/ because it is composition-root/
                           app-shell plumbing, not a layer (router-directory-decomposition D3)
   node/
-    config.ts            Composition root: Ports + Config from process env (DATA_DIR layout,
-                          wiring) — the sole production module naming the concrete
+    config.ts            Composition root: Ports + Config from process env (DATA_DIR and
+                          BLOB_DIR layout, wiring) — the sole production module naming the concrete
                           SessionHubRegistry/Catalog(Db)/KvStore/BlobStore classes, all imported
                           from the packages below
     systemClock.ts        Clock port implementation — the sole sanctioned Date.now() call site
@@ -657,6 +790,10 @@ server/src/
     companion.ts             Companion presence + state + log/transport/command (WS relay),
                               run as the caller's user (a device's user or the cookie user)
     companionDevices.ts      GET|POST /api/companion-devices, DELETE …/:id (cookie only)
+    providers.ts             GET /api/me/providers, PUT|DELETE …/:kind, POST …/:kind/test (cookie only)
+    search.ts                GET /api/search (catalog search: 3 s budget, 2 at once)
+    wiki.ts                  show wiki pages: list/create, read/edit/delete/restore, revisions, merge, split
+    wikiSuggestions.ts       wiki update (POST …/wiki/generate) + AI suggestions: list/read/accept/dismiss
     transcribe.ts             transcript-words + topics CRUD; generate/csv (503)
     exports.ts                export.csv / export.jsonl (← export.py)
     admin.ts                  ADMIN_TOKEN-gated users + studio-definitions admin
@@ -741,8 +878,9 @@ packages/                 Source-only npm workspace packages (no build step; ser
     kvStore.ts               KV replacement (login sessions, OAuth CSRF, Companion last command) on
                              the catalog adapter (atomic take for OAuth state); clock is a
                              required constructor parameter
-    blobStore.ts             Filesystem blob store: atomic put, range get, list, traversal
-                             guard; exports InvalidRangeError, mapped to 416 by instanceof at
+    blobStore.ts             Filesystem blob store on a root shared by every process: atomic
+                             put (put-<uuid> temps), range get, list, traversal guard, the
+                             stale put-temp sweep; exports InvalidRangeError, mapped to 416 by instanceof at
                              app.ts and routers/audio.ts
   transcription/src/      @autologger/transcription — DeepGram transcription (L2; deps:
                            domain, ports, session-core — never contract) moved from
@@ -911,29 +1049,54 @@ Content-coding is transport applied above the frozen representation: the decoded
 | `GET\|POST /api/sessions/{id}/events` (GET adds `has_auto_generated`, whole-session; POST silently strips the reserved `auto_generated`/`auto_generate_run_id` metadata keys from client input) · `PUT\|DELETE …/events/{eid}` (optional `version`/`overwrite`; a stale version is **409** `{detail: "Version conflict.", current}`; see "Row versions" below) | `routers/events.py` |
 | `GET …/status` (`events_stream_revision` is the session revision, advanced by every session write; see "Row versions" below) · `POST …/transport/start\|stop` · `GET …/show-categories` | `routers/events.py` |
 | `…/audio-recording-lease` (claim/heartbeat/release) · `GET …/ws` | `routers/events.py` |
-| `POST …/events/generate` → **503** unconfigured · **403** not an approved user · **409** concurrent-turn · **400** no-transcript/no-anchors/no-instructions/over-instruction-bound/malformed-body/`regenerate`+`selection` combo/selection-matches-no-instructions · **200** `{created, cap_hit}` configured success, plus `deleted` when `regenerate:true` (append-only; regenerate deletes the prior `auto_generated` snapshot only after a successful run creates ≥1 event — zero-created success and `502` leave prior rows intact, `deleted` reflects the post-success removal) · **502** CLI-turn-failure (already-inserted events persist) (see "Event auto-generation" above) | `routers/events.ts` (new, auto-generate-event-logs + event-generate-menu) |
-| `GET\|POST …/audio/segments` · `POST …/segments/sync-from-disk` · range `GET …/segments/{id}` · `PUT …/waveform` | `routers/audio.py` |
+| `POST …/events/generate` → **503** `{"detail":"Add a language model in Settings → Advanced to generate events."}` no caller route · **403** not an approved user · **409** concurrent-turn · **400** no-transcript/no-anchors/no-instructions/over-instruction-bound/malformed-body/`regenerate`+`selection` combo/selection-matches-no-instructions · **200** `{created, cap_hit}` configured success, plus `deleted` when `regenerate:true` (append-only; regenerate deletes the prior `auto_generated` snapshot only after a successful run creates ≥1 event — zero-created success and `502` leave prior rows intact, `deleted` reflects the post-success removal) · **502** turn failure, or on the AI SDK route a run stopped by the step cap or token budget (already-inserted events persist; no regenerate delete) (see "Event auto-generation" above) | `routers/events.ts` (new, auto-generate-event-logs + event-generate-menu) |
+| `GET\|POST …/audio/segments` · `POST …/segments/sync-from-disk` · range `GET …/segments/{id}` · `PUT …/waveform` (the segment dict has 12 keys: the nine frozen ones plus `duration_ms` (null while unknown), `media_status` (`pending`\|`done`\|`failed`, null for rows that predate server-side processing) and `seams` (null, or a merged segment's `[{offset_ms, started_at_utc, ended_at_utc}]` in media order); a `POST` with a `recording_ordinal` and a `started_at_utc` whose window the session already holds, as a chunk or a seam of a merged segment, answers **200** with that segment's dict and stores nothing; `audio.changed` also fires when a worker result is applied) | `routers/audio.py` |
+| `POST …/audio/recordings/{recordingOrdinal}/finalize` `{chunks: [started_at_utc, …]}` (1–1000 windows) → **400** `{detail}` bad ordinal or bad `chunks` · **404** session · **200** `{ok: true, merge: "queued"\|"not-needed"\|"already-queued"\|"waiting"}` (`waiting` while a listed window is not yet held; the straggler's upload then enqueues the merge; no lease check, no segment row changed; see "Media jobs" below) | `routers/audio.ts` (new, media-worker) |
+| `POST …/audio/uploads` `{content_type, size_bytes, part_sha256}` → **201** `{upload_id, part_size, parts_total, expires_at_utc}` (`part_size` 32 MiB; `part_sha256` exactly `ceil(size_bytes / part_size)` lowercase hex sha256s) · **400** blank `content_type` or bad hash list · **413** over 1500 MiB · **429** two uploads already open or over 3 GiB staged per user · **507** blob volume below its free-disk floor | `routers/audioUploads.ts` (new, media-worker) |
+| `PUT …/audio/uploads/{uploadId}/parts/{n}` (raw bytes, `n` 1-based; every part `part_size` but the last, the remainder) → **204** stored (a part may be re-sent) · **400** wrong size, bad `n`, or a sha256 other than the declared one (not recorded) · **404** unknown, expired, aborted or completed upload · **413** over `part_size` · **507** low disk | `routers/audioUploads.ts` (new, media-worker) |
+| `GET …/audio/uploads/{uploadId}` → **200** `{upload_id, status, size_bytes, part_size, parts_total, received, expires_at_utc}` (`received` the sorted part numbers stored) · **404** unknown or expired | `routers/audioUploads.ts` (new, media-worker) |
+| `POST …/audio/uploads/{uploadId}/complete` → import mode (`?duration_s=` and optional `X-Audio-Seam-Parts`, exactly `local-audio-import`'s rules and anchoring) or segment mode (`?recording_ordinal=&started_at_utc=&ended_at_utc=`, exactly the segment `POST`, window idempotency included, no anchor) → **200** `{ok: true, segment_id}` · **400** `duration_s`/seam header as `local-audio-import`, or a size or re-hash mismatch (the upload is aborted) · **404** unknown, expired or completed · **409** `{detail, missing_parts}` while a part is missing, or `{detail}` while the session is recording (import mode, checked before attach and again after the file is placed) | `routers/audioUploads.ts` (new, media-worker) |
+| `DELETE …/audio/uploads/{uploadId}` → **204** staging removed · **404** unknown | `routers/audioUploads.ts` (new, media-worker) |
 | `GET\|POST\|PATCH\|DELETE …/transcript-words` · `…/topics` (`PATCH`/`DELETE …/{id}` take an optional `version`/`overwrite`; a stale version is **409**; see "Row versions" below) | `routers/transcribe.py` |
 | `GET /api/transcript-generation/status` → **200** `{in_flight:false}` idle · **200** busy fields for the earliest-started live run in the deployment (`session_id`, `session_title`, `started_at`; the ids are null for a session the caller can't access) | `routers/transcribe.py` |
 | `…/transcript-words/generate` → **503** unconfigured · **403** not an approved user · **200** `{words}` configured (see "Transcript generation" above) | `routers/transcribe.py` |
-| `POST …/topics/generate` → **503** unconfigured · **403** not an approved user · **409** concurrent-turn · **400** no-transcript · **200** `{topics}` configured success (crash-safe replace-all) · **502** CLI-turn-failure/zero-topics (prior topics unchanged) (see "AI chat (Claude CLI)" below) | `routers/transcribe.py` |
+| `POST …/topics/generate` → **503** `{"detail":"Add a language model in Settings → Advanced to generate topics."}` no caller route · **403** not an approved user · **409** concurrent-turn · **400** no-transcript · **200** `{topics}` configured success (crash-safe replace-all) · **502** turn failure/zero-topics, or on the AI SDK route a run stopped by the step cap or token budget (prior topics unchanged) (see "AI chat (AI SDK or Claude CLI)" below) | `routers/transcribe.py` |
 | `…/transcribe.csv` → **503** | (unavailable) |
 | `POST …/local-audio-import` → **400** missing/invalid `duration_s`/empty body/missing Content-Type · **404** session · **409** rolling · **413** oversize body · **200** `{ok: true}` success (local file attach+anchor; requires `duration_s`; optional `X-Audio-Seam-Parts`; not YouTube) | `routers/sessions.py` |
 | `POST /api/shows/:showId/log-import` → **404** show/no show access · **503** unconfigured · **400** bad body · **200** `{ job_id }` configured success (public Sheets log import job; see "Google Sheets log import" above) | — |
 | `GET /api/log-import/:jobId` → **404** unknown/not-creator · **200** `{ status, lines, error }` | — |
 | `POST …/youtube-import` → **503** unconfigured · **403** not an approved user · **400** bad/non-allowlisted url · **409** concurrent-session · **200** `{ok: true}` configured success · **502** download/extract/bound/container/blob-write failure (see "YouTube audio import" above) | `routers/sessions.py` |
-| `POST …/ai/chat` → **503** unconfigured · **403** not an approved user · **200** `text/event-stream` configured (see "AI chat" below) | `routers/ai.ts` (new, ai-topics-chat) |
+| `POST …/ai/chat` `{message, claude_session_id?: string \| null, history?: [{role: "user"\|"assistant", text}]}` (`history` ≤ 40 entries, 1–8000 chars each, 64 000 total) → **503** `{"detail":"Add a language model in Settings → Advanced to use the assistant."}` no caller route · **403** not an approved user · **422** invalid body (including `history`, before any model request) or a foreign/stale `claude_session_id` on the CLI route · **409** concurrent-turn · **200** `text/event-stream` `delta`/`tool`/`done {claude_session_id}` (a string on the CLI route, `null` on the AI SDK route, which ignores the request's `claude_session_id`)/`error {detail}` (see "AI chat" below) | `routers/ai.ts` (new, ai-topics-chat) |
 | `POST …/ai/v2/design` → **503** unconfigured/credentials · **403** not an approved user · **200** `text/event-stream` configured (SSE: `delta`\|`question`\|`dashboard`\|`done`\|`error`) · `POST …/ai/v2/answer` → answer round trip, **200** `{ok:true}` (see "AI v2 dashboards" below) | `routers/aiV2.ts` (new, ai-v2-dashboards) |
 | `GET\|PUT\|DELETE …/ai/v2/dashboard` → dashboard persistence: **200** `{config}` (GET: `{config:null}` if none) \| `{ok:true}` (DELETE), **422** invalid/bounds-exceeded, **400** malformed | `routers/aiV2.ts` (new, ai-v2-dashboards) |
 | `GET …/export.csv` · `…/export.jsonl` | `routers/exports.py` / `export.py` |
 | `/api/companion/presence\|state\|log\|transport\|command\|categories\|commands/*` → auth is a session cookie or `Authorization: Bearer <Companion device token>` (the device token is honoured only under `/api/companion/*`; an unknown, revoked or expired token, a disabled user or the retired `API_TOKEN` gets **401** `{"detail":"Login required."}`); the call runs as the device's user (or the cookie user) and picks that user's own freshest presence; `POST …/presence` from a device is **403** `{"detail":"Presence is posted by the AutoLogger browser app, not by a Companion device."}` | `routers/companion.py` |
 | `GET /api/companion-devices` → **200** `{devices:[{id, name, created_at, last_used_at, expired}]}` (the caller's devices, newest first; `last_used_at` may be null; `expired` past 90 idle days) · `POST /api/companion-devices {name}` → **201** `{id, name, created_at, token}` (the `ald_…` token appears only here; only its sha256 is stored) · **422** invalid name (trimmed, 1–80 characters) · **400** NUL · **409** `{"detail":"You already have 10 Companion devices; revoke one first."}` · `DELETE /api/companion-devices/{id}` → **204** no body · **404** `{"detail":"Companion device not found."}` for an unknown id or another user's. Cookie only: **401** without a session, and a device Bearer never authenticates them | `routers/companionDevices.ts` (new, companion-devices) |
+| `GET /api/me/providers` → **200** `{llm, stt, run_features_allowed, claude_cli_allowed}` (each credential `{kind, provider, base_url, model, key_last4, updated_at}` or `null`; never the key; `key_last4` is `null` and `model` `"claude-cli"` for the keyless `claude-cli` row; `claude_cli_allowed` is true when the caller is on `CLAUDE_CLI_EMAILS` and `CLAUDE_CLI_PATH` is set) · `PUT /api/me/providers/{llm\|stt}` `{provider, base_url?, model, api_key?}` → **200** the credential (`llm` provider `openai-compatible` with `base_url`, or `anthropic`\|`openai`\|`google`, or exactly `{provider: "claude-cli"}` with no key, base URL or model; `stt` provider `deepgram`; `api_key` required for a first save or a new provider or base URL host, else kept) · **403** `{"detail":"The Claude CLI is limited to approved operator accounts."}` a `claude-cli` save by a caller for whom `claude_cli_allowed` is false (nothing stored) · **422** invalid body · **400** NUL · `DELETE /api/me/providers/{kind}` → **204** · **404** `{"detail":"Provider not set up."}` · `POST /api/me/providers/{kind}/test` → **200** `{ok, detail}` (fixed result strings; for the `claude-cli` row `Connected.` or `The Claude CLI isn't available to this account.`, with no outbound request) · **404** not set up · **429** `{"detail":"Too many connection tests. Try again in a minute."}` (5 per minute per user). Unknown kind → **404** `{"detail":"Not found."}`. Cookie only: **401** without a session | `routers/providers.ts` (new, byo-ai-providers) |
+| `GET /api/search?q=…[&studio_id=…][&show_id=…][&session_id=…][&limit=…]` → **200** `{q, studios:[{id, name}], shows:[{id, name, studio_id}], sessions:[{id, title, episode, show_id, studio_id, started_at_utc, archived, match, snippet}], moments:[{session_id, session_title, show_id, kind, id, sec, speaker, snippet}], moment_sessions:[{session_id, total}]}` (`q` echoed trimmed; each group at most `limit`; at most 3 moments per session unless `session_id` is given, which returns only that session's moments and empty `studios`, `shows` and `sessions`; `moment_sessions` gives each session in `moments` its total matching moments, at most 1000; `match` `title`\|`notes`, `snippet` null for a title match; `kind` `transcript`\|`topic`\|`event`, `id` the topic or event id or the transcript bucket as a decimal; `sec` a number only for a timed transcript moment, else null; `speaker` `""` when not applicable; snippets mark hits with U+E000/U+E001; only what the caller can see, and notes and moments only for shows the caller can access) · **401** `{"detail":"Login required."}` · **422** `q` missing or not 2–200 characters after trimming, or `limit` not a decimal 1–25 (default 5) · **503** `{"detail":"Search timed out; try a more specific query."}` (the 3 s budget) · **503** `{"detail":"Search is busy; try again."}` (2 searches already running in the process for over 1 s). A `studio_id`, `show_id` or `session_id` the caller can't see (a hidden session included) gives **200** with every group empty, like an unknown id. Unknown parameters are ignored; no cookies, no writes | `routers/search.ts` (new, catalog-search) |
+| `GET /api/shows/:showId/wiki/pages[?kind=…][&session_id=…][&deleted=1]` → **200** `{pages:[{id, kind, title, aliases, session_id, revision, updated_at_utc, updated_by_name}], truncated}` (sorted by title ignoring case and accents; at most 2000, `truncated` says whether more matched; merged pages never listed; `deleted=1` lists deleted pages instead of live ones; unknown parameters ignored) · **401** `{"detail":"Login required."}` · **404** `{"detail":"Show not found."}` unknown show or no show access · **422** bad query; no cookies | `routers/wiki.ts` (new, show-wiki) |
+| `POST /api/shows/:showId/wiki/pages {kind, title, body_md?, aliases?, session_id?}` (`session_id` exactly when `kind` is `session`) → **201** the page object `{id, show_id, kind, title, body_md, aliases, session_id, revision, merged_into, deleted, created_at_utc, created_by_name, updated_at_utc, updated_by_name}` (`aliases` in the order saved; `*_by_name` the writer's given and family name, never an email) · **401** · **404** `{"detail":"Show not found."}` · **409** `{"detail":"Title already used.","page_id"}` a live page holds the title or an alias · **409** `{"detail":"Session already has a page.","page_id"}` · **422** `{"detail":[…zod issues]}` schema, or `{"detail":"<message>"}` bad `cite:`/`wiki:` link or session outside the show; no cookies | `routers/wiki.ts` (new, show-wiki) |
+| `GET /api/wiki/pages/:pageId` → **200** the page object, merged and deleted pages included (their `aliases` from the newest revision) · **401** · **404** `{"detail":"Page not found."}` unknown page or no show access | `routers/wiki.ts` (new, show-wiki) |
+| `PUT /api/wiki/pages/:pageId {expected_revision, title?, kind?, body_md?, aliases?, restored_from?}` (fields not sent unchanged; `aliases` replaces the list; `restored_from` only labels the revision) → **200** the page (unchanged for a no-op) · **401** · **404** `Page not found.` · **409** `{"detail":"Version conflict.","current":<page>}` · **409** `{"detail":"Page was merged.","merged_into"}` · **409** `{"detail":"Page is deleted."}` · **409** `Title already used.` with `page_id` · **422** schema, bad link, or a `kind` change to or from `session`; no cookies | `routers/wiki.ts` (new, show-wiki) |
+| `DELETE /api/wiki/pages/:pageId?expected_revision=<n>` (soft delete) → **200** the page (`deleted: true`) · **401** · **404** `Page not found.` · **409** `Version conflict.` with `current` · **409** `Page was merged.` with `merged_into` · **409** `Page is deleted.` · **422** missing or bad `expected_revision`; no cookies | `routers/wiki.ts` (new, show-wiki) |
+| `POST /api/wiki/pages/:pageId/restore {expected_revision}` → **200** the page (`deleted: false`) · **401** · **404** `Page not found.` · **409** `Version conflict.` with `current` · **409** `Page was merged.` with `merged_into` · **409** `{"detail":"Page is not deleted."}` · **409** `Title already used.` / `Session already has a page.` with `page_id` · **422** schema; no cookies | `routers/wiki.ts` (new, show-wiki) |
+| `GET /api/wiki/pages/:pageId/revisions[?limit=1–100][&before=<n>]` → **200** `{revisions:[{revision, title, kind, author_name, at_utc, note}], next_before}` (newest first, default `limit` 50, only revisions below `before`; `next_before` the cursor for the next older page or `null`) · **401** · **404** `Page not found.` · **422** bad query | `routers/wiki.ts` (new, show-wiki) |
+| `GET /api/wiki/pages/:pageId/revisions/:rev` → **200** `{revision, title, kind, author_name, at_utc, note, body_md, aliases}` · **401** · **404** `Page not found.` · **404** `{"detail":"Revision not found."}` | `routers/wiki.ts` (new, show-wiki) |
+| `POST /api/wiki/pages/:pageId/merge {into_page_id, expected_revision, into_expected_revision}` → **200** `{page:<the target page>}` · **401** · **404** `Page not found.` page or target missing, in another show, or not accessible · **409** `Version conflict.` with `current` the stale page · **409** `Page was merged.` / `Page is deleted.` either page · **409** `Title already used.` with `page_id` · **422** same page, a `session` page, or the result over the body or alias limits; no cookies | `routers/wiki.ts` (new, show-wiki) |
+| `POST /api/wiki/pages/:pageId/split {expected_revision, remaining_body_md, new_page:{kind, title, body_md, aliases?}}` → **201** `{page:<the source page>, new_page:<the new page>}` · **401** · **404** `Page not found.` · **409** as for `PUT` · **422** schema (a `session` `new_page.kind` included) or bad link; no cookies | `routers/wiki.ts` (new, show-wiki) |
+| `POST /api/sessions/:sessionId/wiki/generate` (no body; one synchronous AI run on the caller's own route, under the WIKI_GENERATE_* bounds below) → checks in this order: **401** `{"detail":"Login required."}` · **404** `{"detail":"Session not found"}` missing session, a session with no show, or no show access · **503** `{"detail":"Add a language model in Settings → Advanced to update the wiki."}` no caller route · **403** not an approved user · **400** `{"detail":"This session has no transcript words to update the wiki from."}` · **409** `{"detail":"A turn (AI chat, AI v2, topic generation, event generation, or wiki update) is already in progress for this session; wait for it to finish before updating the wiki again. These features share one per-session AI slot by design."}` · **502** `{"detail":"Wiki update failed."}` any failed, capped, timed-out or incomplete run, or a failed store (nothing stored) · **200** `{suggestions:[<suggestion object>]}` the suggestions this run stored, in proposal order (may be empty); no cookies | `routers/wikiSuggestions.ts` (new, show-wiki-ai) |
+| `GET /api/shows/:showId/wiki/suggestions[?status=pending\|accepted\|dismissed\|superseded][&page_id=…]` → **200** `{suggestions:[<suggestion object>], truncated}` with the suggestion object `{id, show_id, session_id, status, page_id, base_revision, kind, title, aliases, rationale, page:{title, revision, state:"live"\|"merged"\|"deleted"}\|null, stale, created_at_utc, created_by_name, resolved_at_utc, resolved_by_name, resolved_revision}` (default `status` `pending`; newest first, at most 500; `page_id` null for a new page; `stale` when the page's revision differs from `base_revision`; unknown parameters ignored) · **401** · **404** `{"detail":"Show not found."}` · **422** bad query; no cookies | `routers/wikiSuggestions.ts` (new, show-wiki-ai) |
+| `GET /api/wiki/suggestions/:suggestionId` → **200** the suggestion object plus `body_md` · **401** · **404** `{"detail":"Suggestion not found."}` unknown suggestion or no show access | `routers/wikiSuggestions.ts` (new, show-wiki-ai) |
+| `POST /api/wiki/suggestions/:suggestionId/accept {expected_revision?, title?, body_md?, aliases?}` (`expected_revision` required for an existing page, ignored for a new one; the overrides are "edit, then accept", with the page limits; the kind can't change; the reviewer authors the revision) → **200** `{page:<page object>, suggestion:<suggestion object>}` an existing page updated · **201** the same, a new page created · **401** · **404** `Suggestion not found.` · **409** `{"detail":"Version conflict.","current":<page>}` · **409** `{"detail":"Page was merged.","merged_into"}` · **409** `{"detail":"Page is deleted."}` · **409** `{"detail":"Title already used.","page_id"}` · **409** `{"detail":"Session already has a page.","page_id"}` · **409** `{"detail":"Suggestion already resolved.","status"}` · **422** `{"detail":"expected_revision is required."}`, schema, or bad link; no cookies | `routers/wikiSuggestions.ts` (new, show-wiki-ai) |
+| `POST /api/wiki/suggestions/:suggestionId/dismiss` (no body) → **200** the suggestion object (`status: "dismissed"`) · **401** · **404** `Suggestion not found.` · **409** `{"detail":"Suggestion already resolved.","status"}`; no cookies | `routers/wikiSuggestions.ts` (new, show-wiki-ai) |
 | `/api/admin/users` · `/api/admin/studios` · `…/users/{id}/memberships\|disable\|enable` | `routers/admin.py` |
 | `POST /api/teams` · `GET\|PATCH\|DELETE /api/teams/{id}` | `routers/teams.ts` (new, teams-self-serve) |
 | `POST …/invites` · `DELETE …/invites/{email}` · `POST …/members/{userId}/role` · `DELETE …/members/{userId}` · `POST …/leave` · `POST …/owner` (transfer ownership, owner only: **200** `{ok: true}`) | `routers/teams.ts` (new, teams-self-serve; owner-bootstrap) |
 | `PUT\|DELETE /api/teams/{id}/shows/{showId}/grants/{userId}` (show grants, owner or admin; no body) → **401** signed out · **404** `Team not found` non-member · **403** `Admin role required.` member · **404** `Show not found.` unknown or other team's show · PUT: **404** `Member not found` non-member target, **200** `{ok: true}` (idempotent; an owner or admin target stores nothing) · DELETE: **200** `{ok: true}` always (idempotent). The team detail carries `members[].show_ids` for owner and admin callers | `routers/teams.ts` (new, show-grants) |
 | `GET /sessions/:id` (SPA shell) | (app.ts frontend bridge) |
 | `GET /teams` (SPA shell) | (app.ts frontend bridge) |
+| `GET /search` (SPA shell; the query string has no server semantics; `/search/…` and `/search/` stay **404**) | (app.ts frontend bridge; catalog-search) |
+| `GET /wiki` · `GET /wiki/:id` (SPA shell; no cookies; the query string has no server semantics; `/wiki/`, `/wiki/:id/` and `/wiki/:id/…` stay **404**) | (app.ts frontend bridge; show-wiki) |
 
 **Show access (show-grants).** Owners and admins of a team reach every show in it; a member
 reaches a show only with a grant (the routes above). Without access:
@@ -973,7 +1136,7 @@ token instead:
 - creating and revoking a device write one server log line each with the user and device ids,
   never the token.
 
-**Auth callback failure redirects:** `GET /auth/google/callback` failure responses are `302` redirects to `/?login_error=<code>` where `<code>` is one of: `provider_error`, `oauth_not_configured`, `missing_params`, `state_invalid`, `exchange_failed`, `token_invalid`, `email_unverified`, `identity_unavailable`, `account_disabled`. The code set is additive-open. Success path unchanged: `302 /` with session cookie. Only Google accounts with a verified email sign in (`email_unverified` otherwise); the verified ID token is then exchanged with Supabase Auth, whose user id is the account id, and `identity_unavailable` means Supabase Auth was unreachable, refused it, or returned an identity that doesn't match the account (gotrue-sign-in).
+**Auth callback failure redirects:** `GET /auth/google/callback` failure responses are `302` redirects to `/?login_error=<code>` where `<code>` is one of: `provider_error`, `oauth_not_configured`, `missing_params`, `state_invalid`, `exchange_failed`, `token_invalid`, `email_unverified`, `identity_unavailable`, `account_disabled`, `signup_closed`. The code set is additive-open. Success path unchanged: `302 /` with session cookie. Only Google accounts with a verified email sign in (`email_unverified` otherwise); the verified ID token is then exchanged with Supabase Auth, whose user id is the account id, and `identity_unavailable` means Supabase Auth was unreachable, refused it, or returned an identity that doesn't match the account (gotrue-sign-in). `signup_closed` means sign-ups are closed and the person has no account and no approval (see "Closed sign-ups"); the check runs before the Supabase Auth exchange, so nothing is written.
 
 WebSocket messages broadcast by the SessionHub: `event.changed` · `transport.changed` ·
 `audio.changed` · `lease.changed` · `command` (Companion → browser). The frontend consumes
@@ -1087,7 +1250,8 @@ only: nothing reads `server/.env`. The stacks take values from OpenBao
 
 | Var | Default | What it does |
 |-----|---------|--------------|
-| `DATA_DIR` | *(required, absolute; the stacks pin `/data`)* | Root for audio blobs and temp staging (the catalog and session content are Postgres; legacy `catalog.db` and `sessions/*.db` files are left untouched). |
+| `DATA_DIR` | *(required, absolute; the stacks pin `/data`)* | Per-process lock, scratch, legacy files: the single-server lock (one server per `DATA_DIR`), the scratch root `tmp/`, and the legacy `catalog.db`, `sessions/*.db` and `blobs/` (left untouched; the catalog and session content are Postgres, audio is `BLOB_DIR`). |
+| `BLOB_DIR` | *(required, absolute; the stacks pin `/blobs`)* | Root for the audio blobs, shared by every server process of a stack. It must not overlap `DATA_DIR` (equal, or either inside the other): the server refuses to boot then, or when it is unset or relative. A compose literal, never an OpenBao value. |
 | `HOST` | `127.0.0.1` outside production, `0.0.0.0` in production | Network **interface to bind**. `127.0.0.1` = loopback-only (reachable only on-box / via a local reverse proxy); `0.0.0.0` = all interfaces (LAN/internet). |
 | `PORT` | `8787` | TCP port to listen on. |
 | `PUBLIC_BASE_URL` | *(required; `.env.example` ships `http://127.0.0.1:8787`)* | Externally-visible origin the server **advertises** — used to build the Google OAuth callback (`…/auth/google/callback`). Must match the browser URL *and* the redirect URI registered in Google Cloud. Behind a proxy this differs from `HOST` (e.g. `https://autologger.example.com`). |
@@ -1101,13 +1265,22 @@ only: nothing reads `server/.env`. The stacks take values from OpenBao
 | `FRAME_BUS_SECRET` | *(required)* | Signs every session frame bus message (HMAC-SHA256, at least 32 characters, server-only; set in OpenBao). `main.ts` refuses to boot without it. Rotate it by restarting every process together. |
 | `BOOTSTRAP_OWNER_EMAIL` | *(required)* | The bootstrap owner's email. A sign-in whose verified Google email matches it (trimmed, ASCII case-insensitive) becomes owner of every team with no owner. The server refuses to boot when it is blank or non-ASCII, and logs it masked (domain plus a short hash). |
 | `RUN_FEATURE_EMAILS` | *(empty = the bootstrap owner only)* | Comma-separated emails of users approved for the run features (AI chat, AI v2 design, topic and event generation, YouTube import, transcript generation); the bootstrap owner is always approved. Others get `403`. A non-ASCII entry refuses boot. See "Run features: approved users only". |
+| `CLAUDE_CLI_EMAILS` | *(empty = nobody)* | Comma-separated emails that may choose "Claude CLI (operator)" as their language model (with `CLAUDE_CLI_PATH` set); matched trimmed, ASCII case-insensitive; the bootstrap owner is not implicitly listed. Set per stack in OpenBao. See "AI chat (AI SDK or Claude CLI)". |
+| `SIGNUPS` | *(empty = open on dev, closed on stage and prod)* | `open` or `closed` (trimmed, case-insensitive). While closed, only existing accounts, the bootstrap owner and emails approved in the last 7 days can sign in. Any other value is refused by `make <env>-up` before compose starts and by the server at boot (never printed). Boot logs `sign-ups: open` or `sign-ups: closed`. See "Closed sign-ups". |
+| `AI_CHAT_MAX_STEPS` / `AI_CHAT_MAX_TOKENS` | `8` / `400000` | AI SDK chat turn: model steps (1–50) and the per-turn token budget. |
+| `GENERATE_MAX_STEPS` / `GENERATE_MAX_TOKENS` | `40` / `3000000` | AI SDK topic and event generation: model steps (1–100) and the per-turn token budget. |
+| `GENERATE_MAX_OUTPUT_TOKENS` | `16000` | AI SDK topic and event generation: output tokens per model step (1000–128000; out of range uses the default). Chat's is fixed at `4000`. A first request answered `400` restarts once at `4000`. The turn's response-byte cap is steps × this × 400 (256 MB at the defaults). |
+| `WIKI_GENERATE_TIMEOUT_SEC` / `WIKI_GENERATE_MAX_BUDGET_USD` | `900` / `5.0` | Wiki update (`…/wiki/generate`): the turn's timeout on both routes, and the Claude CLI route's per-turn cost ceiling. |
+| `WIKI_GENERATE_MAX_STEPS` / `WIKI_GENERATE_MAX_TOKENS` | `80` / `6000000` | AI SDK wiki update: model steps (1–200) and the per-turn token budget; output tokens per step come from `GENERATE_MAX_OUTPUT_TOKENS`. Reaching any wiki bound fails the run with its `502`, and nothing is stored. |
 | `AI_PROVIDER` | `claude_cli` | The AI provider; `claude_cli` is the only accepted value, and any other refuses boot. It runs with no limit on runs across sessions. `AI_CHAT_MAX_CONCURRENT` is ignored (the process-wide limit is gone). |
 
 **Config-gated feature keys** (each endpoint returns a frozen `503` until its key/binary is
-present — see the linked sections above): `DEEPGRAM_API_KEY` (+ `DEEPGRAM_MODEL`) for
-transcript generation, `YTDLP_PATH` (or a `yt-dlp` on `PATH`) for YouTube import,
+present — see the linked sections above): transcript generation runs on each user's own key
+from Settings → Advanced (`DEEPGRAM_API_KEY` + `DEEPGRAM_MODEL` are only the development-mode
+fallback), and `PROVIDER_KEYS_SECRET` (required) encrypts those keys; `YTDLP_PATH` (or a `yt-dlp` on `PATH`) for YouTube import,
 `SHEETS_LOG_IMPORT_ENABLED` for the Google Sheets log import, and
-`CLAUDE_CLI_PATH` for AI chat / topics / event generation / v2 dashboards.
+`CLAUDE_CLI_PATH` for v2 dashboards and for the Claude CLI route of AI chat, topics and event
+generation (which otherwise run on each caller's language model from Settings → Advanced).
 
 **Typical public HTTPS-behind-a-proxy setup:** `HOST=127.0.0.1` (Node reachable only via the
 proxy), `PUBLIC_BASE_URL=https://your.domain`, `TRUST_PROXY=1`, and a
@@ -1134,8 +1307,8 @@ make dev-up                        # the app runs only in the dev stack (docs/op
 ```
 
 The server refuses to boot outside a compose stack (`AUTOLOGGER_STACK`), needs an absolute
-`DATA_DIR`, and never reads `server/.env`. To check the login gate and token scope against a
-running stack, use `docker/scripts/test_router.sh stage` (see "Verifying the container
+`DATA_DIR` and an absolute `BLOB_DIR` that does not overlap it, and never reads `server/.env`.
+To check the login gate and token scope against a running stack, use `docker/scripts/test_router.sh stage` (see "Verifying the container
 topology").
 
 ## Container deployment
@@ -1147,7 +1320,9 @@ behind a small internal router (OpenSpec change `containerize-split-images`; spe
 `compose.yaml`, `docker-bake.hcl`, `docker/Dockerfile`, `docker/Caddyfile` and
 `docker/secrets-env.yaml`, with secrets from OpenBao (see
 [docs/openbao-secrets.md](docs/openbao-secrets.md)). For a hot-reload dev environment, a locally built stage, and
-`make` entry points for all three, see [Local container environments](#local-container-environments).
+`make` entry points for all three, see [Local container environments](#local-container-environments). The first
+deploy of the Postgres-era release onto the running prod is
+[Upgrading prod in place](#upgrading-prod-in-place-first-deploy-of-the-postgres-era-release).
 
 ### Topology
 
@@ -1167,7 +1342,13 @@ behind a small internal router (OpenSpec change `containerize-split-images`; spe
           ▼ everything not below                       ▼ /api*, /auth*, non-GET/HEAD,
    web  (Next standalone, :3000)                        trailing-slash paths, traversal rejects
    no API code, no SQLite, no binaries                 api (server API-only, :8787, single replica)
-                                                        volumes: /data (DATA_DIR), /home/node
+                                                        volumes: /data (DATA_DIR), /blobs
+                                                                 (BLOB_DIR), /home/node
+                                                                   │ shared blob volume
+                                                                   ▼ (/blobs)
+ db (Postgres) ◄── network `media` 172.28.18.0/24 (internal) ── media-worker (uid 10001,
+                   members: db + media-worker only                read-only, no caps,
+                                                                  ffmpeg + node, no port)
 ```
 
 - **`web`** runs Next's standalone server (`output: 'standalone'`); **`api`** is the unchanged
@@ -1195,12 +1376,33 @@ behind a small internal router (OpenSpec change `containerize-split-images`; spe
   it.
 - **Caddy admin API** listens on `127.0.0.1:2019` *inside* the router container and exists only
   for its healthcheck; it is unreachable from either compose network.
+- **`media-worker`** (OpenSpec change `media-worker`, ADR 0032) is the fourth service: it probes,
+  peaks, converts (WAV → FLAC) and merges audio with a digest-pinned `ffmpeg`. It joins only the
+  `media` network (internal, host-isolated, pinned subnet; its only other member is `db`) and
+  connects as the `autologger_media` role with `MEDIA_DB_PASSWORD`, so it can reach nothing but
+  Postgres and can touch only `catalog.media_jobs` (column-limited `UPDATE`, a guard trigger)
+  and read the segment and seam rows. Its environment is the five `PG*` literals plus
+  `BLOB_DIR`; it holds no app secret. It runs as uid `10001` (not the api's `node`, 1000) with a
+  read-only root, a 64 MiB `/tmp` tmpfs, every capability dropped, `no-new-privileges`, `init`,
+  2 CPUs, 1 GiB and 128 pids, and its healthcheck is a `node` check of a heartbeat file the loop
+  touches (no network).
+- **Permissions posture.** The worker mounts the same blob volume as `api`. Unix permissions,
+  not a second mount, narrow what it can write: `audio/` and `.tmp/` belong to `node` (mode
+  0755), so it can read blobs but not create, replace or delete them; `api` creates `media/`
+  sticky and world-writable (1777) at boot, and the worker writes only its own
+  `media/<job>/` (which it `chmod`s 0777 so `api` can remove it) and its result row.
+- **Copy-by-handle adopt.** The worker computes, the api applies: `api` opens a worker output
+  with `O_NOFOLLOW`, checks the open handle (regular file, size cap, owner uid 10001, and an
+  `lstat` of the job directory), copies it into its own `.tmp/put-*` file, fsyncs and renames
+  that into `audio/`, and only then removes `media/<job>/`. No worker-owned inode ever lands in
+  `audio/`, and a swapped symlink or a grown file after the open changes nothing.
 
 ### Build, push, and pin images
 
-Images are named `ghcr.io/kwcantrell/autologger-web` and `…/autologger-api`, tagged with a git
-SHA (never `latest`), in a **private** GHCR namespace. `docker-bake.hcl` builds both targets
-for `linux/amd64` and `linux/arm64`.
+Images are named `ghcr.io/kwcantrell/autologger-web`, `…/autologger-api` and
+`…/autologger-media-worker`, tagged with a git SHA (never `latest`), in a **private** GHCR
+namespace. `docker-bake.hcl` builds all three targets (its `default` group) for `linux/amd64`
+and `linux/arm64`; the worker image comes from `docker/media-worker.Dockerfile`.
 
 ```bash
 # One-time on the build host: a docker-container builder + QEMU/binfmt for the non-native arch
@@ -1212,7 +1414,7 @@ docker buildx inspect --builder autologger-multi --bootstrap
 # Log in to GHCR with a PAT that has write:packages (classic PAT; keep it out of shell history).
 docker login ghcr.io -u <github-user>
 
-# Build + push both images, both architectures. The tag is what compose will pin.
+# Build + push the three images, both architectures. The tag is what compose will pin.
 # (-f is required: bare `bake` auto-loads compose.yaml first and fails on its required variables.)
 GIT_SHA=$(git rev-parse --short=12 HEAD) docker buildx bake -f docker-bake.hcl --builder autologger-multi --push
 ```
@@ -1225,9 +1427,28 @@ GIT_SHA=$(git rev-parse --short=12 HEAD) docker buildx bake -f docker-bake.hcl -
   anonymous pull of the private images must be refused.
 - `docker compose build` builds the images for the *native* architecture only (local runs); it
   does not push.
-- **Pin the tags** in the compose `.env` (`WEB_TAG=<sha>`, `API_TAG=<sha>`). The compose
-  interpolation (`${WEB_TAG:?…}`) refuses an *unset* tag but does **not** reject the literal
-  value `latest`; the operator must not use it.
+- **Pin the tags** in the OpenBao `prod` secret (`WEB_TAG=<sha>`, `API_TAG=<sha>`,
+  `MEDIA_TAG=<sha>`; all three normally the same 12-character SHA). The compose interpolation
+  (`${MEDIA_TAG:?…}`) refuses an *unset* tag, and `make prod-up`/`prod-check` (the `prod-tags`
+  step) also refuse an empty tag or `latest`.
+- **The ffmpeg pin.** The worker's `ffmpeg` is the pinned `linuxserver/ffmpeg` image, named
+  once as `ARG FFMPEG_IMAGE=…@sha256:…` in `docker/media-worker.Dockerfile` with a `# reviewed
+  2026-10-11` comment next to it; `server/scripts/blobSegmentRows.ts`'s `FFMPEG_IMAGE` (the
+  operator scripts') is held equal to it by `server/src/test/ffmpegPin.repo.test.ts`.
+  Dependabot's `docker` ecosystem proposes digest bumps; a bump is a tier 1 change: update the
+  ARG, the review date and `blobSegmentRows.ts` together, then rebuild and re-run
+  `sh docker/scripts/test_media_image.sh`. Node is copied onto that base from the same pinned
+  `node:22-bookworm-slim` as `docker/Dockerfile`.
+- **Smoke-test the worker image** after `make prod-build` (native arch, tag `:local`), with no
+  network and the worker's runtime flags:
+
+  ```bash
+  img=ghcr.io/kwcantrell/autologger-media-worker:local
+  docker run --rm --network none --user 10001:10001 --read-only --tmpfs /tmp --cap-drop ALL \
+    --security-opt no-new-privileges:true --entrypoint node "$img" -e 'console.log(process.version)'
+  docker run --rm --network none --user 10001:10001 --read-only --cap-drop ALL \
+    --entrypoint ffmpeg "$img" -hide_banner -version
+  ```
 - **Build-time egress:** the Docker build downloads from Docker Hub (base images, Caddy),
   the npm registry (`npm ci`, the pinned `@anthropic-ai/claude-code`), and GitHub releases
   (the pinned `yt-dlp` and `deno` binaries).
@@ -1241,7 +1462,8 @@ GIT_SHA=$(git rev-parse --short=12 HEAD) docker buildx bake -f docker-bake.hcl -
   the server's production dependencies (including `next`, which the server requires lazily for
   the bridge and which the API-only mode never loads), the pinned `claude` CLI and Agent SDK
   platform binaries, and `yt-dlp` + `deno` in `/opt/ytdlp`. It carries no `ffmpeg` (the server
-  selects a single `bestaudio` format and never merges).
+  selects a single `bestaudio` format and never merges); `ffmpeg` lives only in the
+  `media-worker` image.
 
 ### Configuration
 
@@ -1252,20 +1474,22 @@ hand-typed `docker compose up` fails on purpose. Nothing reads `server/.env`.
 
 | OpenBao `prod` key | Required | Why |
 |-----|----------|-----|
-| `WEB_TAG`, `API_TAG` | yes | Git-SHA image tags (see above). Compose refuses to start without them. |
+| `WEB_TAG`, `API_TAG`, `MEDIA_TAG` | yes | Git-SHA image tags (see above; `MEDIA_TAG` is the media worker's). Compose refuses to start without them. |
 | `PUBLIC_BASE_URL` | yes | The public HTTPS origin (e.g. `https://autologger.nrvo.ai`). Builds the OAuth redirect `${PUBLIC_BASE_URL}/auth/google/callback`. |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | yes | Google sign-in, the only way in for people; the server refuses to boot without them. |
 | `BOOTSTRAP_OWNER_EMAIL` | yes | The bootstrap owner; their first sign-in claims every ownerless team. Compose and the server refuse to start without it. |
 | `RUN_FEATURE_EMAILS` | optional | Users approved for the run features besides the bootstrap owner (comma-separated). Grant by adding an email and restarting. |
+| `SIGNUPS` | optional | `open` or `closed`; unset is `closed` on prod. See "Closed sign-ups". |
 | `API_TOKEN` | no | **Ignored since ADR 0021 slice 9d.** It stays on the `docker/secrets-env.yaml` allowlist only so a secret that still holds it is not refused; drop it from OpenBao. Companion installs use device tokens from Settings. |
 | `ADMIN_TOKEN` | yes for cutover | Gates `/api/admin/*` (membership bootstrap). |
 | `ROUTER_PORT` | no (`8080`) | Host loopback port the router publishes; the Newt target. |
-| `DEEPGRAM_API_KEY` | optional | Enables transcript generation (else `503`). **Sends recorded audio to DeepGram's cloud STT and spends money.** |
+| `PROVIDER_KEYS_SECRET` | **yes** | Base64 of 32 bytes (`openssl rand -base64 32`, prod's own). Encrypts users' provider keys; `compose-run` and the server refuse to start without it, and the server refuses a different secret once keys are stored. Losing it means users re-enter their keys (see `docs/openbao-secrets.md`). |
+| `DEEPGRAM_API_KEY` | no | **Not used in production** (byo-ai-providers): each user's own key from Settings → Advanced is. |
 | `AI_V2_API_KEY` | leave unset | AI v2 stays **off**; see security notes. |
 
 The compose `environment` block fixes `TRUST_PROXY=1`, `COOKIE_SECURE=1` and
 `PUBLIC_BASE_URL` — literals there take precedence over the allowlist. Login is always required;
-no setting switches it off. The image itself sets `NODE_ENV=production`, `DATA_DIR=/data`, `HOST=0.0.0.0`,
+no setting switches it off. The image itself sets `NODE_ENV=production`, `DATA_DIR=/data`, `BLOB_DIR=/blobs`, `HOST=0.0.0.0`,
 `PORT=8787`, `YTDLP_PATH=/opt/ytdlp/yt-dlp` and `CLAUDE_CLI_PATH`, so YouTube import and the
 Claude-CLI features (AI chat, topics, event generation) are *available*. `IP_ALLOWLIST` is not set by default.
 
@@ -1276,7 +1500,8 @@ the loopback Caddy admin endpoint). Both bridge subnets are pinned in `compose.y
 `172.28.11.1`) appear in `docker/Caddyfile` `trusted_proxies`: **if you must change a subnet,
 change it in both files together.**
 
-**Runtime egress** from `api`: DeepGram (audio, if configured), YouTube and the media hosts
+**Runtime egress** from `api`: DeepGram (audio, on the user's key), the user-chosen LLM hosts of
+the Settings → Advanced connection test (public `https` only in production), YouTube and the media hosts
 `yt-dlp` fetches (import), Anthropic (the `claude` CLI), Google (JWKS, OAuth, Sheets import).
 The image fetches nothing else at runtime; the Claude CLI auto-updater is disabled.
 
@@ -1284,11 +1509,21 @@ The image fetches nothing else at runtime; the Claude CLI auto-updater is disabl
 
 | Volume (compose name) | Mount in `api` | Holds |
 |-----------------------|----------------|-------|
-| `autologger_autologger-data` | `/data` (`DATA_DIR`) | `blobs/`, `tmp/`, and the legacy `catalog.db` and `sessions/*.db` (no longer written; kept for the slice 11 import) |
+| `autologger_autologger-data` | `/data` (`DATA_DIR`) | `tmp/` (scratch), and the legacy `catalog.db`, `sessions/*.db` and `blobs/` (no longer written; kept for the slice 11 import; move `blobs/` with "Moving audio into BLOB_DIR") |
+| `autologger_autologger-blobs` | `/blobs` (`BLOB_DIR`) | The audio blobs, `audio/<session_id>/…`, and the put staging `.tmp/`. Every server process of the stack mounts it. |
 | `autologger_autologger-home` | `/home/node` | `~/.claude/` **and** `~/.claude.json` (subscription credentials and CLI config) |
 
-Both are owned by uid 1000 (`node`); a fresh named volume inherits that from the image. State
+All three are owned by uid 1000 (`node`); a fresh named volume inherits that from the image. State
 survives `docker compose up -d` recreation onto a new image tag.
+
+**The media worker's mount.** `media-worker` mounts `autologger_autologger-blobs` at `/blobs`
+and no other volume (no `/data`, no home). It runs as uid 10001, so the ownership above is what
+confines it: it can read `audio/` (and `.trash/`), and write only under `media/`, which `api`
+creates at boot owned by uid 1000 with mode 1777; `audio/` and `.tmp/` stay 0755 `node`. A blob
+copied in with mode 0600 is unreadable to the worker and its job fails `missing-blob`; restore
+group/other read with `chmod -R a+rX audio/` inside the volume. The layout of `media/`,
+`.trash/<date>/` and the upload staging files, and low-disk mode, are in
+[Storage map](#storage-map) and [Media jobs](#media-jobs).
 
 **Auto-updater on a pre-existing home volume.** The image bakes `~/.claude/settings.json`
 with `{"env":{"DISABLE_AUTOUPDATER":"1"}}`, but a volume that already has content shadows the
@@ -1403,10 +1638,246 @@ rsync -a --delete ${own:+--chown="$own"} "$src"/ "$dst"/'
 # usage: sudo bash -c "$BLOBSYNC" _ <src-dir> <dst-dir> [uid:gid]
 ```
 
+### Moving audio into BLOB_DIR
+
+The server reads and writes audio only under `BLOB_DIR` (`/blobs`, its own volume). Audio
+recorded before that sits in `DATA_DIR/blobs` (`/data/blobs`), which the server no longer reads:
+those segments answer `404` until they are moved. While any file is left there, every boot logs
+`autologger: DATA_DIR/blobs holds <n> legacy audio file(s) the server no longer reads; move them
+into BLOB_DIR (README "Moving audio into BLOB_DIR")`.
+
+The move is an **additive copy, never a mirror**: no `--delete`, and no `BLOBSYNC`. The server
+writes new segments into the blob volume from its first boot, and a mirror from the old
+directory would delete them. Keys never collide (each new segment id is a fresh UUID), so the copy
+only adds files. The source is only read; remove `DATA_DIR/blobs` by hand once old and new
+segments play.
+
+**Dev (in the running app container, as `node`).** The app can keep running: until a file is
+fully copied its segment answers `404` or a short body, as it did before the move. `cp -a` as
+`node` leaves `node`-owned files.
+
+```bash
+docker exec -u node autologger-dev-app cp -a /data/blobs/audio /blobs/
+# check: the file count and the total bytes match
+docker exec -u node autologger-dev-app sh -c 'find /data/blobs/audio -type f | wc -l; find /blobs/audio -type f | wc -l'
+docker exec -u node autologger-dev-app du -sb /data/blobs/audio /blobs/audio
+```
+
+**Stage and prod (on the host, with `api` stopped).** The api image ships no `server/scripts`,
+so the copy runs on the host as root, and `--chown` gives the server's user (uid 1000) every file
+and directory (a root-owned `audio/<sid>/` would make later uploads fail with `EACCES`). `$VOL` is
+the data volume's mountpoint, `$BVOL` the blob volume's (use the `autologger-stage_…` names for
+stage). Slice 11's cutover reuses this step.
+
+```bash
+VOL=$(docker volume inspect -f '{{.Mountpoint}}' autologger_autologger-data)     # root-only path
+BVOL=$(docker volume inspect -f '{{.Mountpoint}}' autologger_autologger-blobs)   # root-only path
+docker compose stop api        # or make prod-down; nothing may write during the copy
+sudo rsync -a --chown=1000:1000 "$VOL/blobs/" "$BVOL/"        # additive: NEVER --delete
+# check: the file count and the total bytes of audio/ match
+sudo sh -c 'find "$1/blobs/audio" -type f | wc -l; find "$2/audio" -type f | wc -l' _ "$VOL" "$BVOL"
+sudo du -sb "$VOL/blobs/audio" "$BVOL/audio"
+```
+
+Then start `api` again and play an old and a new segment.
+
+### Waveform peaks backfill
+
+New segments get their peaks from the media worker. For existing rows prefer
+`enqueueMediaJobs.ts` (README "Media jobs"): it queues the same work for the worker. This script
+stays for offline use (no worker, or blobs copied to another machine).
+
+The timeline waveform of a segment comes from `waveform_peaks_json`. When it is NULL the browser
+fetches and decodes the whole file and stores the result, which never succeeds for large files
+(imported WAVs of a GB and more, hundreds of MP3s). `server/scripts/backfillWaveforms.ts` computes
+the same peaks offline for every NULL row and writes SQL for you to apply. Run it after an import
+of existing audio (the legacy import, an rsync of blobs) or whenever sessions show no waveform.
+
+- **Same values as the browser.** The peak math is `@autologger/domain`'s `waveformPeaks.ts`,
+  pinned bit for bit to the web's copy (`web/src/shared/utils/waveformDecode.pinning.test.ts`);
+  the bucket count is the browser's rule for a segment decoded on its own (4096 for anything over
+  0.41 s), the floor is -48. ffmpeg decodes at 48 kHz with every channel kept, like an
+  `AudioContext` at 48 kHz; on another rate or decoder the values differ by about 1% (<0.5 dB).
+- **Decoder.** By default ffmpeg runs in the pinned `linuxserver/ffmpeg` image (`docker run --rm
+  --network none`, the blob dir mounted read-only); `--ffmpeg <binary>` uses a local one instead.
+  The app images have no ffmpeg. Decoding streams (each file twice: count, then peaks), so memory
+  stays flat: a 1 GB, one-hour WAV takes about 40 s and 140 MB.
+- **Safe to re-run.** Every `UPDATE` has `... and waveform_peaks_json is null`, the file is one
+  transaction under `ON_ERROR_STOP`, and existing peaks (browser-made, legacy `-72` floors) are never
+  touched. Ids and keys are validated (`audio/<session_id>/<file>`, inside the blob dir) before
+  anything is opened or written.
+- **Report.** One line per segment on stderr: `ok`, `failed` (decode error), `missing` (no blob) or
+  `invalid` (bad id/key); a failure doesn't stop the rest. Exit `0` all filled, `1` any not filled
+  (the SQL still holds the ones that worked), `2` usage.
+- **Parallel.** `--jobs N` (1-64, default 1) decodes N files at once. The SQL is identical for any
+  N: rows keep the export's order. One job runs about 1.2 files a minute on the legacy import's mix.
+
+**Dev (on the VM, from the repo checkout, as a user in the `docker` group; the blob volume's
+mountpoint is root-only, hence `sudo`).**
+
+```bash
+DB=autologger-dev-db-1
+BLOBS=/var/lib/docker/volumes/autologger-dev_dev-blobs/_data
+W=$(mktemp -d)
+# 1. export the segments that have no peaks
+docker exec -i "$DB" psql -X -U postgres -c "$(npx tsx server/scripts/backfillWaveforms.ts --print-query)" > "$W/segments.csv"
+# 2. compute (pulls the pinned ffmpeg image on first use); --jobs decodes several files at once
+#    (one ffmpeg each; about a core per job, so leave headroom on a host serving traffic)
+sudo env "PATH=$PATH" npx tsx server/scripts/backfillWaveforms.ts \
+    --blob-dir "$BLOBS" --segments "$W/segments.csv" --out "$W/updates.sql" --jobs 8
+# 3. apply, then check what is left
+docker exec -i "$DB" psql -X -U postgres -v ON_ERROR_STOP=1 < "$W/updates.sql"
+docker exec -i "$DB" psql -X -U postgres -Atc \
+    "select count(*) filter (where waveform_peaks_json is null), count(*) from catalog.session_audio_segments"
+```
+
+**Stage and prod.** The same three steps on the host with the blob volume, with `DB` and `BLOBS`
+for that stack (`autologger-stage-db-1` and `autologger-stage_…-blobs` for stage, `autologger-db-1`
+and `autologger_autologger-blobs` for prod; `docker volume inspect -f '{{.Mountpoint}}' <volume>`).
+The api image ships no `server/scripts`, so step 2 needs a checkout of this repo with `npm ci`
+and Node 22+ on that host. Without one, copy the listed blobs (only the keys in `segments.csv`) to
+a machine that has it, run step 2 there with `--blob-dir` pointing at the copy, and apply the SQL on
+the target host: the updates are keyed by `(session_id, id)` only. The app needs no restart; an open
+session shows the waveform after a reload.
+
+### Convert WAV blobs to FLAC
+
+The media worker converts every new 16/24-bit WAV on ingest, and `enqueueMediaJobs.ts` (README
+"Media jobs") queues existing WAV rows for it, with the WAV moved to the trash instead of deleted.
+This script stays for offline conversion.
+
+Imported 16- and 24-bit PCM WAVs (the legacy data has 22 of them, 22.7 GB) take about a third of the space,
+or less, as FLAC, with exactly the same samples. The app plays, draws and transcribes FLAC like
+any segment (`audio/flac`; transcription concatenates FLAC by frame copy).
+`server/scripts/convertWavToFlac.ts` writes a FLAC next to each WAV and SQL that points the row at
+it; a separate cleanup removes the WAVs once nothing references them.
+
+- **Lossless, checked.** ffmpeg (same pinned image and `--ffmpeg` choice as the waveform backfill)
+  encodes at `-compression_level 8` with the WAV's rate, channels and bit depth. A FLAC is only
+  accepted when both files decode to the same raw PCM (MD5 and length, in the WAV's sample format)
+  and its STREAMINFO has the WAV's parameters and sample count; otherwise it is deleted and the
+  segment reported `failed`. Only integer 16/24-bit PCM is converted (probed from the header);
+  anything else is `skipped` and stays as it is. **32-bit float WAVs** (4 in the legacy data,
+  3.86 GB) are reported `skipped … float PCM: FLAC is integer-only, kept as WAV`: FLAC holds only
+  integers, so a float WAV cannot become FLAC without rounding its samples. They keep working as
+  WAV; nothing to do. The summary line gives the size of everything skipped.
+- **Nothing is lost.** The convert step never touches a WAV. The FLAC is written to
+  `BLOB_DIR/.flac-tmp`, gets the WAV's mode (and owner when run as root, so the app's uid 1000 keeps
+  its access) and is linked into place as `audio/<sid>/<stem>.flac`, never over an existing file;
+  the temp dir is removed afterwards. An existing FLAC is verified and reused, or reported and left
+  alone. Each `UPDATE` sets `r2_key` and `mime_type = 'audio/flac'` only while the row still has the
+  WAV key (one transaction, `ON_ERROR_STOP`), so a re-run or stale file changes nothing. Waveform
+  peaks stay (same PCM).
+- **Disk.** The FLACs need space while the WAVs still exist (about a third of the WAVs' size). Each
+  file is only started when the filesystem keeps `--min-free-gb` (default 2) free after reserving the
+  WAV's size; otherwise it is `failed` with the numbers. On a tight disk convert in batches with
+  `--limit N` (the first N rows), apply, clean up, export again.
+- **Report and exit.** One line per segment: `ok`/`reused` (sizes, ratio, format, duration, PCM
+  MD5), `failed`, `missing`, `invalid`, `skipped`. Exit `0` all converted, `1` otherwise (the SQL
+  still holds the converted ones), `2` usage. `--jobs N` as for the backfill (each job runs three
+  ffmpeg at a time: encode, then both decodes).
+- **Cleanup** (`--cleanup`) reads a fresh export of every referenced key
+  (`--print-referenced-query`). It lists a WAV only when its `.flac` sibling is a regular file and
+  referenced and the WAV is not referenced; symlinks are ignored. Dry run by default; `--delete`
+  re-verifies each pair and unlinks the WAV. Sync-from-disk skips a file whose segment id already
+  has a row, so a leftover WAV never becomes a second segment.
+
+**Dev (on the VM, from the repo checkout; `sudo` because the volume is root-only and so the FLACs
+get uid 1000).**
+
+```bash
+DB=autologger-dev-db-1
+BLOBS=/var/lib/docker/volumes/autologger-dev_dev-blobs/_data
+W=$(mktemp -d)
+# 1. export the WAV rows
+docker exec -i "$DB" psql -X -U postgres -c "$(npx tsx server/scripts/convertWavToFlac.ts --print-query)" > "$W/wavs.csv"
+# 2. convert and verify (pulls the pinned ffmpeg image on first use); add --limit N on a tight disk
+sudo env "PATH=$PATH" npx tsx server/scripts/convertWavToFlac.ts \
+    --blob-dir "$BLOBS" --segments "$W/wavs.csv" --out "$W/flac.sql" --jobs 4
+# 3. apply
+docker exec -i "$DB" psql -X -U postgres -v ON_ERROR_STOP=1 < "$W/flac.sql"
+# 4. check: open a converted session, play and seek; regenerate its transcript
+docker exec -i "$DB" psql -X -U postgres -Atc \
+    "select mime_type, count(*) from catalog.session_audio_segments group by 1 order by 1"
+# 5. clean up: dry run, then --delete
+docker exec -i "$DB" psql -X -U postgres -c "$(npx tsx server/scripts/convertWavToFlac.ts --print-referenced-query)" > "$W/referenced.csv"
+sudo env "PATH=$PATH" npx tsx server/scripts/convertWavToFlac.ts --cleanup --blob-dir "$BLOBS" --referenced "$W/referenced.csv"
+sudo env "PATH=$PATH" npx tsx server/scripts/convertWavToFlac.ts --cleanup --blob-dir "$BLOBS" --referenced "$W/referenced.csv" --delete
+```
+
+**Stage and prod.** The same steps with that stack's `DB` and `BLOBS` (as for the backfill), and a
+`pg_dump -Fc` (README "Backup") after step 3 and before step 5: a dump from before the conversion
+references WAVs that the cleanup deletes. Export `referenced.csv` right before the cleanup, never
+reuse an old one. The app needs no restart.
+
+### Media jobs
+
+The media worker (a fourth container, see "Topology") decodes every new segment once (exact
+`duration_ms`, waveform peaks, a verified FLAC for a 16/24-bit WAV) and merges a finished
+recording's chunks into one segment by packet copy. Work is the table `catalog.media_jobs`
+(`ingest` per segment, `merge` per recording); the worker claims jobs, writes its output under
+`BLOB_DIR/media/<job id>/` and marks the job `done`; the API applies the result every 10 s (status
+`applied`) and trashes what it replaced. A merge waits while the session's transcript generation
+or YouTube import runs. Recordings are merged after the client's finalize, or by the reconcile 30
+minutes after their last chunk (never one that failed or was cancelled in the last 24 h, never one
+whose merge failed `mixed-codecs` or `interleaved-input` while its segments are unchanged, and
+never one recorded before the media worker).
+Every blob is written before its row; at API start, an `audio/` blob older than an hour that no
+row names is moved to the trash (never deleted).
+
+- **Enqueue existing rows** (legacy imports, rows without peaks or duration, WAVs):
+  ```bash
+  npx tsx server/scripts/enqueueMediaJobs.ts > "$W/ingest.sql"          # ingest jobs
+  npx tsx server/scripts/enqueueMediaJobs.ts --merge > "$W/merge.sql"   # merge every multi-chunk recording, legacy ones included
+  docker exec -i "$DB" psql -X -U postgres -v ON_ERROR_STOP=1 < "$W/ingest.sql"
+  ```
+  Set-based SQL, no ids or keys printed; re-running adds nothing (`ON CONFLICT DO NOTHING` on the
+  one-live-job index). These jobs run in the worker's big lane, so live chunks are never delayed.
+  `--merge` is the only way a recording chunked before the media worker is merged.
+- **Watch the queue:**
+  ```bash
+  docker exec -i "$DB" psql -X -U postgres -Atc \
+    "select kind, status, count(*) from catalog.media_jobs group by 1, 2 order by 1, 2"
+  ```
+- **Failed jobs** keep `status = 'failed'` with a code in `error` (`decode-failed`, `mixed-codecs`,
+  `verify-mismatch`, `interleaved-input`, `missing-blob`, `timeout`, `low-disk`, `internal`,
+  `invalid-result`, `inputs-changed`); a failed ingest marks its segment `media_status = 'failed'`
+  (the timeline shows "Waveform unavailable"); a failed merge leaves the chunks as they were.
+  `missing-blob` on a blob written with mode 0600 before the media worker (every write path now
+  leaves 0644) means the worker cannot read it:
+  `sudo chmod -R a+rX "$BLOBS/audio"`, then re-enqueue. To retry, delete the failed row
+  (`delete from catalog.media_jobs where id = '…'`) and run the enqueue again. Terminal jobs older
+  than 7 days are deleted by the API's sweep.
+- **Trash restore:** a replaced blob sits at `BLOB_DIR/.trash/<yyyy-mm-dd>/<r2_key>` for 7 days.
+  To restore a chunk after a bad merge, move the files back to their `audio/<session>/…` path
+  (`sudo mv "$BLOBS/.trash/<day>/audio/<sid>/<file>" "$BLOBS/audio/<sid>/"`) and run
+  `POST /api/sessions/<sid>/audio/segments/sync-from-disk` before the API next restarts (a
+  restored file keeps its old mtime, so the start-up orphan sweep would trash it again while no row
+  names it); delete the merged row first if you want the chunks back as separate segments. The chunks of a merged recording are held twice for a week
+  (prod has 80 GB).
+- **Low-disk mode:** when the blob volume has less than 10 GiB free, the 10-minute sweep purges the
+  trash oldest-first until it has (the grace period shortens, live audio is never touched), uploads
+  answer `507`, and the worker claims no merge and no job needing twice its input size. The API
+  logs one line entering and one leaving the mode.
+- **Uploads** (`…/audio/uploads`, large imports in 32 MiB parts) stage under
+  `BLOB_DIR/.tmp/upload-<id>`, at most 2 open and 3 GiB per user; they expire 24 h after their
+  last part and the sweep removes them.
+
 ### Backup
 
-This section describes prod, which runs `main` (catalog and session content in SQLite files)
-until the Supabase cutover (ADR 0021 slice 11).
+**Postgres (stage and prod).** The catalog and session content live in Postgres; spark-infra
+backs it up, not this repository:
+- a nightly `pg_dumpall` of stage and prod, pulled to Spark (`~/backups/<host>/`, prod:
+  `~/backups/prod-linode/`) by `spark-stage-db-backup.timer` (role `stage_db_backup`, 14 kept);
+- a dump right before each prod `make prod-up` in the spark-infra deploy.
+
+Restoring a dump loses every write made since; it is the owner's step. The blob and data volumes
+are being added to that backup; until then back up the audio with `BLOBSYNC` as below.
+
+**SQLite files (legacy `DATA_DIR`).** The pre-Postgres `catalog.db` and `sessions/*.db` are no
+longer written; the copier below makes the WAL-safe copy the legacy import reads
+([Importing legacy data](#importing-legacy-data-adr-0021-slice-11)), and the `BLOBSYNC` line
+backs up the audio.
 
 Use the WAL-safe copier from a repo checkout on the host (it needs `tsx` and `better-sqlite3`,
 which the checkout has; it is not in the image). It opens every `*.db` read-only, copies a
@@ -1415,11 +1886,19 @@ and a per-table row-count comparison on the copy, and swaps it in atomically.
 
 ```bash
 VOL=$(docker volume inspect -f '{{.Mountpoint}}' autologger_autologger-data)   # root-only path
+BVOL=$(docker volume inspect -f '{{.Mountpoint}}' autologger_autologger-blobs) # root-only path
 BK=/backups/autologger-$(date +%F)
 # $VOL is unreadable to your user, so the copier runs as root; root's PATH usually lacks node
 sudo env "PATH=$PATH" npx tsx server/scripts/copyDataDir.ts "$VOL" "$BK" [--overwrite] [--dry-run]
-sudo bash -c "$BLOBSYNC" _ "$VOL/blobs" "$BK/blobs"    # blobs are plain files; guarded (above)
+sudo bash -c "$BLOBSYNC" _ "$BVOL" "$BK/blobs"    # blobs are plain files; guarded (above)
 ```
+
+The audio is in the blob volume (`$BVOL`), not in `$VOL`: the copier prints that it does not copy
+it. (`$BVOL/.tmp/` holds only in-flight puts.) A deployment that still runs a build from before
+`BLOB_DIR` keeps its audio in `$VOL/blobs`; back that up instead until its audio is moved (see
+"Moving audio into BLOB_DIR"). To restore the audio, with `api` stopped:
+`sudo bash -c "$BLOBSYNC" _ "$BK/blobs" "$BVOL" 1000:1000` (a mirror: it deletes audio written
+after the backup).
 
 Run it from the repo checkout (`sudo` there needs the checkout's `node_modules` readable, which
 it is). The backup does **not** need `api` stopped: the source is opened read-only through the
@@ -1442,26 +1921,28 @@ credentials matter.
 
 The goal is to seed the volume while the old server keeps running and do only the final
 database copy and a blob delta inside the maintenance window. Below, `OLD` is the old host and
-`OLD_DATA` its `DATA_DIR`; `VOL` is the `autologger_autologger-data` mountpoint (as above).
+`OLD_DATA` its `DATA_DIR`; `VOL` is the `autologger_autologger-data` mountpoint and `BVOL` the
+`autologger_autologger-blobs` mountpoint (as above). The audio goes into `$BVOL`, never into
+`$VOL/blobs`.
 
 **Preconditions.** The OAuth client exists and is verified (see above); `.env` is filled in
-(Google credentials, `ADMIN_TOKEN`, `DEEPGRAM_API_KEY`; no `API_TOKEN`, ignored since 9d; no
+(Google credentials, `ADMIN_TOKEN`, `PROVIDER_KEYS_SECRET`; no `API_TOKEN`, ignored since 9d; no
 `AI_V2_API_KEY`); the images are pushed with pinned tags; this host has run `docker login
 ghcr.io` with a `read:packages` PAT; `docker compose up --no-start` has created the volumes.
 
 **1. Pre-seed (no downtime; api stopped on this host, old server still running elsewhere).**
 Take a WAL-safe copy of a point-in-time `DATA_DIR` snapshot into a staging directory and load it
-into the volume, blobs included, home directory included:
+into the volume, the blobs into the blob volume, home directory included:
 
 ```bash
-npx tsx server/scripts/copyDataDir.ts /path/to/snapshot/data /srv/stage      # DBs only; prints the blobs rsync
+npx tsx server/scripts/copyDataDir.ts /path/to/snapshot/data /srv/stage      # DBs only; never copies audio
 #   (re-running into a populated /srv/stage needs --overwrite; the api must be stopped)
 sudo rsync -a --chown=1000:1000 --exclude /blobs /srv/stage/ "$VOL/"
 # Blobs: as YOUR user (ssh agent intact) into a persistent user-owned mirror, then root copies
 # locally. Keep the mirror: the cutover delta (step 3d) reuses it, so it stays small.
 BMIRROR=$HOME/autologger-blob-mirror; mkdir -p "$BMIRROR"
 rsync -a --delete OLDHOST:/path/to/DATA_DIR/blobs/ "$BMIRROR"/     # or a local snapshot's blobs/
-sudo bash -c "$BLOBSYNC" _ "$BMIRROR" "$VOL/blobs" 1000:1000
+sudo bash -c "$BLOBSYNC" _ "$BMIRROR" "$BVOL" 1000:1000
 # ~/.claude and ~/.claude.json -> the home volume, then create/merge settings.json (see Volumes)
 HOMEVOL=$(docker volume inspect -f '{{.Mountpoint}}' autologger_autologger-home)
 sudo rsync -a --chown=1000:1000 ~/.claude ~/.claude.json "$HOMEVOL/"
@@ -1483,6 +1964,7 @@ leaves `-wal`/`-shm` files that must not sit next to a replaced `.db`.
 # a. stop the old server on OLD; api here is already stopped (docker compose stop api)
 : "${BLOBSYNC:?define BLOBSYNC first (Blob sync guard section)}" &&
 BMIRROR=${BMIRROR:-$HOME/autologger-blob-mirror} &&
+: "${BVOL:?set BVOL to the autologger_autologger-blobs mountpoint first}" &&
 # b. on OLD, from its checkout, WAL-safe copy of every DB into a FRESH staging directory
 STAGE=$(ssh OLDHOST 'mktemp -d') &&       # fresh and empty: never reuse a previous stage
 ssh OLDHOST "cd /path/to/autologger && npx tsx server/scripts/copyDataDir.ts /path/to/DATA_DIR $STAGE" &&
@@ -1513,7 +1995,7 @@ sudo find "$VOL" -path "$VOL/blobs" -prune -o -exec chown -h 1000:1000 {} + &&
 #    against an empty/missing source (see Blob sync guard).
 mkdir -p "$BMIRROR" &&
 rsync -a --delete OLDHOST:/path/to/DATA_DIR/blobs/ "$BMIRROR"/ &&
-sudo bash -c "$BLOBSYNC" _ "$BMIRROR" "$VOL/blobs" 1000:1000 &&
+sudo bash -c "$BLOBSYNC" _ "$BMIRROR" "$BVOL" 1000:1000 &&
 # e. integrity: the copier already ran integrity_check + per-table row counts (copy vs source)
 #    before exiting 0. Re-check the shipped files, entirely as root (needs the sqlite3 CLI);
 #    prints "<result>  <file>" per DB and exits non-zero if any is not "ok":
@@ -1543,7 +2025,10 @@ Notes on step 3c:
   dropped by default; either `sudo -E` (or `sudo env SSH_AUTH_SOCK="$SSH_AUTH_SOCK" …`), or, as
   above, rsync as your own user into a user-owned directory and let root copy locally. The blob
   delta in step 3d does exactly that: `rsync` from `OLDHOST` as your user into `$BMIRROR`, then
-  a local guarded `sudo` copy into `$VOL/blobs`. Never put `sudo` in front of an `OLDHOST:` rsync.
+  a local guarded `sudo` copy into the blob volume, `$BVOL`. Never put `sudo` in front of an
+  `OLDHOST:` rsync. The mirror into `$BVOL` runs before `api` first starts, so nothing new is in
+  the blob volume yet; once `api` has run, only the additive copy in "Moving audio into BLOB_DIR"
+  is safe.
 
 Downtime ends after (i). **Verify from outside:** the OAuth round trip; Companion `state`,
 `log`, `command`; traversal through a bypass path (`/api/companion/%2e%2e/sessions/x`) returns
@@ -1551,6 +2036,32 @@ Downtime ends after (i). **Verify from outside:** the OAuth round trip; Companio
 connects; a forged `X-Forwarded-For` is not adopted; and a **Google sign-in through the public
 origin** (the first place the callback and the `Secure` session cookie can be proven). Users
 who have not signed in yet are `PENDING`; re-run the membership bootstrap after they do.
+
+### Importing legacy data (ADR 0021 slice 11)
+
+The pre-Supabase SQLite files (`catalog.db`, `sessions/<id>.db`) are not read by the server. One
+team at a time moves into Postgres with `server/scripts/importLegacy.ts`. It runs on the host
+(the `api` image ships no `server/scripts`), reads the files read-only, and emits:
+- one SQL transaction for `psql` as `postgres`, fed non-interactively, never pasted
+  (`docker exec -i <stack>-db-1 psql -X -U postgres < import.sql`);
+- a parity check that compares every table's row count and content hash, and changes nothing;
+- the list of audio files the team references (with sizes, and optionally sha256), for an
+  additive `rsync --files-from` into the blob volume.
+
+```bash
+npx tsx server/scripts/importLegacy.ts <DATA_DIR> --studio <team id> --out import.sql \
+  --parity parity.sql --manifest manifest.txt --blob-sizes sizes.txt [--sha256 sha256.txt] \
+  [--replace | --replace-live] [--allow-signed-in-users]
+```
+
+It imports the team, its shows, its `studio_config` and every session with all its rows. It
+never imports users, memberships, prefs, invites or KV: the bootstrap owner claims the imported
+team at sign-in. It refuses a source whose `_migrations` isn't exactly `0001`-`0006`, and, at
+apply time, a team, show or session id that already exists, unless `--replace` is passed
+(which still refuses a team with live data: app-created sessions, memberships, grants, leases,
+…; `--replace-live` deletes those too).
+[docs/legacy-import.md](docs/legacy-import.md) is the rehearse, parity, cutover and rollback
+runbook.
 
 ### Membership bootstrap (re-runnable)
 
@@ -1612,22 +2123,153 @@ setup is still the membership bootstrap script above.
 
 ### Update order and rollback
 
-- **Update order: `api` first, then `web`.** Set the new `API_TAG` in OpenBao `prod`, then
-  `make prod-pull prod-up`, wait for `healthy`; then the same for `WEB_TAG`/`web`. The HTTP/WS contract is frozen, so a new `api` under an old `web` is
-  safe. Volumes carry state across recreation.
+- **First deploy of the Postgres-era release:** follow
+  [Upgrading prod in place](#upgrading-prod-in-place-first-deploy-of-the-postgres-era-release)
+  (secrets, pre-deploy dump, audio move, smoke test, rollback).
+- **Update order.** A release sets `WEB_TAG`, `API_TAG` and `MEDIA_TAG` in OpenBao `prod` to the
+  same tag, the deploy commit (spark-infra asserts it), then `make prod-pull prod-up` and waits
+  for `healthy`. `prod-up` recreates the changed services in one step. The HTTP/WS contract is
+  frozen, so a new `api` briefly under an old `web` is safe. Volumes carry state across
+  recreation.
 - **`make prod-up` migrates first.** It applies every migration in the `main` checkout that the
   prod database hasn't recorded (`supabase/migrations/`, through `docker/supabase/migrate.sh`),
   then starts the project; a failed migration stops it before `up`. The migrations come from the
   checkout, not from the image tag, so check out the commit you pinned (the deploy host's Ansible
   checks that the checkout is the pinned commit). Migrations must leave the previous `api`
   working.
-- **Rollback is forward-only for data.** Re-pinning an older tag is safe only if no database
-  migration ran in between (migrations are forward-only);
-  otherwise restore a backup. `prod-up` takes no backup before it migrates: the newest one is the
-  deploy host's nightly Postgres dump, so restoring it loses the writes made since. Take a dump
-  by hand before a deploy whose migrations you may need to undo. Repointing Pangolin at the *old host*
-  drops every write made since cutover (they exist only in the volume) — take a final backup
+- **Rollback is forward-only for data.** Migrations are never undone. Re-pinning an older
+  release (its tags and its KV version) is safe when the migrations since leave its `api` working,
+  as the rule above requires (the Postgres-era release's do); otherwise restore a backup. `prod-up` itself takes no backup before it migrates; the
+  spark-infra deploy dumps the database right before it, and Spark keeps a nightly
+  `pg_dumpall` (see [Backup](#backup)). Restoring either loses the writes made since.
+  Repointing Pangolin at the *old host* drops every write made since cutover (they exist only in the volume) — take a final backup
   first if you might want them.
+- **Rolling back past `BLOB_DIR`.** Audio written since the deploy exists only in the blob
+  volume, and a build from before `BLOB_DIR` reads `DATA_DIR/blobs`. In this order:
+  1. Stop `api` (dev: the app), so nothing writes during the copy.
+  2. Copy the blob volume back, additively and owned by the server user:
+     - stage and prod: `sudo mkdir -p "$VOL/blobs" && sudo rsync -a --chown=1000:1000 --exclude /.tmp/ "$BVOL/" "$VOL/blobs/"`;
+     - dev: the app is stopped, so run the copy in a one-off container of the dev image that
+       mounts both volumes:
+       `docker run --rm -u node -v autologger-dev_dev-data:/data -v autologger-dev_dev-blobs:/blobs --entrypoint sh autologger-dev:local -c 'mkdir -p /data/blobs && cp -a /blobs/audio /data/blobs/'`.
+
+     Check that the file count and the total bytes match (`find … -type f | wc -l`, `du -sb`); on
+     dev, run both in the same kind of one-off container, e.g.
+     `docker run --rm -u node -v autologger-dev_dev-data:/data -v autologger-dev_dev-blobs:/blobs --entrypoint sh autologger-dev:local -c 'for d in /blobs/audio /data/blobs/audio; do find "$d" -type f | wc -l; du -sb "$d"; done'`.
+  3. Revert the code, then start.
+  4. Keep the blob volume until playback of new and old segments is confirmed. Removing it is the
+     owner's step.
+
+### Upgrading prod in place (first deploy of the Postgres-era release)
+
+The first deploy of `supabase-migration` (PR #130) onto the running prod (`prod-linode`,
+compose project `autologger`, db container `autologger-db-1`), which today runs `main` with
+#98 and prod-migrate (#100). spark-infra deploys it (`playbooks/autologger.yml --limit
+prod-linode`, deploy mode `prod`); the steps marked **owner** are by hand. Later deploys need
+only "Before" (tags) and "Deploy".
+
+**Before (owner)**, in this order:
+
+1. Merge PR #130 into `main`.
+2. Build and push from a clean `main` clone: spark-infra `playbooks/autologger-images.yml`
+   (`make prod-push`); note the 12-character tag it prints.
+3. Check the new GHCR package `autologger-media-worker` is pullable from prod: it must be linked
+   to the repository (or granted to the deploy PAT) like `autologger-web` and `autologger-api`.
+   `make prod-pull` uses only `~/.docker/config.json` of the deploy user, so a package the PAT
+   can't read fails the pull. On `prod-linode`:
+   `docker manifest inspect ghcr.io/kwcantrell/autologger-media-worker:<tag> >/dev/null && echo ok`.
+4. Record the rollback point: `bao kv metadata get kv/autologger/prod` and note
+   `current_version` (`N` below). Every write below creates a newer version.
+5. `node docker/scripts/supabase-keys.mjs prod --writer ~/.vault-token`: creates the missing
+   `MEDIA_DB_PASSWORD` and prints `kept` for the rest ([docs/openbao-secrets.md](docs/openbao-secrets.md)).
+6. `bao kv patch kv/autologger/prod PROVIDER_KEYS_SECRET="$(openssl rand -base64 32)" WEB_TAG=<tag> API_TAG=<tag> MEDIA_TAG=<tag>`.
+   `PROVIDER_KEYS_SECRET` encrypts users' provider keys: create it once and never rotate it
+   casually (a different value refuses boot; a lost one makes every stored key unreadable).
+7. Leave `SIGNUPS` unset (= `closed` on prod) unless you want open sign-ups.
+8. Keep `ROUTER_PORT=8080` and `PUBLIC_BASE_URL`. Keep the retired keys `ANON_KEY`,
+   `SERVICE_ROLE_KEY`, `SECRET_KEY_BASE`, `REALTIME_DB_ENC_KEY` and `SUPABASE_PORT` until the
+   release is accepted: the new code ignores them (one warning), the old code needs them for a
+   rollback.
+
+**Deploy (automated, spark-infra):**
+
+1. Read-only pre-checks: `MEDIA_DB_PASSWORD` and `PROVIDER_KEYS_SECRET` present, the three tags
+   equal to the pushed tag.
+2. A clean `main` checkout on the host, `make prod-check`, `make prod-pull`.
+3. A database dump, right before `prod-up` (the rollback point for the schema).
+4. `make prod-up`: `compose run --rm migrate` applies every migration through
+   `20261024000000`, then `compose up -d --remove-orphans` starts `media-worker` and removes the
+   `rest`, `realtime`, `storage` and `supabase-gw` containers. Their volume
+   (`autologger_supabase-storage`) and the `autologger_supabase` / `autologger_edge` networks stay as
+   leftovers.
+
+**Audio move (owner, right after `prod-up`).** The new code reads audio only from `BLOB_DIR`
+(`/blobs`, volume `autologger_autologger-blobs`); prod's audio is still in
+`autologger_autologger-data` under `blobs/` (91 MB, 4 files, measured 2026-10-15), so old segments
+answer `404` until moved. Both volumes are on one filesystem: while the target has no `audio/`
+yet (the first upgrade), a `mv` is a rename, instant and needs no space. The prod wrapper refuses
+any compose step other than the Makefile's, so stop and start the container with plain `docker`.
+
+```bash
+VOL=$(docker volume inspect -f '{{.Mountpoint}}' autologger_autologger-data)     # root-only path
+BVOL=$(docker volume inspect -f '{{.Mountpoint}}' autologger_autologger-blobs)   # root-only path
+docker stop autologger-api                       # nothing may write during the move
+sudo sh -c 'find "$1/blobs/audio" -type f | wc -l; du -sb "$1/blobs/audio"' _ "$VOL"   # note both
+sudo test -e "$BVOL/audio" && echo 'audio/ exists: use the fallback below' \
+  || { sudo mv "$VOL/blobs/audio" "$BVOL/" && sudo chown -R 1000:1000 "$BVOL/audio" && sudo chmod -R a+rX "$BVOL/audio"; }
+sudo sh -c 'find "$1/audio" -type f | wc -l; du -sb "$1/audio"' _ "$BVOL"              # must match
+docker start autologger-api
+```
+
+Then play an old segment (seek too). **Fallback** when `$BVOL/audio` already exists (an upload
+landed before the stop, or a re-run): an additive copy, never `--delete`, after a free-space
+check that requires the size plus 10 GiB (the media worker's low-disk floor):
+
+```bash
+need=$(( $(sudo du -sb "$VOL/blobs/audio" | cut -f1) + 10*1024*1024*1024 ))
+avail=$(sudo df --output=avail -B1 "$BVOL" | tail -1)
+if [ "$avail" -ge "$need" ]; then
+  sudo rsync -a --chown=1000:1000 "$VOL/blobs/audio/" "$BVOL/audio/" && sudo chmod -R a+rX "$BVOL/audio"
+else echo "need $need bytes free, have $avail - free space first"; fi
+```
+
+Check counts and bytes as above, then start `api`. Remove `$VOL/blobs` only once old and new
+segments play ("Moving audio into BLOB_DIR").
+
+**Smoke test (owner):**
+
+- Sign in. Existing accounts and the bootstrap owner are unaffected; a new person needs
+  `catalog.approve_account` first ([Closed sign-ups](#closed-sign-ups)).
+- Upload a short recording; it plays and gets a waveform.
+- `docker ps --filter name=autologger-media-worker --format '{{.Names}} {{.Status}}'` shows
+  `(healthy)`; `sudo stat -c '%a %u' "$BVOL/media"` prints `1777 1000`.
+
+**Behaviour changes to expect** (not regressions):
+
+- AI chat, topic, event and wiki generation answer `503` until the operator is in
+  `CLAUDE_CLI_EMAILS` and picks "Claude CLI (operator)" in Settings → Advanced, or a user saves
+  their own provider key.
+- Transcription answers `503` until each user saves their own Deepgram key: prod ignores the
+  operator's `DEEPGRAM_API_KEY`.
+- A team invite alone no longer lets a new email sign up while sign-ups are closed.
+
+**Rollback (owner):**
+
+1. Restore the KV version recorded in "Before" step 4: `bao kv rollback -version=N
+   kv/autologger/prod` (or `bao kv get -version=N` and `put` its data). That brings back the
+   old `WEB_TAG`/`API_TAG` too; re-pinning the tags alone is not enough, because the old code
+   refuses the new keys (`MEDIA_DB_PASSWORD`, `PROVIDER_KEYS_SECRET`, `MEDIA_TAG`, `SIGNUPS`).
+2. Move the audio back if the old code must play it: "Rolling back past `BLOB_DIR`" in
+   [Update order and rollback](#update-order-and-rollback) (copy, `api` stopped).
+3. Redeploy the previous `main` commit and its images.
+4. Schema: the migrations are additive and the old code works with them, so leave them. Restore
+   the pre-deploy dump only if the schema itself must go back; it loses every write since.
+
+**Later cleanup (owner, once the release is accepted):** remove the retired keys
+([docs/openbao-secrets.md](docs/openbao-secrets.md), "Retired keys", then rotate `JWT_SECRET`),
+the `autologger_supabase-storage` volume and the `autologger_supabase` / `autologger_edge`
+networks ([Removing the old Supabase services' leftovers](#removing-the-old-supabase-services-leftovers)),
+and `$VOL/blobs` once old audio plays.
 
 ### Verifying the container topology
 
@@ -1660,20 +2302,20 @@ existing configuration.
 | `make check` | Static invariant check of dev, stage and prod compose (reads no real env files) |
 | `make dev-check` | Dev invariants plus the credentials-inode drift warning |
 | `make dev-build` | Rebuild the dev image (needed after dependency, lockfile or config changes) |
-| `make dev-up` | Check, then build and start the whole dev project (app, gate, Companion, Supabase), apply migrations, print the URLs |
+| `make dev-up` | Check, then build and start the whole dev project (app, gates, Companion, Postgres, GoTrue), apply migrations, print the URLs; removes containers of services the files no longer define |
 | `make dev-migrate` / `make dev-psql` | Apply `supabase/migrations` to dev Postgres / psql in it ([docs/supabase.md](docs/supabase.md)) |
 | `make dev-down` | Stop and remove dev containers (volumes kept) |
 | `make dev-restart` | Restart dev: `app` then `app-gate`, `companion` then `companion-gate` |
 | `make dev-logs` / `make dev-shell` | Follow dev logs / shell in the dev app container |
-| `make dev-reset CONFIRM=yes` | **Destroy** the dev volumes, including Postgres and Supabase storage ([docs/supabase.md](docs/supabase.md) has the Postgres-only re-init) |
+| `make dev-reset CONFIRM=yes` | **Destroy** the dev volumes, including Postgres and the audio blob volume ([docs/supabase.md](docs/supabase.md) has the Postgres-only re-init; a leftover `supabase-storage` volume stays, see [the leftovers note](#removing-the-old-supabase-services-leftovers)) |
 | `make stage-build` | Build the stage images (native arch, tagged `:local`) |
 | `make stage-push STAGE_IMAGE_TAG=<sha>` | Clean tree whose HEAD is `<sha>` (any branch): bake `STAGE_PLATFORMS` (default `linux/amd64`) and push `ghcr.io/kwcantrell/autologger-{web,api}:<sha>` |
-| `make stage-up` | Check, then build and start the whole stage stack (incl. Supabase), apply migrations, print the URLs. With `STAGE_IMAGE_TAG=<sha> STAGE_PUBLIC_BASE_URL=https://<host>` (a tag requires the URL, and the tree must be that commit) it pulls those images instead of building and serves that public origin (see [Public stage](#public-stage-https-edge)) |
+| `make stage-up` | Check, then build and start the whole stage stack (incl. Postgres and GoTrue), apply migrations, print the URLs, and remove containers of services the files no longer define. With `STAGE_IMAGE_TAG=<sha> STAGE_PUBLIC_BASE_URL=https://<host>` (a tag requires the URL, and the tree must be that commit) it pulls those images instead of building and serves that public origin (see [Public stage](#public-stage-https-edge)) |
 | `make stage-down` / `make stage-logs` | Stop and remove stage containers (volumes kept) / follow logs |
 | `make stage-claude-login` | Interactive Claude login inside the stage api container |
-| `make stage-reset CONFIRM=yes` | **Destroy** the stage volumes, including Postgres and Supabase storage |
-| `make prod-build` | Native-arch build of both images, tagged `:local` only (no SHA tag, no push) |
-| `make prod-push` | Clean `main` only: multi-arch bake and push, tagged with the 12-char HEAD SHA |
+| `make stage-reset CONFIRM=yes` | **Destroy** the stage volumes, including Postgres and the audio blob volume (a leftover `supabase-storage` volume stays, see [the leftovers note](#removing-the-old-supabase-services-leftovers)) |
+| `make prod-build` | Native-arch build of the three images (`web`, `api`, `media-worker`), tagged `:local` only (no SHA tag, no push) |
+| `make prod-push` | Clean `main` only: multi-arch bake and push of the three images (`web`, `api`, `media-worker`), tagged with the 12-char HEAD SHA |
 | `make prod-check` | Any branch: OpenBao `prod` login, guards and compose config; starts nothing |
 | `make prod-pull` / `make prod-up` | Clean `main` only: pull / apply the checkout's migrations (`compose run --rm migrate`), then start prod with the tags pinned in OpenBao `prod` |
 | `make prod-down` / `make prod-logs` | Stop and remove prod containers (volumes kept) / follow logs |
@@ -1692,7 +2334,10 @@ existing configuration.
 | AI v2 | works on the login, no key | needs `AI_V2_API_KEY` | needs `AI_V2_API_KEY` |
 | Companion | yes (dev only) | no (test the scoped token with `curl`) | your own install |
 | Source | read-only bind mounts (hot reload) | baked into images | baked into images |
+| Media worker | `autologger-dev-media-worker:local`, built locally (no source binds: `make dev-build` after a worker change), on the `dev-blobs` volume | `autologger-stage-media-worker:local`, or `ghcr.io/kwcantrell/autologger-media-worker:<STAGE_IMAGE_TAG>` (pulled with `web` and `api`) | `ghcr.io/kwcantrell/autologger-media-worker:<MEDIA_TAG>` |
+| Worker password | `MEDIA_DB_PASSWORD` in OpenBao `dev` (worker and `migrate` only) | in OpenBao `stage` | in OpenBao `prod` |
 | Subnets | 172.28.30.0/24 | 172.28.20.0/24, 172.28.21.0/24 | 172.28.10.0/24, 172.28.11.0/24 |
+| `media` network (db + media-worker, internal) | 172.28.37.0/24 | 172.28.29.0/24 | 172.28.18.0/24 |
 | Cookies | n/a | `COOKIE_SECURE=0` (`1` with an https `STAGE_PUBLIC_BASE_URL`), `SESSION_COOKIE=autologger_stage_sid` | secure |
 
 Docker's default address pools include `172.28.0.0/16`; the subnets above are pinned, so
@@ -1747,7 +2392,9 @@ server change.
   `make dev-reset CONFIRM=yes`.
 - **`server/data` stays out of the stacks**: it is a disposable copy of a backup kept elsewhere,
   not live data. It is never mounted, and never used as `DATA_DIR`. Dev data lives in the
-  `dev-data` volume (`/data`).
+  `dev-data` volume (`/data`), and dev audio in the `dev-blobs` volume (`/blobs`, `BLOB_DIR`).
+  Audio from before `BLOB_DIR` stays in `/data/blobs` until it is moved (see "Moving audio into
+  BLOB_DIR").
 - The gate shares the app's namespace, so a bare `docker restart` of `app` kills the gate. Use
   **`make dev-restart`** (app then gate, Companion then its gate). Dev and stage `up`/`restart`
   are whole-project only; do not `up -d --build companion` alone (its gate would sit on a stale
@@ -1818,7 +2465,8 @@ never production's) and register the redirect URI
 (and the server refuses to boot). The dev Companion uses a device token from Settings (see "Dev
 Companion"); `API_TOKEN` is ignored since 9d.
 
-Other integrations are off unless set in OpenBao `dev`: `DEEPGRAM_API_KEY` (transcripts; sends audio
+Other integrations are off unless set in OpenBao `dev`: `DEEPGRAM_API_KEY` (the development-mode
+fallback for transcripts when a user has no key of their own in Settings → Advanced; sends audio
 to DeepGram), `SHEETS_LOG_IMPORT_ENABLED=1`, `AI_V2_ENABLED=1`. YouTube import works from the
 `yt-dlp` baked into the dev image.
 
@@ -1922,10 +2570,48 @@ The variables are passed to `compose-run.mjs` by name; every `$(RUN)` target (`s
   `COOKIE_SECURE=0` through the edge (the `~/spark-infra` pinned deploy refuses such a tree and checks
   the running containers afterwards). Migrations are forward-only: the previous app then runs on the
   newer schema. If that is not safe, stop the tunnel first.
-- The Supabase gateway, GoTrue (`API_EXTERNAL_URL`, `GOTRUE_SITE_URL`, `GOTRUE_JWT_ISSUER`) and
-  storage (`STORAGE_PUBLIC_URL`) URLs stay `http://localhost:${SUPABASE_PORT}`: no browser code
-  calls them (the web bundle reads no Supabase URL, and the server exchanges the Google ID token
-  with GoTrue over the internal network at `http://auth:9999`), so no public Supabase hostname is needed.
+- GoTrue's URLs (`API_EXTERNAL_URL`, `GOTRUE_SITE_URL`, `GOTRUE_JWT_ISSUER`) are its internal
+  address, `http://auth:9999`, on every stack: no browser code calls GoTrue (the web bundle reads
+  no Supabase URL, and the server exchanges the Google ID token with GoTrue over the internal
+  network), so no public Supabase hostname is needed. No Supabase service publishes a port.
+
+### Removing the old Supabase services' leftovers
+
+PostgREST, Realtime, Storage and their gateway were removed (`drop-unused-supabase-services`).
+Every `make <env>-up`, `-down` and `-reset` passes `--remove-orphans`, so their containers go on
+the next run; removing a container deletes no volume. A dev or stage stack that ran them keeps
+three leftovers, which nothing uses (prod ran them too; its first Postgres-era deploy removes the
+containers, see [Upgrading prod in place](#upgrading-prod-in-place-first-deploy-of-the-postgres-era-release)):
+- the `<project>_supabase-storage` volume, which `make <env>-reset` no longer deletes;
+- the `<project>_supabase` and `<project>_edge` networks;
+- in Postgres, the `_realtime` schema and storage-api's tables in the `storage` schema (the image
+  creates the `storage` and `realtime` schemas themselves; keep those).
+
+**Don't remove them while any checkout still runs the old stack.** `~/autologger-ui` shares
+`kv/autologger/dev` and its branch still starts the old services, which reuse the volume, the
+schema and the tables, and its next `make dev-up` brings the four containers back. Once no
+checkout runs them, for `<project>` `autologger-dev` or `autologger-stage` (or `autologger`, prod, once
+the release is accepted):
+
+```sh
+docker volume rm <project>_supabase-storage
+docker network rm <project>_supabase <project>_edge
+```
+
+Optionally, in Postgres (`make dev-psql`, then `\c postgres supabase_admin`; stage:
+`docker exec -it autologger-stage-db-1 psql -U supabase_admin`; prod: `autologger-db-1`):
+
+```sql
+DROP SCHEMA _realtime CASCADE;
+-- storage-api's tables: list them with \dt storage.* and drop each, e.g.
+-- DROP TABLE storage.<table> CASCADE;
+ALTER ROLE authenticator PASSWORD NULL;
+ALTER ROLE supabase_storage_admin PASSWORD NULL;
+```
+
+The last two clear the password the removed services used; on a database created after the
+removal those roles already have none. Then remove the retired keys from OpenBao
+([docs/openbao-secrets.md](docs/openbao-secrets.md), "Retired keys").
 
 ### Resets, checks and prod guards
 
@@ -1945,8 +2631,8 @@ The variables are passed to `compose-run.mjs` by name; every `$(RUN)` target (`s
   also needs a buildx builder (`BUILDER`, default `autologger-multi`) that lists both
   `linux/amd64` and `linux/arm64` (a one-time privileged binfmt setup; the target prints the
   commands) and tags the **local** `main` HEAD, so push `main` first. `make prod-build` only
-  tags `:local`, so it never overwrites a pulled release. `prod-up` also needs `WEB_TAG` and
-  `API_TAG` pinned in OpenBao `prod`.
+  tags `:local`, so it never overwrites a pulled release. `prod-up` also needs `WEB_TAG`,
+  `API_TAG` and `MEDIA_TAG` pinned in OpenBao `prod`.
 - **`make stage-push`** needs a clean tree whose HEAD is `STAGE_IMAGE_TAG` (any branch) and the
   same builder; it pushes only `STAGE_PLATFORMS` (default `linux/amd64`), tagged with the full
   40-char SHA so it never collides with prod's 12-char multi-arch tags in the shared GHCR repositories.
@@ -2033,7 +2719,7 @@ the app's root layout (`web/src/app/(index)/layout.page.tsx`). No CSS Modules, n
 - **`components`** — chrome families ported as named `@utility` / `@layer components`
   rules (`.btn`, `.field`, `.glass-panel`, …), multi-consumer classes, exotic-selector
   rules Tailwind can't express inline (`::-webkit-scrollbar`, keyframes), and
-  `perfDebug`'s cross-component `body.perf-dbg--*` escape hatches.
+  cross-component escape hatches such as the hide-internal marker rule.
 - **`utilities`** — Tailwind's generated utility set, used inline in JSX composed with
   `clsx` at the existing call sites (exclusive branches per state, not toggled overrides).
 
@@ -2112,8 +2798,7 @@ the upstream proxy (a follow-up).
 The Playwright suites (smoke, visual regression, login gate, Companion headless, container
 routing) were retired during the Supabase migration (ADR 0021 slice 1.4a); they remain in git
 history and return rebuilt against the Supabase stack. Until then, `npm test` (unit and
-integration), `docker/scripts/test_router.sh stage` and `docker/supabase/test_gateway.sh` are the
-regression checks.
+integration) and `docker/scripts/test_router.sh stage` are the regression checks.
 
 ## Companion module (`companion/`)
 
