@@ -58,7 +58,8 @@ The Makefile SHALL also provide:
 - `check`, which runs the static invariant check;
 - `dev-up` and `stage-up`, which run their environment's check first and refuse to start if
   it fails, run the migrations runner once `db` is healthy and before starting the app, and
-  print the app URLs;
+  print the app URLs (`prod-up` also runs the migrations runner; see "Prod targets are explicit
+  and bound to committed content");
 - `dev-migrate`, which runs only the migrations runner against dev;
 - `dev-psql`, which opens `psql` inside the dev `db` container without keeping a history file.
 
@@ -68,9 +69,14 @@ and every `compose down` step (`dev-down`, `dev-reset`, `stage-down`, `stage-res
 no longer define is removed on the next `up` or `down`, and a reset never leaves one running
 against the fresh database. Removing such a container SHALL delete none of its volumes.
 
-The compose wrapper SHALL refuse a `compose run` or `compose exec` step for prod, so neither a
-target nor a hand-written wrapper call can run the migrations runner or a shell against the prod
-`db`.
+For prod, the compose wrapper SHALL run only compose steps whose words are exactly one of
+`config --quiet`, `pull`, `run --rm migrate`, `up -d --remove-orphans`, `down --remove-orphans`
+and `logs -f --tail=200`, and SHALL refuse any other prod compose step before any request. It
+SHALL refuse the `run --rm migrate` step unless the plan has the `prod-tags` and `resolved` steps
+before it, and SHALL refuse to run it unless, checked immediately before the step, the working
+tree is clean and on branch `main`. So no target and no hand-written wrapper call can open a shell
+against the prod `db`, pass extra compose files or flags, or run the migrations runner from
+uncommitted files or without the prod guards.
 
 A target that removes volumes (`dev-reset`, `stage-reset`) SHALL:
 1. refuse unless `CONFIRM=yes` is given;
@@ -103,9 +109,22 @@ No target SHALL remove a prod volume or run `docker volume prune` or
   every migration again
 
 #### Scenario: The wrapper refuses run and exec against prod
-- **WHEN** the compose wrapper is called for prod with a `compose run --rm migrate` or
-  `compose exec db psql` step
-- **THEN** it exits non-zero before running docker, and names the refused subcommand
+- **WHEN** the compose wrapper is called for prod with a `compose exec db psql`,
+  `compose run migrate`, `compose run --rm migrate sh`, `compose run --rm db`,
+  `compose --profile tools run migrate`, `compose -f other.yaml up -d` or a plain `compose up -d`
+  step, or with `compose run --rm migrate` not preceded by `prod-tags` and `resolved`
+- **THEN** it exits non-zero before any OpenBao request and before running docker, and names
+  the refused step
+
+#### Scenario: The wrapper lets prod run the migrations runner
+- **WHEN** the prod plan is `prod-tags`, `resolved`, `compose run --rm migrate`,
+  `compose up -d --remove-orphans`
+- **THEN** the plan check accepts it
+
+#### Scenario: The wrapper refuses to migrate prod from an unclean tree
+- **WHEN** the prod migrate step is reached in a tree with an uncommitted or untracked file, or
+  on a branch other than `main`
+- **THEN** the wrapper exits non-zero before running docker, naming the reason
 
 #### Scenario: Hand-typed compose resolves to the right project
 - **WHEN** `docker compose -f compose.yaml -f docker/compose.stage.yaml config` is resolved
@@ -519,7 +538,9 @@ Wherever either is set, its value SHALL be a single dotted IPv4 address.
 - use `compose.yaml` with the OpenBao `prod` KV secret exactly as README "Container
   deployment" documents, with no overlay;
 - fail if `WEB_TAG`, `API_TAG` or `MEDIA_TAG` is unset, empty, or `latest` in the OpenBao
-  `prod` KV secret.
+  `prod` KV secret;
+- after those guards and the resolved-config check, run the migrations runner once `db` is
+  healthy, and only then start the project; if the runner fails, start nothing else.
 
 `prod-check` SHALL run the prod guards and resolve the prod config through OpenBao `prod`
 without starting anything and without the `main` requirement. This lets a deploy host dry-run
@@ -548,6 +569,19 @@ the OpenBao path before cutover.
 - **WHEN** `make prod-push` runs on a clean `main`
 - **THEN** the bake pushes `autologger-web`, `autologger-api` and `autologger-media-worker`
   under the same 12-character SHA tag, each with both platforms
+
+#### Scenario: Prod start migrates first
+- **WHEN** `make prod-up` runs on a clean `main` against an empty prod `db`
+- **THEN** the migrations runner applies every migration and sets the `autologger_app` and
+  `autologger_media` passwords before `api` is started, and `api` connects as `autologger_app`
+
+#### Scenario: A repeated prod start applies nothing new
+- **WHEN** `make prod-up` runs again with no new migration file
+- **THEN** the runner reports `0 applied` and the project starts as before
+
+#### Scenario: A failed prod migration starts nothing
+- **WHEN** a migration fails during `make prod-up`
+- **THEN** the target exits non-zero naming the file, and `compose up` does not run
 
 #### Scenario: Prod dry run starts nothing
 - **WHEN** `make prod-check` runs on any branch with valid prod credentials
