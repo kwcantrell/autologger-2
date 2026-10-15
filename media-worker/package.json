@@ -13,12 +13,12 @@
     "@autologger/ports": "*",
     "@autologger/storage": "*",
     "@autologger/transcription": "*",
-    "mediabunny": "^1.50.8",
+    "mediabunny": "^1.61.4",
     "postgres": "^3.4.9",
-    "tsx": "^4.23.0"
+    "tsx": "^4.23.15"
   },
   "devDependencies": {
-    "@types/node": "^26.1.1",
+    "@types/node": "^26.6.5",
     "typescript": "^5.7.2",
     "vitest": "^4.1.10"
   }
