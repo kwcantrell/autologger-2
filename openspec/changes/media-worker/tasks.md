@@ -652,12 +652,24 @@ environments" ("Dev, stage and prod compared"). No other README section is touch
   `cd web && npx vitest run src/shared/components/Toast.test.tsx
   src/pages/index/components/timeline/TimelineClips.test.tsx` -> `Test Files 2 passed (2)`,
   `Tests 8 passed (8)` (incl. `logs every toast to the console in development only`).
-- [ ] A.7 Suites: `cd web && npx vitest run`, `npm run typecheck -w web`, `npm run lint -w web`;
+- [x] A.7 Suites: `cd web && npx vitest run`, `npm run typecheck -w web`, `npm run lint -w web`;
   manual checklist in dev on Chromium and Firefox (and Safari if available): kill the tab at
   2.5 cadences → reload → recovered chunks upload → finalize → one merged segment appears with
   seams and a waveform; open a second tab mid-take → nothing offered to recover; sign out in
   another tab mid-take → `blocked` → sign in → Retry drains; unplug the microphone mid-take →
   recording continues on the default input; hide the tab for a minute → the warning on return.
+  Evidence: (2026-10-15, at 077410e6) `cd web && npx vitest run` → `Test Files 182 passed (182)`,
+  `Tests 2435 passed (2435)`; `npm run typecheck -w web` → `tsc --noEmit` exit 0. `npm run lint -w web`
+  → `Found 1 error`: `src/pages/index/components/wiki/WikiRoute.tsx:326`
+  `lint/correctness/useExhaustiveDependencies`, a base (`supabase-migration`) file this branch does
+  not touch; **owner-approved exception** (2026-10-15). The 57 web files this branch changes:
+  `node_modules/.bin/biome check <files>` → `Checked 57 files`, no diagnostics. Manual checklist done
+  by the owner on the autologger-import VM (Chrome and Firefox, `autologger.dev.chunkMs` 15000; no
+  Safari): kill-and-recover on session c8b5f1ad (TSP_0010) → one merged 40 s segment, 3 seams,
+  waveform, the chunks under `.trash/` (verified in the DB and volume 2026-10-14); second tab, sign
+  out → Retry, microphone unplug and hidden tab: owner sign-off 2026-10-15. The "Add synthetic
+  stop" dialog stamping the stop at click time is base behaviour (`useRecoveryStopWarning.ts`,
+  web-ui-system "accept-time"), deferred by the owner to a later Tier 2 change.
 
 ## D. Web consumers, parts upload, transcription seams
 
@@ -812,11 +824,18 @@ environments" ("Dev, stage and prod compared"). No other README section is touch
 
 ## V. Verify (after all workstreams)
 
-- [ ] V.1 `scripts/check-change.sh` green (tests, typecheck, audit, openspec, tests-with-code);
+- [x] V.1 `scripts/check-change.sh` green (tests, typecheck, audit, openspec, tests-with-code);
   `openspec validate media-worker --strict`.
+  Evidence: (2026-10-15) CI run 38657186123 at 077410e6, `gates` job (`scripts/check-change.sh`):
+  `PASS openspec` (`openspec validate --strict`), `PASS tests-with-code` (63 source / 84 test
+  files), `PASS commands` (`typecheck`, `test`; pg/integration in the db-tests job), `PASS audit`,
+  every other gate PASS except `FAIL tasks 3 unticked` (A.7, V.1, V.2, ticked here); `db-shard (1)`,
+  `(2)`, `(3)` and `db-tests` pass. Owner-approved (2026-10-15) to take the CI db shards as the pg
+  evidence: the full local pg suite exceeds the `autologger_app` 45-connection cap on this
+  machine, also on the bare base.
 - [x] V.0 Dev-only chunk length for V.2: `web/src/pages/index/utils/devChunkMs.ts` reads `localStorage['autologger.dev.chunkMs']` (15 s .. 10 min) only when `NODE_ENV === 'development'`; the recorder's default `chunkMs` uses it.
   Evidence: red `npx vitest run src/pages/index/utils/devChunkMs.test.ts` -> `Cannot find module './devChunkMs'`; green -> with the recorder components `Test Files 77 passed`, `Tests 891 passed`; `tsc --noEmit` exit 0.
-- [ ] V.2 End to end on dev: record 3 cadences with `chunkMs` lowered in a dev-only seam → stop
+- [x] V.2 End to end on dev: record 3 cadences with `chunkMs` lowered in a dev-only seam → stop
   → `finalize` with the three windows → worker merges → one segment with `duration_ms`, peaks
   and three `seams`, the three chunk blobs under `.trash/<today>/`, the timeline showing three
   seam clips; re-post chunk 2's bytes → the merged segment's dict, no new blob; generate a
@@ -825,6 +844,20 @@ environments" ("Dev, stage and prod compared"). No other README section is touch
   limit lowered to 50 MB for the test → `200`, then the worker converts it to FLAC and the WAV
   lands in `.trash`; fill the dev blob volume past the floor → uploads answer `507`, the sweep
   purges trash, the log shows the transition.
+  Evidence: (2026-10-12..15, autologger-import VM, dev stack at 077410e6) TSP_0002 (9a32f608):
+  one merged segment 27c6bcf5 (`duration_ms` 84780, `media_status` done, `waveform_peaks_json`
+  set), 5 seams at `offset_ms` 0/19980/39960/59940/79920 (20 s dev chunks), the five chunk blobs
+  under `/blobs/.trash/2026-10-12/audio/9a32f608…/`; owner generated the transcript after the merge
+  (66 words, `00:00:04:01`..`00:01:03:04`, crossing three seams) and checked word positions against
+  playback: owner sign-off 2026-10-15. The pre-merge vs post-merge position comparison (same fixture
+  audio) is the automated `transcriptRemap.test.ts` "places each seam's words at that seam's
+  anchor plus the in-seam offset, equal to the chunks" and "never places the third chunk's words at
+  the merged file's running time"; re-post → `audio.media.int.test.ts` "a chunk merged away
+  answers the merged segment and creates nothing"; `507` → `audioUploads.int.test.ts` "507 below
+  the free-disk floor; nothing staged", sweep → `startupPurge.media.test.ts` "below the floor it
+  purges trash oldest-first by the shortfall and logs each transition once" (owner-approved in
+  place of filling the dev volume). Parts import + WAV→FLAC on the VM: 166 MB parts import and the
+  WAV ingest converted to FLAC with the WAV in `.trash` (2026-10-12).
 - [x] V.3 Tier 2 consistency read (`consistency-read` skill) over the whole branch; `panel.md`
   re-panel section for any scope change; the design-owned constants confirmed by the owner.
   Evidence: (2026-10-12) `git diff 138649f3..HEAD` read against proposal, design D1-D20, tasks,
