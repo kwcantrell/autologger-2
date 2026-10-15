@@ -148,8 +148,14 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
 
 ## V. Verify
 
-- [ ] V.1 `scripts/check-change.sh` green (tests, typecheck, audit, openspec, tests-with-code);
+- [x] V.1 `scripts/check-change.sh` green (tests, typecheck, audit, openspec, tests-with-code);
   `openspec validate closed-signups --strict`; CI db shards for the pg tiers.
+  Evidence: (2026-10-15) CI run 38796814030 at 68775442 (PR #127), `gates` job
+  (`scripts/check-change.sh`): `PASS openspec` (`openspec validate --strict`), `PASS
+  tests-with-code` (8 source / 10 test files), `PASS commands` (`typecheck`, `test`; pg/integration
+  in the db-tests job), `PASS audit`, `PASS evidence`, `PASS artifacts-first`, every gate PASS except
+  `FAIL tasks 1 unticked` (this task); `db-shard (1)`, `(2)`, `(3)` and `db-tests` pass. Local:
+  integration project `1636 passed` (cs-3.2-integration-all.log).
 - [x] V.2 On the dev stack with `SIGNUPS=closed` set in `kv/autologger/dev` by the owner: a
   Google account with no account and no approval gets the no-access-yet page and no
   `auth.users` row appears; after `approve_account` it signs in and the row is gone; the owner's
