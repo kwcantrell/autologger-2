@@ -17,7 +17,7 @@
     "@autologger/ports": "*"
   },
   "devDependencies": {
-    "typescript": "^5.7.2",
+    "typescript": "^7.0.2",
     "vitest": "^4.1.10"
   }
 }
