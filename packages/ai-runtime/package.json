@@ -12,25 +12,25 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@ai-sdk/anthropic": "4.0.78",
-    "@ai-sdk/google": "4.0.93",
-    "@ai-sdk/openai": "4.0.91",
-    "@ai-sdk/openai-compatible": "3.0.67",
-    "@anthropic-ai/claude-agent-sdk": "0.3.216",
+    "@ai-sdk/anthropic": "4.0.88",
+    "@ai-sdk/google": "4.0.105",
+    "@ai-sdk/openai": "4.0.102",
+    "@ai-sdk/openai-compatible": "3.0.78",
+    "@anthropic-ai/claude-agent-sdk": "0.3.310",
     "@autologger/contract": "*",
     "@autologger/domain": "*",
     "@autologger/ports": "*",
     "@autologger/session-core": "*",
-    "@modelcontextprotocol/sdk": "^1.29.0",
-    "ai": "7.0.137"
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "ai": "7.0.153"
   },
   "peerDependencies": {
-    "zod": "^4.0.0"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@anthropic-ai/sdk": "^0.131.0",
     "typescript": "^5.7.2",
     "vitest": "^4.1.10",
-    "zod": "^4.0.0"
+    "zod": "^4.6.7"
   }
 }
