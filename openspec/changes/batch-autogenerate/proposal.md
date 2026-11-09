@@ -12,6 +12,11 @@ Tier reason:
   slot and run leases taken by a background worker; one live job per studio) and an automated
   write to wiki pages (auto-accept) that today only a person makes.
 
+Panel: tier 2, three lenses (assumption tester, failure and abuse, scope and simplicity) recorded
+in `panel.md` on 2026-11-09: 1 critical and 12 major findings, each resolved in the artifacts
+(design D1, D3, D6, D7, D9, D12, D14, D17; the specs; tasks), one of them by the owner's decision
+8a below.
+
 ADR 0033 (task 1.1).
 
 ## Why
@@ -49,13 +54,19 @@ only useful when it is built session by session in episode order.
    alternative leaves them pending. Auto-accept goes through the same accept path and validation
    as a person's accept, authored by the initiator and marked as batch.
 
+**8a. Auto-accept safe changes only** (owner, 2026-11-09, after the panel). In `accept` mode the
+job auto-accepts only new-page suggestions and rewrites that only add (the title unchanged, every
+existing alias kept, every existing body line kept in order). Any suggestion that would remove or
+change existing text stays pending for a person. The report counts accepted and left pending.
+
 ## What changes
 
 - **Job tables.** Migration `20261025000000_autogenerate_jobs.sql` adds
   `catalog.autogenerate_jobs` (team, initiator id, scope, steps, wiki mode, status, lease, cancel
   request, stop reason, times) and `catalog.autogenerate_items` (one row per session and selected
-  step, with its processing ordinal, status, classified outcome, run id and wiki counts). At most
-  one `queued` or `running` job per team. Owners and admins of the team may read both tables; a
+  step, with its processing ordinal, status, classified outcome, the run ids and topic ids its
+  attempts wrote, and wiki counts). At most one `queued` or `running` job per team. Jobs cascade
+  with their team; the legacy importer's `--replace` refuses while the team has a live job. Owners and admins of the team may read both tables; a
   user may insert only a job they initiate for a team they manage, and may only request a cancel.
   The worker writes as the reviewed system task `autogenerate-worker`.
 - **Routes** (all owner/admin of the team; the team family's masked `404` and `403`):
@@ -64,8 +75,11 @@ only useful when it is built session by session in episode order.
   `GET /api/teams/:teamId/autogenerate-jobs` (newest 20),
   `GET /api/teams/:teamId/autogenerate-jobs/:jobId` (job plus per-session items),
   `POST /api/teams/:teamId/autogenerate-jobs/:jobId/cancel`.
-- **Worker.** Every API process runs a worker loop that claims due jobs under a lease (one job
-  per process at a time), processes one session at a time in the job's order, re-checks the
+- **Worker.** Every API process runs a worker loop that polls every 15 s and claims due jobs
+  under a lease (one job per process at a time), processes one session at a time in the job's
+  order, recognises and cleans up its own partial topics and events on resume or failure, backs
+  off on provider rate limits and stops after 3 consecutive sessions of provider failure,
+  re-checks the
   initiator before each session, runs each step through the same code as its manual route (now
   extracted into context-free runners that both the route and the worker call), and resumes a job
   whose lease lapsed.
@@ -74,14 +88,15 @@ only useful when it is built session by session in episode order.
   the approved-user rule, then binds the catalog and the session hub to that user, so every read
   and write runs under the initiator's row-level security, and resolves the initiator's provider
   credentials at each step, as the manual routes do.
-- **Wiki auto-accept.** After a successful wiki step in `accept` mode, each suggestion that run
-  stored is accepted through the existing accept transaction, as the initiator, against its base
-  revision; the revision note is `accepted suggestion <id> (batch <job id>)` (or `created from
+- **Wiki auto-accept, safe changes only.** After a successful wiki step in `accept` mode, each
+  suggestion that run stored that is a new page or an additions-only rewrite (decision 8a) is
+  accepted through the existing accept transaction, as the initiator, against its base revision;
+  every other suggestion stays pending; the revision note is `accepted suggestion <id> (batch <job id>)` (or `created from
   suggestion <id> (batch <job id>)` for a new page). Any refusal
   (stale, title clash, merged, deleted, link check) leaves it pending and is counted.
 - **Settings.** A "Batch autogenerate" section in the Team group, shown only to owners and admins
   of at least one team: team picker, show checklist, step checkboxes, wiki mode, live estimate, a
-  themed confirm naming the run count and the auto-accept trust warning, progress, Cancel, the
+  themed confirm naming the run count and what auto-accept will and will not add, progress, Cancel, the
   final report and recent jobs.
 - **Docs.** README endpoint table and a "Batch autogenerate" section; `docs/security.md` residual
   (unreviewed AI text into wiki pages; spend on the initiator's credentials); ADR 0033.
@@ -99,7 +114,7 @@ only useful when it is built session by session in episode order.
   rule to its initiator).
 - `team-management`: MODIFIED "Team roles, owner anchor and show access" (a role table row for
   batch autogenerate).
-- `show-wiki`: ADDED "A batch job accepts suggestions as its initiator".
+- `show-wiki`: ADDED "A batch job accepts suggestions as its initiator" (safe suggestions only).
 - `core-ports-architecture`: MODIFIED "Every catalog and session call is bound to a caller" (the
   batch worker is the second place a catalog user binding is created, for the job's recorded
   initiator; new reviewed system reason `autogenerate-worker`).
@@ -113,14 +128,17 @@ only useful when it is built session by session in episode order.
   option.
 - No new WebSocket message: the section polls the job route.
 - No change to the manual generate routes' observable behaviour (statuses, bodies, busy texts),
-  except that a batch run can hold a session's slot and answer the existing `409`.
+  except that a batch run can hold a session's slot and answer the existing `409`, and that a
+  failed manual topics run now deletes exactly the topics its tool created (as topic-generation
+  already specifies) rather than every topic that appeared during the run.
 - The "autogenerate after import" checkbox of the YouTube playlist import is not built here (see
   "Follow-up").
 - Members (non-managers) get no batch surface, even for shows they hold grants on.
 
 ## Contract impact
 
-Additive: five new routes and their JSON objects; the start route joins the approved-user rule. A
+Additive: five new routes and their JSON objects (invalid bodies answer `422` with zod 4 issues);
+the start route joins the approved-user rule. A
 new revision-note value `accepted suggestion <id> (batch <job id>)` can appear in the wiki
 revision endpoints' existing `note` string. No existing route's status, body or ordering changes.
 

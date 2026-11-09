@@ -10,14 +10,16 @@ the user is an owner or admin of at least one team. It SHALL offer:
 - a **show checklist** of that team's shows, all ticked by default, with select-all;
 - **step checkboxes** for Transcripts, Log events, Topics and Wiki, all ticked by default, shown in
   run order;
-- a **wiki mode** choice, "Add to wiki pages" (default) or "Leave as suggestions to review",
+- a **wiki mode** choice, "Add new pages and additions to the wiki" (default) or "Leave all as
+  suggestions to review",
   enabled only while Wiki is ticked;
 - a **live estimate** from the preview route: the number of sessions, each step's missing count,
   and `sessions × steps`; when the preview reports a `blocked` reason the section says what to do
   (add a provider in Settings → Advanced, or ask for approval) and Start is disabled;
 - **Start**, which opens a themed confirm naming the sessions, the maximum runs, that the work runs
-  on the user's own provider accounts, and, in "Add to wiki pages" mode, that AI-written text will
-  be added to wiki pages without review; confirming sends the start with the estimate's session
+  on the user's own provider accounts, and, in "Add to wiki pages" mode, that AI-written new pages
+  and additions will be added to wiki pages without review while rewrites that remove or change
+  text stay as suggestions to review; confirming sends the start with the estimate's session
   count, and a `409` "sessions changed" refreshes the estimate and asks again.
 
 While the team has a `queued` or `running` job the section SHALL show it instead of Start: its
@@ -34,8 +36,9 @@ closed or another section is shown.
 
 #### Scenario: Confirm before start
 - **WHEN** an admin with 40 sessions selected and all four steps ticked presses Start
-- **THEN** a themed confirm names 40 sessions and at most 160 runs and warns that AI text will be
-  added to wiki pages without review, and no job is created until it is confirmed
+- **THEN** a themed confirm names 40 sessions and at most 160 runs and warns that AI-written new
+  pages and additions will be added to wiki pages without review, and no job is created until it
+  is confirmed
 
 #### Scenario: Another admin's running job
 - **WHEN** an admin opens the section while a job another admin started is running

@@ -9,7 +9,8 @@ Every batch autogenerate endpoint that returns a job SHALL return exactly this o
 { "id": string, "team_id": string,
   "status": "queued" | "running" | "finished" | "cancelled" | "failed",
   "stop_reason": null | "cancelled" | "initiator-unavailable" | "initiator-role-lost"
-                 | "not-approved" | "unconfigured-stt" | "unconfigured-llm",
+                 | "not-approved" | "unconfigured-stt" | "unconfigured-llm"
+                 | "provider-failing",
   "scope": "shows" | "sessions", "show_ids": [string] | null,
   "steps": ["transcript" | "events" | "topics" | "wiki"],
   "wiki_mode": "accept" | "pending",
@@ -32,30 +33,31 @@ Every batch autogenerate endpoint that returns a job SHALL return exactly this o
 
 Every item SHALL carry an outcome from this fixed list, each with its fixed detail, or null:
 
-| Outcome | Detail |
-| --- | --- |
-| `present` | `Already had output; left unchanged.` |
-| `no-audio` | `The session has no audio to transcribe.` |
-| `no-speech` | `No speech was found in the audio.` |
-| `no-transcript` | `The session has no transcript words.` |
-| `no-anchors` | `The transcript has no timecodes to place events on.` |
-| `no-instructions` | `No event button on this show has a generation instruction.` |
-| `busy` | `The session stayed busy for 10 minutes.` |
-| `access-lost` | `The initiator can no longer access this session.` |
-| `session-gone` | `The session no longer exists.` |
-| `earlier-step-failed` | `Skipped because an earlier step failed.` |
-| `unconfigured` | `No provider is configured for this step.` |
-| `provider-failed` | `The provider request failed.` |
-| `too-large` | `The audio is over the provider's size limit.` |
-| `missing-audio-file` | `An audio file of the session is missing.` |
-| `unreadable` | `The audio could not be read.` |
-| `generation-failed` | `Generation failed.` |
-| `interrupted` | `Interrupted three times; not retried.` |
-| `cancelled` | `Cancelled before it started.` |
-| `job-stopped` | `The job stopped before this step.` |
+| Outcome | Item status | Detail |
+| --- | --- | --- |
+| `present` | `skipped` | `Already had output; left unchanged.` |
+| `no-audio` | `skipped` | `The session has no audio to transcribe.` |
+| `no-speech` | `skipped` | `No speech was found in the audio.` |
+| `no-transcript` | `skipped` | `The session has no transcript words.` |
+| `no-anchors` | `skipped` | `The transcript has no timecodes to place events on.` |
+| `no-instructions` | `skipped` | `No event button on this show has a generation instruction.` |
+| `busy` | `skipped` | `The session stayed busy for 10 minutes.` |
+| `access-lost` | `skipped` | `The initiator can no longer access this session.` |
+| `session-gone` | `skipped` | `The session no longer exists.` |
+| `earlier-step-failed` | `skipped` | `Skipped because an earlier step failed.` |
+| `unconfigured` | `failed` | `No provider is configured for this step.` |
+| `provider-failed` | `failed` | `The provider request failed.` |
+| `rate-limited` | `failed` | `The provider kept refusing with a rate limit.` |
+| `too-large` | `failed` | `The audio is over the provider's size limit.` |
+| `missing-audio-file` | `failed` | `An audio file of the session is missing.` |
+| `unreadable` | `failed` | `The audio could not be read.` |
+| `generation-failed` | `failed` | `Generation failed.` |
+| `interrupted` | `failed` | `Interrupted three times; not retried.` |
+| `cancelled` | `cancelled` | `Cancelled before it started.` |
+| `job-stopped` | `cancelled` | `The job stopped before this step.` |
 
-`done`, `pending` and `running` items have a null outcome and detail. No other text SHALL appear
-in an outcome or detail.
+`done`, `pending` and `running` items have a null outcome and detail. An outcome SHALL appear
+only with the item status its row gives. No other text SHALL appear in an outcome or detail.
 
 #### Scenario: A finished job reports its counts
 - **WHEN** a job over 2 sessions with steps transcript and topics ends with 3 items `done` and 1
@@ -66,8 +68,9 @@ in an outcome or detail.
 ### Requirement: Batch autogenerate endpoints
 The server SHALL expose these JSON routes. All require a logged-in user (`401
 {"detail":"Login required."}`), set no cookie, and decide, before anything else of their own, the
-team family's masked `404` (`Team not found`) for a team the caller is not a member of and `403
-{"detail":"Admin role required."}` for a `member`.
+team family's masked `404 {"detail":"Team not found"}` for a team the caller is not a member of
+and `403 {"detail":"Admin role required."}` for a `member`, in that order, before reading any
+body.
 
 **Scope body** (preview and start):
 
@@ -78,14 +81,17 @@ team family's masked `404` (`Team not found`) for a team the caller is not a mem
 ```
 
 Exactly one of `show_ids` and `session_ids` SHALL be present and non-empty (at most 200 and 1000
-ids); `steps` SHALL be non-empty without duplicates; `wiki_mode` defaults to `accept`. Any other
-shape answers `400` with the validation body.
+ids); `steps` SHALL be non-empty without duplicates; `wiki_mode` defaults to `accept`. A body that
+fails this schema (or, on start, lacks a non-negative integer `expected_sessions`) SHALL be
+answered `422 {"detail": [...]}` with the zod 4 issues ("Validation error bodies carry zod 4
+issues"). These routes SHALL NOT use the team routes' `400` string detail: that is a listed
+exception for the team management family only, and these routes are not part of it.
 
 **`POST /api/teams/:teamId/autogenerate-jobs/preview`** takes the scope body:
 
 | Status | When | Body |
 | --- | --- | --- |
-| `400` | invalid body | the validation body |
+| `422` | the body fails the schema | `{"detail": [<zod 4 issue>]}` |
 | `404` | a show id is not a show of the team | `{"detail":"Show not found."}` |
 | `404` | a session id is not an accessible, non-deleted session of the team | `{"detail":"Session not found"}` |
 | `400` | no candidate session | `{"detail":"No sessions to process."}` |
@@ -102,7 +108,7 @@ shape answers `400` with the validation body.
 
 | Status | When | Body |
 | --- | --- | --- |
-| `400` | invalid body | the validation body |
+| `422` | the body fails the schema | `{"detail": [<zod 4 issue>]}` |
 | `404` | show or session not in scope, as for preview | as for preview |
 | `400` | no candidate session, or more than 1000 | as for preview |
 | `503` | `transcript` is selected and the caller has no speech-to-text credential | `{"detail":"Add a speech-to-text key in Settings → Advanced to generate transcripts."}` |
@@ -170,6 +176,11 @@ endpoints' existing `note` field (show-wiki "A batch job accepts suggestions as 
 - **WHEN** an admin cancels a job whose status is `finished`
 - **THEN** the response is `409 {"detail":"Job already ended.","status":"finished"}` and the job
   is unchanged
+
+#### Scenario: An invalid scope body is a 422
+- **WHEN** an admin posts a preview with both `show_ids` and `session_ids`, and a start without
+  `expected_sessions`
+- **THEN** both responses are `422` with `detail` an array of zod 4 issues, and no job is created
 
 ## MODIFIED Requirements
 

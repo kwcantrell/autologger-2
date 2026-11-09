@@ -24,6 +24,17 @@ cancel it. Starting a job SHALL also require the caller to be an approved user (
 - **WHEN** the owner of T starts a job and an admin of T reads and then cancels it
 - **THEN** the admin reads the job with its items, and the cancel is accepted
 
+### Requirement: Jobs go with their team
+Deleting a team SHALL delete its jobs and their items. A team with a `queued` or `running` job
+always has shows, so the existing team delete refuses it first. The operator's legacy import with
+`--replace` or `--replace-live` SHALL refuse a team that has a `queued` or `running` job, naming
+the reason, and change nothing; finished jobs SHALL be deleted with the team it replaces.
+
+#### Scenario: Replacing a team during a job
+- **WHEN** an operator runs the legacy import with `--replace` for a team whose job is running
+- **THEN** the import is refused with a message saying a batch autogenerate job is in progress and
+  nothing is deleted
+
 ### Requirement: A job's scope is a set of shows or a list of sessions of one team
 A job SHALL name exactly one team and exactly one of:
 - **shows**: one or more shows of that team; the candidates are every session of those shows that
@@ -72,8 +83,19 @@ held:
 - **events** is missing when the session has no auto-generated event (an event whose metadata
   marks it auto-generated), other than events written by this job's own earlier interrupted or
   failed attempts at this step; manual events do not count;
-- **topics** is missing when the session has no topics;
+- **topics** is missing when the session has no topics, other than topics written by this job's
+  own earlier interrupted attempts at this step;
 - **wiki** is never "present": it runs for every processed session that has transcript words.
+
+**The job's own partial output.** Before each topic or event a step writes, the job SHALL know
+it is the step's own: events by the attempt's run id, recorded on the item before the turn
+starts, and topics by their ids, each recorded on the item before the topic is written. When a
+step is re-entered after an interrupted attempt, it SHALL first delete the topics its earlier
+attempts recorded and SHALL exclude its earlier attempts' events from the run's prompt and from
+its anchor computation, as a regenerate excludes its snapshot; then it decides "missing" as above.
+After a successful events run, the events of every earlier attempt SHALL be deleted. Partial
+output of an interrupted attempt SHALL never make a step `present`. Every such delete runs as the
+initiator and touches only rows the item recorded.
 
 A step whose output is present SHALL be skipped with the outcome `present` and SHALL write
 nothing. A transcript produced by a step SHALL be written only if the session still has no
@@ -125,8 +147,9 @@ Every catalog and session read and write for the session SHALL run bound to the 
 the same row-level security as a request by that user. Each step SHALL resolve the initiator's
 provider credential of the kind it needs when the step starts (provider-credentials "Work runs on
 its user's credentials"), with the same rules as the manual route, including the Claude CLI
-allowlist read on every turn. When a step's credential is unavailable the job SHALL stop with
-`unconfigured-stt` or `unconfigured-llm`, since every later session would fail the same way.
+allowlist read on every turn. When a step's credential is unavailable, that item SHALL be
+`failed` with `unconfigured` and the job SHALL stop with `unconfigured-stt` or `unconfigured-llm`,
+since every later session would fail the same way.
 
 #### Scenario: Access lost to one session
 - **WHEN** a job is between two sessions and the next session is deleted
@@ -173,9 +196,12 @@ job at a time; queued jobs SHALL be claimed oldest first.
 ### Requirement: A failed step skips the rest of its session
 When a step fails (the provider call failed, timed out, was over a size limit, or the run did not
 complete), the item SHALL be `failed` with a classified outcome, the session's later steps SHALL
-be `skipped` with `earlier-step-failed`, and the job SHALL continue with the next session. A
-failed events step SHALL delete the events its own run wrote, so the session is left as it was. A
-failed topics or wiki step SHALL leave nothing behind, as the manual routes do. Outcomes and their
+be `skipped` with `earlier-step-failed`, and the job SHALL continue with the next session. A step
+that ends `failed` for any reason, `interrupted` included, SHALL delete the events of every run id
+its attempts recorded and the topics its attempts recorded by id, so the session is left
+"missing" for a later job; a failed wiki step stores nothing, as the manual route does. Topics or
+events a person added during the step SHALL NOT be deleted. When the initiator can no longer
+delete them (access lost), they remain and the item stays `failed`. Outcomes and their
 details SHALL be fixed strings chosen by the server; no provider output, prompt, transcript text,
 file path or stack trace SHALL be stored in a job or item, returned by a route, or logged.
 
@@ -183,6 +209,32 @@ file path or stack trace SHALL be stored in a job or item, returned by a route, 
 - **WHEN** the events step fails on session 2 of 3 after its run created 4 events
 - **THEN** those 4 events are deleted, session 2's topics and wiki are `skipped`
   `earlier-step-failed`, session 3 is processed, and the job ends `finished` with one failed item
+
+#### Scenario: A person's topic survives a failed batch topics step
+- **WHEN** a batch topics turn creates 3 topics, a person adds a topic to the same session, and
+  the turn then fails
+- **THEN** the 3 topics the turn created are deleted and the person's topic remains
+
+### Requirement: Persistent provider failure stops the job
+When a provider answers HTTP `429` (rate limited) and the step can tell (speech to text, and AI
+turns on the AI SDK route), the job SHALL retry the same step after 30, 60, 120, 240 and 480
+seconds, checking for a cancel during each wait, and after the fifth refusal the item SHALL be
+`failed` with `rate-limited`. The job SHALL count consecutive processed sessions that ended with a
+step `failed` as `provider-failed`, `generation-failed` or `rate-limited`; a session with any step
+`done` SHALL reset the count, and a session whose steps were only skipped SHALL leave it unchanged.
+When the count reaches 3, the job SHALL stop with `stop_reason` `provider-failing` and its
+remaining items SHALL be `cancelled` with `job-stopped`.
+
+#### Scenario: A revoked key stops the job
+- **WHEN** the initiator's speech-to-text key is revoked at the provider and sessions 4, 5 and 6
+  each fail their transcript step with `provider-failed`
+- **THEN** the job ends `failed` with `stop_reason` `provider-failing` after session 6, and no
+  provider request is made for session 7 or later
+
+#### Scenario: A rate limit is waited out
+- **WHEN** a topics turn is refused with `429` twice and then succeeds
+- **THEN** the step waited 30 and 60 seconds, its outcome is `done`, and the consecutive-failure
+  count is reset
 
 ### Requirement: Cancel stops after the current step
 A cancel SHALL be recorded on the job with who requested it and when. A `queued` job SHALL become
@@ -197,8 +249,8 @@ interrupted and its output is kept), then become `cancelled`; every item not yet
 
 ### Requirement: A job resumes after a restart
 A running job SHALL hold a lease that its process renews while it works. When the lease has
-lapsed (the process stopped), any server process SHALL claim the job and continue it from the
-first item that has not ended. An item that was `running` when the lease lapsed SHALL be re-run
+lapsed (the process stopped), any server process SHALL claim the job, within 90 seconds of the
+lease's last renewal, and continue it from the first item that has not ended. An item that was `running` when the lease lapsed SHALL be re-run
 as gap-fill: its output is re-checked with the rules of "Steps run in dependency order and only
 where output is missing" (the job's own partial events do not count as present; a wiki run whose
 suggestions were already stored is not repeated, and in `accept` mode its pending suggestions are
@@ -208,8 +260,9 @@ then accepted). An item that has been interrupted three times SHALL be `failed` 
 #### Scenario: Server restart during the topics step
 - **WHEN** the server stops while session 5's topics step runs, after sessions 1-4 finished, and
   starts again
-- **THEN** the job is claimed again within a minute, sessions 1-4 are not re-run, session 5's
-  topics step re-runs, and the job continues with session 5's wiki step
+- **THEN** the job is claimed again within 90 seconds, sessions 1-4 are not re-run, the topics
+  the interrupted attempt wrote are deleted, session 5's topics step re-runs and is not `present`,
+  and the job continues with session 5's wiki step
 
 #### Scenario: Restart after the wiki suggestions were stored
 - **WHEN** the server stops after a wiki step stored its suggestions and before they were accepted
@@ -219,15 +272,24 @@ then accepted). An item that has been interrupted three times SHALL be `failed` 
 ### Requirement: Wiki output is auto-accepted or left pending
 A job SHALL carry a wiki mode: `accept` (the default) or `pending`. In `pending` mode the wiki
 step SHALL store suggestions as a manual wiki update does. In `accept` mode, after the step stored
-its suggestions, each of them SHALL be accepted in the order it was proposed through the same
-accept transaction as a person's accept (show-wiki "A batch job accepts suggestions as its
-initiator"), with the base revision as the expected revision. A suggestion whose accept is refused
-for any reason SHALL stay `pending` and SHALL NOT fail the step. The item SHALL record how many
-suggestions were accepted and how many were left pending.
+its suggestions, the job SHALL auto-accept only **safe** suggestions (owner decision, 2026-11-09),
+in the order they were proposed, through the same accept transaction as a person's accept
+(show-wiki "A batch job accepts suggestions as its initiator"). A suggestion is safe when it
+proposes a new page, or when it rewrites an existing page by additions only, as show-wiki defines;
+any suggestion that would remove or change existing text, title or alias SHALL stay `pending` for
+a person. A safe suggestion whose accept is refused for any reason SHALL stay `pending` too. None
+of this fails the step. The item SHALL record how many suggestions were accepted and how many were
+left pending.
+
+#### Scenario: A rewrite that removes text is left for a person
+- **WHEN** in `accept` mode a wiki step stores a new-page suggestion and a rewrite of an existing
+  page that drops one of its lines
+- **THEN** the new page is created, the rewrite stays `pending`, and the item records 1 accepted
+  and 1 left pending
 
 #### Scenario: A stale suggestion is left pending
-- **WHEN** in `accept` mode a wiki step stores two suggestions and a person edits the first target
-  page before it is accepted
+- **WHEN** in `accept` mode a wiki step stores two additions-only suggestions and a person edits
+  the first target page before it is accepted
 - **THEN** the first suggestion stays `pending`, the second is `accepted`, and the item records 1
   accepted and 1 left pending
 
@@ -249,6 +311,17 @@ selected step's status (`pending`, `running`, `done`, `skipped`, `failed`, `canc
 classified outcome and the outcome's fixed detail. A job SHALL end `finished` when every item
 ended (with or without failed items), `cancelled` after a cancel, or `failed` when it stopped for a
 `stop_reason` other than a cancel.
+
+Each outcome SHALL go with exactly one item status:
+
+| Item status | Outcomes |
+| --- | --- |
+| `done` | none (null) |
+| `skipped` | `present`, `no-audio`, `no-speech`, `no-transcript`, `no-anchors`, `no-instructions`, `busy`, `access-lost`, `session-gone`, `earlier-step-failed` |
+| `failed` | `unconfigured`, `provider-failed`, `rate-limited`, `too-large`, `missing-audio-file`, `unreadable`, `generation-failed`, `interrupted` |
+| `cancelled` | `cancelled` (a cancel), `job-stopped` (any other stop reason) |
+
+`pending` and `running` items have no outcome.
 
 #### Scenario: Report after a mixed run
 - **WHEN** a job over three sessions ends with one `present` transcript, one `no-audio` skip and

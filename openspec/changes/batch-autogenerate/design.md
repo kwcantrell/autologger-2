@@ -2,7 +2,9 @@
 
 ## Context
 
-See proposal.md for the why and the owner decisions (1-8), which are fixed.
+See proposal.md for the why and the owner decisions (1-8), which are fixed, and decision 8a
+(owner, 2026-11-09, after the panel): auto-accept only safe changes. Panel findings and their
+resolutions are in `panel.md`; the decisions below cite them as P1-P13 in panel order.
 
 Today each generation is a synchronous request on one session, with a guard ladder that the
 routes share (`server/src/routers/transcribe.ts`, `events.ts`, `wikiSuggestions.ts`):
@@ -24,7 +26,8 @@ user id (`resolveSttCredential`, `resolveLlmRoute`). Two background precedents e
   a kv record with a heartbeat; it does **not** resume after a restart.
 - **The media job queue** (migration `20261023000000_media_jobs.sql`, ADR 0032) is durable:
   rows claimed with `FOR UPDATE SKIP LOCKED` under a lease, renewed while working, retried when the
-  lease lapses, every statement fenced on `locked_by`, a payload-free `NOTIFY` wake-up, and an
+  lease lapses, every statement fenced on `locked_by`, a payload-free `NOTIFY` wake-up (not reused
+  here, D3), and an
   apply loop in the API process (`server/src/mediaApply.ts`, polled every 10 s).
 
 This change combines them: a durable leased queue like media jobs, whose work runs as the
@@ -71,6 +74,14 @@ push notifications; changing any manual route's observable behaviour.
 | A15 | The team table is `catalog.studio_definitions` | `grep -n "create table catalog.studio_definitions" supabase/migrations/20261001000000_catalog_schema.sql` | `40:create table catalog.studio_definitions (` |
 | A16 | Settings sections are not hidden by role today | `grep -n "role" web/src/pages/index/components/settings/sections.ts` | no match (Team sections show a `RoleLockNotice` instead) |
 | A17 | README has the endpoint table the repo test reads | `grep -n "^## Endpoints" README.md` | `1008:## Endpoints` |
+| A18 | `create_topic` inserts per tool call with no run tag | `grep -n "insertTopic(parsed.data)" packages/ai-runtime/src/aiMcpServer.ts` | `848: const topic = await (await registry.get(sessionId)).as(caller).insertTopic(parsed.data);` |
+| A19 | The topics route computes its run's topics by set difference | `grep -n "newIds = after.filter" server/src/routers/transcribe.ts` | `const newIds = after.filter((t) => !preRunIds.has(t.id)).map((t) => t.id);` |
+| A20 | The topic-generation spec deletes "the topics this run created" on failure | `grep -n "delete the topics" openspec/specs/topic-generation/spec.md` | `54: transaction, leaving the freshly created set. On failure it SHALL instead delete the topics` |
+| A21 | AI SDK failures carry the upstream status; Deepgram's error knows it but drops it | `grep -n "statusOf" packages/ai-runtime/src/sdkTurn.ts`; `grep -n 'status ${res.status}' packages/transcription/src/deepgram.ts` | `207: function statusOf(error: unknown)` · `217: return new SdkTurnFailure('provider', { status: statusOf(error) });` · `181: throw new DeepgramUpstreamError(... (status ${res.status}).)` |
+| A22 | No route deletes a show, and a team is deleted only with no shows | `grep -rn "DELETE FROM shows" packages/catalog/src server/src/routers`; `grep -n "still has" packages/catalog/src/studioRegistry.ts` | no match · `Team still has ${nshows} show(s); delete or move them first.` |
+| A23 | The legacy importer deletes the team row on `--replace` | `grep -n "DELETE FROM catalog.studio_definitions" server/scripts/legacyImportSql.ts` | `577: '  DELETE FROM catalog.studio_definitions WHERE id = st;',` |
+| A24 | Invalid bodies answer 422 zod issues; the team family's 400 string is a listed exception | `grep -n "the team routes' .400. detail" openspec/specs/api-contract-freeze/spec.md` | `- the team routes' 400 detail, which is the first issue's message;` (requirement "Validation error bodies carry zod 4 issues") |
+| A25 | The API process has no LISTEN for jobs | `grep -n "LISTEN\|listen(" server/src/mediaApply.ts` | no match |
 
 ## Decisions
 
@@ -81,7 +92,8 @@ push notifications; changing any manual route's observable behaviour.
 ```sql
 create table catalog.autogenerate_jobs (
   id                     text collate "C" primary key,
-  team_id                text collate "C" not null references catalog.studio_definitions (id),
+  team_id                text collate "C" not null
+                           references catalog.studio_definitions (id) on delete cascade,
   initiator_user_id      text collate "C" not null references catalog.users (id),
   initiator_name         text collate "C" not null,
   scope                  text collate "C" not null check (scope in ('shows', 'sessions')),
@@ -91,7 +103,9 @@ create table catalog.autogenerate_jobs (
   status                 text collate "C" not null default 'queued'
                            check (status in ('queued', 'running', 'finished', 'cancelled', 'failed')),
   stop_reason            text collate "C" check (stop_reason in ('cancelled', 'initiator-unavailable',
-                           'initiator-role-lost', 'not-approved', 'unconfigured-stt', 'unconfigured-llm')),
+                           'initiator-role-lost', 'not-approved', 'unconfigured-stt', 'unconfigured-llm',
+                           'provider-failing')),
+  consecutive_provider_failures smallint not null default 0,      -- D17
   session_count          integer not null check (session_count between 1 and 1000),
   locked_by              text collate "C",
   locked_until_ms        bigint,
@@ -122,12 +136,15 @@ create table catalog.autogenerate_items (
   outcome         text collate "C",                              -- one of the contract's fixed codes
   attempts        smallint not null default 0,
   run_ids         text collate "C" not null default '',          -- events/wiki run ids this item used
+  own_topic_ids   text collate "C" not null default '',          -- topic ids its attempts wrote (D7)
   wiki_accepted   integer,
   wiki_pending    integer,
   started_at_ms   bigint,
   finished_at_ms  bigint,
   primary key (job_id, session_id, step),
-  constraint autogenerate_items_outcome check (outcome is null or outcome in (<the 19 codes>))
+  constraint autogenerate_items_outcome check (outcome is null or outcome in (<the 20 codes>)),
+  constraint autogenerate_items_outcome_status check (<each outcome only with its item status, per
+    the contract table>)
 );
 create index idx_autogenerate_items_order on catalog.autogenerate_items (job_id, ordinal, step_order);
 ```
@@ -137,8 +154,20 @@ create index idx_autogenerate_items_order on catalog.autogenerate_items (job_id,
   no column can hold provider text (owner decision 5), the way `media_jobs_error_code` does.
 - **No credential column.** The initiator is only `initiator_user_id` (owner decision 6). The
   name is a snapshot, as wiki rows do.
-- **`run_ids`** is a comma list (at most 3 interrupted attempts + 1) so a resumed item can find its
-  own partial output (D7).
+- **`run_ids`** and **`own_topic_ids`** are comma lists written ahead of the work (D7), so a
+  resumed or failed item can find exactly its own partial output and nothing else.
+- **Deleting a team (P5).** `team_id` cascades, like every other per-team child table. A team can
+  be deleted only when it has no shows (A22), and no route deletes a show, so a team with a live
+  job cannot be deleted through `adminDeleteStudio` (self-serve or admin plane): the existing
+  `400` "Team still has N show(s)" answers first and no contract changes. Finished jobs go with the
+  team by the cascade. The legacy importer's `--replace` and `--replace-live` (A23) delete teams
+  with their shows directly, so they **refuse** while the team has a `queued` or `running` job:
+  `RAISE EXCEPTION 'legacy import refused: team % has a batch autogenerate job in progress; cancel
+  it first'`, checked under the importer's existing `LOCK TABLE … SHARE ROW EXCLUSIVE`, with
+  `catalog.autogenerate_jobs` added to the locked tables so a start cannot slip in. Finished jobs
+  are not "live data" and go with the cascade. Refusing is the simpler option of the two (refuse or
+  cancel): an operator cancels from Settings, and the importer never reasons about a worker
+  mid-step.
 - **The live index** gives "one running job per studio" as a database fact: two concurrent starts
   collide on `23505`, which the route maps to the first `409`.
 - Times are Clock epoch milliseconds, like media jobs; the routes format them as ISO strings.
@@ -180,10 +209,14 @@ the shutdown sequence:
   locked_until_ms < $now) order by created_at_ms for update skip locked limit 1) returning *`.
   A claimed `queued` job with a cancel already requested ends `cancelled` at once.
 - **Lease.** Renewed every 10 s, fenced on `locked_by = $me and status = 'running'`. A renewal
-  that changes no row means another process took the job over: this process stops after its
-  current step and writes nothing more (each item and job write is fenced the same way).
-- **Wake-up.** The start route sends `pg_notify('autogenerate_jobs', '')` after commit; the worker
-  also polls every 15 s, so a restarted process picks up a lapsed job within 60 s + 15 s.
+  that changes no row (taken over, or the row gone with its team) means this process stops after
+  its current step and writes nothing more (each item and job write is fenced the same way).
+- **Poll only (P13).** The worker polls every 15 s. There is no `NOTIFY` wake-up: the API process
+  has no job `LISTEN` (A25), the binding rules allow `pg_notify` only to the frame bus, and a 15 s
+  start delay meets decision 4. A new job starts within 15 s; a lapsed one is claimed within 60 s
+  (lease) + 15 s (poll) = 75 s of its last renewal, which the spec states as "within 90 seconds"
+  to leave room for clock skew and a slow claim (P9); test 4.3 drives the fake clock to exactly
+  that bound.
 - **Order.** Items are read in `(ordinal, step_order)` order; the first item not ended is next.
 - One session at a time inside a job (owner decision 4); across processes, two teams' jobs may run
   at once (Open question Q6).
@@ -226,7 +259,7 @@ same way:
 | 7 | per step: preconditions, the route's own (no audio, no words, no anchors, no instructions, instruction bound) | item `skipped` with the code; dependent steps `skipped` the same |
 | 8 | per step: single-flight (D8) | wait, then `busy` |
 | 9 | per step: gap again under the single-flight | item `skipped` `present` |
-| 10 | run (D6) | `done`, or `failed` with a code (D9) |
+| 10 | run (D6) | `done`, or `failed` with a code (D9); 429 backoff and the consecutive-failure stop (D17) |
 
 Step 4 runs before every session even when steps 1-3 pass, as the security floor (owner decision
 6); it is the same predicate the session routes' masked 404 uses (`requireSession`). Steps 2-3 are
@@ -249,32 +282,74 @@ runWiki(p, sessionId, opts: { runId? }) → WikiOutcome
 Each outcome is a discriminated union of the route's refusals and results (`unconfigured`,
 `forbidden`, `precondition:<code>`, `busy`, `failed:<code>`, `ok`). The route maps them to its
 frozen statuses and details, unchanged; `sdkTurnSpec`/`callerLlmRoute` take `(env, user)` instead of
-`c`. Existing route tests (`transcribe.int.test.ts`, `events.generate.int.test.ts`,
-`wikiSuggestions.int.test.ts`, the topic tests) are the regression net and must pass unedited.
+`c`. The regression net (P12) is every suite that reaches these routes or helpers:
+`transcribe.int.test.ts`, `transcribe.test.ts`, `events.generate.int.test.ts`,
+`eventsGenerateWindow.test.ts`, `wikiSuggestions.int.test.ts`, `wiki.int.test.ts`,
+`ai.int.test.ts`, `aiV2.int.test.ts`, `providers.int.test.ts`, `sessions.youtubeImport.int.test.ts`
+(asserts the `topics/generate` 503), `apiResponseFixtures.int.test.ts`, `_aiRoute.test.ts` and
+`server/src/test/aiSdk.real.test.ts`. Their assertions must not change. The only permitted edits
+are mechanical call-site updates for the new `(env, user)` signature in `_aiRoute.test.ts` and
+`aiSdk.real.test.ts`, which call `sdkTurnSpec` directly; task 3.6 checks that every other file of
+the net has an empty diff and that those two diffs touch call sites only.
 
 *Why not call the routes over HTTP from the worker?* It would need a session cookie for the
 initiator (a stored credential, refused by decision 6) and could not express the gap guards.
 
-### D7. "Missing", per step, and the job's own partial output
+### D7. "Missing", per step, and the job's own partial output (P1, P2, P3, P7)
 
-- **transcript**: `listTranscriptWords().length === 0`. The runner gains `onlyIfEmpty`: inside the
-  existing replace transaction (`replaceTranscriptWordsRemapped`) it re-counts the words and, if
-  any exist, throws a sentinel that rolls back and maps to `present`. The paid call is then wasted
-  but no word is overwritten (owner decision 2).
-- **events**: missing when no event is auto-generated, ignoring events whose
-  `auto_generate_run_id` is in the item's `run_ids` (its own interrupted or failed attempts). A
-  run records its fresh run id in `run_ids` **before** the turn. On success it deletes the events
-  of the item's earlier run ids (delete-after-success, like `regenerate`, but limited to its own
-  ids). On failure it deletes the events of its own run id, through the same `session-undo` path the
-  route uses for its regenerate snapshot, so a failed step leaves the session "missing" for a later
-  job. The run is never `regenerate` and never passes a selection: every instruction-bearing
-  category runs.
-- **topics**: missing when `listTopics().length === 0`. The runner's crash-safe swap already
-  deletes the pre-run topics on success; on a first attempt the pre-run set is empty; on a resumed
-  attempt it is the interrupted run's partial topics (and see Risk R6).
-- **wiki**: always runs when the session has words. The item records its run id before the turn. On
-  resume, if any suggestion with that run id exists, generation is done; only the accept phase
-  (D12) continues. Otherwise a fresh run id is used.
+The rule: before a step writes a row that a later attempt might have to recognise as its own, the
+item records how to recognise it (write-ahead, under `autogenerate-worker`). Re-entry and failure
+clean up exactly those rows, **as the initiator** (see the end of D7), and only then decide
+"missing".
+
+- **transcript**: missing when `listTranscriptWords().length === 0`. The runner gains
+  `onlyIfEmpty`: inside the existing replace transaction (`replaceTranscriptWordsRemapped`) it
+  re-counts the words and, if any exist, throws a sentinel that rolls back and maps to `present`.
+  The replace is atomic, so no attempt leaves partial words.
+- **events**: each attempt appends its fresh run id to `run_ids` before the turn; generated events
+  carry it (`auto_generate_run_id`, A3).
+  - *Missing*: no auto-generated event other than those whose run id is in `run_ids`.
+  - *Re-entry* (P2): the attempt runs with an exclusion set, the ids of the events carrying an
+    earlier run id, passed through the same run-context field a regenerate uses for its snapshot
+    (`regenerateSnapshotIds`), so the earlier attempts' events are absent from the prompt's
+    existing-events list and from `create_event`'s anchor basis. It is still not a `regenerate`
+    and passes no selection.
+  - *Success*: deletes the events of every earlier run id (delete-after-success, even when the run
+    created none: an interrupted partial set is never a complete run).
+  - *Any failed ending* (`failed` with any code, `interrupted` included): deletes the events of
+    **every** run id in `run_ids`, the current one too.
+- **topics** (P1, P3): no tag column on `session_topics`. A tag would change a session content
+  table whose rows are the frozen topic wire shape, need a decision for every existing topic, and
+  still need id-level cleanup; an item-side list keeps the change inside the new tables. Instead:
+  - `create_topic` gets an optional per-turn **id allocator** in its MCP context. The batch
+    runner's allocator generates the topic id, appends it to the item's `own_topic_ids`
+    (committed), and only then lets the tool call `insertTopic` with that id (`insertTopic` gains
+    an optional caller-supplied `id`). A crash between the two leaves an id with no row, which the
+    cleanup ignores; it can never leave a row without a recorded id.
+  - The shared runner identifies **this run's topics by the ids its tool created** (the batch
+    allocator's list, or a default in-memory allocator for the manual route), not by
+    `after − preRunIds` (A19), and on failure deletes exactly those. Because this lives in the
+    shared runner, the manual route uses it too, and stays spec-identical: topic-generation already
+    says failure deletes "the topics this run created" (A20). The only observable difference is
+    that a topic a person adds during a failing manual run is no longer deleted, which the spec
+    never allowed (R12, test in 3.4).
+  - *Missing*: no topics other than those in `own_topic_ids`.
+  - *Re-entry*: first delete the topics in `own_topic_ids` (an interrupted set that never passed
+    the coverage gate), then check "missing"; a topic a person added meanwhile makes the step
+    `present`.
+  - *Success*: the swap deletes the pre-run topics, which for a batch run is the empty set, so
+    topics a person adds during the run are kept beside the generated ones.
+  - *Failed ending*: deletes the topics in `own_topic_ids`.
+- **wiki**: always runs when the session has words. The item records its run id before the turn.
+  On re-entry, if any suggestion with that run id exists, generation is done; only the accept phase
+  (D12) continues. Otherwise a fresh run id is used. A failed wiki run stores nothing.
+
+**Cleanup runs as the initiator (P7).** The worker deletes its own events and topics through the
+initiator-bound hub, under the same row-level security as the manual delete routes. It uses no
+system caller for this: `session-undo` keeps its definition ("a request's undo steps") and is not
+used by the worker, so the core-ports delta needs no new undo reason. If the initiator lost access
+to the session, the delete is refused; the rows stay, the item stays `failed`, and the content-free
+log line names the item. They remain identifiable from the item's `run_ids` and `own_topic_ids`.
 
 ### D8. Busy: wait, then skip the session
 
@@ -298,6 +373,11 @@ run lease, so a batch step and a manual run never overlap on a session.
 | events/topics/wiki turn failure, timeout, incomplete page coverage, store failure | `failed` `generation-failed` | same |
 | any unexpected throw | `failed` `generation-failed`, logged with the session id and error class only | same |
 | interrupted 3 times | `failed` `interrupted` | same |
+| upstream `429`, five times (D17) | `failed` `rate-limited` | same |
+
+Deepgram's upstream error gains a numeric `status` field (A21) so the transcript runner can report
+`rate-limited`; the AI SDK route already reports the status (A21). A CLI turn reports no status, so
+its 429 is `generation-failed`. Every `failed` row also cleans up per D7.
 
 Logs follow the routes' content-free pattern (`[autogenerate] job=<id> session=<id> step=<s>:
 <code>`), never provider text, prompts or paths.
@@ -314,27 +394,43 @@ recorded, then the job ends `cancelled` and every non-ended item becomes `cancel
 A process that dies leaves its job `running` with a lapsing lease and possibly one item
 `running`. The next claim continues from the first non-ended item. A `running` item is re-entered
 with `attempts + 1`; at the fourth entry it is `failed` `interrupted`. Re-entry runs the full
-ladder (D5) again, including the gap check with D7's own-output rules, so it is gap-fill by
-construction. The session's run leases of the dead process lapse after 40 s (A11), before the
+ladder (D5) again, and D7's re-entry cleanup runs before the gap check, so an interrupted
+attempt's partial topics or events never make the step `present`: it is gap-fill by construction. The session's run leases of the dead process lapse after 40 s (A11), before the
 job's 60 s lease, so the resumed step does not see its own ghost as busy.
 
-### D12. Wiki auto-accept
+### D12. Wiki auto-accept: safe changes only (owner decision 8a; P6)
 
 `WikiSuggestionStore.acceptSuggestion` gains an optional `{ batchJobId }`, used only by the worker:
 it appends ` (batch <job id>)` to the note, and nothing else changes (same transaction, same
-compare-and-set, same link checks, same `resolved_by`). For each suggestion of the item's run id
-that is still `pending`, in proposal order, the worker calls it as the initiator with
-`expectedRevision = base_revision` (a new page needs none). Any wiki error (stale, merged, deleted,
-clash, session page exists, invalid link) leaves the suggestion pending and counts it in
-`wiki_pending`. Each accept is its own transaction, so one refusal does not undo another accept.
+compare-and-set, same link checks, same `resolved_by`).
 
-This is the trust boundary of the change. A person's accept is a reviewed act on a diff; a batch
-accept is a pre-authorisation, given once in the confirm, for text the person will not read first.
-What still holds: every new quote was checked against the transcript at proposal time (ADR 0031),
-the page rules and link checks run, the author is the human who confirmed, the note marks it, and
-the history allows a revert. What does not: a true quote supporting a false or injected claim
-(transcripts are untrusted input) reaches the live page, visible to every member of the show,
-without review. See R1.
+In `accept` mode, for each suggestion of the item's run id that is still `pending`, in proposal
+order, the worker:
+1. reads the suggestion detail and, for an existing page, the page; if the page's current revision
+   is not the base revision, the suggestion is stale and stays pending;
+2. applies `isSafeSuggestion(page, suggestion)` from `packages/contract` (pure, unit-tested):
+   - a new-page suggestion is safe;
+   - a rewrite is safe only when the trimmed title is unchanged, the old aliases are a subset of
+     the new ones (exact), and the old body's lines (after `CRLF → LF`, split on `LF`) are a
+     subsequence of the new body's lines, byte for byte; a line that changed in any way, even one
+     that only grew, counts as a removal;
+3. accepts a safe one as the initiator with `expectedRevision = base_revision`; the compare-and-set
+   guarantees the page the rule judged is the page that is written. Any wiki error (stale, merged,
+   deleted, clash, session page exists, invalid link) leaves it pending.
+
+Unsafe and refused suggestions both count in `wiki_pending`; accepted ones in `wiki_accepted`.
+Each accept is its own transaction, so one refusal does not undo another accept.
+
+This is still the trust boundary of the change, now narrower. A person's accept is a reviewed act
+on a diff; a batch accept is a pre-authorisation, given once in the confirm, for text the person
+will not read first. The safe rule removes the panel's main harm (a rewrite silently deleting
+human-written content at scale, `propose_page` replacing whole pages, up to 20 per run): a job can
+only add pages, add lines and add aliases. What still holds: every new quote was checked against
+the transcript at proposal time (ADR 0031), page rules and link checks run, the author is the human
+who confirmed, the note marks it, and the history allows a revert. What does not: an added line
+can carry a false or injected claim (transcripts are untrusted input) supported by a true quote,
+and it is live without review; batch revisions stack, so reverting an early one by hand means
+re-applying later additions. See R1.
 
 ### D13. Ordering
 
@@ -347,7 +443,9 @@ created_at_utc, id` (all `collate "C"`).
 
 `server/src/routers/autogenerate.ts`, mounted with the team routes, reusing `requireTeamRole(c,
 teamId, OWNER_OR_ADMIN)` (exported from `teams.ts` or moved to `_helpers.ts`) so the `401` /
-masked `404` / `403` prefix is byte-identical to the team family. Contract schemas in
+masked `404` / `403` prefix is byte-identical to the team family. Invalid bodies answer `422`
+with zod 4 issues, the general rule (P8, A24); these routes do not use `parseTeamBody`'s `400`
+string, which the contract lists as an exception for the team family only. Contract schemas in
 `packages/contract/src/autogenerate.ts`. The candidate query is one SQL statement under the
 caller's binding, so RLS bounds it; the session-list scope checks each id with the same query and
 masks a miss as `404 Session not found`. `startAutogenerateJob(principal, scope)` (the service the
@@ -373,14 +471,32 @@ bar), like Companion devices.
 initiator with no stored credential, the per-session re-check, the wiki pre-authorised accept (and
 how it answers ADR 0031's revisit trigger), and what would reverse it.
 
+### D17. Rate limits and persistent provider failure (P4)
+
+- **429 backoff.** When a runner reports `rate-limited` (A21), the worker waits 30, 60, 120, 240
+  and 480 s (15.5 min in all) and retries the same step, re-checking the cancel and the job lease
+  during each wait and re-running D5 steps 0-4 before each retry; the fifth refusal ends the item
+  `failed` `rate-limited`. A retry re-enters the step per D7 (own output first).
+- **Consecutive failures.** `consecutive_provider_failures` lives on the job row, so a resume
+  continues the count. A processed session that ends with a step `failed` as `provider-failed`,
+  `generation-failed` or `rate-limited` adds one; a session with any step `done` resets it to 0; a
+  session with only skips leaves it. At 3 the job stops `failed` `provider-failing`, remaining
+  items `cancelled` `job-stopped`. Three tells a revoked key or a provider outage from one bad
+  session, and bounds the waste of a dead key to three sessions.
+
+*Alternative.* Probe the provider with the connection test before each session: rejected, it adds
+a request per session and still misses a mid-session failure.
+
 ## Risks / Trade-offs
 
-- **R1 [Trust boundary: auto-accept] Unreviewed AI text, possibly steered by an injected
-  transcript, lands in live wiki pages.** → The owner chose `accept` as the default (decision 8).
-  Mitigations: the confirm names it explicitly; quotes are verified; stale or clashing suggestions
-  stay pending; every batch revision is marked `(batch <job id>)` and attributable; the history
-  reverts it. Residual recorded in `docs/security.md`. The panel should weigh whether the default
-  should be `pending`; this design does not change the owner's decision.
+- **R1 [Trust boundary: auto-accept] AI-written new pages and added lines, possibly steered by an
+  injected transcript, land in live wiki pages without review.** → Narrowed by owner decision 8a:
+  only new pages and additions-only rewrites are accepted (D12); anything that removes or changes
+  existing text, title or alias stays pending. Further mitigations: the confirm names it; quotes
+  are verified; stale or clashing suggestions stay pending; every batch revision is marked
+  `(batch <job id>)` and attributable; the history reverts it. Residual (recorded in
+  `docs/security.md` and ADR 0033): a false or injected claim in an added line or a new page is
+  published without review, and stacked batch revisions make a hand revert of an early one costly.
 - **R2 [Spend] A job can make up to 4000 paid runs on the initiator's accounts, possibly for days.**
   → 1000-session cap, the estimate and confirm, per-turn bounds of each step, cancel by any
   manager. No job-level budget (Q5). A manager may start a job that spends another manager's
@@ -395,9 +511,10 @@ how it answers ADR 0031's revisit trigger), and what would reverse it.
 - **R5 [Manual users see a plain 409]** While a batch step holds a session, the manual routes
   answer their existing busy text, which does not name the batch (kept frozen, as ADR 0031 did). →
   The transcript status endpoint and the Settings section show the running job.
-- **R6 [Topics resume]** A human topic added to a session during the crash window of an
-  interrupted topics step is deleted by the resumed run's success swap. → Narrow window (a crash
-  during a topics turn on a session that had no topics); recorded.
+- **R6 [Topics and events resume — resolved by D7]** An interrupted attempt's partial topics or
+  events are recognised by the ids and run ids the item recorded ahead of the work, deleted on
+  re-entry or failure, and never counted as present. Residual: a cleanup refused because the
+  initiator lost access leaves those rows, recorded on the item.
 - **R7 [Wasted paid call]** A transcript discarded by `onlyIfEmpty`, or a step that lost its job
   lease, still cost a provider call. → Rare; correctness over cost.
 - **R8 [Long cancel latency]** Cancel waits for the current step (up to the wiki timeout, 900 s). →
@@ -409,8 +526,12 @@ how it answers ADR 0031's revisit trigger), and what would reverse it.
   step while another resumes the job. → Item and job writes are fenced on `locked_by`; the
   session's run lease prevents two runs on one session; the resumed step's gap check sees the
   output and records `present`.
-- **R11 [Importer pin]** The new migration moves the legacy importer's `TARGET_SCHEMA_VERSION`
-  (as in closed-signups task 1.2). → Task 1.4.
+- **R11 [Importer pin and replace]** The new migration moves the legacy importer's
+  `TARGET_SCHEMA_VERSION` (as in closed-signups task 1.2), and `--replace`/`--replace-live` now
+  refuse while the team has a live job (D1). → Task 1.4.
+- **R12 [Manual topics failure keeps a person's concurrent topic]** The shared runner's id-based
+  cleanup (D7) changes one unspecified side effect of the manual route. → Spec-identical (A20);
+  pinned by a test in 3.4.
 
 ## Migration Plan
 
@@ -441,5 +562,7 @@ Recorded for the owner and the panel; each has the default this design implement
 - **Q8. Archived sessions.** Default: included (only deleted sessions are excluded).
 - **Q9. Wiki on already-filled sessions.** Default per decision 2: always runs. Option: an "only
   sessions with no wiki suggestion from any run yet" toggle, if R3 proves costly.
-- **Q10. Auto-accept default.** Owner decision 8 makes `accept` the default; the panel is asked to
-  confirm the residual (R1) is accepted, not to change it.
+- **Q10. Auto-accept scope.** Answered by the owner after the panel (decision 8a): `accept` stays
+  the default, but auto-accepts only new pages and additions-only rewrites (D12). Still open for
+  the owner: whether added aliases should also wait for review, and whether the line rule should
+  ignore trailing whitespace (it does not; strict is the default).

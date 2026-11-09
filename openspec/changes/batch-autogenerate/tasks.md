@@ -15,16 +15,22 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
 
 - [ ] 1.1 Write `docs/decisions/0033-batch-autogenerate-jobs.md` (template 0000; Status Proposed;
   Rule: batch-autogenerate, show-wiki "A batch job accepts suggestions as its initiator",
-  core-ports-architecture "Every catalog and session call is bound to a caller"), stating how it
-  answers ADR 0031's "background run" revisit trigger, and add a one-line pointer to 0033 in ADR
-  0031's Consequences. Docs only, no test; verify: `scripts/check-change.sh --only
-  openspec,guide-size` passes and `grep -n 0033 docs/decisions/0031-show-wiki-ai.md` finds the
-  pointer.
+  core-ports-architecture "Every catalog and session call is bound to a caller"). It states how the
+  change answers ADR 0031's "background run" revisit trigger: the human initiator is the author,
+  the credential is the initiator's, and auto-accept is limited to safe changes (owner decision
+  8a: new pages and additions-only rewrites, the precise rule, and the residual of R1). Add a
+  one-line pointer to 0033 in ADR 0031's Consequences. Docs only, no test; verify:
+  `scripts/check-change.sh --only openspec,guide-size` passes and `grep -n 0033
+  docs/decisions/0031-show-wiki-ai.md` finds the pointer.
+  Evidence:
 - [ ] 1.2 Test first, new `server/src/test/pg/autogenerateJobs.pg.test.ts`, plus the recorded
   expectation in `catalogSchema.pg.test.ts` and the RLS listing test:
   - the columns, checks and the live index: a second `queued`/`running` job for a team fails
     `23505`, a `finished` one does not; an outcome or stop reason outside the lists fails `23514`;
+    an outcome with the wrong item status (`present` on a `failed` item) fails `23514`;
     `stop_reason` null with `failed` fails `23514`;
+  - deleting a team row (as `postgres`, standing in for `adminDeleteStudio` and the importer)
+    deletes its jobs and their items (cascade);
   - `catalog_user` select: owner and admin of the team see its jobs and items; a member, an outsider
     and an admin of another team see none;
   - insert: an admin inserts a `queued` job with itself as initiator and its items; a member, an
@@ -33,74 +39,111 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
     `new row violates`);
   - update: an admin of the team requests a cancel on a `running` job (cancel columns only) and
     cancels a `queued` one (`status` `cancelled`, `stop_reason` `cancelled`); a member's cancel,
-    a second cancel overwrite, `running → finished`, a change to `initiator_user_id`, `steps` or
-    the lease each fail `42501`; `catalog_user` update or delete on items and delete on jobs fail
-    `42501`;
+    a second cancel overwrite, `running → finished`, a change to `initiator_user_id`, `steps`,
+    `consecutive_provider_failures` or the lease each fail `42501`; `catalog_user` update or delete
+    on items and delete on jobs fail `42501`;
   - `catalog_system` may do all of the above.
   Evidence: under 1.3.
-- [ ] 1.3 `supabase/migrations/20261025000000_autogenerate_jobs.sql`: both tables, indexes, RLS,
-  the system policies, the user policies, the column grant, `autogenerate_jobs_user_guard`, the
-  header with the rollback statements; no transaction-control lines (`migrate.sh`). Verify:
-  1.2 green; `docker/supabase/test_migrate.sh` green.
+- [ ] 1.3 `supabase/migrations/20261025000000_autogenerate_jobs.sql`: both tables (with
+  `on delete cascade` from `studio_definitions`, `own_topic_ids`, `consecutive_provider_failures`,
+  the outcome/status check), indexes, RLS, the system policies, the user policies, the column
+  grant, `autogenerate_jobs_user_guard`, the header with the rollback statements; no
+  transaction-control lines (`migrate.sh`). Verify: 1.2 green; `docker/supabase/test_migrate.sh`
+  green.
   Evidence:
-- [ ] 1.4 Move the legacy importer's pin (`server/scripts/legacyImportSql.ts`
-  `TARGET_SCHEMA_VERSION` → `20261025000000`); the importer never touches the new tables. Test
-  first: `server/src/test/importLegacy.test.ts` "is the newest migration" is red before the move.
+- [ ] 1.4 Legacy importer (design D1, R11). Test first, `server/src/test/importLegacy.test.ts` and
+  the importer's pg test: "is the newest migration" is red before the pin moves; `--replace` and
+  `--replace-live` of a team with a `queued` and with a `running` job each fail with `legacy import
+  refused: team <id> has a batch autogenerate job in progress; cancel it first` and change
+  nothing; with only a `finished` job, both succeed and the job and its items are gone; the job
+  table is in the importer's lock list. Then move `TARGET_SCHEMA_VERSION` to `20261025000000` and
+  add the refusal and the lock in `server/scripts/legacyImportSql.ts`. Verify: green.
+  Evidence:
+- [ ] 1.5 Test first, `server/src/routers/teams.int.test.ts` addition: a team that has only
+  finished jobs and no shows is deleted through `DELETE /api/teams/:id` (`200`) and its jobs are
+  gone; a team with a live job still has shows and answers the existing `400` "Team still has N
+  show(s)". Expected to pass once 1.3 lands (no `adminDeleteStudio` change); record it.
   Evidence:
 
-## 2. Contract and catalog store (design D1, D3, D13, D14)
+## 2. Contract and catalog store (design D1, D3, D12, D13, D14)
 
 - [ ] 2.1 Test first, `packages/contract/src/autogenerate.test.ts`: the scope body (exactly one of
   `show_ids`/`session_ids`, non-empty, 200/1000 caps, steps non-empty and unique, `wiki_mode`
-  default `accept`, `expected_sessions` required on start and a non-negative integer); the outcome
-  list equals the contract table's 19 codes and each maps to its exact detail string; the job and
-  detail response schemas parse the spec's examples.
+  default `accept`, `expected_sessions` required on start and a non-negative integer), each refusal
+  producing zod 4 issues; the outcome list equals the contract table's 20 codes, each maps to its
+  exact detail string and its one item status; the stop reasons include `provider-failing`; the job
+  and detail response schemas parse the spec's examples.
   Evidence: under 2.2.
-- [ ] 2.2 `packages/contract/src/autogenerate.ts` (schemas, `AUTOGENERATE_OUTCOMES`,
-  `AUTOGENERATE_DETAIL`, step order). Verify: 2.1 green, `npm run typecheck` exit 0.
+- [ ] 2.2 `packages/contract/src/autogenerate.ts` (schemas, `AUTOGENERATE_OUTCOMES` with status
+  and detail, stop reasons, step order). Verify: 2.1 green, `npm run typecheck` exit 0.
   Evidence:
-- [ ] 2.3 Test first, `server/src/test/pg/autogenerateStore.pg.test.ts`:
+- [ ] 2.3 Test first, `packages/contract/src/wikiSafeSuggestion.test.ts` for `isSafeSuggestion`
+  (design D12): a new page is safe; `A\nB\nC` → `A\nB\nnew\nC` safe, → `new\nA\nB\nC\nend` safe;
+  `A\nB more\nC` unsafe; `A\nC` unsafe; `B\nA\nC` (reordered) unsafe; `CRLF` bodies compare as
+  `LF`; a trailing-space change on a line unsafe; title changed (beyond trim) unsafe; an alias
+  dropped unsafe, an alias added safe; an empty old body with any new body safe. Then implement.
+  Verify: green.
+  Evidence:
+- [ ] 2.4 Test first, `server/src/test/pg/autogenerateStore.pg.test.ts`:
   - create: candidates for a show scope exclude deleted and include archived sessions; a session
     scope dedupes; the ordinals follow design D13 for the spec's two ordering scenarios (B, A, C;
     `b` before `a`) and put undated sessions last; items are one per session and step in
     `(ordinal, step_order)`; the job and items commit together or not at all;
   - claim: two concurrent claims with one due job return it once; a `running` job with a lapsed
     lease is claimable, a live one is not; renewals and transitions fenced on `locked_by` change
-    nothing for another holder;
+    nothing for another holder; a renewal of a job whose row was deleted reports "gone";
+  - write-ahead: appending to `run_ids` and `own_topic_ids` is fenced like every item write;
   - list returns the newest 20 of the team; detail returns items in order with current titles
     (`""` for a vanished session); preview counts missing transcript, events (auto-generated only)
     and topics.
-  Evidence: under 2.4.
-- [ ] 2.4 `packages/catalog/src/autogenerateStore.ts` on the catalog facade; add
+  Evidence: under 2.5.
+- [ ] 2.5 `packages/catalog/src/autogenerateStore.ts` on the catalog facade; add
   `autogenerate-worker` to the reviewed system reasons (`server/src/catalogSystem.repo.test.ts`
-  ALLOWLIST, file and reason). Verify: 2.3 green; `catalogSystem.repo.test.ts` green.
+  ALLOWLIST, file and reason). Verify: 2.4 green; `catalogSystem.repo.test.ts` green.
   Evidence:
 
-## 3. Shared runners, no change to the manual routes (design D6, D7, D12)
+## 3. Shared runners (design D6, D7, D9, D12)
 
-- [ ] 3.1 Baseline: run the manual route suites before any edit and record the counts:
-  `transcribe.int.test.ts`, `transcribe.test.ts`, `events.generate.int.test.ts`,
-  `eventsGenerateWindow.test.ts`, `wikiSuggestions.int.test.ts`, `ai.int.test.ts`,
-  `providers.int.test.ts`, `apiResponseFixtures.int.test.ts`. These files are not edited in group 3.
+- [ ] 3.1 Baseline: before any edit, run the regression net of design D6 and record the per-file
+  counts: `transcribe.int.test.ts`, `transcribe.test.ts`, `events.generate.int.test.ts`,
+  `eventsGenerateWindow.test.ts`, `wikiSuggestions.int.test.ts`, `wiki.int.test.ts`,
+  `ai.int.test.ts`, `aiV2.int.test.ts`, `providers.int.test.ts`,
+  `sessions.youtubeImport.int.test.ts`, `apiResponseFixtures.int.test.ts`, `_aiRoute.test.ts`, and
+  `server/src/test/aiSdk.real.test.ts` (record whether it runs or skips without real keys). Their
+  assertions are not edited in group 3; the only allowed edits are the signature updates of 3.6.
   Evidence:
 - [ ] 3.2 Test first, `server/src/generation/transcript.test.ts`: `runTranscript` returns typed
-  outcomes for unconfigured, forbidden, busy, `no_audio`, `no_speech`, upstream, oversize,
-  missing blob, unreadable and ok; with `onlyIfEmpty`, a word inserted between the provider call
-  and the replace makes the outcome `present`, the replace rolls back and the inserted word
-  remains (`packages/session-core` replace test for the sentinel too). Then extract the runner from
+  outcomes for unconfigured, forbidden, busy, `no_audio`, `no_speech`, upstream, upstream `429`
+  (`rate-limited`, via a numeric `status` on `DeepgramUpstreamError`), oversize, missing blob,
+  unreadable and ok; with `onlyIfEmpty`, a word inserted between the provider call and the replace
+  makes the outcome `present`, the replace rolls back and the inserted word remains
+  (`packages/session-core` replace test for the sentinel too). Then extract the runner from
   `transcribe.ts`; the route becomes an adapter. Verify: 3.2 green and the 3.1 transcript suites
-  green with the same counts.
+  green with the baseline counts.
   Evidence:
-- [ ] 3.3 Test first, `server/src/generation/events.test.ts`: `runEvents` outcomes for each guard
-  of the route's ladder; with `ownRunIds`, events tagged with those run ids do not count as present,
-  are deleted after a successful run and kept on a refused one; on a failed run with
-  `deleteOwnOnFailure`, the events of its own run id are deleted through `session-undo` and manual
-  and other runs' events remain. Then extract from `events.ts`. Verify: 3.3 green, 3.1 events
-  suites green with the same counts.
+- [ ] 3.3 Test first, `server/src/generation/events.test.ts` (design D7 events):
+  - with `excludeEventIds` (the earlier attempts' events), those events are absent from the
+    prompt's existing-events list and from `create_event`'s anchor basis, exactly as a regenerate
+    snapshot is, while the run is not a regenerate;
+  - with earlier `run_ids`, events tagged with them do not count as present; after a successful
+    run they are deleted (also when the run created none); manual events and other runs' events
+    remain;
+  - a failed run, and a run ended as `interrupted`, delete the events of every run id in the
+    item's `run_ids`, the current one included, as the initiator (user caller), and nothing else;
+  - an AI SDK `429` is reported as `rate-limited`.
+  Then extract from `events.ts`. Verify: 3.3 green, 3.1 events suites green with the baseline
+  counts.
   Evidence:
-- [ ] 3.4 Test first, `server/src/generation/topics.test.ts`: `runTopics` outcomes (unconfigured,
-  forbidden, no words, busy, failed, ok) and the swap unchanged. Then extract from
-  `transcribe.ts`. Verify: 3.4 green, 3.1 suites green with the same counts.
+- [ ] 3.4 Test first, `server/src/generation/topics.test.ts` and `packages/ai-runtime`
+  `aiMcpServer` tests (design D7 topics):
+  - `create_topic` with an id allocator calls it before `insertTopic`, inserts with the allocated
+    id, and an allocator that throws makes the tool return an error without inserting;
+  - the runner deletes on failure exactly the topics its tool created: a topic a person inserts
+    during a failing run survives (manual route included, R12), and the success swap still
+    deletes the pre-run topics;
+  - `runTopics` outcomes (unconfigured, forbidden, no words, busy, failed, `rate-limited`, ok).
+  Then extract from `transcribe.ts` and add the allocator and `insertTopic`'s optional id. Verify:
+  green, 3.1 suites green with the baseline counts.
   Evidence:
 - [ ] 3.5 Test first, `server/src/generation/wiki.test.ts` and
   `server/src/test/pg/wikiSuggestionStore.pg.test.ts` additions: `runWiki` accepts a caller-chosen
@@ -108,13 +151,15 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
   suggestion <id> (batch <job>)` (and `created from suggestion <id> (batch <job>)` for a new page),
   `resolved_by` is the bound user, and every refusal of the manual accept still refuses. Then
   extract from `wikiSuggestions.ts` and add the option. Verify: green, 3.1 wiki suites green with
-  the same counts.
+  the baseline counts.
   Evidence:
-- [ ] 3.6 `sdkTurnSpec` and `callerLlmRoute` take `(env, user)`; every 3.1 suite re-run green with
-  the baseline counts, unedited (`git diff --stat` shows no change to those files).
+- [ ] 3.6 `sdkTurnSpec` and `callerLlmRoute` take `(env, user)`. Update only the call sites in
+  `_aiRoute.test.ts` and `aiSdk.real.test.ts` to the new signature. Verify: every 3.1 suite green
+  with the baseline counts; `git diff --stat` over the net shows changes only in those two files,
+  and their diffs touch only `sdkTurnSpec`/`callerLlmRoute` call lines.
   Evidence:
 
-## 4. The worker (design D3, D4, D5, D7-D12)
+## 4. The worker (design D3, D4, D5, D7-D12, D17)
 
 - [ ] 4.1 Test first, `server/src/autogenerate/worker.test.ts` (fake clock, fake runners, fake
   store):
@@ -123,31 +168,45 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
   - a session the initiator can no longer access is skipped `access-lost` with **no runner call**,
     and a deleted one `session-gone`; the job continues;
   - disabled initiator, role lost, not approved, and unconfigured STT / LLM each stop the job with
-    their `stop_reason`, the remaining items `cancelled` with `job-stopped`;
+    their `stop_reason` (the detecting item `failed` `unconfigured` for the last two), the remaining
+    items `cancelled` with `job-stopped`;
   - present, precondition cascades (`no-audio` → `no-transcript`), failure cascade
-    (`earlier-step-failed`), the D9 mapping table row by row;
+    (`earlier-step-failed`), the D9 mapping table row by row, and every item status/outcome pair
+    matches the contract table;
   - busy: retried every 15 s, runs when free, skipped `busy` (with the session's remaining steps)
     after 10 min; a cancel during the wait ends the job without running;
+  - `rate-limited`: retried after 30, 60, 120, 240, 480 s, a cancel during a wait is honoured, the
+    fifth refusal ends the item `failed` `rate-limited`; a success after two refusals is `done`;
+  - consecutive provider failures: three sessions in a row failing with `provider-failed`,
+    `generation-failed` or `rate-limited` stop the job `provider-failing` with no runner call for
+    the fourth; a `done` step in between resets the count; a skip-only session does not; the count
+    survives a resume (read from the job row);
   - cancel during a running step: the step's result is recorded, no further step starts;
+  - the worker polls every 15 s and sends no `pg_notify`;
   - the job row and items never receive any field but the listed columns (no credential).
   Evidence: under 4.2.
 - [ ] 4.2 `server/src/autogenerate/worker.ts` and `principal.ts` (D4: system re-read of the
   account, `forUser`, `userCaller`), `main.ts` start and shutdown. Update the reviewed lists in
-  `server/src/catalogSystem.repo.test.ts`: the worker's `forUser(` site, its `userCaller(` site,
-  `autogenerate-worker`, and `session-undo` in `server/src/generation/events.ts`. Verify: 4.1
+  `server/src/catalogSystem.repo.test.ts`: the worker's `forUser(` site, its `userCaller(` site and
+  `autogenerate-worker` (no `session-undo` site: cleanup runs as the initiator, D7). Verify: 4.1
   green, the repo test green, and its mutation checks still fail a synthetic unlisted site.
   Evidence:
 - [ ] 4.3 Test first (integration, real Postgres, stubbed providers),
   `server/src/autogenerate/worker.resume.int.test.ts`, **restart-resume**:
   - a job over three sessions with all steps; worker A is stopped (no release, as a crash) while
-    session 2's topics step runs; the clock passes the lease; worker B claims within one poll;
-    session 1's steps make no second provider call, session 2's topics re-runs once, then its wiki,
-    then session 3; the job ends `finished`;
-  - an events step interrupted after writing 2 events: on resume they do not count as present, the
-    re-run succeeds and the 2 partial events are gone while manual events remain;
+    session 2's topics turn runs, after its tool created 2 topics; the fake clock advances 90 s
+    from A's last renewal; worker B claims the job by then; session 1's steps make no second
+    provider call; session 2's 2 partial topics are deleted, its topics step is **not** `present`
+    and re-runs once, then its wiki, then session 3; the job ends `finished`;
+  - a topic a person adds to session 2 between the crash and the resume makes the resumed step
+    `present` after the partial topics are deleted, and the person's topic remains;
+  - an events step interrupted after writing 2 events: the resumed run's prompt and anchor basis
+    exclude them, the re-run succeeds, and the 2 partial events are gone while manual events
+    remain; an events item interrupted three times ends `failed` `interrupted` and the events of
+    all its run ids are deleted;
   - a wiki step interrupted after its suggestions were stored: no second wiki provider call, and
-    in `accept` mode the stored suggestions are accepted;
-  - an item interrupted three times ends `failed` `interrupted` and the job continues.
+    in `accept` mode its safe suggestions are accepted;
+  - the job continues after an `interrupted` item.
   Evidence:
 - [ ] 4.4 Test first (integration), `server/src/autogenerate/worker.authz.int.test.ts`, **the
   per-session re-check as the initiator**:
@@ -156,9 +215,9 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
     the job ends `failed` `initiator-role-lost`, no further provider call;
   - the initiator removed from the team; the initiator's account disabled; `RUN_FEATURE_EMAILS`
     changed to exclude the initiator: each stops the job with its reason before the next session;
-  - every catalog and session statement of a processed session's steps runs as `catalog_user` with
-    the initiator's id (the binding spy the existing caller tests use), and the job writes run as
-    `catalog_system` `autogenerate-worker`;
+  - every catalog and session statement of a processed session's steps, the cleanup deletes
+    included, runs as `catalog_user` with the initiator's id (the binding spy the existing caller
+    tests use), and the job writes run as `catalog_system` `autogenerate-worker`;
   - the provider requests carry the initiator's own stored key, not the operator's or another
     manager's, and a key the initiator changes mid-job is used from the next step.
   Evidence:
@@ -166,69 +225,93 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
   chat turn holding a session's slot makes the batch step wait and then run; a live recording
   lease leads to `busy` after the window (clock-driven); a batch step holding the slot makes a
   manual `topics/generate` answer its existing `409` text unchanged; two worker instances (two
-  "processes") never run the same job or the same session at once.
+  "processes") never run the same job or the same session at once; a job whose team row is
+  deleted mid-job (as the importer would, bypassing its guard) stops the worker without writes.
   Evidence:
-- [ ] 4.6 Test first (integration), `server/src/autogenerate/worker.wiki.int.test.ts`: `accept`
-  mode accepts the run's suggestions with the batch note and the initiator as author and resolver;
-  a page edited after the run leaves its suggestion pending (`wiki_pending` 1); a title clash on a
-  new page stays pending; `pending` mode leaves all pending; a suggestion from another run is never
-  accepted; no suggestion is dismissed.
+- [ ] 4.6 Test first (integration), `server/src/autogenerate/worker.provider.int.test.ts`: with a
+  stub STT provider answering `401` for every request, a 6-session job ends `failed`
+  `provider-failing` after session 3 and the stub saw exactly 3 transcript requests; with a stub
+  answering `429` twice then `200`, the step is `done` after the 30 s and 60 s waits (fake clock).
+  Evidence:
+- [ ] 4.7 Test first (integration), `server/src/autogenerate/worker.wiki.int.test.ts` (design D12):
+  in `accept` mode, a new-page suggestion and an additions-only rewrite are accepted with the batch
+  note and the initiator as author and resolver; a rewrite that changes a line, one that drops a
+  line, one that changes the title and one that drops an alias each stay `pending`; a page edited
+  after the run leaves its suggestion pending; a title clash on a new page stays pending; the item
+  records the matching `wiki_accepted` and `wiki_pending`; `pending` mode leaves all pending; a
+  suggestion from another run is never accepted; no suggestion is dismissed.
   Evidence:
 
 ## 5. Routes (design D14; api-contract-freeze delta)
 
 - [ ] 5.1 Test first, `server/src/routers/autogenerate.int.test.ts`: every status table row of the
-  five routes in the spec's order (401, masked 404 byte-identical to a missing team, member 403,
-  400 body, show 404, session 404, no sessions, over 1000, both 503s, run-feature 403, live-job
-  409 with `job_id`, `expected_sessions` 409 with `sessions`, 201); two concurrent starts give one
-  `201` and one `409`; preview `runs`, `max_runs` and each `blocked` value and that it writes
-  nothing; list newest 20; detail shape and order and the `Job not found.` 404 for another team's
-  job; cancel of a queued (→ `cancelled`), running (cancel recorded, still `running`), repeated
-  (200) and ended (409) job; no route sets a cookie; the shapes added to
-  `apiResponseFixtures.int.test.ts`.
+  five routes in the spec's order (401, masked `404 {"detail":"Team not found"}` byte-identical to
+  a missing team, member 403, `422` with zod 4 issues for a body with both scopes, with neither,
+  with duplicate steps and for a start without `expected_sessions`, show 404, session 404, no
+  sessions, over 1000, both 503s, run-feature 403, live-job 409 with `job_id`, `expected_sessions`
+  409 with `sessions`, 201); two concurrent starts give one `201` and one `409`; preview `runs`,
+  `max_runs` and each `blocked` value and that it writes nothing; list newest 20; detail shape and
+  order, item status/outcome pairs per the contract table, and the `Job not found.` 404 for another
+  team's job; cancel of a queued (→ `cancelled`), running (cancel recorded, still `running`),
+  repeated (200) and ended (409) job; no route sets a cookie; the five success shapes and the two
+  typed `409` bodies captured in `apiResponseFixtures.int.test.ts` into `fixtures/api-responses/`.
   Evidence: under 5.2.
 - [ ] 5.2 `server/src/routers/autogenerate.ts`, `startAutogenerateJob` service, mount in
-  `server/src/app.ts`, `requireTeamRole` shared from `teams.ts`; `pg_notify` after commit. Verify:
-  5.1 green, `teams.int.test.ts` and `authz.int.test.ts` unchanged and green.
+  `server/src/app.ts`, `requireTeamRole` shared from `teams.ts` (no `pg_notify`: the worker polls).
+  Verify: 5.1 green, `teams.int.test.ts` and `authz.int.test.ts` unchanged and green.
   Evidence:
 - [ ] 5.3 Test first: add the five routes with their statuses to
   `server/src/routers/readmeEndpoints.repo.test.ts` (red). Then add them to README "Endpoints" and
-  a README "Batch autogenerate" section (who may run it, gap rules, order, cancel, resume,
-  auto-accept and how to revert a batch revision, rollback). Verify: green.
+  a README "Batch autogenerate" section (who may run it, gap rules, order, cancel, resume, provider
+  stop, safe-only auto-accept and how to revert a batch revision, the importer refusal, rollback).
+  Verify: green.
   Evidence:
 
 ## 6. Settings section (design D15; web-ui-system delta)
 
-- [ ] 6.1 Test first, `web/src/pages/index/components/settings/BatchAutogenerateSection.test.tsx`
+- [ ] 6.1 Test first, web API-response conformance for the five new client call sites: client
+  types in `web/src/api/types.ts` (job object, detail, preview, the typed `409` bodies `{detail,
+  job_id}` and `{detail, sessions}`, the `422` issues body); type-level assignments in
+  `web/src/api/types.conformance.test.ts` against each fixture captured in 5.1, including both
+  `409` bodies; a verdict entry for every new parse site in `web/src/apiResponseShapes.repo.test.ts`
+  (red until the sites and types exist). Verify: `npm run typecheck` and both tests green after
+  6.3.
+  Evidence: under 6.3.
+- [ ] 6.2 Test first, `web/src/pages/index/components/settings/BatchAutogenerateSection.test.tsx`
   and the `SettingsView`/`sections` tests: hidden for a member-only user and listed for an
   owner/admin; team picker limited to managed teams with the active team default; all shows and
   steps ticked by default; wiki mode disabled without Wiki; estimate shown from preview (debounced)
   and each `blocked` message disables Start; the confirm names sessions, max runs, the own-accounts
-  note and the auto-accept warning (absent in pending mode); a `409` "sessions changed" refreshes
-  and re-asks; a live job (another admin's) shows progress, initiator and Cancel instead of Start,
-  polled every 5 s only while visible; cancel goes through the themed confirm; an ended job's
-  report groups failed and skipped items by session with their details; Recent jobs opens a
-  report; nothing is fetched while Settings is closed or another section is shown.
-  Evidence: under 6.2.
-- [ ] 6.2 `BatchAutogenerateSection.tsx`, `sections.ts`, `SettingsSections.tsx`,
-  `web/src/api/hooks/useAutogenerateJobs.ts`, types. Verify: 6.1 green; `npm run typecheck` exit
-  0; biome clean.
+  note and what auto-accept adds and leaves for review (absent in pending mode); a `409` "sessions
+  changed" refreshes and re-asks; a `422` shows a generic error; a live job (another admin's) shows
+  progress, initiator and Cancel instead of Start, polled every 5 s only while visible; cancel goes
+  through the themed confirm; an ended job's report groups failed and skipped items by session with
+  their details, words each stop reason (`provider-failing` included), and shows the wiki
+  accepted/left-pending counts; Recent jobs opens a report; nothing is fetched while Settings is
+  closed or another section is shown.
+  Evidence: under 6.3.
+- [ ] 6.3 `BatchAutogenerateSection.tsx`, `sections.ts`, `SettingsSections.tsx`,
+  `web/src/api/hooks/useAutogenerateJobs.ts`, `web/src/api/types.ts`. Verify: 6.1 and 6.2 green;
+  `npm run typecheck` exit 0; biome clean.
   Evidence:
 
 ## 7. Security notes
 
-- [ ] 7.1 `docs/security.md`: the auto-accept residual (unreviewed AI text, possibly steered by an
-  untrusted transcript, in live pages; marked, attributable, revertible), the spend residual (up to
-  4000 runs on the initiator's accounts), and the worker as the second user-binding site. Verify:
-  the consistency read (8.2) finds each residual referenced from ADR 0033.
+- [ ] 7.1 `docs/security.md`: the auto-accept residual (new pages and added lines, possibly
+  steered by an untrusted transcript, live without review; removals always wait for a person;
+  marked, attributable, revertible; stacked revisions), the spend residual (up to 4000 runs on the
+  initiator's accounts, bounded by the provider-failure stop), and the worker as the second
+  user-binding site. Verify: the consistency read (8.2) finds each residual referenced from ADR
+  0033.
   Evidence:
 
 ## 8. Verification
 
 - [ ] 8.1 Dev stack (`make dev-up`): as an admin with a dev provider, run a job over three sessions
   of a test show (one without audio, one already transcribed) in `accept` mode; restart the `api`
-  container during the second session; record the report (outcomes per step), that the job
-  resumed, and a batch revision's note in the page history. Repeat once in `pending` mode.
+  container during the second session's topics step; record the report (outcomes per step), that
+  the job resumed within 90 s, that no partial topic set was kept, and a batch revision's note in
+  the page history. Repeat once in `pending` mode.
   Evidence:
 - [ ] 8.2 Tier 2 consistency read (`consistency-read` skill) over specs, design, code and tests;
   every finding fixed or escalated.
