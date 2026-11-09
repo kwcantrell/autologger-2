@@ -69,10 +69,14 @@ nothing the listing touches); a server-side import job (owner decision 1 chose t
 ### D2. URL validation and canonicalization in `@autologger/contract`
 
 `validateYoutubePlaylistUrl(raw)` beside `validateYoutubeImportUrl` returns
-`{ok: true, listId, href}` or `{ok: false, reason: 'not-playlist' | 'mix' | 'private-only'}`:
+`{ok: true, listId, href}` or `{ok: false, reason: 'not-playlist' | 'mix'}`:
 `new URL()` parse, `http(s)`, exact host in `{youtube.com, www.youtube.com, m.youtube.com,
 music.youtube.com}`, pathname `/playlist` or `/watch`, `list` matching `^[A-Za-z0-9_-]{2,64}$`;
-then `RD*` → `mix`, `WL`/`LL`/`LM` → `private-only`. `href` is always
+then `RD*` → `mix`. Private lists such as `WL` and `LL` are not special-cased: YouTube answers
+them "does not exist" (A4), which is already the private-or-nonexistent `502` (panel: no frozen
+surface without user value). The body itself is checked by `youtubePlaylistBodySchema` and refused
+with the frozen `422 {detail: [zod issues]}` (api-contract-freeze "Validation error bodies carry
+zod 4 issues"); only the URL rules give `400`. `href` is always
 `https://www.youtube.com/playlist?list=<listId>`, which is what yt-dlp gets. Canonicalizing means
 the `v` of a watch link can never make yt-dlp take the single-video path, `music.youtube.com`
 never selects a different extractor, and no caller-controlled query parameter reaches the child.
@@ -97,29 +101,32 @@ Bounds, from the measurements in Assumptions:
 | --- | --- | --- |
 | Entries | 5000 (`--playlist-end`) | YouTube's own playlist cap; uploads lists exceed it (A7) |
 | Stdout | 16 MiB | ~1.36 KB per entry (A2, A6) → 5000 ≈ 6.8 MB; 2.3× headroom |
-| Stderr | first 64 KiB, classify only | error lines are under 200 bytes (A4, A5) |
+| Stderr | first 64 KiB, classify only | error lines are under 200 bytes (A4) |
 | Wall clock | 60 s | 1702 entries in 9.4 s (A6) → 5000 ≈ 28 s; under the 100 s proxy limit |
 | Concurrency | 2 per process, else busy `503` | as search's 2-at-once; each listing is one short child |
 
 Failure classification (fixed details, stderr never echoed): stderr matching
-`/does not exist|is private|private playlist/i` → private-or-nonexistent `502`;
-`/unviewable/i` → playlist-type `502`; timeout → timed-out `502`; overflow, non-zero exit,
-unparseable JSON or a `_type` other than `playlist` → generic `502`.
+`/does not exist|is private|private playlist/i` → private-or-nonexistent `502`; timeout →
+timed-out `502`; anything else (overflow, another non-zero exit such as an unviewable playlist
+type, unparseable JSON, a `_type` other than `playlist`) → generic `502`.
 
 The process cap is a module singleton like `youtubeImportGuard` (`playlistListingGuard`,
-`tryAcquire(): lease | null`), acquired after the `400` checks and released in `finally`. The
+`tryAcquire(): lease | null`), acquired after the `422`/`400` checks and released in `finally`. The
 per-request temp dir is `youtube-import-playlist-<random>` under `scratchRoot()`, so the existing
 startup sweep covers it.
 
 ### D4. Entry projection is the server's job
 
 `projectPlaylist(raw, listId)` in `packages/media-import/src/playlistEntries.ts` maps yt-dlp's
-entry objects to the contract shape, so the client never sees yt-dlp's schema: keep only entries whose `id` matches `^[A-Za-z0-9_-]{11}$`; `index` is the 1-based
+entry objects to the contract shape, so the client never sees yt-dlp's schema: keep only
+entries whose `id` matches `^[A-Za-z0-9_-]{11}$`; `index` is the 1-based
 position in yt-dlp's `entries` array (a dropped malformed entry leaves a gap rather than shifting
 later positions); `title` with control characters stripped and capped at 500; `duration_s` a
 finite non-negative number or `null`; `reason` by the contract's order (title `null` or the
 literal `[Private video]`/`[Deleted video]` → `unavailable`; `live_status` `is_live` → `live`,
-`is_upcoming` → `upcoming`; `duration_s > 14400` → `too_long`). `truncated` is
+`is_upcoming` → `upcoming`; `duration_s >= 14400` → `too_long`, matching the download filter
+`duration < 14400` in `downloadFlags`, so an exactly-4-hour video is never offered and then
+refused). `truncated` is
 `entries.length === 5000 && (playlist_count ?? 0) > 5000`. The mapper is a pure function with
 unit tests over recorded fixtures (A2, A8).
 
@@ -129,49 +136,105 @@ unit tests over recorded fixtures (A2, A8).
   all/none, From/To range, count, "Use publish date", truncated notice. Rows render in a
   scrollable list (max height) of plain checkboxes, each row styled `content-visibility: auto` so
   off-screen rows are not laid out; selection is one `Set<number>` of positions, so Select all and
-  the range are one state update. No virtualization library: a 5000-row render test (task 7.3)
+  the range are one state update. No virtualization library: a 5000-row render test (task 8.3)
   bounds the cost, and the picker is mounted only while a playlist is loaded.
 - `web/src/pages/index/batchImport/playlistNames.ts`: `playlistSessionNames(entries) → Map<index,
   name>` implementing the naming requirement; pure, unit-tested.
 - `web/src/pages/index/batchImport/playlistRunner.ts`: `runPlaylistImport({showId, entries,
-  names, usePublishDate, profile, signal, initialLines, onProgress, onSessionCreated})`. It reuses
-  `alignActiveShow`, `fetchSessions`, `createSessionForStem`, `deleteSession`,
+  names, usePublishDate, profile, signal, initialLines, onProgress, onSessionCreated, sleep?})`.
+  It reuses `alignActiveShow`, `fetchSessions`, `createSessionForStem`, `deleteSession`,
   `findMatchingSession` and the `format*Line` helpers, which `runner.ts` exports (today they are
   module-private, except the formatters and matcher). `initialLines` carries the folder part's
   lines so the one progress state keeps every part (`runBatchImport` replaces `lines` wholesale
-  through `onProgress`).
+  through `onProgress`). `sleep` is injectable so the 15 s polling is tested with fake time.
+- **Per-entry show check and fresh list.** `GET /api/sessions` lists the profile's *current*
+  active show (`server/src/routers/sessions.ts:147-177`), not the run's, and a run lasts hours.
+  Before each entry the runner reads `GET /api/profile`; if `active_show_id` is not the run's show
+  it re-runs `alignActiveShow` (one progress line), then fetches the list and keeps only sessions
+  with `show_id === showId`. The filter means a switch that lands between the profile read and the
+  list read can only cause a missed skip, never a skip against another show's session. The list is
+  read immediately before each create, so a session another tab or member made for the same video
+  a moment ago is skipped.
+- **Created-session memory.** The runner remembers each session it creates with the folder
+  import's `rememberImportSession` (IndexedDB, 30 days, `web/src/api/uploads.ts:184`) under the key
+  `youtube:<showId>:<video_id>`, and forgets it on completion or after a definite-failure delete.
+  A name match that is remembered for this show and video and has zero audio segments
+  (`GET …/audio/segments`, as `resumableSessionFor` reads) is retried into, not skipped; a `409`
+  there means the server is still importing it (its per-session guard and run lease), so the
+  runner logs that and moves on without creating anything. A session someone made by hand is
+  never imported into.
+- **Validation details.** `apiFetch` turns an array `detail` into `JSON.stringify` text. The
+  runner formats `ApiError.body.detail` arrays itself as `<path joined with .>: <message>` joined
+  with `; ` (a helper beside the line formatters).
 - The modal runs folder → playlist → logs (logs last so they can match sessions just created).
 
 ### D6. Session naming (owner decision 2)
 
-The name must fit `episode` (80) because both fields get it, must survive the create path's trim,
-and must never carry NUL (api-contract-freeze "Text containing NUL is refused"); hence NFC,
-control characters to spaces, whitespace collapse, trim, 80 code points. Names are computed over
-the whole listing in playlist order, so `Q&A (2)` is the same video whether or not the first `Q&A`
-is checked, and a re-run with a different selection skips the right sessions.
+The name must fit `episode` (`z.string().max(80)`, which counts UTF-16 code units: 41 emoji fail,
+40 pass, per the panel's probe) because both fields get it, must survive the create path's trim,
+and must never carry NUL (api-contract-freeze "Text containing NUL is refused"). Hence NFC,
+control characters to spaces, whitespace collapse, trim, then a cut at 80 UTF-16 units that drops
+a surrogate pair rather than splitting it (a lone surrogate would be stored as U+FFFD or refused).
 
-**Alternatives:** suffix with the video id (`Title [dQw4w9WgXcQ]`): stable under reordering, but
-the owner asked for the title; recorded as an open question.
+Duplicates within a listing get ` [<video_id>]` on **every** entry sharing the plain name, with
+the title part cut to 66 units. A positional ` (k)` (the first draft) shifts when a same-titled
+video is added above or removed, and a re-run then skips a video that was never imported because
+its new name matches another video's session (panel). With the id suffix every name depends only on
+the video and on whether its title is shared, never on positions or the selection.
+
+**Residual:** if a playlist later gains a second video with an already-imported title, the first
+video's name changes from `Q&A` to `Q&A [id]`, so a re-run imports it once more under the new
+name. That is a visible duplicate, not a silent skip, and needs a new same-titled upload.
+
+**Alternatives:** suffix every name with the id (stable always, but the owner asked for the title);
+positional suffixes (rejected above).
 
 ### D7. Failure, abort and unknown outcomes
 
 - A `{detail}` failure is definite (the route rolls back its own segment on every path), so the
-  runner deletes the session it created, as folder import does, and a re-run retries the video.
-- A failure with no JSON body (network error, Cloudflare `524` after 100 s) is an unknown outcome:
-  the server may still attach the audio. Deleting would hide a session that is about to get
-  audio; keeping it means a re-run skips it. The runner keeps it and says so in the line.
+  runner deletes the session it created and forgets it, as folder import does, and a re-run
+  retries the video.
 - `401`, `403` and `503` end the playlist part: every later request would fail identically.
-- Abort (modal close) deletes the in-flight session best-effort without a signal (as folder
-  import). The server does not watch the client connection, so its download continues and
-  attaches to the now-hidden session (`canAccessSession` includes hidden sessions). Harmless but
-  wasted; see Risks.
+- **A failure with no JSON body** (network error, Cloudflare `524` after 100 s) is an unknown
+  outcome: the server keeps downloading (it does not watch the client connection). Moving on would
+  let one run stack up concurrent server downloads, each up to 2 GB buffered by `readFile`
+  (`server/src/routers/sessions.ts:556`), with no global cap (panel). So the runner keeps the
+  session and waits: it reads `GET …/audio/segments` every 15 s for at most 32 minutes (the probe
+  and download spawns each have a 15-minute hang bound, `DEFAULT_HANG_TIMEOUT_MS`, plus 2 minutes
+  for the blob write and anchor). A segment means success. It never re-sends `youtube-import`
+  while waiting: a re-send racing the first import's finish would attach the audio twice, because
+  the lease is released only after the segment is attached. If nothing appears, the line says so
+  and the remembered empty session is retried by the next run (D5).
+- **Abort** (modal close) stops the run and any waiting, and **keeps** the in-flight session,
+  remembered: the server finishes or fails on its own, and the next run skips it (has audio),
+  retries it (empty), or gets `409` (still running). The first draft deleted it, which left the
+  server attaching audio to a hidden session (`canAccessSession` includes hidden sessions).
+- With these rules one run has at most one server download in flight. A user who closes and
+  reopens the modal and starts again can add one more per restart (the restarted run gets `409`
+  for the in-flight video and moves on to the next). A process-wide cap on `youtube-import`
+  downloads would bound that, but it would add a new refusal to `youtube-import`, whose frozen
+  contract has none for other sessions ("No global import ceiling on claude_cli"); left as an open
+  question.
 
 ### D8. Contract and docs
 
 api-contract-freeze ADDED "YouTube playlist listing endpoint" and MODIFIED "Run features are
 limited to approved users" (seven routes). README: endpoint table row (statuses 200, 400, 403,
-502, 503), "Run features: approved users only" route list (six → seven), "YouTube audio import"
-section paragraph on playlists. `readmeEndpoints.repo.test.ts` gains the route.
+422, 502, 503), "Run features: approved users only" route list (six → seven), the
+`RUN_FEATURE_EMAILS` row of the settings table (README.md:1267, which names the run features),
+"YouTube audio import" section paragraph on playlists. `readmeEndpoints.repo.test.ts` gains the
+route.
+
+**API-response conformance** (web-api-response-conformance): the new `POST youtube/playlist-entries`
+site and the create, import, delete, profile, session-list and segment-list calls in
+`playlistRunner.ts` are response-consuming sites that `web/src/apiResponseShapes.repo.test.ts`
+scans. The response types (`YoutubePlaylistResponse`, `YoutubePlaylistEntry`) are declared in
+`web/src/api/types.ts`, because `web` does not depend on `@autologger/contract`
+(`grep -n contract web/package.json` → none). A real `200` body is captured by
+`server/src/routers/apiResponseFixtures.int.test.ts` (fake binary), and
+`web/src/api/types.conformance.test.ts` assigns the capture to the client type; the moved runner
+calls reuse the existing captures for their endpoints (session, sessions list, profile, segments,
+`{ok: true}`), with a recorded verdict for each new site.
 
 ## Assumptions
 
@@ -224,18 +287,32 @@ the same binary prod uses) or by reading the code. `Y` below is
   `packages/media-import/src/youtubeImportScratch.ts:41` `if
   (!name.startsWith(YOUTUBE_IMPORT_TMP_PREFIX)) continue;` with the prefix `youtube-import-`.
 
+- **A16. Length limits count UTF-16 code units.** `cd server && node --input-type=module -e
+  "import {z} from 'zod/v4'; const s=z.string().max(80); console.log(s.safeParse('😀'.repeat(41)).success,
+  s.safeParse('😀'.repeat(40)).success)"` (run from the main checkout's `server/`, which has
+  `node_modules`) → `false true`.
+- **A17. The session list follows the profile's active show.** `sed -n 147,177p
+  server/src/routers/sessions.ts` → `listSessionsForShow(activeShowId)`, with `activeShowId` read
+  from the user's prefs on every request; each entry carries `show_id`.
+- **A18. `web` cannot import `@autologger/contract`.** `grep -n contract web/package.json` → no
+  match (exit 1).
+- **A19. The created-session memory lives 30 days.** `web/src/api/uploads.ts:184`
+  `IMPORT_SESSION_MEMORY_TTL_MS = 30 * 24 * 60 * 60 * 1000`.
+
 ## Risks / Trade-offs
 
 - **[Proxy timeouts on long downloads]** `youtube-import` holds the request for the whole
   download; behind Cloudflare a request over 100 s gets a `524` while the server finishes. One
-  manual import hits this rarely; a playlist of long videos may hit it often. → D7 keeps such
-  sessions and says so; Open question 1.
-- **[Abort leaves server work running]** Closing the modal does not stop the in-flight download,
-  which lands in a hidden session. → Bounded by the import's own 15-minute and 2 GB bounds; Open
-  question 2.
-- **[Reordered playlists rename duplicates]** If a playlist with duplicate titles is reordered
-  between runs, `Q&A (2)` may name a different video, so a re-run could skip the wrong one. →
-  Rare (needs duplicate titles and a reorder); Open question 3.
+  manual import hits this rarely; a playlist of long videos may hit it often. → D7 waits for
+  the outcome instead of moving on, so a run never stacks downloads; Open question 1.
+- **[Restarts add server downloads]** Closing and restarting the run while a video downloads adds
+  one concurrent server download per restart (D7). → Bounded by the import's 15-minute and 2 GB
+  bounds per download; Open question 2.
+- **[A newly duplicated title re-imports once]** D6 residual: visible duplicate session, never a
+  silent skip.
+- **[Two tabs importing the same playlist]** Both read the list, both see no match, both create
+  within the same second. → Accepted: the list is read right before each create, so the window is
+  one round trip; the duplicate is visible and can be deleted.
 - **[Same-name videos already in the show]** A video whose title equals an unrelated existing
   session is skipped as "already in system" (owner decision 2, same as folder import).
 - **[Stderr classification is text-matching]** A yt-dlp release could change wording, falling
@@ -257,11 +334,13 @@ ordinary sessions).
 1. **Cloudflare 100 s limit on `youtube-import` (prod, behind the tunnel).** How often does a
    real download exceed it? If often, a follow-up could make `youtube-import` asynchronous; that
    would be its own contract change. This change only keeps the outcome honest (D7).
-2. **Should abort wait for the in-flight video** instead of deleting its session while the server
-   keeps downloading? Waiting conflicts with folder import's "close resets the modal"; the current
-   choice matches folder import.
-3. **Duplicate-title suffix**: positional ` (2)` (chosen, readable) versus a video-id suffix
-   (stable under reordering). Owner decision 2 says "the video title"; confirm the suffix form.
+2. **A process-wide cap on concurrent `youtube-import` downloads.** D7 limits one run to one
+   in-flight download, but restarts and several users can still stack them (each up to 2 GB
+   buffered). A cap would add a new `409`/`503` to `youtube-import` for reasons outside the
+   session, which its frozen "No global import ceiling on claude_cli" requirement rules out, so it
+   needs its own contract change. Decide whether to propose it (or stream the blob write instead of
+   `readFile`).
+3. *(Closed by the panel: duplicate titles carry ` [<video_id>]`, design D6.)*
 4. **`youtu.be/<id>?list=…` share links** are refused with the playlist-link `400` under owner
    decision 5. Accepting them is a one-line host addition if the owner wants it.
 5. **Per-user fairness of the busy `503`.** Two listings per process is global; one user

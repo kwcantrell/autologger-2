@@ -22,7 +22,7 @@ YouTube playlist.
 2. **Session name** = the video title (sanitized and trimmed, design D6) for both `episode` and
    `title`. Skip semantics are batch import's: a session in the show whose `episode` or `title`
    equals that name is skipped and logged "already in system". Duplicate titles inside one
-   playlist get a numbered suffix (design D6).
+   playlist carry their video id (`Q&A [dQw4w9WgXcQ]`, design D6).
 3. **Publish date**: one checkbox for the whole run, default on, sent as `use_publish_date`.
 4. **No size cap on the import.** The listing returns every entry (up to YouTube's own playlist
    limit, design D3) and the user picks which to import with checkboxes and a range.
@@ -37,8 +37,8 @@ YouTube playlist.
 ## What changes
 
 - **New route** `POST /api/youtube/playlist-entries` `{url}` → `200 {playlist, entries, truncated}`.
-  It validates the URL (exact YouTube hosts, playlist forms only, Mix and private-only list ids
-  refused), then runs `yt-dlp` once in flat-playlist mode against a canonical
+  It validates the body (`422` zod issues, the frozen convention) and the URL (exact YouTube
+  hosts, playlist forms only, Mix lists refused with `400`), then runs `yt-dlp` once in flat-playlist mode against a canonical
   `https://www.youtube.com/playlist?list=<id>` with the same lockdown as the existing import spawn
   (discrete argv, `--` terminator, `--ignore-config`, `--no-plugin-dirs`, scrubbed env) and new
   bounds: at most 5000 entries, 16 MiB of output, 60 s wall clock, two listings at once per
@@ -53,14 +53,21 @@ YouTube playlist.
 - **Playlist runner** (browser): per selected entry, in playlist order: skip if a session of the
   show already has that name; otherwise create the session and call `youtube-import` with the
   entry's `https://www.youtube.com/watch?v=<id>` URL. A per-video failure is logged and the loop
-  continues; a definite failure rolls the created session back (as folder import does); closing the
-  modal aborts the run.
-- **Docs**: README endpoint table row, the "Run features" route list, and the "YouTube audio
-  import" section.
+  continues; a definite failure rolls the created session back (as folder import does). When the
+  outcome is unknown (a proxy timeout), the runner waits, polling the session's segments for up to
+  32 minutes, before starting the next video, so one run never stacks server downloads. Sessions it
+  created and that are still empty are retried into on the next run, not skipped. The skip check
+  reads a fresh session list for the run's show before each entry. Closing the modal aborts the
+  run and keeps the in-flight session for the next run.
+- **Docs**: README endpoint table row, the "Run features" route list, the `RUN_FEATURE_EMAILS`
+  settings row, and the "YouTube audio import" section.
+- **API-response conformance** for every new web call site (client types in `web/src/api/types.ts`,
+  a captured fixture, verdicts).
 
 ## Contract impact
 
-Observable additions only: one new route (statuses `200`, `400`, `401`, `403`, `502`, `503`),
+Observable additions only: one new route (statuses `200`, `400`, `401`, `403`, `422`, `502`,
+`503`),
 and the run-feature gate grows from six routes to seven. `POST /api/sessions/:id/youtube-import`,
 `POST /api/sessions` and every other route are unchanged. No WebSocket change.
 
@@ -103,7 +110,7 @@ None.
   `packages/media-import/src/{ytdlpPlaylist,playlistEntries,playlistListingGuard}.ts` (new),
   `packages/media-import/src/ytdlp.ts` (stdout/stderr bounds on the shared spawn helper), `packages/contract/src/schemas.ts`
   (body schema, playlist URL validator, response types).
-- Web: `web/src/pages/index/components/BatchImportModal.tsx`, new
+- Web: `web/src/api/types.ts` (response types), `web/src/pages/index/components/BatchImportModal.tsx`, new
   `web/src/pages/index/components/PlaylistPicker.tsx`, new
   `web/src/pages/index/batchImport/playlistRunner.ts` and `playlistNames.ts`, small exports from
   `batchImport/runner.ts`.

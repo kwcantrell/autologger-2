@@ -88,18 +88,20 @@ run is in progress.
 
 Each playlist entry with a title SHALL get one session name, used as both `episode`
 and `title`, computed over the whole loaded listing (checked or not) so that a name
-does not depend on the selection:
+does not depend on the selection or on the entries' positions. Lengths are counted in
+UTF-16 code units, as the session create schema counts them (`episode` at most 80):
 
 1. Normalize the title to Unicode NFC; replace every control character
    (U+0000–U+001F, U+007F–U+009F) and U+2028/U+2029 with a space; collapse each run
-   of whitespace to one space; trim.
-2. If the result is empty, use `YouTube <video_id>`.
-3. Shorten it to at most 80 characters (Unicode code points; the session `episode`
-   limit), then trim trailing whitespace.
-4. Walking entries in playlist order, the first entry with a given name keeps it; each
-   later entry with the same name gets ` (k)` appended, with the smallest `k ≥ 2` not
-   already assigned, shortening the base (then trimming it) so the whole name stays
-   within 80 characters.
+   of whitespace to one space; trim. The result is the entry's *base*.
+2. If the base is empty, the name is `YouTube <video_id>`.
+3. Otherwise cut the base to at most 80 UTF-16 code units, never splitting a surrogate
+   pair (a pair that would straddle the limit is dropped whole), then trim trailing
+   whitespace. This is the *plain name*.
+4. When two or more titled entries of the listing share a plain name, every one of
+   them SHALL be named `<base cut to 66 units, never splitting a pair, trimmed> [<video_id>]`
+   (14 units of suffix, so the whole name stays within 80); a plain name shared by no
+   other entry is the name as is.
 
 Names SHALL be compared exactly (case-sensitive), as folder import compares stems.
 
@@ -110,49 +112,91 @@ Names SHALL be compared exactly (case-sensitive), as folder import compares stem
 
 #### Scenario: Long titles fit the episode limit
 
-- **WHEN** an entry's title is 120 characters long
+- **WHEN** an entry's title is 120 ASCII characters long
 - **THEN** its session name is its first 80 characters with trailing spaces trimmed
 
-#### Scenario: Duplicate titles in one playlist get numbered
+#### Scenario: Emoji titles fit the episode limit in UTF-16 units
 
-- **WHEN** positions 2, 5 and 9 all have the title `Q&A`
-- **THEN** their session names are `Q&A`, `Q&A (2)` and `Q&A (3)` respectively, whichever
-  of them are checked
+- **WHEN** an entry's title is 80 emoji such as `😀` (160 UTF-16 code units)
+- **THEN** its session name is 40 of those emoji (80 units), no half pair is left, and
+  creating the session with that `episode` and `title` succeeds
+
+#### Scenario: Duplicate titles in one playlist carry their video ids
+
+- **WHEN** positions 2, 5 and 9 all have the title `Q&A`, with video ids `aaaaaaaaaaa`,
+  `bbbbbbbbbbb` and `ccccccccccc`
+- **THEN** their session names are `Q&A [aaaaaaaaaaa]`, `Q&A [bbbbbbbbbbb]` and
+  `Q&A [ccccccccccc]`, whichever of them are checked and in whatever order the playlist
+  lists them
 
 ### Requirement: YouTube playlist import run
 
 The playlist part of Start Import SHALL run against the selected show (switching the
 profile's active show first, as folder import does) and SHALL process the checked
-entries one at a time in playlist order:
+entries one at a time in playlist order. No entry SHALL start while the previous
+entry's import may still be running on the server.
 
-- If any session of that show has `episode` or `title` equal to the entry's name, the
-  entry SHALL be skipped with the progress line `Skipped <name> (already in system)`.
-- Otherwise the client SHALL create a session with `episode` and `title` set to the
-  name (frame rate and offset from the profile's new-session defaults), then call
-  `POST /api/sessions/:id/youtube-import` with the entry's `url` and the run's
-  `use_publish_date`. Success SHALL log `Completed <name>`. The run SHALL NOT navigate
-  to any session.
-- A failure SHALL log `Failed <name>: <detail>` and the run SHALL continue with the next
-  entry. When the server answered with a JSON `{detail}` (a definite failure) the
-  created session SHALL be deleted, so a re-run retries the entry. When there was no
-  such answer (a network error or a proxy timeout, where the server may still finish),
-  the session SHALL be kept and the line SHALL say the import may still finish and to
-  check the session.
-- A `401`, `403` or `503` from `youtube-import` SHALL end the playlist part after that
-  entry's line, with one more line saying how many checked entries were not attempted,
-  since every later entry would fail the same way.
+For each entry:
+
+- **Fresh session list.** Immediately before deciding to skip or create, the client
+  SHALL read the profile; if its active show is no longer the run's show it SHALL
+  switch it back (one progress line saying so), then SHALL read the session list and
+  consider only sessions whose `show_id` is the run's show.
+- **Skip.** If such a session has `episode` or `title` equal to the entry's name, the
+  entry SHALL be skipped with the progress line `Skipped <name> (already in system)`,
+  unless it is this import's own unfinished session (next item).
+- **Retry into an unfinished session.** When the matching session is the one this
+  import created for the same show and video id (remembered in the browser for 30
+  days, like folder import's created sessions) and it has no audio segments, the
+  client SHALL import into it instead of skipping. If that import answers `409`
+  (an import for that session is still running on the server), the line SHALL be
+  `Still importing <name> on the server; run the import again later to check it` and
+  the run SHALL move on.
+- **Create and import.** Otherwise the client SHALL create a session with `episode`
+  and `title` set to the name (frame rate and offset from the profile's new-session
+  defaults), remember it, then call `POST /api/sessions/:id/youtube-import` with the
+  entry's `url` and the run's `use_publish_date`. Success SHALL log
+  `Completed <name>` and forget the remembered session. The run SHALL NOT navigate to
+  any session.
+- **Definite failure.** When the import answers with a JSON `{detail}`, the client
+  SHALL delete the session it created for the entry (and forget it), log
+  `Failed <name>: <detail>`, and continue with the next entry. A `401`, `403` or `503`
+  SHALL instead end the playlist part after that entry's line, with one more line
+  saying how many checked entries were not attempted, since every later entry would
+  fail the same way.
+- **Create failure.** A failed create SHALL log `Failed <name>: <detail>`, where a
+  `detail` that is an array of validation issues is rendered as each issue's `path`
+  (joined with `.`) and `message`, as `<path>: <message>`, joined with `; `; and the run
+  SHALL continue.
+- **Unknown outcome.** When the import ends with no JSON answer (a network error or a
+  proxy timeout such as Cloudflare's `524`), the server may still be downloading. The
+  client SHALL keep the session and SHALL NOT start the next entry until the outcome is
+  known: it SHALL read the session's audio segments every 15 seconds for at most 32
+  minutes (the import's two 15-minute subprocess bounds plus margin), showing
+  `Waiting for the server to finish <name>...`. A segment appearing SHALL count as
+  `Completed <name>`. If none appears in that time, the line SHALL be
+  `Failed <name>: the server did not confirm the import; run the import again to retry`
+  (the next run retries into the session, as above), and the run SHALL continue.
 
 While it runs, the progress region SHALL show `Importing <name> (video i of n)...` with
 the percent of entries finished. Closing the modal SHALL abort the run: no further
-entry starts, a session created for the in-flight entry SHALL be deleted best-effort,
-and sessions already completed SHALL remain.
+entry starts, the waiting stops, and a session whose import was in flight SHALL be
+kept and remembered (the server keeps working on it; a later run completes, skips or
+retries it by the rules above). Sessions already completed SHALL remain.
 
 #### Scenario: An existing episode is skipped
 
-- **WHEN** the show already has a session titled `Episode 12: The Return` and that entry
-  is checked
+- **WHEN** the run's show already has a session titled `Episode 12: The Return` that
+  this import did not create, and that entry is checked
 - **THEN** no session is created for it and the progress lists
   `Skipped Episode 12: The Return (already in system)`
+
+#### Scenario: A same-named session in another show does not cause a skip
+
+- **WHEN** the active show was switched to another show in another tab mid-run, and
+  that other show has a session named like the next entry
+- **THEN** the client switches the active show back, the entry is not skipped, and its
+  session is created in the run's show
 
 #### Scenario: One failing video does not stop the run
 
@@ -166,17 +210,38 @@ and sessions already completed SHALL remain.
 - **WHEN** the user unchecks "Use publish date" and starts the run
 - **THEN** every `youtube-import` request of the run carries `use_publish_date: false`
 
-#### Scenario: A gateway timeout keeps the session
+#### Scenario: A gateway timeout waits before the next video
 
-- **WHEN** an entry's `youtube-import` request ends with a non-JSON `524` from a proxy
-- **THEN** the session created for it is kept, its line says the import may still finish,
-  and the run continues
+- **WHEN** an entry's `youtube-import` request ends with a non-JSON `524` from a proxy and
+  the server attaches the audio four minutes later
+- **THEN** the session is kept, no request for the next entry is sent until the segment
+  is seen, and the entry is logged `Completed <name>`
 
-#### Scenario: Closing mid-run keeps completed sessions
+#### Scenario: An unconfirmed import is retried on the next run
+
+- **WHEN** an earlier run left this import's session for an entry with no audio segments,
+  and the user runs the import again with that entry checked
+- **THEN** the client imports into that session instead of skipping it or creating
+  another
+
+#### Scenario: A still-running import is not duplicated
+
+- **WHEN** a re-run reaches this import's empty session for an entry and its
+  `youtube-import` answers `409`
+- **THEN** no session is created, the line says the import is still running on the
+  server, and the run moves on
+
+#### Scenario: A validation refusal on create is readable
+
+- **WHEN** creating an entry's session answers `422` with one issue at path `["episode"]`
+  and message `Too big`
+- **THEN** the progress lists `Failed <name>: episode: Too big`
+
+#### Scenario: Closing mid-run keeps completed and in-flight sessions
 
 - **WHEN** the user closes the modal while the third of five checked entries is importing
 - **THEN** the first two sessions remain with their audio, the third entry's session is
-  deleted best-effort, and entries four and five are not started
+  kept and remembered, and entries four and five are not started
 
 #### Scenario: Losing approval stops the playlist part
 

@@ -7,7 +7,11 @@
 `POST /api/youtube/playlist-entries` SHALL list the entries of one public or unlisted YouTube
 playlist without downloading any media (youtube-playlist-import). It is login-gated like every
 `/api/*` route and is not scoped to a session or show. The request body SHALL be
-`{ "url": string }` with `url` 1–2048 characters; unknown body keys are ignored.
+`{ "url": string }` with `url` 1–2048 characters; unknown body keys are ignored. A body that is
+not JSON or fails this schema SHALL be answered with the frozen validation shape ("Validation error
+bodies carry zod 4 issues"): `422 {"detail": [...zod issues]}` (a body that is not JSON is one
+issue at path `[]`). `POST /api/sessions/:id/youtube-import` keeps its own `400` body refusal
+unchanged.
 
 The URL SHALL be accepted only when all of these hold, checked on the parsed URL:
 
@@ -17,8 +21,9 @@ The URL SHALL be accepted only when all of these hold, checked on the parsed URL
 - the `list` query parameter matches `^[A-Za-z0-9_-]{2,64}$`.
 
 A `/watch` URL with a `list` parameter SHALL be treated as that playlist; its `v` parameter is
-ignored. A list id beginning `RD` (Mix and radio lists) and the private-only list ids `WL`, `LL`
-and `LM` SHALL be refused with their own `400` details below.
+ignored. A list id beginning `RD` (Mix and radio lists) SHALL be refused with its own `400` detail
+below. Private lists (including Watch Later and Liked videos) are not recognized by id; YouTube
+reports them as nonexistent, which gives the private-or-nonexistent `502`.
 
 Responses, decided in this order (each later row only when no earlier row applies):
 
@@ -27,18 +32,16 @@ Responses, decided in this order (each later row only when no earlier row applie
 | `401` | not logged in | `{"detail":"Login required."}` |
 | `503` | no `yt-dlp` available (the `youtube-import` gate) | `{"detail":"YouTube import is unavailable on this deployment."}` |
 | `403` | not an approved user ("Run features are limited to approved users") | `{"detail":"This feature is limited to approved users on this server."}` |
-| `400` | body not JSON, or not `{url: string}` within 1–2048 characters | `{"detail":"Invalid playlist request body."}` |
+| `422` | body not JSON, or not `{url: string}` within 1–2048 characters | `{"detail":[…zod issues]}` |
 | `400` | `url` fails the host, path or `list` rules above | `{"detail":"url must be a YouTube playlist link: youtube.com/playlist?list=… or youtube.com/watch?v=…&list=…."}` |
 | `400` | list id begins `RD` | `{"detail":"Mix and radio lists can't be imported; use a regular playlist link."}` |
-| `400` | list id is `WL`, `LL` or `LM` | `{"detail":"Private lists such as Watch Later and Liked videos can't be imported; use a public or unlisted playlist."}` |
 | `503` | two listings are already running in this server process | `{"detail":"Playlist listing is busy; try again."}` |
 | `502` | YouTube reports the playlist private or nonexistent | `{"detail":"This playlist is private or does not exist. Only public and unlisted playlists can be imported."}` |
-| `502` | YouTube reports the playlist type unviewable | `{"detail":"This playlist type can't be listed; use a regular playlist link."}` |
 | `502` | the listing ran longer than 60 seconds | `{"detail":"Listing the playlist timed out."}` |
 | `502` | any other listing failure, including output over 16 MiB or output that is not a playlist | `{"detail":"Failed to list the playlist."}` |
 | `200` | the listing ran | the object below |
 
-No `400` row, nor the busy `503`, SHALL spawn a subprocess or make an outbound request.
+No `422` or `400` row, nor the busy `503`, SHALL spawn a subprocess or make an outbound request.
 
 The `200` body SHALL be exactly:
 
@@ -63,8 +66,9 @@ The `200` body SHALL be exactly:
 - `duration_s` is the reported duration in seconds, or `null` when none is reported.
 - `reason` is the first that applies of: `unavailable` (no title, or a title of exactly
   `[Private video]` or `[Deleted video]`), `live` (a live stream in progress), `upcoming` (a
-  scheduled premiere or stream), `too_long` (a duration over 14,400 seconds, the `youtube-import`
-  4-hour limit); otherwise `null`. `importable` is `true` exactly when `reason` is `null`.
+  scheduled premiere or stream), `too_long` (a duration of 14,400 seconds or more, which the
+  `youtube-import` download filter `duration < 14400` refuses); otherwise `null`. `importable`
+  is `true` exactly when `reason` is `null`.
 - `truncated` is `true` when the playlist reports more entries than were returned.
 - An empty playlist SHALL give `200` with `entries: []`.
 - The endpoint SHALL set no cookies, SHALL write nothing to the catalog or blob store, and SHALL
@@ -91,12 +95,14 @@ The `200` body SHALL be exactly:
   `youtube.com.evil.com`
 - **THEN** the response is `400` with the playlist-link detail and no subprocess is spawned
 
-#### Scenario: Private-only lists are refused before any spawn
-- **WHEN** the posted `url` is `https://www.youtube.com/playlist?list=WL`
-- **THEN** the response is `400` with the private-lists detail and no subprocess is spawned
+#### Scenario: A malformed body is a zod 4 validation error
+- **WHEN** an approved user posts `{}` or `{"url": 5}`
+- **THEN** the response is `422`, `detail` is an array with an issue at path `["url"]`, and no
+  subprocess is spawned
 
 #### Scenario: A private or missing playlist is a clear 502
-- **WHEN** YouTube reports that the requested playlist does not exist or is private
+- **WHEN** YouTube reports that the requested playlist does not exist or is private, as it does
+  for `https://www.youtube.com/playlist?list=WL`
 - **THEN** the response is `502` with the private-or-nonexistent detail
 
 #### Scenario: Unavailable entries are listed but not importable
@@ -136,7 +142,7 @@ keeps its place), and before the in-process slot, the run lease and any subproce
 call. For `ai/v2/design` it SHALL run after both the configuration `503` and the agent-credentials
 `503`, that is after the whole shared AI v2 guard prologue, and SHALL NOT be part of that prologue,
 which the AI v2 answer route also runs and which stays ungated. For `youtube/playlist-entries` it
-SHALL run after the configuration `503` and before the body `400`. Each route's own ordered
+SHALL run after the configuration `503` and before the body `422`. Each route's own ordered
 requirement or status table SHALL list the `403` at that step. No other route SHALL be affected.
 
 #### Scenario: A user who is not approved is refused before any work
@@ -174,4 +180,4 @@ requirement or status table SHALL list the `403` at that step. No other route SH
 
 - **WHEN** a signed-in user who is not approved posts a malformed body to
   `POST /api/youtube/playlist-entries` on a deployment with `yt-dlp`
-- **THEN** the response is `403` with the fixed detail, not `400`, and no subprocess is spawned
+- **THEN** the response is `403` with the fixed detail, not `422`, and no subprocess is spawned

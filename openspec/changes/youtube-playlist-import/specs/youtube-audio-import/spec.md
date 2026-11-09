@@ -25,8 +25,8 @@ subprocess's whole process group:
 1. **Entries**: at most 5000 entries are requested from YouTube (its own playlist limit); a longer
    list (a large channel's uploads) is returned truncated, with `truncated: true`.
 2. **Output**: at most 16 MiB of standard output is read; more kills the subprocess. Standard error
-   is read up to 64 KiB, used only to classify the failure into one of the contract's fixed
-   details, and never echoed.
+   is read up to 64 KiB, used only to tell a private-or-nonexistent playlist from other failures,
+   and never echoed.
 3. **Time**: 60 seconds of wall clock.
 4. **Concurrency**: at most two listings run at once in a server process; a third is refused with
    the busy `503` before spawning.
@@ -64,7 +64,8 @@ subprocess's whole process group:
 Each listed entry SHALL carry `importable` and `reason` so a client can avoid sending
 `youtube-import` requests that are certain to fail: an entry with no reported title (a deleted or
 private video) is `unavailable`, a live stream in progress is `live`, a scheduled premiere or
-stream is `upcoming`, and a reported duration over the import's 4-hour limit is `too_long`. An
+stream is `upcoming`, and a reported duration of 14,400 seconds or more (which the import's
+download filter `duration < 14400` refuses) is `too_long`. An
 entry whose problem cannot be seen in flat-playlist metadata (such as an age-restricted or
 members-only video) SHALL be listed as importable; its `youtube-import` then fails through that
 route's existing `502`.
@@ -78,3 +79,8 @@ route's existing `502`.
 
 - **WHEN** the listing contains a past live stream with a known duration under 4 hours
 - **THEN** that entry is `importable` with `reason` `null`
+
+#### Scenario: Exactly four hours is not importable
+
+- **WHEN** the listing contains an entry whose duration is exactly 14,400 seconds
+- **THEN** that entry has `importable` `false` and `reason` `too_long`
