@@ -105,7 +105,8 @@ create table catalog.autogenerate_jobs (
   stop_reason            text collate "C" check (stop_reason in ('cancelled', 'initiator-unavailable',
                            'initiator-role-lost', 'not-approved', 'unconfigured-stt', 'unconfigured-llm',
                            'provider-failing')),
-  consecutive_provider_failures smallint not null default 0,      -- D17
+  consecutive_stt_failures smallint not null default 0,           -- D17, per provider kind
+  consecutive_llm_failures smallint not null default 0,           -- D17
   session_count          integer not null check (session_count between 1 and 1000),
   locked_by              text collate "C",
   locked_until_ms        bigint,
@@ -137,6 +138,7 @@ create table catalog.autogenerate_items (
   attempts        smallint not null default 0,
   run_ids         text collate "C" not null default '',          -- events/wiki run ids this item used
   own_topic_ids   text collate "C" not null default '',          -- topic ids its attempts wrote (D7)
+  kept_edited     integer,                                       -- own rows kept as edited (D7)
   wiki_accepted   integer,
   wiki_pending    integer,
   started_at_ms   bigint,
@@ -351,6 +353,41 @@ used by the worker, so the core-ports delta needs no new undo reason. If the ini
 to the session, the delete is refused; the rows stay, the item stays `failed`, and the content-free
 log line names the item. They remain identifiable from the item's `run_ids` and `own_topic_ids`.
 
+**Fenced write-ahead (re-panel 4).** Appending a run id or topic id to the item is fenced on the
+job lease (`locked_by = $me` and `status = 'running'`). Zero rows changed means the lease is lost:
+- events: the run id append happens before the turn; on zero rows the run does not start;
+- topics: the allocator throws; `create_topic` returns a tool error without inserting, the
+  allocator latches so every later call of the turn refuses too, and the runner ends the turn as
+  failed. The worker then stops for this job and writes nothing more (the new holder owns cleanup).
+So no row is ever inserted without being recorded. The session's `ai-turn` run lease, still held
+by the old process while its turn drains, keeps the new holder's step busy meanwhile (D8).
+
+**Version-guarded deletes (re-panel 1).** Every own-output delete goes through the per-row
+`deleteEvent(id, {version: 1})` / `deleteTopic(id, {version: 1})` paths, one row at a time, with
+the insert-time version (every new row is version 1, migration `20261010000000`). A row a person
+edited (version moved; events PUT keeps `auto_generated` and the run id, topic PATCH keeps the id)
+answers a version conflict and is kept. The item counts it in `kept_edited`, and it counts as
+**present** in the gap check: the person adopted it. So an edited auto event makes events
+`present`, an edited topic makes topics `present`.
+
+**Recorded partial output, across jobs (re-panel 2).** Chosen over an orphan table: the gap check
+of events and topics excludes every unedited row whose run id or topic id is recorded on an item
+for the same session and step, of any job, whose status is not `done` (one indexed query over
+`autogenerate_items` by `session_id, step`). Before its gap check, a step deletes all of those
+rows (version-guarded, as its own initiator), not only its own job's. So a partial set that could
+not be cleaned up (access lost, account gone, job row vanished, process killed between ending and
+cleanup) is never `present` and is removed by the next job that reaches the session. No new table
+and no second cleanup path; the residual is that such rows stay visible to people until then (R13).
+
+**Every ending cleans up (re-panel 2).** One function, `cleanupOwnOutput(item)`, runs (as the
+initiator, version-guarded) before any write that ends an item without `done` or abandons a
+session that has an attempt in flight or recorded output: a failed step; a cancel, including one
+noticed during a busy or rate-limit wait; every job stop (`initiator-*`, `not-approved`,
+`unconfigured-*`, `provider-failing`); ladder steps 1-4 refusing the session. For stops where the
+initiator cannot act (account gone, access lost, role lost) it is attempted and refusals are
+tolerated; the cross-job exclusion above covers what stays. If the job row vanished, nothing is
+written and the next job cleans up.
+
 ### D8. Busy: wait, then skip the session
 
 The runner's single-flight refusal (`busy`) and a live `recording` lease (`leaseStatus().lease_alive`)
@@ -388,6 +425,8 @@ The cancel route writes the cancel columns as the caller (D2). The worker checks
 before each session and each step and between busy retries; it never aborts a provider call (the
 manual routes pass no abort signal either). When the step in progress ends, its result is kept and
 recorded, then the job ends `cancelled` and every non-ended item becomes `cancelled`/`cancelled`.
+A cancel noticed during a busy or rate-limit wait first runs `cleanupOwnOutput` for the waiting
+item (D7), whose partial output would otherwise stay.
 
 ### D11. Resume
 
@@ -477,12 +516,14 @@ how it answers ADR 0031's revisit trigger), and what would reverse it.
   and 480 s (15.5 min in all) and retries the same step, re-checking the cancel and the job lease
   during each wait and re-running D5 steps 0-4 before each retry; the fifth refusal ends the item
   `failed` `rate-limited`. A retry re-enters the step per D7 (own output first).
-- **Consecutive failures.** `consecutive_provider_failures` lives on the job row, so a resume
-  continues the count. A processed session that ends with a step `failed` as `provider-failed`,
-  `generation-failed` or `rate-limited` adds one; a session with any step `done` resets it to 0; a
-  session with only skips leaves it. At 3 the job stops `failed` `provider-failing`, remaining
-  items `cancelled` `job-stopped`. Three tells a revoked key or a provider outage from one bad
-  session, and bounds the waste of a dead key to three sessions.
+- **Consecutive failures, per provider kind (re-panel 3).** Two counts on the job row (a resume
+  continues them): `consecutive_stt_failures` for the transcript step and
+  `consecutive_llm_failures` for events, topics and wiki. A processed session in which a step of
+  that kind ended `failed` as `provider-failed`, `generation-failed` or `rate-limited` adds one to
+  that kind; a `done` step resets only its own kind; other outcomes leave both. At 3 in either the
+  job stops `failed` `provider-failing` (after `cleanupOwnOutput`), remaining items `cancelled`
+  `job-stopped`. Per kind, so a revoked LLM key is caught even while transcripts succeed. Three
+  tells a dead key or an outage from one bad session.
 
 *Alternative.* Probe the provider with the connection test before each session: rejected, it adds
 a request per session and still misses a mid-session failure.
@@ -531,7 +572,13 @@ a request per session and still misses a mid-session failure.
   refuse while the team has a live job (D1). → Task 1.4.
 - **R12 [Manual topics failure keeps a person's concurrent topic]** The shared runner's id-based
   cleanup (D7) changes one unspecified side effect of the manual route. → Spec-identical (A20);
-  pinned by a test in 3.4.
+  pinned by a test in 3.4. Minor edge: a manual run whose tool created 0 topics while a person
+  added one used to see `newIds` = 1 and succeed (deleting the pre-run set); it now sees 0 created
+  topics and answers the existing `502 Topic generation failed.` (the spec's "creates no topics"
+  failure), keeping the pre-run topics and the person's topic. Pinned in 3.4.
+- **R13 [Uncleaned partial output stays visible]** Partial rows whose cleanup was refused stay in
+  the session (visible to people, excluded from every gap check) until a later job reaches the
+  session. → Recorded on the item; the report shows the item `failed`/`cancelled`.
 
 ## Migration Plan
 

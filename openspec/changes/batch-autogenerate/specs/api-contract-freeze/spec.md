@@ -133,11 +133,14 @@ team's 20 newest jobs, newest first. Query parameters are ignored.
                  "steps": [{ "step": string, "status": "pending" | "running" | "done"
                                        | "skipped" | "failed" | "cancelled",
                              "outcome": string | null, "detail": string | null,
-                             "wiki_accepted": number | null, "wiki_pending": number | null }] }] }
+                             "wiki_accepted": number | null, "wiki_pending": number | null,
+                             "kept_edited": number | null }] }] }
 ```
 
 in processing order; `title` is the session's current title, or `""` when it no longer exists;
-`wiki_accepted` and `wiki_pending` are numbers only on a `done` wiki item. A job id that doesn't
+`wiki_accepted` and `wiki_pending` are numbers only on a `done` wiki item; `kept_edited` is the
+number of the item's own partial events or topics it kept because a person had edited them, a
+number only on an ended events or topics item. A job id that doesn't
 exist or belongs to another team answers `404 {"detail":"Job not found."}`.
 
 **`POST /api/teams/:teamId/autogenerate-jobs/:jobId/cancel`** takes no body (any body is ignored):

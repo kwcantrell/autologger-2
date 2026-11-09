@@ -40,12 +40,13 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
   - update: an admin of the team requests a cancel on a `running` job (cancel columns only) and
     cancels a `queued` one (`status` `cancelled`, `stop_reason` `cancelled`); a member's cancel,
     a second cancel overwrite, `running → finished`, a change to `initiator_user_id`, `steps`,
-    `consecutive_provider_failures` or the lease each fail `42501`; `catalog_user` update or delete
+    either `consecutive_*_failures` count or the lease each fail `42501`; `catalog_user` update or delete
     on items and delete on jobs fail `42501`;
   - `catalog_system` may do all of the above.
   Evidence: under 1.3.
 - [ ] 1.3 `supabase/migrations/20261025000000_autogenerate_jobs.sql`: both tables (with
-  `on delete cascade` from `studio_definitions`, `own_topic_ids`, `consecutive_provider_failures`,
+  `on delete cascade` from `studio_definitions`, `own_topic_ids`, `kept_edited`, the two
+  `consecutive_*_failures` counts, an index on items `(session_id, step)`,
   the outcome/status check), indexes, RLS, the system policies, the user policies, the column
   grant, `autogenerate_jobs_user_guard`, the header with the rollback statements; no
   transaction-control lines (`migrate.sh`). Verify: 1.2 green; `docker/supabase/test_migrate.sh`
@@ -92,7 +93,10 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
   - claim: two concurrent claims with one due job return it once; a `running` job with a lapsed
     lease is claimable, a live one is not; renewals and transitions fenced on `locked_by` change
     nothing for another holder; a renewal of a job whose row was deleted reports "gone";
-  - write-ahead: appending to `run_ids` and `own_topic_ids` is fenced like every item write;
+  - write-ahead: appending to `run_ids` and `own_topic_ids` is fenced like every item write and
+    reports 0 rows for a holder that lost the lease;
+  - recorded partial output: for a session and step, the store returns the run ids and topic ids
+    on non-`done` items of every job (two jobs, one `done` item excluded);
   - list returns the newest 20 of the team; detail returns items in order with current titles
     (`""` for a vanished session); preview counts missing transcript, events (auto-generated only)
     and topics.
@@ -130,6 +134,10 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
     remain;
   - a failed run, and a run ended as `interrupted`, delete the events of every run id in the
     item's `run_ids`, the current one included, as the initiator (user caller), and nothing else;
+  - deletes are per row with expected version 1: an event a person edited is kept, counted in
+    `kept_edited`, and makes the gap check `present`;
+  - when the run-id append changes 0 rows (lease lost), the run does not start and no provider
+    request is made;
   - an AI SDK `429` is reported as `rate-limited`.
   Then extract from `events.ts`. Verify: 3.3 green, 3.1 events suites green with the baseline
   counts.
@@ -137,7 +145,13 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
 - [ ] 3.4 Test first, `server/src/generation/topics.test.ts` and `packages/ai-runtime`
   `aiMcpServer` tests (design D7 topics):
   - `create_topic` with an id allocator calls it before `insertTopic`, inserts with the allocated
-    id, and an allocator that throws makes the tool return an error without inserting;
+    id, and an allocator that throws makes the tool return an error without inserting; after one
+    refusal every later call of the turn refuses too and the runner reports the turn failed;
+  - own-topic deletes use expected version 1: a topic a person edited is kept, counted in
+    `kept_edited`, and makes the gap check `present`;
+  - the manual route: a run whose tool created 0 topics while a person added one answers the
+    existing `502 Topic generation failed.` and keeps both the pre-run topics and the person's
+    (R12 edge);
   - the runner deletes on failure exactly the topics its tool created: a topic a person inserts
     during a failing run survives (manual route included, R12), and the success swap still
     deletes the pre-run topics;
@@ -177,10 +191,14 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
     after 10 min; a cancel during the wait ends the job without running;
   - `rate-limited`: retried after 30, 60, 120, 240, 480 s, a cancel during a wait is honoured, the
     fifth refusal ends the item `failed` `rate-limited`; a success after two refusals is `done`;
-  - consecutive provider failures: three sessions in a row failing with `provider-failed`,
-    `generation-failed` or `rate-limited` stop the job `provider-failing` with no runner call for
-    the fourth; a `done` step in between resets the count; a skip-only session does not; the count
-    survives a resume (read from the job row);
+  - consecutive provider failures per kind: three sessions in a row with an LLM step failing with
+    `provider-failed`, `generation-failed` or `rate-limited` stop the job `provider-failing` even
+    though each had a `done` transcript; an LLM `done` resets only the LLM count, an STT `done`
+    only the STT count; skips change neither; both counts survive a resume;
+  - every ending cleans up: for an item with recorded partial output, a cancel (also during a busy
+    and during a rate-limit wait), each job stop reason, `provider-failing`, and ladder steps 1-4
+    refusing the session each call `cleanupOwnOutput` before the item's ending write; when the
+    initiator's deletes are refused, the item still ends and the rows stay recorded;
   - cancel during a running step: the step's result is recorded, no further step starts;
   - the worker polls every 15 s and sends no `pg_notify`;
   - the job row and items never receive any field but the listed columns (no credential).
@@ -206,7 +224,15 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
     all its run ids are deleted;
   - a wiki step interrupted after its suggestions were stored: no second wiki provider call, and
     in `accept` mode its safe suggestions are accepted;
-  - the job continues after an `interrupted` item.
+  - the job continues after an `interrupted` item;
+  - **cross-job exclusion**: job 1 is stopped with the initiator's access to session 2 removed
+    after its topics attempt wrote 2 topics (cleanup refused); job 2, by another admin, finds those
+    topics not `present`, deletes them as its initiator and generates topics; an edited one is kept
+    and makes the step `present`;
+  - **lease takeover**: worker A's lease is taken over by worker B mid topics turn; A's next
+    `create_topic` refuses (0-row fenced write), A inserts no unrecorded topic and writes nothing
+    more; every topic in the session is recorded on the item; B's step proceeds once A's run lease
+    is released.
   Evidence:
 - [ ] 4.4 Test first (integration), `server/src/autogenerate/worker.authz.int.test.ts`, **the
   per-session re-check as the initiator**:
@@ -230,8 +256,12 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
   Evidence:
 - [ ] 4.6 Test first (integration), `server/src/autogenerate/worker.provider.int.test.ts`: with a
   stub STT provider answering `401` for every request, a 6-session job ends `failed`
-  `provider-failing` after session 3 and the stub saw exactly 3 transcript requests; with a stub
-  answering `429` twice then `200`, the step is `done` after the 30 s and 60 s waits (fake clock).
+  `provider-failing` after session 3 and the stub saw exactly 3 transcript requests; **LLM key
+  revoked, STT fine**: the STT stub answers `200`, the LLM stub `401`, a 6-session job with
+  transcript and events ends `provider-failing` after session 3 with 3 transcript `done` and 3
+  events `provider-failed`, and no request for session 4; with a stub answering `429` twice then
+  `200`, the step is `done` after the 30 s and 60 s waits (fake clock); a cancel during a `429`
+  wait after an events attempt wrote 3 events deletes them and ends the job `cancelled`.
   Evidence:
 - [ ] 4.7 Test first (integration), `server/src/autogenerate/worker.wiki.int.test.ts` (design D12):
   in `accept` mode, a new-page suggestion and an additions-only rewrite are accepted with the batch
@@ -251,7 +281,7 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
   sessions, over 1000, both 503s, run-feature 403, live-job 409 with `job_id`, `expected_sessions`
   409 with `sessions`, 201); two concurrent starts give one `201` and one `409`; preview `runs`,
   `max_runs` and each `blocked` value and that it writes nothing; list newest 20; detail shape and
-  order, item status/outcome pairs per the contract table, and the `Job not found.` 404 for another
+  order, item status/outcome pairs per the contract table, `kept_edited`, and the `Job not found.` 404 for another
   team's job; cancel of a queued (→ `cancelled`), running (cancel recorded, still `running`),
   repeated (200) and ended (409) job; no route sets a cookie; the five success shapes and the two
   typed `409` bodies captured in `apiResponseFixtures.int.test.ts` into `fixtures/api-responses/`.

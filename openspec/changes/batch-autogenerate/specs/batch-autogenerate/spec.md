@@ -81,10 +81,9 @@ output is missing, decided just before the step and again after the session's si
 held:
 - **transcript** is missing when the session has no transcript words;
 - **events** is missing when the session has no auto-generated event (an event whose metadata
-  marks it auto-generated), other than events written by this job's own earlier interrupted or
-  failed attempts at this step; manual events do not count;
-- **topics** is missing when the session has no topics, other than topics written by this job's
-  own earlier interrupted attempts at this step;
+  marks it auto-generated), other than **recorded partial output** (below); manual events do not
+  count;
+- **topics** is missing when the session has no topics, other than recorded partial output;
 - **wiki** is never "present": it runs for every processed session that has transcript words.
 
 **The job's own partial output.** Before each topic or event a step writes, the job SHALL know
@@ -96,6 +95,30 @@ its anchor computation, as a regenerate excludes its snapshot; then it decides "
 After a successful events run, the events of every earlier attempt SHALL be deleted. Partial
 output of an interrupted attempt SHALL never make a step `present`. Every such delete runs as the
 initiator and touches only rows the item recorded.
+
+**Recording is refused when the job lost its lease.** The write that records a run id or a topic
+id on the item SHALL be fenced on the job's lease. When it changes no row, nothing SHALL be
+written: an events run whose run id could not be recorded SHALL NOT start, and a topic whose id
+could not be recorded SHALL NOT be inserted; the topic tool SHALL refuse that call and every later
+call of the turn, the turn SHALL end as failed, and that worker SHALL write nothing more for the
+job.
+
+**Recorded partial output** of a session and step is every event whose run id, and every topic
+whose id, is recorded on an item for that session and step, of **any** job, whose status is not
+`done`, except rows a person edited. It SHALL NOT count as present for any job, and a later
+job's step on that session SHALL delete it (version-guarded, below) before its gap check, as its
+own initiator.
+
+**A person's edit wins.** Every own-output delete SHALL be guarded by the row's version at insert
+(`1`): a row whose version moved because a person edited it SHALL be kept, SHALL count as present
+(the person adopted it), and the item SHALL record how many rows it kept this way (`kept_edited`).
+
+**Every ending cleans up.** Whenever an item ends without `done`, or a session is abandoned with an
+attempt in flight or recorded partial output (a cancel, including one during a busy or rate-limit
+wait; any job stop, `provider-failing` included; ladder steps 1-4 refusing the session; a failed
+step), the item's own output SHALL be cleaned up first, as above. When the cleanup cannot run (the
+initiator lost access, the account is gone, or the job row vanished), the rows stay recorded on a
+non-`done` item and so remain excluded from every gap check until a later job removes them.
 
 A step whose output is present SHALL be skipped with the outcome `present` and SHALL write
 nothing. A transcript produced by a step SHALL be written only if the session still has no
@@ -219,11 +242,12 @@ file path or stack trace SHALL be stored in a job or item, returned by a route, 
 When a provider answers HTTP `429` (rate limited) and the step can tell (speech to text, and AI
 turns on the AI SDK route), the job SHALL retry the same step after 30, 60, 120, 240 and 480
 seconds, checking for a cancel during each wait, and after the fifth refusal the item SHALL be
-`failed` with `rate-limited`. The job SHALL count consecutive processed sessions that ended with a
-step `failed` as `provider-failed`, `generation-failed` or `rate-limited`; a session with any step
-`done` SHALL reset the count, and a session whose steps were only skipped SHALL leave it unchanged.
-When the count reaches 3, the job SHALL stop with `stop_reason` `provider-failing` and its
-remaining items SHALL be `cancelled` with `job-stopped`.
+`failed` with `rate-limited`. The job SHALL keep one count per provider kind, speech to text
+(the transcript step) and language model (events, topics, wiki): a processed session in which a
+step of that kind ended `failed` as `provider-failed`, `generation-failed` or `rate-limited` adds
+one to that kind's count; a step of that kind ending `done` resets only that kind's count; other
+outcomes leave both unchanged. When either count reaches 3, the job SHALL stop with `stop_reason`
+`provider-failing` and its remaining items SHALL be `cancelled` with `job-stopped`.
 
 #### Scenario: A revoked key stops the job
 - **WHEN** the initiator's speech-to-text key is revoked at the provider and sessions 4, 5 and 6
@@ -231,10 +255,26 @@ remaining items SHALL be `cancelled` with `job-stopped`.
 - **THEN** the job ends `failed` with `stop_reason` `provider-failing` after session 6, and no
   provider request is made for session 7 or later
 
+#### Scenario: A revoked language-model key stops the job while transcription works
+- **WHEN** the initiator's `llm` key is revoked at the provider and sessions 1, 2 and 3 each get a
+  `done` transcript and a `provider-failed` events step
+- **THEN** the job stops with `provider-failing` after session 3 and makes no request for session 4
+
 #### Scenario: A rate limit is waited out
 - **WHEN** a topics turn is refused with `429` twice and then succeeds
-- **THEN** the step waited 30 and 60 seconds, its outcome is `done`, and the consecutive-failure
-  count is reset
+- **THEN** the step waited 30 and 60 seconds, its outcome is `done`, and the language-model
+  failure count is reset
+
+#### Scenario: A cancel during a rate-limit wait cleans up
+- **WHEN** an events attempt wrote 3 events and was refused with `429`, and an admin cancels during
+  the wait
+- **THEN** the 3 events are deleted, the item is `cancelled`, and the job is `cancelled`
+
+#### Scenario: An edited partial event is kept
+- **WHEN** an interrupted events attempt wrote 2 events and a person edited one of them before the
+  job resumed
+- **THEN** the resumed step deletes the unedited one, keeps the edited one, records `kept_edited`
+  1, and the step is `present`
 
 ### Requirement: Cancel stops after the current step
 A cancel SHALL be recorded on the job with who requested it and when. A `queued` job SHALL become
