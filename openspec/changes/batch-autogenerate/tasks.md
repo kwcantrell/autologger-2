@@ -68,24 +68,24 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
 
 ## 2. Contract and catalog store (design D1, D3, D12, D13, D14)
 
-- [ ] 2.1 Test first, `packages/contract/src/autogenerate.test.ts`: the scope body (exactly one of
+- [x] 2.1 Test first, `packages/contract/src/autogenerate.test.ts`: the scope body (exactly one of
   `show_ids`/`session_ids`, non-empty, 200/1000 caps, steps non-empty and unique, `wiki_mode`
   default `accept`, `expected_sessions` required on start and a non-negative integer), each refusal
   producing zod 4 issues; the outcome list equals the contract table's 20 codes, each maps to its
   exact detail string and its one item status; the stop reasons include `provider-failing`; the job
   and detail response schemas parse the spec's examples.
-  Evidence: under 2.2.
-- [ ] 2.2 `packages/contract/src/autogenerate.ts` (schemas, `AUTOGENERATE_OUTCOMES` with status
+  Evidence: under 2.2; red: `npx vitest run src/autogenerate.test.ts` (packages/contract) -> `Error: Cannot find module './autogenerate'`, `Tests no tests` (ba-2.1-red.log)
+- [x] 2.2 `packages/contract/src/autogenerate.ts` (schemas, `AUTOGENERATE_OUTCOMES` with status
   and detail, stop reasons, step order). Verify: 2.1 green, `npm run typecheck` exit 0.
-  Evidence:
-- [ ] 2.3 Test first, `packages/contract/src/wikiSafeSuggestion.test.ts` for `isSafeSuggestion`
+  Evidence: `npx vitest run src/autogenerate.test.ts` -> `Tests 11 passed (11)` (ba-2.2-green.log); `npm run typecheck` -> `exit=0`, 0 `error TS` (ba-2.2-typecheck.log)
+- [x] 2.3 Test first, `packages/contract/src/wikiSafeSuggestion.test.ts` for `isSafeSuggestion`
   (design D12): a new page is safe; `A\nB\nC` → `A\nB\nnew\nC` safe, → `new\nA\nB\nC\nend` safe;
   `A\nB more\nC` unsafe; `A\nC` unsafe; `B\nA\nC` (reordered) unsafe; `CRLF` bodies compare as
   `LF`; a trailing-space change on a line unsafe; title changed (beyond trim) unsafe; an alias
   dropped unsafe, an alias added safe; an empty old body with any new body safe. Then implement.
   Verify: green.
-  Evidence:
-- [ ] 2.4 Test first, `server/src/test/pg/autogenerateStore.pg.test.ts`:
+  Evidence: red: `npx vitest run src/wikiSafeSuggestion.test.ts` -> `Cannot find module './wikiSafeSuggestion'` (ba-2.3-red.log); green: `Tests 7 passed (7)` (ba-2.3-green.log)
+- [x] 2.4 Test first, `server/src/test/pg/autogenerateStore.pg.test.ts`:
   - create: candidates for a show scope exclude deleted and include archived sessions; a session
     scope dedupes; the ordinals follow design D13 for the spec's two ordering scenarios (B, A, C;
     `b` before `a`) and put undated sessions last; items are one per session and step in
@@ -100,11 +100,11 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
   - list returns the newest 20 of the team; detail returns items in order with current titles
     (`""` for a vanished session); preview counts missing transcript, events (auto-generated only)
     and topics.
-  Evidence: under 2.5.
-- [ ] 2.5 `packages/catalog/src/autogenerateStore.ts` on the catalog facade; add
+  Evidence: under 2.5; red with the store not yet on the facade: `npx vitest run --project pg src/test/pg/autogenerateStore.pg.test.ts` -> `× a show scope: deleted sessions excluded...`, every case failing on `autogenerate` undefined (ba-2.4-red.log). The store file was drafted before this test was run; the red run is with it unwired. Two of the test's own expectations were wrong and corrected (the session-scope order is `a, A` by D13, since both are dated 2024-03-01 and `a` started first; the empty-output check used a session that held another test's recorded ids)
+- [x] 2.5 `packages/catalog/src/autogenerateStore.ts` on the catalog facade; add
   `autogenerate-worker` to the reviewed system reasons (`server/src/catalogSystem.repo.test.ts`
   ALLOWLIST, file and reason). Verify: 2.4 green; `catalogSystem.repo.test.ts` green.
-  Evidence:
+  Evidence: `npx vitest run --project pg src/test/pg/autogenerateStore.pg.test.ts` -> `Tests 14 passed (14)`; `npx vitest run --project unit src/catalogSystem.repo.test.ts` -> `Tests 18 passed (18)` (allowlist entry `packages/catalog/src/autogenerateStore.ts autogenerate-worker`: `autogenerateWorkerCatalog` is the one reviewed binding site the worker uses); `packages/catalog` `src/catalog.test.ts` -> `Tests 8 passed (8)`; typecheck exit 0 (ba-2.5-green.log, ba-2-typecheck.log)
 
 ## 3. Shared runners (design D6, D7, D9, D12)
 

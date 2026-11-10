@@ -149,6 +149,11 @@ const ALLOWLIST: readonly { file: string; reason: string; why: string }[] = [
     why: 'the invite transaction looks users up by email and adds their memberships',
   },
   {
+    file: 'packages/catalog/src/autogenerateStore.ts',
+    reason: 'autogenerate-worker',
+    why: "batch-autogenerate D2, D4: the batch worker's claim, lease, item and job writes and the initiator re-read; the session work runs as the initiator",
+  },
+  {
     file: 'server/src/routers/teams.ts',
     reason: 'team-create',
     why: "the create transaction purges a recreated team's leftover rows",
