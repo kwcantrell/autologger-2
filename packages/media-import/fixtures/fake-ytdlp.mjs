@@ -71,10 +71,30 @@
 //                           the whole process group, not just this pid: if
 //                           only this pid were signaled, the grandchild
 //                           would survive and eventually write the marker.
+//
+// Playlist-listing modes (youtube-playlist-import task 2.2). The listing spawn
+// is recognized by `--flat-playlist` in argv; its env snapshot goes to
+// `env-check-playlist.json`, and the hang/flood modes write their pid to
+// `child-pid.txt` so a test can prove the process group was killed.
+//   playlist              — prints `fixtures/<control.fixture>` (default
+//                           `playlist-basic.json`) as one JSON line, exit 0.
+//                           The fixtures are trimmed from real yt-dlp 2026.08.19
+//                           `--flat-playlist --dump-single-json` output (design
+//                           A2, A8); the malformed id, live/upcoming states and
+//                           the 16,606 s duration are edited in.
+//   playlist-missing      — stderr `ERROR: [youtube:tab] PLx: YouTube said: The
+//                           playlist does not exist.`, exit 1.
+//   playlist-unviewable   — stderr `... This playlist type is unviewable.`, exit 1.
+//   playlist-hang         — never exits on its own.
+//   playlist-flood        — writes 17 MiB to stdout, then never exits.
+//   playlist-not-playlist — prints a `_type: video` object, exit 0.
+//   playlist-garbage      — prints non-JSON text, exit 0.
+//   playlist-fail         — no output, exit 2 (any other non-zero exit).
 
 import { spawn as spawnChild } from 'node:child_process';
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const argv = process.argv.slice(2);
 const cwd = process.cwd();
@@ -82,11 +102,15 @@ const controlPath = join(cwd, '.ytdlp-stub.json');
 const control = existsSync(controlPath) ? JSON.parse(readFileSync(controlPath, 'utf8')) : {};
 const mode = control.mode || 'success';
 const isProbe = argv.includes('--skip-download');
+const isPlaylist = argv.includes('--flat-playlist');
 
 appendFileSync(join(cwd, 'argv-log.jsonl'), `${JSON.stringify(argv)}\n`);
 
 writeFileSync(
-  join(cwd, isProbe ? 'env-check-probe.json' : 'env-check-download.json'),
+  join(
+    cwd,
+    isPlaylist ? 'env-check-playlist.json' : isProbe ? 'env-check-probe.json' : 'env-check-download.json',
+  ),
   JSON.stringify({
     hasPlantedSecret: Object.hasOwn(process.env, 'PLANTED_SECRET_TOKEN'),
     hasHome: Object.hasOwn(process.env, 'HOME'),
@@ -96,7 +120,9 @@ writeFileSync(
   }),
 );
 
-if (mode === 'hang' || mode === 'hang-with-descendant') {
+if (mode.startsWith('playlist')) {
+  runPlaylistMode();
+} else if (mode === 'hang' || mode === 'hang-with-descendant') {
   if (mode === 'hang-with-descendant') {
     // Spawned WITHOUT `detached` — on POSIX it inherits this process's
     // process group (pgid), exactly like a real ffmpeg postprocessor
@@ -154,5 +180,36 @@ if (mode === 'hang' || mode === 'hang-with-descendant') {
     const ext = mode === 'unsupported-container' ? 'opus' : control.ext || 'm4a';
     writeFileSync(join(cwd, `audio.${ext}`), 'fake-audio-bytes');
     process.exitCode = 0;
+  }
+}
+
+function runPlaylistMode() {
+  if (mode === 'playlist') {
+    const fixturesDir = dirname(fileURLToPath(import.meta.url));
+    const fixture = readFileSync(join(fixturesDir, control.fixture || 'playlist-basic.json'), 'utf8');
+    process.stdout.write(`${JSON.stringify(JSON.parse(fixture))}\n`);
+    process.exitCode = 0;
+  } else if (mode === 'playlist-missing') {
+    process.stderr.write('ERROR: [youtube:tab] PLx: YouTube said: The playlist does not exist.\n');
+    process.exitCode = 1;
+  } else if (mode === 'playlist-unviewable') {
+    process.stderr.write('WARNING: [youtube:tab] YouTube said: This playlist type is unviewable.\n');
+    process.stderr.write('ERROR: [youtube:tab] PLx: This playlist type is unviewable.\n');
+    process.exitCode = 1;
+  } else if (mode === 'playlist-hang' || mode === 'playlist-flood') {
+    writeFileSync(join(cwd, 'child-pid.txt'), String(process.pid));
+    if (mode === 'playlist-flood') {
+      const chunk = Buffer.alloc(1024 * 1024, 'x');
+      for (let i = 0; i < 17; i += 1) process.stdout.write(chunk);
+    }
+    setInterval(() => {}, 1 << 30);
+  } else if (mode === 'playlist-not-playlist') {
+    process.stdout.write(`${JSON.stringify({ _type: 'video', id: 'dQw4w9WgXcQ', title: 'x' })}\n`);
+    process.exitCode = 0;
+  } else if (mode === 'playlist-garbage') {
+    process.stdout.write('this is not json\n');
+    process.exitCode = 0;
+  } else {
+    process.exitCode = 2;
   }
 }

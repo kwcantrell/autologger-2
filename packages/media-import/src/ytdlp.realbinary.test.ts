@@ -18,6 +18,7 @@
 import { spawnSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
 import { downloadFlags, PROBE_FLAGS } from './ytdlp';
+import { PLAYLIST_FLAGS } from './ytdlpPlaylist';
 
 function resolveYtDlp(): string | null {
   const candidate = (process.env.YTDLP_PATH || '').trim() || 'yt-dlp';
@@ -46,5 +47,10 @@ describe('yt-dlp real-binary flag validity', () => {
 
   it.skipIf(!binary)('every downloadFlags option is a real yt-dlp option', () => {
     expect(optionParseOutput(downloadFlags(1))).not.toMatch(/no such option/i);
+  });
+
+  // youtube-playlist-import task 2.4: the listing spawn's flags.
+  it.skipIf(!binary)('every PLAYLIST_FLAGS option is a real yt-dlp option', () => {
+    expect(optionParseOutput(PLAYLIST_FLAGS)).not.toMatch(/no such option/i);
   });
 });

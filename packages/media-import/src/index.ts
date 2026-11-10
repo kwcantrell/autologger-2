@@ -15,3 +15,4 @@ export * from './fixturesDir';
 export * from './youtubeImportGuard';
 export * from './youtubeImportScratch';
 export * from './ytdlp';
+export * from './ytdlpPlaylist';

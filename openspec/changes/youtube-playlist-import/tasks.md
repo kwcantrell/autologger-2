@@ -41,12 +41,12 @@ Test commands: packages are `npx vitest run <files>` from the package directory
 
 ## 2. Spawn: bounded flat-playlist listing (design D3)
 
-- [ ] 2.1 Test first, `packages/media-import/src/ytdlp.test.ts` (existing suite stays green):
+- [x] 2.1 Test first, `packages/media-import/src/ytdlp.test.ts` (existing suite stays green):
   `runYtDlpProcess` with `maxStdoutBytes` kills the process group and reports overflow when the
   fake writes past the bound; with `maxStderrBytes` keeps only that many bytes; with neither, the
   probe and download spawns behave exactly as before (the existing cases).
   Evidence: under 2.3.
-- [ ] 2.2 Test first, new `packages/media-import/src/ytdlpPlaylist.test.ts`, driving
+- [x] 2.2 Test first, new `packages/media-import/src/ytdlpPlaylist.test.ts`, driving
   `fixtures/fake-ytdlp.mjs` with new control-file modes `playlist` (prints a fixture from
   `fixtures/playlist-*.json`), `playlist-missing` (stderr `ERROR: [youtube:tab] PLx: YouTube said:
   The playlist does not exist.`, exit 1), `playlist-unviewable` (stderr `… This playlist type is
@@ -61,20 +61,31 @@ Test commands: packages are `npx vitest run <files>` from the package directory
     other non-zero exit → generic), and no stderr text appears in any message;
   - the hang and flood cases leave no child process (the group is killed).
   Evidence: under 2.3.
-- [ ] 2.3 `packages/media-import/src/ytdlp.ts` (bounded `runYtDlpProcess`, exported for the new
+- [x] 2.3 `packages/media-import/src/ytdlp.ts` (bounded `runYtDlpProcess`, exported for the new
   module), new `packages/media-import/src/ytdlpPlaylist.ts` (`PLAYLIST_FLAGS`,
   `listYoutubePlaylist`), fixture modes and recorded fixtures (trimmed from the design's A2 and A8
   outputs: 3 normal entries, one with no title, one `is_live`, one `is_upcoming`, one 16,606 s,
   one malformed id).
   Evidence: red/green `cd packages/media-import && npx vitest run src/ytdlp.test.ts
   src/ytdlpPlaylist.test.ts` (ypi-2.1-red.log, ypi-2.1-green.log).
-- [ ] 2.4 Test first, `packages/media-import/src/ytdlp.realbinary.test.ts`: every
+  Evidence (2026-11-09): red `Error: Cannot find module './ytdlpPlaylist'` and
+  `TypeError: runYtDlpProcess is not a function` (3 failed | 27 passed) (ypi-2.1-red.log);
+  green `Test Files  2 passed (2)`, `Tests  42 passed (42)` (ypi-2.1-green.log). Fixtures
+  `fixtures/playlist-{basic,small,empty}.json` trimmed from real yt-dlp 2026.08.19 output of
+  `PLBB231211A4F62143` and `PLsyOSbh5bs16vubvKePAQ1x3PhKavfBIl` (malformed id, live/upcoming
+  and 16,606 s edited in).
+- [x] 2.4 Test first, `packages/media-import/src/ytdlp.realbinary.test.ts`: every
   `PLAYLIST_FLAGS` option is a real yt-dlp option (same shape as the probe/download cases; skips
   without a binary). Then, if it fails, fix the flag. Run it with the image's binary:
   `docker run --rm -v "$PWD":/w -w /w/packages/media-import -e YTDLP_PATH=/opt/ytdlp/yt-dlp
   --entrypoint npx autologger-api:dev vitest run src/ytdlp.realbinary.test.ts`, or on the dev
   stack.
   Evidence: the run output with the new case passing, not skipped (ypi-2.4-green.log).
+  Evidence (2026-11-09): passed on first run, since `PLAYLIST_FLAGS` already existed from 2.3
+  (the case could not be red except by a wrong flag). `docker run --rm -v "$PWD":/w -w
+  /w/packages/media-import -e YTDLP_PATH=/opt/ytdlp/yt-dlp --entrypoint npx autologger-api:dev
+  vitest run --reporter=verbose src/ytdlp.realbinary.test.ts` -> `✓ ... every PLAYLIST_FLAGS
+  option is a real yt-dlp option 737ms`, `Tests  3 passed (3)` (ypi-2.4-green.log).
 
 ## 3. Entry projection (design D4)
 

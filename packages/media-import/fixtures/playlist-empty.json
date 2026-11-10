@@ -1,0 +1,11 @@
+{
+  "_type": "playlist",
+  "id": "PL4lCao7KL_QFVb7Iudeipvc2BCavECqzc",
+  "title": "youtube-dl public playlist unlisted",
+  "availability": "unlisted",
+  "playlist_count": 0,
+  "extractor": "youtube:tab",
+  "extractor_key": "YoutubeTab",
+  "webpage_url": "https://www.youtube.com/playlist?list=PL4lCao7KL_QFVb7Iudeipvc2BCavECqzc",
+  "entries": []
+}
