@@ -121,7 +121,7 @@ Test commands: packages are `npx vitest run <files>` from the package directory
 
 ## 5. Route (design D1; api-contract-freeze "YouTube playlist listing endpoint", "Run features")
 
-- [ ] 5.1 Test first, new `server/src/routers/youtubePlaylist.int.test.ts` with the fake binary
+- [x] 5.1 Test first, new `server/src/routers/youtubePlaylist.int.test.ts` with the fake binary
   (pattern of `sessions.youtubeImport.int.test.ts`):
   - signed out → `401`; no yt-dlp → `503` with the import's detail, for an approved and an
     unapproved user, with no spawn; unapproved user with yt-dlp → `403` before a malformed body;
@@ -137,19 +137,24 @@ Test commands: packages are `npx vitest run <files>` from the package directory
   - no `Set-Cookie`; the temp dir is gone after success, a failure and a timeout; no catalog row
     or blob written (session and segment counts unchanged).
   Evidence: under 5.3.
-- [ ] 5.2 Test first, in the new route's `server/src/routers/youtubePlaylist.int.test.ts` (there is
+- [x] 5.2 Test first, in the new route's `server/src/routers/youtubePlaylist.int.test.ts` (there is
   no shared run-feature test; each route's int test carries its own cases, as
   `sessions.youtubeImport.int.test.ts` does): `RUN_FEATURE_EMAILS` unset → the bootstrap owner
   proceeds; `,` → owner proceeds, another member `403`; only another member listed → both proceed;
   an unapproved user with a malformed body → `403`, not `422`; unconfigured → `503` for an
   unapproved user.
   Evidence: under 5.3.
-- [ ] 5.3 New `server/src/routers/youtubePlaylist.ts` (guard order: config `503` → `403` → body
+- [x] 5.3 New `server/src/routers/youtubePlaylist.ts` (guard order: config `503` → `403` → body
   `422` (the repo's zod-issue helper) → URL `400` → busy `503` → temp dir → `listYoutubePlaylist` → `projectPlaylist` → `200`;
   `finally` releases the guard and removes the temp dir); mount in `server/src/app.ts`.
   Evidence: red/green `cd server && npx vitest run --project integration
   src/routers/youtubePlaylist.int.test.ts src/routers/sessions.youtubeImport.int.test.ts`
   (ypi-5.1-red.log, ypi-5.1-green.log); the existing `youtube-import` cases unchanged and green.
+  Evidence (2026-11-09): red `Error: Cannot find module './youtubePlaylist'`, `Test Files  1
+  failed` (ypi-5.1-red.log); green `Test Files  2 passed (2)`, `Tests  70 passed (70)` (the new
+  file's 5.1 and 5.2 cases plus the unchanged `youtube-import` suite) (ypi-5.1-green.log);
+  `cd server && npx tsc --noEmit` exit 0. The timed-out `502` case lowers the bound through the
+  route's test-only `playlistListingLimits.timeoutMs` seam (60 s otherwise).
 
 ## 6. README (design D8)
 
