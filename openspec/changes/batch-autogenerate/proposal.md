@@ -19,6 +19,8 @@ in `panel.md` on 2026-11-09: 1 critical and 12 major findings, each resolved in 
 
 ADR 0033 (task 1.1).
 
+Approved-by: Kalen (11-9-2026)
+
 ## Why
 
 Every generation feature runs one session at a time from the session workspace: Transcript,
