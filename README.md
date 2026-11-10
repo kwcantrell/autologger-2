@@ -1879,7 +1879,8 @@ autogenerate**; routes under `/api/teams/{teamId}/autogenerate-jobs`, ADR 0033).
   first`); cancel the job in Settings first. Deleting a team deletes its finished jobs.
 - **Rollback.** Cancel live jobs (or wait for them), revert the code, then
   `drop table catalog.autogenerate_items; drop table catalog.autogenerate_jobs;
-  drop function catalog.autogenerate_jobs_user_guard();` (migration `20261025000000` header).
+  drop function catalog.autogenerate_jobs_user_guard();
+  drop function catalog.autogenerate_jobs_cancel_queued_items();` (migration `20261025000000` header).
   Pages changed by batch accepts keep their revisions.
 
 ### Media jobs

@@ -43,12 +43,12 @@ const captured = {
     "finished_at_utc": "####-##-##T##:##:##.###Z",
     "sessions": 2,
     "counts": {
-      "pending": 2,
+      "pending": 0,
       "running": 0,
       "done": 0,
       "skipped": 0,
       "failed": 0,
-      "cancelled": 0
+      "cancelled": 2
     },
     "current": null
   }

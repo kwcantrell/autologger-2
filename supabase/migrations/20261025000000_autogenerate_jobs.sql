@@ -27,7 +27,8 @@
 -- - Rollback (a documented step, not a migration file), after cancelling live jobs and reverting
 --   the code:
 --   `drop table catalog.autogenerate_items; drop table catalog.autogenerate_jobs;
---    drop function catalog.autogenerate_jobs_user_guard();`
+--    drop function catalog.autogenerate_jobs_user_guard();
+--    drop function catalog.autogenerate_jobs_cancel_queued_items();`
 --   Wiki pages changed by batch accepts keep their revisions (note `(batch <job id>)`).
 
 create table catalog.autogenerate_jobs (
@@ -207,3 +208,28 @@ revoke all on function catalog.autogenerate_jobs_user_guard() from public;
 drop trigger if exists autogenerate_jobs_user_guard on catalog.autogenerate_jobs;
 create trigger autogenerate_jobs_user_guard before update on catalog.autogenerate_jobs
   for each row execute function catalog.autogenerate_jobs_user_guard();
+
+-- A `queued` job cancelled before any worker claimed it (design D2, D10; consistency read
+-- 2026-11-10): every item ends `cancelled` / `cancelled` ("Cancelled before it started.") in the
+-- same statement. The function is `security definer` (owned by the migration's role, so it is not
+-- bound by the items' row-level security) and changes only the items of that job; `catalog_user`
+-- keeps no privilege on items. A `running` job's items are ended by its worker.
+create or replace function catalog.autogenerate_jobs_cancel_queued_items() returns trigger
+  language plpgsql
+  security definer
+  set search_path = pg_catalog, pg_temp
+  as $$
+  begin
+    update catalog.autogenerate_items
+       set status = 'cancelled', outcome = 'cancelled', finished_at_ms = new.finished_at_ms,
+           kept_edited = case when step in ('events', 'topics') then coalesce(kept_edited, 0)
+                              else kept_edited end
+     where job_id = new.id and status in ('pending', 'running');
+    return null;
+  end
+$$;
+revoke all on function catalog.autogenerate_jobs_cancel_queued_items() from public;
+drop trigger if exists autogenerate_jobs_cancel_queued_items on catalog.autogenerate_jobs;
+create trigger autogenerate_jobs_cancel_queued_items after update on catalog.autogenerate_jobs
+  for each row when (old.status = 'queued' and new.status = 'cancelled')
+  execute function catalog.autogenerate_jobs_cancel_queued_items();

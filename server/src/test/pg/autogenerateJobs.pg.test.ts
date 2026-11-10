@@ -398,6 +398,38 @@ describe('catalog_user update (design D2, autogenerate_jobs_user_guard)', () => 
     ).toBe('ok:1');
   });
 
+  // Consistency read 2026-11-10, design D2/D10: cancelling a queued job ends its items in the same
+  // statement (the definer trigger), with no item privilege for catalog_user.
+  it('a queued cancel ends every item cancelled/cancelled in the same statement', async () => {
+    let items: Record<string, unknown>[] = [];
+    await app
+      .begin(async (tx) => {
+        await tx`select set_config('role', 'catalog_system', true)`;
+        await tx.unsafe(insertItem('jq', 'events'));
+        await tx`select set_config('role', 'catalog_user', true), set_config('app.user_id', 'owner', true)`;
+        await tx.unsafe(`update autogenerate_jobs set ${cancelCols('owner')}, status = 'cancelled',
+             stop_reason = 'cancelled', finished_at_ms = 7 where id = 'jq'`);
+        items = [
+          ...(await tx`select step, status, outcome, finished_at_ms::int as f, kept_edited
+                       from autogenerate_items where job_id = 'jq' order by step_order`),
+        ];
+        throw new Rollback();
+      })
+      .catch((e) => {
+        if (!(e instanceof Rollback)) throw e;
+      });
+    expect(items.map((r) => ({ ...r }))).toEqual([
+      { step: 'transcript', status: 'cancelled', outcome: 'cancelled', f: 7, kept_edited: null },
+      { step: 'events', status: 'cancelled', outcome: 'cancelled', f: 7, kept_edited: 0 },
+    ]);
+    // catalog_user still holds no item update.
+    expect(
+      codeOf(
+        await as('owner', `update autogenerate_items set status = 'cancelled' where job_id = 'jq'`),
+      ),
+    ).toBe('42501');
+  });
+
   it('refuses a member, a second cancel, other transitions and every other column', async () => {
     // A member's cancel: invisible row (0 rows) or refused; never a change.
     expect(
