@@ -170,10 +170,11 @@ unit tests over recorded fixtures (A2, A8).
 
 ### D6. Session naming (owner decision 2)
 
-The name must fit `episode` (`z.string().max(80)`, which counts UTF-16 code units: 41 emoji fail,
-40 pass, per the panel's probe) because both fields get it, must survive the create path's trim,
+The name must fit `episode` (`z.string().max(80)`; the locked zod 4.6.5 counts code points, A16)
+because both fields get it, must survive the create path's trim,
 and must never carry NUL (api-contract-freeze "Text containing NUL is refused"). Hence NFC,
-control characters to spaces, whitespace collapse, trim, then a cut at 80 UTF-16 units that drops
+control characters to spaces, whitespace collapse, trim, then a cut at 80 UTF-16 units (stricter than
+the schema's count, so it always fits however the schema counts) that drops
 a surrogate pair rather than splitting it (a lone surrogate would be stored as U+FFFD or refused).
 
 Duplicates within a listing get ` [<video_id>]` on **every** entry sharing the plain name, with
@@ -287,10 +288,14 @@ the same binary prod uses) or by reading the code. `Y` below is
   `packages/media-import/src/youtubeImportScratch.ts:41` `if
   (!name.startsWith(YOUTUBE_IMPORT_TMP_PREFIX)) continue;` with the prefix `youtube-import-`.
 
-- **A16. Length limits count UTF-16 code units.** `cd server && node --input-type=module -e
-  "import {z} from 'zod/v4'; const s=z.string().max(80); console.log(s.safeParse('😀'.repeat(41)).success,
-  s.safeParse('😀'.repeat(40)).success)"` (run from the main checkout's `server/`, which has
-  `node_modules`) → `false true`.
+- **A16. The locked zod counts code points; an 80-UTF-16-unit name always fits.** Corrected
+  2026-11-09: the original probe (`false true` for 41/40 emoji) ran against the main checkout's
+  stale zod 3.25.76 `zod/v4`. With the locked zod 4.6.5 (`package-lock.json`), from the change's
+  worktree: `node --input-type=module -e "import {z} from 'zod'; const s=z.string().max(80); for
+  (const n of [40,41,80,81]) console.log(n, s.safeParse('😀'.repeat(n)).success)"` → `40 true`,
+  `41 true`, `80 true`, `81 false`. The UTF-16 cut is kept as the stricter bound; the real schema
+  accepts the produced names (`packages/contract/src/schemas.test.ts` "newSessionBodySchema accepts
+  playlist session names").
 - **A17. The session list follows the profile's active show.** `sed -n 147,177p
   server/src/routers/sessions.ts` → `listSessionsForShow(activeShowId)`, with `activeShowId` read
   from the user's prefs on every request; each entry carries `show_id`.

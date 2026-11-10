@@ -69,7 +69,8 @@ The `200` body SHALL be exactly:
   scheduled premiere or stream), `too_long` (a duration of 14,400 seconds or more, which the
   `youtube-import` download filter `duration < 14400` refuses); otherwise `null`. `importable`
   is `true` exactly when `reason` is `null`.
-- `truncated` is `true` when the playlist reports more entries than were returned.
+- `truncated` is `true` exactly when 5000 entries were returned and the playlist reports more
+  than 5000 (`playlist_count`); hidden, deleted or dropped entries do not make it `true`.
 - An empty playlist SHALL give `200` with `entries: []`.
 - The endpoint SHALL set no cookies, SHALL write nothing to the catalog or blob store, and SHALL
   download no media.

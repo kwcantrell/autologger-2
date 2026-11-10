@@ -89,7 +89,8 @@ run is in progress.
 Each playlist entry with a title SHALL get one session name, used as both `episode`
 and `title`, computed over the whole loaded listing (checked or not) so that a name
 does not depend on the selection or on the entries' positions. Lengths are counted in
-UTF-16 code units, as the session create schema counts them (`episode` at most 80):
+UTF-16 code units; a name of at most 80 units never exceeds the session create schema's
+80-character `episode` limit, however that limit counts:
 
 1. Normalize the title to Unicode NFC; replace every control character
    (U+0000–U+001F, U+007F–U+009F) and U+2028/U+2029 with a space; collapse each run
