@@ -83,7 +83,7 @@ async function sessionRow(p: GenerationPrincipal, sessionId: string) {
 export function eventsResult(out: EventsOutcome): StepResult {
   if (out.kind === 'precondition') {
     return out.code === 'too-many-instructions'
-      ? { kind: 'fail', outcome: 'generation-failed' }
+      ? { kind: 'fail', outcome: 'generation-failed', notProviderFault: true }
       : { kind: 'skip', outcome: out.code };
   }
   return aiResult(out);

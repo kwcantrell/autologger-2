@@ -197,6 +197,10 @@ status columns: rejected, the per-step outcome and attempts would need four colu
   (a) setting the cancel columns once, to the caller, on a `queued` or `running` job, and (b) for
   a `queued` job in the same statement, `status → 'cancelled'`, `stop_reason → 'cancelled'`,
   `finished_at_ms` set. Anything else raises `42501`. No user update on items; no user delete.
+- A queued cancel ends the job's items too (consistency read 2026-11-10): the `after update`
+  trigger `autogenerate_jobs_cancel_queued_items`, `security definer`, sets every `pending` or
+  `running` item of that job `cancelled`/`cancelled` in the same statement. `catalog_user`'s grants
+  and policies are unchanged (still no item privilege).
 - The worker uses `system('autogenerate-worker')` for claims, lease renewals, item and job
   transitions, and the initiator re-read (D4). That reason joins the reviewed allowlist.
 
@@ -399,7 +403,9 @@ The runner's single-flight refusal (`busy`) and a live `recording` lease (`lease
 both mean busy. The worker retries the step every 15 s, re-checking the cancel and the job lease,
 for up to 10 minutes from the first refusal, then marks the item and the session's remaining items
 `skipped` `busy` and moves on. Nothing is queued for later (Q4). Within one process the worker's
-step and a human's request contend for the same in-process slot; across processes, for the same
+step and a human's request contend for the same in-process slot (before each retry after a wait,
+D5 step 4 runs again, as in D17: a session deleted or no longer accessible meanwhile is skipped
+`session-gone`/`access-lost` with its remaining steps; consistency read 2026-11-10); across processes, for the same
 run lease, so a batch step and a manual run never overlap on a session.
 
 ### D9. Failure classification
@@ -413,7 +419,7 @@ run lease, so a batch step and a manual run never overlap on a session.
 | transcript `missing_blob` | `failed` `missing-audio-file` | same |
 | transcript `unreadable` | `failed` `unreadable` | same |
 | events/topics/wiki turn failure, timeout, incomplete page coverage, store failure | `failed` `generation-failed` | same |
-| events: the show's event-button instructions exceed the aggregate size bound (owner, 2026-11-10) | `failed` `generation-failed` | same |
+| events: the show's event-button instructions exceed the aggregate size bound (owner, 2026-11-10) | `failed` `generation-failed`, classified internally as not a provider fault | still run (topics and wiki do not depend on events); no `earlier-step-failed` |
 | events/topics/wiki: the provider refused with an HTTP status other than `429` (AI SDK route; amendment, owner 2026-11-09) | `failed` `provider-failed` | same |
 | any unexpected throw | `failed` `generation-failed`, logged with the session id and error class only | same |
 | interrupted 3 times | `failed` `interrupted` | same |
@@ -432,6 +438,8 @@ The cancel route writes the cancel columns as the caller (D2). The worker checks
 before each session and each step and between busy retries; it never aborts a provider call (the
 manual routes pass no abort signal either). When the step in progress ends, its result is kept and
 recorded, then the job ends `cancelled` and every non-ended item becomes `cancelled`/`cancelled`.
+A `queued` job, which no worker holds, is cancelled with its items in the cancel statement itself
+(the definer trigger of D2; consistency read 2026-11-10).
 A cancel noticed during a busy or rate-limit wait first runs `cleanupOwnOutput` for the waiting
 item (D7), whose partial output would otherwise stay.
 
@@ -528,7 +536,9 @@ how it answers ADR 0031's revisit trigger), and what would reverse it.
   continues them): `consecutive_stt_failures` for the transcript step and
   `consecutive_llm_failures` for events, topics and wiki. A processed session in which a step of
   that kind ended `failed` as `provider-failed`, `generation-failed` or `rate-limited` adds one to
-  that kind; a `done` step resets only its own kind; other outcomes leave both. At 3 in either the
+  that kind; a `done` step resets only its own kind; other outcomes leave both. The events
+  instruction-size bound (`generation-failed`, not a provider fault; owner 2026-11-10) neither
+  adds nor resets. At 3 in either the
   job stops `failed` `provider-failing` (after `cleanupOwnOutput`), remaining items `cancelled`
   `job-stopped`. Per kind, so a revoked LLM key is caught even while transcripts succeed. Three
   tells a dead key or an outage from one bad session.

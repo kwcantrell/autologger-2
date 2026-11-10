@@ -54,6 +54,10 @@ export type StepResult =
         | 'unreadable'
         | 'generation-failed';
       keptEdited?: number;
+      /** A failure that is the show's own (the events instruction-size bound; owner,
+       * 2026-11-10): it neither counts toward nor resets the D17 provider counts, and the
+       * session's later steps still run (D9). */
+      notProviderFault?: boolean;
     }
   | { kind: 'rate-limited'; keptEdited?: number }
   | { kind: 'busy' }
@@ -401,11 +405,17 @@ export class JobRun {
       const out = await this.#step(item);
       const kind = kindOf(item.step);
       if (out.status === 'done') done[kind] = true;
-      if (out.status === 'failed' && out.outcome && PROVIDER_OUTCOMES.has(out.outcome)) {
+      if (
+        out.status === 'failed' &&
+        !out.notProviderFault &&
+        out.outcome &&
+        PROVIDER_OUTCOMES.has(out.outcome)
+      ) {
         failed[kind] = true;
       }
-      if (out.status === 'failed') cascade = 'earlier-step-failed';
+      if (out.status === 'failed' && !out.notProviderFault) cascade = 'earlier-step-failed';
       if (out.status === 'busy-skip') cascade = 'busy';
+      if (out.status === 'session-skip') cascade = out.outcome;
       if (
         out.outcome === 'no-audio' ||
         out.outcome === 'no-speech' ||
@@ -439,8 +449,9 @@ export class JobRun {
   // -- one step ---------------------------------------------------------------------------------
 
   async #step(item: AutogenerateItemRow): Promise<{
-    status: 'done' | 'skipped' | 'failed' | 'busy-skip';
+    status: 'done' | 'skipped' | 'failed' | 'busy-skip' | 'session-skip';
     outcome: AutogenerateOutcome | null;
+    notProviderFault?: boolean;
   }> {
     // D11: a re-entered item counts an attempt; the fourth entry ends it `interrupted`.
     if (item.status === 'running' && item.attempts >= MAX_ATTEMPTS) {
@@ -455,6 +466,7 @@ export class JobRun {
     });
     let busySince: number | null = null;
     let rateRetries = 0;
+    let retry = false;
     for (;;) {
       // D10 / D17: the cancel, the account, role and approval before each attempt.
       const p = await this.#jobLadder(item);
@@ -462,6 +474,17 @@ export class JobRun {
         (await this.ports.store.items(this.job.id)).find(
           (i) => i.session_id === item.session_id && i.step === item.step,
         ) ?? item;
+      if (retry) {
+        // D17 / D8: after a wait, the session as the initiator again (D5 step 4), the security
+        // floor of owner decision 6: a deleted session or a revoked show is never generated on.
+        const access = await this.ports.gates.session(p, item.session_id, this.job.team_id);
+        if (access !== 'ok') {
+          const kept = await this.#cleanupItem(fresh);
+          await this.#endItem(fresh, 'skipped', access, { kept_edited: kept });
+          return { status: 'session-skip', outcome: access };
+        }
+      }
+      retry = true;
       const attempt = await this.#attempt(p, fresh);
       if (attempt.kind === 'busy') {
         busySince ??= this.ports.now();
@@ -608,7 +631,11 @@ export class JobRun {
   async #finish(
     item: AutogenerateItemRow,
     out: Exclude<StepResult, { kind: 'busy' } | { kind: 'rate-limited' }>,
-  ): Promise<{ status: 'done' | 'skipped' | 'failed'; outcome: AutogenerateOutcome | null }> {
+  ): Promise<{
+    status: 'done' | 'skipped' | 'failed';
+    outcome: AutogenerateOutcome | null;
+    notProviderFault?: boolean;
+  }> {
     switch (out.kind) {
       case 'done':
         await this.#endItem(item, 'done', null, {
@@ -628,7 +655,11 @@ export class JobRun {
         await this.#endItem(item, 'failed', out.outcome, {
           kept_edited: kept + (out.keptEdited ?? 0),
         });
-        return { status: 'failed', outcome: out.outcome };
+        return {
+          status: 'failed',
+          outcome: out.outcome,
+          ...(out.notProviderFault ? { notProviderFault: true } : {}),
+        };
       }
       case 'unconfigured': {
         const kept = await this.#cleanupItem(item);

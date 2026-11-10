@@ -9,7 +9,7 @@ describe('eventsResult', () => {
   it('the instruction-size bound fails the step generation-failed', () => {
     expect(
       eventsResult({ kind: 'precondition', code: 'too-many-instructions', detail: 'x' }),
-    ).toEqual({ kind: 'fail', outcome: 'generation-failed' });
+    ).toEqual({ kind: 'fail', outcome: 'generation-failed', notProviderFault: true });
   });
 
   it('the other preconditions skip with their code', () => {

@@ -327,13 +327,13 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
 
 ## 7. Security notes
 
-- [ ] 7.1 `docs/security.md`: the auto-accept residual (new pages and added lines, possibly
+- [x] 7.1 `docs/security.md`: the auto-accept residual (new pages and added lines, possibly
   steered by an untrusted transcript, live without review; removals always wait for a person;
   marked, attributable, revertible; stacked revisions), the spend residual (up to 4000 runs on the
   initiator's accounts, bounded by the provider-failure stop), and the worker as the second
   user-binding site. Verify: the consistency read (8.2) finds each residual referenced from ADR
   0033.
-  Evidence: NOT TICKED: its verify is the 8.2 consistency read, which is still open. Done: `docs/security.md` gains "Batch autogenerate jobs" (the auto-accept residual, the spend residual, the worker as the second user-binding site, uncleaned partial output). `grep -n 'docs/security.md' docs/decisions/0033-batch-autogenerate-jobs.md` -> the R1 residual line and the "Recorded in docs/security.md" line
+  Evidence: the consistency read (panel.md "Consistency read 2026-11-10") found no residual missing from ADR 0033 and raised no finding on it. `docs/security.md` gains "Batch autogenerate jobs" (the auto-accept residual, the spend residual, the worker as the second user-binding site, uncleaned partial output). `grep -n 'docs/security.md' docs/decisions/0033-batch-autogenerate-jobs.md` -> the R1 residual line and the "Recorded in docs/security.md" line
 
 ## 8. Verification
 
@@ -343,9 +343,12 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
   the job resumed within 90 s, that no partial topic set was kept, and a batch revision's note in
   the page history. Repeat once in `pending` mode.
   Evidence:
-- [ ] 8.2 Tier 2 consistency read (`consistency-read` skill) over specs, design, code and tests;
+- [x] 8.2 Tier 2 consistency read (`consistency-read` skill) over specs, design, code and tests;
   every finding fixed or escalated.
-  Evidence:
+  Evidence: a fresh reviewer appended `## Consistency read 2026-11-10` to panel.md with 3 [major] findings, each now ticked with `Resolved:`.
+    - Queued cancel: pg `autogenerateJobs.pg.test.ts` red (`× a queued cancel ends every item cancelled/cancelled`, ba-cr1-red.log), then green 88/88 (ba-cr1-green.log). The route test and the recaptured `autogenerateCancel` fixture pass.
+    - Session gate on retry and the instruction bound: `worker.test.ts`/`steps.test.ts` red, 4 failed (ba-cr-red.log), then green 28/28 (ba-cr-green.log).
+    - Full pg with `--maxWorkers=4`: `Tests 362 passed | 1 skipped` (ba-cr-pg.log). The affected integration files: 129 passed plus the fixture rerun 69/69 (ba-cr-int.log).
 - [ ] 8.3 `scripts/check-change.sh --stage hook` green, then `scripts/check-change.sh` (all gates,
   as CI) green with `GITHUB_BASE_REF=main`.
   Evidence:

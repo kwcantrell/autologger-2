@@ -638,3 +638,69 @@ describe('cancel, polling and columns (design D3, D10)', () => {
     expect(wiki).toMatchObject({ status: 'done', wiki_accepted: 1, wiki_pending: 2 });
   });
 });
+
+describe('consistency read 2026-11-10', () => {
+  it('a session deleted during a rate-limit wait is skipped session-gone after its cleanup, with no further run', async () => {
+    const w = makeWorld(['A', 'B'], ['events', 'wiki']);
+    w.results.set('A:events', [
+      async (h) => {
+        await h.beforeRun('r1');
+        return { kind: 'rate-limited' };
+      },
+    ]);
+    w.ports.sleep = async (ms) => {
+      w.sleeps.push(ms);
+      w.gate.session.set('A', 'session-gone');
+    };
+    await w.worker.tick();
+    expect(report(w)).toEqual({
+      'A:events': 'skipped session-gone',
+      'A:wiki': 'skipped session-gone',
+      'B:events': 'done',
+      'B:wiki': 'done',
+    });
+    expect(w.calls.filter((c) => c.startsWith('run A'))).toEqual(['run A:events']);
+    expect(w.calls.indexOf('cleanup A:events')).toBeLessThan(
+      w.calls.indexOf('end A:events session-gone'),
+    );
+    expectContractPairs(w);
+  });
+
+  it('show access revoked during a busy wait skips the session access-lost, with no run', async () => {
+    const w = makeWorld(['A'], ['topics', 'wiki']);
+    w.results.set('A:topics', [{ kind: 'busy' }]);
+    w.ports.sleep = async (ms) => {
+      w.sleeps.push(ms);
+      w.clock.now += ms;
+      w.gate.session.set('A', 'access-lost');
+    };
+    await w.worker.tick();
+    expect(report(w)).toEqual({
+      'A:topics': 'skipped access-lost',
+      'A:wiki': 'skipped access-lost',
+    });
+    expect(w.sleeps).toEqual([15_000]);
+    expect(w.job.status).toBe('finished');
+  });
+
+  it('the instruction-size bound fails events but is no provider fault: topics and wiki run, no stop', async () => {
+    const w = makeWorld(['A', 'B', 'C', 'D'], ['events', 'topics', 'wiki'], {
+      consecutive_llm_failures: 2,
+    });
+    for (const s of ['A', 'B', 'C', 'D']) {
+      w.results.set(`${s}:events`, [
+        { kind: 'fail', outcome: 'generation-failed', notProviderFault: true },
+      ]);
+      w.results.set(`${s}:topics`, [{ kind: 'present' }]);
+      w.results.set(`${s}:wiki`, [{ kind: 'skip', outcome: 'no-transcript' }]);
+    }
+    await w.worker.tick();
+    for (const s of ['A', 'B', 'C', 'D']) {
+      expect(statusOf(w, s, 'events')).toBe('failed generation-failed');
+      expect(statusOf(w, s, 'topics')).toBe('skipped present');
+    }
+    // Neither counted nor reset: no step of either kind was done.
+    expect(w.job.consecutive_llm_failures).toBe(2);
+    expect(w.job.status).toBe('finished');
+  });
+});

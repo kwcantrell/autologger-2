@@ -219,7 +219,11 @@ job at a time; queued jobs SHALL be claimed oldest first.
 ### Requirement: A failed step skips the rest of its session
 When a step fails (the provider call failed, timed out, was over a size limit, or the run did not
 complete), the item SHALL be `failed` with a classified outcome, the session's later steps SHALL
-be `skipped` with `earlier-step-failed`, and the job SHALL continue with the next session. A step
+be `skipped` with `earlier-step-failed`, and the job SHALL continue with the next session. One
+exception (owner, 2026-11-10): an events step refused because the show's event-button
+instructions exceed the size bound is `failed` with `generation-failed`, but it is not a provider
+failure (it neither adds to nor resets the provider failure counts) and the session's topics and
+wiki steps still run. A step
 that ends `failed` for any reason, `interrupted` included, SHALL delete the events of every run id
 its attempts recorded and the topics its attempts recorded by id, so the session is left
 "missing" for a later job; a failed wiki step stores nothing, as the manual route does. Topics or
