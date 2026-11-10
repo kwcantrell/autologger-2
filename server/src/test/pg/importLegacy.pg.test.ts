@@ -448,6 +448,53 @@ describe('legacy import into Postgres', () => {
     expect(psql(name, replace).code).toBe(0);
   });
 
+  // batch-autogenerate D1, R11: --replace and --replace-live refuse a team with a live batch job,
+  // changing nothing; a finished job goes with the team.
+  it('--replace and --replace-live refuse while the team has a queued or running batch job', async () => {
+    const { name, sql } = await freshDb();
+    expect(psql(name, (await emit(root)).importSql).code).toBe(0);
+    await sql`insert into catalog.users (id, google_sub, email, created_at_utc) values ('owner', 'g', 'o@x.y', ${T})`;
+    const job = (status: string) =>
+      `insert into catalog.autogenerate_jobs (id, team_id, initiator_user_id, initiator_name, scope,
+         steps, wiki_mode, status, stop_reason, session_count, created_at_ms, finished_at_ms,
+         updated_at_ms)
+       values ('aj', '${IDS.studio}', 'owner', 'O', 'shows', 'wiki', 'accept', '${status}', null, 1,
+         1, ${status === 'finished' ? 2 : 'null'}, 1);
+       insert into catalog.autogenerate_items (job_id, session_id, step, ordinal, step_order)
+         values ('aj', '${IDS.s1}', 'wiki', 0, 3)`;
+    const snapshot = async () =>
+      (
+        await sql.unsafe(`select
+          (select count(*) from catalog.sessions)::int as sessions,
+          (select count(*) from catalog.shows)::int as shows,
+          (select count(*) from catalog.studio_definitions)::int as teams,
+          (select count(*) from catalog.autogenerate_jobs)::int as jobs,
+          (select count(*) from catalog.autogenerate_items)::int as items`)
+      )[0];
+    const replace = (await emit(root, { replace: true })).importSql;
+    const replaceLive = (await emit(root, { replaceLive: true, allowSignedInUsers: true }))
+      .importSql;
+    for (const status of ['queued', 'running']) {
+      await sql.unsafe(job(status));
+      const before = await snapshot();
+      for (const file of [replace, replaceLive]) {
+        const r = psql(name, file);
+        expect(r.code, status).not.toBe(0);
+        expect(r.out, status).toMatch(
+          /legacy import refused: team ymhs has a batch autogenerate job in progress; cancel it first/,
+        );
+        expect(await snapshot(), status).toEqual(before);
+      }
+      await sql.unsafe(`delete from catalog.autogenerate_jobs`);
+    }
+    for (const file of [replace, replaceLive]) {
+      await sql.unsafe(job('finished'));
+      const r = psql(name, file);
+      expect(r.code, r.out).toBe(0);
+      expect(await snapshot()).toMatchObject({ jobs: 0, items: 0 });
+    }
+  });
+
   it("--replace-live swaps the team in one transaction, keeps other teams, and never touches another team's ids", async () => {
     const { name, sql } = await freshDb();
     expect(psql(name, (await emit(root)).importSql).code).toBe(0);

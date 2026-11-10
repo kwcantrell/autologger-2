@@ -13,7 +13,7 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
 
 ## 1. ADR, migration and row-level security (design D1, D2, D16)
 
-- [ ] 1.1 Write `docs/decisions/0033-batch-autogenerate-jobs.md` (template 0000; Status Proposed;
+- [x] 1.1 Write `docs/decisions/0033-batch-autogenerate-jobs.md` (template 0000; Status Proposed;
   Rule: batch-autogenerate, show-wiki "A batch job accepts suggestions as its initiator",
   core-ports-architecture "Every catalog and session call is bound to a caller"). It states how the
   change answers ADR 0031's "background run" revisit trigger: the human initiator is the author,
@@ -22,8 +22,8 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
   one-line pointer to 0033 in ADR 0031's Consequences. Docs only, no test; verify:
   `scripts/check-change.sh --only openspec,guide-size` passes and `grep -n 0033
   docs/decisions/0031-show-wiki-ai.md` finds the pointer.
-  Evidence:
-- [ ] 1.2 Test first, new `server/src/test/pg/autogenerateJobs.pg.test.ts`, plus the recorded
+  Evidence: `scripts/check-change.sh --only openspec,guide-size` -> `PASS openspec openspec validate --strict`, `PASS guide-size AGENTS.md 96/150 lines`; `grep -n 0033 docs/decisions/0031-show-wiki-ai.md` -> `59:- **Background run:** ADR 0033 (batch autogenerate) answers that trigger` (ba-1.1-green.log)
+- [x] 1.2 Test first, new `server/src/test/pg/autogenerateJobs.pg.test.ts`, plus the recorded
   expectation in `catalogSchema.pg.test.ts` and the RLS listing test:
   - the columns, checks and the live index: a second `queued`/`running` job for a team fails
     `23505`, a `finished` one does not; an outcome or stop reason outside the lists fails `23514`;
@@ -43,28 +43,28 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
     either `consecutive_*_failures` count or the lease each fail `42501`; `catalog_user` update or delete
     on items and delete on jobs fail `42501`;
   - `catalog_system` may do all of the above.
-  Evidence: under 1.3.
-- [ ] 1.3 `supabase/migrations/20261025000000_autogenerate_jobs.sql`: both tables (with
+  Evidence: under 1.3; red before 1.3: `npx vitest run --project pg src/test/pg/autogenerateJobs.pg.test.ts` -> `PostgresError: relation "autogenerate_jobs" does not exist`, `11 skipped`; catalogSchema/catalogPolicies with the expectations unchanged -> `× matches the recorded catalog schema`, `expected [...] to have a length of 49 but got 54` (ba-1.2-red.log)
+- [x] 1.3 `supabase/migrations/20261025000000_autogenerate_jobs.sql`: both tables (with
   `on delete cascade` from `studio_definitions`, `own_topic_ids`, `kept_edited`, the two
   `consecutive_*_failures` counts, an index on items `(session_id, step)`,
   the outcome/status check), indexes, RLS, the system policies, the user policies, the column
   grant, `autogenerate_jobs_user_guard`, the header with the rollback statements; no
   transaction-control lines (`migrate.sh`). Verify: 1.2 green; `docker/supabase/test_migrate.sh`
   green.
-  Evidence:
-- [ ] 1.4 Legacy importer (design D1, R11). Test first, `server/src/test/importLegacy.test.ts` and
+  Evidence: `npx vitest run --project pg src/test/pg/catalogSchema.pg.test.ts src/test/pg/catalogPolicies.pg.test.ts src/test/pg/autogenerateJobs.pg.test.ts` -> `Tests 73 passed (73)` (ba-1.3-green.log); `sh docker/supabase/test_migrate.sh` -> `test_migrate: 55 passed, 0 failed` (ba-1.3-migrate.log)
+- [x] 1.4 Legacy importer (design D1, R11). Test first, `server/src/test/importLegacy.test.ts` and
   the importer's pg test: "is the newest migration" is red before the pin moves; `--replace` and
   `--replace-live` of a team with a `queued` and with a `running` job each fail with `legacy import
   refused: team <id> has a batch autogenerate job in progress; cancel it first` and change
   nothing; with only a `finished` job, both succeed and the job and its items are gone; the job
   table is in the importer's lock list. Then move `TARGET_SCHEMA_VERSION` to `20261025000000` and
   add the refusal and the lock in `server/scripts/legacyImportSql.ts`. Verify: green.
-  Evidence:
-- [ ] 1.5 Test first, `server/src/routers/teams.int.test.ts` addition: a team that has only
+  Evidence: red: `npx vitest run --project unit src/test/importLegacy.test.ts` -> `× is the newest migration`, `× locks the batch autogenerate jobs table`; pg -> `Tests 9 failed | 1 passed` (the pin, ba-1.4-red.log); green: unit `Tests 25 passed (25)`, `npx vitest run --project pg src/test/pg/importLegacy.pg.test.ts` -> `Tests 10 passed (10)` (ba-1.4-green.log)
+- [x] 1.5 Test first, `server/src/routers/teams.int.test.ts` addition: a team that has only
   finished jobs and no shows is deleted through `DELETE /api/teams/:id` (`200`) and its jobs are
   gone; a team with a live job still has shows and answers the existing `400` "Team still has N
   show(s)". Expected to pass once 1.3 lands (no `adminDeleteStudio` change); record it.
-  Evidence:
+  Evidence: passed on first run as expected (no adminDeleteStudio change): `npx vitest run --project integration src/routers/teams.int.test.ts` -> `Tests 67 passed (67)` (ba-1.5-green.log)
 
 ## 2. Contract and catalog store (design D1, D3, D12, D13, D14)
 
