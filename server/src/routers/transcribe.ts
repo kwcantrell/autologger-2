@@ -7,10 +7,6 @@
 // legacy transcribe.csv download remains intentionally unavailable on this
 // deployment and always returns 503.
 
-import { aiChatTurns } from '@autologger/ai-runtime/aiChatRegistry';
-import { allTranscriptPagesServed } from '@autologger/ai-runtime/aiMcpServer';
-import { sdkFailureSuffix, sdkFallbackSuffix } from '@autologger/ai-runtime/sdkTurn';
-import { generateTopicsTurn } from '@autologger/ai-runtime/topicGenerate';
 import {
   deleteVersionQuerySchema,
   topicCreateSchema,
@@ -23,27 +19,22 @@ import {
   DEEPGRAM_MAX_GROUP_BYTES,
   exceedsGroupSizeLimit,
   GENERATION_IN_FLIGHT_DETAIL,
-  generateTranscriptWords,
   TRANSCRIPT_NEEDS_KEY,
   TRANSCRIPT_UNAVAILABLE,
   TranscriptGenerateError,
 } from '@autologger/transcription';
 import { Hono } from 'hono';
 import type { AppEnv } from '../appEnv';
-import { resolveSttCredential } from '../auth/providerResolve';
-import { generateSdkLimits, topicGenerateMaxBudgetUsd, topicGenerateTimeoutSec } from '../env';
+import { runTopics } from '../generation/topics';
+import { runTranscript } from '../generation/transcript';
 import { ApiError } from '../httpError';
-import { callerLlmRoute, sdkTurnSpec } from './_aiRoute';
-import { claimAiLease } from './_aiSlot';
 import {
   canAccessSession,
   expectedVersion,
   getSessionHub,
-  requireRunFeature,
+  principalOf,
+  RUN_FEATURE_FORBIDDEN_DETAIL,
   requireSession,
-  requireUser,
-  sessionCaller,
-  timecodeCtx,
   versionConflict,
 } from './_helpers';
 
@@ -160,44 +151,45 @@ transcribeRouter.post('/api/sessions/:sessionId/transcript-words/generate', asyn
   const sessionId = c.req.param('sessionId');
   const row = await requireSession(c, sessionId);
 
-  // byo-ai-providers D3: the caller's own speech-to-text key (the operator's only in development
-  // mode); none answers the unconfigured 503 before the approval 403 (frozen order).
-  const stt = await resolveSttCredential(c.env, requireUser(c).id);
-  if (stt === null) {
-    throw new ApiError(503, TRANSCRIPT_NEEDS_KEY);
-  }
-  // Approved users only (run-status-and-sweeper D9) — 403, before the lock, the lease and DeepGram.
-  requireRunFeature(c);
-
-  try {
-    const words = await generateTranscriptWords({
-      stt,
-      audio: c.env.ports.audio,
-      getHub: () => getSessionHub(c, sessionId),
-      ctx: timecodeCtx(row),
-      sessionId,
-      signal: c.req.raw.signal,
-      resolveSessionTitle: (id) => resolveCatalogSessionTitle(c.get('catalog'), id),
-    });
-    return c.json({ words: words.map(wordApiDict) });
-  } catch (err) {
-    // Cross-tenant redaction on the enriched 409: the in-flight detail names
-    // the HOLDER's session (title or id), which the requester may not be able
-    // to access (show-grants D12). Swap in the identifier-free generic detail
-    // for them. Access is checked against the holder the
-    // detail actually names (carried on the error), never a fresh lock read,
-    // which could see a different holder after an await (async-session-callers
-    // D5); no named holder means the detail is already the generic one.
-    // Same 409 status either way. The holder is now always the requested
-    // session (run-status-and-sweeper D3), so a caller who passed
-    // `requireSession` keeps the named detail; the check is unchanged.
-    if (err instanceof TranscriptGenerateError && err.code === 'in_flight') {
-      const named = err.holderSessionId;
+  // The shared runner (batch-autogenerate D6): the caller's own speech-to-text key (the operator's
+  // only in development mode; none answers the unconfigured 503 before the approval 403, the
+  // frozen order), the approved-user 403 before the lock, the lease and DeepGram, then the run.
+  const out = await runTranscript(principalOf(c), sessionId, { row, signal: c.req.raw.signal });
+  switch (out.kind) {
+    case 'ok':
+      return c.json({ words: out.words.map(wordApiDict) });
+    case 'unconfigured':
+      throw new ApiError(503, TRANSCRIPT_NEEDS_KEY);
+    case 'forbidden':
+      throw new ApiError(403, RUN_FEATURE_FORBIDDEN_DETAIL);
+    case 'busy': {
+      // Cross-tenant redaction on the enriched 409: the in-flight detail names
+      // the HOLDER's session (title or id), which the requester may not be able
+      // to access (show-grants D12). Swap in the identifier-free generic detail
+      // for them. Access is checked against the holder the
+      // detail actually names (carried on the error), never a fresh lock read,
+      // which could see a different holder after an await (async-session-callers
+      // D5); no named holder means the detail is already the generic one.
+      // Same 409 status either way. The holder is now always the requested
+      // session (run-status-and-sweeper D3), so a caller who passed
+      // `requireSession` keeps the named detail; the check is unchanged.
+      const named = out.holderSessionId;
       if (named === undefined || !(await canAccessSession(c, named))) {
         throw new ApiError(409, GENERATION_IN_FLIGHT_DETAIL);
       }
+      throw new ApiError(409, out.detail);
     }
-    mapGenerateError(err);
+    case 'present':
+      // Only a run with `onlyIfEmpty` (the batch worker) can end here; the route never asks.
+      throw new Error('transcript route: unexpected present outcome');
+    case 'error':
+      // A rate limit is an upstream failure to the route (its frozen 502).
+      mapGenerateError(
+        new TranscriptGenerateError(
+          out.code === 'rate-limited' ? 'upstream' : out.code,
+          out.detail,
+        ),
+      );
   }
 });
 
@@ -249,7 +241,7 @@ transcribeRouter.get('/api/sessions/:sessionId/topics', async (c) => {
   return c.json({ topics: await (await getSessionHub(c, sessionId)).listTopics() });
 });
 
-// ── Topic generation (topic-generation, design D1-D7) ───────────────────────
+// ── Topic generation (topic-generation, design D1-D7; the runner: batch-autogenerate D6) ──
 // Reuses the AI chat's CLI/MCP lockdown + gate + turn registry (env.ts "Topic
 // generation" section) for a one-shot, non-conversational generate turn
 // (`generateTopicsTurn`, task 2.3) run to completion server-side (design D2 —
@@ -274,121 +266,26 @@ const TOPIC_GENERATE_FAILURE_DETAIL = 'Topic generation failed.';
 transcribeRouter.post('/api/sessions/:sessionId/topics/generate', async (c) => {
   const sessionId = c.req.param('sessionId');
   await requireSession(c, sessionId);
-
-  // Configuration gate — 503, before any spawn or model request: the caller's route
-  // (ai-sdk-agent-harness D1), the Claude CLI or the AI SDK on the caller's own credential.
-  const route = await callerLlmRoute(c);
-  if (route === null) {
-    throw new ApiError(503, TOPIC_GENERATE_NOT_CONFIGURED_DETAIL);
-  }
-  // Approved users only (run-status-and-sweeper D9) — 403, before any slot, lease or spawn.
-  requireRunFeature(c);
-
-  // Transcript precondition (design D4) — 400 before any spawn.
-  const transcriptWords = await (await getSessionHub(c, sessionId)).listTranscriptWords();
-  if (transcriptWords.length === 0) {
-    throw new ApiError(400, NO_TRANSCRIPT_DETAIL);
-  }
-
-  // Single-flight (per session) — 409, spawning nothing. There is no
-  // process-wide ceiling (run-status-and-sweeper D2). Acquired here (not inside generateTopicsTurn) and
-  // released in this handler's own finally.
-  const proc = aiChatTurns.tryAcquire(sessionId);
-  if (!proc.ok) throw new ApiError(409, TOPIC_GENERATE_SESSION_BUSY_DETAIL);
-  // The session's `ai-turn` lease (session-run-leases D4), behind the slot: a
-  // refusal means another process runs a turn here, so it reads as session-busy.
-  const slot = await claimAiLease(c, sessionId, proc);
-  if (slot === null) throw new ApiError(409, TOPIC_GENERATE_SESSION_BUSY_DETAIL);
-
-  try {
-    // Record pre-run topic ids BEFORE the run (design D3's crash-safe swap):
-    // nothing below ever mutates these topics until the atomic
-    // delete-on-success.
-    const preRunIds = new Set(
-      (await (await getSessionHub(c, sessionId)).listTopics()).map((t) => t.id),
-    );
-
-    const common = {
-      clock: c.env.ports.clock,
-      registry: c.env.ports.sessions,
-      caller: sessionCaller(c),
-      sessionId,
-      timeoutMs: topicGenerateTimeoutSec(c.env.config) * 1000,
-    };
-    const outcome = await generateTopicsTurn(
-      route.kind === 'cli'
-        ? {
-            ...common,
-            cliPath: c.env.config.CLAUDE_CLI_PATH.trim(),
-            maxBudgetUsd: topicGenerateMaxBudgetUsd(c.env.config),
-          }
-        : { ...common, sdk: sdkTurnSpec(c, route, 'topics', generateSdkLimits(c.env.config)) },
-    );
-    // An AI SDK run's tool bodies may still be running after a timeout: wait for them before
-    // reading the run's topics, so none lands after the cleanup below (D3 "Draining tool
-    // bodies"). The lease keeps renewing meanwhile.
-    await outcome.toolsDrained?.();
-
-    // Re-acquire the hub after the async, potentially multi-minute turn
-    // above — the idle sweeper may have closed the prior handle in the
-    // meantime (async-session-hub design D6: a hub is re-resolved after a long
-    // non-hub await, and used across its own calls below).
-    const hub = await getSessionHub(c, sessionId);
-    const after = await hub.listTopics();
-    const newIds = after.filter((t) => !preRunIds.has(t.id)).map((t) => t.id);
-
-    // Page-coverage gate (topic-generate-paged-transcript D6): a run that
-    // created topics from only SOME of its transcript pages must not replace
-    // a full-session topic set with partial-coverage ones — a corruption
-    // strictly less detectable than the oversized-payload bug paging fixes.
-    // This is the server's own bookkeeping (it served the pages), never
-    // model-output inference; a turn whose registration carried no word
-    // snapshot claims no coverage and cannot fail here.
-    const fullyRead = allTranscriptPagesServed(outcome.pageCoverage);
-
-    if (outcome.ok && newIds.length >= 1 && fullyRead) {
-      // A run that restarted at the smaller output cap (D3 "A smaller-model fallback") is noted,
-      // content-free, so an operator can see the model rejected the larger cap.
-      if (outcome.outputCapFallback !== undefined) {
-        console.info(
-          `[topics/generate] session=${sessionId}: AI turn succeeded${sdkFallbackSuffix(outcome)}`,
-        );
-      }
-      // Success: delete the pre-run topics, leaving only the fresh set.
-      await hub.deleteTopics([...preRunIds]);
-      return c.json({ topics: await hub.listTopics() });
-    }
-
-    // Failure (turn error/timeout/CLI error, a run that created no topics, or
-    // one that never read the whole transcript): delete only the topics THIS
-    // run created — the pre-run topics were never touched and remain exactly
-    // as they were. Same status, same body as every other failure cause.
-    await hub.deleteTopics(newIds);
-    // Operator-facing diagnostic: the `502` body is deliberately opaque to the
-    // client (a fixed, non-sensitive string), but a self-hosted operator needs
-    // the real reason to debug — an exceeded `--max-budget-usd` surfaces as the
-    // outcome detail `upstream-failed`, a slow turn as `timeout`, an auth
-    // problem as `not-logged-in`, a turn that ran clean but made no topics
-    // as `ok` with zero new topics, and a model that stopped reading pages
-    // early as incomplete page coverage. Logged to the server console only;
-    // never the response.
-    console.warn(
-      `[topics/generate] session=${sessionId}: generation failed — ` +
-        (!outcome.ok
-          ? `AI turn failed (${outcome.detail})` +
-            sdkFailureSuffix(outcome.failure, outcome.ending, outcome.summary) +
-            sdkFallbackSuffix(outcome)
-          : newIds.length === 0
-            ? 'AI turn succeeded but created 0 topics'
-            : `AI turn created ${newIds.length} topic(s) after reading only ` +
-              `${outcome.pageCoverage.servedPages} of ${outcome.pageCoverage.totalPages} ` +
-              'transcript page(s)') +
-        (outcome.ok ? sdkFallbackSuffix(outcome) : ''),
-    );
-    throw new ApiError(502, TOPIC_GENERATE_FAILURE_DETAIL);
-  } finally {
-    // Lease, then slot, before the response (session-run-leases D4).
-    await slot.release();
+  // The shared runner (batch-autogenerate D6) keeps the frozen order: the caller's route 503, the
+  // approved-user 403, the transcript 400, then the shared slot and its lease (409).
+  const out = await runTopics(principalOf(c), sessionId);
+  switch (out.kind) {
+    case 'ok':
+      return c.json({ topics: out.topics });
+    case 'unconfigured':
+      throw new ApiError(503, TOPIC_GENERATE_NOT_CONFIGURED_DETAIL);
+    case 'forbidden':
+      throw new ApiError(403, RUN_FEATURE_FORBIDDEN_DETAIL);
+    case 'precondition':
+      throw new ApiError(400, NO_TRANSCRIPT_DETAIL);
+    case 'busy':
+      throw new ApiError(409, TOPIC_GENERATE_SESSION_BUSY_DETAIL);
+    case 'failed':
+      throw new ApiError(502, TOPIC_GENERATE_FAILURE_DETAIL);
+    case 'present':
+    case 'stopped':
+      // Only a batch step (with `batch` options) ends here.
+      throw new Error(`topics route: unexpected ${out.kind} outcome`);
   }
 });
 

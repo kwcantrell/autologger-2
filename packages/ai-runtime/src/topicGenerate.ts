@@ -31,7 +31,7 @@
 
 import type { Clock } from '@autologger/ports';
 import type { SessionCaller, SessionHubRegistryFacade } from '@autologger/session-core';
-import type { AiGenerationSnapshotWord } from './aiMcpServer';
+import type { AiGenerationSnapshotWord, TopicIdAllocator } from './aiMcpServer';
 import { type DriveAiTurnResult, driveAiTurn } from './aiTurn';
 import type { SdkTurnSpec } from './sdkTurn';
 
@@ -82,6 +82,8 @@ interface GenerateTopicsTurnCommon {
   caller: SessionCaller;
   sessionId: string;
   timeoutMs: number;
+  /** batch-autogenerate D7: `create_topic`'s id allocator (the runner's, which records ids). */
+  topicIds?: TopicIdAllocator;
 }
 
 /** The runner (ai-sdk-agent-harness D3): the CLI with its path and budget, or an AI SDK turn
@@ -151,7 +153,11 @@ export async function generateTopicsTurn(
     // transcript as one oversized tool result — and is the list the route's
     // page-coverage gate counts. It carries ONLY words: no event-run fields,
     // and `create_event` registration stays keyed by the tool set above.
-    mcpContext: { tools: TOPIC_GENERATE_ALLOWED_TOOLS, pagedWords },
+    mcpContext: {
+      tools: TOPIC_GENERATE_ALLOWED_TOOLS,
+      pagedWords,
+      ...(opts.topicIds ? { topicIds: opts.topicIds } : {}),
+    },
     timeoutMs: opts.timeoutMs,
     emit: () => {},
     // No abortSignal — design D2: the one-shot always runs to completion.

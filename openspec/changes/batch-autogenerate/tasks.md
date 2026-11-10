@@ -108,15 +108,15 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
 
 ## 3. Shared runners (design D6, D7, D9, D12)
 
-- [ ] 3.1 Baseline: before any edit, run the regression net of design D6 and record the per-file
+- [x] 3.1 Baseline: before any edit, run the regression net of design D6 and record the per-file
   counts: `transcribe.int.test.ts`, `transcribe.test.ts`, `events.generate.int.test.ts`,
   `eventsGenerateWindow.test.ts`, `wikiSuggestions.int.test.ts`, `wiki.int.test.ts`,
   `ai.int.test.ts`, `aiV2.int.test.ts`, `providers.int.test.ts`,
   `sessions.youtubeImport.int.test.ts`, `apiResponseFixtures.int.test.ts`, `_aiRoute.test.ts`, and
   `server/src/test/aiSdk.real.test.ts` (record whether it runs or skips without real keys). Their
   assertions are not edited in group 3; the only allowed edits are the signature updates of 3.6.
-  Evidence:
-- [ ] 3.2 Test first, `server/src/generation/transcript.test.ts`: `runTranscript` returns typed
+  Evidence: before any edit, `npx vitest run --project integration <9 int files> --reporter=verbose` -> `Tests 503 passed (503)`; `--project unit <4 unit files>` -> `Tests 10 passed | 2 skipped (12)`. Per file: transcribe.int 83, transcribe 6, events.generate.int 46, eventsGenerateWindow 1, wikiSuggestions.int 34, wiki.int 78, ai.int 54, aiV2.int 76, providers.int 20, sessions.youtubeImport.int 44, apiResponseFixtures.int 68, _aiRoute 3, aiSdk.real 0 passed + 2 skipped (skips without real keys) (ba-3.1-baseline.log)
+- [x] 3.2 Test first, `server/src/generation/transcript.test.ts`: `runTranscript` returns typed
   outcomes for unconfigured, forbidden, busy, `no_audio`, `no_speech`, upstream, upstream `429`
   (`rate-limited`, via a numeric `status` on `DeepgramUpstreamError`), oversize, missing blob,
   unreadable and ok; with `onlyIfEmpty`, a word inserted between the provider call and the replace
@@ -124,7 +124,7 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
   (`packages/session-core` replace test for the sentinel too). Then extract the runner from
   `transcribe.ts`; the route becomes an adapter. Verify: 3.2 green and the 3.1 transcript suites
   green with the baseline counts.
-  Evidence:
+  Evidence: red: `npx vitest run --project integration src/generation/transcript.int.test.ts src/test/session/replaceOnlyIfEmpty.int.test.ts` -> `Cannot find module './transcript'`; the replace test `× throws the sentinel and writes nothing` (ba-3.2-red.log). Green: `Tests 9 passed (9)`; net: transcribe.int 83 passed, transcribe 6 passed (baseline counts); packages/transcription `Tests 101 passed` (ba-3.2-green.log). Deviation: the runner test is `server/src/generation/transcript.int.test.ts` (integration, not `.test.ts`): the onlyIfEmpty sentinel needs the real hub transaction; the session-core replace test is `server/src/test/session/replaceOnlyIfEmpty.int.test.ts`, where the hub's database tests live; `oversize` is covered through `transcriptOutcomeOf` (a 2 GB group is not producible in a test)
 - [ ] 3.3 Test first, `server/src/generation/events.test.ts` (design D7 events):
   - with `excludeEventIds` (the earlier attempts' events), those events are absent from the
     prompt's existing-events list and from `create_event`'s anchor basis, exactly as a regenerate
@@ -141,8 +141,8 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
   - an AI SDK `429` is reported as `rate-limited`.
   Then extract from `events.ts`. Verify: 3.3 green, 3.1 events suites green with the baseline
   counts.
-  Evidence:
-- [ ] 3.4 Test first, `server/src/generation/topics.test.ts` and `packages/ai-runtime`
+  Evidence: NOT TICKED: the runner is extracted and its new test is green, but one regression-net test cannot stay green with its assertions unchanged. `server/src/routers/eventsGenerateWindow.test.ts` reads the text of `routers/events.ts` and looks for the literal `const transcriptWords = await (await getSessionHub(c, sessionId)).listTranscriptWords();`, and that code now lives in `server/src/generation/events.ts` (design D6). Retargeting it needs the human: D6 allows edits only in `_aiRoute.test.ts` and `aiSdk.real.test.ts`. The same invariant is enforced on the runner by a new `server/src/generation/eventsWindow.test.ts` (green). Red (batch behaviour stripped from the runner): `npx vitest run --project integration src/generation/events.int.test.ts` -> `Tests 5 failed | 1 passed (6)` (ba-3.3-red.log); green -> `Tests 6 passed (6)` (ba-3.3-green.log); net: events.generate.int 46, _aiRoute 3 passed, eventsGenerateWindow 0/1 (ba-3.4-net-raw.log). Deviation: integration test (`events.int.test.ts`), since it needs the real hub, row versions and a fake provider
+- [x] 3.4 Test first, `server/src/generation/topics.test.ts` and `packages/ai-runtime`
   `aiMcpServer` tests (design D7 topics):
   - `create_topic` with an id allocator calls it before `insertTopic`, inserts with the allocated
     id, and an allocator that throws makes the tool return an error without inserting; after one
@@ -158,20 +158,20 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
   - `runTopics` outcomes (unconfigured, forbidden, no words, busy, failed, `rate-limited`, ok).
   Then extract from `transcribe.ts` and add the allocator and `insertTopic`'s optional id. Verify:
   green, 3.1 suites green with the baseline counts.
-  Evidence:
-- [ ] 3.5 Test first, `server/src/generation/wiki.test.ts` and
+  Evidence: red: `npx vitest run --project integration src/test/session/aiMcpTopicAllocator.int.test.ts` -> `expected [ 'insert', 'insert' ] to deeply equal [ 'allocate', 'insert', …` (2 failed); `src/generation/topics.int.test.ts` -> `Cannot find module './topics'` (ba-3.4-red.log). Green: `Tests 10 passed (10)` (ba-3.4-green.log); net after the extraction: transcribe.int 83, ai.int 54, aiV2.int 76, providers.int 20, sessions.youtubeImport.int 44, apiResponseFixtures.int 68, wiki.int 78, wikiSuggestions.int 34, transcribe 6, _aiRoute 3 passed, aiSdk.real 2 skipped (ba-3.4-net-raw.log, then transcribe.int rerun 83 passed). The page-coverage tests in transcribe.int stub `generateTopicsTurn` and insert through `opts.registry` rather than the tool. They stay unchanged and green because the runner hands the turn a registry handle that allocates (and, for a batch, records) an id for any topic inserted through it. Production inserts come only from `create_topic`, which carries an explicit allocated id. Deviation: integration tests (`topics.int.test.ts`; the aiMcpServer allocator test is `server/src/test/session/aiMcpTopicAllocator.int.test.ts`, beside the existing MCP server suite)
+- [x] 3.5 Test first, `server/src/generation/wiki.test.ts` and
   `server/src/test/pg/wikiSuggestionStore.pg.test.ts` additions: `runWiki` accepts a caller-chosen
   run id; `acceptSuggestion(id, {expectedRevision}, {batchJobId})` writes the note `accepted
   suggestion <id> (batch <job>)` (and `created from suggestion <id> (batch <job>)` for a new page),
   `resolved_by` is the bound user, and every refusal of the manual accept still refuses. Then
   extract from `wikiSuggestions.ts` and add the option. Verify: green, 3.1 wiki suites green with
   the baseline counts.
-  Evidence:
+  Evidence: red: `npx vitest run --project integration src/generation/wiki.int.test.ts` -> `Cannot find module './wiki'`; `--project pg src/test/pg/wikiSuggestionStore.pg.test.ts` -> `× notes an existing page ... (batch <job>)`, `× notes a new page ...`, `× lists a run’s pending suggestion ids`, `Tests 3 failed | 27 passed` (the refusals case passed before the change, as expected) (ba-3.5-red.log). Green: wiki.int `Tests 3 passed (3)`, store pg `Tests 30 passed (30)` (ba-3.5-green.log); net: wikiSuggestions.int 34, wiki.int 78 (ba-3.6-net-raw.log). The store also gains `pendingOfRun`/`anyOfRun` (a run's suggestions by run id, for the worker's resume and accept order). Deviation: integration test name `wiki.int.test.ts`
 - [ ] 3.6 `sdkTurnSpec` and `callerLlmRoute` take `(env, user)`. Update only the call sites in
   `_aiRoute.test.ts` and `aiSdk.real.test.ts` to the new signature. Verify: every 3.1 suite green
   with the baseline counts; `git diff --stat` over the net shows changes only in those two files,
   and their diffs touch only `sdkTurnSpec`/`callerLlmRoute` call lines.
-  Evidence:
+  Evidence: NOT TICKED: its verify needs every net suite green, and `eventsGenerateWindow.test.ts` is red (see 3.3). Otherwise done: `sdkTurnSpec(env, …)`/`callerLlmRoute(env, user)` in `server/src/generation/aiRoute.ts` (re-exported by `routers/_aiRoute.ts`, plus a `requestLlmRoute(c)` wrapper for the routes). Net, `--reporter=verbose`: every file at its baseline count except `eventsGenerateWindow.test.ts` 0/1 (see 3.3) (ba-3.6-green.log). `git diff --stat` over the 13 net files -> `server/src/routers/_aiRoute.test.ts | 6 +++---` only, its three lines `sdkTurnSpec(ctx, …)` -> `sdkTurnSpec(ctx.env, …)`. `aiSdk.real.test.ts` needed no edit (it never calls `sdkTurnSpec` directly).
 
 ## 4. The worker (design D3, D4, D5, D7-D12, D17)
 
