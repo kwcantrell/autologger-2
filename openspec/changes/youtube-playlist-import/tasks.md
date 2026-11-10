@@ -158,11 +158,11 @@ Test commands: packages are `npx vitest run <files>` from the package directory
 
 ## 6. README (design D8)
 
-- [ ] 6.1 Test first, `server/src/routers/readmeEndpoints.repo.test.ts`: add the route
+- [x] 6.1 Test first, `server/src/routers/readmeEndpoints.repo.test.ts`: add the route
   (`server/src/routers/youtubePlaylist.ts`, `post`, `'/api/youtube/playlist-entries'`, README text
   `POST /api/youtube/playlist-entries`, statuses `200`, `400`, `403`, `422`, `502`, `503`).
   Evidence: under 6.2.
-- [ ] 6.2 README: the endpoint table row (body, `200` shape, every status and detail, the bounds);
+- [x] 6.2 README: the endpoint table row (body, `200` shape, every status and detail, the bounds);
   "Run features: approved users only" lists seven routes; the `RUN_FEATURE_EMAILS` row of the
   settings table (README.md:1267) adds "YouTube playlist listing" to its run features; "YouTube
   audio import" gains a playlist paragraph (accepted links, refused Mix lists, private lists as the
@@ -170,6 +170,10 @@ Test commands: packages are `npx vitest run <files>` from the package directory
   the source map.
   Evidence: red/green `cd server && npx vitest run --project unit
   src/routers/readmeEndpoints.repo.test.ts` (ypi-6.1-red.log, ypi-6.1-green.log).
+  Evidence (2026-11-09): red `AssertionError: a table row naming \`POST
+  /api/youtube/playlist-entries\`: expected undefined to be defined`, `Tests  1 failed | 6 passed
+  (7)` (ypi-6.1-red.log); green `Tests  7 passed (7)` (ypi-6.1-green.log); whole server unit
+  project `Tests  616 passed | 5 skipped (621)`.
 
 ## 7. API-response conformance (design D8; web-api-response-conformance)
 

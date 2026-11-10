@@ -66,6 +66,14 @@ const ROUTES: { file: string; method: string; path: string; readme: string; stat
       readme: 'DELETE …/audio/uploads/{uploadId}',
       statuses: ['204', '404'],
     },
+    // youtube-playlist-import task 6.1: the playlist listing.
+    {
+      file: 'server/src/routers/youtubePlaylist.ts',
+      method: 'post',
+      path: "'/api/youtube/playlist-entries'",
+      readme: 'POST /api/youtube/playlist-entries',
+      statuses: ['200', '400', '403', '422', '502', '503'],
+    },
   ];
 
 describe('README "Endpoints" lists the media-worker routes', () => {
