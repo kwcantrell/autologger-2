@@ -18,7 +18,7 @@ import {
 import type { Context } from 'hono';
 import type { AppEnv } from '../appEnv';
 import { runFeatureAllowed } from '../env';
-import type { GenerationPrincipal } from '../generation/principal';
+import { type GenerationPrincipal, RUN_FEATURE_FORBIDDEN_DETAIL } from '../generation/principal';
 import { ApiError } from '../httpError';
 
 export { timecodeCtx } from '../generation/principal';
@@ -65,8 +65,7 @@ export function requireUser(c: Context<AppEnv>): AuthUser {
 }
 
 /** The run routes' refusal of a user who is not approved (run-status-and-sweeper D9). */
-export const RUN_FEATURE_FORBIDDEN_DETAIL =
-  'This feature is limited to approved users on this server.';
+export { RUN_FEATURE_FORBIDDEN_DETAIL };
 
 /** The approved-user gate of the six run routes (run-status-and-sweeper D9): 403 unless the
  * signed-in user's email is the bootstrap owner's or in `RUN_FEATURE_EMAILS`. Each route calls it

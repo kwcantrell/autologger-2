@@ -73,7 +73,7 @@ async function requireTeamMember(
 /** requireTeamRole (owner-bootstrap D2): member check first, then 403 for a member whose role
  * is not in `roles` (they may know the team exists; they may not manage it). The detail names
  * the admin role when admins are allowed, else the owner role. */
-async function requireTeamRole(
+export async function requireTeamRole(
   c: Context<AppEnv>,
   teamId: string,
   roles: readonly TeamRole[],
@@ -103,7 +103,7 @@ function roleRequiredMessage(roles: readonly TeamRole[]): string {
   return roles.includes('admin') ? 'Admin role required.' : 'Owner role required.';
 }
 
-const OWNER_OR_ADMIN: readonly TeamRole[] = ['owner', 'admin'];
+export const OWNER_OR_ADMIN: readonly TeamRole[] = ['owner', 'admin'];
 const OWNER_ONLY: readonly TeamRole[] = ['owner'];
 
 /** The owner anchors the team (owner-bootstrap D2): no team-plane write targets the owner. */

@@ -74,9 +74,45 @@ const ROUTES: { file: string; method: string; path: string; readme: string; stat
       readme: 'POST /api/youtube/playlist-entries',
       statuses: ['200', '400', '403', '422', '502', '503'],
     },
+    // batch-autogenerate task 5.3 (api-contract-freeze "Batch autogenerate endpoints").
+    {
+      file: 'server/src/routers/autogenerate.ts',
+      method: 'post',
+      path: T('/preview'),
+      readme: 'POST /api/teams/{teamId}/autogenerate-jobs/preview',
+      statuses: ['401', '404', '403', '422', '400', '200'],
+    },
+    {
+      file: 'server/src/routers/autogenerate.ts',
+      method: 'post',
+      path: 'BASE,',
+      readme: 'POST /api/teams/{teamId}/autogenerate-jobs',
+      statuses: ['401', '404', '403', '422', '400', '503', '409', '201'],
+    },
+    {
+      file: 'server/src/routers/autogenerate.ts',
+      method: 'get',
+      path: 'BASE,',
+      readme: 'GET /api/teams/{teamId}/autogenerate-jobs',
+      statuses: ['401', '404', '403', '200'],
+    },
+    {
+      file: 'server/src/routers/autogenerate.ts',
+      method: 'get',
+      path: T('/:jobId'),
+      readme: 'GET /api/teams/{teamId}/autogenerate-jobs/{jobId}',
+      statuses: ['401', '404', '403', '200'],
+    },
+    {
+      file: 'server/src/routers/autogenerate.ts',
+      method: 'post',
+      path: T('/:jobId/cancel'),
+      readme: 'POST /api/teams/{teamId}/autogenerate-jobs/{jobId}/cancel',
+      statuses: ['401', '404', '403', '409', '200'],
+    },
   ];
 
-describe('README "Endpoints" lists the media-worker routes', () => {
+describe('README "Endpoints" lists the media-worker and batch autogenerate routes', () => {
   it.each(ROUTES)('$readme is registered and documented', (r) => {
     const src = read(r.file).replace(/\s+/g, ' ').replace(/\( /g, '(');
     expect(src.includes(`.${r.method}(${r.path}`), `${r.file} registers ${r.readme}`).toBe(true);

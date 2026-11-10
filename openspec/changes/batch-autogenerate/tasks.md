@@ -175,7 +175,7 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
 
 ## 4. The worker (design D3, D4, D5, D7-D12, D17)
 
-- [ ] 4.1 Test first, `server/src/autogenerate/worker.test.ts` (fake clock, fake runners, fake
+- [x] 4.1 Test first, `server/src/autogenerate/worker.test.ts` (fake clock, fake runners, fake
   store):
   - the ladder runs in D5's order, and step 4 (session access as the initiator) runs before every
     session even when steps 1-3 pass;
@@ -202,13 +202,13 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
   - cancel during a running step: the step's result is recorded, no further step starts;
   - the worker polls every 15 s and sends no `pg_notify`;
   - the job row and items never receive any field but the listed columns (no credential).
-  Evidence: under 4.2.
-- [ ] 4.2 `server/src/autogenerate/worker.ts` and `principal.ts` (D4: system re-read of the
+  Evidence: under 4.2; red with the worker module absent: `npx vitest run --project unit src/autogenerate/worker.test.ts` -> `Cannot find module './worker'` (ba-4.1-red.log). The worker was drafted beside the test; its first run against it failed 2 cases, which led to fixes: `account` cleanup was skipped when the account was gone (now attempted through a bound principal), and the source comment matched the no-pg_notify check (ba-4.1 notes). Green: `Tests 23 passed (23)` (ba-4.1-green.log)
+- [x] 4.2 `server/src/autogenerate/worker.ts` and `principal.ts` (D4: system re-read of the
   account, `forUser`, `userCaller`), `main.ts` start and shutdown. Update the reviewed lists in
   `server/src/catalogSystem.repo.test.ts`: the worker's `forUser(` site, its `userCaller(` site and
   `autogenerate-worker` (no `session-undo` site: cleanup runs as the initiator, D7). Verify: 4.1
   green, the repo test green, and its mutation checks still fail a synthetic unlisted site.
-  Evidence:
+  Evidence: `server/src/autogenerate/{worker,principal,ports,steps}.ts`, `main.ts` start and shutdown; `catalogSystem.repo.test.ts`: `server/src/autogenerate/principal.ts` added to USER_BINDERS (`forUser(`) and USER_SESSION_CALLERS (`userCaller(`). The `autogenerate-worker` reason stays reviewed at `packages/catalog/src/autogenerateStore.ts` (`autogenerateWorkerCatalog`, task 2.5), the one system site the worker uses. No `session-undo` entry. `packageBoundaries.repo.test.ts` enumerates `generation` and `autogenerate`. `npx vitest run --project unit src/autogenerate/worker.test.ts src/catalogSystem.repo.test.ts src/packageBoundaries.repo.test.ts` -> `Tests 126 passed (126)`, the repo test's synthetic-tree mutation cases included (ba-4.2-green.log)
 - [ ] 4.3 Test first (integration, real Postgres, stubbed providers),
   `server/src/autogenerate/worker.resume.int.test.ts`, **restart-resume**:
   - a job over three sessions with all steps; worker A is stopped (no release, as a crash) while
@@ -274,7 +274,7 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
 
 ## 5. Routes (design D14; api-contract-freeze delta)
 
-- [ ] 5.1 Test first, `server/src/routers/autogenerate.int.test.ts`: every status table row of the
+- [x] 5.1 Test first, `server/src/routers/autogenerate.int.test.ts`: every status table row of the
   five routes in the spec's order (401, masked `404 {"detail":"Team not found"}` byte-identical to
   a missing team, member 403, `422` with zod 4 issues for a body with both scopes, with neither,
   with duplicate steps and for a start without `expected_sessions`, show 404, session 404, no
@@ -285,17 +285,17 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
   team's job; cancel of a queued (→ `cancelled`), running (cancel recorded, still `running`),
   repeated (200) and ended (409) job; no route sets a cookie; the five success shapes and the two
   typed `409` bodies captured in `apiResponseFixtures.int.test.ts` into `fixtures/api-responses/`.
-  Evidence: under 5.2.
-- [ ] 5.2 `server/src/routers/autogenerate.ts`, `startAutogenerateJob` service, mount in
+  Evidence: under 5.2; red: `npx vitest run --project integration src/routers/autogenerate.int.test.ts` -> `Tests 8 failed (8)` (no routes, ba-5.1-red.log). Fixtures captured with `UPDATE_API_FIXTURES=1 npx vitest run --project integration src/routers/apiResponseFixtures.int.test.ts -t 'batch autogenerate routes'` into `fixtures/api-responses/autogenerate{Preview,Start,List,Detail,Cancel,LiveJob,SessionsChanged}.ts`, then re-asserted: `Tests 69 passed (69)` (ba-5.1-fixtures.log)
+- [x] 5.2 `server/src/routers/autogenerate.ts`, `startAutogenerateJob` service, mount in
   `server/src/app.ts`, `requireTeamRole` shared from `teams.ts` (no `pg_notify`: the worker polls).
   Verify: 5.1 green, `teams.int.test.ts` and `authz.int.test.ts` unchanged and green.
-  Evidence:
-- [ ] 5.3 Test first: add the five routes with their statuses to
+  Evidence: `npx vitest run --project integration src/routers/apiResponseFixtures.int.test.ts src/routers/autogenerate.int.test.ts` -> `Tests 77 passed (77)`; `src/routers/teams.int.test.ts src/routers/authz.int.test.ts` (assertions unchanged; teams.int carries only the 1.5 addition) -> `Tests 75 passed (75)` (ba-5.2-green.log). `startAutogenerateJob` is in `server/src/autogenerate/service.ts`; `requireTeamRole`/`OWNER_OR_ADMIN` are exported from `teams.ts`; no notify call
+- [x] 5.3 Test first: add the five routes with their statuses to
   `server/src/routers/readmeEndpoints.repo.test.ts` (red). Then add them to README "Endpoints" and
   a README "Batch autogenerate" section (who may run it, gap rules, order, cancel, resume, provider
   stop, safe-only auto-accept and how to revert a batch revision, the importer refusal, rollback).
   Verify: green.
-  Evidence:
+  Evidence: red: `npx vitest run --project unit src/routers/readmeEndpoints.repo.test.ts` -> `Tests 5 failed | 6 passed (11)` (ba-5.3-red.log); after the README rows and the "Batch autogenerate" section -> `Tests 11 passed (11)` (ba-5.3-green.log)
 
 ## 6. Settings section (design D15; web-ui-system delta)
 

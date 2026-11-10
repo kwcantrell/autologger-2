@@ -8,6 +8,11 @@ import type { AuthUser, CatalogFacade, Row } from '@autologger/catalog';
 import type { SessionCaller, TimecodeCtx } from '@autologger/session-core';
 import type { Bindings } from '../appEnv';
 
+/** The run routes' refusal of a user who is not approved (run-status-and-sweeper D9); also the
+ * batch start's (batch-autogenerate D14). */
+export const RUN_FEATURE_FORBIDDEN_DETAIL =
+  'This feature is limited to approved users on this server.';
+
 export interface GenerationPrincipal {
   user: AuthUser;
   /** The catalog bound to `user` (catalog_user under `user`'s row-level security). */
