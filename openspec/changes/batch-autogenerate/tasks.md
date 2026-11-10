@@ -333,7 +333,7 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
   initiator's accounts, bounded by the provider-failure stop), and the worker as the second
   user-binding site. Verify: the consistency read (8.2) finds each residual referenced from ADR
   0033.
-  Evidence:
+  Evidence: NOT TICKED: its verify is the 8.2 consistency read, which is still open. Done: `docs/security.md` gains "Batch autogenerate jobs" (the auto-accept residual, the spend residual, the worker as the second user-binding site, uncleaned partial output). `grep -n 'docs/security.md' docs/decisions/0033-batch-autogenerate-jobs.md` -> the R1 residual line and the "Recorded in docs/security.md" line
 
 ## 8. Verification
 
@@ -352,10 +352,10 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
 
 ## 9. Hand-off to the playlist import (proposal "Follow-up")
 
-- [ ] 9.1 Test first, `server/src/autogenerate/startService.int.test.ts`: `startAutogenerateJob`
+- [x] 9.1 Test first, `server/src/autogenerate/startService.int.test.ts`: `startAutogenerateJob`
   called without an HTTP request, for a given initiator and a session-id list, creates the same job
   the route would (order, items, `scope` `sessions`), and refuses exactly as the route does when the
   initiator is a member, unapproved, unconfigured, or the team has a live job. Then export it for
   server-side callers. The "autogenerate after import" checkbox is not built here: it lands with
   whichever of `youtube-playlist-import` and this change merges second (proposal "Follow-up").
-  Evidence:
+  Evidence: `npx vitest run --project integration src/autogenerate/startService.int.test.ts` -> `Tests 2 passed (2)` on its first run (ba-9.1-green.log). It passed at once because `startAutogenerateJob` (`server/src/autogenerate/service.ts`, exported) was already built in 5.2 as the route's service and re-runs every start check itself. The checkbox is not built here (proposal "Follow-up")

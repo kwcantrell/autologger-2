@@ -177,6 +177,30 @@ These live in the forge, not the repo, so the template can't apply them:
   forge a signed frame, and the flood is bounded by the role's connection limit (4) and statement
   timeout; the API's sweep reads `pg_notification_queue_usage()` every minute and logs a warning
   above 0.5, which is the monitoring for it.
+- **Batch autogenerate jobs** (batch-autogenerate D1-D5, D7, D12, D17, ADR
+  [0033](decisions/0033-batch-autogenerate-jobs.md)). A studio owner or admin starts a durable job
+  that runs transcript, events, topics and wiki steps over up to 1000 sessions **as its
+  initiator**: the job row holds only the initiator's user id (no token, cookie or key); before
+  each session the worker re-reads the account under the reviewed system reason
+  `autogenerate-worker`, re-checks the team role and the approved-user rule, then binds the
+  catalog and the session hub to the initiator (the **second user-binding site** after the auth
+  middleware, listed in `server/src/catalogSystem.repo.test.ts`) and checks the session under the
+  initiator's row-level security; each step resolves the initiator's own provider credential when
+  it starts. `catalog_user` may only read the jobs of a team it manages, insert its own `queued`
+  job, and request a cancel (a guard trigger refuses any other update). Outcomes and stop reasons
+  are fixed codes, so no provider text reaches a row, a response or a log.
+  **Residuals:** (1) *Unreviewed AI text in wiki pages:* in the default mode the job accepts, as
+  the initiator and with a `(batch <job id>)` note, new pages and additions-only rewrites (title,
+  aliases and every existing line kept); a false or injected claim in an added line or a new page,
+  possibly steered by an untrusted transcript and supported by a true quote, goes live without
+  review. Removals and changes always wait for a person; each batch revision is marked,
+  attributable and revertible, but batch revisions stack, so reverting an early one by hand means
+  re-applying the later additions. (2) *Spend:* a job can make up to 4000 paid runs (1000
+  sessions × 4 steps) on the initiator's accounts, possibly for days, bounded by the estimate and
+  confirm, each step's per-turn bounds, cancel by any manager, the 429 backoff and the stop after
+  3 consecutive sessions of provider failure per provider kind; there is no per-job budget. (3)
+  Partial output whose cleanup the initiator could no longer make (access or account lost) stays
+  visible in the session until a later job removes it; it never counts as present.
 - PUBLIC keeps `CONNECT` on every database and `TEMP` on `postgres`, so `autologger_app` can
   connect to databases where it has no grants and create session-local temp tables. Revoking
   them from PUBLIC would change what GoTrue (`supabase_auth_admin`) gets; slice 6 revisits it.
