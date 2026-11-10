@@ -307,6 +307,6 @@ Test commands: packages are `npx vitest run <files>` from the package directory
   playlist with an unavailable entry (`PLsyOSbh5bs16vubvKePAQ1x3PhKavfBIl`) shows it greyed.
   Delete the test sessions after.
   Evidence: the progress lines and session titles observed (ypi-V.2.log).
-- [ ] V.3 Tier 2 consistency read (`consistency-read` skill) over the whole branch against D1–D8
+- [x] V.3 Tier 2 consistency read (`consistency-read` skill) over the whole branch against D1–D8
   and the three spec deltas; record it in `panel.md`.
-  Evidence: the panel.md section and its findings line.
+  Evidence: the panel.md section and its findings line. 2026-11-10: `## Consistency read 2026-11-09` in panel.md, 3 major findings, all ticked Resolved (2d503a0f, c61ea26c); `scripts/check-change.sh --only panel` -> `PASS  panel  12 finding(s), no open criticals`.
