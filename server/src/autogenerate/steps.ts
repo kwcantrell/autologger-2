@@ -47,7 +47,7 @@ export function transcriptResult(out: TranscriptOutcome): StepResult {
 function aiResult(
   out:
     | { kind: 'unconfigured' | 'forbidden' | 'busy' | 'present' | 'stopped' }
-    | { kind: 'failed'; rateLimited: boolean; keptEdited?: number }
+    | { kind: 'failed'; rateLimited: boolean; providerFailed?: boolean; keptEdited?: number }
     | { kind: 'ok'; keptEdited?: number },
 ): StepResult {
   switch (out.kind) {
@@ -56,7 +56,13 @@ function aiResult(
     case 'failed':
       return out.rateLimited
         ? { kind: 'rate-limited', keptEdited: out.keptEdited ?? 0 }
-        : { kind: 'fail', outcome: 'generation-failed', keptEdited: out.keptEdited ?? 0 };
+        : {
+            kind: 'fail',
+            // An HTTP refusal by the provider (a revoked key) is `provider-failed`; any other turn
+            // failure (timeout, incomplete coverage, the CLI) `generation-failed`.
+            outcome: out.providerFailed ? 'provider-failed' : 'generation-failed',
+            keptEdited: out.keptEdited ?? 0,
+          };
     default:
       return { kind: out.kind };
   }

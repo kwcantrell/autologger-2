@@ -20,7 +20,12 @@ import {
 } from '../env';
 import { callerLlmRoute, sdkTurnSpec } from './aiRoute';
 import { claimAiLeaseFor } from './aiSlot';
-import { type GenerationPrincipal, hubFor, isRateLimitStatus } from './principal';
+import {
+  type GenerationPrincipal,
+  hubFor,
+  isProviderRefusal,
+  isRateLimitStatus,
+} from './principal';
 import { createWikiToolPort } from './wikiToolPort';
 
 export type WikiOutcome =
@@ -30,7 +35,7 @@ export type WikiOutcome =
   | { kind: 'busy' }
   /** batch: `beforeRun` could not record the run id (the job lease is lost); nothing ran. */
   | { kind: 'stopped' }
-  | { kind: 'failed'; rateLimited: boolean }
+  | { kind: 'failed'; rateLimited: boolean; providerFailed: boolean }
   | { kind: 'ok'; suggestions: WikiSuggestion[] };
 
 export interface WikiRunOptions {
@@ -108,7 +113,7 @@ export async function runWiki(
         console.warn(
           `[wiki/generate] session=${sessionId}: storing ${proposals.length} suggestion(s) failed`,
         );
-        return { kind: 'failed', rateLimited: false };
+        return { kind: 'failed', rateLimited: false, providerFailed: false };
       }
       if (outcome.outputCapFallback !== undefined) {
         console.info(
@@ -134,6 +139,7 @@ export async function runWiki(
         !outcome.ok &&
         outcome.failure?.kind === 'provider' &&
         isRateLimitStatus(outcome.failure.status),
+      providerFailed: !outcome.ok && isProviderRefusal(outcome.failure),
     };
   } finally {
     // Lease, then slot, before the response (session-run-leases D4).

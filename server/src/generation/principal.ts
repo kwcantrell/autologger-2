@@ -47,6 +47,15 @@ export async function hubFor(p: GenerationPrincipal, sessionId: string) {
   return (await p.env.ports.sessions.get(sessionId)).as(p.caller);
 }
 
+/** A turn's provider failure with an HTTP status other than 429: the provider refused the
+ * request (a revoked or over-quota key, an outage), reported `provider-failed` by a batch step
+ * (batch spec "A revoked language-model key stops the job while transcription works"). */
+export function isProviderRefusal(failure: { kind: string; status?: number } | undefined): boolean {
+  return (
+    failure?.kind === 'provider' && typeof failure.status === 'number' && failure.status !== 429
+  );
+}
+
 /** A runner's provider failure that answered HTTP 429 (design D9, D17). */
 export function isRateLimitStatus(status: unknown): boolean {
   return status === 429;

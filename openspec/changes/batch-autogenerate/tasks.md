@@ -209,7 +209,7 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
   `autogenerate-worker` (no `session-undo` site: cleanup runs as the initiator, D7). Verify: 4.1
   green, the repo test green, and its mutation checks still fail a synthetic unlisted site.
   Evidence: `server/src/autogenerate/{worker,principal,ports,steps}.ts`, `main.ts` start and shutdown; `catalogSystem.repo.test.ts`: `server/src/autogenerate/principal.ts` added to USER_BINDERS (`forUser(`) and USER_SESSION_CALLERS (`userCaller(`). The `autogenerate-worker` reason stays reviewed at `packages/catalog/src/autogenerateStore.ts` (`autogenerateWorkerCatalog`, task 2.5), the one system site the worker uses. No `session-undo` entry. `packageBoundaries.repo.test.ts` enumerates `generation` and `autogenerate`. `npx vitest run --project unit src/autogenerate/worker.test.ts src/catalogSystem.repo.test.ts src/packageBoundaries.repo.test.ts` -> `Tests 126 passed (126)`, the repo test's synthetic-tree mutation cases included (ba-4.2-green.log)
-- [ ] 4.3 Test first (integration, real Postgres, stubbed providers),
+- [x] 4.3 Test first (integration, real Postgres, stubbed providers),
   `server/src/autogenerate/worker.resume.int.test.ts`, **restart-resume**:
   - a job over three sessions with all steps; worker A is stopped (no release, as a crash) while
     session 2's topics turn runs, after its tool created 2 topics; the fake clock advances 90 s
@@ -233,8 +233,8 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
     `create_topic` refuses (0-row fenced write), A inserts no unrecorded topic and writes nothing
     more; every topic in the session is recorded on the item; B's step proceeds once A's run lease
     is released.
-  Evidence:
-- [ ] 4.4 Test first (integration), `server/src/autogenerate/worker.authz.int.test.ts`, **the
+  Evidence: red: with the worker's catch for unexpected runner throws reverted, `npx vitest run --project integration src/autogenerate/worker.resume.int.test.ts` -> `× job 2 finds job 1’s recorded topics not present…`, `SessionAccessDeniedError` (ba-4.3-red.log); green `Tests 9 passed (9)` (ba-4.3-green.log). The crash is emulated by abandoning A's hung turn (`worker.stop()`, `aiChatTurns.reset()`, A's run lease rows removed, clock +90 s). The events resume finds the earlier attempt's events already deleted by the pre-gap cleanup; the exclusion path itself is covered in 3.3
+- [x] 4.4 Test first (integration), `server/src/autogenerate/worker.authz.int.test.ts`, **the
   per-session re-check as the initiator**:
   - a session deleted between two sessions is skipped `session-gone` with no provider call;
   - the initiator demoted to member (with grants on every show) mid-job: the running step finishes,
@@ -246,15 +246,15 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
     tests use), and the job writes run as `catalog_system` `autogenerate-worker`;
   - the provider requests carry the initiator's own stored key, not the operator's or another
     manager's, and a key the initiator changes mid-job is used from the next step.
-  Evidence:
-- [ ] 4.5 Test first (integration), `server/src/autogenerate/worker.concurrency.int.test.ts`: an AI
+  Evidence: passed on its first run against the 4.2 worker; mutation red (session gate always ok, role check accepting member) -> `Tests 2 failed | 5 passed` (ba-4.4-red.log); green `Tests 7 passed (7)` (ba-4.4-green.log). Binding spy: the `GatedCatalog` statement log, plus a storage-caller recorder. Every session statement runs as `user:<initiator>` (except the hub's own `system:session-open`), and job writes as `system:autogenerate-worker`
+- [x] 4.5 Test first (integration), `server/src/autogenerate/worker.concurrency.int.test.ts`: an AI
   chat turn holding a session's slot makes the batch step wait and then run; a live recording
   lease leads to `busy` after the window (clock-driven); a batch step holding the slot makes a
   manual `topics/generate` answer its existing `409` text unchanged; two worker instances (two
   "processes") never run the same job or the same session at once; a job whose team row is
   deleted mid-job (as the importer would, bypassing its guard) stops the worker without writes.
-  Evidence:
-- [ ] 4.6 Test first (integration), `server/src/autogenerate/worker.provider.int.test.ts`: with a
+  Evidence: passed on its first run; mutation red (recording gate disabled) -> `× a live recording lease leads to busy after the 10-minute window` (ba-4.5-red.log); green `Tests 5 passed (5)` (ba-4.5-green.log)
+- [x] 4.6 Test first (integration), `server/src/autogenerate/worker.provider.int.test.ts`: with a
   stub STT provider answering `401` for every request, a 6-session job ends `failed`
   `provider-failing` after session 3 and the stub saw exactly 3 transcript requests; **LLM key
   revoked, STT fine**: the STT stub answers `200`, the LLM stub `401`, a 6-session job with
@@ -262,15 +262,15 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
   events `provider-failed`, and no request for session 4; with a stub answering `429` twice then
   `200`, the step is `done` after the 30 s and 60 s waits (fake clock); a cancel during a `429`
   wait after an events attempt wrote 3 events deletes them and ends the job `cancelled`.
-  Evidence:
-- [ ] 4.7 Test first (integration), `server/src/autogenerate/worker.wiki.int.test.ts` (design D12):
+  Evidence: red: `npx vitest run --project integration src/autogenerate/worker.provider.int.test.ts` -> `expected 'failed generation-failed' to be 'failed provider-failed'` (ba-4.6-red.log); green `Tests 4 passed (4)` (ba-4.6-green.log): STT 401 -> provider-failing after 3 DeepGram requests; LLM 401 -> 3 events provider-failed; 429×2 -> done after [30000, 60000]; a cancel in the 429 wait deletes the 3 events. An AI SDK refusal with an HTTP status other than 429 is now `provider-failed` (D9 says generation-failed; the spec scenario requires provider-failed; flagged)
+- [x] 4.7 Test first (integration), `server/src/autogenerate/worker.wiki.int.test.ts` (design D12):
   in `accept` mode, a new-page suggestion and an additions-only rewrite are accepted with the batch
   note and the initiator as author and resolver; a rewrite that changes a line, one that drops a
   line, one that changes the title and one that drops an alias each stay `pending`; a page edited
   after the run leaves its suggestion pending; a title clash on a new page stays pending; the item
   records the matching `wiki_accepted` and `wiki_pending`; `pending` mode leaves all pending; a
   suggestion from another run is never accepted; no suggestion is dismissed.
-  Evidence:
+  Evidence: mutation red (safe check skipped) -> `expected 'accepted' to be 'pending'` (ba-4.7-red.log); green `Tests 2 passed (2)` (ba-4.7-green.log); all five worker suites plus generation int: `Tests 51 passed (51)` (ba-4.3-4.7-all.log)
 
 ## 5. Routes (design D14; api-contract-freeze delta)
 
@@ -299,15 +299,15 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
 
 ## 6. Settings section (design D15; web-ui-system delta)
 
-- [ ] 6.1 Test first, web API-response conformance for the five new client call sites: client
+- [x] 6.1 Test first, web API-response conformance for the five new client call sites: client
   types in `web/src/api/types.ts` (job object, detail, preview, the typed `409` bodies `{detail,
   job_id}` and `{detail, sessions}`, the `422` issues body); type-level assignments in
   `web/src/api/types.conformance.test.ts` against each fixture captured in 5.1, including both
   `409` bodies; a verdict entry for every new parse site in `web/src/apiResponseShapes.repo.test.ts`
   (red until the sites and types exist). Verify: `npm run typecheck` and both tests green after
   6.3.
-  Evidence: under 6.3.
-- [ ] 6.2 Test first, `web/src/pages/index/components/settings/BatchAutogenerateSection.test.tsx`
+  Evidence: under 6.3; red: `npx tsc --noEmit -p web` -> `error TS2305: Module '"./types"' has no exported member 'AutogenerateDetailResponse'` (ba-6.1-red.log); green: `cd web && npx vitest run src/api/types.conformance.test.ts src/apiResponseShapes.repo.test.ts` -> `Tests 134 passed (134)` (ba-6.1-green.log). No new verdict entry was needed: every new `apiFetch<T>` site names a fixture-checked type
+- [x] 6.2 Test first, `web/src/pages/index/components/settings/BatchAutogenerateSection.test.tsx`
   and the `SettingsView`/`sections` tests: hidden for a member-only user and listed for an
   owner/admin; team picker limited to managed teams with the active team default; all shows and
   steps ticked by default; wiki mode disabled without Wiki; estimate shown from preview (debounced)
@@ -319,11 +319,11 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
   their details, words each stop reason (`provider-failing` included), and shows the wiki
   accepted/left-pending counts; Recent jobs opens a report; nothing is fetched while Settings is
   closed or another section is shown.
-  Evidence: under 6.3.
-- [ ] 6.3 `BatchAutogenerateSection.tsx`, `sections.ts`, `SettingsSections.tsx`,
+  Evidence: under 6.3; red: `cd web && npx vitest run src/pages/index/components/settings/BatchAutogenerateSection.test.tsx` -> `Failed Tests 21` (ba-6.2-red.log); green `Tests 23 passed (23)`; settings dir `Tests 183 passed` (ba-6.2-green.log)
+- [x] 6.3 `BatchAutogenerateSection.tsx`, `sections.ts`, `SettingsSections.tsx`,
   `web/src/api/hooks/useAutogenerateJobs.ts`, `web/src/api/types.ts`. Verify: 6.1 and 6.2 green;
   `npm run typecheck` exit 0; biome clean.
-  Evidence:
+  Evidence: `cd web && npx vitest run` -> `Test Files 183 passed`, `Tests 2463 passed` (ba-6.3-web-full.log); `npm run typecheck` exit 0 (ba-6.3-typecheck.log); biome clean on the touched files. Adds an optional `active` prop to the Settings sections, so a hidden mounted section stops polling
 
 ## 7. Security notes
 

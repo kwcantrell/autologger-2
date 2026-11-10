@@ -3,8 +3,8 @@
 // the same job the start route would and refuses exactly as the route does.
 
 import { afterEach, describe, expect, it } from 'vitest';
-import { principalFor } from '../test/generationPrincipal';
 import { closeFakes, fakeProvider } from '../test/generationFixtures';
+import { principalFor } from '../test/generationPrincipal';
 import { envWith } from '../test/harness';
 import {
   catalogFor,
@@ -21,7 +21,8 @@ import { startAutogenerateJob } from './service';
 
 afterEach(closeFakes);
 
-const sttEnv = () => envWith({ DEEPGRAM_API_KEY: 'k', DEEPGRAM_MODEL: 'nova-3', HOST: '127.0.0.1' });
+const sttEnv = () =>
+  envWith({ DEEPGRAM_API_KEY: 'k', DEEPGRAM_MODEL: 'nova-3', HOST: '127.0.0.1' });
 
 async function world() {
   const team = await seedStudio();

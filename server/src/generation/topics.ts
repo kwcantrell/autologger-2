@@ -31,7 +31,12 @@ import {
 } from '../env';
 import { callerLlmRoute, sdkTurnSpec } from './aiRoute';
 import { claimAiLeaseFor } from './aiSlot';
-import { type GenerationPrincipal, hubFor, isRateLimitStatus } from './principal';
+import {
+  type GenerationPrincipal,
+  hubFor,
+  isProviderRefusal,
+  isRateLimitStatus,
+} from './principal';
 
 export type TopicsOutcome =
   | { kind: 'unconfigured' }
@@ -42,7 +47,7 @@ export type TopicsOutcome =
   | { kind: 'present' }
   /** batch: a topic id could not be recorded (the job lease is lost); the turn failed. */
   | { kind: 'stopped' }
-  | { kind: 'failed'; rateLimited: boolean; keptEdited: number }
+  | { kind: 'failed'; rateLimited: boolean; providerFailed: boolean; keptEdited: number }
   | { kind: 'ok'; topics: Topic[]; keptEdited: number };
 
 export interface TopicsBatchOptions {
@@ -257,6 +262,7 @@ export async function runTopics(
         !outcome.ok &&
         outcome.failure?.kind === 'provider' &&
         isRateLimitStatus(outcome.failure.status),
+      providerFailed: !outcome.ok && isProviderRefusal(outcome.failure),
       keptEdited,
     };
   } finally {

@@ -114,7 +114,12 @@ describe('runEvents batch options (design D7 events)', () => {
         },
       },
     });
-    expect(out).toEqual({ kind: 'failed', rateLimited: false, keptEdited: 1 });
+    expect(out).toEqual({
+      kind: 'failed',
+      rateLimited: false,
+      providerFailed: true,
+      keptEdited: 1,
+    });
     expect(recorded).toHaveLength(1);
     expect(await messages(sessionId)).toEqual([
       'Another run slate',

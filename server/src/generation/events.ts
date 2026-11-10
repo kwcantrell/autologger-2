@@ -49,7 +49,13 @@ import {
 } from '../env';
 import { callerLlmRoute, sdkTurnSpec } from './aiRoute';
 import { claimAiLeaseFor } from './aiSlot';
-import { type GenerationPrincipal, hubFor, isRateLimitStatus, timecodeCtx } from './principal';
+import {
+  type GenerationPrincipal,
+  hubFor,
+  isProviderRefusal,
+  isRateLimitStatus,
+  timecodeCtx,
+} from './principal';
 
 // ── Event auto-generation (auto-generate-event-logs, design D2/D3, task 4.3) ─
 // POST …/events/generate — a synchronous JSON route mirroring topics/
@@ -307,7 +313,7 @@ export type EventsOutcome =
   | { kind: 'present' }
   /** batch: `beforeRun` could not record the run id (the job lease is lost); nothing ran. */
   | { kind: 'stopped' }
-  | { kind: 'failed'; rateLimited: boolean; keptEdited: number }
+  | { kind: 'failed'; rateLimited: boolean; providerFailed: boolean; keptEdited: number }
   | { kind: 'ok'; created: number; capHit: boolean; deleted?: number; keptEdited: number };
 
 export interface EventsBatchOptions {
@@ -564,6 +570,7 @@ export async function runEvents(
       kind: 'failed',
       rateLimited:
         outcome.failure?.kind === 'provider' && isRateLimitStatus(outcome.failure.status),
+      providerFailed: isProviderRefusal(outcome.failure),
       keptEdited: kept,
     };
   } finally {

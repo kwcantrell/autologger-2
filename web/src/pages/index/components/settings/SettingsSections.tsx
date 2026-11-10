@@ -1,6 +1,7 @@
 import type { ComponentType } from 'react';
 import { AccountSection } from './AccountSection';
 import { AdvancedSection } from './AdvancedSection';
+import { BatchAutogenerateSection } from './BatchAutogenerateSection';
 import { CompanionDevicesSection } from './CompanionDevicesSection';
 import { EventButtonsSection } from './EventButtonsSection';
 import { MembersSection } from './MembersSection';
@@ -28,6 +29,7 @@ export const SETTINGS_SECTION_CONTENT: Record<
   members: MembersSection,
   shows: ShowsSection,
   'team-details': TeamDetailsSection,
+  'batch-autogenerate': BatchAutogenerateSection,
   'show-details': ShowDetailsSection,
   'event-buttons': EventButtonsSection,
 };
