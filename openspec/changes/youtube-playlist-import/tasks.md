@@ -89,7 +89,7 @@ Test commands: packages are `npx vitest run <files>` from the package directory
 
 ## 3. Entry projection (design D4)
 
-- [ ] 3.1 Test first, new `packages/media-import/src/playlistEntries.test.ts` over the recorded
+- [x] 3.1 Test first, new `packages/media-import/src/playlistEntries.test.ts` over the recorded
   fixtures: positions are 1-based and keep a gap where the malformed id was dropped; `url` is
   `https://www.youtube.com/watch?v=<id>`; a title with `\u0000`, `\n` and `\u0085` loses them; a
   600-character title is cut to 500; `reason` is `unavailable` for a `null` title and for exactly
@@ -99,10 +99,12 @@ Test commands: packages are `npx vitest run <files>` from the package directory
   14,399 s; `importable` iff `reason === null`; `truncated` true
   only for 5000 entries with `playlist_count` 7000; playlist `title` `""` when missing.
   Evidence: under 3.2.
-- [ ] 3.2 New `packages/media-import/src/playlistEntries.ts` (`projectPlaylist(raw, listId)`);
+- [x] 3.2 New `packages/media-import/src/playlistEntries.ts` (`projectPlaylist(raw, listId)`);
   export it and `listYoutubePlaylist` from the package entry.
   Evidence: red/green `cd packages/media-import && npx vitest run src/playlistEntries.test.ts`
   (ypi-3.1-red.log, ypi-3.1-green.log).
+  Evidence (2026-11-09): red `Error: Cannot find module './playlistEntries'` (ypi-3.1-red.log);
+  green `Tests  22 passed (22)` (ypi-3.1-green.log).
 
 ## 4. Listing guard (design D3)
 
