@@ -276,7 +276,7 @@ Test commands: packages are `npx vitest run <files>` from the package directory
   click (`expected '9 of 10 selected' to be '8 of 10 selected'`), fixed in the row handler; green
   `Tests  12 passed (12)` including the 5000-entry render + Select all (ypi-8.3-green.log);
   `npx tsc --noEmit` exit 0.
-- [ ] 8.4 Test first, `web/src/pages/index/components/BatchImportModal.test.tsx`: control order
+- [x] 8.4 Test first, `web/src/pages/index/components/BatchImportModal.test.tsx`: control order
   (Import Audio, Import YouTube Playlist, Import Logs, Start Import); the prompt and loading state;
   a `503` and a Mix `400` show the server detail beneath the control with no playlist loaded;
   loading a second link replaces the first playlist's title, rows and selection (and a failed
@@ -286,6 +286,12 @@ Test commands: packages are `npx vitest run <files>` from the package directory
   Then `BatchImportModal.tsx`.
   Evidence: red/green `cd web && npx vitest run src/pages/index/components/BatchImportModal.test.tsx`
   (ypi-8.4-red.log, ypi-8.4-green.log).
+  Evidence (2026-11-09): red `Tests  8 failed | 14 passed (22)` (the 8 new playlist cases; the 14
+  existing ones green) (ypi-8.4-red.log); a first green run caught the folder part's lines being
+  dropped (`expected [ 'Completed First video 1', …(1) ] to deeply equal [ 'Completed YMH_001',
+  …(2) ]`: the lines ref was set in a lazy state updater), fixed by setting it synchronously;
+  green `Tests  22 passed (22)` (ypi-8.4-green.log); whole web suite `Test Files  185 passed
+  (185)`, `Tests  2497 passed (2497)`; `npx tsc --noEmit` exit 0.
 
 ## V. Verify
 

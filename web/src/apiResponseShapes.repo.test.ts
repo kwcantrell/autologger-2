@@ -1386,7 +1386,7 @@ const EXEMPTIONS: readonly Exemption[] = [
   {
     key: 'pages/index/batchImport/playlistRunner.ts :: apiFetch<OkResponse>(`sessions/<var>/youtube-import`) [POST]',
     reason:
-      'youtube-playlist-import D8 verdict CONFORMS — endpoint POST /api/sessions/:id/youtube-import, client shape OkResponse, emitted shape `{ok: true}` (the route\'s single 2xx, unchanged by this change; audit §5 row 25 read the handler in full). The playlist runner awaits it and reads no field. The change\'s other new sites need no entry: the listing (YoutubePlaylistResponse, fixture youtubePlaylistEntries), the profile read (ProfilePayload) and the segment reads (AudioSegmentsResponse) are covered by their conformance assignments, and the create, list, profile PUT and delete calls are the existing runner.ts sites, reused.',
+      "youtube-playlist-import D8 verdict CONFORMS — endpoint POST /api/sessions/:id/youtube-import, client shape OkResponse, emitted shape `{ok: true}` (the route's single 2xx, unchanged by this change; audit §5 row 25 read the handler in full). The playlist runner awaits it and reads no field. The change's other new sites need no entry: the listing (YoutubePlaylistResponse, fixture youtubePlaylistEntries), the profile read (ProfilePayload) and the segment reads (AudioSegmentsResponse) are covered by their conformance assignments, and the create, list, profile PUT and delete calls are the existing runner.ts sites, reused.",
   },
   {
     key: 'api/hooks/useTeams.ts :: apiFetch<OkResponse>(teamPath(teamId)) [DELETE]',

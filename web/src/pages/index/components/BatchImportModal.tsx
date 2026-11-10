@@ -3,12 +3,20 @@ import clsx from 'clsx';
 import { Upload, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { showAccessFrom } from '../../../api/hooks/useShowAccess';
-import type { ProfilePayload } from '../../../api/types';
+import type { ProfilePayload, YoutubePlaylistResponse } from '../../../api/types';
 import { Button, TOUCH_TARGET } from '../../../shared/components/ui/button';
 import { Field, FieldLabel } from '../../../shared/components/ui/field';
 import { Dialog, DialogActions } from '../../../shared/ui/Dialog';
 import { useTextPrompt } from '../../../shared/ui/PromptDialog';
-import { type BatchImportProgressState, runBatchImport } from '../batchImport/runner';
+import { playlistSessionNames } from '../batchImport/playlistNames';
+import { listPlaylistEntries, runPlaylistImport } from '../batchImport/playlistRunner';
+import {
+  type BatchImportProgressState,
+  formatErrorDetail,
+  isAbortError,
+  runBatchImport,
+} from '../batchImport/runner';
+import { PlaylistPicker, type PlaylistSelection } from './PlaylistPicker';
 import { Select } from './Select';
 
 interface Props {
@@ -48,6 +56,7 @@ function BatchImportIcon() {
 }
 
 const EMPTY_PROGRESS: BatchImportProgressState = { current: null, percent: 0, lines: [] };
+const NO_SELECTION: PlaylistSelection = { indexes: [], usePublishDate: true };
 
 export function BatchImportModal({ profile, onClose }: Props) {
   // show-grants D13: the picker lists the active team's shows the user can access.
@@ -62,25 +71,87 @@ export function BatchImportModal({ profile, onClose }: Props) {
   const [selectedFiles, setSelectedFiles] = useState<FileList | null>(null);
   const [logsUrl, setLogsUrl] = useState<string | null>(null);
   const [isImporting, setIsImporting] = useState(false);
-  const [progress, setProgress] = useState<BatchImportProgressState>(EMPTY_PROGRESS);
+  const [progress, setProgressState] = useState<BatchImportProgressState>(EMPTY_PROGRESS);
+  // youtube-playlist-import D5: the loaded listing, its load state and the picker's selection.
+  const [playlist, setPlaylist] = useState<YoutubePlaylistResponse | null>(null);
+  const [playlistLoading, setPlaylistLoading] = useState(false);
+  const [playlistError, setPlaylistError] = useState<string | null>(null);
+  const [playlistSelection, setPlaylistSelection] = useState<PlaylistSelection>(NO_SELECTION);
 
   const dirInputRef = useRef<HTMLInputElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const listingAbortRef = useRef<AbortController | null>(null);
+  // The latest progress, so a later part starts from the earlier parts' lines (`runBatchImport`
+  // and `runPlaylistImport` report whole states).
+  const progressRef = useRef<BatchImportProgressState>(EMPTY_PROGRESS);
+  const setProgress = (
+    next: BatchImportProgressState | ((prev: BatchImportProgressState) => BatchImportProgressState),
+  ) => {
+    if (typeof next !== 'function') {
+      // Runners report whole states: keep the ref current synchronously for the next part.
+      progressRef.current = next;
+      setProgressState(next);
+      return;
+    }
+    setProgressState((prev) => {
+      const value = next(prev);
+      progressRef.current = value;
+      return value;
+    });
+  };
 
   useEffect(() => {
     return () => {
       abortRef.current?.abort();
+      listingAbortRef.current?.abort();
     };
   }, []);
 
   const hasAudio = Boolean(folderName && selectedFiles && selectedFiles.length > 0);
   const hasLogs = Boolean(logsUrl?.trim());
-  const canStart = Boolean(showId && (hasAudio || hasLogs) && !isImporting);
+  const hasPlaylist = Boolean(playlist && playlistSelection.indexes.length > 0);
+  const canStart = Boolean(showId && (hasAudio || hasPlaylist || hasLogs) && !isImporting);
 
   const handleClose = () => {
     abortRef.current?.abort();
     abortRef.current = null;
+    listingAbortRef.current?.abort();
+    listingAbortRef.current = null;
     onClose();
+  };
+
+  // Themed text prompt, then the listing (batch-audio-import "YouTube playlist selection"). A new
+  // link replaces the loaded playlist; a refused or failed one leaves none, with the detail.
+  const handleImportPlaylist = async () => {
+    const raw = await requestText({
+      title: 'Import YouTube playlist',
+      label: 'YouTube playlist link (public or unlisted)',
+      placeholder: 'https://www.youtube.com/playlist?list=…',
+      submitLabel: 'Load playlist',
+    });
+    if (raw === null) return;
+    const url = raw.trim();
+    if (!url) return;
+    listingAbortRef.current?.abort();
+    const controller = new AbortController();
+    listingAbortRef.current = controller;
+    setPlaylist(null);
+    setPlaylistSelection(NO_SELECTION);
+    setPlaylistError(null);
+    setPlaylistLoading(true);
+    try {
+      const listing = await listPlaylistEntries(url, controller.signal);
+      if (listingAbortRef.current !== controller) return;
+      setPlaylist(listing);
+    } catch (err) {
+      if (isAbortError(err) || listingAbortRef.current !== controller) return;
+      setPlaylistError(formatErrorDetail(err, 'Failed to list the playlist.'));
+    } finally {
+      if (listingAbortRef.current === controller) {
+        listingAbortRef.current = null;
+        setPlaylistLoading(false);
+      }
+    }
   };
 
   const handleImportAudio = () => {
@@ -108,12 +179,16 @@ export function BatchImportModal({ profile, onClose }: Props) {
 
   const handleStartImport = async () => {
     if (!profile || !showId) return;
-    if (!hasAudio && !hasLogs) return;
+    if (!hasAudio && !hasPlaylist && !hasLogs) return;
 
     const controller = new AbortController();
     abortRef.current = controller;
     setIsImporting(true);
+    progressRef.current = EMPTY_PROGRESS;
     setProgress(EMPTY_PROGRESS);
+    const invalidateSessions = () => {
+      void queryClient.invalidateQueries({ queryKey: ['sessions'] });
+    };
 
     const mergeLines = (extra: string[]) => {
       setProgress((prev) => ({
@@ -130,9 +205,23 @@ export function BatchImportModal({ profile, onClose }: Props) {
           profile,
           signal: controller.signal,
           onProgress: setProgress,
-          onSessionCreated: () => {
-            void queryClient.invalidateQueries({ queryKey: ['sessions'] });
-          },
+          onSessionCreated: invalidateSessions,
+        });
+      }
+
+      // Folder, then playlist, then logs: logs can match sessions the audio parts created.
+      if (hasPlaylist && playlist) {
+        const checked = new Set(playlistSelection.indexes);
+        await runPlaylistImport({
+          showId,
+          entries: playlist.entries.filter((e) => checked.has(e.index)),
+          names: playlistSessionNames(playlist.entries),
+          usePublishDate: playlistSelection.usePublishDate,
+          profile,
+          signal: controller.signal,
+          initialLines: progressRef.current.lines,
+          onProgress: setProgress,
+          onSessionCreated: invalidateSessions,
         });
       }
 
@@ -141,7 +230,7 @@ export function BatchImportModal({ profile, onClose }: Props) {
         setProgress((prev) => ({
           ...prev,
           current: 'Importing logs…',
-          percent: hasAudio ? Math.max(prev.percent, 90) : 10,
+          percent: hasAudio || hasPlaylist ? Math.max(prev.percent, 90) : 10,
         }));
         const jobId = await startLogImport(showId, logsUrl, controller.signal);
         const job = await pollLogImportJob(jobId, controller.signal, (j) => {
@@ -258,6 +347,42 @@ export function BatchImportModal({ profile, onClose }: Props) {
             <span className="text-[0.85rem] text-v5-muted" data-testid="batch-import-folder-name">
               {folderName}
             </span>
+          ) : null}
+        </div>
+
+        <div className="flex flex-col gap-1">
+          <Button
+            variant="outline"
+            className={clsx('self-start', TOUCH_TARGET)}
+            id="bi-import-playlist"
+            onClick={() => void handleImportPlaylist()}
+            disabled={isImporting}
+          >
+            Import YouTube Playlist
+          </Button>
+          {playlistLoading ? (
+            <span
+              className="text-[0.85rem] text-v5-muted"
+              data-testid="batch-import-playlist-status"
+            >
+              Loading playlist…
+            </span>
+          ) : null}
+          {playlistError ? (
+            <span
+              className="text-[0.85rem] text-destructive"
+              role="alert"
+              data-testid="batch-import-playlist-error"
+            >
+              {playlistError}
+            </span>
+          ) : null}
+          {playlist ? (
+            <PlaylistPicker
+              listing={playlist}
+              disabled={isImporting}
+              onChange={setPlaylistSelection}
+            />
           ) : null}
         </div>
 

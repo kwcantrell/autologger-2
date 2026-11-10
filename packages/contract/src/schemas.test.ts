@@ -289,7 +289,9 @@ describe('validateYoutubePlaylistUrl (youtube-playlist-import D2)', () => {
   });
 
   it('accepts a 64-character list id', () => {
-    expect(validateYoutubePlaylistUrl(`https://www.youtube.com/playlist?list=${'P'.repeat(64)}`).ok).toBe(true);
+    expect(
+      validateYoutubePlaylistUrl(`https://www.youtube.com/playlist?list=${'P'.repeat(64)}`).ok,
+    ).toBe(true);
   });
 });
 

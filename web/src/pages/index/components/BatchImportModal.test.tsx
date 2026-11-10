@@ -1,15 +1,16 @@
 import { QueryClient } from '@tanstack/react-query';
 import { fireEvent, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { apiFetch } from '../../../api/client';
-import type { ProfilePayload } from '../../../api/types';
+import { ApiError, apiFetch } from '../../../api/client';
+import type { ProfilePayload, YoutubePlaylistResponse } from '../../../api/types';
 import { renderWithQueryClient } from '../../../test/renderWithQueryClient';
 import { stitchAudioFiles } from '../batchImport/stitch';
 import { BatchImportModal } from './BatchImportModal';
 
-vi.mock('../../../api/client', () => ({
-  apiFetch: vi.fn(),
-}));
+vi.mock('../../../api/client', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../api/client')>();
+  return { ...actual, apiFetch: vi.fn() };
+});
 
 vi.mock('../batchImport/stitch', () => ({
   stitchAudioFiles: vi.fn(),
@@ -362,5 +363,262 @@ describe('BatchImportModal — the picker lists accessible shows of the active t
     // One option, named for the accessible show (the ✓ indicator is aria-hidden).
     expect(screen.getAllByRole('option')).toHaveLength(1);
     expect(screen.getByRole('option', { name: 'Your Mom (YMH)' })).not.toBeNull();
+  });
+});
+
+// youtube-playlist-import task 8.4 (batch-audio-import "Batch Import modal layout and actions",
+// "YouTube playlist selection", "YouTube playlist import run").
+describe('BatchImportModal — YouTube playlist', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  function playlist(title: string, ids: string[]): YoutubePlaylistResponse {
+    return {
+      playlist: { id: 'PLx', title, url: 'https://www.youtube.com/playlist?list=PLx' },
+      entries: ids.map((id, i) => ({
+        index: i + 1,
+        video_id: id,
+        url: `https://www.youtube.com/watch?v=${id}`,
+        title: `${title} video ${i + 1}`,
+        duration_s: 60,
+        importable: true,
+        reason: null,
+      })),
+      truncated: false,
+    };
+  }
+
+  async function loadPlaylist(url: string) {
+    fireEvent.click(screen.getByRole('button', { name: 'Import YouTube Playlist' }));
+    const field = await screen.findByRole('textbox', { name: /YouTube playlist link/ });
+    fireEvent.change(field, { target: { value: url } });
+    fireEvent.click(screen.getByRole('button', { name: 'Load playlist' }));
+  }
+
+  const startButton = () =>
+    screen.getByRole('button', { name: 'Start Import' }) as HTMLButtonElement;
+
+  it('orders the controls Import Audio, Import YouTube Playlist, Import Logs, Start Import', () => {
+    renderWithQueryClient(<BatchImportModal profile={profileFixture()} onClose={() => {}} />);
+    const names = screen
+      .getAllByRole('button')
+      .map((b) => b.textContent)
+      .filter((t) =>
+        ['Import Audio', 'Import YouTube Playlist', 'Import Logs', 'Start Import'].includes(
+          t ?? '',
+        ),
+      );
+    expect(names).toEqual([
+      'Import Audio',
+      'Import YouTube Playlist',
+      'Import Logs',
+      'Start Import',
+    ]);
+  });
+
+  it('asks for the link in the themed prompt, shows a loading state, then the playlist', async () => {
+    let resolve: ((v: YoutubePlaylistResponse) => void) | undefined;
+    mockedApiFetch.mockImplementation(async (path) => {
+      if (path === 'youtube/playlist-entries') {
+        return new Promise((r) => {
+          resolve = r as (v: YoutubePlaylistResponse) => void;
+        });
+      }
+      throw new Error(`unexpected ${path}`);
+    });
+    const prompt = vi.spyOn(window, 'prompt');
+    renderWithQueryClient(<BatchImportModal profile={profileFixture()} onClose={() => {}} />);
+    await loadPlaylist(' https://www.youtube.com/playlist?list=PLx ');
+    expect(await screen.findByText('Loading playlist…')).not.toBeNull();
+    expect(mockedApiFetch).toHaveBeenCalledWith(
+      'youtube/playlist-entries',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ url: 'https://www.youtube.com/playlist?list=PLx' }),
+      }),
+    );
+    resolve?.(playlist('First', ['aaaaaaaaaaa']));
+    expect(await screen.findByText('First')).not.toBeNull();
+    expect(screen.queryByText('Loading playlist…')).toBeNull();
+    expect(prompt).not.toHaveBeenCalled();
+    prompt.mockRestore();
+  });
+
+  it.each([
+    [503, 'YouTube import is unavailable on this deployment.'],
+    [400, "Mix and radio lists can't be imported; use a regular playlist link."],
+  ])('a %i shows the server detail beneath the control and loads no playlist', async (status, detail) => {
+    mockedApiFetch.mockImplementation(async (path) => {
+      if (path === 'youtube/playlist-entries') throw new ApiError(status, detail, { detail });
+      throw new Error(`unexpected ${path}`);
+    });
+    renderWithQueryClient(<BatchImportModal profile={profileFixture()} onClose={() => {}} />);
+    await loadPlaylist('https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=RDdQw4w9WgXcQ');
+    const error = await screen.findByTestId('batch-import-playlist-error');
+    expect(error.textContent).toBe(detail);
+    expect(screen.queryByTestId('playlist-picker')).toBeNull();
+    expect(startButton().disabled).toBe(true);
+  });
+
+  it('a second link replaces the first playlist; a failed load leaves none', async () => {
+    const lists: Array<YoutubePlaylistResponse | Error> = [
+      playlist('First', ['aaaaaaaaaaa', 'bbbbbbbbbbb', 'ccccccccccc']),
+      playlist('Second', ['ddddddddddd']),
+      new ApiError(502, 'Failed to list the playlist.', { detail: 'Failed to list the playlist.' }),
+    ];
+    mockedApiFetch.mockImplementation(async (path) => {
+      if (path === 'youtube/playlist-entries') {
+        const next = lists.shift();
+        if (next instanceof Error) throw next;
+        return next;
+      }
+      throw new Error(`unexpected ${path}`);
+    });
+    renderWithQueryClient(<BatchImportModal profile={profileFixture()} onClose={() => {}} />);
+    await loadPlaylist('https://www.youtube.com/playlist?list=PL1');
+    await screen.findByText('First');
+    fireEvent.click(screen.getByRole('button', { name: 'Select none' }));
+    expect(screen.getByTestId('playlist-selected-count').textContent).toBe('0 of 3 selected');
+
+    await loadPlaylist('https://www.youtube.com/playlist?list=PL2');
+    await screen.findByText('Second');
+    expect(screen.queryByText('First')).toBeNull();
+    expect(screen.queryByText('First video 2')).toBeNull();
+    expect(screen.getByTestId('playlist-selected-count').textContent).toBe('1 of 1 selected');
+
+    await loadPlaylist('https://www.youtube.com/playlist?list=PL3');
+    expect((await screen.findByTestId('batch-import-playlist-error')).textContent).toBe(
+      'Failed to list the playlist.',
+    );
+    expect(screen.queryByTestId('playlist-picker')).toBeNull();
+  });
+
+  it('a playlist alone enables Start Import; unchecking every entry disables it', async () => {
+    mockedApiFetch.mockImplementation(async (path) => {
+      if (path === 'youtube/playlist-entries')
+        return playlist('First', ['aaaaaaaaaaa', 'bbbbbbbbbbb']);
+      throw new Error(`unexpected ${path}`);
+    });
+    renderWithQueryClient(<BatchImportModal profile={profileFixture()} onClose={() => {}} />);
+    expect(startButton().disabled).toBe(true);
+    await loadPlaylist('https://www.youtube.com/playlist?list=PLx');
+    await screen.findByText('First');
+    await waitFor(() => expect(startButton().disabled).toBe(false));
+    fireEvent.click(screen.getByRole('checkbox', { name: /^1\. / }));
+    fireEvent.click(screen.getByRole('checkbox', { name: /^2\. / }));
+    await waitFor(() => expect(startButton().disabled).toBe(true));
+  });
+
+  it('runs folder, then playlist, then logs, with the lines in that order', async () => {
+    const sessions: Array<{ id: string; episode: string; title: string; show_id: string }> = [];
+    const order: string[] = [];
+    mockedApiFetch.mockImplementation(async (path, opts) => {
+      const method = opts?.method ?? 'GET';
+      if (path === 'youtube/playlist-entries') return playlist('First', ['aaaaaaaaaaa']);
+      if (path === 'profile' && method === 'GET') return profileFixture();
+      if (path === 'sessions' && method === 'GET') return { active: [...sessions], archived: [] };
+      if (path === 'sessions' && method === 'POST') {
+        const body = JSON.parse(String(opts?.body));
+        const s = {
+          id: `new-${sessions.length + 1}`,
+          episode: body.episode,
+          title: body.title,
+          show_id: body.show_id,
+        };
+        sessions.push(s);
+        return s;
+      }
+      if (path.includes('local-audio-import')) {
+        order.push('folder');
+        return { ok: true };
+      }
+      if (path.endsWith('/youtube-import')) {
+        order.push('playlist');
+        return { ok: true };
+      }
+      if (path === 'shows/show-1/log-import') {
+        order.push('logs');
+        return { job_id: 'job-1' };
+      }
+      if (path === 'log-import/job-1')
+        return { status: 'completed', lines: ['matched 2 sheets'], error: null };
+      throw new Error(`unexpected ${method} ${path}`);
+    });
+    mockedStitch.mockResolvedValue({
+      blob: new Blob(['wav'], { type: 'audio/wav' }),
+      durationS: 3,
+      partDurationsS: [3],
+    });
+    renderWithQueryClient(<BatchImportModal profile={profileFixture()} onClose={() => {}} />);
+    pickFolder(folderFile('YMH_001.mp3', 'Batch/YMH_001.mp3'));
+    await loadPlaylist('https://www.youtube.com/playlist?list=PLx');
+    await screen.findByText('First');
+    await enterLogs('https://docs.google.com/spreadsheets/d/abc123/edit');
+    await waitFor(() => expect(startButton().disabled).toBe(false));
+    fireEvent.click(startButton());
+    await screen.findByText('[logs] matched 2 sheets');
+    expect(order).toEqual(['folder', 'playlist', 'logs']);
+    const lines = Array.from(screen.getByTestId('batch-import-lines').querySelectorAll('li')).map(
+      (li) => li.textContent,
+    );
+    expect(lines).toEqual([
+      'Completed YMH_001',
+      'Completed First video 1',
+      '[logs] matched 2 sheets',
+    ]);
+  });
+
+  async function enterLogs(url: string) {
+    fireEvent.click(screen.getByRole('button', { name: 'Import Logs' }));
+    const field = await screen.findByRole('textbox', { name: /Google Sheets URL/ });
+    fireEvent.change(field, { target: { value: url } });
+    fireEvent.click(screen.getByRole('button', { name: 'Use URL' }));
+  }
+
+  it('closing mid-run aborts the playlist run and a reopen is empty', async () => {
+    let importSignal: AbortSignal | undefined;
+    mockedApiFetch.mockImplementation(async (path, opts) => {
+      const method = opts?.method ?? 'GET';
+      if (path === 'youtube/playlist-entries')
+        return playlist('First', ['aaaaaaaaaaa', 'bbbbbbbbbbb']);
+      if (path === 'profile' && method === 'GET') return profileFixture();
+      if (path === 'sessions' && method === 'GET') return { active: [], archived: [] };
+      if (path === 'sessions' && method === 'POST') {
+        return { id: 'new-1', episode: 'x', title: 'x', show_id: 'show-1' };
+      }
+      if (path.endsWith('/youtube-import')) {
+        importSignal = opts?.signal ?? undefined;
+        return new Promise((_, reject) => {
+          opts?.signal?.addEventListener('abort', () =>
+            reject(new DOMException('Aborted', 'AbortError')),
+          );
+        });
+      }
+      throw new Error(`unexpected ${method} ${path}`);
+    });
+    const onClose = vi.fn();
+    const { unmount } = renderWithQueryClient(
+      <BatchImportModal profile={profileFixture()} onClose={onClose} />,
+    );
+    await loadPlaylist('https://www.youtube.com/playlist?list=PLx');
+    await screen.findByText('First');
+    await waitFor(() => expect(startButton().disabled).toBe(false));
+    fireEvent.click(startButton());
+    await waitFor(() => expect(importSignal).toBeDefined());
+    expect(screen.getByTestId('batch-import-current').textContent).toContain(
+      'Importing First video 1 (video 1 of 2)...',
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(importSignal?.aborted).toBe(true);
+    expect(onClose).toHaveBeenCalledTimes(1);
+    unmount();
+    expect(
+      mockedApiFetch.mock.calls.filter(([p]) => String(p).endsWith('/youtube-import')),
+    ).toHaveLength(1);
+
+    renderWithQueryClient(<BatchImportModal profile={profileFixture()} onClose={() => {}} />);
+    expect(screen.getByTestId('batch-import-progress').textContent).toBe('');
+    expect(screen.queryByTestId('playlist-picker')).toBeNull();
   });
 });
