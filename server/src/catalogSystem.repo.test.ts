@@ -166,11 +166,17 @@ const IMPLEMENTING = new Set([
   'packages/storage/src/postgresCatalogStore.ts',
   'packages/storage/src/postgresSessionSql.ts',
 ]);
-const USER_BINDERS = new Set(['server/src/middleware/auth.ts']);
+const USER_BINDERS = new Set([
+  'server/src/middleware/auth.ts',
+  // batch-autogenerate D4: the batch worker binds each session's work to the job's initiator.
+  'server/src/autogenerate/principal.ts',
+]);
 /** Where `userCaller(` may appear (session-content-policies D7, D9). */
 const USER_SESSION_CALLERS = new Set([
   'server/src/routers/_helpers.ts',
   'server/src/routers/logImport.ts',
+  // batch-autogenerate D4: the user recorded on a batch job (its initiator).
+  'server/src/autogenerate/principal.ts',
 ]);
 /** Where `new PostgresSessionDb(` may appear (session-content-policies D9). */
 const SESSION_DB_BUILDERS = new Set([

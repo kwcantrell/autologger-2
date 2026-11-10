@@ -2132,8 +2132,9 @@ describe('checkInterfaceOnlyConsumption (mutation check on a synthetic server/sr
 // `checkForbiddenServerSrcDirs` below. The former `routers -> ai-runtime` and
 // `ai-runtime -> aiV2` directory edges vanish with their endpoints; no
 // positive directory pin ever named either, so nothing else needs restating.
-// batch-autogenerate D6: `generation` holds the runners the routes and the batch worker share.
-const SERVER_SRC_LAYER_DIRS = ['node', 'auth', 'middleware', 'routers', 'generation'];
+// batch-autogenerate D3, D6: `generation` holds the runners the routes and the batch worker share;
+// `autogenerate` the batch worker and its start service.
+const SERVER_SRC_LAYER_DIRS = ['node', 'auth', 'middleware', 'routers', 'generation', 'autogenerate'];
 
 /** Matches `*.test.ts`, `*.int.test.ts` (both end in `.test.ts`), and the
  * widened `.mts`/`.cts` test-source shapes (`*.test.mts`, `*.test.cts`) —

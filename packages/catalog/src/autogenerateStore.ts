@@ -721,7 +721,9 @@ export class AutogenerateStore implements AutogenerateStoreFacade {
     nowMs: number,
   ): Promise<number> {
     const r = await this.db.run(
-      `UPDATE autogenerate_items SET status = 'cancelled', outcome = ?, finished_at_ms = ?
+      `UPDATE autogenerate_items SET status = 'cancelled', outcome = ?, finished_at_ms = ?,
+         kept_edited = CASE WHEN step IN ('events', 'topics') THEN coalesce(kept_edited, 0)
+                            ELSE kept_edited END
        WHERE job_id = ? AND status IN ('pending', 'running') AND ${FENCE}`,
       outcome,
       nowMs,
