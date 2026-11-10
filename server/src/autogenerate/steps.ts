@@ -4,7 +4,12 @@
 // Every call runs as the principal (the initiator).
 
 import { type AutogenerateStep, isSafeSuggestion } from '@autologger/contract';
-import { deleteOwnEvents, eventsPresent, runEvents } from '../generation/events';
+import {
+  deleteOwnEvents,
+  type EventsOutcome,
+  eventsPresent,
+  runEvents,
+} from '../generation/events';
 import { type GenerationPrincipal, hubFor } from '../generation/principal';
 import { deleteOwnTopics, runTopics, topicsPresent } from '../generation/topics';
 import { runTranscript, type TranscriptOutcome } from '../generation/transcript';
@@ -72,6 +77,18 @@ async function sessionRow(p: GenerationPrincipal, sessionId: string) {
   return p.catalog.sessions.getSessionIndexRow(sessionId);
 }
 
+/** D9: an events runner outcome in the worker's terms. The aggregate instruction bound is a
+ * failure (`generation-failed`, owner decision 2026-11-10), so it shows in the report's failures;
+ * the other preconditions skip with their own code. */
+export function eventsResult(out: EventsOutcome): StepResult {
+  if (out.kind === 'precondition') {
+    return out.code === 'too-many-instructions'
+      ? { kind: 'fail', outcome: 'generation-failed' }
+      : { kind: 'skip', outcome: out.code };
+  }
+  return aiResult(out);
+}
+
 export function workerSteps(): StepOps {
   return {
     async cleanup(p, sessionId, step, ids) {
@@ -105,15 +122,7 @@ export function workerSteps(): StepOps {
             row,
             batch: { earlierRunIds: hooks.earlierRunIds, beforeRun: (id) => hooks.beforeRun(id) },
           });
-          if (out.kind === 'precondition') {
-            // `too-many-instructions` (the aggregate instruction bound) has no outcome code of its
-            // own; it is the show's instructions that keep the step from running.
-            return {
-              kind: 'skip',
-              outcome: out.code === 'too-many-instructions' ? 'no-instructions' : out.code,
-            };
-          }
-          return aiResult(out);
+          return eventsResult(out);
         }
         case 'topics': {
           const out = await runTopics(p, sessionId, {

@@ -258,7 +258,7 @@ same way:
 | 4 | session exists, not deleted, show in the team, `authCanAccessShow` (user binding) | session's items `skipped` `session-gone` / `access-lost`; continue |
 | 5 | per step: gap (D7) | item `skipped` `present` |
 | 6 | per step: credential (D4) | item `failed` `unconfigured`; job `failed` `unconfigured-stt` / `-llm` |
-| 7 | per step: preconditions, the route's own (no audio, no words, no anchors, no instructions, instruction bound) | item `skipped` with the code; dependent steps `skipped` the same |
+| 7 | per step: preconditions, the route's own (no audio, no words, no anchors, no instructions) | item `skipped` with the code; dependent steps `skipped` the same. The events instruction-size bound is not a skip: item `failed` `generation-failed` (owner, 2026-11-10; D9) |
 | 8 | per step: single-flight (D8) | wait, then `busy` |
 | 9 | per step: gap again under the single-flight | item `skipped` `present` |
 | 10 | run (D6) | `done`, or `failed` with a code (D9); 429 backoff and the consecutive-failure stop (D17) |
@@ -413,6 +413,7 @@ run lease, so a batch step and a manual run never overlap on a session.
 | transcript `missing_blob` | `failed` `missing-audio-file` | same |
 | transcript `unreadable` | `failed` `unreadable` | same |
 | events/topics/wiki turn failure, timeout, incomplete page coverage, store failure | `failed` `generation-failed` | same |
+| events: the show's event-button instructions exceed the aggregate size bound (owner, 2026-11-10) | `failed` `generation-failed` | same |
 | events/topics/wiki: the provider refused with an HTTP status other than `429` (AI SDK route; amendment, owner 2026-11-09) | `failed` `provider-failed` | same |
 | any unexpected throw | `failed` `generation-failed`, logged with the session id and error class only | same |
 | interrupted 3 times | `failed` `interrupted` | same |

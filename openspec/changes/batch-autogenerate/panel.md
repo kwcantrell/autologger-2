@@ -31,7 +31,6 @@ Owner-approved amendments (owner, 2026-11-09), recorded in design.md and the spe
   `failed` `provider-failed` (timeouts, incomplete coverage, CLI failures stay `generation-failed`).
 - Rate-limit wording: five waits (30, 60, 120, 240, 480 s), at most six attempts; the sixth refusal
   ends the item `failed` `rate-limited`.
-- Instruction-size → failed: decided by the owner. Not implemented: item details are looked up from
-  the outcome code only (contract "No other text SHALL appear in an outcome or detail"), and no
-  existing failed code's fixed detail says that the show's event-button instructions exceed the
-  limit. Escalated back to the owner; the code still maps the bound to `skipped` `no-instructions`.
+- Instruction-size → failed: owner chose `failed` `generation-failed` (generic detail, no new
+  contract code) 2026-11-10; implemented (`eventsResult` in `server/src/autogenerate/steps.ts`,
+  `steps.test.ts`).
