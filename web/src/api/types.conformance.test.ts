@@ -124,6 +124,7 @@ import { wikiSuggestionDismiss } from '../../../fixtures/api-responses/wikiSugge
 import { wikiSuggestionGenerate } from '../../../fixtures/api-responses/wikiSuggestionGenerate';
 import { wikiSuggestionList } from '../../../fixtures/api-responses/wikiSuggestionList';
 import { wikiSuggestionResolved } from '../../../fixtures/api-responses/wikiSuggestionResolved';
+import { youtubePlaylistEntries } from '../../../fixtures/api-responses/youtubePlaylistEntries';
 import type { LogImportJobStatus } from '../pages/index/batchImport/logImportClient';
 import { fmtDateOnly } from '../shared/utils/fmtDateOnly';
 import type {
@@ -190,6 +191,8 @@ import type {
   WikiSuggestionListResponse,
   WikiSuggestionResolvedConflict,
   WikiVersionConflict,
+  YoutubePlaylistEntry,
+  YoutubePlaylistResponse,
 } from './types';
 
 describe('CW-1 — transport start/stop emit the transport state, not `{ok}`', () => {
@@ -905,6 +908,19 @@ describe('sheets log import — the two logImportClient.ts responses', () => {
     expect(check.status).toBe('failed');
     expect(check.lines.length).toBeGreaterThan(0);
     expect(check.error).toContain('XLSX');
+  });
+});
+
+describe('YouTube playlist listing — the Batch Import modal reads (youtube-playlist-import D8)', () => {
+  it('the captured 200 is assignable to YoutubePlaylistResponse, entry by entry to YoutubePlaylistEntry', () => {
+    const check: YoutubePlaylistResponse = youtubePlaylistEntries;
+    const entry: YoutubePlaylistEntry = youtubePlaylistEntries.entries[1];
+    expect(check.truncated).toBe(false);
+    expect(check.entries.map((e) => e.reason)).toEqual([null, 'unavailable', 'too_long']);
+    // The unavailable entry carries the two nullable fields' null side.
+    expect(entry.title).toBeNull();
+    expect(entry.duration_s).toBeNull();
+    expect(entry.importable).toBe(false);
   });
 });
 

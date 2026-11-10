@@ -1091,3 +1091,33 @@ export interface WikiSuggestionResolvedConflict {
   detail: 'Suggestion already resolved.';
   status: WikiSuggestionStatus;
 }
+
+// --- YouTube playlist listing (youtube-playlist-import D4, D8) ------------------------------------
+// `POST /api/youtube/playlist-entries` (api-contract-freeze "YouTube playlist listing endpoint").
+// Declared here, not imported from `@autologger/contract`, because `web` does not depend on it;
+// `types.conformance.test.ts` assigns the captured `200` to these.
+
+/** Why a listed entry cannot be imported. */
+export type YoutubePlaylistUnavailableReason = 'unavailable' | 'live' | 'upcoming' | 'too_long';
+
+export interface YoutubePlaylistEntry {
+  /** 1-based position in the playlist; gaps where a malformed entry was dropped. */
+  index: number;
+  video_id: string;
+  /** `https://www.youtube.com/watch?v=<video_id>`, accepted by `youtube-import` unchanged. */
+  url: string;
+  /** `null` when YouTube reports no title (deleted or private video). */
+  title: string | null;
+  duration_s: number | null;
+  /** True exactly when `reason` is null. */
+  importable: boolean;
+  reason: YoutubePlaylistUnavailableReason | null;
+}
+
+export interface YoutubePlaylistResponse {
+  playlist: { id: string; title: string; url: string };
+  /** At most 5000, in playlist order. */
+  entries: YoutubePlaylistEntry[];
+  /** The playlist has more entries than were returned. */
+  truncated: boolean;
+}

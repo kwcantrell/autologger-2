@@ -24,6 +24,10 @@
 // (assert-only otherwise — see `server/src/test/apiFixtures.ts` for why a
 // missing fixture fails instead of being written.)
 
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { MEDIA_IMPORT_FIXTURES_DIR } from '@autologger/media-import';
 import { describe, expect, it, vi } from 'vitest';
 import { expectCapturedResponse } from '../test/apiFixtures';
 import { answer, callTools, type FakeLlm, startFakeLlm } from '../test/fakeLlm';
@@ -2143,6 +2147,60 @@ describe('wiki suggestions', () => {
       });
     } finally {
       await llm?.close();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// YouTube playlist listing (youtube-playlist-import task 7.1, design D8): a real `200` from the
+// fake yt-dlp's `playlist-small.json` (one importable, one unavailable and one too_long entry).
+// A `.ts` fixture: `reason` is a string-literal union.
+// ---------------------------------------------------------------------------
+
+describe('YouTube playlist listing', () => {
+  it('POST /api/youtube/playlist-entries matches the captured fixture', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ytdlp-fixture-'));
+    try {
+      const binaryPath = join(dir, 'yt-dlp');
+      writeFileSync(
+        binaryPath,
+        '#!/bin/sh\n' +
+          `echo '{"mode":"playlist","fixture":"playlist-small.json"}' > .ytdlp-stub.json\n` +
+          `exec "${process.execPath}" "${join(MEDIA_IMPORT_FIXTURES_DIR, 'fake-ytdlp.mjs')}" "$@"\n`,
+      );
+      chmodSync(binaryPath, 0o755);
+      const res = await app.request(
+        '/api/youtube/playlist-entries',
+        {
+          method: 'POST',
+          headers: JSON_HEADERS,
+          body: JSON.stringify({ url: 'https://www.youtube.com/playlist?list=PLBB231211A4F62143' }),
+        },
+        envWith({ YTDLP_RESOLVED_PATH: binaryPath, HOST: '127.0.0.1', IP_ALLOWLIST: '' }),
+      );
+      const body = (await expectCapturedResponse(
+        {
+          name: 'youtubePlaylistEntries',
+          endpoint: 'POST /api/youtube/playlist-entries',
+          format: 'ts',
+        },
+        res,
+      )) as { entries: Array<Record<string, unknown>> } & Record<string, unknown>;
+      expect(Object.keys(body).sort()).toEqual(['entries', 'playlist', 'truncated']);
+      for (const e of body.entries) {
+        expect(Object.keys(e).sort()).toEqual([
+          'duration_s',
+          'importable',
+          'index',
+          'reason',
+          'title',
+          'url',
+          'video_id',
+        ]);
+      }
+      expect(body.entries.map((e) => e.reason)).toEqual([null, 'unavailable', 'too_long']);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });
