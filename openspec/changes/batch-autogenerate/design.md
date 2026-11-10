@@ -294,6 +294,11 @@ are mechanical call-site updates for the new `(env, user)` signature in `_aiRout
 `aiSdk.real.test.ts`, which call `sdkTurnSpec` directly; task 3.6 checks that every other file of
 the net has an empty diff and that those two diffs touch call sites only.
 
+*Amendment (owner, 2026-11-09).* `eventsGenerateWindow.test.ts` reads the source of
+`routers/events.ts`; the code it pins moved to `server/src/generation/events.ts`. Its path and its
+source literal (`getSessionHub(c, sessionId)` → `hubFor(p, sessionId)`) are retargeted to the
+runner; its assertions are otherwise unchanged, and the invariant is the same.
+
 *Why not call the routes over HTTP from the worker?* It would need a session cookie for the
 initiator (a stored credential, refused by decision 6) and could not express the gap guards.
 
@@ -408,9 +413,10 @@ run lease, so a batch step and a manual run never overlap on a session.
 | transcript `missing_blob` | `failed` `missing-audio-file` | same |
 | transcript `unreadable` | `failed` `unreadable` | same |
 | events/topics/wiki turn failure, timeout, incomplete page coverage, store failure | `failed` `generation-failed` | same |
+| events/topics/wiki: the provider refused with an HTTP status other than `429` (AI SDK route; amendment, owner 2026-11-09) | `failed` `provider-failed` | same |
 | any unexpected throw | `failed` `generation-failed`, logged with the session id and error class only | same |
 | interrupted 3 times | `failed` `interrupted` | same |
-| upstream `429`, five times (D17) | `failed` `rate-limited` | same |
+| upstream `429` again after the fifth wait (D17) | `failed` `rate-limited` | same |
 
 Deepgram's upstream error gains a numeric `status` field (A21) so the transcript runner can report
 `rate-limited`; the AI SDK route already reports the status (A21). A CLI turn reports no status, so
@@ -514,8 +520,9 @@ how it answers ADR 0031's revisit trigger), and what would reverse it.
 
 - **429 backoff.** When a runner reports `rate-limited` (A21), the worker waits 30, 60, 120, 240
   and 480 s (15.5 min in all) and retries the same step, re-checking the cancel and the job lease
-  during each wait and re-running D5 steps 0-4 before each retry; the fifth refusal ends the item
-  `failed` `rate-limited`. A retry re-enters the step per D7 (own output first).
+  during each wait and re-running D5 steps 0-4 before each retry. Five waits, so at most six
+  attempts: the sixth refusal (the one after the 480 s wait) ends the item `failed` `rate-limited`
+  (wording amended, owner 2026-11-09). A retry re-enters the step per D7 (own output first).
 - **Consecutive failures, per provider kind (re-panel 3).** Two counts on the job row (a resume
   continues them): `consecutive_stt_failures` for the transcript step and
   `consecutive_llm_failures` for events, topics and wiki. A processed session in which a step of

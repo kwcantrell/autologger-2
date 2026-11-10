@@ -125,7 +125,7 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
   `transcribe.ts`; the route becomes an adapter. Verify: 3.2 green and the 3.1 transcript suites
   green with the baseline counts.
   Evidence: red: `npx vitest run --project integration src/generation/transcript.int.test.ts src/test/session/replaceOnlyIfEmpty.int.test.ts` -> `Cannot find module './transcript'`; the replace test `× throws the sentinel and writes nothing` (ba-3.2-red.log). Green: `Tests 9 passed (9)`; net: transcribe.int 83 passed, transcribe 6 passed (baseline counts); packages/transcription `Tests 101 passed` (ba-3.2-green.log). Deviation: the runner test is `server/src/generation/transcript.int.test.ts` (integration, not `.test.ts`): the onlyIfEmpty sentinel needs the real hub transaction; the session-core replace test is `server/src/test/session/replaceOnlyIfEmpty.int.test.ts`, where the hub's database tests live; `oversize` is covered through `transcriptOutcomeOf` (a 2 GB group is not producible in a test)
-- [ ] 3.3 Test first, `server/src/generation/events.test.ts` (design D7 events):
+- [x] 3.3 Test first, `server/src/generation/events.test.ts` (design D7 events):
   - with `excludeEventIds` (the earlier attempts' events), those events are absent from the
     prompt's existing-events list and from `create_event`'s anchor basis, exactly as a regenerate
     snapshot is, while the run is not a regenerate;
@@ -141,7 +141,7 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
   - an AI SDK `429` is reported as `rate-limited`.
   Then extract from `events.ts`. Verify: 3.3 green, 3.1 events suites green with the baseline
   counts.
-  Evidence: NOT TICKED: the runner is extracted and its new test is green, but one regression-net test cannot stay green with its assertions unchanged. `server/src/routers/eventsGenerateWindow.test.ts` reads the text of `routers/events.ts` and looks for the literal `const transcriptWords = await (await getSessionHub(c, sessionId)).listTranscriptWords();`, and that code now lives in `server/src/generation/events.ts` (design D6). Retargeting it needs the human: D6 allows edits only in `_aiRoute.test.ts` and `aiSdk.real.test.ts`. The same invariant is enforced on the runner by a new `server/src/generation/eventsWindow.test.ts` (green). Red (batch behaviour stripped from the runner): `npx vitest run --project integration src/generation/events.int.test.ts` -> `Tests 5 failed | 1 passed (6)` (ba-3.3-red.log); green -> `Tests 6 passed (6)` (ba-3.3-green.log); net: events.generate.int 46, _aiRoute 3 passed, eventsGenerateWindow 0/1 (ba-3.4-net-raw.log). Deviation: integration test (`events.int.test.ts`), since it needs the real hub, row versions and a fake provider
+  Evidence: (Ticked after the owner-approved D6 amendment, 2026-11-09: `eventsGenerateWindow.test.ts` retargeted to `server/src/generation/events.ts`, path and literal only -> `Tests 1 passed (1)`.) Earlier note: one regression-net test could not stay green with its assertions unchanged. `server/src/routers/eventsGenerateWindow.test.ts` reads the text of `routers/events.ts` and looks for the literal `const transcriptWords = await (await getSessionHub(c, sessionId)).listTranscriptWords();`, and that code now lives in `server/src/generation/events.ts` (design D6). Retargeting it needs the human: D6 allows edits only in `_aiRoute.test.ts` and `aiSdk.real.test.ts`. The same invariant is enforced on the runner by a new `server/src/generation/eventsWindow.test.ts` (green). Red (batch behaviour stripped from the runner): `npx vitest run --project integration src/generation/events.int.test.ts` -> `Tests 5 failed | 1 passed (6)` (ba-3.3-red.log); green -> `Tests 6 passed (6)` (ba-3.3-green.log); net: events.generate.int 46, _aiRoute 3 passed, eventsGenerateWindow 0/1 (ba-3.4-net-raw.log). Deviation: integration test (`events.int.test.ts`), since it needs the real hub, row versions and a fake provider
 - [x] 3.4 Test first, `server/src/generation/topics.test.ts` and `packages/ai-runtime`
   `aiMcpServer` tests (design D7 topics):
   - `create_topic` with an id allocator calls it before `insertTopic`, inserts with the allocated
@@ -167,11 +167,11 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
   extract from `wikiSuggestions.ts` and add the option. Verify: green, 3.1 wiki suites green with
   the baseline counts.
   Evidence: red: `npx vitest run --project integration src/generation/wiki.int.test.ts` -> `Cannot find module './wiki'`; `--project pg src/test/pg/wikiSuggestionStore.pg.test.ts` -> `× notes an existing page ... (batch <job>)`, `× notes a new page ...`, `× lists a run’s pending suggestion ids`, `Tests 3 failed | 27 passed` (the refusals case passed before the change, as expected) (ba-3.5-red.log). Green: wiki.int `Tests 3 passed (3)`, store pg `Tests 30 passed (30)` (ba-3.5-green.log); net: wikiSuggestions.int 34, wiki.int 78 (ba-3.6-net-raw.log). The store also gains `pendingOfRun`/`anyOfRun` (a run's suggestions by run id, for the worker's resume and accept order). Deviation: integration test name `wiki.int.test.ts`
-- [ ] 3.6 `sdkTurnSpec` and `callerLlmRoute` take `(env, user)`. Update only the call sites in
+- [x] 3.6 `sdkTurnSpec` and `callerLlmRoute` take `(env, user)`. Update only the call sites in
   `_aiRoute.test.ts` and `aiSdk.real.test.ts` to the new signature. Verify: every 3.1 suite green
   with the baseline counts; `git diff --stat` over the net shows changes only in those two files,
   and their diffs touch only `sdkTurnSpec`/`callerLlmRoute` call lines.
-  Evidence: NOT TICKED: its verify needs every net suite green, and `eventsGenerateWindow.test.ts` is red (see 3.3). Otherwise done: `sdkTurnSpec(env, …)`/`callerLlmRoute(env, user)` in `server/src/generation/aiRoute.ts` (re-exported by `routers/_aiRoute.ts`, plus a `requestLlmRoute(c)` wrapper for the routes). Net, `--reporter=verbose`: every file at its baseline count except `eventsGenerateWindow.test.ts` 0/1 (see 3.3) (ba-3.6-green.log). `git diff --stat` over the 13 net files -> `server/src/routers/_aiRoute.test.ts | 6 +++---` only, its three lines `sdkTurnSpec(ctx, …)` -> `sdkTurnSpec(ctx.env, …)`. `aiSdk.real.test.ts` needed no edit (it never calls `sdkTurnSpec` directly).
+  Evidence: (Ticked after the D6 amendment; `eventsGenerateWindow.test.ts` green, see 3.3, so every net suite is at its baseline count.) `sdkTurnSpec(env, …)`/`callerLlmRoute(env, user)` in `server/src/generation/aiRoute.ts` (re-exported by `routers/_aiRoute.ts`, plus a `requestLlmRoute(c)` wrapper for the routes). Net, `--reporter=verbose`: every file at its baseline count except `eventsGenerateWindow.test.ts` 0/1 (see 3.3) (ba-3.6-green.log). `git diff --stat` over the 13 net files -> `server/src/routers/_aiRoute.test.ts | 6 +++---` only, its three lines `sdkTurnSpec(ctx, …)` -> `sdkTurnSpec(ctx.env, …)`. `aiSdk.real.test.ts` needed no edit (it never calls `sdkTurnSpec` directly).
 
 ## 4. The worker (design D3, D4, D5, D7-D12, D17)
 
@@ -190,7 +190,7 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
   - busy: retried every 15 s, runs when free, skipped `busy` (with the session's remaining steps)
     after 10 min; a cancel during the wait ends the job without running;
   - `rate-limited`: retried after 30, 60, 120, 240, 480 s, a cancel during a wait is honoured, the
-    fifth refusal ends the item `failed` `rate-limited`; a success after two refusals is `done`;
+    sixth refusal (after the fifth wait) ends the item `failed` `rate-limited`; a success after two refusals is `done`;
   - consecutive provider failures per kind: three sessions in a row with an LLM step failing with
     `provider-failed`, `generation-failed` or `rate-limited` stop the job `provider-failing` even
     though each had a `done` transcript; an LLM `done` resets only the LLM count, an STT `done`

@@ -241,8 +241,9 @@ file path or stack trace SHALL be stored in a job or item, returned by a route, 
 ### Requirement: Persistent provider failure stops the job
 When a provider answers HTTP `429` (rate limited) and the step can tell (speech to text, and AI
 turns on the AI SDK route), the job SHALL retry the same step after 30, 60, 120, 240 and 480
-seconds, checking for a cancel during each wait, and after the fifth refusal the item SHALL be
-`failed` with `rate-limited`. The job SHALL keep one count per provider kind, speech to text
+seconds (five waits, so at most six attempts), checking for a cancel during each wait, and when the
+attempt after the fifth wait is refused too (the sixth refusal) the item SHALL be `failed` with
+`rate-limited`. The job SHALL keep one count per provider kind, speech to text
 (the transcript step) and language model (events, topics, wiki): a processed session in which a
 step of that kind ended `failed` as `provider-failed`, `generation-failed` or `rate-limited` adds
 one to that kind's count; a step of that kind ending `done` resets only that kind's count; other
