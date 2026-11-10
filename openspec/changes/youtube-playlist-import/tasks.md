@@ -108,13 +108,16 @@ Test commands: packages are `npx vitest run <files>` from the package directory
 
 ## 4. Listing guard (design D3)
 
-- [ ] 4.1 Test first, new `packages/media-import/src/playlistListingGuard.test.ts`: two
+- [x] 4.1 Test first, new `packages/media-import/src/playlistListingGuard.test.ts`: two
   `tryAcquire()` succeed, the third returns `null`, a release frees one slot, a double release
   frees only one, `reset()` clears.
   Evidence: under 4.2.
-- [ ] 4.2 New `packages/media-import/src/playlistListingGuard.ts` (cap 2, module singleton).
+- [x] 4.2 New `packages/media-import/src/playlistListingGuard.ts` (cap 2, module singleton).
   Evidence: red/green `cd packages/media-import && npx vitest run src/playlistListingGuard.test.ts`
   (ypi-4.1-red.log, ypi-4.1-green.log).
+  Evidence (2026-11-09): red `Error: Cannot find module './playlistListingGuard'`
+  (ypi-4.1-red.log); green `Tests  4 passed (4)` (ypi-4.1-green.log); whole package
+  `npm test` -> `Tests  73 passed | 3 skipped (76)`, `npm run typecheck` no errors.
 
 ## 5. Route (design D1; api-contract-freeze "YouTube playlist listing endpoint", "Run features")
 

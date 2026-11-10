@@ -13,9 +13,11 @@
 //
 // youtube-playlist-import adds the playlist listing: ytdlpPlaylist.ts (the bounded
 // flat-playlist spawn), playlistEntries.ts (projection to the contract shape) and
+// playlistListingGuard.ts (two listings per process).
 
 export * from './fixturesDir';
 export * from './playlistEntries';
+export * from './playlistListingGuard';
 export * from './youtubeImportGuard';
 export * from './youtubeImportScratch';
 export * from './ytdlp';
