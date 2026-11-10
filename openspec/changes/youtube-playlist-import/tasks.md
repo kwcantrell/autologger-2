@@ -261,7 +261,7 @@ Test commands: packages are `npx vitest run <files>` from the package directory
   62 passed (62)` (the existing runner suites) (ypi-8.2-red.log); green `Tests  89 passed (89)`
   (runner.test.ts and runner.parts.test.ts unchanged and green) (ypi-8.2-green.log); `cd web &&
   npx tsc --noEmit` exit 0.
-- [ ] 8.3 Test first, new `web/src/pages/index/components/PlaylistPicker.test.tsx`: the
+- [x] 8.3 Test first, new `web/src/pages/index/components/PlaylistPicker.test.tsx`: the
   selection scenarios (unavailable and too-long entries greyed with reasons and uncheckable even by
   Select all; From 3 To 6 with position 4 unavailable checks exactly 3, 5, 6; Select none; checked
   count), "Use publish date" checked by default, the truncated notice, controls disabled while
@@ -271,6 +271,11 @@ Test commands: packages are `npx vitest run <files>` from the package directory
   Then `web/src/pages/index/components/PlaylistPicker.tsx`.
   Evidence: red/green `cd web && npx vitest run src/pages/index/components/PlaylistPicker.test.tsx`
   (ypi-8.3-red.log, ypi-8.3-green.log).
+  Evidence (2026-11-09): red `Error: Failed to resolve import "./PlaylistPicker"`, `Test Files  1
+  failed` (ypi-8.3-red.log); first green run caught a disabled box toggling under a synthetic
+  click (`expected '9 of 10 selected' to be '8 of 10 selected'`), fixed in the row handler; green
+  `Tests  12 passed (12)` including the 5000-entry render + Select all (ypi-8.3-green.log);
+  `npx tsc --noEmit` exit 0.
 - [ ] 8.4 Test first, `web/src/pages/index/components/BatchImportModal.test.tsx`: control order
   (Import Audio, Import YouTube Playlist, Import Logs, Start Import); the prompt and loading state;
   a `503` and a Mix `400` show the server detail beneath the control with no playlist loaded;
