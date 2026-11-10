@@ -177,7 +177,7 @@ Test commands: packages are `npx vitest run <files>` from the package directory
 
 ## 7. API-response conformance (design D8; web-api-response-conformance)
 
-- [ ] 7.1 Test first:
+- [x] 7.1 Test first:
   - `server/src/routers/apiResponseFixtures.int.test.ts`: capture a real `200` body of
     `POST /api/youtube/playlist-entries` (fake binary, the recorded fixture with one importable,
     one unavailable and one `too_long` entry) as a new fixture, generated with
@@ -197,10 +197,23 @@ Test commands: packages are `npx vitest run <files>` from the package directory
   src/routers/apiResponseFixtures.int.test.ts`, then `cd web && npx vitest run
   src/api/types.conformance.test.ts src/apiResponseShapes.repo.test.ts` and `npx tsc --noEmit`
   (ypi-7.1-red.log, ypi-7.1-green.log); the repo test re-run after 8.2 (ypi-7.1-after-8.2.log).
+  Evidence (2026-11-09): red server `Error: Missing captured fixture youtubePlaylistEntries.ts for
+  POST /api/youtube/playlist-entries` (`Tests  1 failed | 68 skipped`); red web `npx tsc --noEmit`
+  -> `types.conformance.test.ts(194,3): error TS2305: Module '"./types"' has no exported member
+  'YoutubePlaylistEntry'`; the repo test before any new site `Tests  131 passed` (with
+  types.conformance) (ypi-7.1-red.log). Captured with `UPDATE_API_FIXTURES=1 ... -t "YouTube
+  playlist"` (only the new fixture written; `git diff` shows no other fixture changed); green
+  server `Tests  69 passed (69)` assert-only (ypi-7.1-green-server.log); web `Tests  131 passed
+  (131)`, `npx tsc --noEmit` exit 0 (ypi-7.1-green.log). After 8.2 the repo test reported exactly
+  one new uncovered site, `playlistRunner.ts :: apiFetch<OkResponse>(\`sessions/<var>/youtube-import\`)
+  [POST]` (`Tests  1 failed | 47 passed`); its verdict row is recorded as its exemption reason
+  (CONFORMS, `{ok: true}`); the listing, profile and segment sites are covered by their
+  conformance assignments and the create/list/PUT/DELETE calls are the reused runner.ts sites;
+  re-run `Tests  48 passed (48)` (ypi-7.1-after-8.2.log).
 
 ## 8. Web: naming, picker, runner, modal (design D5, D6, D7; batch-audio-import)
 
-- [ ] 8.1 Test first, new `web/src/pages/index/batchImport/playlistNames.test.ts`: the spec
+- [x] 8.1 Test first, new `web/src/pages/index/batchImport/playlistNames.test.ts`: the spec
   scenarios (cleaning; 120 ASCII characters → 80; 80 `😀` → 40 `😀`, length 80 in UTF-16 units, no
   lone surrogate; `Q&A` at three positions → `Q&A [<id>]` each); a title whose 80th unit is the
   first half of a pair → cut to 79 units; an all-whitespace title → `YouTube <video_id>`; a shared
@@ -211,7 +224,10 @@ Test commands: packages are `npx vitest run <files>` from the package directory
   Then `web/src/pages/index/batchImport/playlistNames.ts`.
   Evidence: red/green `cd web && npx vitest run src/pages/index/batchImport/playlistNames.test.ts`
   (ypi-8.1-red.log, ypi-8.1-green.log).
-- [ ] 8.2 Test first, new `web/src/pages/index/batchImport/playlistRunner.test.ts` (mocked
+  Evidence (2026-11-09): red `Error: Cannot find module './playlistNames'` (ypi-8.1-red.log);
+  green `Tests  13 passed (13)` (ypi-8.1-green.log). The test mirrors `z.string().max(80)` as
+  `name.length <= 80` (UTF-16 units; `web` does not depend on zod).
+- [x] 8.2 Test first, new `web/src/pages/index/batchImport/playlistRunner.test.ts` (mocked
   `apiFetch` and an in-memory import-session memory, as `runner.test.ts`; injected `sleep`):
   - active show aligned at start; before each entry the profile is read and, when another tab
     switched the active show, it is switched back with one line; the session list is read right
@@ -240,6 +256,11 @@ Test commands: packages are `npx vitest run <files>` from the package directory
   green).
   Evidence: red/green `cd web && npx vitest run src/pages/index/batchImport/` (ypi-8.2-red.log,
   ypi-8.2-green.log).
+  Evidence (2026-11-09): red `Error: Cannot find module
+  '/src/pages/index/batchImport/playlistRunner'`, `Test Files  1 failed | 5 passed (6)`, `Tests
+  62 passed (62)` (the existing runner suites) (ypi-8.2-red.log); green `Tests  89 passed (89)`
+  (runner.test.ts and runner.parts.test.ts unchanged and green) (ypi-8.2-green.log); `cd web &&
+  npx tsc --noEmit` exit 0.
 - [ ] 8.3 Test first, new `web/src/pages/index/components/PlaylistPicker.test.tsx`: the
   selection scenarios (unavailable and too-long entries greyed with reasons and uncheckable even by
   Select all; From 3 To 6 with position 4 unavailable checks exactly 3, 5, 6; Select none; checked
