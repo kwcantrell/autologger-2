@@ -634,6 +634,70 @@ export function validateYoutubeImportUrl(raw: string): YoutubeUrlValidation {
   return { ok: true, href: parsed.href };
 }
 
+// -- youtube-playlist-import: playlist listing body, URL validator, response (D2, D4) ------
+// `POST /api/youtube/playlist-entries` (api-contract-freeze "YouTube playlist listing endpoint").
+// A body failing this schema is the frozen `422 {detail: [zod issues]}`; only the URL rules
+// below give `400`. Unknown keys are stripped (zod's default).
+export const youtubePlaylistBodySchema = z.object({
+  url: z.string().min(1).max(2048),
+});
+export type YoutubePlaylistBody = z.infer<typeof youtubePlaylistBodySchema>;
+
+const YOUTUBE_PLAYLIST_HOSTS: ReadonlySet<string> = new Set([
+  'youtube.com',
+  'www.youtube.com',
+  'm.youtube.com',
+  'music.youtube.com',
+]);
+const YOUTUBE_PLAYLIST_LIST_ID = /^[A-Za-z0-9_-]{2,64}$/;
+
+export type YoutubePlaylistUrlValidation =
+  | { ok: true; listId: string; href: string }
+  | { ok: false; reason: 'not-playlist' | 'mix' };
+
+/**
+ * Playlist link validator (youtube-playlist-import D2). Accepts `http(s)` on an exact YouTube
+ * host with path `/playlist` or `/watch` and a `list` of 2–64 `[A-Za-z0-9_-]`; `RD…` (Mix and
+ * radio) lists are refused as `mix`. `href` is always the canonical
+ * `https://www.youtube.com/playlist?list=<listId>`, so no caller-controlled part (the `v` of a
+ * watch link, another host, other query parameters) ever reaches `yt-dlp`.
+ */
+export function validateYoutubePlaylistUrl(raw: string): YoutubePlaylistUrlValidation {
+  const notPlaylist = { ok: false, reason: 'not-playlist' } as const;
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    return notPlaylist;
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return notPlaylist;
+  if (!YOUTUBE_PLAYLIST_HOSTS.has(parsed.hostname.toLowerCase())) return notPlaylist;
+  if (parsed.pathname !== '/playlist' && parsed.pathname !== '/watch') return notPlaylist;
+  const listId = parsed.searchParams.get('list');
+  if (listId === null || !YOUTUBE_PLAYLIST_LIST_ID.test(listId)) return notPlaylist;
+  if (listId.startsWith('RD')) return { ok: false, reason: 'mix' };
+  return { ok: true, listId, href: `https://www.youtube.com/playlist?list=${listId}` };
+}
+
+/** Why a listed entry cannot be imported (api-contract-freeze "YouTube playlist listing endpoint"). */
+export type YoutubePlaylistUnavailableReason = 'unavailable' | 'live' | 'upcoming' | 'too_long';
+
+export interface YoutubePlaylistEntry {
+  index: number;
+  video_id: string;
+  url: string;
+  title: string | null;
+  duration_s: number | null;
+  importable: boolean;
+  reason: YoutubePlaylistUnavailableReason | null;
+}
+
+export interface YoutubePlaylistResponse {
+  playlist: { id: string; title: string; url: string };
+  entries: YoutubePlaylistEntry[];
+  truncated: boolean;
+}
+
 export const profileUpdateBodySchema = z.object({
   active_studio_id: z.string().max(120).nullish(),
   active_show_id: z.string().min(1).max(120).nullish(),

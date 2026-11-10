@@ -14,7 +14,7 @@ Test commands: packages are `npx vitest run <files>` from the package directory
 
 ## 1. Contract: playlist URL validation and wire types (design D2, D4)
 
-- [ ] 1.1 Test first, `packages/contract/src/schemas.test.ts`, new `describe`
+- [x] 1.1 Test first, `packages/contract/src/schemas.test.ts`, new `describe`
   `validateYoutubePlaylistUrl`:
   - accepted, each giving `listId` and `href` `https://www.youtube.com/playlist?list=<id>`:
     `https://www.youtube.com/playlist?list=PLBB231211A4F62143`, `http://youtube.com/playlist?list=PL_x-1`,
@@ -29,12 +29,15 @@ Test commands: packages are `npx vitest run <files>` from the package directory
   - `youtubePlaylistBodySchema`: `{url}` 1–2048 accepted, unknown keys stripped; missing `url`,
     `''`, 2049 characters, a number refused.
   Evidence: under 1.2.
-- [ ] 1.2 `packages/contract/src/schemas.ts`: `youtubePlaylistBodySchema`,
+- [x] 1.2 `packages/contract/src/schemas.ts`: `youtubePlaylistBodySchema`,
   `validateYoutubePlaylistUrl`, and the server-side response types `YoutubePlaylistEntry`,
   `YoutubePlaylistResponse`, `YoutubePlaylistUnavailableReason`; export from the package entry.
   (The web client declares its own copies in `web/src/api/types.ts`, task 7.1.)
   Evidence: red/green `cd packages/contract && npx vitest run src/schemas.test.ts`
   (ypi-1.1-red.log, ypi-1.1-green.log); `npm run typecheck` exit 0.
+  Evidence (2026-11-09): red `TypeError: validateYoutubePlaylistUrl is not a function`,
+  `Tests  24 failed | 36 passed (60)` (ypi-1.1-red.log); green `Tests  60 passed (60)`
+  (ypi-1.1-green.log); `cd packages/contract && npm run typecheck` -> `tsc --noEmit`, no errors.
 
 ## 2. Spawn: bounded flat-playlist listing (design D3)
 

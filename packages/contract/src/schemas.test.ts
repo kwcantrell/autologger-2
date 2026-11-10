@@ -12,7 +12,9 @@ import {
   topicUpdateSchema,
   transcriptWordUpdateSchema,
   validateYoutubeImportUrl,
+  validateYoutubePlaylistUrl,
   youtubeImportBodySchema,
+  youtubePlaylistBodySchema,
 } from './schemas';
 
 describe('logBodySchema.metadata cap', () => {
@@ -242,5 +244,65 @@ describe('expected versions (session-row-versions D4)', () => {
     ]) {
       expect(deleteVersionQuerySchema.safeParse(bad).success, JSON.stringify(bad)).toBe(false);
     }
+  });
+});
+
+describe('validateYoutubePlaylistUrl (youtube-playlist-import D2)', () => {
+  const accepted: Array<[string, string]> = [
+    ['https://www.youtube.com/playlist?list=PLBB231211A4F62143', 'PLBB231211A4F62143'],
+    ['http://youtube.com/playlist?list=PL_x-1', 'PL_x-1'],
+    ['https://m.youtube.com/watch?v=RlJy2Kt8Be0&list=PLBB231211A4F62143', 'PLBB231211A4F62143'],
+    ['https://music.youtube.com/playlist?list=OLAK5uy_abc', 'OLAK5uy_abc'],
+    ['https://WWW.YouTube.com/playlist?list=UUBR8-60-B28hp2BmDPdntcQ', 'UUBR8-60-B28hp2BmDPdntcQ'],
+    // Not special-cased: reaches yt-dlp and gets the private-or-nonexistent 502.
+    ['https://www.youtube.com/playlist?list=WL', 'WL'],
+  ];
+  it.each(accepted)('accepts %s', (url, listId) => {
+    expect(validateYoutubePlaylistUrl(url)).toEqual({
+      ok: true,
+      listId,
+      href: `https://www.youtube.com/playlist?list=${listId}`,
+    });
+  });
+
+  const notPlaylist = [
+    'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+    'https://youtu.be/dQw4w9WgXcQ?list=PLx1',
+    'https://www.youtube.com/@channel',
+    'https://youtube.com.evil.com/playlist?list=PLx1',
+    'https://youtube.com@evil.com/playlist?list=PLx1',
+    'ftp://youtube.com/playlist?list=PLx1',
+    'https://www.youtube.com/playlist?list=a',
+    `https://www.youtube.com/playlist?list=${'P'.repeat(65)}`,
+    'https://www.youtube.com/playlist?list=PL%20x',
+    'not a url',
+  ];
+  it.each(notPlaylist)('refuses %s as not-playlist', (url) => {
+    expect(validateYoutubePlaylistUrl(url)).toEqual({ ok: false, reason: 'not-playlist' });
+  });
+
+  it.each([
+    'https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=RDdQw4w9WgXcQ',
+    'https://www.youtube.com/playlist?list=RDCLAK5uy_x',
+  ])('refuses %s as mix', (url) => {
+    expect(validateYoutubePlaylistUrl(url)).toEqual({ ok: false, reason: 'mix' });
+  });
+
+  it('accepts a 64-character list id', () => {
+    expect(validateYoutubePlaylistUrl(`https://www.youtube.com/playlist?list=${'P'.repeat(64)}`).ok).toBe(true);
+  });
+});
+
+describe('youtubePlaylistBodySchema', () => {
+  it('accepts url of 1 and 2048 characters and strips unknown keys', () => {
+    expect(youtubePlaylistBodySchema.safeParse({ url: 'x' }).success).toBe(true);
+    const r = youtubePlaylistBodySchema.safeParse({ url: 'x'.repeat(2048), extra: 1 });
+    expect(r.success).toBe(true);
+    if (r.success) expect(r.data).toEqual({ url: 'x'.repeat(2048) });
+  });
+  it.each([{}, { url: '' }, { url: 'x'.repeat(2049) }, { url: 5 }])('refuses %j', (body) => {
+    const r = youtubePlaylistBodySchema.safeParse(body);
+    expect(r.success).toBe(false);
+    if (!r.success) expect(r.error.issues[0]?.path).toEqual(['url']);
   });
 });
