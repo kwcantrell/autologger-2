@@ -5,6 +5,8 @@ Tier reason: adds a new HTTP route (`POST /api/youtube/playlist-entries`) to the
 adds it to the approved-users run-feature gate, and spawns an external process on untrusted
 input; touches `server/src/routers/**` and `packages/contract/**`.
 
+Approved-by: Kalen 11-9-2026
+
 ## Why
 
 Shows that publish on YouTube keep their back catalogue in playlists. Today each video has to be
