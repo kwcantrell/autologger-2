@@ -1042,9 +1042,9 @@ packages/                 Source-only npm workspace packages (no build step; ser
 This surface is **frozen** (capability spec `api-contract-freeze`): the route column below
 is the normative inventory, and every route's observable behavior — JSON response shapes,
 status codes, export bodies (CSV/JSONL), header/range semantics, and the WebSocket messages
-listed after the table (their shapes *and* when they fire) — changes only with an
-authorizing OpenSpec delta spec. The origin column records which Python module each route
-was ported from: historical provenance, not a live parity claim.
+listed after the table (their shapes *and* when they fire) — changes only with a human
+decision that amends the `api-contract-freeze` spec. The origin column records which Python
+module each route was ported from: historical provenance, not a live parity claim.
 
 **Content-encoding negotiation.** Responses under `/api/*` — and only there — are
 content-encoding negotiated. A compressible body over the middleware's 1024-byte threshold
@@ -1473,7 +1473,7 @@ GIT_SHA=$(git rev-parse --short=12 HEAD) docker buildx bake -f docker-bake.hcl -
   once as `ARG FFMPEG_IMAGE=…@sha256:…` in `docker/media-worker.Dockerfile` with a `# reviewed
   2026-10-11` comment next to it; `server/scripts/blobSegmentRows.ts`'s `FFMPEG_IMAGE` (the
   operator scripts') is held equal to it by `server/src/test/ffmpegPin.repo.test.ts`.
-  Dependabot's `docker` ecosystem proposes digest bumps; a bump is a tier 1 change: update the
+  Dependabot's `docker` ecosystem proposes digest bumps; a bump is an ordinary PR: update the
   ARG, the review date and `blobSegmentRows.ts` together, then rebuild and re-run
   `sh docker/scripts/test_media_image.sh`. Node is copied onto that base from the same pinned
   `node:22-bookworm-slim` as `docker/Dockerfile`.

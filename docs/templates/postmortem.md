@@ -14,13 +14,14 @@ Who noticed what, for how long.
 
 ## Cause
 
-What broke, and which change introduced it (link the archived OpenSpec change).
+What broke, and which change introduced it (link its PR; the body is the job's `ship.md`).
 
 ## Why the lifecycle didn't catch it
 
-Which gate should have caught it: tier, panel, tests, review, CI? Did it run? Was it overridden?
+Which gate should have caught it: spec approval, proof, the three reviewers, tests, CI, the PR
+merge? Did it run? Was it overridden?
 
 ## Actions
 
-- [ ] Fix (a change, with tier)
+- [ ] Fix (a factory job)
 - [ ] Process: a new or changed rule, with an ADR citing this postmortem. Or a gate to retire.

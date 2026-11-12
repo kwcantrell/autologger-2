@@ -7,16 +7,16 @@ agent writes code in this repo. Review this table in the quarterly rule review.
 
 | Risk | How it shows up here | Controls |
 | --- | --- | --- |
-| ASI01 Agent Goal Hijack | Instructions hidden in an issue, PR comment, web page, dependency README or test fixture | AGENTS.md rule 9 (content is data); human approval of scope; panel's failure-and-abuse reviewer |
+| ASI01 Agent Goal Hijack | Instructions hidden in an issue, PR comment, web page, dependency README or test fixture | AGENTS.md rule 9 (content is data); human approval of each job's `task.md`; the security reviewer and the independent verifier |
 | ASI02 Tool Misuse | Agent runs a destructive or exfiltrating command | Sandbox; `deny` for curl, wget, force-push, `--no-verify`; `ask` for push (prefix-matched); commits are checked by the pre-commit hooks (incl. no commits on `main`), pre-push and CI (ADR 0020) |
 | ASI03 Identity & Privilege Abuse | Agent uses the developer's credentials beyond the task | Secrets unreadable (`Read(**/.env)` denied); workflows default to `contents: read`; no push to main; stack secrets come from OpenBao KV v2 (`kv/autologger/<env>`), read with one AppRole per environment whose policy is `read` on its own `kv/data/autologger/<env>` only; the secret_id is CIDR-bound to the VM's IP (90-day TTL, rotated by Ansible), held in an untracked mode-600 `.env.openbao.<env>` file, and the short-lived token is revoked right after the read; nothing is put on argv, disk or output by `docker/scripts/compose-run.mjs` ([docs/openbao-secrets.md](openbao-secrets.md)). **Residuals:** the Read deny rule is not the boundary. An agent's `Bash` `cat`, `docker inspect`, `docker exec … env` and `/proc/*/environ` can still read the credentials file and container environments (the secret_id only works from its bound CIDR, so a copied one is useless elsewhere, but on the VM itself it reads that environment's secrets). The owner's admin userpass token (`~/.vault-token` after `bao login`) can read and write every path; an agent running as the owner can use it while it is valid, so keep its TTL short and don't leave a session open on a VM where agents run. `~/.docker` (plugins, `currentContext`) is trusted as the operator's own |
 | ASI04 Agentic Supply Chain Vulnerabilities | Agent adds a malicious or vulnerable package, or a workflow uses a moved tag | Dependency review; `lifecycle.commands.audit`; SHA-pinned actions; Dependabot |
 | ASI05 Unexpected Code Execution | Agent runs untrusted code from a dependency or a fetched script | Sandbox filesystem and network isolation; CI in ephemeral runners |
 | ASI06 Memory & Context Poisoning | A poisoned spec, ADR or skill steers future changes; attacker-controlled text in container logs (request paths, emails, failed-auth names in GoTrue's logs) read as evidence | CODEOWNERS on openspec/, docs/decisions/, .claude/; generated skills can't be edited; container logs are untrusted data: log checks count values with `grep -cF` instead of reading the logs |
-| ASI07 Insecure Inter-Agent Communication | A subagent's report carries injected instructions to the parent | Panel reviewers return findings, not actions; the parent treats reports as data |
-| ASI08 Cascading Failures | One bad change propagates through many files or services | Tier 2 for contracts; CI required before merge |
-| ASI09 Human-Agent Trust Exploitation | A confident summary gets approved without reading | Evidence rule (command + output); human reviews the diff, not the summary |
-| ASI10 Rogue Agents | Agent weakens its own guardrails | Settings, hooks and approval lines are agent-unwritable; CODEOWNERS on .claude/ and .github/ |
+| ASI07 Insecure Inter-Agent Communication | A subagent's report carries injected instructions to the parent | Factory agents hand off through files (`build.md`, `proof.md`, reviews) and record verdicts through the `factory` CLI, not actions; the supervisor treats reports as data |
+| ASI08 Cascading Failures | One bad change propagates through many files or services | Frozen-contract and auth work escalates to a human; three reviewers per job; CI required before merge |
+| ASI09 Human-Agent Trust Exploitation | A confident summary gets approved without reading | Evidence rule (command + output) and a verifier that re-runs it; human reviews the diff, not the summary |
+| ASI10 Rogue Agents | Agent weakens its own guardrails | Settings and hooks are agent-unwritable; the plugin's hook turns `factory approve` and `factory merge` into permission prompts; CODEOWNERS on .claude/ and .github/ |
 
 ## Setup a human must do
 
@@ -37,39 +37,29 @@ These live in the forge, not the repo, so the template can't apply them:
 
 ## Known gaps
 
-- `Approved-by:` is a text line. Code owner review is the real control (ADR 0002).
+- Spec approval lives in the untracked `factory/` directory and is guarded by a permission
+  prompt, not by CI. An agent outside Claude Code, or running without the plugin's hook, could
+  call `factory approve`. The PR merge on GitHub, with green CI, is the real control (ADR 0034).
 - With a single collaborator, code owner review can only be met through the admin's
   bypass on PRs, since GitHub doesn't count an author's own approval. Anything holding the
   admin's token, an agent included, has that bypass. Real separation needs a second reviewer.
-- The panel gate checks structure, not honesty. A real critical tagged `[minor]`, or
-  `No findings.` written over findings discussed in prose, passes. `[minor]` is no longer a
-  panel severity (ADR 0024), but the gate still accepts it, so a stray one isn't flagged. The
-  human approver is the control.
+- Reviewer verdicts are self-recorded. A reviewer that approves a real problem is not caught by
+  any gate; `ship.md` and the human reading the diff at the PR are the control.
 - Files under test folders count as tests, so source hidden in a `tests/` folder evades
   `tests-with-code`. Code review is the control.
 - Exemptions (`managed_paths`, `test_globs`) come from the base
   branch, so a PR can't exempt itself. A later PR can still widen them where no human owns
   `openspec/config.yaml`. A modified copy of the vendored checker isn't detected.
-- A grandfathered change (ADR 0014) skips the review-artifact gates. High-risk paths it
-  touches only warn. Any `archive/<date>-<id>` for a listed id qualifies while main still has
-  the id. The controls are human review, the `Grandfathered: <id>` line in the PR, and the rule
-  that the change must already be on main.
-  A tasks.md-only edit to such an archive is exempt like any other (next point) and needs no
-  `Grandfathered:` line.
+- No gate singles out high-risk paths (`.github/**`, `scripts/**`, `.claude/**`, auth,
+  migrations, the contract, the routers) since the tier gates were retired (ADR 0034). The
+  controls are the security reviewer, the human merge, and the ruleset's code owner review.
 - No gate limits PR size (ADR 0024). `supabase-migration` has no branch protection, and human
   PR review there leaves no trace on GitHub, so an arbitrarily large PR can merge into it and
   reach `main` in the cutover PR. The controls are the owner's slice planning and the cutover
   PR's whole-branch audit.
-- A tasks.md-only edit to an archive already on the base branch is not a change (ADR 0016). A tier 0 PR can
-  therefore tick archived tasks that weren't done, or drop their `Evidence:` lines. The controls
-  are the `change` message, which names every such archive, CODEOWNERS on `openspec/changes/`
-  (a repo that keeps its own CODEOWNERS must add it), and human review.
-- Adopting into a repo with its own settings leaves the lifecycle hooks unwired until a human
-  merges `.lifecycle-adoption/settings.json` (ADR 0015). Until then, the Stop and approval hooks
-  don't run there.
-- The adoption blocks' precedence line ("the lifecycle gates win") is advisory text. Codex reads
-  AGENTS.md but not `@` imports. An agent could apply the proposals despite the README telling
-  it not to; the install PR's human review is the control.
+- No gate checks archived OpenSpec changes any more, so an edit to
+  `openspec/changes/archive/` passes CI. CODEOWNERS on `openspec/changes/` and human review are
+  the controls.
 - Deny rules match command prefixes. A determined agent can reach the network another way,
   which is why the sandbox, not the deny list, is the boundary
   ([Claude Code security](https://code.claude.com/docs/en/security)).

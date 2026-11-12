@@ -1,70 +1,102 @@
-# The agent lifecycle, explained
+# The factory lifecycle, explained
 
-AGENTS.md is the rulebook agents load. This file is for humans: why the loop looks the way it
-does, and how to set it up. Agents don't need to read it.
+AGENTS.md is the rulebook agents load. This file is for humans: how work moves through the
+software factory, where you come in, and how to set it up. ADR 0034 records why the repo moved
+to it from the OpenSpec change lifecycle.
 
 ## The loop
 
 ```
-Explore -> Tier -> Propose -> Panel -> APPROVE -> Branch -> Implement (TDD) -> Verify -> REVIEW + CI -> Archive
-                                         ^ human                                          ^ human, hard gate
+request -> intake -> APPROVE SPEC -> build -> proof -> review -> ship -> PR -> MERGE (CI green)
+           task.md   ^ human         builder  verifier  3 reviewers  ship.md      ^ human, hard gate
+                       /factory:approve  ^        |        |                       on GitHub
+                                         +--------+--------+  fail / changes requested
 ```
 
-The shape follows vendor guidance that converges on explore, plan, implement, verify
-([Anthropic](https://code.claude.com/docs/en/best-practices),
-[OpenAI Codex](https://developers.openai.com/codex/learn/best-practices)), with two hard
-gates added: human approval before code and green CI before merge. DORA 2025 found AI raises
-throughput but lowers stability unless testing, version control and small batches are strong
-([DORA](https://cloud.google.com/blog/products/ai-machine-learning/announcing-the-2025-dora-report)).
-The gates are how this template supplies those controls.
+You start work with `/factory:run <request>` in Claude Code. The supervisor (that session)
+splits the request into one or more jobs and writes a `task.md` for each: the goal, checkable
+acceptance criteria, what is out of scope, and context. Then each job runs the line:
+
+| Stage | Who | Writes |
+| --- | --- | --- |
+| Intake | Supervisor | `task.md` |
+| Build | `builder` agent, in its own git worktree on branch `factory/<id>` | commits + `build.md` |
+| Proof | `verifier` agent, independent of the builder; re-runs every claim first-hand | `proof.md` + `evidence/` |
+| Review | `reviewer-security`, `reviewer-standards` and `reviewer-behavior`, in parallel | `review-<round>-<lens>.md`, each with its own verdict |
+| Ship | Supervisor | `ship.md`: what changed, how each criterion was proven, risks |
 
 Loop-backs:
 
-- Panel finds a critical issue: back to Propose.
-- Implementation shows the spec is wrong: stop, update the artifacts, re-panel the delta, re-approve.
-- Verify fails: back to Implement.
-- Review asks for changes outside scope: a new change, not this one.
+- Proof fails: back to build. After 3 failed proofs the job stops and needs you.
+- Any reviewer asks for changes: back to build, then proof again. After 3 rounds the job stops and
+  needs you.
+- The builder finds the task contradictory or impossible: it stops and says so, and the job
+  needs you. You fix `task.md` (which needs approving again) or close the job.
+- Work found along the way is a new job, not scope creep in this one.
 
-## Tiers
+The `factory` CLI enforces the line, not the prompts. It is the only writer of `job.json` and the
+only way a job changes stage: `start` refuses an unapproved or since-edited `task.md`, `built`
+refuses a dirty worktree or a missing `build.md`, and `verdict` refuses a verdict without its
+written review.
 
-See AGENTS.md for the table and ADR 0001 for the reasoning. The short version: a typo shouldn't
-need a panel, and an auth change shouldn't skip one. The path floor in `openspec/config.yaml`
-stops anyone from calling a guardrail change trivial.
+## The two human gates
 
-## Spec-driven, but light
+1. **Spec approval.** `factory.json` sets `spec_gate: true`, so every job stops after intake.
+   Read its `task.md` and run `/factory:approve <id>` to approve it, or
+   `/factory:approve <id> changes <what to change>` to send it back. Approving pins the file:
+   if `task.md` changes afterwards, the job can't start until you approve it again. A plugin
+   hook turns `factory approve` into a permission prompt, so an agent can't approve for you.
+2. **PR merge with green CI.** When all three reviewers approve, the job reaches ship. Run
+   `/factory:ship <id>`. It shows you `ship.md` and the diff stat, then takes the PR path:
+   ```sh
+   git push -u origin factory/<id>
+   gh pr create --base main --head factory/<id> --title "<job title>" \
+     --body-file factory/jobs/<id>/ship.md
+   ```
+   CI runs on the PR. You merge it on GitHub once the required checks (`gates`, `secrets`,
+   `dependency-review`, `db-tests`) are green, then run `factory close <id> merged via PR` and
+   `git pull` on `main`. Never use the plugin's local `factory merge` here: it would commit on
+   `main`, which the pre-commit hook and the branch ruleset both refuse.
 
-OpenSpec keeps specs durable: a change's spec deltas merge into `openspec/specs/` on archive.
-Thoughtworks warns that spec-driven development can slide back into waterfall, with days spent
-perfecting a spec ([podcast](https://www.thoughtworks.com/insights/podcasts/technology-podcasts/what-is-spec-driven-development)).
-Size the proposal to the change: a tier 1 proposal can be ten lines.
+To reject a job at ship, run `/factory:ship <id> reject <reason>`; the branch is kept.
+
+## Specs: what the system does now
+
+`openspec/specs/<capability>/spec.md` stays the living description of behavior, in OpenSpec's
+format (requirements with scenarios). There are no change proposals or delta specs any more:
+
+- **A job that changes behavior updates the matching spec in the same job.** Intake writes that
+  into the acceptance criteria, the builder edits the spec beside the code, and reviewers read
+  the two together. A new capability gets a new `openspec/specs/<capability>/spec.md`.
+- **The `openspec` gate validates the specs** with `openspec validate --specs --strict` on every
+  commit, push and PR. Run it yourself after editing a spec.
+- **`openspec/changes/archive/`** is history. Nothing new goes under `openspec/changes/`.
+- **A frozen-contract change** (the README endpoint table and the `api-contract-freeze` spec)
+  needs your decision before it is built. Agents escalate it with `factory human` instead.
 
 ## What the checks do
 
-`scripts/check-change.sh` is the single implementation. Stages:
+`scripts/check-change.sh` is the single implementation. It never reads the PR body, so a PR
+whose body is `ship.md` needs nothing extra.
 
 | Check | commit | hook | pr | Fails when |
 | --- | --- | --- | --- | --- |
-| openspec | x | x | x | `openspec validate --strict` or `--archived` fails |
+| openspec | x | x | x | `openspec validate --specs --strict` fails |
 | yaml | x | x | x | A YAML file doesn't parse, or `.pre-commit-config.yaml` lacks a loadable shape. At the commit and hook stages, broken files the change didn't touch only warn |
 | workflows | x | x | x | An action isn't SHA-pinned, or a workflow lacks top-level `permissions:` |
 | skills-sync | x | x | x | `.agents/skills` differs from `.claude/skills` |
-| guide-size | x | x | x | AGENTS.md is over its line budget |
-| change | x | x | x | More than one change on the branch, no `Tier:` line, tier 1-2 without a change, or a tier 0 change dir. A grandfathered change WARNs, and in CI fails unless the PR body says `Grandfathered: <id>`. A tasks.md-only edit to an archive already on the base isn't counted, and is named in the message (ADR 0016) |
-| risk-floor | x | x | x | A high-risk path is touched below tier 2 (a grandfathered change WARNs with the paths) |
-| evidence | | x | x | A ticked task has no `Evidence:` |
-| commands | | x | x | lint, typecheck or test fails. Whether the test run includes the pg and integration projects depends on the changed paths; see below |
-| approval | | | x | Tier 1-2 proposal lacks `Approved-by:` |
-| panel | | | x | Tier 2 lacks panel.md. Or panel.md has no `- [ ] [severity]` findings and no `No findings.` line, a finding lacks a `[critical\|major\|minor]` tag, a critical is open, or a ticked critical or major lacks `Resolved:` or `Declined` |
-| tasks | | | x | An unticked task remains |
-| artifacts-first | | | x | The branch's first commit holds more than the change artifacts |
+| guide-size | x | x | x | AGENTS.md is over its line budget (`agent_guide_max_lines`, 150) |
+| commands | | x | x | typecheck or test fails. Whether the test run includes the pg and integration projects depends on the changed paths; see below |
 | tests-with-code | | | x | Source changed without a test change. Test folders count at any depth; `managed_paths` files are ignored (label `no-test-needed` overrides) |
 | audit | | | x | `lifecycle.commands.audit` fails |
 
-`managed_paths`, `test_globs` and `db_test_paths` are read from the base branch's
-config, so a PR can't exempt itself. Changes to them apply from the next PR.
+`lifecycle.commands.lint` is empty, so no gate runs `npm run lint` yet; builders run it by hand.
+`managed_paths`, `test_globs` and `db_test_paths` are read from the base branch's config, so a
+PR can't exempt itself. Changes to them apply from the next PR.
 
-The Stop hook runs the `hook` stage. pre-commit runs `commit` on commit and `hook` on push.
-CI runs `pr` on pull requests.
+pre-commit runs `commit` on commit and `hook` on push. CI runs `pr` on pull requests. The Stop
+hook script (`.claude/hooks/stop-check.sh`) would run `hook`, but it isn't registered in
+`.claude/settings.json`, so agents run it themselves before they finish.
 
 ### Which tests run (ADR 0026)
 
@@ -72,7 +104,7 @@ The pg and integration vitest projects (`server`, `packages/storage`) start a Po
 and take most of the test time. They run in CI on the PR, and only when the change can affect
 them:
 
-- **Locally, never by default.** Pre-push, the Stop hook and manual runs skip them, with
+- **Locally, never by default.** Pre-push and manual runs skip them, with
   `(pg/integration skipped: local run; ...)`. Test-first work runs the test being written
   directly, for example `npx vitest run --project integration src/foo.int.test.ts`. Catching
   regressions elsewhere is the PR's `db-tests` check.
@@ -82,68 +114,60 @@ them:
   those projects out. Anything unclear runs them: no base, no list on the base, a non-PR CI run,
   or `FULL_TESTS=1`. An inherited `SKIP_DB_TESTS` is always stripped.
 - **What it says.** The `commands` line ends with `(full: <why>)`, `(pg/integration skipped:
-  <why>)` or `(pg/integration: db-tests job)`. The skip line prints even under `--quiet`, so
-  pre-push shows it. `scripts/check-change.sh --db-selection` prints CI's path decision locally.
+  <why>)` or `(pg/integration: db-tests job)`. `scripts/check-change.sh --db-selection` prints
+  CI's path decision locally.
 - **Forcing a full run locally.** `FULL_TESTS=1 scripts/check-change.sh --stage hook`.
 - **In CI**, `gates` sets `DB_TESTS_IN_SHARDS=1` and runs typecheck, unit tests and audit. The DB
-  tests run in `db-shard`, a 3-way matrix that splits the server files with `vitest --shard`
-  (storage's 3 files run whole on shard 1). Each shard asks
-  `scripts/check-change.sh --db-selection`, and skips only when that exits 0 with exactly one
-  `skip: ` line. `db-tests` is green only when every shard succeeded, and it's the check to
-  require.
-- **After merge**, a push to `supabase-migration` runs `gates` with `--only commands,audit` and
-  all three shards with `FULL_TESTS=1`. That run catches anything the path list missed.
+  tests run in `db-shard`, a 3-way matrix that splits the server files with `vitest --shard`.
+  `db-tests` is green only when every shard succeeded, and it's the check to require.
 
-## Setup
+## Setup on a fresh clone
 
-1. `scripts/init.sh --owner @you /path/to/repo`, which asks for your stack commands and source
-   globs. It only creates files that don't exist yet, and records each one in
-   `.lifecycle-adoption/MANIFEST` so `scripts/lib/adopt.py undo --target /path/to/repo` can
-   remove exactly those. It renders `.github/CODEOWNERS` for the owner unless one exists.
-2. Add toolchain setup to the "Stack setup" steps in both workflows.
-3. Do the forge settings in `docs/security.md` "Setup a human must do".
-4. `pre-commit install --hook-type pre-commit --hook-type pre-push`
-5. Commit the install as a tier 2 change, run through the lifecycle itself.
+You need git, Node 22.12+ with npm, Python 3.8+ with PyYAML, the OpenSpec CLI (`openspec@1.13.2`,
+as CI pins it), the `gh` CLI signed in to GitHub, and Claude Code.
 
-Presets for common stacks may come later. Until then, init.sh asks for the commands.
+1. Clone the repo and run `npm ci` at its root.
+2. `pre-commit install --hook-type pre-commit --hook-type pre-push`.
+3. Get a checkout of the software-factory plugin, for example at `~/software-factory`.
+4. Start Claude Code in the repo with the plugin loaded:
+   ```sh
+   claude --plugin-dir ~/software-factory
+   ```
+   The plugin adds `/factory:run`, `/factory:approve`, `/factory:ship` and `/factory:dashboard`,
+   the builder, verifier and reviewer agents, and the hook that guards `factory approve` and
+   `factory merge`. Inside Claude Code, `factory` is on the PATH; outside it, call
+   `~/software-factory/bin/factory`.
+5. Check the configuration with `factory config`: it should print `"spec_gate": true` from
+   `factory.json`. Runtime state goes in `factory/` (jobs, worktrees, the dashboard), which
+   ignores itself in git.
+6. Do the forge settings in `docs/security.md` "Setup a human must do" once per repository.
 
-### Adopting into a repo with its own lifecycle
+Then start work with `/factory:run <request>` from the main checkout on an up-to-date `main`.
+Jobs are cut from the branch the main checkout is on.
 
-Where the repo already has AGENTS.md, CLAUDE.md, `.claude/settings.json` or
-`openspec/config.yaml`, init.sh leaves them untouched (ADR 0015). Adoption then has two phases:
+## The dashboard
 
-1. **Install.** New files are created. Proposals go into `.lifecycle-adoption/`, a folder git
-   ignores:
-   - `settings.json`, your settings with the lifecycle deny rules, sandbox and hooks merged in;
-   - `openspec-config.snippet.yaml`, the sections your config lacks;
-   - `AGENTS.block.md` and `CLAUDE.block.md`, marked blocks that point to the rulebook at
-     `docs/agent-lifecycle.md` and say the lifecycle gates win on conflict.
-2. **Merge by hand.** Work through `.lifecycle-adoption/README.md`. It lists risky settings
-   first. The hooks are **not active** until you merge the proposed settings.json. Then reconcile
-   any of your own guidance that contradicts the lifecycle, and delete the folder.
+`/factory:dashboard` starts it in the background and prints the URL. From a shell:
 
-`openspec init` runs only on repos with no OpenSpec files. Otherwise run `openspec update`
-yourself.
+```sh
+factory dashboard --port 8787      # then open http://127.0.0.1:8787/
+# or, the same thing:
+cd factory && python3 -m http.server 8787 --bind 127.0.0.1
+```
 
-### Grandfathering in-flight changes
-
-Changes already in flight when a repo adopts the lifecycle have no `Tier:` line or checklist
-panel, so they would fail every gate. To let one finish (ADR 0014):
-
-1. A PR of its own adds the id to `lifecycle.grandfathered_changes` in `openspec/config.yaml`.
-   It touches a high-risk path, so it's tier 2 and a human approves it. The change's directory
-   must already be on main.
-2. The change's branch merges main, so its merge-base has both the list and the directory.
-3. The change's PR body says `Grandfathered: <id>`.
-
-The change then skips the tier, approval, panel, tasks, evidence, artifacts-first gates.
-Every other gate runs, and risk-floor warns about any high-risk paths it touches. Once it's
-archived and merged, the entry no longer matches anything. Remove it in a later PR.
+Jobs are cards that move across the stage columns, with a row of reviewer chips per review
+round. Jobs that need you are highlighted and counted in the header and the tab title; click a
+card to read its markdown files and history. The page re-reads `factory/jobs/*/job.json` every
+two seconds. For a text view, run `factory status` (or `factory status <id>`); `factory stats`
+prints the line metrics: first-pass proof rate, review rounds to approval, time to approval and
+escalations.
 
 ## Operating
 
-- Release: `docs/templates/release-checklist.md`. Tagging `v*` runs `release.yml`, which builds,
-  generates an SBOM and attests provenance.
+- Release: `docs/templates/release-checklist.md`. This repo has no `release` workflow yet, so the
+  checklist's workflow and attestation steps don't apply until one is added.
 - Rollback: rehearse with `docs/templates/rollback-drill.md` each quarter.
 - Incidents: `docs/templates/postmortem.md`. A postmortem that finds a process gap proposes a
   rule with an ADR. One that finds a gate never fires proposes retiring it (ADR 0011).
+- Each quarter, read `factory stats` alongside the gates: a station or gate that never catches
+  anything is a candidate to retire.
