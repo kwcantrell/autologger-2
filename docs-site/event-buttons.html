@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Event buttons - AutoLogger Help</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="site-header"><nav class="topnav" aria-label="Help navigation"><a class="brand" href="index.html">AutoLogger Help</a><ul><li><a href="index.html">Home</a></li><li><a href="index.html#getting-started">Getting started</a></li><li><a href="index.html#running-a-session">Running a session</a></li><li><a href="index.html#after-the-session">After the session</a></li><li><a href="index.html#analysis">Analysis</a></li><li><a href="index.html#team-administration">Team administration</a></li><li><a href="index.html#hardware">Hardware</a></li></ul></nav></header>
+<main class="content">
+<p class="crumb"><a href="index.html">Help</a> &rsaquo; <a href="index.html#team-administration">Team administration</a></p>
+<h1>Event buttons</h1>
+<p class="lead">Event buttons are the logging strip operators press during a live session. Each show has its
+own set, its own colour palette, and optional instructions that let AutoLogger log events
+automatically from a transcript. Owners and admins set them up; everyone uses them.</p>
+<h2>How to add an event button</h2>
+<ol>
+  <li>Choose the show in the top bar, then open <strong>Settings</strong> &rarr; <strong>Event
+    buttons</strong>.</li>
+  <li>Click <strong>Add button</strong>.</li>
+  <li>Type the <strong>Name</strong> (shown on the button and as the event's category).</li>
+  <li>Choose the <strong>Type</strong>:
+    <ul>
+      <li><strong>Button</strong>: logs one event with the button's name.</li>
+      <li><strong>Dropdown</strong>: you pick an option when logging; the option becomes the
+        event message.</li>
+      <li><strong>Text</strong>: you type a short message when logging.</li>
+      <li><strong>On / Off</strong>: toggles between two states and logs each change.</li>
+    </ul>
+  </li>
+  <li>Pick a <strong>Colour</strong> from the show's palette. The <strong>Preview</strong> shows the
+    button.</li>
+  <li>For a Dropdown, fill in each option under <strong>Options</strong> and use <strong>Add
+    option</strong> for more. Tick <strong>Needs context</strong> on an option to ask for a note
+    after it is chosen.</li>
+  <li>For On / Off, fill in the <strong>On label</strong> and <strong>Off label</strong>.</li>
+  <li>Click <strong>Add button</strong>.</li>
+</ol>
+
+<h2>How to order buttons and their number keys</h2>
+<ol>
+  <li>Click <strong>Edit</strong> on a button.</li>
+  <li>Under <strong>Position</strong>, click <strong>Move up</strong> or <strong>Move
+    down</strong>.</li>
+  <li>Click <strong>Save</strong>. The first nine buttons get the keys <kbd>1</kbd> to
+    <kbd>9</kbd>; the list shows each button's key.</li>
+</ol>
+
+<h2>How to write auto-generate instructions</h2>
+<ol>
+  <li>Edit a button and find <strong>Auto-generate</strong>.</li>
+  <li>In <strong>Instruction</strong>, describe when the event should be logged, for example
+    &ldquo;Log when the host introduces a new segment.&rdquo;</li>
+  <li>For a Dropdown, you can also fill in <strong>Instruction for this option</strong> to say when
+    each option should be picked.</li>
+  <li>Click <strong>Save</strong>. Buttons with instructions are listed as
+    &ldquo;Auto-generates&rdquo;.</li>
+</ol>
+<p>On / Off buttons cannot auto-generate events. See <a href="auto-generate-events.html">Auto-generating
+events</a> for running it.</p>
+
+<h2>How to change the colours</h2>
+<ol>
+  <li>Under <strong>Palette</strong>, choose a preset: <strong>Default</strong>,
+    <strong>Neon</strong>, <strong>Desert</strong> or <strong>Aqua</strong>.</li>
+  <li>Or change one of the <strong>Colours</strong>; the palette becomes
+    <strong>Custom</strong>.</li>
+</ol>
+
+<h2>How to copy buttons from another show</h2>
+<ol>
+  <li>Under <strong>Copy from another show</strong>, choose the show in <strong>Copy buttons
+    from</strong>.</li>
+  <li>Click <strong>Copy</strong> and confirm <strong>Replace buttons</strong>. This show's buttons
+    and colours are replaced with a copy of the other show's.</li>
+</ol>
+
+<h2>How to delete a button</h2>
+<ol>
+  <li>Click <strong>Edit</strong> on the button.</li>
+  <li>Under <strong>Delete</strong>, click <strong>Delete</strong>, then <strong>Click again to
+    delete</strong>.</li>
+</ol>
+<p>Events already logged with it stay in their sessions.</p>
+
+<h2>Permissions</h2>
+<p>Only owners and admins can change event buttons. Members see them read-only.</p>
+
+<h2>Common problems</h2>
+<ul>
+  <li><strong>Sheets log import puts everything under OTHER.</strong> Add a button named OTHER and
+    make sure button and option names match the sheet's type column; see <a
+    href="sheets-log-import.html">Importing logs from Google Sheets</a>.</li>
+  <li><strong>A button has no number key.</strong> Only the first nine have one; move it up.</li>
+</ul>
+<h2>Related</h2>
+<ul class="related"><li><a href="live-logging.html">Live logging with timecode</a></li><li><a href="auto-generate-events.html">Auto-generating events</a></li><li><a href="shows.html">Shows</a></li><li><a href="sheets-log-import.html">Importing logs from Google Sheets</a></li></ul>
+</main>
+<footer class="site-footer"><p><a href="index.html">AutoLogger Help</a> &middot; Help for people
+who use AutoLogger. For problems these pages don't cover, contact your team's owner or your
+server administrator.</p></footer>
+</body>
+</html>

@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Timeline and playback - AutoLogger Help</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="site-header"><nav class="topnav" aria-label="Help navigation"><a class="brand" href="index.html">AutoLogger Help</a><ul><li><a href="index.html">Home</a></li><li><a href="index.html#getting-started">Getting started</a></li><li><a href="index.html#running-a-session">Running a session</a></li><li><a href="index.html#after-the-session">After the session</a></li><li><a href="index.html#analysis">Analysis</a></li><li><a href="index.html#team-administration">Team administration</a></li><li><a href="index.html#hardware">Hardware</a></li></ul></nav></header>
+<main class="content">
+<p class="crumb"><a href="index.html">Help</a> &rsaquo; <a href="index.html#running-a-session">Running a session</a></p>
+<h1>Timeline and playback</h1>
+<p class="lead">The timeline shows the whole session at a glance: audio waveform, recorded clips and a marker
+for each event. Members use it to listen back and to jump between moments.</p>
+<h2>How to play back audio</h2>
+<ol>
+  <li>Make sure timecode is stopped (status <strong>STOPPED</strong>).</li>
+  <li>Click <strong>Play or pause audio</strong>, or press <kbd>Space</kbd>. The status shows
+    <strong>PLAY</strong>.</li>
+  <li>Click <strong>Pause audio</strong> or press <kbd>Space</kbd> again to pause.</li>
+</ol>
+
+<h2>How to move around the timeline</h2>
+<ol>
+  <li>Click or drag on the <strong>Timeline scrubber</strong> to move the playhead.</li>
+  <li>With the playhead focused, press <kbd>&larr;</kbd> or <kbd>&rarr;</kbd> to move 1 second, or
+    hold <kbd>Shift</kbd> to move 10 seconds.</li>
+  <li>Use the <strong>Timeline zoom</strong> controls (<strong>Reduce timeline zoom</strong> /
+    <strong>Increase timeline zoom</strong>) or press <kbd>+</kbd> and <kbd>&minus;</kbd> to zoom
+    in and out.</li>
+  <li>Click <strong>Previous marker</strong> or <strong>Next marker</strong> to step between logged
+    events. The timeline shows the <strong>Current marker</strong>. Marker navigation moves the
+    playhead but does not start playback.</li>
+</ol>
+
+<h2>How to jump to a row from a feed</h2>
+<ol>
+  <li>In the <strong>Event Feed</strong>, <strong>Transcript</strong> or <strong>Topics</strong>
+    tab, find the row.</li>
+  <li>Click its jump button (named <strong>Jump to</strong> and the row's time).</li>
+  <li>The timeline moves to that point and playback starts from there. If no recording covers that
+    moment, only the playhead moves.</li>
+</ol>
+
+<h2>What the timeline shows</h2>
+<ul>
+  <li><strong>Clips</strong> for each recording or import. A gap labelled &ldquo;No audio file for
+    this log interval&rdquo; means events were logged without audio.</li>
+  <li><strong>Generating waveform&hellip;</strong> or <strong>Finalizing recording&hellip;</strong>
+    while new audio is processed; <strong>Waveform unavailable</strong> if it could not be
+    drawn. Playback still works without a waveform.</li>
+  <li>One <strong>marker</strong> per event, coloured by its event button.</li>
+</ul>
+
+<h2>Common problems</h2>
+<ul>
+  <li><strong>Jump buttons are unavailable.</strong> Jumping is turned off while timecode is
+    rolling, while the session is still loading, or during batch edit.</li>
+  <li><strong>A topic has no jump button.</strong> Topics can only be placed once the session has a
+    transcript.</li>
+  <li><strong>&ldquo;Audio failed to load.&rdquo;</strong> Reload the page; if the clip still fails,
+    the audio may still be processing.</li>
+</ul>
+<h2>Related</h2>
+<ul class="related"><li><a href="live-logging.html">Live logging with timecode</a></li><li><a href="event-feed.html">Reviewing and editing the Event Feed</a></li><li><a href="recording-audio.html">Recording audio</a></li><li><a href="keyboard-shortcuts.html">Keyboard shortcuts</a></li></ul>
+</main>
+<footer class="site-footer"><p><a href="index.html">AutoLogger Help</a> &middot; Help for people
+who use AutoLogger. For problems these pages don't cover, contact your team's owner or your
+server administrator.</p></footer>
+</body>
+</html>

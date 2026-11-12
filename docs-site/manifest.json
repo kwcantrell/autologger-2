@@ -1,0 +1,167 @@
+{
+  "generatedBy": "docs-writer agent (.claude/agents/docs-writer.md)",
+  "specs": {
+    "ai-topics-chat": {
+      "pages": [
+        "ai-assistant.html",
+        "topics.html"
+      ]
+    },
+    "ai-v2-dashboards": {
+      "pages": [
+        "ai-dashboards.html"
+      ]
+    },
+    "api-contract-freeze": {
+      "excluded": "Developer-only: the frozen server interface that other software depends on."
+    },
+    "auto-event-generation": {
+      "pages": [
+        "auto-generate-events.html",
+        "event-buttons.html"
+      ]
+    },
+    "batch-audio-import": {
+      "pages": [
+        "batch-import.html"
+      ]
+    },
+    "batch-autogenerate": {
+      "pages": [
+        "batch-autogenerate.html"
+      ]
+    },
+    "catalog-database": {
+      "excluded": "Infrastructure-only: how the catalog database is laid out and secured."
+    },
+    "catalog-search": {
+      "pages": [
+        "search.html"
+      ]
+    },
+    "container-deployment": {
+      "excluded": "Infrastructure-only: how the server is packaged and deployed."
+    },
+    "core-ports-architecture": {
+      "excluded": "Developer-only: internal ports and adapters of the server core."
+    },
+    "cursor-agent-adapters": {
+      "excluded": "Developer-only: configuration for coding agents working on the repository."
+    },
+    "legacy-data-import": {
+      "excluded": "Operator-only: a one-off server migration of a team's older data, run by an administrator."
+    },
+    "live-recording-chunks": {
+      "pages": [
+        "recording-audio.html"
+      ]
+    },
+    "local-container-environments": {
+      "excluded": "Infrastructure-only: local development and staging environments."
+    },
+    "media-processing": {
+      "pages": [
+        "recording-audio.html",
+        "timeline-and-playback.html"
+      ]
+    },
+    "package-architecture": {
+      "excluded": "Developer-only: how the code is split into packages."
+    },
+    "provider-credentials": {
+      "pages": [
+        "ai-and-transcription-accounts.html"
+      ]
+    },
+    "session-title-suffix": {
+      "pages": [
+        "creating-sessions.html",
+        "shows.html"
+      ]
+    },
+    "sheets-log-import": {
+      "pages": [
+        "sheets-log-import.html"
+      ]
+    },
+    "show-wiki": {
+      "pages": [
+        "show-wiki.html"
+      ]
+    },
+    "team-management": {
+      "pages": [
+        "teams-and-roles.html",
+        "signing-in.html",
+        "shows.html"
+      ]
+    },
+    "topic-generation": {
+      "pages": [
+        "topics.html"
+      ]
+    },
+    "transcript-generation": {
+      "pages": [
+        "transcripts.html"
+      ]
+    },
+    "web-api-response-conformance": {
+      "excluded": "Developer-only: build-time checks that the web app matches server responses."
+    },
+    "web-coordination-seam": {
+      "excluded": "Developer-only: an internal coordination mechanism between web app components."
+    },
+    "web-frontend-platform": {
+      "excluded": "Developer-only: how the web frontend is built, served and booted."
+    },
+    "web-home-launch": {
+      "pages": [
+        "getting-around.html",
+        "managing-sessions.html"
+      ]
+    },
+    "web-login-experience": {
+      "pages": [
+        "signing-in.html"
+      ]
+    },
+    "web-session-console": {
+      "pages": [
+        "session-workspace.html",
+        "live-logging.html",
+        "event-feed.html",
+        "timeline-and-playback.html",
+        "keyboard-shortcuts.html",
+        "auto-generate-events.html",
+        "exports.html"
+      ]
+    },
+    "web-session-routing": {
+      "pages": [
+        "managing-sessions.html"
+      ]
+    },
+    "web-ui-system": {
+      "pages": [
+        "getting-around.html",
+        "keyboard-shortcuts.html",
+        "event-buttons.html",
+        "companion-module.html",
+        "ai-and-transcription-accounts.html",
+        "batch-autogenerate.html"
+      ]
+    },
+    "wiki-generation": {
+      "pages": [
+        "show-wiki.html"
+      ]
+    },
+    "youtube-audio-import": {
+      "pages": [
+        "youtube-import.html",
+        "batch-import.html"
+      ]
+    }
+  }
+}

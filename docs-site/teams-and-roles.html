@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Teams, roles and invitations - AutoLogger Help</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="site-header"><nav class="topnav" aria-label="Help navigation"><a class="brand" href="index.html">AutoLogger Help</a><ul><li><a href="index.html">Home</a></li><li><a href="index.html#getting-started">Getting started</a></li><li><a href="index.html#running-a-session">Running a session</a></li><li><a href="index.html#after-the-session">After the session</a></li><li><a href="index.html#analysis">Analysis</a></li><li><a href="index.html#team-administration">Team administration</a></li><li><a href="index.html#hardware">Hardware</a></li></ul></nav></header>
+<main class="content">
+<p class="crumb"><a href="index.html">Help</a> &rsaquo; <a href="index.html#team-administration">Team administration</a></p>
+<h1>Teams, roles and invitations</h1>
+<p class="lead">A team (also called a studio) groups people and shows. Owners and admins run the team: they
+invite members, set roles, decide which shows each member can open, and hand over or delete the
+team. Members can see who is on the team.</p>
+<h2>Roles</h2>
+<table>
+  <thead><tr><th>What</th><th>Owner</th><th>Admin</th><th>Member</th></tr></thead>
+  <tbody>
+    <tr><td>Open every show of the team</td><td>Yes</td><td>Yes</td><td>Only shows they are given</td></tr>
+    <tr><td>Rename the team, change team and show settings, add shows</td><td>Yes</td><td>Yes</td><td>No</td></tr>
+    <tr><td>Invite people, revoke invites</td><td>Yes</td><td>Yes</td><td>No</td></tr>
+    <tr><td>Give or remove show access</td><td>Yes</td><td>Yes</td><td>No</td></tr>
+    <tr><td>Remove a member</td><td>Yes</td><td>Yes</td><td>No</td></tr>
+    <tr><td>Remove an admin, change roles</td><td>Yes</td><td>No</td><td>No</td></tr>
+    <tr><td>Transfer ownership, delete the team</td><td>Yes</td><td>No</td><td>No</td></tr>
+    <tr><td>Run batch autogenerate</td><td>Yes</td><td>Yes</td><td>No</td></tr>
+    <tr><td>Leave the team</td><td>Transfer first</td><td>Yes</td><td>Yes</td></tr>
+  </tbody>
+</table>
+<p>Each team has exactly one owner. Anyone can create a new team and becomes its owner.</p>
+
+<h2>How to invite someone</h2>
+<ol>
+  <li>Open <strong>Settings</strong> and choose <strong>Members</strong> under your team.</li>
+  <li>In <strong>Invite someone</strong>, type their <strong>Email address</strong> (for example
+    <code>producer@example.com</code>).</li>
+  <li>Click <strong>Send invite</strong>.</li>
+  <li>If they already use AutoLogger they join at once. Otherwise they appear as
+    <strong>Invited</strong> (&ldquo;Invited. Joins at first sign-in.&rdquo;) and join as a member
+    when they first sign in with that Google account.</li>
+  <li>Give them show access (next section); new members start with no shows.</li>
+</ol>
+<p>To cancel a pending invite, click <strong>Revoke</strong> next to it.</p>
+
+<h2>How to give a member access to shows</h2>
+<ol>
+  <li>In <strong>Members</strong>, click the member.</li>
+  <li>Under <strong>Show access</strong>, tick the shows they may open and untick the rest.</li>
+  <li>Click <strong>Save</strong>.</li>
+</ol>
+<p>You can also choose who opens a show from the show itself: <strong>Shows</strong> &rarr;
+<strong>Edit</strong> &rarr; <strong>Who can open it</strong>. Removing access takes effect at once,
+and closes any session of that show the member has open.</p>
+
+<h2>How to change someone's role</h2>
+<ol>
+  <li>As the owner, open <strong>Members</strong> and click the person.</li>
+  <li>Under <strong>Role</strong>, choose <strong>Admin</strong> or <strong>Member</strong>.</li>
+  <li>Click <strong>Save</strong>.</li>
+</ol>
+
+<h2>How to remove someone from the team</h2>
+<ol>
+  <li>In <strong>Members</strong>, click the person.</li>
+  <li>Under <strong>Membership</strong>, click <strong>Remove&hellip;</strong> (or <strong>Keep on
+    team</strong> to undo).</li>
+  <li>Click <strong>Remove member</strong> and confirm. They lose access right away, including to
+    any open sessions.</li>
+</ol>
+
+<h2>How to rename the team or set its frame rate</h2>
+<ol>
+  <li>Open <strong>Settings</strong> &rarr; <strong>Team details</strong>.</li>
+  <li>Change <strong>Team name</strong> or <strong>Default frame rate</strong> (new sessions in this
+    team start at this rate). The <strong>Team id</strong> cannot be changed.</li>
+  <li>Click <strong>Save</strong>.</li>
+</ol>
+
+<h2>How to hand over, leave or delete a team</h2>
+<ul>
+  <li><strong>Transfer ownership</strong> (owner): in <strong>Team details</strong>, click
+    <strong>Transfer&hellip;</strong>, pick a member and confirm <strong>Transfer</strong>. You
+    become an admin.</li>
+  <li><strong>Leave team</strong> (admins and members): click <strong>Leave team</strong> and
+    confirm. You need a new invite to rejoin. An owner must transfer ownership first.</li>
+  <li><strong>Delete team</strong> (owner): click <strong>Delete team</strong> and confirm. A team
+    that still has shows cannot be deleted. This cannot be undone.</li>
+</ul>
+
+<h2>How to create another team</h2>
+<p>In <strong>Team details</strong>, use <strong>Create a team</strong>: type a <strong>Team id
+(slug)</strong> and <strong>Display name</strong> and click <strong>Create team</strong>. You become
+its owner. Switch between teams from the top bar.</p>
+
+<h2>Common problems</h2>
+<ul>
+  <li><strong>Controls are greyed out.</strong> &ldquo;Only owners and admins can invite people or
+    change roles and show access.&rdquo;</li>
+  <li><strong>A member sees no sessions.</strong> They have no show access yet; give them shows.</li>
+  <li><strong>&ldquo;Discard changes?&rdquo;</strong> You closed a panel without saving. Choose
+    <strong>Keep editing</strong> and click <strong>Save</strong>.</li>
+</ul>
+<h2>Related</h2>
+<ul class="related"><li><a href="shows.html">Shows</a></li><li><a href="signing-in.html">Signing in and your account</a></li><li><a href="getting-around.html">Getting around AutoLogger</a></li><li><a href="batch-autogenerate.html">Batch autogenerate</a></li></ul>
+</main>
+<footer class="site-footer"><p><a href="index.html">AutoLogger Help</a> &middot; Help for people
+who use AutoLogger. For problems these pages don't cover, contact your team's owner or your
+server administrator.</p></footer>
+</body>
+</html>

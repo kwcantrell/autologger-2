@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Auto-generating events - AutoLogger Help</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="site-header"><nav class="topnav" aria-label="Help navigation"><a class="brand" href="index.html">AutoLogger Help</a><ul><li><a href="index.html">Home</a></li><li><a href="index.html#getting-started">Getting started</a></li><li><a href="index.html#running-a-session">Running a session</a></li><li><a href="index.html#after-the-session">After the session</a></li><li><a href="index.html#analysis">Analysis</a></li><li><a href="index.html#team-administration">Team administration</a></li><li><a href="index.html#hardware">Hardware</a></li></ul></nav></header>
+<main class="content">
+<p class="crumb"><a href="index.html">Help</a> &rsaquo; <a href="index.html#after-the-session">After the session</a></p>
+<h1>Auto-generating events</h1>
+<p class="lead">Auto generate reads a session's transcript and logs events for you, following instructions you
+attach to each event button (for example &ldquo;Log when the host introduces a new segment&rdquo;).
+It is used by members who want a first-pass log of a recorded session.</p>
+<h2>Before you start</h2>
+<ul>
+  <li>The session needs a transcript (see <a href="transcripts.html">Transcripts</a>).</li>
+  <li>At least one event button of the show needs an auto-generate instruction (set by an owner or
+    admin in <a href="event-buttons.html">Event buttons</a>).</li>
+  <li>You need your own language model in Settings &rarr; Advanced (see
+    <a href="ai-and-transcription-accounts.html">AI and transcription accounts</a>).</li>
+</ul>
+
+<h2>How to generate events from all instructions</h2>
+<ol>
+  <li>Open the <strong>Event Feed</strong> tab.</li>
+  <li>Click <strong>Auto generate</strong>.</li>
+  <li>Choose <strong>Generate All</strong>. The button shows <strong>Generating&hellip;</strong>
+    while it works.</li>
+  <li>When it finishes, the toolbar says how many events were created, for example &ldquo;Created 12
+    events.&rdquo; New events are marked as auto-generated and placed at the matching point of the
+    transcript.</li>
+</ol>
+
+<h2>How to generate from selected instructions</h2>
+<ol>
+  <li>Click <strong>Auto generate</strong> and choose <strong>Custom</strong>.</li>
+  <li>In <strong>Custom event generation</strong>, tick the button and option instructions to use.
+    Each button's own instruction is listed as <strong>Button instruction</strong>; dropdown options
+    are listed by name.</li>
+  <li>Click <strong>Generate</strong>.</li>
+</ol>
+
+<h2>How to regenerate</h2>
+<ol>
+  <li>Once a session has auto-generated events, the menu offers <strong>Regenerate All</strong>
+    instead of Generate All.</li>
+  <li>Choose it and confirm <strong>Delete and regenerate</strong>.</li>
+  <li>The earlier auto-generated events are replaced only if the new run succeeds. A failed run, or
+    one that finds nothing to log, leaves them in place. Events you logged by hand are never
+    touched.</li>
+</ol>
+
+<h2>Permissions</h2>
+<p>Anyone who can open the show can run Auto generate, using their own language model account.
+Only owners and admins can write the instructions.</p>
+
+<h2>Common problems</h2>
+<ul>
+  <li><strong>&ldquo;No event buttons carry auto-generate instructions yet.&rdquo;</strong> Ask an
+    owner or admin to add instructions in Settings &rsaquo; Event buttons.</li>
+  <li><strong>&ldquo;Add a language model in Settings &rarr; Advanced to generate events.&rdquo;</strong>
+    Add your language model; manual logging still works meanwhile.</li>
+  <li><strong>&ldquo;&hellip; per-run cap reached&rdquo;.</strong> One run creates a limited number
+    of events. Review them, then run again or use Custom for the rest.</li>
+  <li>On / Off buttons cannot auto-generate events.</li>
+</ul>
+<h2>Related</h2>
+<ul class="related"><li><a href="event-feed.html">Reviewing and editing the Event Feed</a></li><li><a href="event-buttons.html">Event buttons</a></li><li><a href="transcripts.html">Transcripts</a></li><li><a href="batch-autogenerate.html">Batch autogenerate</a></li></ul>
+</main>
+<footer class="site-footer"><p><a href="index.html">AutoLogger Help</a> &middot; Help for people
+who use AutoLogger. For problems these pages don't cover, contact your team's owner or your
+server administrator.</p></footer>
+</body>
+</html>

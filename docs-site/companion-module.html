@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stream Deck and the Companion module - AutoLogger Help</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="site-header"><nav class="topnav" aria-label="Help navigation"><a class="brand" href="index.html">AutoLogger Help</a><ul><li><a href="index.html">Home</a></li><li><a href="index.html#getting-started">Getting started</a></li><li><a href="index.html#running-a-session">Running a session</a></li><li><a href="index.html#after-the-session">After the session</a></li><li><a href="index.html#analysis">Analysis</a></li><li><a href="index.html#team-administration">Team administration</a></li><li><a href="index.html#hardware">Hardware</a></li></ul></nav></header>
+<main class="content">
+<p class="crumb"><a href="index.html">Help</a> &rsaquo; <a href="index.html#hardware">Hardware</a></p>
+<h1>Stream Deck and the Companion module</h1>
+<p class="lead">The AutoLogger module for Bitfocus Companion lets an operator drive a live session from a Stream
+Deck: roll and stop timecode, record, play and log events, with the timecode and session name shown
+on the keys. It is set up by the operator who runs the hardware.</p>
+<h2>How to create a device token</h2>
+<ol>
+  <li>In AutoLogger, open <strong>Settings</strong> &rarr; <strong>Companion devices</strong>
+    (under <strong>You</strong>).</li>
+  <li>Type a <strong>Device name</strong>, for example <em>Booth A</em>, so you can tell it apart
+    later.</li>
+  <li>Click <strong>Add device</strong>.</li>
+  <li>The <strong>Device token</strong> dialog shows the token. Click <strong>Copy</strong>. Copy it
+    now: it won't be shown again.</li>
+  <li>Click <strong>Done</strong>.</li>
+</ol>
+<p>The Stream Deck acts as <em>you</em>: it can only reach the sessions you can open.</p>
+
+<h2>How to connect Companion</h2>
+<ol>
+  <li>In Companion, add a connection using the <strong>AutoLogger</strong> module.</li>
+  <li>Fill in <strong>AutoLogger server URL</strong> with the address of your AutoLogger server.</li>
+  <li>Paste the token into <strong>Device token (required)</strong>.</li>
+  <li>Leave <strong>Poll interval (ms)</strong> at 1000 unless told otherwise.</li>
+  <li>Save. The connection turns OK once it reaches the server.</li>
+</ol>
+
+<h2>How to set up the keys</h2>
+<ol>
+  <li>In Companion's presets, open the <strong>AutoLogger</strong> category.</li>
+  <li>Drag the presets you want onto your Stream Deck:
+    <ul>
+      <li><strong>Roll / Stop</strong>: rolls or stops timecode; shows the session name and
+        timecode and lights while rolling.</li>
+      <li><strong>Record</strong>: starts or stops audio recording; lights while recording.</li>
+      <li><strong>Play</strong>: plays or pauses recorded audio.</li>
+      <li><strong>Log event</strong>: logs an event; edit the key to choose the
+        <strong>Category</strong> (an event button of the active show) and an optional
+        <strong>Message</strong>.</li>
+    </ul>
+  </li>
+  <li>You can also build your own keys with the actions <strong>Log event</strong>,
+    <strong>Transport (roll/stop)</strong> (Toggle, Roll or Stop), <strong>Record</strong> (Toggle,
+    Start or Stop) and <strong>Play (toggle)</strong>, the feedbacks <strong>Take is
+    rolling</strong>, <strong>Recording</strong>, <strong>Playing</strong> and <strong>No active
+    session (warn)</strong>, and variables such as session timecode, deck title, show name and
+    logged event count.</li>
+</ol>
+
+<h2>How to run a session from the Stream Deck</h2>
+<ol>
+  <li>Open the session in AutoLogger in a browser and keep that browser open. The module acts on
+    the session that browser has open.</li>
+  <li>Check the session name shown on the keys before pressing; with several tabs open the active
+    session can change.</li>
+  <li>Press <strong>Roll / Stop</strong> to roll, then <strong>Log event</strong> keys as things
+    happen.</li>
+  <li>Record and Play commands are passed to the browser, which shows a short &ldquo;Companion:
+    &hellip;&rdquo; message. If delivery fails, the module's last-command-error variable says
+    why.</li>
+</ol>
+
+<h2>How to revoke a device</h2>
+<ol>
+  <li>In <strong>Settings</strong> &rarr; <strong>Companion devices</strong>, find the device (it
+    shows when it was created and last used).</li>
+  <li>Click <strong>Revoke</strong> and confirm. Its token stops working at once.</li>
+</ol>
+
+<h2>Common problems</h2>
+<ul>
+  <li><strong>&ldquo;Device token invalid or revoked&rdquo;.</strong> The token was revoked,
+    mistyped, or unused for 90 days (it shows <strong>Expired</strong> in Settings). Create a new
+    device and paste its token.</li>
+  <li><strong>&ldquo;Cannot reach AutoLogger server&rdquo;.</strong> Check the server URL and the
+    network.</li>
+  <li><strong>Record does nothing.</strong> Timecode must be rolling, and only one client can record
+    at a time; &ldquo;Another client holds the recording lease.&rdquo; means someone else is
+    recording.</li>
+  <li><strong>Playing state lags.</strong> The playing light is reported by the browser on a
+    best-effort basis; the rolling and recording lights are exact.</li>
+</ul>
+<h2>Related</h2>
+<ul class="related"><li><a href="live-logging.html">Live logging with timecode</a></li><li><a href="recording-audio.html">Recording audio</a></li><li><a href="event-buttons.html">Event buttons</a></li></ul>
+</main>
+<footer class="site-footer"><p><a href="index.html">AutoLogger Help</a> &middot; Help for people
+who use AutoLogger. For problems these pages don't cover, contact your team's owner or your
+server administrator.</p></footer>
+</body>
+</html>

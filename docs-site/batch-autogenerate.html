@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Batch autogenerate - AutoLogger Help</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="site-header"><nav class="topnav" aria-label="Help navigation"><a class="brand" href="index.html">AutoLogger Help</a><ul><li><a href="index.html">Home</a></li><li><a href="index.html#getting-started">Getting started</a></li><li><a href="index.html#running-a-session">Running a session</a></li><li><a href="index.html#after-the-session">After the session</a></li><li><a href="index.html#analysis">Analysis</a></li><li><a href="index.html#team-administration">Team administration</a></li><li><a href="index.html#hardware">Hardware</a></li></ul></nav></header>
+<main class="content">
+<p class="crumb"><a href="index.html">Help</a> &rsaquo; <a href="index.html#team-administration">Team administration</a></p>
+<h1>Batch autogenerate</h1>
+<p class="lead">Batch autogenerate fills in what is missing across many sessions in one background job:
+transcripts, auto-generated events, topics and wiki updates, oldest session first. It is for team
+owners and admins catching up an archive.</p>
+<h2>How to start a batch job</h2>
+<ol>
+  <li>Open <strong>Settings</strong> &rarr; <strong>Batch autogenerate</strong> (under your
+    team).</li>
+  <li>Choose the <strong>Team</strong>.</li>
+  <li>Under <strong>Shows</strong>, tick <strong>All shows</strong> or the shows to include.</li>
+  <li>Under <strong>Steps</strong>, tick <strong>Transcripts</strong>, <strong>Log
+    events</strong>, <strong>Topics</strong> and/or <strong>Wiki</strong>.</li>
+  <li>Under <strong>Wiki output</strong>, choose <strong>Add new pages and additions to the
+    wiki</strong> or <strong>Leave all as suggestions to review</strong>.</li>
+  <li>Read the estimate (for example &ldquo;Run on 14 sessions, at most 40 runs.&rdquo;).</li>
+  <li>Click <strong>Start</strong> and confirm <strong>Start batch autogenerate</strong>.</li>
+</ol>
+
+<h2>How the job runs</h2>
+<ul>
+  <li>Sessions run one at a time, oldest first, and each step runs only where its output is
+    missing (a session that already has a transcript is not transcribed again).</li>
+  <li>Steps run in order; if one fails, the rest of that session is skipped and the job moves on.</li>
+  <li>The job runs on <em>your</em> provider accounts, keeps going if you close the browser, and
+    resumes after a server restart.</li>
+  <li>If the provider fails on three sessions in a row, the job stops.</li>
+</ul>
+
+<h2>How to follow and cancel a job</h2>
+<ol>
+  <li>Under <strong>Recent jobs</strong>, each job shows <strong>Queued</strong>,
+    <strong>Running</strong>, <strong>Finished</strong>, <strong>Cancelled</strong> or
+    <strong>Stopped</strong>, and what it is doing now (&ldquo;Now: <em>session</em> &middot;
+    <em>step</em>&rdquo;).</li>
+  <li>To stop it, click <strong>Cancel job</strong> and confirm. The job stops after its current
+    step; work already done is kept.</li>
+  <li>When it ends, the report lists each session and the result of each step.</li>
+</ol>
+
+<h2>Permissions and requirements</h2>
+<ul>
+  <li>Only owners and admins of a team can run, view or cancel its batch jobs; the section is
+    hidden from everyone else.</li>
+  <li>You need a speech-to-text key for Transcripts and a language model for the other steps (see
+    <a href="ai-and-transcription-accounts.html">AI and transcription accounts</a>).</li>
+  <li>The server may limit this to approved users; ask your administrator if told so.</li>
+</ul>
+
+<h2>Common problems</h2>
+<ul>
+  <li><strong>&ldquo;Stopped: the initiator has no speech-to-text key.&rdquo;</strong> (or no
+    language model) Add it and start again.</li>
+  <li><strong>&ldquo;Stopped: the initiator is no longer an owner or admin of this team.&rdquo;</strong>
+    The person who started the job lost their role.</li>
+  <li><strong>&ldquo;Pick at least one show and one step.&rdquo;</strong> Tick a show and a
+    step.</li>
+</ul>
+<h2>Related</h2>
+<ul class="related"><li><a href="batch-import.html">Batch Import: folders and playlists</a></li><li><a href="transcripts.html">Transcripts</a></li><li><a href="auto-generate-events.html">Auto-generating events</a></li><li><a href="show-wiki.html">The show wiki</a></li></ul>
+</main>
+<footer class="site-footer"><p><a href="index.html">AutoLogger Help</a> &middot; Help for people
+who use AutoLogger. For problems these pages don't cover, contact your team's owner or your
+server administrator.</p></footer>
+</body>
+</html>
