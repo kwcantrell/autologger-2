@@ -98,6 +98,7 @@ describe('the scan is mutation-checked against synthetic trees (session-tables D
     const root = tree({
       'packages/session-core/src/a.ts': [
         "db.all('SELECT * FROM session_events WHERE session_id = ? AND id = ?', sid, id);",
+        // biome-ignore lint/suspicious/noTemplateCurlyInString: fixture source text; the scanner must see a literal `${table}` interpolation.
         'db.all(`SELECT COALESCE(MAX(ordinal), -1) + 1 AS n FROM ${table} WHERE session_id = ?`, sid);',
         'db.run(`INSERT INTO session_meta (session_id, key, value) VALUES (?, ?, ?)`, sid, k, v);',
         "// the hub's lock: `SELECT` below",
@@ -122,9 +123,11 @@ describe('the scan is mutation-checked against synthetic trees (session-tables D
   it('an interpolated table name without session_id fails', () => {
     const root = tree({
       'packages/session-core/src/c.ts':
+        // biome-ignore lint/suspicious/noTemplateCurlyInString: fixture source text; the scanner must see a literal `${table}` interpolation.
         'db.all(`SELECT COALESCE(MAX(ordinal), -1) + 1 AS n FROM ${table}`);\n',
     });
     expect(scanSessionSql(root).unscoped).toEqual([
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: the scanner reports the statement's source text, `${table}` included.
       'packages/session-core/src/c.ts: SELECT COALESCE(MAX(ordinal), -1) + 1 AS n FROM ${table}',
     ]);
   });

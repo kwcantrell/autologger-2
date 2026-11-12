@@ -10,7 +10,7 @@ const urls = (body: string) => parseWikiLinks(body).links.map((l) => l.url);
 const one = (body: string) => {
   const { links } = parseWikiLinks(body);
   expect(links).toHaveLength(1);
-  return links[0]!;
+  return links[0];
 };
 
 describe('parseWikiLinks', () => {
