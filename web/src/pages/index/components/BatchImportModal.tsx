@@ -1,21 +1,58 @@
 import { useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { Upload, X } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  autogenerateKeys,
+  useAutogenerateJobs,
+  useAutogeneratePreview,
+} from '../../../api/hooks/useAutogenerateJobs';
+import { useProviders } from '../../../api/hooks/useProviders';
 import { showAccessFrom } from '../../../api/hooks/useShowAccess';
-import type { ProfilePayload, YoutubePlaylistResponse } from '../../../api/types';
+import type {
+  AutogenerateBlocked,
+  AutogenerateJobListResponse,
+  AutogenerateScopeBody,
+  AutogenerateStep,
+  AutogenerateWikiMode,
+  ProfilePayload,
+  YoutubePlaylistResponse,
+} from '../../../api/types';
 import { Button, TOUCH_TARGET } from '../../../shared/components/ui/button';
+import { Checkbox } from '../../../shared/components/ui/checkbox';
 import { Field, FieldLabel } from '../../../shared/components/ui/field';
+import { useConfirm } from '../../../shared/ui/ConfirmDialog';
 import { Dialog, DialogActions } from '../../../shared/ui/Dialog';
 import { useTextPrompt } from '../../../shared/ui/PromptDialog';
+import {
+  autogenerateMayHaveStarted,
+  startAutogenerateAfterImport,
+} from '../batchImport/autogenerateAfterImport';
 import { playlistSessionNames } from '../batchImport/playlistNames';
-import { listPlaylistEntries, runPlaylistImport } from '../batchImport/playlistRunner';
+import {
+  listPlaylistEntries,
+  readProfile,
+  readShowSessions,
+  runPlaylistImport,
+} from '../batchImport/playlistRunner';
 import {
   type BatchImportProgressState,
   formatErrorDetail,
   isAbortError,
   runBatchImport,
 } from '../batchImport/runner';
+import {
+  AutogenerateConfirmMessage,
+  AutogenerateOptions,
+} from './autogenerate/AutogenerateOptions';
+import {
+  BLOCKED_TEXT,
+  blockedFromProviders,
+  defaultAutogenerateSteps,
+  maxRuns,
+  orderedSteps,
+  useDebounced,
+} from './autogenerate/autogenerateModel';
 import { PlaylistPicker, type PlaylistSelection } from './PlaylistPicker';
 import { Select } from './Select';
 
@@ -58,6 +95,45 @@ function BatchImportIcon() {
 const EMPTY_PROGRESS: BatchImportProgressState = { current: null, percent: 0, lines: [] };
 const NO_SELECTION: PlaylistSelection = { indexes: [], usePublishDate: true };
 
+// playlist-import-autogenerate (batch-audio-import "YouTube playlist import can autogenerate
+// afterwards"): one batch job after the run over the sessions its playlist part brought in.
+/** The job's session cap (`AUTOGENERATE_MAX_SESSIONS`). */
+const AUTOGENERATE_MAX_VIDEOS = 1000;
+/** How long the confirm waits for the team's job list before opening without the warning. */
+const JOB_LIST_WAIT_MS = 5_000;
+const RECHECK_SENTENCE = 'Your providers are checked again when the import ends.';
+const LIVE_JOB_WARNING =
+  'A batch job is already running for this team; autogenerate after this import will not start unless it has finished by then.';
+
+/** The up-front check for the current selection (design D6). Only `block` stops Start Import;
+ * `unknown` (the preview could not answer) falls back to a provider-derived warning. */
+type AutogenerateVerdict =
+  | { kind: 'off' }
+  | { kind: 'pending' }
+  | { kind: 'clear' }
+  | { kind: 'block'; reason: AutogenerateBlocked }
+  | { kind: 'unknown' };
+
+/** Whether the team's job list (read just before the confirm) holds a live job; false when the
+ * read fails or does not answer in time (owner decision 6: it only warns). */
+async function hasLiveJob(
+  refetch: () => Promise<{ status: string; data?: AutogenerateJobListResponse }>,
+): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<null>((resolve) => {
+    timer = setTimeout(() => resolve(null), JOB_LIST_WAIT_MS);
+  });
+  try {
+    const r = await Promise.race([refetch(), timeout]);
+    if (r === null || r.status !== 'success') return false;
+    return (r.data?.jobs ?? []).some((j) => j.status === 'queued' || j.status === 'running');
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export function BatchImportModal({ profile, onClose }: Props) {
   // show-grants D13: the picker lists the active team's shows the user can access.
   const shows = showAccessFrom(profile).accessibleShows(profile?.active_studio_id);
@@ -77,6 +153,16 @@ export function BatchImportModal({ profile, onClose }: Props) {
   const [playlistLoading, setPlaylistLoading] = useState(false);
   const [playlistError, setPlaylistError] = useState<string | null>(null);
   const [playlistSelection, setPlaylistSelection] = useState<PlaylistSelection>(NO_SELECTION);
+  // The "Autogenerate after import" group (design D11): reset whenever the group is hidden.
+  const [agTicked, setAgTicked] = useState(false);
+  const [agSteps, setAgSteps] = useState<Set<AutogenerateStep>>(defaultAutogenerateSteps);
+  const [agMode, setAgMode] = useState<AutogenerateWikiMode>('accept');
+  const resetAutogenerate = () => {
+    setAgTicked(false);
+    setAgSteps(defaultAutogenerateSteps());
+    setAgMode('accept');
+  };
+  const { confirm, confirmElement } = useConfirm();
 
   const dirInputRef = useRef<HTMLInputElement>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -110,7 +196,63 @@ export function BatchImportModal({ profile, onClose }: Props) {
   const hasAudio = Boolean(folderName && selectedFiles && selectedFiles.length > 0);
   const hasLogs = Boolean(logsUrl?.trim());
   const hasPlaylist = Boolean(playlist && playlistSelection.indexes.length > 0);
-  const canStart = Boolean(showId && (hasAudio || hasPlaylist || hasLogs) && !isImporting);
+
+  // Design D7: only an owner or admin of the modal's team (the active one) sees the group.
+  const teamId = profile?.active_studio_id ?? '';
+  const teamRole = profile?.auth?.user?.teams?.find((t) => t.id === teamId)?.role;
+  const canAutogenerate = teamRole === 'owner' || teamRole === 'admin';
+  const groupShown = canAutogenerate && playlist !== null;
+  const armed = groupShown && agTicked && playlistSelection.indexes.length > 0;
+  const runSteps = orderedSteps(agSteps);
+  const checkedCount = playlistSelection.indexes.length;
+  const tooMany = checkedCount > AUTOGENERATE_MAX_VIDEOS;
+
+  // Up-front check (design D6): the preview over the run's show, debounced like Settings. Only
+  // an answer for the current body counts; the hook's placeholder (previous) answer never does.
+  const checkOn = armed && runSteps.length > 0 && !isImporting && showId !== '';
+  const agBodyKey = checkOn ? JSON.stringify([showId, runSteps, agMode]) : null;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the key is the body's content
+  const agBody = useMemo<AutogenerateScopeBody | null>(
+    () => (checkOn ? { show_ids: [showId], steps: runSteps, wiki_mode: agMode } : null),
+    [agBodyKey],
+  );
+  const agDebounced = useDebounced(agBody, 400);
+  const agPreview = useAutogeneratePreview(teamId, agDebounced, checkOn);
+  let verdict: AutogenerateVerdict = { kind: 'off' };
+  if (checkOn) {
+    if (agDebounced !== agBody || agPreview.isPlaceholderData) verdict = { kind: 'pending' };
+    else if (agPreview.isSuccess) {
+      const blocked = agPreview.data.blocked;
+      verdict = blocked === null ? { kind: 'clear' } : { kind: 'block', reason: blocked };
+    } else if (agPreview.isError) verdict = { kind: 'unknown' };
+    else verdict = { kind: 'pending' };
+  }
+  const verdictRef = useRef(verdict);
+  verdictRef.current = verdict;
+  const providers = useProviders({ enabled: verdict.kind === 'unknown' });
+  const warning =
+    verdict.kind === 'unknown' && providers.data
+      ? blockedFromProviders(runSteps, providers.data)
+      : null;
+  // The live-job warning's list (design D10): enabled only while armed, read again at Start.
+  const jobList = useAutogenerateJobs(teamId, armed, false);
+
+  const agReason = !armed
+    ? null
+    : runSteps.length === 0
+      ? 'Pick at least one step.'
+      : tooMany
+        ? `Autogenerate after import covers at most ${AUTOGENERATE_MAX_VIDEOS} videos; check fewer videos or untick it.`
+        : verdict.kind === 'pending'
+          ? 'Checking your providers…'
+          : verdict.kind === 'block'
+            ? BLOCKED_TEXT[verdict.reason]
+            : null;
+  const agNote =
+    agReason ?? (armed && warning ? `${BLOCKED_TEXT[warning]} ${RECHECK_SENTENCE}` : null);
+  const canStart = Boolean(
+    showId && (hasAudio || hasPlaylist || hasLogs) && !isImporting && agReason === null,
+  );
 
   const handleClose = () => {
     abortRef.current?.abort();
@@ -137,6 +279,7 @@ export function BatchImportModal({ profile, onClose }: Props) {
     listingAbortRef.current = controller;
     setPlaylist(null);
     setPlaylistSelection(NO_SELECTION);
+    resetAutogenerate();
     setPlaylistError(null);
     setPlaylistLoading(true);
     try {
@@ -181,6 +324,48 @@ export function BatchImportModal({ profile, onClose }: Props) {
     if (!profile || !showId) return;
     if (!hasAudio && !hasPlaylist && !hasLogs) return;
 
+    // With autogenerate armed: the team's job list, then one confirm, then the current verdict
+    // once more (design D6, D9, D10); the confirmed choice and user are fixed for the run (D12).
+    let autogenerate: {
+      teamId: string;
+      steps: AutogenerateStep[];
+      wikiMode: AutogenerateWikiMode;
+      confirmedUserId: string;
+      runStudio: string;
+    } | null = null;
+    if (armed) {
+      const steps = runSteps;
+      const wikiMode = agMode;
+      const live = await hasLiveJob(() => jobList.refetch());
+      const ok = await confirm({
+        title: 'Import and autogenerate',
+        message: (
+          <AutogenerateConfirmMessage
+            lead={[
+              ...(live ? [LIVE_JOB_WARNING] : []),
+              `Import ${checkedCount} videos, then autogenerate on up to ${checkedCount} sessions, at most ${maxRuns(checkedCount, steps)} runs.`,
+              'Only videos this import brings in are included.',
+            ]}
+            trailing={[RECHECK_SENTENCE]}
+            mode={wikiMode}
+            wiki={steps.includes('wiki')}
+          />
+        ),
+        confirmLabel: 'Start',
+      });
+      if (!ok) return;
+      const now = verdictRef.current.kind;
+      if (now === 'block' || now === 'pending') return;
+      autogenerate = {
+        teamId,
+        steps,
+        wikiMode,
+        confirmedUserId: profile.auth?.user?.id ?? '',
+        runStudio: profile.active_studio_id,
+      };
+    }
+    const importedIds: string[] = [];
+
     const controller = new AbortController();
     abortRef.current = controller;
     setIsImporting(true);
@@ -198,76 +383,102 @@ export function BatchImportModal({ profile, onClose }: Props) {
     };
 
     try {
-      if (hasAudio && selectedFiles) {
-        await runBatchImport({
-          showId,
-          files: selectedFiles,
-          profile,
-          signal: controller.signal,
-          onProgress: setProgress,
-          onSessionCreated: invalidateSessions,
-        });
-      }
+      try {
+        if (hasAudio && selectedFiles) {
+          await runBatchImport({
+            showId,
+            files: selectedFiles,
+            profile,
+            signal: controller.signal,
+            onProgress: setProgress,
+            onSessionCreated: invalidateSessions,
+          });
+        }
 
-      // Folder, then playlist, then logs: logs can match sessions the audio parts created.
-      if (hasPlaylist && playlist) {
-        const checked = new Set(playlistSelection.indexes);
-        await runPlaylistImport({
-          showId,
-          entries: playlist.entries.filter((e) => checked.has(e.index)),
-          names: playlistSessionNames(playlist.entries),
-          usePublishDate: playlistSelection.usePublishDate,
-          profile,
-          signal: controller.signal,
-          initialLines: progressRef.current.lines,
-          onProgress: setProgress,
-          onSessionCreated: invalidateSessions,
-        });
-      }
+        // Folder, then playlist, then logs: logs can match sessions the audio parts created.
+        if (hasPlaylist && playlist) {
+          const checked = new Set(playlistSelection.indexes);
+          await runPlaylistImport({
+            showId,
+            entries: playlist.entries.filter((e) => checked.has(e.index)),
+            names: playlistSessionNames(playlist.entries),
+            usePublishDate: playlistSelection.usePublishDate,
+            profile,
+            signal: controller.signal,
+            initialLines: progressRef.current.lines,
+            onProgress: setProgress,
+            onSessionCreated: invalidateSessions,
+            ...(autogenerate ? { onSessionImported: (id: string) => importedIds.push(id) } : {}),
+          });
+        }
 
-      if (hasLogs && logsUrl) {
-        const { startLogImport, pollLogImportJob } = await import('../batchImport/logImportClient');
-        setProgress((prev) => ({
-          ...prev,
-          current: 'Importing logs…',
-          percent: hasAudio || hasPlaylist ? Math.max(prev.percent, 90) : 10,
-        }));
-        const jobId = await startLogImport(showId, logsUrl, controller.signal);
-        const job = await pollLogImportJob(jobId, controller.signal, (j) => {
+        if (hasLogs && logsUrl) {
+          const { startLogImport, pollLogImportJob } = await import(
+            '../batchImport/logImportClient'
+          );
           setProgress((prev) => ({
             ...prev,
-            current: j.status === 'running' || j.status === 'queued' ? 'Importing logs…' : null,
-            percent: j.status === 'completed' || j.status === 'failed' ? 100 : prev.percent,
-            lines: [
-              ...prev.lines.filter((l) => !l.startsWith('[logs] ')),
-              ...j.lines.map((l) => `[logs] ${l}`),
-            ],
+            current: 'Importing logs…',
+            percent: hasAudio || hasPlaylist ? Math.max(prev.percent, 90) : 10,
           }));
-        });
-        if (job.status === 'failed') {
-          mergeLines([`Failed logs: ${job.error ?? 'Log import failed'}`]);
+          const jobId = await startLogImport(showId, logsUrl, controller.signal);
+          const job = await pollLogImportJob(jobId, controller.signal, (j) => {
+            setProgress((prev) => ({
+              ...prev,
+              current: j.status === 'running' || j.status === 'queued' ? 'Importing logs…' : null,
+              percent: j.status === 'completed' || j.status === 'failed' ? 100 : prev.percent,
+              lines: [
+                ...prev.lines.filter((l) => !l.startsWith('[logs] ')),
+                ...j.lines.map((l) => `[logs] ${l}`),
+              ],
+            }));
+          });
+          if (job.status === 'failed') {
+            mergeLines([`Failed logs: ${job.error ?? 'Log import failed'}`]);
+          }
+          void queryClient.invalidateQueries({ queryKey: ['sessions'] });
         }
-        void queryClient.invalidateQueries({ queryKey: ['sessions'] });
+      } catch (err) {
+        if (err instanceof DOMException && err.name === 'AbortError') {
+          return;
+        }
+        const detail = err instanceof Error ? err.message : 'Import failed';
+        const status =
+          err && typeof err === 'object' && 'status' in err && typeof err.status === 'number'
+            ? err.status
+            : null;
+        // A job 404 means its record expired or never existed (shared-request-state D1).
+        const hint =
+          status === 404
+            ? ' (The import job was not found. It may have expired; start the import again.)'
+            : '';
+        setProgress((prev) => ({
+          ...prev,
+          current: null,
+          lines: [...prev.lines, `Failed: ${status ? `HTTP ${status} — ` : ''}${detail}${hint}`],
+        }));
       }
-    } catch (err) {
-      if (err instanceof DOMException && err.name === 'AbortError') {
-        return;
+
+      // Design D3: after the last part, also when a part ended with a Failed line; never after an
+      // abort. Its lines follow every import line and never change them.
+      if (autogenerate && !controller.signal.aborted) {
+        const run = autogenerate;
+        const lines = await startAutogenerateAfterImport({
+          teamId: run.teamId,
+          sessionIds: importedIds,
+          steps: run.steps,
+          wikiMode: run.wikiMode,
+          confirmedUserId: run.confirmedUserId,
+          readProfile,
+          listShowSessionIds: async (signal) =>
+            (await readShowSessions(showId, run.runStudio, signal)).sessions.map((s) => s.id),
+          signal: controller.signal,
+        });
+        if (lines.length > 0 && !controller.signal.aborted) mergeLines(lines);
+        if (autogenerateMayHaveStarted(lines)) {
+          void queryClient.invalidateQueries({ queryKey: autogenerateKeys.all(run.teamId) });
+        }
       }
-      const detail = err instanceof Error ? err.message : 'Import failed';
-      const status =
-        err && typeof err === 'object' && 'status' in err && typeof err.status === 'number'
-          ? err.status
-          : null;
-      // A job 404 means its record expired or never existed (shared-request-state D1).
-      const hint =
-        status === 404
-          ? ' (The import job was not found. It may have expired; start the import again.)'
-          : '';
-      setProgress((prev) => ({
-        ...prev,
-        current: null,
-        lines: [...prev.lines, `Failed: ${status ? `HTTP ${status} — ` : ''}${detail}${hint}`],
-      }));
     } finally {
       if (abortRef.current === controller) {
         abortRef.current = null;
@@ -283,7 +494,12 @@ export function BatchImportModal({ profile, onClose }: Props) {
   return (
     <Dialog
       open
-      onOpenChange={(o) => !o && handleClose()}
+      // Design D13: during a run, Escape and a click outside do not close (and abort) it; the
+      // Close control still does.
+      onOpenChange={(o) => {
+        if (!o && !isImporting) handleClose();
+      }}
+      closeOnOverlayClick={!isImporting}
       className="md:![transform:translate(calc(-50%+8.125rem),-50%)]"
       hideTitle
       title="Batch Import"
@@ -384,6 +600,41 @@ export function BatchImportModal({ profile, onClose }: Props) {
               onChange={setPlaylistSelection}
             />
           ) : null}
+          {groupShown ? (
+            <div className="flex flex-col gap-3 pt-1" data-testid="batch-import-autogenerate">
+              <Field orientation="horizontal">
+                <Checkbox
+                  id="bi-autogenerate"
+                  aria-label="Autogenerate after import"
+                  checked={agTicked}
+                  disabled={isImporting}
+                  onCheckedChange={(next) => setAgTicked(next === true)}
+                />
+                <FieldLabel htmlFor="bi-autogenerate" className="font-normal">
+                  Autogenerate after import
+                </FieldLabel>
+              </Field>
+              {agTicked ? (
+                <AutogenerateOptions
+                  idPrefix="bi-autogenerate"
+                  steps={agSteps}
+                  onStepsChange={setAgSteps}
+                  mode={agMode}
+                  onModeChange={setAgMode}
+                  disabled={isImporting}
+                />
+              ) : null}
+              {agNote ? (
+                <span
+                  className="text-[0.85rem] text-v5-muted"
+                  role="status"
+                  data-testid="batch-import-autogenerate-note"
+                >
+                  {agNote}
+                </span>
+              ) : null}
+            </div>
+          ) : null}
         </div>
 
         <div className="flex flex-col gap-1">
@@ -448,6 +699,7 @@ export function BatchImportModal({ profile, onClose }: Props) {
         </div>
       </div>
       {promptElement}
+      {confirmElement}
     </Dialog>
   );
 }

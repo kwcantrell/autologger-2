@@ -3,6 +3,7 @@ import type {
   AudioSegmentsResponse,
   OkResponse,
   ProfilePayload,
+  Session,
   YoutubePlaylistEntry,
   YoutubePlaylistResponse,
 } from '../../../api/types';
@@ -72,6 +73,33 @@ export function listPlaylistEntries(
   });
 }
 
+/** `GET /api/profile`: the fresh read before each entry, and the end-of-run user check
+ * (playlist-import-autogenerate D12). */
+export function readProfile(signal: AbortSignal): Promise<ProfilePayload> {
+  return apiFetch<ProfilePayload>('profile', { signal });
+}
+
+/**
+ * The run's show's sessions, read fresh (design D5): the active show may have been switched in
+ * another tab, and the list follows the active show, so re-align it first (in the run's studio)
+ * and keep only the run's show either way. `realigned` says whether it had to switch back.
+ */
+export async function readShowSessions(
+  showId: string,
+  runStudio: string,
+  signal: AbortSignal,
+): Promise<{ sessions: Session[]; realigned: boolean }> {
+  throwIfAborted(signal);
+  const current = await readProfile(signal);
+  let realigned = false;
+  if (current.active_show_id !== showId) {
+    await alignActiveShow({ ...current, active_studio_id: runStudio }, showId, signal);
+    realigned = true;
+  }
+  const sessions = (await fetchSessions(signal)).filter((s) => s.show_id === showId);
+  return { sessions, realigned };
+}
+
 function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal.aborted) {
@@ -133,6 +161,10 @@ export interface RunPlaylistImportOptions {
   onProgress: (state: BatchImportProgressState) => void;
   /** Called after each successful session create (for query invalidation). */
   onSessionCreated?: () => void;
+  /** Called with each session this import brought in (playlist-import-autogenerate D2): where it
+   * logs `Completed <name>`, and for this import's own remembered session that already has audio
+   * from an earlier, interrupted run (skipped as already in the system, then forgotten). */
+  onSessionImported?: (sessionId: string) => void;
   /** Injectable for tests (virtual time); rejects with `AbortError` on abort. */
   sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
 }
@@ -143,6 +175,7 @@ type EntryOutcome = 'done' | 'end-run';
  * session whose import was in flight is then kept and remembered (design D7). */
 export async function runPlaylistImport(options: RunPlaylistImportOptions): Promise<void> {
   const { showId, names, usePublishDate, profile, signal, onProgress, onSessionCreated } = options;
+  const onSessionImported = options.onSessionImported;
   const sleep = options.sleep ?? abortableSleep;
   const entries = options.entries.filter((e) => names.has(e.index));
   const total = entries.length;
@@ -184,6 +217,7 @@ export async function runPlaylistImport(options: RunPlaylistImportOptions): Prom
       if (count > 0) {
         await forgetImportSession(key);
         log(formatCompletedLine(name));
+        onSessionImported?.(sessionId);
         return;
       }
     }
@@ -194,29 +228,34 @@ export async function runPlaylistImport(options: RunPlaylistImportOptions): Prom
   const importEntry = async (entry: YoutubePlaylistEntry, name: string): Promise<EntryOutcome> => {
     const key = playlistImportKey(showId, entry.video_id);
 
-    // Fresh check before deciding (design D5): the active show may have been switched in another
-    // tab, and the list follows the active show; keep only the run's show either way.
-    throwIfAborted(signal);
-    const current = await apiFetch<ProfilePayload>('profile', { signal });
-    if (current.active_show_id !== showId) {
-      await alignActiveShow({ ...current, active_studio_id: runStudio }, showId, signal);
+    // Fresh check before deciding (design D5).
+    const { sessions, realigned } = await readShowSessions(showId, runStudio, signal);
+    if (realigned) {
       log("The active show was changed elsewhere; switched back to this import's show");
     }
-    const sessions = (await fetchSessions(signal)).filter((s) => s.show_id === showId);
 
     let sessionId: string | null = null;
     let retrying = false;
     const existing = findMatchingSession(sessions, name);
     if (existing) {
+      let ownWithAudio = false;
       if ((await findImportSession(key)) === existing.id) {
         throwIfAborted(signal);
         if ((await segmentCount(existing.id, signal)) === 0) {
           sessionId = existing.id;
           retrying = true;
+        } else {
+          // Audio an earlier, interrupted run of this import brought in (design D2): it counts as
+          // this import's, then is forgotten so a later run treats it as an ordinary session.
+          ownWithAudio = true;
         }
       }
       if (sessionId === null) {
         log(formatSkippedLine(name));
+        if (ownWithAudio) {
+          await forgetImportSession(key);
+          onSessionImported?.(existing.id);
+        }
         return 'done';
       }
     }
@@ -259,6 +298,7 @@ export async function runPlaylistImport(options: RunPlaylistImportOptions): Prom
     }
     await forgetImportSession(key);
     log(formatCompletedLine(name));
+    onSessionImported?.(sessionId);
     return 'done';
   };
 

@@ -175,6 +175,7 @@ async function run(
     signal?: AbortSignal;
     initialLines?: string[];
     onSessionCreated?: () => void;
+    onSessionImported?: (sessionId: string) => void;
     sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
   } = {},
 ): Promise<RunResult> {
@@ -190,6 +191,7 @@ async function run(
     initialLines: opts.initialLines,
     onProgress: (s) => states.push({ ...s, lines: [...s.lines] }),
     onSessionCreated: opts.onSessionCreated,
+    ...(opts.onSessionImported ? { onSessionImported: opts.onSessionImported } : {}),
     sleep:
       opts.sleep ??
       (async (ms) => {
@@ -505,5 +507,143 @@ describe('runPlaylistImport — progress', () => {
     const { last } = await run([], { initialLines: ['x'] });
     expect(last).toEqual({ current: null, percent: 100, lines: ['x'] });
     expect(calls).toEqual([]);
+  });
+});
+
+// playlist-import-autogenerate task 2.1 (design D2; batch-audio-import "YouTube playlist import can
+// autogenerate afterwards", "Qualifying sessions"): the runner reports each session this import
+// brought in, and nothing else, without changing a single progress line.
+describe('runPlaylistImport — onSessionImported', () => {
+  const E4 = entry(4, 'Four', 'ddddddddddd');
+  const E5 = entry(5, 'Five', 'eeeeeeeeeee');
+
+  /** E1 completes; E2 is already in the system; E3 fails definitely; E4's outcome is unknown and
+   * later confirmed by a segment; E5's is unknown and never confirmed. */
+  function fiveEntryWorld() {
+    sessions = [sessionRow('old-two', 'Two')];
+    importImpl = async (sessionId, n) => {
+      if (n === 2) throw jsonError(502, 'Failed to download audio.');
+      if (n === 3) {
+        segments[sessionId] = 1; // the server finished after the proxy gave up
+        throw new ApiError(524, 'A timeout occurred', undefined);
+      }
+      if (n === 4) throw new TypeError('Failed to fetch');
+      segments[sessionId] = 1;
+      return { ok: true };
+    };
+  }
+
+  it('reports exactly the completed and the confirmed-later entries', async () => {
+    fiveEntryWorld();
+    const reported: string[] = [];
+    const { last } = await run([E1, E2, E3, E4, E5], {
+      onSessionImported: (id) => reported.push(id),
+    });
+    expect(last.lines).toEqual([
+      'Completed One',
+      'Skipped Two (already in system)',
+      'Failed Three: Failed to download audio.',
+      'Completed Four',
+      'Failed Five: the server did not confirm the import; run the import again to retry',
+    ]);
+    expect(reported).toEqual(['new-1', 'new-3']);
+  });
+
+  it('every progress state is byte-identical to the same run without the callback', async () => {
+    fiveEntryWorld();
+    const without = await run([E1, E2, E3, E4, E5]);
+    vi.clearAllMocks();
+    // A fresh world for the second run.
+    segments = {};
+    calls = [];
+    creates = [];
+    imports = [];
+    deleted = [];
+    memory = new Map();
+    nextId = 1;
+    fiveEntryWorld();
+    const withCb = await run([E1, E2, E3, E4, E5], { onSessionImported: () => {} });
+    expect(JSON.stringify(withCb.states)).toBe(JSON.stringify(without.states));
+  });
+
+  it("a retry into this import's own empty session that completes is reported", async () => {
+    sessions = [sessionRow('mine', 'One')];
+    memory.set(`youtube:${SHOW}:aaaaaaaaaaa`, 'mine');
+    const reported: string[] = [];
+    await run([E1], { onSessionImported: (id) => reported.push(id) });
+    expect(reported).toEqual(['mine']);
+  });
+
+  it('a 409 still-importing retry is not reported', async () => {
+    sessions = [sessionRow('mine', 'One')];
+    memory.set(`youtube:${SHOW}:aaaaaaaaaaa`, 'mine');
+    importImpl = async () => {
+      throw jsonError(409, 'An import is already in progress for this session.');
+    };
+    const reported: string[] = [];
+    await run([E1], { onSessionImported: (id) => reported.push(id) });
+    expect(reported).toEqual([]);
+  });
+
+  it('after a 403 ends the part, the ids completed before it are reported and nothing after', async () => {
+    importImpl = async (sessionId, n) => {
+      if (n === 2)
+        throw jsonError(403, 'This feature is limited to approved users on this server.');
+      segments[sessionId] = 1;
+      return { ok: true };
+    };
+    const reported: string[] = [];
+    await run([E1, E2, E3], { onSessionImported: (id) => reported.push(id) });
+    expect(reported).toEqual(['new-1']);
+  });
+
+  it('an abort reports nothing more', async () => {
+    const ac = new AbortController();
+    importImpl = async (sessionId, n) => {
+      if (n === 2) {
+        ac.abort();
+        throw new DOMException('Aborted', 'AbortError');
+      }
+      segments[sessionId] = 1;
+      return { ok: true };
+    };
+    const reported: string[] = [];
+    await expect(
+      run([E1, E2, E3], { signal: ac.signal, onSessionImported: (id) => reported.push(id) }),
+    ).rejects.toMatchObject({ name: 'AbortError' });
+    expect(reported).toEqual(['new-1']);
+  });
+
+  it("an interrupted earlier run: this import's remembered own session with audio is skipped, reported and forgotten", async () => {
+    sessions = [sessionRow('mine', 'One')];
+    segments.mine = 1;
+    memory.set(`youtube:${SHOW}:aaaaaaaaaaa`, 'mine');
+    const reported: string[] = [];
+    const first = await run([E1], { onSessionImported: (id) => reported.push(id) });
+    expect(first.last.lines).toEqual(['Skipped One (already in system)']);
+    expect(reported).toEqual(['mine']);
+    expect(memory.has(`youtube:${SHOW}:aaaaaaaaaaa`)).toBe(false);
+    expect(importCalls()).toHaveLength(0);
+
+    // A third run sees an ordinary existing session.
+    const again: string[] = [];
+    const second = await run([E1], { onSessionImported: (id) => again.push(id) });
+    expect(second.last.lines).toEqual(['Skipped One (already in system)']);
+    expect(again).toEqual([]);
+  });
+
+  it('a name match that is not remembered, or remembered for another video, is skipped and not reported', async () => {
+    sessions = [sessionRow('theirs', 'One'), sessionRow('other', 'Two')];
+    segments.theirs = 1;
+    segments.other = 1;
+    memory.set(`youtube:${SHOW}:zzzzzzzzzzz`, 'other');
+    const reported: string[] = [];
+    const { last } = await run([E1, E2], { onSessionImported: (id) => reported.push(id) });
+    expect(last.lines).toEqual([
+      'Skipped One (already in system)',
+      'Skipped Two (already in system)',
+    ]);
+    expect(reported).toEqual([]);
+    expect(memory.get(`youtube:${SHOW}:zzzzzzzzzzz`)).toBe('other');
   });
 });
