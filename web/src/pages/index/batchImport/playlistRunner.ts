@@ -3,6 +3,7 @@ import type {
   AudioSegmentsResponse,
   OkResponse,
   ProfilePayload,
+  Session,
   YoutubePlaylistEntry,
   YoutubePlaylistResponse,
 } from '../../../api/types';
@@ -70,6 +71,33 @@ export function listPlaylistEntries(
     body: JSON.stringify({ url }),
     signal,
   });
+}
+
+/** `GET /api/profile`: the fresh read before each entry, and the end-of-run user check
+ * (playlist-import-autogenerate D12). */
+export function readProfile(signal: AbortSignal): Promise<ProfilePayload> {
+  return apiFetch<ProfilePayload>('profile', { signal });
+}
+
+/**
+ * The run's show's sessions, read fresh (design D5): the active show may have been switched in
+ * another tab, and the list follows the active show, so re-align it first (in the run's studio)
+ * and keep only the run's show either way. `realigned` says whether it had to switch back.
+ */
+export async function readShowSessions(
+  showId: string,
+  runStudio: string,
+  signal: AbortSignal,
+): Promise<{ sessions: Session[]; realigned: boolean }> {
+  throwIfAborted(signal);
+  const current = await readProfile(signal);
+  let realigned = false;
+  if (current.active_show_id !== showId) {
+    await alignActiveShow({ ...current, active_studio_id: runStudio }, showId, signal);
+    realigned = true;
+  }
+  const sessions = (await fetchSessions(signal)).filter((s) => s.show_id === showId);
+  return { sessions, realigned };
 }
 
 function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
@@ -200,15 +228,11 @@ export async function runPlaylistImport(options: RunPlaylistImportOptions): Prom
   const importEntry = async (entry: YoutubePlaylistEntry, name: string): Promise<EntryOutcome> => {
     const key = playlistImportKey(showId, entry.video_id);
 
-    // Fresh check before deciding (design D5): the active show may have been switched in another
-    // tab, and the list follows the active show; keep only the run's show either way.
-    throwIfAborted(signal);
-    const current = await apiFetch<ProfilePayload>('profile', { signal });
-    if (current.active_show_id !== showId) {
-      await alignActiveShow({ ...current, active_studio_id: runStudio }, showId, signal);
+    // Fresh check before deciding (design D5).
+    const { sessions, realigned } = await readShowSessions(showId, runStudio, signal);
+    if (realigned) {
       log("The active show was changed elsewhere; switched back to this import's show");
     }
-    const sessions = (await fetchSessions(signal)).filter((s) => s.show_id === showId);
 
     let sessionId: string | null = null;
     let retrying = false;

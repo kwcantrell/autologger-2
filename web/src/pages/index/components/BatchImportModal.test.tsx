@@ -1,15 +1,41 @@
 import { QueryClient } from '@tanstack/react-query';
-import { fireEvent, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError, apiFetch } from '../../../api/client';
-import type { ProfilePayload, YoutubePlaylistResponse } from '../../../api/types';
+import type {
+  AutogenerateJob,
+  ProfilePayload,
+  ProvidersResponse,
+  YoutubePlaylistResponse,
+} from '../../../api/types';
 import { renderWithQueryClient } from '../../../test/renderWithQueryClient';
+import { startAutogenerateAfterImport } from '../batchImport/autogenerateAfterImport';
+import type { RunPlaylistImportOptions } from '../batchImport/playlistRunner';
 import { stitchAudioFiles } from '../batchImport/stitch';
 import { BatchImportModal } from './BatchImportModal';
 
 vi.mock('../../../api/client', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../../api/client')>();
   return { ...actual, apiFetch: vi.fn() };
+});
+
+// playlist-import-autogenerate task 4.1: the autogenerate tests replace the playlist runner; every
+// other test keeps the real one.
+const runner = vi.hoisted(() => ({
+  impl: null as null | ((o: RunPlaylistImportOptions) => Promise<void>),
+}));
+vi.mock('../batchImport/playlistRunner', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../batchImport/playlistRunner')>();
+  return {
+    ...actual,
+    runPlaylistImport: vi.fn((o: RunPlaylistImportOptions) =>
+      runner.impl ? runner.impl(o) : actual.runPlaylistImport(o),
+    ),
+  };
+});
+vi.mock('../batchImport/autogenerateAfterImport', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../batchImport/autogenerateAfterImport')>();
+  return { ...actual, startAutogenerateAfterImport: vi.fn(async () => []) };
 });
 
 vi.mock('../batchImport/stitch', () => ({
@@ -620,5 +646,749 @@ describe('BatchImportModal — YouTube playlist', () => {
     renderWithQueryClient(<BatchImportModal profile={profileFixture()} onClose={() => {}} />);
     expect(screen.getByTestId('batch-import-progress').textContent).toBe('');
     expect(screen.queryByTestId('playlist-picker')).toBeNull();
+  });
+});
+
+// playlist-import-autogenerate task 4.1 (batch-audio-import "Batch Import modal layout and
+// actions" and "YouTube playlist import can autogenerate afterwards"; design D3, D6, D7, D9-D13).
+describe('BatchImportModal — Autogenerate after import', () => {
+  const TEAM = 'studio-1';
+  const PREVIEW = `teams/${TEAM}/autogenerate-jobs/preview`;
+  const JOBS = `teams/${TEAM}/autogenerate-jobs`;
+  const CHECKING = 'Checking your providers…';
+  const RECHECK = 'Your providers are checked again when the import ends.';
+  const LIVE_WARNING =
+    'A batch job is already running for this team; autogenerate after this import will not start unless it has finished by then.';
+  const mockedStart = vi.mocked(startAutogenerateAfterImport);
+
+  type Role = 'owner' | 'admin' | 'member';
+  function profileAs(role: Role | null, userId = 'me'): ProfilePayload {
+    const p = profileFixture();
+    if (role === null) return p;
+    return {
+      ...p,
+      auth: {
+        logged_in: true,
+        oauth_configured: true,
+        user: {
+          id: userId,
+          email: 'me@example.com',
+          given_name: 'Ana',
+          family_name: 'Diaz',
+          picture_url: null,
+          teams: [{ id: TEAM, name: 'Studio', role }],
+        },
+      },
+    } as unknown as ProfilePayload;
+  }
+
+  function listing(n: number, title = 'First'): YoutubePlaylistResponse {
+    return {
+      playlist: { id: 'PLx', title, url: 'https://www.youtube.com/playlist?list=PLx' },
+      entries: Array.from({ length: n }, (_, i) => ({
+        index: i + 1,
+        video_id: `v${String(i + 1).padStart(10, '0')}`,
+        url: `https://www.youtube.com/watch?v=v${i + 1}`,
+        title: `${title} video ${i + 1}`,
+        duration_s: 60,
+        importable: true,
+        reason: null,
+      })),
+      truncated: false,
+    };
+  }
+
+  const configured: ProvidersResponse = {
+    llm: {
+      kind: 'llm',
+      provider: 'anthropic',
+      base_url: null,
+      model: 'm',
+      key_last4: 'abcd',
+      updated_at: '2026-11-11T00:00:00.000Z',
+    },
+    stt: {
+      kind: 'stt',
+      provider: 'deepgram',
+      base_url: null,
+      model: 'nova',
+      key_last4: 'wxyz',
+      updated_at: '2026-11-11T00:00:00.000Z',
+    },
+    run_features_allowed: true,
+    claude_cli_allowed: false,
+  };
+  const job = (status: AutogenerateJob['status']) => ({ id: `j-${status}`, status });
+
+  let listings: Array<YoutubePlaylistResponse | Error>;
+  let previewImpl: (body: Record<string, unknown>) => Promise<unknown>;
+  let jobsImpl: () => Promise<unknown>;
+  let providersImpl: () => Promise<unknown>;
+  let previewBodies: Array<Record<string, unknown>>;
+  let order: string[];
+
+  const clearPreview = (body: Record<string, unknown>) =>
+    Promise.resolve({
+      sessions: 3,
+      steps: body.steps,
+      runs: {},
+      max_runs: 3 * (body.steps as string[]).length,
+      blocked: null,
+    });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    listings = [];
+    previewBodies = [];
+    order = [];
+    previewImpl = clearPreview;
+    jobsImpl = async () => ({ jobs: [] });
+    providersImpl = async () => configured;
+    runner.impl = async (o) => {
+      order.push('playlist');
+      o.onProgress({
+        current: null,
+        percent: 100,
+        lines: [...(o.initialLines ?? []), 'Completed First video 1'],
+      });
+      o.onSessionImported?.('s-1');
+    };
+    mockedStart.mockImplementation(async () => {
+      order.push('autogenerate');
+      return [
+        'Autogenerate started for 1 sessions (at most 4 runs); follow it in Settings → Batch autogenerate.',
+      ];
+    });
+    mockedApiFetch.mockImplementation(async (path, opts) => {
+      const method = opts?.method ?? 'GET';
+      if (path === 'youtube/playlist-entries') {
+        const next = listings.shift() ?? listing(2);
+        if (next instanceof Error) throw next;
+        return next;
+      }
+      if (path === PREVIEW && method === 'POST') {
+        const body = JSON.parse(String(opts?.body));
+        previewBodies.push(body);
+        return previewImpl(body);
+      }
+      if (path === JOBS && method === 'GET') return jobsImpl();
+      if (path === 'me/providers') return providersImpl();
+      if (path === 'shows/show-1/log-import') {
+        order.push('logs');
+        return { job_id: 'job-1' };
+      }
+      if (path === 'log-import/job-1')
+        return { status: 'completed', lines: ['matched 1 sheet'], error: null };
+      throw new Error(`unexpected ${method} ${path}`);
+    });
+  });
+
+  afterEach(() => {
+    runner.impl = null;
+  });
+
+  async function loadPlaylist() {
+    fireEvent.click(screen.getByRole('button', { name: 'Import YouTube Playlist' }));
+    const field = await screen.findByRole('textbox', { name: /YouTube playlist link/ });
+    fireEvent.change(field, { target: { value: 'https://www.youtube.com/playlist?list=PLx' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Load playlist' }));
+    await screen.findByTestId('playlist-picker');
+  }
+
+  async function enterLogs() {
+    fireEvent.click(screen.getByRole('button', { name: 'Import Logs' }));
+    const field = await screen.findByRole('textbox', { name: /Google Sheets URL/ });
+    fireEvent.change(field, {
+      target: { value: 'https://docs.google.com/spreadsheets/d/abc123/edit' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Use URL' }));
+    await screen.findByTestId('batch-import-logs-url');
+  }
+
+  const autogenerateBox = () =>
+    screen.queryByRole('checkbox', { name: 'Autogenerate after import' });
+  const startButton = () =>
+    screen.getByRole('button', { name: /Start Import|Importing…/ }) as HTMLButtonElement;
+  const note = () => screen.queryByTestId('batch-import-autogenerate-note')?.textContent ?? null;
+  const tick = (name: string) => fireEvent.click(screen.getByRole('checkbox', { name }));
+  const stepChecked = (name: string) =>
+    within(screen.getByTestId('batch-import-autogenerate'))
+      .getByRole('checkbox', { name })
+      .getAttribute('aria-checked');
+  const jobListCalls = () =>
+    mockedApiFetch.mock.calls.filter(([p, o]) => p === JOBS && (o?.method ?? 'GET') === 'GET');
+  const autogenerateCalls = () =>
+    mockedApiFetch.mock.calls.filter(([p]) => String(p).includes('autogenerate-jobs'));
+  const WAIT = { timeout: 3000 };
+
+  async function armed(role: Role = 'owner', client?: QueryClient, onClose = () => {}) {
+    const utils = renderWithQueryClient(
+      <BatchImportModal profile={profileAs(role)} onClose={onClose} />,
+      client,
+    );
+    await loadPlaylist();
+    tick('Autogenerate after import');
+    await waitFor(() => expect(startButton().disabled).toBe(false), WAIT);
+    return utils;
+  }
+
+  async function confirmDialog() {
+    return screen.findByRole('alertdialog');
+  }
+
+  describe('visibility (design D7)', () => {
+    it('absent with no playlist loaded', () => {
+      renderWithQueryClient(<BatchImportModal profile={profileAs('owner')} onClose={() => {}} />);
+      expect(autogenerateBox()).toBeNull();
+    });
+
+    it('absent for a member, and a member run sends no autogenerate request', async () => {
+      renderWithQueryClient(<BatchImportModal profile={profileAs('member')} onClose={() => {}} />);
+      await loadPlaylist();
+      expect(autogenerateBox()).toBeNull();
+      await waitFor(() => expect(startButton().disabled).toBe(false));
+      fireEvent.click(startButton());
+      await screen.findByText('Completed First video 1');
+      expect(screen.queryByRole('alertdialog')).toBeNull();
+      expect(autogenerateCalls()).toEqual([]);
+      expect(mockedStart).not.toHaveBeenCalled();
+    });
+
+    it.each(['owner', 'admin'] as const)('present and unticked for an %s', async (role) => {
+      renderWithQueryClient(<BatchImportModal profile={profileAs(role)} onClose={() => {}} />);
+      await loadPlaylist();
+      expect(autogenerateBox()?.getAttribute('aria-checked')).toBe('false');
+      expect(screen.queryByRole('group', { name: 'Steps' })).toBeNull();
+    });
+  });
+
+  describe('options and arming (design D11)', () => {
+    it('ticking shows all four steps and the accept mode', async () => {
+      await armed();
+      for (const name of ['Transcripts', 'Log events', 'Topics', 'Wiki']) {
+        expect(stepChecked(name)).toBe('true');
+      }
+      expect(
+        screen
+          .getByRole('radio', { name: 'Add new pages and additions to the wiki' })
+          .getAttribute('aria-checked'),
+      ).toBe('true');
+    });
+
+    it('every control of the group is disabled during a run', async () => {
+      runner.impl = (o) =>
+        new Promise((_, reject) =>
+          o.signal.addEventListener('abort', () =>
+            reject(new DOMException('Aborted', 'AbortError')),
+          ),
+        );
+      await armed();
+      fireEvent.click(startButton());
+      fireEvent.click(await screen.findByRole('button', { name: 'Start' }));
+      await waitFor(() => expect(startButton().textContent).toBe('Importing…'));
+      const group = screen.getByTestId('batch-import-autogenerate');
+      for (const box of within(group).getAllByRole('checkbox')) {
+        expect((box as HTMLButtonElement).disabled).toBe(true);
+      }
+      for (const r of within(group).getAllByRole('radio')) {
+        expect((r as HTMLButtonElement).disabled).toBe(true);
+      }
+      fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    });
+
+    it('reopening the modal resets the box and the steps', async () => {
+      const { unmount } = await armed();
+      tick('Topics');
+      unmount();
+      renderWithQueryClient(<BatchImportModal profile={profileAs('owner')} onClose={() => {}} />);
+      await loadPlaylist();
+      expect(autogenerateBox()?.getAttribute('aria-checked')).toBe('false');
+      tick('Autogenerate after import');
+      expect(stepChecked('Topics')).toBe('true');
+    });
+
+    it('loading another link unticks the box and resets the steps', async () => {
+      listings = [listing(2), listing(1, 'Second')];
+      await armed();
+      tick('Topics');
+      await loadPlaylist();
+      await screen.findByText('Second');
+      expect(autogenerateBox()?.getAttribute('aria-checked')).toBe('false');
+      tick('Autogenerate after import');
+      expect(stepChecked('Topics')).toBe('true');
+    });
+
+    it('a failed listing hides the group and unticks the box', async () => {
+      listings = [
+        listing(2),
+        new ApiError(502, 'Failed to list the playlist.', {
+          detail: 'Failed to list the playlist.',
+        }),
+        listing(2),
+      ];
+      await armed();
+      fireEvent.click(screen.getByRole('button', { name: 'Import YouTube Playlist' }));
+      const field = await screen.findByRole('textbox', { name: /YouTube playlist link/ });
+      fireEvent.change(field, { target: { value: 'https://www.youtube.com/playlist?list=PL2' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Load playlist' }));
+      await screen.findByTestId('batch-import-playlist-error');
+      expect(autogenerateBox()).toBeNull();
+      await loadPlaylist();
+      expect(autogenerateBox()?.getAttribute('aria-checked')).toBe('false');
+    });
+
+    it('a ticked box with every entry unchecked does not narrow Start Import: folder only, no confirm, no preview', async () => {
+      mockedApiFetch.mockImplementation(async (path, opts) => {
+        const method = opts?.method ?? 'GET';
+        if (path === 'youtube/playlist-entries') return listing(2);
+        if (path === 'sessions')
+          return {
+            active: [{ id: 's1', episode: 'YMH_001', title: 'YMH_001', show_id: 'show-1' }],
+            archived: [],
+          };
+        if (path === PREVIEW) previewBodies.push({ path });
+        if (path === JOBS) return { jobs: [] };
+        throw new Error(`unexpected ${method} ${path}`);
+      });
+      renderWithQueryClient(<BatchImportModal profile={profileAs('owner')} onClose={() => {}} />);
+      pickFolder(folderFile('YMH_001.mp3', 'Batch/YMH_001.mp3'));
+      await loadPlaylist();
+      tick('Autogenerate after import');
+      for (const name of ['Transcripts', 'Log events', 'Topics', 'Wiki']) tick(name);
+      fireEvent.click(screen.getByRole('button', { name: 'Select none' }));
+      await waitFor(() => expect(startButton().disabled).toBe(false));
+      expect(note()).toBeNull();
+      fireEvent.click(startButton());
+      await screen.findByText('Skipped YMH_001 (already in system)');
+      expect(screen.queryByRole('alertdialog')).toBeNull();
+      expect(previewBodies).toEqual([]);
+      expect(mockedStart).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('up-front check (design D6)', () => {
+    it('sends the preview for the show only while armed, debounced; pending disables Start Import', async () => {
+      let resolve: ((v: unknown) => void) | undefined;
+      previewImpl = () =>
+        new Promise((r) => {
+          resolve = r;
+        });
+      renderWithQueryClient(<BatchImportModal profile={profileAs('owner')} onClose={() => {}} />);
+      await loadPlaylist();
+      await new Promise((r) => setTimeout(r, 500));
+      expect(previewBodies).toEqual([]);
+      tick('Autogenerate after import');
+      expect(startButton().disabled).toBe(true);
+      expect(note()).toBe(CHECKING);
+      expect(previewBodies).toEqual([]); // debounced: not sent on the tick itself
+      await waitFor(() => expect(previewBodies).toHaveLength(1), WAIT);
+      expect(previewBodies[0]).toEqual({
+        show_ids: ['show-1'],
+        steps: ['transcript', 'events', 'topics', 'wiki'],
+        wiki_mode: 'accept',
+      });
+      expect(startButton().disabled).toBe(true);
+      await act(async () =>
+        resolve?.({ sessions: 2, steps: [], runs: {}, max_runs: 8, blocked: null }),
+      );
+      await waitFor(() => expect(startButton().disabled).toBe(false));
+      expect(note()).toBeNull();
+    });
+
+    it('after a step change the previous answer is not used until the new one arrives', async () => {
+      const pending: Array<(v: unknown) => void> = [];
+      previewImpl = (body) =>
+        (body.steps as string[]).includes('transcript')
+          ? new Promise((r) => pending.push(r))
+          : clearPreview(body);
+      renderWithQueryClient(<BatchImportModal profile={profileAs('owner')} onClose={() => {}} />);
+      await loadPlaylist();
+      tick('Autogenerate after import');
+      tick('Transcripts');
+      tick('Log events');
+      tick('Wiki');
+      await waitFor(() => expect(startButton().disabled).toBe(false), WAIT);
+      tick('Transcripts');
+      expect(startButton().disabled).toBe(true);
+      expect(note()).toBe(CHECKING);
+      await waitFor(() => expect(pending).toHaveLength(1), WAIT);
+      expect(startButton().disabled).toBe(true);
+      expect(note()).toBe(CHECKING);
+      await act(async () =>
+        pending[0]({ sessions: 2, steps: [], runs: {}, max_runs: 4, blocked: null }),
+      );
+      await waitFor(() => expect(startButton().disabled).toBe(false));
+    });
+
+    it('a 200 blocked answer shows its text and disables Start Import; unticking re-enables it', async () => {
+      previewImpl = async (body) => ({
+        ...((await clearPreview(body)) as object),
+        blocked: 'unconfigured-llm',
+      });
+      renderWithQueryClient(<BatchImportModal profile={profileAs('owner')} onClose={() => {}} />);
+      await loadPlaylist();
+      tick('Autogenerate after import');
+      await waitFor(
+        () => expect(note()).toBe('Add a language model in Settings → Advanced to autogenerate.'),
+        WAIT,
+      );
+      expect(startButton().disabled).toBe(true);
+      tick('Autogenerate after import');
+      await waitFor(() => expect(startButton().disabled).toBe(false));
+      expect(note()).toBeNull();
+    });
+
+    it('a 400 preview (empty show) with no stt only warns, with Start Import enabled', async () => {
+      previewImpl = async () => {
+        throw new ApiError(400, 'No sessions to process.', { detail: 'No sessions to process.' });
+      };
+      providersImpl = async () => ({ ...configured, stt: null });
+      renderWithQueryClient(<BatchImportModal profile={profileAs('owner')} onClose={() => {}} />);
+      await loadPlaylist();
+      tick('Autogenerate after import');
+      await waitFor(
+        () =>
+          expect(note()).toBe(
+            `Add a speech-to-text key in Settings → Advanced to generate transcripts. ${RECHECK}`,
+          ),
+        WAIT,
+      );
+      expect(startButton().disabled).toBe(false);
+    });
+
+    it('a 400 preview for a configured user shows no warning', async () => {
+      previewImpl = async () => {
+        throw new ApiError(400, 'No sessions to process.', { detail: 'No sessions to process.' });
+      };
+      renderWithQueryClient(<BatchImportModal profile={profileAs('owner')} onClose={() => {}} />);
+      await loadPlaylist();
+      tick('Autogenerate after import');
+      await waitFor(
+        () => expect(mockedApiFetch.mock.calls.some(([p]) => p === 'me/providers')).toBe(true),
+        WAIT,
+      );
+      await waitFor(() => expect(startButton().disabled).toBe(false));
+      expect(note()).toBeNull();
+    });
+
+    it('both reads failing show nothing and leave Start Import enabled', async () => {
+      previewImpl = async () => {
+        throw new TypeError('Failed to fetch');
+      };
+      providersImpl = async () => {
+        throw new TypeError('Failed to fetch');
+      };
+      renderWithQueryClient(<BatchImportModal profile={profileAs('owner')} onClose={() => {}} />);
+      await loadPlaylist();
+      tick('Autogenerate after import');
+      await waitFor(() => expect(startButton().disabled).toBe(false), WAIT);
+      await waitFor(() =>
+        expect(mockedApiFetch.mock.calls.some(([p]) => p === 'me/providers')).toBe(true),
+      );
+      expect(note()).toBeNull();
+    });
+
+    it('no step ticked disables Start Import with "Pick at least one step."; a step or unticking re-enables it', async () => {
+      await armed();
+      for (const name of ['Transcripts', 'Log events', 'Topics', 'Wiki']) tick(name);
+      expect(startButton().disabled).toBe(true);
+      expect(note()).toBe('Pick at least one step.');
+      tick('Topics');
+      await waitFor(() => expect(startButton().disabled).toBe(false), WAIT);
+      for (const name of ['Topics']) tick(name);
+      expect(startButton().disabled).toBe(true);
+      tick('Autogenerate after import');
+      expect(startButton().disabled).toBe(false);
+    });
+
+    it('more than 1000 checked entries disable Start Import with the cap text', async () => {
+      listings = [listing(1001)];
+      renderWithQueryClient(<BatchImportModal profile={profileAs('owner')} onClose={() => {}} />);
+      await loadPlaylist();
+      tick('Autogenerate after import');
+      await waitFor(() =>
+        expect(note()).toBe(
+          'Autogenerate after import covers at most 1000 videos; check fewer videos or untick it.',
+        ),
+      );
+      expect(startButton().disabled).toBe(true);
+      fireEvent.click(screen.getByRole('checkbox', { name: /^1001\. / }));
+      await waitFor(() => expect(startButton().disabled).toBe(false), WAIT);
+    });
+
+    it('"A playlist alone enables Start Import" still holds with the box unticked', async () => {
+      renderWithQueryClient(<BatchImportModal profile={profileAs('owner')} onClose={() => {}} />);
+      await loadPlaylist();
+      await waitFor(() => expect(startButton().disabled).toBe(false));
+      expect(previewBodies).toEqual([]);
+    });
+  });
+
+  describe('confirm (design D9, D10)', () => {
+    it('a block that arrives while the confirm is open stops the run', async () => {
+      const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      await armed('owner', client);
+      fireEvent.click(startButton());
+      await confirmDialog();
+      previewImpl = async (body) => ({
+        ...((await clearPreview(body)) as object),
+        blocked: 'not-approved',
+      });
+      await act(async () => {
+        await client.invalidateQueries({ queryKey: ['autogenerate-jobs', TEAM, 'preview'] });
+      });
+      await waitFor(() =>
+        expect(note()).toBe(
+          'Batch autogenerate is limited to approved users on this server. Ask the operator for approval.',
+        ),
+      );
+      fireEvent.click(screen.getByRole('button', { name: 'Start' }));
+      await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+      expect(
+        vi.mocked((await import('../batchImport/playlistRunner')).runPlaylistImport),
+      ).not.toHaveBeenCalled();
+      expect(startButton().disabled).toBe(true);
+      expect(mockedStart).not.toHaveBeenCalled();
+    });
+
+    it('shows the estimate and the re-check sentence; dismissing imports nothing', async () => {
+      listings = [listing(12)];
+      renderWithQueryClient(<BatchImportModal profile={profileAs('admin')} onClose={() => {}} />);
+      await loadPlaylist();
+      tick('Autogenerate after import');
+      tick('Log events');
+      tick('Wiki');
+      await waitFor(() => expect(startButton().disabled).toBe(false), WAIT);
+      fireEvent.click(startButton());
+      const dialog = await confirmDialog();
+      expect(dialog.textContent).toContain(
+        'Import 12 videos, then autogenerate on up to 12 sessions, at most 24 runs.',
+      );
+      expect(dialog.textContent).toContain('Only videos this import brings in are included.');
+      expect(dialog.textContent).toContain('The work runs on your own provider accounts.');
+      expect(dialog.textContent).toContain(RECHECK);
+      expect(dialog.textContent).not.toContain(LIVE_WARNING);
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+      await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+      const { runPlaylistImport } = await import('../batchImport/playlistRunner');
+      expect(vi.mocked(runPlaylistImport)).not.toHaveBeenCalled();
+      expect(mockedStart).not.toHaveBeenCalled();
+    });
+
+    it('the wiki auto-accept warning is in the confirm only in accept mode with Wiki ticked', async () => {
+      await armed();
+      fireEvent.click(startButton());
+      expect((await confirmDialog()).textContent).toContain('without review');
+      fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+      await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+      fireEvent.click(screen.getByRole('radio', { name: 'Leave all as suggestions to review' }));
+      await waitFor(() => expect(startButton().disabled).toBe(false), WAIT);
+      fireEvent.click(startButton());
+      expect((await confirmDialog()).textContent).not.toContain('without review');
+    });
+
+    it('unticked: no confirm and no job-list request', async () => {
+      renderWithQueryClient(<BatchImportModal profile={profileAs('owner')} onClose={() => {}} />);
+      await loadPlaylist();
+      await waitFor(() => expect(startButton().disabled).toBe(false));
+      fireEvent.click(startButton());
+      await screen.findByText('Completed First video 1');
+      expect(screen.queryByRole('alertdialog')).toBeNull();
+      expect(jobListCalls()).toEqual([]);
+      expect(mockedStart).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      'running',
+      'queued',
+    ] as const)('a %s job puts the live-job warning first; Start stays enabled and runs the import', async (status) => {
+      jobsImpl = async () => ({ jobs: [job('finished'), job(status)] });
+      await armed();
+      const before = jobListCalls().length;
+      fireEvent.click(startButton());
+      const dialog = await confirmDialog();
+      expect(jobListCalls().length).toBeGreaterThan(before);
+      // First in the confirm's message, before the estimate.
+      const message = within(dialog).getByText(LIVE_WARNING).parentElement;
+      expect(message?.firstElementChild?.textContent).toBe(LIVE_WARNING);
+      expect(message?.textContent?.indexOf('Import 2 videos')).toBeGreaterThan(0);
+      const start = within(dialog).getByRole('button', { name: 'Start' }) as HTMLButtonElement;
+      expect(start.disabled).toBe(false);
+      fireEvent.click(start);
+      await screen.findByText('Completed First video 1');
+    });
+
+    it.each([
+      [
+        'only ended jobs',
+        async () => ({ jobs: [job('finished'), job('cancelled'), job('failed')] }),
+      ],
+      ['a 500', async () => Promise.reject(new ApiError(500, 'Internal error', { detail: 'x' }))],
+      ['a network error', async () => Promise.reject(new TypeError('Failed to fetch'))],
+    ])('%s: the confirm opens without the warning', async (_label, impl) => {
+      await armed();
+      jobsImpl = impl;
+      fireEvent.click(startButton());
+      const dialog = await confirmDialog();
+      expect(dialog.textContent).not.toContain(LIVE_WARNING);
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Start' }));
+      await screen.findByText('Completed First video 1');
+    });
+  });
+
+  describe('dialog during a run (design D13)', () => {
+    function hangingRun() {
+      let signal: AbortSignal | undefined;
+      runner.impl = (o) => {
+        signal = o.signal;
+        return new Promise((_, reject) =>
+          o.signal.addEventListener('abort', () =>
+            reject(new DOMException('Aborted', 'AbortError')),
+          ),
+        );
+      };
+      return () => signal;
+    }
+
+    it('Escape and a pointer-down outside leave the modal open and the run going; Close aborts', async () => {
+      const signal = hangingRun();
+      const onClose = vi.fn();
+      renderWithQueryClient(<BatchImportModal profile={profileAs('owner')} onClose={onClose} />);
+      await loadPlaylist();
+      fireEvent.click(startButton());
+      await waitFor(() => expect(signal()).toBeDefined());
+      fireEvent.keyDown(screen.getByRole('dialog', { name: 'Batch Import' }), { key: 'Escape' });
+      fireEvent.pointerDown(document.body);
+      expect(onClose).not.toHaveBeenCalled();
+      expect(signal()?.aborted).toBe(false);
+      expect(screen.getByRole('dialog', { name: 'Batch Import' })).not.toBeNull();
+      fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+      expect(signal()?.aborted).toBe(true);
+      expect(onClose).toHaveBeenCalledTimes(1);
+    });
+
+    it('with no run in progress, Escape still closes', () => {
+      const onClose = vi.fn();
+      renderWithQueryClient(<BatchImportModal profile={profileAs('owner')} onClose={onClose} />);
+      fireEvent.keyDown(screen.getByRole('dialog', { name: 'Batch Import' }), { key: 'Escape' });
+      expect(onClose).toHaveBeenCalledTimes(1);
+    });
+
+    it('closing mid-run sends no autogenerate request', async () => {
+      const signal = hangingRun();
+      await armed();
+      fireEvent.click(startButton());
+      fireEvent.click(await screen.findByRole('button', { name: 'Start' }));
+      await waitFor(() => expect(signal()).toBeDefined());
+      fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 0));
+      });
+      expect(mockedStart).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('end-of-run start (design D3, D5, D12)', () => {
+    it('starts once after the log part with the reported ids, the team, the confirmed steps and mode and user, and appends its line', async () => {
+      runner.impl = async (o) => {
+        order.push('playlist');
+        o.onProgress({
+          current: null,
+          percent: 100,
+          lines: [...(o.initialLines ?? []), 'Completed First video 1', 'Completed First video 2'],
+        });
+        o.onSessionImported?.('s-1');
+        o.onSessionImported?.('retried-from-earlier-run');
+      };
+      const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      const invalidate = vi.spyOn(client, 'invalidateQueries');
+      renderWithQueryClient(
+        <BatchImportModal profile={profileAs('owner')} onClose={() => {}} />,
+        client,
+      );
+      await loadPlaylist();
+      await enterLogs();
+      tick('Autogenerate after import');
+      tick('Log events');
+      fireEvent.click(screen.getByRole('radio', { name: 'Leave all as suggestions to review' }));
+      await waitFor(() => expect(startButton().disabled).toBe(false), WAIT);
+      fireEvent.click(startButton());
+      fireEvent.click(await screen.findByRole('button', { name: 'Start' }));
+      await screen.findByText(/^Autogenerate started for 1 sessions/);
+      expect(order).toEqual(['playlist', 'logs', 'autogenerate']);
+      expect(mockedStart).toHaveBeenCalledTimes(1);
+      const call = mockedStart.mock.calls[0][0];
+      expect(call).toMatchObject({
+        teamId: TEAM,
+        sessionIds: ['s-1', 'retried-from-earlier-run'],
+        steps: ['transcript', 'topics', 'wiki'],
+        wikiMode: 'pending',
+        confirmedUserId: 'me',
+      });
+      const lines = Array.from(screen.getByTestId('batch-import-lines').querySelectorAll('li')).map(
+        (li) => li.textContent,
+      );
+      expect(lines).toEqual([
+        'Completed First video 1',
+        'Completed First video 2',
+        '[logs] matched 1 sheet',
+        'Autogenerate started for 1 sessions (at most 4 runs); follow it in Settings → Batch autogenerate.',
+      ]);
+      expect(invalidate).toHaveBeenCalledWith({ queryKey: ['autogenerate-jobs', TEAM] });
+      expect(startButton().textContent).toBe('Start Import');
+    });
+
+    it("the injected reads go through the run's profile and show sessions", async () => {
+      await armed();
+      fireEvent.click(startButton());
+      fireEvent.click(await screen.findByRole('button', { name: 'Start' }));
+      await waitFor(() => expect(mockedStart).toHaveBeenCalledTimes(1));
+      mockedApiFetch.mockImplementation(async (path) => {
+        if (path === 'profile') return profileAs('owner', 'someone');
+        if (path === 'sessions')
+          return {
+            active: [
+              { id: 's-1', show_id: 'show-1', title: 'a', episode: 'a' },
+              { id: 'x', show_id: 'show-2', title: 'b', episode: 'b' },
+            ],
+            archived: [],
+          };
+        throw new Error(`unexpected ${path}`);
+      });
+      const { readProfile, listShowSessionIds } = mockedStart.mock.calls[0][0];
+      const signal = new AbortController().signal;
+      expect((await readProfile(signal)).auth.user?.id).toBe('someone');
+      expect(await listShowSessionIds(signal)).toEqual(['s-1']);
+    });
+
+    it('a part ending with a Failed line still starts it, with the ids reported before the failure', async () => {
+      runner.impl = async (o) => {
+        o.onProgress({ current: null, percent: 50, lines: ['Completed First video 1'] });
+        o.onSessionImported?.('s-1');
+        throw new Error('boom');
+      };
+      await armed();
+      fireEvent.click(startButton());
+      fireEvent.click(await screen.findByRole('button', { name: 'Start' }));
+      await screen.findByText(/^Autogenerate started/);
+      expect(mockedStart.mock.calls[0][0].sessionIds).toEqual(['s-1']);
+      const lines = Array.from(screen.getByTestId('batch-import-lines').querySelectorAll('li')).map(
+        (li) => li.textContent,
+      );
+      expect(lines.slice(0, 2)).toEqual(['Completed First video 1', 'Failed: boom']);
+    });
+
+    it('a not-started line does not refresh the job list', async () => {
+      mockedStart.mockResolvedValue([
+        'Autogenerate not started: no video was imported by this import.',
+      ]);
+      const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      const invalidate = vi.spyOn(client, 'invalidateQueries');
+      await armed('owner', client);
+      fireEvent.click(startButton());
+      fireEvent.click(await screen.findByRole('button', { name: 'Start' }));
+      await screen.findByText('Autogenerate not started: no video was imported by this import.');
+      expect(invalidate).not.toHaveBeenCalledWith({ queryKey: ['autogenerate-jobs', TEAM] });
+    });
   });
 });

@@ -122,7 +122,7 @@ Web tests: `cd web && npx vitest run <files>`. Gates run through `scripts/check-
 
 ## 4. Modal: checkbox, options, up-front check, confirm, wiring (design D3, D6, D7, D9-D13)
 
-- [ ] 4.1 Test first, `web/src/pages/index/components/BatchImportModal.test.tsx`:
+- [x] 4.1 Test first, `web/src/pages/index/components/BatchImportModal.test.tsx`:
   - the checkbox is absent with no playlist loaded, absent for a `member` of the active team (and
     no `autogenerate-jobs` request is ever sent for them), present and unticked for an `owner` and
     an `admin`;
@@ -166,7 +166,8 @@ Web tests: `cd web && npx vitest run <files>`. Gates run through `scripts/check-
     and the confirmed steps and mode, and appends its line after every import line; a part ending
     with a `Failed` line still starts it; closing the modal mid-run sends no autogenerate request.
   Verify: red before 4.2, green after.
-- [ ] 4.2 `BatchImportModal.tsx`: visibility from the profile role (D7), the options group under the
+  Evidence: red: `cd web && npx vitest run src/pages/index/components/BatchImportModal.test.tsx` -> `Tests  30 failed | 27 passed (57)` (every new case that needs the group, the confirm, the D13 Escape guard or the end-of-run call failed; the absence cases, e.g. "absent with no playlist loaded" and "with no run in progress, Escape still closes", passed already) (pia-4.1-red.log); green after 4.2 (pia-4.2-green.log)
+- [x] 4.2 `BatchImportModal.tsx`: visibility from the profile role (D7), the options group under the
   picker, the job-list read before the confirm via `useAutogenerateJobs` (D10), `useAutogeneratePreview` then `useProviders` with `blockedFromProviders` for the up-front
   check (D6) with the pending/stale rule and the post-confirm re-check, arming and reset (D11),
   `closeOnOverlayClick={!isImporting}` and the ignored `onOpenChange(false)` during a run (D13),
@@ -174,11 +175,13 @@ Web tests: `cd web && npx vitest run <files>`. Gates run through `scripts/check-
   `onSessionImported` collector, the end-of-run call after the existing parts and the
   `autogenerateKeys.all(teamId)` invalidation after a `201` or an unknown start. Verify: 4.1 and
   the whole existing `BatchImportModal.test.tsx` green; `npm run typecheck` exit 0; biome clean.
-- [ ] 4.3 README "YouTube audio import": one paragraph on "Autogenerate after import" (owners and
+  Evidence: `cd web && npx vitest run src/pages/index/components/BatchImportModal.test.tsx` -> `Tests  57 passed (57)`; with the conformance guard, `batchImport/`, `autogenerate/` and the Settings test -> `Test Files  12 passed (12)`, `Tests  314 passed (314)` (pia-4.2-green.log; `apiResponseShapes.repo.test.ts` still green: the modal's reads use `useProviders`, `useAutogenerateJobs` and the runner's extracted `readProfile`/`readShowSessions`, so no new `apiFetch` site); `npm run typecheck -w web` exit 0; biome on the touched files exit 0 (pia-4.2-typecheck.log)
+- [x] 4.3 README "YouTube audio import": one paragraph on "Autogenerate after import" (owners and
   admins, one job at the end over this run's imported videos, the confirm, the progress line and
   where to follow the job). Docs only; verify: `cd server && npx vitest run
   src/routers/readmeEndpoints.repo.test.ts` still green (no endpoint row changes) and the paragraph names
   Settings → Batch autogenerate.
+  Evidence: README "YouTube audio import" gains the paragraph "**Autogenerate after import (playlist-import-autogenerate).**", which ends "Follow or retry the job in Settings → Batch autogenerate."; `cd server && npx vitest run src/routers/readmeEndpoints.repo.test.ts` -> `Tests  12 passed (12)` (pia-4.3-green.log)
 
 ## 5. Verification
 

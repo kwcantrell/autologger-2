@@ -280,6 +280,18 @@ videos) come back as the private-or-nonexistent `502`. It runs one flat-playlist
 process (a third gets the busy `503`). Each entry says whether it can be imported (`unavailable`,
 `live`, `upcoming`, or `too_long` at 4 hours or more). The listing writes nothing.
 
+**Autogenerate after import (playlist-import-autogenerate).** Owners and admins of the active team
+see an "Autogenerate after import" checkbox beneath the playlist picker (members never do), with the
+same steps and wiki mode as Settings → Batch autogenerate. While it is ticked, the modal checks your
+providers up front with the existing preview route, and Start Import first opens one confirm with
+the estimate (checked videos × steps, a warning when the team already has a live job). When the
+whole run has ended (folder, playlist, then logs), the browser starts one batch job over exactly
+the sessions this import brought in (skipped and failed videos are left out) through the existing
+preview and start routes; no further prompt. One progress line reports the outcome: started, or why
+not (no imported video, a live job for the team, blocked or refused, or a failure whose outcome is
+unknown). Follow or retry the job in Settings → Batch autogenerate. Closing the modal starts no job;
+during a run, Escape and clicks outside the modal no longer close it.
+
 ### Google Sheets log import
 
 `POST /api/shows/:showId/log-import` returns `503 {detail}` unless the operator explicitly
