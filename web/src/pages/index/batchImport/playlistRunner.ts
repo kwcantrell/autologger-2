@@ -133,6 +133,10 @@ export interface RunPlaylistImportOptions {
   onProgress: (state: BatchImportProgressState) => void;
   /** Called after each successful session create (for query invalidation). */
   onSessionCreated?: () => void;
+  /** Called with each session this import brought in (playlist-import-autogenerate D2): where it
+   * logs `Completed <name>`, and for this import's own remembered session that already has audio
+   * from an earlier, interrupted run (skipped as already in the system, then forgotten). */
+  onSessionImported?: (sessionId: string) => void;
   /** Injectable for tests (virtual time); rejects with `AbortError` on abort. */
   sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
 }
@@ -143,6 +147,7 @@ type EntryOutcome = 'done' | 'end-run';
  * session whose import was in flight is then kept and remembered (design D7). */
 export async function runPlaylistImport(options: RunPlaylistImportOptions): Promise<void> {
   const { showId, names, usePublishDate, profile, signal, onProgress, onSessionCreated } = options;
+  const onSessionImported = options.onSessionImported;
   const sleep = options.sleep ?? abortableSleep;
   const entries = options.entries.filter((e) => names.has(e.index));
   const total = entries.length;
@@ -184,6 +189,7 @@ export async function runPlaylistImport(options: RunPlaylistImportOptions): Prom
       if (count > 0) {
         await forgetImportSession(key);
         log(formatCompletedLine(name));
+        onSessionImported?.(sessionId);
         return;
       }
     }
@@ -208,15 +214,24 @@ export async function runPlaylistImport(options: RunPlaylistImportOptions): Prom
     let retrying = false;
     const existing = findMatchingSession(sessions, name);
     if (existing) {
+      let ownWithAudio = false;
       if ((await findImportSession(key)) === existing.id) {
         throwIfAborted(signal);
         if ((await segmentCount(existing.id, signal)) === 0) {
           sessionId = existing.id;
           retrying = true;
+        } else {
+          // Audio an earlier, interrupted run of this import brought in (design D2): it counts as
+          // this import's, then is forgotten so a later run treats it as an ordinary session.
+          ownWithAudio = true;
         }
       }
       if (sessionId === null) {
         log(formatSkippedLine(name));
+        if (ownWithAudio) {
+          await forgetImportSession(key);
+          onSessionImported?.(existing.id);
+        }
         return 'done';
       }
     }
@@ -259,6 +274,7 @@ export async function runPlaylistImport(options: RunPlaylistImportOptions): Prom
     }
     await forgetImportSession(key);
     log(formatCompletedLine(name));
+    onSessionImported?.(sessionId);
     return 'done';
   };
 

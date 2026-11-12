@@ -51,7 +51,7 @@ Web tests: `cd web && npx vitest run <files>`. Gates run through `scripts/check-
 
 ## 2. Runner reports its successful imports (design D2)
 
-- [ ] 2.1 Test first, `web/src/pages/index/batchImport/playlistRunner.test.ts`: with
+- [x] 2.1 Test first, `web/src/pages/index/batchImport/playlistRunner.test.ts`: with
   `onSessionImported`, a run over five entries (created and completed; skipped as already in the
   system; definite failure; unknown outcome later confirmed by a segment; unknown outcome never
   confirmed) reports exactly the ids of the first and fourth; a retry into this import's own empty
@@ -63,10 +63,12 @@ Web tests: `cd web && npx vitest run <files>`. Gates run through `scripts/check-
   key forgotten (a second run over the same entry then skips it without reporting); a name match
   that is not remembered, or remembered for another video, is skipped and not reported. Verify:
   red before 2.2, green after.
-- [ ] 2.2 `playlistRunner.ts`: optional `onSessionImported(sessionId)` in
+  Evidence: red: `cd web && npx vitest run src/pages/index/batchImport/playlistRunner.test.ts` -> `Tests  5 failed | 30 passed (35)`, e.g. `AssertionError: expected [] to deeply equal [ 'new-1', 'new-3' ]`, `expected [] to deeply equal [ 'mine' ]` (pia-2.1-red.log); the byte-identical, 409 and not-reported cases passed before 2.2 because they assert the absence of a report or a line change; green after 2.2 (pia-2.2-green.log)
+- [x] 2.2 `playlistRunner.ts`: optional `onSessionImported(sessionId)` in
   `RunPlaylistImportOptions`, called at the two `Completed` points and at the remembered-own-
   session-with-audio skip, which also forgets the key. Verify: 2.1 and the whole
   existing `playlistRunner.test.ts` green.
+  Evidence: `cd web && npx vitest run src/pages/index/batchImport/playlistRunner.test.ts` -> `Tests  35 passed (35)`; `npx vitest run src/pages/index/batchImport/` -> `Test Files  6 passed (6)`, `Tests  97 passed (97)`; `npm run typecheck` exit 0 (pia-2.2-green.log)
 
 ## 3. End-of-run start (design D4, D5, D12)
 
