@@ -295,10 +295,10 @@ Test commands: packages are `npx vitest run <files>` from the package directory
 
 ## V. Verify
 
-- [ ] V.1 `scripts/check-change.sh` green (tests, typecheck, audit, openspec, tests-with-code,
+- [x] V.1 `scripts/check-change.sh` green (tests, typecheck, audit, openspec, tests-with-code,
   evidence), and `scripts/check-change.sh --stage hook` before finishing; `openspec validate
   youtube-playlist-import --strict`.
-  Evidence: the gate summary lines (ypi-V.1.log).
+  Evidence: 2026-11-11, after rebasing onto main 5ad0ca05 (audit-fix-2026-11, #141) and `npm ci`: `GITHUB_BASE_REF=main scripts/check-change.sh` -> every gate PASS (`audit  ran ['audit']`, `commands  ran ['typecheck', 'test']`, `panel 12 finding(s), no open criticals`, `evidence`, `artifacts-first`, `tests-with-code 19 source / 15 test file(s)`) except `tasks 1 unticked task(s)`, this task (log `gate2-youtube-playlist.log`); `--stage hook` PASS before the push; `openspec validate youtube-playlist-import --strict` valid. CI on #139 before the rebase: db-shard 1-3, db-tests, dependency-review and secrets pass; gates failed only on audit + tasks.
 - [x] V.2 On the dev stack (`make dev-up`, branch deployed to autologger-dev), as the bootstrap
   owner: load `https://www.youtube.com/playlist?list=PLBB231211A4F62143` (29 entries) in Batch
   Import; a Mix link (`400`) and `list=WL` (private-or-nonexistent `502`) show their details; check positions 1–3 with "Use publish date"
