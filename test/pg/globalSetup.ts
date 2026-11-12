@@ -38,6 +38,8 @@ export const DOCKER_MISSING =
 const LABEL = 'autologger-test-pg.pid';
 const HOST_LABEL = 'autologger-test-pg.host';
 const READY_TRIES = 120;
+/** The test containers' `max_connections` (the server's integration tier budgets against it). */
+export const MAX_CONNECTIONS = 300;
 
 /** Removes test containers left on this host by runs whose process has exited. */
 export async function reapStale(d: StartDeps): Promise<void> {
@@ -101,7 +103,7 @@ export async function startTestPostgres(d: StartDeps): Promise<TestPg> {
       '-c',
       'log_min_messages=fatal',
       '-c',
-      'max_connections=300',
+      `max_connections=${MAX_CONNECTIONS}`,
     ],
     secrets,
   );

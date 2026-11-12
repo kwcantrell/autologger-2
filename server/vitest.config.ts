@@ -20,6 +20,18 @@ const skipDbTests = process.env.SKIP_DB_TESTS === '1';
 // maxWorkers in its own group, after the unit and integration files.
 export const PG_MAX_WORKERS = 2;
 
+// The `integration` container lets the app role open 280 connections (pgIntegrationSetup.ts)
+// under max_connections=300 (test/pg/globalSetup.ts), 3 of them reserved for superusers. vitest's
+// default of one file per core but one held about 145 app connections at 19 files here (7.6 a
+// file), so it would pass 280 on a machine with about 38 or more cores. One file at its worst holds
+// 40 app-role and 42 client connections (frameBus.int.test.ts: the harness's catalog adapter and two
+// server processes on the Postgres frame bus, 12 + 2 × 14, plus a `postgres` admin client and the
+// harness's next template clone). Six files at that worst stay under both limits on any machine:
+// 6 × 40 = 240 ≤ 280 and 6 × 42 + 3 others = 255 ≤ 297. src/test/integrationConnectionBudget.ts
+// holds the arithmetic and vitestConfig.test.ts pins this bound under it. A project with its own
+// maxWorkers runs in its own group: unit files first, then integration, then pg.
+export const INTEGRATION_MAX_WORKERS = 6;
+
 export default defineConfig({
   test: {
     // `npm run test:coverage -w server` (vitest run --coverage): v8 coverage of the server's full
@@ -53,6 +65,8 @@ export default defineConfig({
                 setupFiles: ['./src/test/setup.int.ts'],
                 globalSetup: ['./src/test/pgIntegrationSetup.ts'],
                 hookTimeout: 600_000,
+                maxWorkers: INTEGRATION_MAX_WORKERS,
+                sequence: { groupOrder: 1 },
               },
             },
             {
@@ -64,7 +78,7 @@ export default defineConfig({
                 hookTimeout: 600_000,
                 testTimeout: 30_000,
                 maxWorkers: PG_MAX_WORKERS,
-                sequence: { groupOrder: 1 },
+                sequence: { groupOrder: 2 },
               },
             },
           ]),
