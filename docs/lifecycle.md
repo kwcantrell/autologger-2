@@ -45,7 +45,8 @@ written review.
    Read its `task.md` and run `/factory:approve <id>` to approve it, or
    `/factory:approve <id> changes <what to change>` to send it back. Approving pins the file:
    if `task.md` changes afterwards, the job can't start until you approve it again. A plugin
-   hook turns `factory approve` into a permission prompt, so an agent can't approve for you.
+   hook turns `factory approve` into a permission prompt, so an agent can't approve for you by
+   calling it directly.
 2. **PR merge with green CI.** When all three reviewers approve, the job reaches ship. Run
    `/factory:ship <id>`. It shows you `ship.md` and the diff stat, then takes the PR path:
    ```sh
@@ -56,7 +57,9 @@ written review.
    CI runs on the PR. You merge it on GitHub once the required checks (`gates`, `secrets`,
    `dependency-review`, `db-tests`) are green, then run `factory close <id> merged via PR` and
    `git pull` on `main`. Never use the plugin's local `factory merge` here: it would commit on
-   `main`, which the pre-commit hook and the branch ruleset both refuse.
+   `main`, which the pre-commit hook and the branch ruleset both refuse. `ship.md` becomes a
+   public PR body, so check before pushing that it quotes no secrets, `.env` contents or PII
+   from the job's evidence.
 
 To reject a job at ship, run `/factory:ship <id> reject <reason>`; the branch is kept.
 

@@ -37,9 +37,10 @@ These live in the forge, not the repo, so the template can't apply them:
 
 ## Known gaps
 
-- Spec approval lives in the untracked `factory/` directory and is guarded by a permission
-  prompt, not by CI. An agent outside Claude Code, or running without the plugin's hook, could
-  call `factory approve`. The PR merge on GitHub, with green CI, is the real control (ADR 0034).
+- Spec approval lives in the untracked `factory/` directory and is guarded by a
+  pattern-matched permission prompt, not by CI. The hook matches the Bash command text, so an
+  agent outside Claude Code, running without the plugin's hook, or calling the CLI indirectly
+  (through a variable or a script file) could run `factory approve`. The PR merge on GitHub, with green CI, is the real control (ADR 0034).
 - With a single collaborator, code owner review can only be met through the admin's
   bypass on PRs, since GitHub doesn't count an author's own approval. Anything holding the
   admin's token, an agent included, has that bypass. Real separation needs a second reviewer.

@@ -2,8 +2,8 @@
 
 - Date: 2026-11-12
 - Status: Accepted (supersedes ADRs 0001-0006, 0008, 0014-0016 and 0024)
-- Rule: AGENTS.md "The line" and rules 1-8; `factory.json` (`spec_gate: true`); the `openspec`
-  gate (specs only); CI's required checks on the PR
+- Rule: AGENTS.md "The line" and rules 1-7 (rule 8 carries over ADR 0008); `factory.json`
+  (`spec_gate: true`); the `openspec` gate (specs only); CI's required checks on the PR
 
 ## Context
 
@@ -63,9 +63,10 @@ the `factory/` directory is untracked, so the facts are quoted here):
 - Every job's `task.md` stopped for human approval before build, as `spec_gate` requires.
 - Non-blocking findings were not lost: they became new jobs (004 from 003, 008 from 003-006) or
   follow-ups listed in `ship.md`.
-- Jobs built in parallel worktrees (002 and 003 from 14:24, 007 and 008 overlapping) and each
-  `ship.md` reports `git merge-tree` finding no conflicts. No commit landed on the wrong branch,
-  the failure ADR 0005 was written against.
+- Jobs built in parallel worktrees (002 and 003 from 14:24, 007 and 008 overlapping). 8 of 9
+  `ship.md` files report `git merge-tree` finding no conflicts; 002's warned of a possible small
+  conflict with 003, and 003, merged second, reported none against a base that included 002. No
+  commit landed on the wrong branch, the failure ADR 0005 was written against.
 - Jobs 010 and 011 then reworked the gates, CI and guidance for this decision through the same
   line.
 
