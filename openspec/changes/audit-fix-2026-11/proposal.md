@@ -6,6 +6,8 @@ in the transcription client, `zod` validating every request body, `body-parser` 
 SDK's `express`), as the precedents `fix-dependency-vulns` and `audit-fix-2026-10` (both tier 2)
 were. It changes only the lockfile and one exact pin. No spec, route or contract change is intended.
 
+Approved-by: Kalen 11-11-2026
+
 ## Why
 
 `npm audit --audit-level=high` fails on `main` (beed639b), so CI's `audit` gate fails on every PR into
