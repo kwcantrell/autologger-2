@@ -1,14 +1,18 @@
-<!-- CI reads the Tier and Change lines. Keep them on their own lines. -->
-Tier: 1
-Change: <openspec change id, or "none" for tier 0>
+<!--
+Factory PRs: /factory:ship opens this PR with the job's ship.md as the body, so this template is
+only for a PR opened by hand. No gate reads the body; CI checks the code, not this text.
+-->
+
+Factory job: <job id, e.g. 012-short-slug> (`factory/jobs/<id>/`: task.md, build.md, proof.md, review-*.md)
 
 ## What and why
 
-<!-- One or two sentences. Link the proposal for anything longer. -->
+<!-- One or two sentences. task.md holds the acceptance criteria. -->
 
 ## Evidence
 
-<!-- Paste the tail of `scripts/check-change.sh` and anything a reviewer should see run. -->
+<!-- Where the proof lives: proof.md, files under factory/jobs/<id>/evidence/, and anything a
+     reviewer should see run (the tail of `scripts/check-change.sh`, test output). -->
 
 ## Overrides
 
@@ -16,6 +20,8 @@ Change: <openspec change id, or "none" for tier 0>
 
 ## Reviewer checklist
 
-- [ ] Tier matches the risk (tier 2 for contracts, auth, secrets, migrations, concurrency, destructive ops, the process)
-- [ ] Diff matches the approved proposal; nothing out of scope
-- [ ] Tests fail without the change and pass with it
+- [ ] The diff does what task.md's acceptance criteria ask, and nothing out of scope
+- [ ] Each criterion has a test that fails without the change, or saved evidence (proof.md)
+- [ ] Behavior changes update the matching spec under `openspec/specs/` in this PR
+- [ ] No observable change to the frozen HTTP/WS contract; auth, secrets and PII work was human-led
+- [ ] Blocking review findings are fixed or answered

@@ -49,3 +49,6 @@ openspec/changes/**/qa/**/*.png
 
 # vitest coverage reports (npm run test:coverage -w server)
 coverage/
+
+# Python bytecode (the gate script and its tests)
+__pycache__/
