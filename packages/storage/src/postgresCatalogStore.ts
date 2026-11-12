@@ -476,7 +476,11 @@ export class PostgresCatalogDb implements CatalogRoot {
   }
 
   private pools(): Pool[] {
-    return [this.rootPool, this.txPool, ...(this.sessionPoolOrNull ? [this.sessionPoolOrNull] : [])];
+    return [
+      this.rootPool,
+      this.txPool,
+      ...(this.sessionPoolOrNull ? [this.sessionPoolOrNull] : []),
+    ];
   }
 
   /** The session slots, opened on the first session call: a process that runs no session work
@@ -738,19 +742,21 @@ export class PostgresCatalogDb implements CatalogRoot {
       };
       const body = refused
         ? Promise.resolve(null)
-        : current.run(a, async () => fn(new TxHandle(a))).then(
-          async (value) => {
-            settle();
-            // A statement the body started without awaiting still decides the outcome (A11).
-            await drain(a);
-            return { value };
-          },
-          (error: unknown) => {
-            fail(a, error);
-            settle();
-            return null;
-          },
-        );
+        : current
+            .run(a, async () => fn(new TxHandle(a)))
+            .then(
+              async (value) => {
+                settle();
+                // A statement the body started without awaiting still decides the outcome (A11).
+                await drain(a);
+                return { value };
+              },
+              (error: unknown) => {
+                fail(a, error);
+                settle();
+                return null;
+              },
+            );
       const deadline = new Promise<'timeout'>((res) => {
         timer = setTimeout(() => res('timeout'), Math.max(0, deadlineAt - Date.now()));
       });

@@ -104,8 +104,13 @@ export function parseWikiLinks(body: string): WikiLinksResult {
           kind: scheme[1]!.toLowerCase() as 'cite' | 'wiki',
           source: node.type,
           url: node.url,
-          label: node.type === 'definition' ? (node.label ?? node.identifier ?? '') : plainText(node),
-          position: { line: start?.line ?? 0, column: start?.column ?? 0, offset: start?.offset ?? 0 },
+          label:
+            node.type === 'definition' ? (node.label ?? node.identifier ?? '') : plainText(node),
+          position: {
+            line: start?.line ?? 0,
+            column: start?.column ?? 0,
+            offset: start?.offset ?? 0,
+          },
           valid: target !== null,
           ...fields,
         });

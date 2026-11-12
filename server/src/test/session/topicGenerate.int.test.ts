@@ -16,8 +16,6 @@
 
 import { readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import type { Clock } from '@autologger/ports';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AI_CHAT_SYSTEM_PROMPT_BRIEF, stableSessionCwd } from '@autologger/ai-runtime/aiChatRunner';
 import { __resetAiMcpListenerForTests, AiMcpListener } from '@autologger/ai-runtime/aiMcpServer';
 import { AI_RUNTIME_FIXTURES_DIR } from '@autologger/ai-runtime/fixturesDir';
@@ -26,7 +24,9 @@ import {
   TOPIC_GENERATE_MESSAGE,
   TOPIC_GENERATE_SYSTEM_PROMPT,
 } from '@autologger/ai-runtime/topicGenerate';
-import { TEST_CALLER, testRegistry, type TestRegistry } from './sessionRows';
+import type { Clock } from '@autologger/ports';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { TEST_CALLER, type TestRegistry, testRegistry } from './sessionRows';
 
 // ai-runtime-package (task 2.2) — a plain real-time clock literal, defined
 // locally rather than importing `server/src/node/systemClock` (composition-

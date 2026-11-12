@@ -6,10 +6,9 @@
 // whole write, with no frame sent.
 
 import { UI_SNAPSHOT_LABEL_KEY } from '@autologger/domain';
-import type { SessionProjection } from '@autologger/session-core/sessionCore';
 import type { SessionHubRegistry } from '@autologger/session-core/SessionHub';
+import type { SessionProjection } from '@autologger/session-core/sessionCore';
 import { afterEach, describe, expect, it } from 'vitest';
-import { type SlowStorage, slowStorage } from './slowStorage';
 import {
   catalogRoot,
   createSessionRow,
@@ -18,6 +17,7 @@ import {
   testRegistry,
   testStorage,
 } from './sessionRows';
+import { type SlowStorage, slowStorage } from './slowStorage';
 
 const CTX = { frameRate: 24, startOffsetFrames: 0 };
 const STARTED_AT = '2026-10-01T10:00:00.000Z';
@@ -118,9 +118,9 @@ describe('the catalog projection is current after each projection-changing hub m
   it('maybeRelinkOrphans', async () => {
     const { id, hub } = await openHub();
     await add(hub, 'orphan', JSON.stringify({ [UI_SNAPSHOT_LABEL_KEY]: 'Camera' }), 'gone');
-    expect(await hub.maybeRelinkOrphans({ validIds: ['cam'], labelToIds: { camera: ['cam'] } })).toBe(
-      1,
-    );
+    expect(
+      await hub.maybeRelinkOrphans({ validIds: ['cam'], labelToIds: { camera: ['cam'] } }),
+    ).toBe(1);
     expect((await expectCurrent(id, hub)).event_count).toBe(1);
   });
 

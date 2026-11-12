@@ -64,7 +64,15 @@ describe('chatRequestSchema history (ai-sdk-agent-harness D6)', () => {
   });
 
   it('refuses a malformed history or entry', () => {
-    for (const history of [null, 'x', {}, [null], [{ role: 'user' }], [{ text: 'x' }], [{ role: 'user', text: 1 }]])
+    for (const history of [
+      null,
+      'x',
+      {},
+      [null],
+      [{ role: 'user' }],
+      [{ text: 'x' }],
+      [{ role: 'user', text: 1 }],
+    ])
       expect(ok({ message: 'hi', history }), JSON.stringify(history)).toBe(false);
   });
 });

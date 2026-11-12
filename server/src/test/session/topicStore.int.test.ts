@@ -1,6 +1,6 @@
+import { topicRow } from '@autologger/session-core/topicStore';
 import { describe, expect, it } from 'vitest';
 import { boundCore } from './boundCore';
-import { topicRow } from '@autologger/session-core/topicStore';
 
 describe('topicRow', () => {
   it('maps a full topic row', () => {

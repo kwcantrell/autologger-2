@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TimecodeCtx } from '@autologger/session-core/sessionCore';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { boundCore } from './boundCore';
 import { insertRaw, type TestStorage } from './sessionRows';
 

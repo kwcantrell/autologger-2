@@ -111,7 +111,7 @@ describe('the scan is mutation-checked against synthetic trees (session-tables D
   it('a literal without session_id fails, naming the file and the statement', () => {
     const root = tree({
       'packages/session-core/src/b.ts':
-        "db.run('DELETE FROM session_transcript_words');\ndb.all(\"select id from session_topics where id = ?\", id);\n",
+        'db.run(\'DELETE FROM session_transcript_words\');\ndb.all("select id from session_topics where id = ?", id);\n',
     });
     expect(scanSessionSql(root).unscoped).toEqual([
       'packages/session-core/src/b.ts: DELETE FROM session_transcript_words',

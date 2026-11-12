@@ -335,9 +335,9 @@ export function describeSessionSqlContract(name: string, target: SessionContract
           await t.run(INSERT, f.sessionId, 'bad', 'a\u0000b');
         }),
       ).rejects.toBeInstanceOf(CatalogInvalidTextError);
-      await expect(
-        s.snapshot(SYS, async (t) => t.all(KEYS, 'a\u0000b')),
-      ).rejects.toBeInstanceOf(CatalogInvalidTextError);
+      await expect(s.snapshot(SYS, async (t) => t.all(KEYS, 'a\u0000b'))).rejects.toBeInstanceOf(
+        CatalogInvalidTextError,
+      );
       expect(await f.keys()).toEqual([]);
     });
 

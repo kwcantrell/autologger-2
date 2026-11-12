@@ -19,11 +19,19 @@ describe('active-show repair vs a concurrent profile update', () => {
 
     const gated = new GatedCatalog(env.ports.catalog);
     const h = gated.hold(/^INSERT INTO user_prefs/);
-    const list = anonApp.request('/api/sessions', { method: 'GET', headers: { cookie } }, envWith({}, { catalog: gated }));
+    const list = anonApp.request(
+      '/api/sessions',
+      { method: 'GET', headers: { cookie } },
+      envWith({}, { catalog: gated }),
+    );
     await h.reached;
     const put = await anonApp.request(
       '/api/profile',
-      { method: 'PUT', headers: { ...J, cookie }, body: JSON.stringify({ active_studio_id: studio, active_show_id: chosen }) },
+      {
+        method: 'PUT',
+        headers: { ...J, cookie },
+        body: JSON.stringify({ active_studio_id: studio, active_show_id: chosen }),
+      },
       { ...env },
     );
     expect(put.status).toBe(200);

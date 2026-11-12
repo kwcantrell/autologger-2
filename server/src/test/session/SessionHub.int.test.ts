@@ -1,11 +1,18 @@
 import { MAX_DASHBOARDS_PER_SESSION } from '@autologger/contract';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   DashboardBoundsError,
   DashboardValidationError,
 } from '@autologger/session-core/dashboardStore';
 import { EventStore } from '@autologger/session-core/eventStore';
-import { catalogRoot, createSessionRow, DRIVER_SAFE_FAKE_TIMERS, openTestHub, testRegistry, testStorage } from './sessionRows';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  catalogRoot,
+  createSessionRow,
+  DRIVER_SAFE_FAKE_TIMERS,
+  openTestHub,
+  testRegistry,
+  testStorage,
+} from './sessionRows';
 
 // One session per test (session-tables D12): a hub over its storage; reopening is a second hub on
 // the same session.

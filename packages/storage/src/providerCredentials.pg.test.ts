@@ -252,7 +252,10 @@ describe('PostgresProviderCredentialStore (byo-ai-providers D1)', () => {
     await store.put('ub', 'stt', { ...STT, key: key(2) });
     const back = await store.put('ub', 'llm', { ...LLM, key: key(3, '3333') });
     expect(back.key && bytes(back.key)).toEqual(bytes(key(3, '3333')));
-    expect((await store.list('ub')).map((r) => r.provider)).toEqual(['openai-compatible', 'deepgram']);
+    expect((await store.list('ub')).map((r) => r.provider)).toEqual([
+      'openai-compatible',
+      'deepgram',
+    ]);
   });
 
   it('get and list return key null for the claude-cli row (ai-sdk 2.2)', async () => {
@@ -266,10 +269,12 @@ describe('PostgresProviderCredentialStore (byo-ai-providers D1)', () => {
       url: null,
       key: null,
     });
-    expect((await store.list('ua')).map((r) => [r.kind, r.provider, r.key?.last4 ?? null])).toEqual([
-      ['llm', 'claude-cli', null],
-      ['stt', 'deepgram', 'wxyz'],
-    ]);
+    expect((await store.list('ua')).map((r) => [r.kind, r.provider, r.key?.last4 ?? null])).toEqual(
+      [
+        ['llm', 'claude-cli', null],
+        ['stt', 'deepgram', 'wxyz'],
+      ],
+    );
   });
 
   it('updateKeepingKey never keeps a key across a switch from claude-cli, nor on the keyless row (ai-sdk 2.2)', async () => {
