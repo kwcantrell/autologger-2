@@ -29,6 +29,32 @@ export const autogenerateKeys = {
 
 const base = (teamId: string) => `teams/${encodeURIComponent(teamId)}/autogenerate-jobs`;
 
+/** `POST /api/teams/:teamId/autogenerate-jobs/preview` (read-only estimate and `blocked`). */
+export function previewAutogenerateJob(
+  teamId: string,
+  body: AutogenerateScopeBody,
+  signal?: AbortSignal,
+): Promise<AutogeneratePreviewResponse> {
+  return apiFetch<AutogeneratePreviewResponse>(`${base(teamId)}/preview`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+    signal,
+  });
+}
+
+/** `POST /api/teams/:teamId/autogenerate-jobs`; the typed `409` bodies ride on `ApiError.body`. */
+export function startAutogenerateJob(
+  teamId: string,
+  body: AutogenerateStartBody,
+  signal?: AbortSignal,
+): Promise<AutogenerateJobResponse> {
+  return apiFetch<AutogenerateJobResponse>(base(teamId), {
+    method: 'POST',
+    body: JSON.stringify(body),
+    signal,
+  });
+}
+
 export function useAutogeneratePreview(
   teamId: string,
   body: AutogenerateScopeBody | null,
@@ -36,11 +62,7 @@ export function useAutogeneratePreview(
 ) {
   return useQuery({
     queryKey: autogenerateKeys.preview(teamId, body),
-    queryFn: () =>
-      apiFetch<AutogeneratePreviewResponse>(`${base(teamId)}/preview`, {
-        method: 'POST',
-        body: JSON.stringify(body),
-      }),
+    queryFn: () => previewAutogenerateJob(teamId, body as AutogenerateScopeBody),
     enabled: enabled && teamId !== '' && body !== null,
     placeholderData: keepPreviousData,
   });
@@ -73,11 +95,7 @@ export function useAutogenerateJob(
 export function useStartAutogenerateJob(teamId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: AutogenerateStartBody) =>
-      apiFetch<AutogenerateJobResponse>(base(teamId), {
-        method: 'POST',
-        body: JSON.stringify(body),
-      }),
+    mutationFn: (body: AutogenerateStartBody) => startAutogenerateJob(teamId, body),
     onSettled: () => qc.invalidateQueries({ queryKey: autogenerateKeys.all(teamId) }),
   });
 }

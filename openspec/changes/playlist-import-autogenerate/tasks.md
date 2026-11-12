@@ -24,7 +24,7 @@ Web tests: `cd web && npx vitest run <files>`. Gates run through `scripts/check-
 
 ## 1. Shared autogenerate options (design D8)
 
-- [ ] 1.1 Test first, new `web/src/pages/index/components/autogenerate/AutogenerateOptions.test.tsx`
+- [x] 1.1 Test first, new `web/src/pages/index/components/autogenerate/AutogenerateOptions.test.tsx`
   and `autogenerateModel.test.ts`: the four steps in run order with Settings' labels, all ticked
   by default by the caller's initial state; toggling a step calls back with the new set; the wiki
   radio is disabled without Wiki; `idPrefix` makes every id unique (two instances in one tree have
@@ -38,7 +38,8 @@ Web tests: `cd web && npx vitest run <files>`. Gates run through `scripts/check-
   timers); the confirm body renders the optional lead
   sentence first, the own-accounts sentence, and the auto-accept warning only in `accept` mode with
   Wiki ticked. Verify: red before 1.2 (module not found), green after.
-- [ ] 1.2 Create `components/autogenerate/{autogenerateModel.ts,AutogenerateOptions.tsx}` by moving
+  Evidence: red: `cd web && npx vitest run src/pages/index/components/autogenerate/` -> `Error: Cannot find module './autogenerateModel'`, `Failed to resolve import "./AutogenerateOptions"`, `Tests  no tests` (pia-1.1-red.log); green after 1.2: same command plus the Settings test -> `Test Files  3 passed (3)`, `Tests  42 passed (42)` (pia-1.2-green.log)
+- [x] 1.2 Create `components/autogenerate/{autogenerateModel.ts,AutogenerateOptions.tsx}` by moving
   the constants, `useDebounced`, the Steps and Wiki output groups and the confirm body out of
   `settings/BatchAutogenerateSection.tsx`, which then renders them; move the two `apiFetch` calls
   of `useAutogeneratePreview` and `useStartAutogenerateJob` into exported
@@ -46,6 +47,7 @@ Web tests: `cd web && npx vitest run <files>`. Gates run through `scripts/check-
   in `useAutogenerateJobs.ts`, called by the hooks (design D8, finding F). Verify: 1.1 green;
   `BatchAutogenerateSection.test.tsx` green with no assertion changed (imports only);
   `npm run typecheck` exit 0; biome clean.
+  Evidence: `cd web && npx vitest run src/pages/index/components/autogenerate/ src/pages/index/components/settings/BatchAutogenerateSection.test.tsx` -> `Test Files  3 passed (3)`, `Tests  42 passed (42)`; `BatchAutogenerateSection.test.tsx` unchanged (it renders through `SettingsView`, so not even its imports changed) (pia-1.2-green.log); `npm run typecheck` -> `tsc --noEmit` exit 0; `npx biome check --error-on-warnings src/pages/index/components/autogenerate src/pages/index/components/settings src/api/hooks` exit 0 (pia-1.2-typecheck.log; the whole-`src/` run reports one pre-existing error in untouched `wiki/WikiRoute.tsx:326` under biome 2.5.3)
 
 ## 2. Runner reports its successful imports (design D2)
 
