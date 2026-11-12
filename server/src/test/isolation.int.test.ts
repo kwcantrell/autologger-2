@@ -1,10 +1,10 @@
-// Per-test isolation of the integration harness (job 006): every test starts from a pristine
+// Per-test isolation of the integration harness (harness.ts): every test starts from a pristine
 // catalog database, an empty DATA_DIR and BLOB_DIR, and fresh bindings (hub registry, KV, every
 // other port), whatever an earlier test in the same worker left behind. Each test below first
 // asserts that pristine state, then dirties a different part of it; the two describes run the
 // writers in both orders, and the file runs with the rest of the tier at its real concurrency.
-// With the per-test reset disabled (a file-level env instead of a per-test one) every test after
-// the first fails.
+// With the per-test reset disabled (a file-level env instead of a per-test one), 3 of the 4 tests
+// fail: every one after the first in the file.
 
 import { mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import { join, relative } from 'node:path';

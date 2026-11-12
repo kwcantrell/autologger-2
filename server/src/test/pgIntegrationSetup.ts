@@ -4,10 +4,11 @@
 // - A higher connection limit for the app role. Every integration test builds the server's own
 //   catalog adapter (up to 12 connections: 3 root, 5 transaction and 4 session, session-tables D2;
 //   14 with the Postgres frame bus's listener and publisher, session-frame-bus D7) and vitest runs
-//   about 19 files at once, past the role's production limit of 45.
+//   up to INTEGRATION_MAX_WORKERS files at once (vitest.config.ts), which together pass the
+//   role's production limit of 45 (integrationConnectionBudget.ts has the budget).
 // - No disk flushes (fsync, synchronous_commit, full_page_writes off). Every test clones
-//   autologger_template, about 10 MB of WAL each, and with ~19 files at once the clones queued on
-//   WAL flushes (job 006: 18 ms of server time per clone at 16 at once, 6 ms without flushes).
+//   autologger_template, about 10 MB of WAL each, and with many files at once the clones queue on
+//   WAL flushes (measured at 18 ms of server time per clone at 16 at once, 6 ms without flushes).
 //   Flushes only matter after a crash, and this container never outlives its run.
 // Only a superuser may change these, so they run as supabase_admin on the container's local socket.
 
@@ -31,8 +32,21 @@ export default async function setup(project: TestProject): Promise<() => Promise
   const teardown = await sharedSetup(project);
   try {
     const { container } = project.getProvidedContext().pg;
-    const psql = `exec -u postgres ${container} psql -XqtA -v ON_ERROR_STOP=1 -U supabase_admin -d postgres`;
-    const args = [...psql.split(' '), ...SETTINGS.flatMap((s) => ['-c', s])];
+    const args = [
+      'exec',
+      '-u',
+      'postgres',
+      container,
+      'psql',
+      '-XqtA',
+      '-v',
+      'ON_ERROR_STOP=1',
+      '-U',
+      'supabase_admin',
+      '-d',
+      'postgres',
+      ...SETTINGS.flatMap((s) => ['-c', s]),
+    ];
     await promisify(execFile)('docker', args);
   } catch (e) {
     await teardown();

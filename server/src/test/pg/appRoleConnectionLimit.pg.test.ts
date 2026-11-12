@@ -31,8 +31,9 @@ afterEach(async () => {
 
 describe('the app role connection limit migration (session-frame-bus D7)', () => {
   it('sets the app role connection limit to 45', async () => {
-    // Roles are cluster-wide, and another file replays the catalog schema migration (which sets
-    // 20) without a lock: the migration runs and the role is read in one transaction (D8).
+    // Roles are cluster-wide and other files replay migrations in parallel, though none commits a
+    // change to the limit (replayMigration puts it back): the migration runs and the role is read
+    // in one rolled-back transaction, which sees its own update and leaves the role as it was (D8).
     const sql = connect((await createTestDatabase()).admin);
     const limit = await readAppRoleWithLimitMigration(sql, async (tx) =>
       Number(

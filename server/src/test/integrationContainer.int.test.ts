@@ -1,7 +1,7 @@
 // The integration tier's own Postgres settings (pgIntegrationSetup.ts): the app role's raised
-// connection limit, and no disk flushes, which keeps a per-test template clone cheap (job 006).
-// The connection settings are the ones the tier's concurrency bound is budgeted against (job 004,
-// integrationConnectionBudget.ts).
+// connection limit, and no disk flushes, which keeps a per-test template clone cheap.
+// The connection settings are the ones the tier's concurrency bound is budgeted against
+// (integrationConnectionBudget.ts).
 
 import { expect, it } from 'vitest';
 import { MAX_CONNECTIONS } from '../../../test/pg/globalSetup';

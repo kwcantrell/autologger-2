@@ -1,4 +1,4 @@
-// The `integration` tier's connection budget (job 004): how many files may run at once against
+// The `integration` tier's connection budget: how many files may run at once against
 // its container without passing the app role's limit or the server's max_connections, on any core
 // count. vitest.config.ts sets INTEGRATION_MAX_WORKERS; vitestConfig.test.ts pins it at or under
 // safeIntegrationMaxWorkers(), and integrationContainer.int.test.ts checks the container's
@@ -14,9 +14,10 @@ export const RESERVED_CONNECTIONS = 0;
 
 /** The most app-role connections one integration file holds at once. A server's catalog adapter
  * opens up to 12 (PostgresCatalogDb's defaults: 3 root, 5 transaction, 4 session slots), 14 with
- * the Postgres frame bus's listener and publisher. The heaviest file, frameBus.int.test.ts, runs
- * the harness's adapter beside two server processes on the bus: 12 + 2 × 14 = 40. The next
- * heaviest hold two adapters and a raw client or one bus (24 to 27). */
+ * the Postgres frame bus's listener and publisher. The two heaviest files, frameBus.int.test.ts
+ * and sessionWs.access.int.test.ts, each run the harness's adapter beside two server processes on
+ * the bus: 12 + 2 × 14 = 40. The next heaviest hold two adapters and a raw client or one bus
+ * (24 to 27). */
 export const FILE_APP_CONNECTIONS = 40;
 
 /** The most client connections of any role one file holds at once: its app-role connections, a

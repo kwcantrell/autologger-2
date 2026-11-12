@@ -1,4 +1,4 @@
-// The one way test code builds server bindings (job 006). `createBindings` resolves
+// The one way test code builds server bindings. `createBindings` resolves
 // `AI_V2_CREDENTIAL_SOURCE_PATH` and `AI_CHAT_CLI_HOME` from `homedir()` (which reads
 // `process.env.HOME` on Linux) once, at construction, so for that one call `HOME` points at a fresh
 // empty temp dir, removed straight after: no test can read the operator's real

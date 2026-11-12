@@ -32,13 +32,12 @@ describe('the integration vitest project', () => {
     expect(INTEGRATION_APP_ROLE_LIMIT).toBe(280);
     expect(NON_SUPERUSER_CONNECTIONS).toBe(297);
     // 7 × 40 = 280 ≤ 280 and 7 × 42 + 3 = 297 ≤ 297; one more file passes both.
-    expect(safeIntegrationMaxWorkers()).toBe(7);
     const n = safeIntegrationMaxWorkers();
-    expect(n * FILE_APP_CONNECTIONS).toBeLessThanOrEqual(INTEGRATION_APP_ROLE_LIMIT);
-    expect(n * FILE_CLIENT_CONNECTIONS + OTHER_CLIENT_CONNECTIONS).toBeLessThanOrEqual(
-      NON_SUPERUSER_CONNECTIONS,
-    );
-    expect((n + 1) * FILE_APP_CONNECTIONS).toBeGreaterThan(INTEGRATION_APP_ROLE_LIMIT);
+    expect({
+      n,
+      app: n * FILE_APP_CONNECTIONS,
+      clients: n * FILE_CLIENT_CONNECTIONS + OTHER_CLIENT_CONNECTIONS,
+    }).toEqual({ n: 7, app: 280, clients: 297 });
   });
 
   it('runs at most INTEGRATION_MAX_WORKERS files at once, within that budget, whatever the core count', () => {
