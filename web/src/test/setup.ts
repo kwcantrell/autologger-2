@@ -56,8 +56,24 @@ if (typeof window !== 'undefined' && !window.localStorage) {
 // etc. explicitly from 'vitest' instead), so cleanup must be wired up here.
 // Without it, DOM nodes from one test's render() leak into the next test in
 // the same file — any multi-test/multi-render file in the tier hits this.
-afterEach(() => {
+//
+// The macrotask wait after `cleanup()` is load-bearing too. Unmounting a Radix FocusScope (every
+// Dialog, AlertDialog, Popover, Select, DropdownMenu and vaul Drawer) schedules a 0 ms
+// `setTimeout` that builds a `CustomEvent`, dispatches it on the scope's container and restores
+// focus. vitest's jsdom environment leaves `setTimeout` as Node's, so nothing cancels that timer
+// when the environment is torn down; after the file's last test it can fire once
+// `CustomEvent` is Node's again, and jsdom's `dispatchEvent` throws "parameter 1 is not of type
+// 'Event'" as an unhandled error. Waiting one macrotask runs those timers here, while jsdom is
+// alive and the error, if any, still belongs to this test; it also stops one test's
+// focus restore from landing in the next test. `realSetTimeout` is captured at load so a test
+// that leaves fake timers installed cannot hang this hook (its Radix timers are fake too, and
+// never fire on their own). setup.test.tsx guards this.
+const realSetTimeout = globalThis.setTimeout;
+afterEach(async () => {
   cleanup();
+  await new Promise<void>((resolve) => {
+    realSetTimeout(resolve, 0);
+  });
 });
 
 // Load-bearing, not hygiene (web-coordination-seam D3): the coordination
