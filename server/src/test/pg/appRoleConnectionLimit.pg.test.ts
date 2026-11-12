@@ -3,10 +3,21 @@
 // a server whose `max_connections` is below 100.
 
 import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import postgres from 'postgres';
 import { afterEach, describe, expect, it } from 'vitest';
-import { type ConnOptions, createTestDatabase } from '../../../../test/pg/testDb';
-import { CONNECTION_LIMIT_MIGRATION, readAppRoleWithLimitMigration } from './appRoleLimit';
+import { type ConnOptions, connOptions, createTestDatabase } from '../../../../test/pg/testDb';
+import {
+  CONNECTION_LIMIT_MIGRATION,
+  readAppRoleWithLimitMigration,
+  replayMigration,
+} from './appRoleLimit';
+import { holdRoleGuardLock } from './roleGuardLock';
+
+const CATALOG_SCHEMA_MIGRATION = resolve(
+  import.meta.dirname,
+  '../../../../supabase/migrations/20261001000000_catalog_schema.sql',
+);
 
 const open: postgres.Sql[] = [];
 function connect(o: ConnOptions): postgres.Sql {
@@ -47,5 +58,28 @@ describe('the app role connection limit migration (session-frame-bus D7)', () =>
         await tx.unsafe(text);
       }),
     ).rejects.toThrow(/max_connections/);
+  });
+});
+
+describe('migration replays leave the app role connection limit alone (appRoleLimit.ts)', () => {
+  it('a replay of the catalog schema migration, which sets 20, commits no change to the limit', async () => {
+    // The replay runs the role guards, which a parallel scratch role would trip (roleGuardLock.ts).
+    await holdRoleGuardLock(connect(connOptions('postgres', 'postgres')));
+    const name = `t_rl_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    const root = connect(connOptions('postgres', 'postgres'));
+    await root.unsafe(`create database ${name} template template0`);
+    const limit = async () =>
+      Number(
+        (await root`select rolconnlimit from pg_roles where rolname = 'autologger_app'`)[0]
+          ?.rolconnlimit,
+      );
+    const before = await limit();
+    expect(before).toBe(45);
+    const sql = connect(connOptions('postgres', name));
+    await replayMigration(sql, readFileSync(CATALOG_SCHEMA_MIGRATION, 'utf8'));
+    // The migration did run: its schema exists in the scratch database.
+    const [s] = await sql`select count(*)::int as n from pg_namespace where nspname = 'catalog'`;
+    expect(s?.n).toBe(1);
+    expect(await limit()).toBe(before);
   });
 });

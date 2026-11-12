@@ -5,6 +5,7 @@ import { resolve } from 'node:path';
 import postgres from 'postgres';
 import { afterEach, describe, expect, it } from 'vitest';
 import { connOptions, createTestDatabase } from '../../../../test/pg/testDb';
+import { replayMigration } from './appRoleLimit';
 
 const MIGRATIONS = resolve(import.meta.dirname, '../../../../supabase/migrations');
 const EARLIER = [
@@ -98,13 +99,13 @@ describe('the seed teams (owner-bootstrap D1)', () => {
     const sql = connect(connOptions('postgres', name));
     for (const f of EARLIER) {
       const text = readFileSync(resolve(MIGRATIONS, f), 'utf8');
-      await sql.begin((tx) => tx.unsafe(text));
+      await replayMigration(sql, text);
     }
     await sql.unsafe(`insert into catalog.app_settings (key, value)
                       values ('active_studio_id', 'test-studios'), ('active_show_id', 'show-autolog-test'),
                              ('other', 'kept')`);
     const text = readFileSync(resolve(MIGRATIONS, TEAM_OWNER), 'utf8');
-    await sql.begin((tx) => tx.unsafe(text));
+    await replayMigration(sql, text);
     const rows = await sql`select key from catalog.app_settings order by key`;
     expect(rows.map((r) => r.key)).toEqual(['other']);
     const defs = await sql`select id from catalog.studio_definitions order by sort_order, id`;
