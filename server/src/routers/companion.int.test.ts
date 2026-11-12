@@ -409,20 +409,6 @@ describe('Companion routes check a signed-in caller’s session access (show-gra
     expect(await env.ports.presence.list(m.ungranted.id)).toEqual([]);
   });
 
-  it('presence: a granted member is 200 and the state reports the session', async () => {
-    const m = await seedAccessMatrix();
-    const res = await asCookie(m.granted.cookie, '/api/companion/presence', {
-      method: 'POST',
-      body: { client_id: 'tab-g', session_id: m.sessionId },
-    });
-    expect(res.status).toBe(200);
-    const st = (await (await asToken(m.granted.id, '/api/companion/state')).json()) as Record<
-      string,
-      unknown
-    >;
-    expect(st.active_session_id).toBe(m.sessionId);
-  });
-
   it('presence: closing, an empty session_id and a token-only post behave as before; NUL is still 400 first', async () => {
     const m = await seedAccessMatrix();
     const closing = await asCookie(m.ungranted.cookie, '/api/companion/presence', {

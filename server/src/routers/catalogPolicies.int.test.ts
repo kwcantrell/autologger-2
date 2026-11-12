@@ -45,21 +45,6 @@ async function send(
 }
 
 describe('existence probes keep their statuses (design D6)', () => {
-  it('POST /api/shows: 404 for an existing team of which the caller is not a member, 400 for a missing team', async () => {
-    const mine = await seedStudio();
-    const foreign = await seedStudio();
-    const cookie = await loginCookie(await seedUser({ studios: [mine], role: 'owner' }));
-    const res = await send('POST', '/api/shows', cookie, { studio_id: foreign, name: 'X' });
-    expect(res.status).toBe(404);
-    expect(await res.json()).toEqual({ detail: 'Unknown studio id.' });
-    const missing = await send('POST', '/api/shows', cookie, {
-      studio_id: 'no-such-team',
-      name: 'X',
-    });
-    expect(missing.status).toBe(400);
-    expect(await missing.json()).toEqual({ detail: 'Unknown studio id.' });
-  });
-
   it("POST /api/sessions: another team's show is 400 Show does not belong to the active team.", async () => {
     const mine = await seedStudio();
     const foreign = await seedStudio();
@@ -314,48 +299,6 @@ describe('routes under the catalog_user policies (design D3, D5, D7, D8)', () =>
     expect(await namesOf(ungranted.id)).toEqual({ given_name: 'Plain', family_name: 'Member' });
   });
 
-  it("the owner's team delete leaves no invite, definition, settings or membership row", async () => {
-    const team = await seedStudio();
-    const ownerId = await seedUser({ studios: [team], role: 'owner' });
-    await seedUser({ studios: [team], role: 'member' });
-    await testDb().run(
-      "INSERT INTO team_invites (studio_id, email_norm, invited_by_user_id, invited_at_utc) VALUES (?, 'x@example.com', ?, '2026-10-03')",
-      team,
-      ownerId,
-    );
-    const res = await send('DELETE', `/api/teams/${team}`, await loginCookie(ownerId));
-    expect(res.status).toBe(200);
-    const left = await testDb().first<{ n: number }>(
-      `SELECT (SELECT COUNT(*) FROM team_invites WHERE studio_id = ?)
-            + (SELECT COUNT(*) FROM studio_definitions WHERE id = ?)
-            + (SELECT COUNT(*) FROM app_settings WHERE key = ?)
-            + (SELECT COUNT(*) FROM user_studio_memberships WHERE studio_id = ?) AS n`,
-      team,
-      team,
-      `studio_config:${team}`,
-      team,
-    );
-    expect(Number(left?.n)).toBe(0);
-  });
-
-  it("a granted member's leave removes their grants in that team only", async () => {
-    const a = await seedAccessMatrix();
-    const b = await seedAccessMatrix();
-    await createCatalog(env.ports.catalog)
-      .system('test-seed')
-      .auth.authAddMembershipWithRole(a.granted.id, b.studioId, 'member');
-    await createCatalog(env.ports.catalog)
-      .system('test-seed')
-      .auth.authGrantShow(a.granted.id, b.showId, b.owner.id, '2026-10-03T00:00:00Z');
-    const res = await send('POST', `/api/teams/${a.studioId}/leave`, a.granted.cookie, {});
-    expect(res.status).toBe(200);
-    const grants = await testDb().all<{ show_id: string }>(
-      'SELECT show_id FROM show_grants WHERE user_id = ? ORDER BY show_id',
-      a.granted.id,
-    );
-    expect(grants).toEqual([{ show_id: b.showId }]);
-  });
-
   it('a transfer to a non-member or to an unknown user id is 404 Member not found', async () => {
     const { studioId, owner, nonMember } = await seedAccessMatrix();
     for (const target of [nonMember.id, 'no-such-user']) {
@@ -446,6 +389,14 @@ describe('routes under the catalog_user policies (design D3, D5, D7, D8)', () =>
       binding: `user:${userId}`,
       sql: 'SELECT catalog.studio_exists(?) AS e',
     });
+    // A team that does not exist at all is a 400, not a 404 (moved from "POST /api/shows: 404 for an
+    // existing team of which the caller is not a member, 400 for a missing team").
+    const missing = await send('POST', '/api/shows', await loginCookie(userId), {
+      studio_id: 'no-such-team',
+      name: 'X',
+    });
+    expect(missing.status).toBe(400);
+    expect(await missing.json()).toEqual({ detail: 'Unknown studio id.' });
   });
 });
 

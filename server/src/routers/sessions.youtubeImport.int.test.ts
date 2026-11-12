@@ -335,52 +335,6 @@ describe('configured success (matrix: youtu.be accepted + success + episode_date
   });
 });
 
-// ── Task 9.1 → flipped by 9.4 (design D10-D13): a successful import now
-// synthesizes a timeline-anchored take (recording_ordinal=N, non-null
-// started/ended_at_utc, a matching pair of `Recording N Started`/`Stopped`
-// events) instead of the pre-9.4 anchorless outcome this test used to pin.
-// Fuller matrix coverage (2nd import, is_rolling 409, anchor-resolution
-// end-to-end) is task 9.5 — this just asserts the flipped baseline.
-
-describe('anchored import (task 9.1 → 9.4: timeline-anchored take, design D10-D13)', () => {
-  it('a successful import produces a segment with recording_ordinal=1, non-null started/ended_at_utc, and a Recording 1 Started/Stopped event pair', async () => {
-    const session = (await seededSession()).sessionId;
-    const { binaryPath } = freshBinary(); // default success mode: ext m4a, duration 125s, upload_date "20240115"
-    const testEnv = configuredEnv(binaryPath);
-
-    const res = await postImport(session, VALID_BODY, testEnv);
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true });
-
-    const after = await listSegments(session, testEnv);
-    expect(after.segments).toHaveLength(1);
-    const seg = after.segments[0] as {
-      recording_ordinal: number | null;
-      started_at_utc: string | null;
-      ended_at_utc: string | null;
-    };
-    expect(seg.recording_ordinal).toBe(1);
-    expect(seg.started_at_utc).not.toBeNull();
-    expect(seg.ended_at_utc).not.toBeNull();
-
-    const eventsRes = await app.request(
-      `/api/sessions/${session}/events`,
-      { method: 'GET' },
-      testEnv,
-    );
-    expect(eventsRes.status).toBe(200);
-    const eventsBody = (await eventsRes.json()) as {
-      total: number;
-      events: Array<{ message: string }>;
-    };
-    expect(eventsBody.total).toBe(2);
-    expect(eventsBody.events.map((e) => e.message).sort()).toEqual([
-      'Recording 1 Started',
-      'Recording 1 Stopped',
-    ]);
-  });
-});
-
 // ── Matrix row: bare yt-dlp on PATH counts as configured ────────────────────
 
 describe('bare yt-dlp on PATH counts as configured (matrix; spec "Bare yt-dlp on PATH counts as configured")', () => {
@@ -453,7 +407,8 @@ describe('post-validation failures — 502, audio unchanged (matrix: download-fa
     ['download-fail', /Failed to download/],
     ['unsupported-container', /not supported/],
     ['oversize', /Failed to download/],
-    ['live', /live stream/],
+    // live-stream: the exact 502 body and the unchanged listing are pinned by the cross-package
+    // instanceof test below, which drives the same mode.
   ];
 
   it.each(

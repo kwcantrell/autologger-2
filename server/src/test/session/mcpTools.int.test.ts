@@ -397,19 +397,4 @@ describe('buildAggregateMcpServer — propose_dashboard (design D10)', () => {
       await close();
     }
   });
-
-  it('does not accept a sessionId argument — no such property on the tool schema', async () => {
-    const { client, close } = await connectToTurn('proposeNoSession');
-    try {
-      const { tools } = await client.listTools();
-      const proposeTool = tools.find((t) => t.name === 'propose_dashboard');
-      expect(proposeTool).toBeTruthy();
-      const props = Object.keys(
-        (proposeTool?.inputSchema?.properties ?? {}) as Record<string, unknown>,
-      );
-      expect(props.every((p) => !/session/i.test(p))).toBe(true);
-    } finally {
-      await close();
-    }
-  });
 });

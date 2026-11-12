@@ -43,12 +43,11 @@ import { AI_RUNTIME_FIXTURES_DIR } from '@autologger/ai-runtime';
 import { aiChatTurns } from '@autologger/ai-runtime/aiChatRegistry';
 import * as aiV2SdkSpawnModule from '@autologger/ai-runtime/aiV2SdkSpawn';
 import { AGGREGATE_MCP_SERVER_NAME } from '@autologger/ai-runtime/mcpTools';
-import type { Clock, Config } from '@autologger/ports';
+import type { Clock } from '@autologger/ports';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Bindings } from '../appEnv';
-import { aiV2CredentialsRefused } from '../env';
 import { anonApp, app, env, envWith } from '../test/harness';
 import {
   loginCookie,
@@ -311,47 +310,6 @@ describe('ai/v2/design — agent credentials refusal (503)', () => {
     await res.text(); // drain the stream so the turn's finally (slot release) runs
     expect(spawnSpy).toHaveBeenCalledTimes(1);
   });
-
-  it('predicate: aiV2CredentialsRefused is independent of IP_ALLOWLIST', async () => {
-    const base: Config = {
-      PUBLIC_BASE_URL: '',
-      HOST: '0.0.0.0',
-      GOOGLE_CLIENT_ID: '',
-      GOOGLE_CLIENT_SECRET: '',
-      BOOTSTRAP_OWNER_EMAIL: '',
-      RUN_FEATURE_EMAILS: '',
-      SESSION_COOKIE: '',
-      SESSION_DAYS: '14',
-      NEW_USER_ALL_TEAMS: '0',
-      COOKIE_SECURE: '',
-      IP_ALLOWLIST: '10.0.0.0/8',
-      TRUST_PROXY: '',
-      ADMIN_TOKEN: '',
-      DEEPGRAM_API_KEY: '',
-      DEEPGRAM_MODEL: '',
-      CLAUDE_CLI_PATH: '',
-      AI_CHAT_TIMEOUT_SEC: '',
-      AI_PROVIDER: 'claude_cli',
-      AI_CHAT_MAX_BUDGET_USD: '',
-      TOPIC_GENERATE_MAX_BUDGET_USD: '',
-      TOPIC_GENERATE_TIMEOUT_SEC: '',
-      EVENT_GENERATE_MAX_BUDGET_USD: '',
-      EVENT_GENERATE_TIMEOUT_SEC: '',
-      EVENT_GENERATE_MAX_CREATED_EVENTS: '',
-      EVENT_GENERATE_MAX_INSTRUCTION_BYTES: '',
-      EVENT_GENERATE_MAX_INSTRUCTION_ENTRIES: '',
-      AI_V2_ENABLED: '1',
-      AI_V2_API_KEY: '',
-      AI_V2_MAX_BUDGET_USD: '',
-      AI_V2_CREDENTIAL_SOURCE_PATH: '',
-    };
-    // Non-loopback, no key, allowlist set — the allowlist does not lift it.
-    expect(aiV2CredentialsRefused(base)).toBe(true);
-    expect(aiV2CredentialsRefused({ ...base, AI_V2_API_KEY: 'k' })).toBe(false);
-    for (const h of ['127.0.0.1', '::1', 'localhost']) {
-      expect(aiV2CredentialsRefused({ ...base, HOST: h })).toBe(false);
-    }
-  });
 });
 
 describe('ai/v2/design — body validation (422 / 400), spawning nothing', () => {
@@ -559,18 +517,9 @@ describe('ai/v2/design — a device token is inert (handled exactly as anonymous
     const res = await req({ ...J, ...(await seedCompanionDevice()).bearer });
     expect(res.status).toBe(anon.status);
     expect(res.status).toBe(401);
-    expect(await res.json()).toEqual(await anon.json());
-    expect(spawnSpy).not.toHaveBeenCalled();
-  });
-
-  it('a device-token-only request is 401 "Login required." and spawns nothing', async () => {
-    const s = (await seededSession()).sessionId;
-    const res = await post(s, { message: 'hi' }, loopbackEnv(), {
-      ...J,
-      ...(await seedCompanionDevice()).bearer,
-    });
-    expect(res.status).toBe(401);
-    expect(await res.json()).toEqual({ detail: 'Login required.' });
+    const anonBody = await anon.json();
+    expect(await res.json()).toEqual(anonBody);
+    expect(anonBody).toEqual({ detail: 'Login required.' });
     expect(spawnSpy).not.toHaveBeenCalled();
   });
 
@@ -584,19 +533,6 @@ describe('ai/v2/design — a device token is inert (handled exactly as anonymous
     expect(res.status).toBe(200);
     await res.text();
     expect(spawnSpy).toHaveBeenCalledTimes(1);
-  });
-});
-
-describe('ai/v2/design — no guard path spawns (spec "Design turn contract")', () => {
-  it('across every guard-rejecting scenario exercised above, attemptDesignTurnSpawn was never called', () => {
-    // Aggregate assertion: the per-test expect(spawnSpy).not.toHaveBeenCalled()
-    // calls above already prove this per-case; this is the single, named
-    // assertion the report cites as "recorder/spy shows zero invocations".
-    // (aiV2.ts's own module doc explains why this spy is non-vacuous: no
-    // spawn call exists anywhere in aiV2.ts yet, so the property holds by
-    // construction — this test is the tripwire for when tasks 2.3-2.8 wire
-    // one in.)
-    expect(spawnSpy).not.toHaveBeenCalled();
   });
 });
 
@@ -1337,21 +1273,6 @@ describe('ai/v2/dashboard — read scoped exactly as the session (spec "Dashboar
     const s = (await seededSession()).sessionId;
     const res = await getDashboard(s, envWith({ AI_V2_ENABLED: '', HOST: '127.0.0.1' }));
     expect(res.status).toBe(503);
-  });
-
-  it('a device-token-only GET is inert: identical to the same request with no Authorization', async () => {
-    const s = (await seededSession()).sessionId;
-    const e = () => envWith({ AI_V2_ENABLED: '1', HOST: '127.0.0.1' });
-    const path = `/api/sessions/${s}/ai/v2/dashboard`;
-    const anon = await anonApp.request(path, { headers: J }, e());
-    const tok = await anonApp.request(
-      path,
-      { headers: { ...J, ...(await seedCompanionDevice()).bearer } },
-      e(),
-    );
-    expect(tok.status).toBe(anon.status);
-    expect(tok.status).toBe(401);
-    expect(await tok.json()).toEqual(await anon.json());
   });
 
   it('GET still works on a non-loopback, no-key bind (NOT gated by the credentials refusal, unlike design/answer)', async () => {

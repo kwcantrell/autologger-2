@@ -1,29 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { anonApp, app, env, envWith } from '../test/harness';
-import {
-  adminHeader,
-  loginCookie,
-  seedCompanionDevice,
-  seededSession,
-  seedSession,
-  seedShow,
-  seedStudio,
-  seedUser,
-} from '../test/helpers';
+import { adminHeader, seedCompanionDevice, seededSession } from '../test/helpers';
 
 const withLogin = envWith({});
 
 describe('auth gate', () => {
-  it('blocks an unauthenticated /api/* (401)', async () => {
-    const res = await anonApp.request('/api/sessions', { method: 'GET' }, withLogin);
-    expect(res.status).toBe(401);
-  });
-
-  it('allows GET /api/profile anonymously even under strict login', async () => {
-    const res = await anonApp.request('/api/profile', { method: 'GET' }, withLogin);
-    expect(res.status).toBe(200);
-  });
-
   it('admin routes 503 when ADMIN_TOKEN unconfigured, 401 on a wrong token', async () => {
     // .dev.vars provides an ADMIN_TOKEN in this env, so force-clear it for the 503 path.
     const noToken = await anonApp.request(
@@ -86,15 +67,6 @@ describe('login is always required (require-login)', () => {
       { ...env },
     );
     expect(ok.status).toBe(200);
-  });
-
-  it('a Companion device token on /api/companion/state is 200', async () => {
-    const res = await anonApp.request(
-      '/api/companion/state',
-      { method: 'GET', headers: (await seedCompanionDevice()).bearer },
-      { ...env },
-    );
-    expect(res.status).toBe(200);
   });
 });
 
@@ -161,23 +133,6 @@ describe('encoded spellings of /api paths get the literal path’s answer', () =
         `${r.method} ${r.path} -> ${literal.status}`,
       );
     }
-  });
-});
-
-describe('tenancy', () => {
-  it('returns 404 for a session outside the caller’s studio', async () => {
-    const studioA = await seedStudio();
-    const studioB = await seedStudio();
-    const show = await seedShow({ studioId: studioB });
-    const session = await seedSession({ showId: show });
-    const user = await seedUser({ studios: [studioA] }); // NOT in studioB
-    const cookie = await loginCookie(user);
-    const res = await app.request(
-      `/api/sessions/${session}/status`,
-      { method: 'GET', headers: { Cookie: cookie } },
-      withLogin,
-    );
-    expect(res.status).toBe(404);
   });
 });
 

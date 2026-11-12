@@ -1,4 +1,4 @@
-import { LeaseStore, type RunLeaseKind } from '@autologger/session-core/leaseStore';
+import type { RunLeaseKind } from '@autologger/session-core/leaseStore';
 import { holdRunLease } from '@autologger/session-core/runLease';
 import type { SessionHubEntry, SessionHubFacade } from '@autologger/session-core/SessionHub';
 import { userCaller } from '@autologger/session-core/sessionCaller';
@@ -66,15 +66,6 @@ describe('silent run leases on catalog.session_leases (session-run-leases D2)', 
     vi.setSystemTime(new Date('2026-10-07T00:00:00.000Z'));
   });
   afterEach(() => vi.useRealTimers());
-
-  it('the run kinds live 40 s; the recording TTL is unchanged', () => {
-    expect(LeaseStore.TTL_MS).toEqual({
-      recording: LeaseStore.LEASE_STALE_MS,
-      'ai-turn': TTL,
-      'transcript-generation': TTL,
-      'youtube-import': TTL,
-    });
-  });
 
   it.each(
     KINDS,

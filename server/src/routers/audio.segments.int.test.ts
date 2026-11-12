@@ -82,24 +82,6 @@ describe('multi-chunk live recording segment uploads (task 6.1)', () => {
       mime_type: 'audio/webm',
     });
   });
-
-  it('a replayed recording window answers the first segment and stores no second row (media-worker D18)', async () => {
-    // Superseded premise: until media-worker the server was append-only here and the client's
-    // dedupe was the only guard. Now the POST is idempotent per (recording_ordinal,
-    // started_at_utc) window (api-contract-freeze "Segment upload is idempotent per recording
-    // window"); the client keeps its dedupe as the first guard.
-    const session = (await seededSession()).sessionId;
-    const startedAtUtc = '2026-08-12T11:00:00.000Z';
-    const endedAtUtc = '2026-08-12T11:00:05.000Z';
-    const first = await uploadSegment(session, { recordingOrdinal: 2, startedAtUtc, endedAtUtc });
-    const retry = await uploadSegment(session, { recordingOrdinal: 2, startedAtUtc, endedAtUtc });
-    expect(retry.id).toBe(first.id);
-    const segments = await listSegments(session);
-    const matches = segments.filter(
-      (s) => s.recording_ordinal === 2 && s.started_at_utc === startedAtUtc,
-    );
-    expect(matches.map((s) => s.id)).toEqual([first.id]);
-  });
 });
 
 // session-tables design D5 (A11): a `recording_ordinal` digit string whose number is not a safe

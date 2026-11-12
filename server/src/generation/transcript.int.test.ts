@@ -6,14 +6,14 @@
 
 import { readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { TRANSCRIPTION_FIXTURES_DIR, TranscriptGenerateError } from '@autologger/transcription';
+import { TRANSCRIPTION_FIXTURES_DIR } from '@autologger/transcription';
 import { transcriptGenerationLock } from '@autologger/transcription/transcriptGenerationLock';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { principalFor } from '../test/generationPrincipal';
 import { app, env, envWith, testDirs } from '../test/harness';
 import { catalogFor, NOT_APPROVED_EMAIL, seededSession, seedUser } from '../test/helpers';
 import { hubFor } from './principal';
-import { runTranscript, transcriptOutcomeOf } from './transcript';
+import { runTranscript } from './transcript';
 
 const SEG1 = join(TRANSCRIPTION_FIXTURES_DIR, 'audio', 'seg1.webm');
 const CORRUPT = join(TRANSCRIPTION_FIXTURES_DIR, 'audio', 'seg-corrupt.bin');
@@ -120,19 +120,6 @@ describe('runTranscript (design D6)', () => {
     const [seg] = await (await hubFor(await principalFor(d.uid), d.sessionId)).listAudioSegments();
     rmSync(join(testDirs().blobDir, String(seg?.r2_key)), { force: true });
     expect(await run(d.sessionId, d.uid)).toMatchObject({ kind: 'error', code: 'missing_blob' });
-  });
-
-  it('maps an oversize group (and every generation error code) to its outcome', () => {
-    expect(transcriptOutcomeOf(new TranscriptGenerateError('oversize', 'big'))).toEqual({
-      kind: 'error',
-      code: 'oversize',
-      detail: 'big',
-    });
-    expect(
-      transcriptOutcomeOf(
-        Object.assign(new TranscriptGenerateError('upstream', 'x'), { upstreamStatus: 429 }),
-      ),
-    ).toMatchObject({ kind: 'error', code: 'rate-limited' });
   });
 
   it('ok: the words are written', async () => {

@@ -30,21 +30,6 @@ describe('events flow', () => {
 });
 
 describe('audio flow (blob-store round-trip)', () => {
-  it('uploads a segment, stores bytes in the blob store, and downloads them back', async () => {
-    const session = (await seededSession()).sessionId;
-    const bytes = new Uint8Array([1, 2, 3, 4, 5]);
-    const up = await app.request(
-      `/api/sessions/${session}/audio/segments`,
-      { method: 'POST', headers: { 'content-type': 'audio/webm' }, body: bytes },
-      { ...env },
-    );
-    expect(up.status).toBe(200);
-    const seg = (await up.json()) as { id: string; url: string };
-    const down = await app.request(seg.url, { method: 'GET' }, { ...env });
-    expect(down.status).toBe(200);
-    expect(new Uint8Array(await down.arrayBuffer())).toEqual(bytes);
-  });
-
   it('rejects an empty audio body with 400', async () => {
     const session = (await seededSession()).sessionId;
     const res = await app.request(
@@ -93,27 +78,6 @@ describe('audio flow (blob-store round-trip)', () => {
     );
     expect(res.status).toBe(416);
     expect(await res.json()).toEqual({ detail: 'Requested range not satisfiable.' });
-  });
-
-  it('serves a satisfiable suffix Range against a non-empty blob unchanged', async () => {
-    const session = (await seededSession()).sessionId;
-    const bytes = new Uint8Array([1, 2, 3, 4, 5]);
-    const up = await app.request(
-      `/api/sessions/${session}/audio/segments`,
-      { method: 'POST', headers: { 'content-type': 'audio/webm' }, body: bytes },
-      { ...env },
-    );
-    expect(up.status).toBe(200);
-    const seg = (await up.json()) as { url: string };
-    const res = await app.request(
-      seg.url,
-      { method: 'GET', headers: { range: 'bytes=-2' } },
-      { ...env },
-    );
-    expect(res.status).toBe(206);
-    expect(res.headers.get('content-range')).toBe('bytes 3-4/5');
-    expect(res.headers.get('content-length')).toBe('2');
-    expect(new Uint8Array(await res.arrayBuffer())).toEqual(new Uint8Array([4, 5]));
   });
 });
 

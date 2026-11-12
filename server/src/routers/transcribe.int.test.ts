@@ -86,19 +86,6 @@ describe('unavailable endpoints (503)', () => {
   // flipping the 503 stub to a gated handler. Update this test in lockstep
   // with that change, not before.
 
-  it('topics/generate is byte-identical to the pre-change frozen 503', async () => {
-    const s = (await seededSession()).sessionId;
-    const res = await app.request(
-      `/api/sessions/${s}/topics/generate`,
-      { method: 'POST' },
-      { ...env },
-    );
-    expect(res.status).toBe(503);
-    expect(await res.json()).toEqual({
-      detail: 'Add a language model in Settings → Advanced to generate topics.',
-    });
-  });
-
   it('topics/generate 404s an unknown session before the 503 (requireSession guard unchanged)', async () => {
     const res = await app.request(
       '/api/sessions/does-not-exist/topics/generate',

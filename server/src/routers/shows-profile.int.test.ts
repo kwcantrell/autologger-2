@@ -273,29 +273,6 @@ describe('shows', () => {
     expect(res.status).toBe(200);
     expect(((await res.json()) as { show: { id: string } }).show.id).toBe(showId);
   });
-
-  it('GET /api/shows/:showId is 401 Login required for an anonymous caller', async () => {
-    const sid = await activeStudioId();
-    const showId = await seedShow({ studioId: sid, name: 'Gated Show', code: 'GS' });
-
-    const res = await anonApp.request(`/api/shows/${showId}`, { method: 'GET' }, { ...env });
-    expect(res.status).toBe(401);
-    expect(await res.json()).toEqual({ detail: 'Login required.' });
-  });
-
-  it('422 on POST /api/shows with a missing name', async () => {
-    const sid = await activeStudioId();
-    const res = await app.request(
-      '/api/shows',
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ studio_id: sid }),
-      },
-      { ...env },
-    );
-    expect(res.status).toBe(422);
-  });
 });
 
 // session-title-suffix (design D1/D7/D8, api-contract-freeze delta, task

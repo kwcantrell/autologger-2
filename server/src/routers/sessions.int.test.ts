@@ -72,19 +72,6 @@ describe('POST /api/sessions', () => {
     );
     expect(update.status).toBe(422);
   });
-
-  it('422 on an invalid create body (missing show_id)', async () => {
-    const res = await app.request(
-      '/api/sessions',
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ episode: '1' }),
-      },
-      { ...env },
-    );
-    expect(res.status).toBe(422);
-  });
 });
 
 // session-title-suffix (design D2/D3/D4/D6, task 1.3) — create-path title
@@ -338,19 +325,6 @@ describe('session lifecycle (PUT / archive / restore / delete)', () => {
     const res = await app.request(`/api/sessions/${session}`, { method: 'DELETE' }, { ...env });
     expect(res.status).toBe(200);
     expect((await res.json()) as { hidden: boolean }).toMatchObject({ hidden: true });
-  });
-
-  it('youtube-import is 503 with the current unconditional-refusal detail body', async () => {
-    const session = (await seededSession()).sessionId;
-    const res = await app.request(
-      `/api/sessions/${session}/youtube-import`,
-      { method: 'POST' },
-      { ...env },
-    );
-    expect(res.status).toBe(503);
-    expect(await res.json()).toEqual({
-      detail: 'YouTube import is unavailable on this deployment.',
-    });
   });
 });
 

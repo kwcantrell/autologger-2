@@ -413,20 +413,6 @@ describe('events/generate — guard ladder', () => {
     expect(neverSpawned(sessionId)).toBe(true);
   });
 
-  it('6a. aggregate instruction BYTES over the bound → 400 naming the bound, no spawn', async () => {
-    const { sessionId } = await newSession();
-    await seedAnchoredTranscript(sessionId);
-    const res = await generateReq(
-      sessionId,
-      configuredEnv(EVENTS_SUCCESS_FIXTURE, { EVENT_GENERATE_MAX_INSTRUCTION_BYTES: '4' }),
-    );
-    expect(res.status).toBe(400);
-    const detail = await detailOf(res);
-    expect(detail).toMatch(/bound|exceed/i);
-    expect(detail).toMatch(/EVENT_GENERATE_MAX_INSTRUCTION_BYTES/);
-    expect(neverSpawned(sessionId)).toBe(true);
-  });
-
   it('6b. aggregate instruction ENTRY COUNT over the bound → 400 (bearing categories + bearing options counted)', async () => {
     // 3 entries: slate button + mic button-level + Lav option-level.
     const { sessionId } = await newSession({ categoriesJson: GEN_DROPDOWN_CATEGORIES_JSON });
@@ -448,6 +434,12 @@ describe('events/generate — guard ladder', () => {
       configuredEnv(EVENTS_SUCCESS_FIXTURE, { EVENT_GENERATE_MAX_INSTRUCTION_BYTES: '4' }),
     );
     expect(over.status).toBe(400);
+    // The 400 names the bound and spawns nothing (moved from "6a. aggregate instruction BYTES over
+    // the bound", which sent this same request).
+    const detail = await detailOf(over);
+    expect(detail).toMatch(/bound|exceed/i);
+    expect(detail).toMatch(/EVENT_GENERATE_MAX_INSTRUCTION_BYTES/);
+    expect(neverSpawned(sessionId)).toBe(true);
     // Order pin with teeth: were tryAcquire moved ABOVE the aggregate-bound
     // check, the ApiError(400) would throw before the try/finally and leak
     // the slot — wedging this session's AI surface behind 409s until restart.

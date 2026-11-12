@@ -9,6 +9,7 @@ import {
   adminMeta,
   adminTokenConfigured,
   aiChatSdkLimits,
+  aiV2CredentialsRefused,
   bootstrapEmailMatch,
   bootstrapOwnerEmail,
   claudeCliAllowed,
@@ -521,5 +522,49 @@ describe('SIGNUPS (closed-signups D1)', () => {
     expect(signupsClosed(E({ AUTOLOGGER_STACK: 'stage' }))).toBe(true);
     expect(signupsClosed(E({}))).toBe(true);
     expect(signupsClosed(E({ SIGNUPS: 'opne', AUTOLOGGER_STACK: 'dev' }))).toBe(true);
+  });
+});
+
+// ai-v2 design: the credentials refusal (moved from aiV2.int.test.ts; a pure predicate over Config).
+describe('aiV2CredentialsRefused', () => {
+  it('predicate: aiV2CredentialsRefused is independent of IP_ALLOWLIST', async () => {
+    const base: Config = {
+      PUBLIC_BASE_URL: '',
+      HOST: '0.0.0.0',
+      GOOGLE_CLIENT_ID: '',
+      GOOGLE_CLIENT_SECRET: '',
+      BOOTSTRAP_OWNER_EMAIL: '',
+      RUN_FEATURE_EMAILS: '',
+      SESSION_COOKIE: '',
+      SESSION_DAYS: '14',
+      NEW_USER_ALL_TEAMS: '0',
+      COOKIE_SECURE: '',
+      IP_ALLOWLIST: '10.0.0.0/8',
+      TRUST_PROXY: '',
+      ADMIN_TOKEN: '',
+      DEEPGRAM_API_KEY: '',
+      DEEPGRAM_MODEL: '',
+      CLAUDE_CLI_PATH: '',
+      AI_CHAT_TIMEOUT_SEC: '',
+      AI_PROVIDER: 'claude_cli',
+      AI_CHAT_MAX_BUDGET_USD: '',
+      TOPIC_GENERATE_MAX_BUDGET_USD: '',
+      TOPIC_GENERATE_TIMEOUT_SEC: '',
+      EVENT_GENERATE_MAX_BUDGET_USD: '',
+      EVENT_GENERATE_TIMEOUT_SEC: '',
+      EVENT_GENERATE_MAX_CREATED_EVENTS: '',
+      EVENT_GENERATE_MAX_INSTRUCTION_BYTES: '',
+      EVENT_GENERATE_MAX_INSTRUCTION_ENTRIES: '',
+      AI_V2_ENABLED: '1',
+      AI_V2_API_KEY: '',
+      AI_V2_MAX_BUDGET_USD: '',
+      AI_V2_CREDENTIAL_SOURCE_PATH: '',
+    };
+    // Non-loopback, no key, allowlist set — the allowlist does not lift it.
+    expect(aiV2CredentialsRefused(base)).toBe(true);
+    expect(aiV2CredentialsRefused({ ...base, AI_V2_API_KEY: 'k' })).toBe(false);
+    for (const h of ['127.0.0.1', '::1', 'localhost']) {
+      expect(aiV2CredentialsRefused({ ...base, HOST: h })).toBe(false);
+    }
   });
 });
