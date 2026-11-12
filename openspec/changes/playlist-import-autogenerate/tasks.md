@@ -72,7 +72,7 @@ Web tests: `cd web && npx vitest run <files>`. Gates run through `scripts/check-
 
 ## 3. End-of-run start (design D4, D5, D12)
 
-- [ ] 3.1 Test first, new `web/src/pages/index/batchImport/autogenerateAfterImport.test.ts`
+- [x] 3.1 Test first, new `web/src/pages/index/batchImport/autogenerateAfterImport.test.ts`
   (mocked `apiFetch`/`fetch`, injected `readProfile` and `listShowSessionIds`): no ids → the
   "no video was imported by this import" line and no request; a profile whose `auth.user.id`
   differs from `confirmedUserId` → the different-user line and no preview or start; a failed
@@ -94,11 +94,13 @@ Web tests: `cd web && npx vitest run <files>`. Gates run through `scripts/check-
   second preview or start; an abort before or during
   either request resolves `[]` with no further request; the function never rejects except with
   `AbortError`. Verify: red before 3.2, green after.
-- [ ] 3.2 `autogenerateAfterImport.ts`: `startAutogenerateAfterImport`, calling
+  Evidence: red: `cd web && npx vitest run src/pages/index/batchImport/autogenerateAfterImport.test.ts` -> `Error: Cannot find module './autogenerateAfterImport'`, `Tests  no tests` (pia-3.1-red.log); green after 3.2 (pia-3.2-green.log). The tests stub the global `fetch` under the real `apiFetch`, so the typed bodies and non-JSON answers go through the real parse; the abort cases resolve `[]` (the function never rejects).
+- [x] 3.2 `autogenerateAfterImport.ts`: `startAutogenerateAfterImport`, calling
   `previewAutogenerateJob` / `startAutogenerateJob` from task 1.2 (no new `apiFetch` site) and
   reading the typed 409 bodies.
   Verify: 3.1 green; `npm run typecheck` exit 0.
-- [ ] 3.3 Test first, web API-response conformance for the new call sites (spec
+  Evidence: `cd web && npx vitest run src/pages/index/batchImport/autogenerateAfterImport.test.ts` -> `Tests  40 passed (40)`; `npm run typecheck` exit 0; biome clean (pia-3.2-green.log). A start `503` with a string `detail` (the route's pre-write "unconfigured" refusal) is the `<detail>` line per the spec table's string-detail row, not "may have started"; other `500`+ or non-JSON answers are.
+- [x] 3.3 Test first, web API-response conformance for the new call sites (spec
   web-api-response-conformance "Every response-consuming site has a recorded conformance verdict"):
   run `cd web && npx vitest run src/apiResponseShapes.repo.test.ts src/api/types.conformance.test.ts`
   after 1.2 and 3.2. The end-of-run start calls the hook file's fetch functions, so its
@@ -116,6 +118,7 @@ Web tests: `cd web && npx vitest run <files>`. Gates run through `scripts/check-
   `autogenerateList`), so neither adds a site; record that in the evidence. If either is instead
   called through a new `apiFetch<…>` site, add its CONFORMS verdict against that fixture.
   Verify: both test files green.
+  Evidence: `cd web && npx vitest run src/apiResponseShapes.repo.test.ts src/api/types.conformance.test.ts` -> `Test Files  2 passed (2)`, `Tests  135 passed (135)` (pia-3.3-green.log), so no verdict entry was added: the two moved sites are `useAutogenerateJobs.ts:38` `apiFetch<AutogeneratePreviewResponse>` and `:51` `apiFetch<AutogenerateJobResponse>`, both fixture-assigned (`types.conformance.test.ts:960`, `:966`; the 409 bodies at `:982`, `:984`); `grep -c apiFetch autogenerateAfterImport.ts` -> `0`. The modal's provider and job-list reads go through the existing `useProviders` and `useAutogenerateJobs` hooks (task 4.2), adding no site; the guard is re-run after 4.2.
 
 ## 4. Modal: checkbox, options, up-front check, confirm, wiring (design D3, D6, D7, D9-D13)
 
