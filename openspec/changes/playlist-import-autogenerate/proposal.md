@@ -37,11 +37,14 @@ checkbox to a small follow-up change named `playlist-import-autogenerate`, since
 4. **Owners and admins only.** The checkbox is shown only to an owner or admin of the selected
    show's team (the start route refuses everyone else); members never see it.
 
-5. **Only sessions created in this run** (owner, 2026-11-12, reversing an earlier same-day
-   decision to include retried sessions). Only a session this run created and attached audio to
-   qualifies. Excluded: this import's own empty session from an earlier run that this run retried
-   and filled, and a remembered own session that already has audio from an earlier, interrupted
-   run. Those videos are filled by a show-wide job in Settings → Batch autogenerate.
+5. **Sessions this import brought in count** (owner, 2026-11-12, confirmed). Besides sessions
+   this run created and filled, two more qualify: (1) a session an earlier run of this import
+   created and left without audio, which this run imports into and completes; (2) on a rerun, this
+   import's own remembered session that already has audio from an earlier, interrupted run of this
+   import (closed mid-import, or an unknown outcome that landed later), which is skipped as
+   "already in system" but qualifies and is then forgotten. Part (2) was proposed by the
+   orchestrator after tier-2 panel finding C; the owner briefly reversed both parts the same day
+   (be01b3d0), then corrected that as a misread and confirmed both (revert of be01b3d0).
 6. **Warn about a live job at confirm** (owner, 2026-11-12, answering design Q2). When Start Import
    opens the confirm, the modal reads the team's jobs (existing
    `GET /api/teams/:teamId/autogenerate-jobs`); if one is `queued` or `running`, the confirm warns

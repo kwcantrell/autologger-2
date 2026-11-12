@@ -118,7 +118,7 @@ start, and the end-of-run start reports a live job as below. When the read fails
 answer, the confirm SHALL open without the warning and nothing is blocked. With N checked playlist
 entries and S ticked steps the confirm SHALL say
 `Import N videos, then autogenerate on up to N sessions, at most N×S runs.` (the numbers
-computed), that only videos imported in this run are included, that the work runs on the user's
+computed), that only videos this import brings in are included, that the work runs on the user's
 own provider accounts, that the providers are checked again when the import ends, and, in "Add new
 pages and additions to the wiki" mode with Wiki ticked, Settings' warning that AI-written new
 pages and additions will be added to wiki pages without review while rewrites that remove or
@@ -128,21 +128,26 @@ nothing SHALL run and the block is shown as above; otherwise Start Import runs a
 prompt SHALL be shown for the autogenerate job. The modal SHALL record the signed-in user's id at
 that moment. Start Import with autogenerate not armed SHALL show no confirm.
 
-**Qualifying sessions.** A session SHALL qualify only when this run created it and this run
-attached its audio: the playlist part of this run created the session for the entry and then
-logged `Completed <name>` for it (the import answered success, or its unknown outcome was
-confirmed by a segment appearing). A session from an earlier run SHALL NOT qualify, even when this
-run imported into it ("Retry into an unfinished session") or its audio arrived after an earlier
-run was interrupted. Skipped, failed, unconfirmed and still-importing entries SHALL NOT qualify.
-Sessions of the folder and log parts SHALL NOT qualify. Videos an earlier, interrupted run brought
-in are filled by a show-wide job in Settings → Batch autogenerate.
+**Qualifying sessions.** A session SHALL qualify when the playlist part of this run either:
+
+- logged `Completed <name>` for it: a session created and imported in this run, this import's own
+  unfinished session from an earlier run that this run imported into, or an import whose unknown
+  outcome was confirmed by a segment appearing; or
+- skipped its entry as already in the system while the matching session is this import's own
+  remembered session for that show and video (batch-audio-import "YouTube playlist import run",
+  "Retry into an unfinished session") and has audio segments: audio an earlier, interrupted run of
+  this import brought in. The skip line is unchanged, and the session SHALL then be forgotten as a
+  completed one is, so later runs treat it as an ordinary existing session.
+
+Other skipped entries, failed, unconfirmed and still-importing entries SHALL NOT qualify. Sessions
+of the folder and log parts SHALL NOT qualify.
 
 **End-of-run start.** After the last part of Start Import has ended (the log part when there is
 one; also when a part ended with a `Failed` line), and only when the run was not aborted and
 autogenerate was confirmed, the modal SHALL:
 
 1. With no qualifying session, send no request and log
-   `Autogenerate not started: no video was imported in this run.`
+   `Autogenerate not started: no video was imported by this import.`
 2. Read the profile. When the signed-in user differs from the one recorded at the confirm, log
    `Autogenerate not started: you are signed in as a different user than the one who confirmed.`
    and send nothing more; when the read fails, log the "request failed" line below.
@@ -249,23 +254,25 @@ further.
   entries 1 and 4, the start's `expected_sessions` is the preview's `sessions` (2), and the last
   line is `Autogenerate started for 2 sessions (at most 8 runs); follow it in Settings → Batch autogenerate.`
 
-#### Scenario: A retried session from an earlier run does not qualify
+#### Scenario: A retried session from an earlier run qualifies
 
-- **WHEN** an earlier run left this import's session for an entry without audio, this run imports
-  into it and logs `Completed <name>`, and this run also creates and completes one other entry
-- **THEN** the end-of-run job's `session_ids` holds only the other entry's session
+- **WHEN** an earlier run left this import's session for an entry without audio, and this run
+  imports into it and logs `Completed <name>`
+- **THEN** that session is in the end-of-run job's `session_ids`
 
-#### Scenario: An interrupted earlier run's import does not qualify on the rerun
+#### Scenario: An interrupted earlier run's import qualifies on the rerun
 
 - **WHEN** an earlier run was closed while entry 3 was importing, the server then attached its
   audio, and a rerun with the same entries checked skips entry 3 as already in the system
-- **THEN** entry 3's session is not in the end-of-run job's `session_ids`
+- **THEN** entry 3's session is in the end-of-run job's `session_ids`, its skip line is unchanged,
+  and a third run treats it as an ordinary existing session that does not qualify
 
 #### Scenario: Nothing imported means no job
 
-- **WHEN** a confirmed run skips every checked entry as already in the system
+- **WHEN** a confirmed run skips every checked entry as already in the system and none of them is
+  this import's own remembered session
 - **THEN** no preview or start is sent and the last line is
-  `Autogenerate not started: no video was imported in this run.`
+  `Autogenerate not started: no video was imported by this import.`
 
 #### Scenario: Another account does not inherit the confirm
 
