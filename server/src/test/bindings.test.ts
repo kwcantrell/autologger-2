@@ -62,12 +62,20 @@ describe('testBindings', () => {
   });
 
   it('restores HOME and removes the stand-in when createBindings throws', () => {
-    const before = process.env.HOME;
-    const leftBefore = readdirSync(tmpdir()).filter((n) => n.startsWith('autologger-test-home-'));
-    expect(() => testBindings({ ...procEnv(), DATA_DIR: 'relative' })).toThrow(/DATA_DIR/);
-    expect(process.env.HOME).toBe(before);
-    const leftAfter = readdirSync(tmpdir()).filter((n) => n.startsWith('autologger-test-home-'));
-    expect(leftAfter.filter((n) => !leftBefore.includes(n))).toEqual([]);
+    const env = procEnv();
+    // A private TMPDIR, so other workers' stand-ins can't show up in the listing.
+    const tmp = mkdtempSync(join(tmpdir(), 'autologger-bindings-tmp-'));
+    dirs.push(tmp);
+    const before = { HOME: process.env.HOME, TMPDIR: process.env.TMPDIR };
+    process.env.TMPDIR = tmp;
+    try {
+      expect(() => testBindings({ ...env, DATA_DIR: 'relative' })).toThrow(/DATA_DIR/);
+      expect(process.env.HOME).toBe(before.HOME);
+      expect(readdirSync(tmp)).toEqual([]);
+    } finally {
+      if (before.TMPDIR === undefined) delete process.env.TMPDIR;
+      else process.env.TMPDIR = before.TMPDIR;
+    }
   });
 
   it('restores an unset HOME as unset', async () => {
