@@ -59,8 +59,7 @@ export class PostgresSessionDb {
 
   forSession(sessionId: string): SessionStorage {
     return {
-      tx: async (caller, fn) =>
-        this.bind(caller).sessionTx(sessionId, (t) => fn(sessionHandle(t))),
+      tx: async (caller, fn) => this.bind(caller).sessionTx(sessionId, (t) => fn(sessionHandle(t))),
       snapshot: async (caller, fn) =>
         this.bind(caller).snapshot(sessionId, (t) => fn(sessionHandle(t))),
     };

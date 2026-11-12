@@ -11,6 +11,15 @@ import { defineConfig } from 'vitest/config';
 // db_test_paths changed (ci-db-test-selection D2).
 const skipDbTests = process.env.SKIP_DB_TESTS === '1';
 
+// The `pg` container keeps the app role's production connection limit of 45, and every `pg` file
+// connects as that role: a file holding the server's catalog adapter can open 12 connections
+// (3 root, 5 transaction, 4 session slots), authCreateUser.pg.test.ts opens two adapters (24),
+// and the other files a few raw clients each. vitest's default is one worker per core but one, so
+// on a 20-core machine 19 files ran at once and passed 45 ("too many connections for role"). Two
+// files at once stay under it on any machine (24 + 14 < 45); vitest runs a project with its own
+// maxWorkers in its own group, after the unit and integration files.
+export const PG_MAX_WORKERS = 2;
+
 export default defineConfig({
   test: {
     projects: [
@@ -43,6 +52,8 @@ export default defineConfig({
                 globalSetup: ['../test/pg/globalSetup.ts'],
                 hookTimeout: 600_000,
                 testTimeout: 30_000,
+                maxWorkers: PG_MAX_WORKERS,
+                sequence: { groupOrder: 1 },
               },
             },
           ]),

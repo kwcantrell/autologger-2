@@ -8,8 +8,8 @@ import { describe, expect, it, vi } from 'vitest';
 import type { Bindings } from '../appEnv';
 import { app, env, envWith } from '../test/harness';
 import { seededSession as seedSessionChain, testDb } from '../test/helpers';
-import { __setLocalAudioImportByteCapForTests, MAX_LOCAL_AUDIO_IMPORT_BYTES } from './audio';
 import { harnessHub } from '../test/session/sessionRows';
+import { __setLocalAudioImportByteCapForTests, MAX_LOCAL_AUDIO_IMPORT_BYTES } from './audio';
 
 // Detail strings copied verbatim from `server/src/routers/sessions.ts`'s own
 // module-private constants (not exported) so these tests assert the EXACT
@@ -352,9 +352,11 @@ describe('POST /api/sessions/:sessionId/local-audio-import — anchor failure ro
     const before = await listSegmentsRaw(session, env);
     expect((await hub.transportSnapshot(CTX)).elapsed_frames).toBe(0);
 
-    const anchorSpy = vi.spyOn(SessionHubView.prototype, 'anchorImportedTake').mockImplementationOnce(() => {
-      throw new Error('simulated anchor failure');
-    });
+    const anchorSpy = vi
+      .spyOn(SessionHubView.prototype, 'anchorImportedTake')
+      .mockImplementationOnce(() => {
+        throw new Error('simulated anchor failure');
+      });
 
     try {
       const res = await postLocalImport(session, { durationS: '10', contentType: 'audio/wav' });

@@ -5,15 +5,18 @@
 // and the route answers its own `404 Event not found.`.
 
 import { AsyncResource } from 'node:async_hooks';
+import type {
+  SessionHubRegistry,
+  SessionHubRegistryFacade,
+} from '@autologger/session-core/SessionHub';
 import { systemCaller, userCaller } from '@autologger/session-core/sessionCaller';
 import { SessionProjectionError } from '@autologger/session-core/sessionCore';
 import { CatalogForbiddenError } from '@autologger/storage';
-import type { SessionHubRegistry, SessionHubRegistryFacade } from '@autologger/session-core/SessionHub';
 import { afterEach, describe, expect, it } from 'vitest';
 import { app, envWith } from '../harness';
 import { catalogFor, loginCookie, seedSession, seedShow, seedStudio, seedUser } from '../helpers';
-import { slowStorage } from './slowStorage';
 import { testRegistry } from './sessionRows';
+import { slowStorage } from './slowStorage';
 
 const CTX = { frameRate: 24, startOffsetFrames: 0 };
 const event = (message: string) => ({

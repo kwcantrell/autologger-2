@@ -22,9 +22,9 @@ import { SessionHubView, userCaller } from '@autologger/session-core';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { slowStorage } from './slowStorage';
-import { TEST_CALLER, type TestRegistry, testRegistry } from './sessionRows';
 import { catalogFor, seedAccessMatrix } from '../helpers';
+import { TEST_CALLER, type TestRegistry, testRegistry } from './sessionRows';
+import { slowStorage } from './slowStorage';
 
 let registry: TestRegistry;
 let listener: AiMcpListener;
@@ -1333,9 +1333,11 @@ describe('create_event handler — the cap is reserved before the first await (a
     });
     expect(first.isError).toBeFalsy();
     expect(turn.createdEvents()).toBe(1);
-    const spy = vi.spyOn(SessionHubView.prototype, 'createAnchoredEvent').mockImplementationOnce(() => {
-      throw new Error('simulated insert fault');
-    });
+    const spy = vi
+      .spyOn(SessionHubView.prototype, 'createAnchoredEvent')
+      .mockImplementationOnce(() => {
+        throw new Error('simulated insert fault');
+      });
     try {
       const faulted = await createEventViaMcp(turn.url, turn.token, {
         category: 'cat1',

@@ -9,16 +9,16 @@
 // functions directly, so the assertions cover the actual wire-shaped tool
 // behavior a design turn would see.
 
-import type { DashboardConfig } from '@autologger/contract';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   AGGREGATE_TOOL_NAMES,
   type BuildAggregateMcpServerDeps,
   buildAggregateMcpServer,
 } from '@autologger/ai-runtime/mcpTools';
-import { TEST_CALLER, testRegistry, type TestRegistry } from './sessionRows';
+import type { DashboardConfig } from '@autologger/contract';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { TEST_CALLER, type TestRegistry, testRegistry } from './sessionRows';
 
 let registry: TestRegistry;
 

@@ -9,6 +9,7 @@ import { resolve } from 'node:path';
 import postgres from 'postgres';
 import { afterEach, describe, expect, it } from 'vitest';
 import { type ConnOptions, connOptions, createTestDatabase } from '../../../../test/pg/testDb';
+import { replayMigration } from './appRoleLimit';
 import { holdRoleGuardLock } from './roleGuardLock';
 
 const MIGRATIONS = resolve(import.meta.dirname, '../../../../supabase/migrations');
@@ -222,7 +223,7 @@ describe('the companion devices migration (design D1, D3)', () => {
     expect(earlier).toContain('20261014000000_session_lease_started_at.sql');
     for (const f of earlier) {
       const text = readFileSync(resolve(MIGRATIONS, f), 'utf8');
-      await sql.begin((tx) => tx.unsafe(text));
+      await replayMigration(sql, text);
     }
     await sql.unsafe(`
       insert into catalog.kv (key, value) values
@@ -230,7 +231,7 @@ describe('the companion devices migration (design D1, D3)', () => {
         ('companion:last_command:d1', 'kept'),
         ('other', 'kept');`);
     const text = readFileSync(resolve(MIGRATIONS, MIGRATION), 'utf8');
-    await sql.begin((tx) => tx.unsafe(text));
+    await replayMigration(sql, text);
     const kv = await sql`select key from catalog.kv order by key`;
     expect(kv.map((r) => r.key)).toEqual(['companion:last_command:d1', 'other']);
     for (const table of TABLES) {

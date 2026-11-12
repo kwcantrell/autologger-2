@@ -1,6 +1,6 @@
+import { paragraphRow, sentimentRow, wordRow } from '@autologger/session-core/transcriptStore';
 import { describe, expect, it } from 'vitest';
 import { boundCore } from './boundCore';
-import { paragraphRow, sentimentRow, wordRow } from '@autologger/session-core/transcriptStore';
 
 describe('wordRow', () => {
   it('maps a full transcript-word row', () => {

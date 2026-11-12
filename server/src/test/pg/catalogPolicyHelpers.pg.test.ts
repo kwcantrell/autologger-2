@@ -10,7 +10,11 @@ import { resolve } from 'node:path';
 import { defaultSettingsBlob, validateSettingsBlob } from '@autologger/domain';
 import postgres from 'postgres';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { type ConnOptions, createTestDatabase, type TestDatabase } from '../../../../test/pg/testDb';
+import {
+  type ConnOptions,
+  createTestDatabase,
+  type TestDatabase,
+} from '../../../../test/pg/testDb';
 import { seedPolicyFixture, T, U, V } from './policyFixture';
 
 const MIGRATION = resolve(

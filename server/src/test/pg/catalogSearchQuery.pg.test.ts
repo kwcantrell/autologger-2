@@ -873,7 +873,11 @@ describe('catalog.search: D11 tuning', () => {
   it("the candidate bound applies after access: another team's or a hidden session's 2,500 matching chunks don't reduce the caller's results", async () => {
     // Inserted first, so without filtering they would fill the 2,000 candidates.
     await session(sys, 'fx', 'su', { title: 'Foreign many', started: '2027-02-01T00:00:00Z' });
-    await session(sys, 'hx', 's1', { title: 'Hidden many', started: '2027-02-01T00:00:00Z', hidden: true });
+    await session(sys, 'hx', 's1', {
+      title: 'Hidden many',
+      started: '2027-02-01T00:00:00Z',
+      hidden: true,
+    });
     for (const sid of ['fx', 'hx']) {
       await sys`insert into session_transcript_words
                   (session_id, id, word, start_sec, end_sec, ordinal, created_at_utc)

@@ -7,14 +7,14 @@
 
 import { AiMcpListener } from '@autologger/ai-runtime/aiMcpServer';
 import { LeaseStore } from '@autologger/session-core/leaseStore';
-import { systemCaller, userCaller } from '@autologger/session-core/sessionCaller';
-import type { SessionCaller } from '@autologger/session-core/sessionCaller';
-import type { SessionStorage } from '@autologger/session-core/sessionCore';
 import {
   SessionHub,
   SessionHubRegistry,
   type SessionHubRegistryFacade,
 } from '@autologger/session-core/SessionHub';
+import type { SessionCaller } from '@autologger/session-core/sessionCaller';
+import { systemCaller, userCaller } from '@autologger/session-core/sessionCaller';
+import type { SessionStorage } from '@autologger/session-core/sessionCore';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import ExcelJS from 'exceljs';
@@ -248,7 +248,8 @@ describe('hub calls run under their caller (session-content-policies D3, D6)', (
     expect(body?.status, body?.lines.join('\n')).toBe('completed');
     const calls = log.filter((l) => l.caller !== 'system:session-open');
     expect(calls.some((l) => l.mode === 'tx')).toBe(true);
-    for (const l of calls) expect(l).toEqual({ ...l, role: 'catalog_user', uid: member, caller: 'user' });
+    for (const l of calls)
+      expect(l).toEqual({ ...l, role: 'catalog_user', uid: member, caller: 'user' });
   });
 
   it('registry.get(id) resolves an entry with no storage member (a type case)', async () => {

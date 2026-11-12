@@ -47,7 +47,16 @@ describe('drop pre-GoTrue users migration', () => {
       return r;
     };
     const migration = readFileSync(MIGRATION, 'utf8');
-    const kept = { users: 0, memberships: 0, prefs: 0, invites: 0, sessions: 0, csrf: 1, studios: 1, shows: 1 };
+    const kept = {
+      users: 0,
+      memberships: 0,
+      prefs: 0,
+      invites: 0,
+      sessions: 0,
+      csrf: 1,
+      studios: 1,
+      shows: 1,
+    };
     for (let run = 0; run < 2; run++) {
       await sql.begin((tx) => tx.unsafe(migration));
       expect(await counts(), `run ${run + 1}`).toEqual(kept);
