@@ -335,6 +335,10 @@ describe('ai/chat — a configured turn serves', () => {
     expect(res.status).toBe(200);
     expect(res.headers.get('content-type')).toMatch(/text\/event-stream/);
     expect(res.headers.get('content-encoding')).toBeNull();
+    // Nor does it gain Vary: Accept-Encoding: an SSE stream is not a negotiated representation
+    // (moved here from compression.int.test.ts, which drove this same request).
+    const vary = (res.headers.get('vary') ?? '').split(',').map((t) => t.trim().toLowerCase());
+    expect(vary.includes('accept-encoding')).toBe(false);
     const events = parseSse(await res.text());
     // The real fixture's canned success turn: tool then delta then done.
     expect(events).toEqual([

@@ -58,7 +58,7 @@ Four facts shaped the design:
 - The panel and both re-panels are in `openspec/changes/show-wiki/panel.md`, and the measured assumptions A1–A24 are in that change's `design.md`.
 - **Access matrix:** owner, granted member, ungranted member and outsider, for select, insert, update and delete on all three tables. Cross-show rows are refused by the foreign keys even for a user with access to both shows (`showWiki.pg.test.ts`, 25 tests).
 - **Store behaviour:** compare-and-set, name clashes, merge, split, restore, link checks through reference definitions and autolinks, and the fail-closed missing parser (`wikiStore.pg.test.ts`, 31 tests).
-- **Every endpoint, status and body** of the contract delta: `wiki.int.test.ts`, 78 tests.
+- **Every endpoint, status and body** of the contract delta: `wiki.int.test.ts`, 68 tests.
 
 ## Consequences
 

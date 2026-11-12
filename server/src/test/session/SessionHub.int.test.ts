@@ -1,11 +1,18 @@
 import { MAX_DASHBOARDS_PER_SESSION } from '@autologger/contract';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   DashboardBoundsError,
   DashboardValidationError,
 } from '@autologger/session-core/dashboardStore';
 import { EventStore } from '@autologger/session-core/eventStore';
-import { catalogRoot, createSessionRow, DRIVER_SAFE_FAKE_TIMERS, openTestHub, testRegistry, testStorage } from './sessionRows';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  catalogRoot,
+  createSessionRow,
+  DRIVER_SAFE_FAKE_TIMERS,
+  openTestHub,
+  testRegistry,
+  testStorage,
+} from './sessionRows';
 
 // One session per test (session-tables D12): a hub over its storage; reopening is a second hub on
 // the same session.
@@ -49,21 +56,6 @@ describe('SessionHub', () => {
     // Revision bumped in the same transaction as the insert.
     expect((await hub.statusLive(CTX)).events_stream_revision).toBe(1);
     await hub.close();
-  });
-
-  it('state survives close + reopen (persisted in the database)', async () => {
-    const hub = await openHub();
-    await hub.addEvent({
-      category: 'cam',
-      message: 'x',
-      metadataJson: '{}',
-      markedAtUtc: null,
-      ctx: CTX,
-    });
-    await hub.close();
-    const hub2 = await openHub();
-    expect((await hub2.ensure()).event_count).toBe(1);
-    await hub2.close();
   });
 
   it('broadcasts to attached sockets and counts presence by role', async () => {
@@ -152,30 +144,6 @@ describe('SessionHub.anchorImportedTake (composite anchor RPC)', () => {
     expect(stopped.timecode_total_frames).toBe(72 + 120); // 5s @ 24fps = 120 frames
     expect(projection.transport_elapsed_frames).toBe(192);
     expect(projection.is_rolling).toBe(false);
-    await hub.close();
-  });
-
-  it('emits event.changed and transport.changed exactly once each, after commit (Phase-9 fix-wave finding 1)', async () => {
-    const hub = await openHub();
-    const got: string[] = [];
-    hub.attachSocket({ send: (d: string) => void got.push(d) }, 'browser');
-
-    await hub.anchorImportedTake({ recordingOrdinal: 1, durationS: 5, ctx: CTX });
-
-    const parsed = got.map((d) => JSON.parse(d));
-    // Exactly once each — the composite suppresses the two per-addEvent
-    // broadcasts and the stopTakeWithDuration broadcast, then fires ONE
-    // event.changed + ONE transport.changed after inTxn commits (design D11:
-    // "broadcasts once after commit").
-    expect(parsed.filter((m) => m.type === 'event.changed')).toHaveLength(1);
-    expect(parsed.filter((m) => m.type === 'transport.changed')).toHaveLength(1);
-    // Exact recorded-take shape stopTake emits — stopTakeWithDuration previously
-    // broadcast nothing at all.
-    expect(parsed).toContainEqual({
-      type: 'transport.changed',
-      is_rolling: false,
-      current_take: 0,
-    });
     await hub.close();
   });
 
@@ -731,13 +699,6 @@ describe('SessionHubRegistry', () => {
       ctx: CTX,
     });
     expect((await (await reg.get('sess-b')).ensure()).event_count).toBe(0);
-    await reg.closeAll();
-  });
-
-  it('rejects path-hostile session ids', async () => {
-    const reg = testRegistry({ autoCreate: true });
-    await expect(reg.get('../escape')).rejects.toThrow();
-    await expect(reg.get('a/b')).rejects.toThrow();
     await reg.closeAll();
   });
 

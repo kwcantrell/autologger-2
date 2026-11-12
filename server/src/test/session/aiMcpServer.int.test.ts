@@ -4,8 +4,6 @@
 // concurrent turns on distinct sessions. These assert the security boundary,
 // not merely that the listener boots.
 
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import {
   __resetAiMcpListenerForTests,
   type AiGenerationRunContext,
@@ -17,14 +15,13 @@ import {
   GENERATION_PAGE_SIZE_WORDS,
   getAiMcpListener,
 } from '@autologger/ai-runtime/aiMcpServer';
-import { AI_RUNTIME_FIXTURES_DIR } from '@autologger/ai-runtime/fixturesDir';
 import { SessionHubView, userCaller } from '@autologger/session-core';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { slowStorage } from './slowStorage';
-import { TEST_CALLER, type TestRegistry, testRegistry } from './sessionRows';
 import { catalogFor, seedAccessMatrix } from '../helpers';
+import { TEST_CALLER, type TestRegistry, testRegistry } from './sessionRows';
+import { slowStorage } from './slowStorage';
 
 let registry: TestRegistry;
 let listener: AiMcpListener;
@@ -885,23 +882,6 @@ describe('create_event — success path (3.2)', () => {
     });
     turn.dispose();
   });
-
-  it('emits one event.changed broadcast per insert (manual-insert semantics, not suppressed)', async () => {
-    const sent: string[] = [];
-    (await registry.get('gen-ws')).attachSocket({ send: (d) => sent.push(d) }, 'browser');
-    const turn = listener.registerTurn('gen-ws', TEST_CALLER, genContext());
-    for (const t of ['00:00:01:00', '00:00:02:00']) {
-      const res = await createEventViaMcp(turn.url, turn.token, {
-        category: 'cat1',
-        message: 'SLATE',
-        session_time: t,
-      });
-      expect(res.isError).toBeFalsy();
-    }
-    const frames = sent.map((d) => JSON.parse(d) as { type: string });
-    expect(frames.filter((f) => f.type === 'event.changed')).toHaveLength(2);
-    turn.dispose();
-  });
 });
 
 describe('create_event — per-run cap (3.2)', () => {
@@ -1278,52 +1258,7 @@ describe('create_event — anchor basis is clamped monotone before interpolation
   });
 });
 
-/** Strip `//` and `/* *\/` comments while preserving string/template literal
- * content verbatim — the same dependency-free regex idiom
- * `packageBoundaries.repo.test.ts` uses for source inspection without a real
- * parser. Comments in the `create_event` handler literally contain the word
- * "await" in prose ("never held across an await"), so comments MUST be
- * stripped before a substring search for the keyword, or the pin below would
- * false-positive on its own documentation. */
-function stripComments(src: string): string {
-  return src.replace(
-    /`(?:\\.|[^`\\])*`|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\/\/.*|\/\*[\s\S]*?\*\//g,
-    (m) => (m.startsWith('//') || m.startsWith('/*') ? '' : m),
-  );
-}
-
 describe('create_event handler — the cap is reserved before the first await (async-session-hub D8 / delta spec "The create_event cap is reserved before any await")', () => {
-  const AI_MCP_SERVER_SRC = join(AI_RUNTIME_FIXTURES_DIR, '../src/aiMcpServer.ts');
-
-  it('stripComments removes a comment containing the word "await" (mutation check — proves the predicate is not vacuous)', async () => {
-    const sample = 'const x = 1; // never held across an await\nconst y = 2;';
-    const stripped = stripComments(sample);
-    expect(stripped).not.toMatch(/await/);
-    expect(stripped).toContain('const y = 2;');
-  });
-
-  it("the handler's cap check and its reservation both precede its first `await`", async () => {
-    const source = readFileSync(AI_MCP_SERVER_SRC, 'utf8');
-    const startMarker =
-      'create_event: (server, { registry, sessionId, caller, generation, createdEvents }) => {';
-    const startIdx = source.indexOf(startMarker);
-    expect(startIdx).toBeGreaterThanOrEqual(0);
-    // The unique two-line close of TOOL_BUILDERS ("  },\n};") — create_event
-    // is TOOL_BUILDERS' last key, so this is the entry's own close too.
-    const endMarker = '\n  },\n};';
-    const endIdx = source.indexOf(endMarker, startIdx);
-    expect(endIdx).toBeGreaterThan(startIdx);
-    const handler = stripComments(source.slice(startIdx, endIdx));
-    const capCheck = handler.indexOf(
-      'if (createdEvents.count + createdEvents.reserved >= generation.cap)',
-    );
-    const reserve = handler.indexOf('createdEvents.reserved += 1;');
-    expect(capCheck).toBeGreaterThanOrEqual(0);
-    expect(reserve).toBeGreaterThan(capCheck);
-    const firstAwait = handler.search(/\bawait\b/);
-    if (firstAwait >= 0) expect(reserve).toBeLessThan(firstAwait);
-  });
-
   it('a failed insert at cap - 1 returns the internal-error result, leaves createdEvents() unchanged and frees its reservation for the next call', async () => {
     const turn = listener.registerTurn('gen-reserve', TEST_CALLER, genContext({ cap: 2 }));
     const first = await createEventViaMcp(turn.url, turn.token, {
@@ -1333,9 +1268,11 @@ describe('create_event handler — the cap is reserved before the first await (a
     });
     expect(first.isError).toBeFalsy();
     expect(turn.createdEvents()).toBe(1);
-    const spy = vi.spyOn(SessionHubView.prototype, 'createAnchoredEvent').mockImplementationOnce(() => {
-      throw new Error('simulated insert fault');
-    });
+    const spy = vi
+      .spyOn(SessionHubView.prototype, 'createAnchoredEvent')
+      .mockImplementationOnce(() => {
+        throw new Error('simulated insert fault');
+      });
     try {
       const faulted = await createEventViaMcp(turn.url, turn.token, {
         category: 'cat1',

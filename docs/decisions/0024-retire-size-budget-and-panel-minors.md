@@ -1,7 +1,7 @@
 # 0024: Retire the size budget; the panel reports only critical and major findings
 
 - Date: 2026-10-02
-- Status: Accepted (supersedes ADR 0007)
+- Status: Superseded by 0034 (2026-11-12); it superseded ADR 0007
 - Rule: Non-negotiable 7 is retired (no `size` check); the `adversarial-panel` skill has two severities, `critical` and `major`
 
 ## Context

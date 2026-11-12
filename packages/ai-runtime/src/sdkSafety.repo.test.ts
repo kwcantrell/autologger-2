@@ -74,7 +74,7 @@ const bindingNames = (n: ts.BindingName | undefined, into: Set<string>) => {
 };
 
 /** The rule violations in one source text, as `rule: line` strings. */
-export function scan(fileName: string, text: string): string[] {
+function scan(fileName: string, text: string): string[] {
   const sf = ts.createSourceFile(fileName, text, ts.ScriptTarget.Latest, true);
   const out: string[] = [];
   const line = (n: ts.Node) => sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1;
@@ -206,6 +206,7 @@ describe('the scanner pins each rule', () => {
   const v = (text: string) => scan('x.ts', text);
   it('1: a string model to streamText or generateText', () => {
     expect(v(`streamText({ model: 'openai/gpt-5', onError() {} });`)).toEqual(['string-model: 1']);
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: fixture source text; the scanner must see a template-literal model id.
     expect(v('generateText({ model: `anthropic/${m}` });')).toEqual(['string-model: 1']);
     expect(v(`ai.generateText({ model: "x" });`)).toEqual(['string-model: 1']);
     expect(v('streamText({ model: openai(id), onError: () => {} });')).toEqual([]);

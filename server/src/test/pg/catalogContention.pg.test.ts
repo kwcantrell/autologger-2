@@ -139,11 +139,14 @@ describe('cross-team contention (catalog-policies D10)', () => {
         await check.first('SELECT title FROM sessions WHERE id = ?', ids[team].session),
       ).toEqual({ title: `Written ${team}` });
       expect(
-        await check.first('SELECT display_name FROM studio_definitions WHERE id = ?', `team-${team}`),
+        await check.first(
+          'SELECT display_name FROM studio_definitions WHERE id = ?',
+          `team-${team}`,
+        ),
       ).toEqual({ display_name: `Renamed ${team}` });
-      expect(
-        await check.all('SELECT studio_id FROM shows WHERE name = ?', `New ${team}`),
-      ).toEqual([{ studio_id: `team-${team}` }]);
+      expect(await check.all('SELECT studio_id FROM shows WHERE name = ?', `New ${team}`)).toEqual([
+        { studio_id: `team-${team}` },
+      ]);
     }
   });
 });

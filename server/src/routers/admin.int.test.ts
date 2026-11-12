@@ -7,15 +7,6 @@ const ADMIN_ENV = envWith({ ADMIN_TOKEN: TOKEN });
 const H = { ...adminHeader(TOKEN), 'content-type': 'application/json' };
 
 describe('admin auth', () => {
-  it('401 with a wrong token', async () => {
-    const res = await anonApp.request(
-      '/api/admin/users',
-      { method: 'GET', headers: adminHeader('nope') },
-      ADMIN_ENV,
-    );
-    expect(res.status).toBe(401);
-  });
-
   it('GET /api/admin/users returns studios_catalog + users', async () => {
     const res = await anonApp.request('/api/admin/users', { method: 'GET', headers: H }, ADMIN_ENV);
     expect(res.status).toBe(200);

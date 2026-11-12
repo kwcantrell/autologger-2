@@ -11,38 +11,20 @@
 // the bug it prevents. hono's `compress()` sets no Vary of its own; the inner
 // `measureCompressibleBody` middleware stamps it, and the assertions below
 // pin that it SURVIVES compress()'s response rebuild. Surfaces outside
-// negotiation (audio byte-serving, SSE) must NOT gain it.
+// negotiation (audio byte-serving, SSE) must NOT gain it; the SSE half is asserted in
+// ai.int.test.ts's loopback-bound ai/chat test, which drives the same gzip request.
 //
 // NOTE: `app.request(...)` bypasses Node's HTTP client, so Accept-Encoding is
 // never added implicitly — every request here sets (or omits) it explicitly,
 // and compressed bodies arrive still-gzipped (no auto-decode). Decode via
 // DecompressionStream.
 
-import { rmSync } from 'node:fs';
-import { join } from 'node:path';
-import { AI_RUNTIME_FIXTURES_DIR } from '@autologger/ai-runtime';
-import { stableSessionCwd } from '@autologger/ai-runtime/aiChatRunner';
-import { afterEach, describe, expect, it } from 'vitest';
-import { app, env, envWith } from '../test/harness';
+import { describe, expect, it } from 'vitest';
+import { app, env } from '../test/harness';
 import { seededSession } from '../test/helpers';
-import { CLI_TEST_EMAILS, chooseClaudeCliForAll } from '../test/llmRoutes';
 
 const GZIP = { 'accept-encoding': 'gzip' };
 const J = { 'content-type': 'application/json' };
-
-/** The hermetic fake-claude CLI (ai.int.test.ts's `FIXTURE_CLI`) — the only
- * env that completes a real ai/chat turn, and so the only way to reach a
- * genuine SSE response through the shared app. */
-const FIXTURE_CLI = join(AI_RUNTIME_FIXTURES_DIR, 'fake-claude.mjs');
-
-/** The fixture writes into a deterministic per-session cwd outside DATA_DIR;
- * clean up after the SSE test the way ai.int.test.ts does. */
-const sseSessionIds: string[] = [];
-afterEach(() => {
-  for (const id of sseSessionIds.splice(0)) {
-    rmSync(stableSessionCwd(id), { recursive: true, force: true });
-  }
-});
 
 /** Vary is a comma-separated token list; assert membership, not the exact
  * string, so a route that adds its own token later doesn't fail this. */
@@ -56,11 +38,13 @@ function variesOnAcceptEncoding(res: Response): boolean {
 }
 
 async function gunzipJson(res: Response): Promise<unknown> {
-  return await new Response(res.body!.pipeThrough(new DecompressionStream('gzip'))).json();
+  if (!res.body) throw new Error('expected a response body');
+  return await new Response(res.body.pipeThrough(new DecompressionStream('gzip'))).json();
 }
 
 async function gunzipText(res: Response): Promise<string> {
-  return await new Response(res.body!.pipeThrough(new DecompressionStream('gzip'))).text();
+  if (!res.body) throw new Error('expected a response body');
+  return await new Response(res.body.pipeThrough(new DecompressionStream('gzip'))).text();
 }
 
 /** Seed enough transcript words that the JSON list body clears the
@@ -353,35 +337,5 @@ describe('API compression (app-level /api/* compress middleware)', () => {
     expect(jsonl.headers.get('content-encoding')).toBe('gzip');
     expect(jsonl.headers.get('vary')).toBe('Accept-Encoding');
     expect(await gunzipText(jsonl)).toBe(plainJsonlText);
-  });
-
-  it('adds no Vary: Accept-Encoding to an SSE stream', async () => {
-    // (d), streaming half. `streamSSE` sets Transfer-Encoding: chunked and
-    // text/event-stream — compress() skips both, so the response is not a
-    // negotiated representation and must gain nothing from the middleware.
-    // Driven through the real ai/chat route with the hermetic fake-claude
-    // fixture (the same env ai.int.test.ts's streaming test uses) because
-    // that is the only way to reach a genuine streaming response through the
-    // shared app: the middleware pair only wraps routes wireApp mounted.
-    const session = (await seededSession()).sessionId;
-    sseSessionIds.push(session);
-    // ai-sdk-agent-harness D9 category 1: the caller is listed and chose the Claude CLI.
-    await chooseClaudeCliForAll();
-
-    const res = await app.request(
-      `/api/sessions/${session}/ai/chat`,
-      { method: 'POST', headers: { ...J, ...GZIP }, body: JSON.stringify({ message: 'hi' }) },
-      envWith({
-        CLAUDE_CLI_PATH: FIXTURE_CLI,
-        CLAUDE_CLI_EMAILS: CLI_TEST_EMAILS,
-        HOST: '127.0.0.1',
-      }),
-    );
-    expect(res.status).toBe(200);
-    expect(res.headers.get('content-type')).toMatch(/text\/event-stream/);
-    expect(res.headers.get('content-encoding')).toBeNull();
-    expect(variesOnAcceptEncoding(res)).toBe(false);
-    // Drain so the fixture subprocess finishes before teardown.
-    await res.text();
   });
 });

@@ -12,7 +12,11 @@ import {
   createTestDatabase,
   testPg,
 } from '../../../../test/pg/testDb';
-import { readAppRoleWithLimitMigration } from './appRoleLimit';
+import {
+  readAppRoleWithLimitMigration,
+  readInRolledBackTransaction,
+  replayMigration,
+} from './appRoleLimit';
 import { CONTENT_INSERT, seedPolicyFixture } from './policyFixture';
 import { holdRoleGuardLock } from './roleGuardLock';
 
@@ -1143,9 +1147,13 @@ describe('the app role (design D3)', () => {
     expect(block).toBeTruthy();
     const db = await createTestDatabase();
     const sql = connect(db.admin);
-    await sql.unsafe(block ?? '');
-    const [r] = await sql`select rolsuper, rolbypassrls, rolconnlimit from pg_roles
-                          where rolname = 'autologger_app'`;
+    // The block sets the cluster-wide limit to 20: it runs and the role is read in one rolled-back
+    // transaction, so parallel files keep connecting under 45 (appRoleLimit.ts).
+    const [r] = await readInRolledBackTransaction(sql, async (tx) => {
+      await tx.unsafe(block ?? '');
+      return tx`select rolsuper, rolbypassrls, rolconnlimit from pg_roles
+                where rolname = 'autologger_app'`;
+    });
     expect(r).toMatchObject({ rolsuper: false, rolbypassrls: false, rolconnlimit: 20 });
   });
 });
@@ -1469,13 +1477,13 @@ describe('the session tables migration (session-tables D1)', () => {
     expect(earlier.at(-1)).toBe('20261007000000_catalog_policies.sql');
     for (const f of earlier) {
       const text = readFileSync(resolve(MIGRATIONS, f), 'utf8');
-      await sql.begin((tx) => tx.unsafe(text));
+      await replayMigration(sql, text);
     }
     await sql`insert into catalog.sessions (id, event_count, max_timecode_total_frames, is_rolling,
                 current_take, transport_elapsed_frames, roll_started_at_utc)
               values ('se', 7, 1234, 1, 3, 456, '2026-10-08T00:00:00.000Z')`;
     const text = readFileSync(resolve(MIGRATIONS, SESSION_TABLES_MIGRATION), 'utf8');
-    await sql.begin((tx) => tx.unsafe(text));
+    await replayMigration(sql, text);
     const rows = await sql`select event_count::int as event_count,
                                   max_timecode_total_frames::int as max_timecode_total_frames,
                                   is_rolling::int as is_rolling, current_take::int as current_take,
@@ -1509,7 +1517,7 @@ describe('the session row versions migration (session-row-versions D1)', () => {
     expect(earlier.at(-1)).toBe('20261009000000_session_content_policies.sql');
     for (const f of earlier) {
       const text = readFileSync(resolve(MIGRATIONS, f), 'utf8');
-      await sql.begin((tx) => tx.unsafe(text));
+      await replayMigration(sql, text);
     }
     const t = '2026-10-10T00:00:00.000Z';
     await sql.unsafe(`
@@ -1523,7 +1531,7 @@ describe('the session row versions migration (session-row-versions D1)', () => {
       insert into catalog.session_topics (session_id, id, ordinal, created_at_utc)
         values ('a', 'tp', 0, '${t}');`);
     const text = readFileSync(resolve(MIGRATIONS, ROW_VERSIONS_MIGRATION), 'utf8');
-    await sql.begin((tx) => tx.unsafe(text));
+    await replayMigration(sql, text);
     const revs = await sql`select id, revision::int as revision from catalog.sessions order by id`;
     expect(revs.map((r) => ({ ...r }))).toEqual([
       { id: 'a', revision: 17 },
@@ -1601,14 +1609,14 @@ describe('the session leases migration (session-leases D1)', () => {
     expect(earlier.at(-1)).toBe(ROW_VERSIONS_MIGRATION);
     for (const f of earlier) {
       const text = readFileSync(resolve(MIGRATIONS, f), 'utf8');
-      await sql.begin((tx) => tx.unsafe(text));
+      await replayMigration(sql, text);
     }
     await sql.unsafe(`
       insert into catalog.sessions (id) values ('a');
       insert into catalog.session_meta (session_id, key, value)
         values ('a', 'lease_holder', 'tab-1'), ('a', 'lease_seen_ms', '1234');`);
     const text = readFileSync(resolve(MIGRATIONS, LEASES_MIGRATION), 'utf8');
-    await sql.begin((tx) => tx.unsafe(text));
+    await replayMigration(sql, text);
     const meta = await sql`select session_id, key, value from catalog.session_meta order by key`;
     expect(meta.map((r) => ({ ...r }))).toEqual([
       { session_id: 'a', key: 'lease_holder', value: 'tab-1' },
@@ -1727,7 +1735,7 @@ describe('the session run leases migration (session-run-leases D1)', () => {
     expect(earlier.at(-1)).toBe(LEASES_MIGRATION);
     for (const f of earlier) {
       const text = readFileSync(resolve(MIGRATIONS, f), 'utf8');
-      await sql.begin((tx) => tx.unsafe(text));
+      await replayMigration(sql, text);
     }
     await sql.unsafe(`
       insert into catalog.sessions (id) values ('a');
@@ -1736,7 +1744,7 @@ describe('the session run leases migration (session-run-leases D1)', () => {
         values ('a', 'recording', 'tab-1', 'u1', 1000, 41000);`);
     const before = await sql`select row_to_json(l) as r from catalog.session_leases l`;
     const text = readFileSync(resolve(MIGRATIONS, RUN_LEASES_MIGRATION), 'utf8');
-    await sql.begin((tx) => tx.unsafe(text));
+    await replayMigration(sql, text);
     const after = await sql`select row_to_json(l) as r from catalog.session_leases l`;
     expect(after.map((r) => r.r)).toEqual(before.map((r) => r.r));
     expect(after).toHaveLength(1);
@@ -1801,7 +1809,7 @@ describe('the lease started_at migration (run-status-and-sweeper D4)', () => {
     expect(earlier).toContain(RUN_LEASES_MIGRATION);
     for (const f of earlier) {
       const text = readFileSync(resolve(MIGRATIONS, f), 'utf8');
-      await sql.begin((tx) => tx.unsafe(text));
+      await replayMigration(sql, text);
     }
     await sql.unsafe(`
       insert into catalog.sessions (id) values ('a');
@@ -1812,7 +1820,7 @@ describe('the lease started_at migration (run-status-and-sweeper D4)', () => {
     const before =
       await sql`select row_to_json(l) as r from catalog.session_leases l order by kind`;
     const text = readFileSync(resolve(MIGRATIONS, STARTED_AT_MIGRATION), 'utf8');
-    await sql.begin((tx) => tx.unsafe(text));
+    await replayMigration(sql, text);
     const after = await sql`select row_to_json(l) as r from catalog.session_leases l order by kind`;
     expect(after.map((r) => r.r)).toEqual(before.map((r) => ({ ...r.r, started_at_ms: null })));
     expect(after).toHaveLength(2);
@@ -1884,7 +1892,7 @@ describe('the claude-cli provider migration (ai-sdk-agent-harness D2)', () => {
     expect(earlier.at(-1)).toBe('20261017000000_provider_test_windows.sql');
     for (const f of earlier) {
       const text = readFileSync(resolve(MIGRATIONS, f), 'utf8');
-      await sql.begin((tx) => tx.unsafe(text));
+      await replayMigration(sql, text);
     }
     const t = '2026-10-18T00:00:00.000Z';
     await sql.unsafe(`
@@ -1902,7 +1910,7 @@ describe('the claude-cli provider migration (ai-sdk-agent-harness D2)', () => {
       sql`select row_to_json(c) as r from catalog.user_provider_credentials c order by kind`;
     const before = await rows();
     const text = readFileSync(resolve(MIGRATIONS, CLAUDE_CLI_MIGRATION), 'utf8');
-    await sql.begin((tx) => tx.unsafe(text));
+    await replayMigration(sql, text);
     const after = await rows();
     expect(after.map((r) => r.r)).toEqual(before.map((r) => r.r));
     expect(after).toHaveLength(2);

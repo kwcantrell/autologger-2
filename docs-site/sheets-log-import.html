@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Importing logs from Google Sheets - AutoLogger Help</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="site-header"><nav class="topnav" aria-label="Help navigation"><a class="brand" href="index.html">AutoLogger Help</a><ul><li><a href="index.html">Home</a></li><li><a href="index.html#getting-started">Getting started</a></li><li><a href="index.html#running-a-session">Running a session</a></li><li><a href="index.html#after-the-session">After the session</a></li><li><a href="index.html#analysis">Analysis</a></li><li><a href="index.html#team-administration">Team administration</a></li><li><a href="index.html#hardware">Hardware</a></li></ul></nav></header>
+<main class="content">
+<p class="crumb"><a href="index.html">Help</a> &rsaquo; <a href="index.html#after-the-session">After the session</a></p>
+<h1>Importing logs from Google Sheets</h1>
+<p class="lead">If your team kept episode logs in Google Sheets (one tab per episode), Import Logs turns those
+rows into events on the matching sessions, lined up with each session's transcript. It is used by
+members bringing an existing archive into AutoLogger.</p>
+<h2>Prepare the workbook</h2>
+<ul>
+  <li>Share the workbook so <strong>anyone with the link can view</strong> it.</li>
+  <li>Name each tab exactly like the session it belongs to (the session name in the show).</li>
+  <li>Log rows start at row 7. Column A is the timecode, column B the message, and column C an
+    optional event type. Rows with an empty column A are ignored.</li>
+  <li>Column C should match one of the show's event buttons or dropdown options. A blank or
+    unknown type is logged under the button named <strong>OTHER</strong> (an unknown type is added
+    to the end of the message), so give the show an OTHER button.</li>
+</ul>
+
+<h2>How to import logs</h2>
+<ol>
+  <li>Click <strong>Import</strong> in the sidebar to open <strong>Batch Import</strong>.</li>
+  <li>Choose the <strong>Show</strong>.</li>
+  <li>Click <strong>Import Logs</strong>, paste the <strong>Public Google Sheets URL</strong> and
+    click <strong>Use URL</strong>.</li>
+  <li>Click <strong>Start Import</strong>. The progress list shows &ldquo;Importing
+    logs&hellip;&rdquo; and then a line per tab: imported, skipped (no session with that name) or
+    failed.</li>
+</ol>
+<p>Each session's events are placed by matching the log messages against its transcript, so the
+times line up with the audio even if the sheet's timecodes were offset. Rows already in the session
+(same message at the same time) are skipped, so running the import twice does not duplicate
+events.</p>
+
+<h2>Requirements</h2>
+<ul>
+  <li>Each session needs a transcript. If it has none, AutoLogger tries to generate one using your
+    own speech-to-text key; add it in Settings &rarr; Advanced first.</li>
+  <li>Log import must be enabled on the server; if it is not, ask your administrator.</li>
+  <li>You need access to the show. If your access is removed during an import, it stops; sheets
+    already imported stay.</li>
+</ul>
+
+<h2>Common problems</h2>
+<ul>
+  <li><strong>A tab is skipped.</strong> No session in the show has exactly that name. Rename the
+    tab or the session and import again.</li>
+  <li><strong>A session fails to sync.</strong> Too few log messages matched words in the
+    transcript to line them up safely. Check that the right workbook tab and session are paired and
+    that the transcript is complete.</li>
+  <li><strong>&ldquo;Skipped transcript generation&hellip;&rdquo;.</strong> Add a speech-to-text
+    key, or generate the transcript in the session first.</li>
+</ul>
+<h2>Related</h2>
+<ul class="related"><li><a href="batch-import.html">Batch Import: folders and playlists</a></li><li><a href="transcripts.html">Transcripts</a></li><li><a href="event-buttons.html">Event buttons</a></li><li><a href="event-feed.html">Reviewing and editing the Event Feed</a></li></ul>
+</main>
+<footer class="site-footer"><p><a href="index.html">AutoLogger Help</a> &middot; Help for people
+who use AutoLogger. For problems these pages don't cover, contact your team's owner or your
+server administrator.</p></footer>
+</body>
+</html>

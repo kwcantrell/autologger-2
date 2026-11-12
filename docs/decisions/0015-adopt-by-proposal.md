@@ -1,7 +1,7 @@
 # 0015: Adopt into existing repos by proposal, never by merging
 
 - Date: 2026-09-29
-- Status: Accepted
+- Status: Superseded by 0034 (2026-11-12)
 - Rule: `scripts/lib/adopt.py` create-only install; `.lifecycle-adoption/`
 
 ## Context

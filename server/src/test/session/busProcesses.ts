@@ -1,5 +1,5 @@
 // Server processes on the Postgres frame bus, for route-level tests (session-frame-bus D8): each is
-// `createBindings({ frameBus: 'postgres' })` over the current test database, with the bus started,
+// `testBindings(…, { frameBus: 'postgres' })` over the current test database, with the bus started,
 // served on a real listening server as `main.ts` serves it. `closeBusProcesses` ends them all.
 
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -11,12 +11,12 @@ import { createNodeWebSocket } from '@hono/node-ws';
 import { Hono } from 'hono';
 import { wireApp } from '../../app';
 import type { AppEnv } from '../../appEnv';
-import { createBindings } from '../../node/config';
+import { testBindings } from '../bindings';
 import { testDatabase } from '../harness';
 
 export const BUS_TEST_SECRET = 'x'.repeat(40);
 
-export type BusProcess = ReturnType<typeof createBindings> & { port: number };
+export type BusProcess = ReturnType<typeof testBindings> & { port: number };
 
 const made: Array<{ p: BusProcess; dirs: string[]; srv: ServerType }> = [];
 
@@ -27,7 +27,7 @@ export async function busProcess(opts: { blobDir?: string } = {}): Promise<BusPr
   const db = testDatabase();
   const dir = mkdtempSync(join(tmpdir(), 'autologger-bus-'));
   const ownBlobDir = opts.blobDir ? null : mkdtempSync(join(tmpdir(), 'autologger-bus-blobs-'));
-  const m = createBindings(
+  const m = testBindings(
     {
       DATA_DIR: dir,
       BLOB_DIR: opts.blobDir ?? (ownBlobDir as string),

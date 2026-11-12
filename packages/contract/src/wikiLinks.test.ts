@@ -4,18 +4,19 @@
 // with its decoded URL, label and position, and whether it matches the exact grammar.
 
 import { describe, expect, it } from 'vitest';
-import { WIKI_MAX_LINKS, citationsOf, classifyWikiUrl, parseWikiLinks } from './wikiLinks';
+import { citationsOf, classifyWikiUrl, parseWikiLinks, WIKI_MAX_LINKS } from './wikiLinks';
 
 const urls = (body: string) => parseWikiLinks(body).links.map((l) => l.url);
 const one = (body: string) => {
   const { links } = parseWikiLinks(body);
   expect(links).toHaveLength(1);
-  return links[0]!;
+  return links[0];
 };
 
 describe('parseWikiLinks', () => {
   it('finds cite: and wiki: links with their label and position', () => {
-    const body = 'Intro.\n\nWe said [we start **Monday**](cite:S1@754) and see [Budget](wiki:page_1).';
+    const body =
+      'Intro.\n\nWe said [we start **Monday**](cite:S1@754) and see [Budget](wiki:page_1).';
     const { links, tooMany } = parseWikiLinks(body);
     expect(tooMany).toBe(false);
     expect(links).toEqual([
@@ -98,7 +99,11 @@ describe('parseWikiLinks', () => {
     });
 
     it('unused reference definitions too', () => {
-      expect(one('[Unused Ref]: wiki:zz')).toMatchObject({ source: 'definition', label: 'Unused Ref', pageId: 'zz' });
+      expect(one('[Unused Ref]: wiki:zz')).toMatchObject({
+        source: 'definition',
+        label: 'Unused Ref',
+        pageId: 'zz',
+      });
     });
 
     it('angle-bracket destinations', () => {
@@ -106,7 +111,12 @@ describe('parseWikiLinks', () => {
     });
 
     it('autolinks, labelled with their text', () => {
-      expect(one('<cite:S1@3>')).toMatchObject({ source: 'link', url: 'cite:S1@3', label: 'cite:S1@3', valid: true });
+      expect(one('<cite:S1@3>')).toMatchObject({
+        source: 'link',
+        url: 'cite:S1@3',
+        label: 'cite:S1@3',
+        valid: true,
+      });
     });
 
     it('links with titles', () => {
@@ -118,11 +128,19 @@ describe('parseWikiLinks', () => {
     });
 
     it('backslash escapes', () => {
-      expect(one('[a](cite\\:S1@6)')).toMatchObject({ kind: 'cite', url: 'cite:S1@6', valid: true });
+      expect(one('[a](cite\\:S1@6)')).toMatchObject({
+        kind: 'cite',
+        url: 'cite:S1@6',
+        valid: true,
+      });
     });
 
     it('entities', () => {
-      expect(one('[a](cite&#58;S1@7)')).toMatchObject({ kind: 'cite', url: 'cite:S1@7', valid: true });
+      expect(one('[a](cite&#58;S1@7)')).toMatchObject({
+        kind: 'cite',
+        url: 'cite:S1@7',
+        valid: true,
+      });
       expect(one('[a](wiki&colon;p)')).toMatchObject({ kind: 'wiki', url: 'wiki:p', valid: true });
     });
 
@@ -150,13 +168,16 @@ describe('parseWikiLinks', () => {
 
   it('ignores other schemes', () => {
     expect(
-      urls('[a](https://x.test) [b](mailto:a@b.test) [c](javascript:alert(1)) <https://y.test> [d](/rel)\n\n[r]: http://z.test'),
+      urls(
+        '[a](https://x.test) [b](mailto:a@b.test) [c](javascript:alert(1)) <https://y.test> [d](/rel)\n\n[r]: http://z.test',
+      ),
     ).toEqual([]);
   });
 
   it(`returns every link and flags more than ${WIKI_MAX_LINKS}`, () => {
     expect(WIKI_MAX_LINKS).toBe(500);
-    const body = (n: number) => Array.from({ length: n }, (_, i) => `[q${i}](cite:S1@${i})`).join(' ');
+    const body = (n: number) =>
+      Array.from({ length: n }, (_, i) => `[q${i}](cite:S1@${i})`).join(' ');
     const atLimit = parseWikiLinks(body(500));
     expect(atLimit.links).toHaveLength(500);
     expect(atLimit.tooMany).toBe(false);
@@ -175,7 +196,11 @@ describe('parseWikiLinks', () => {
 describe('classifyWikiUrl', () => {
   it('parses exact-grammar cite: and wiki: URLs', () => {
     expect(classifyWikiUrl('cite:S1@754')).toEqual({ kind: 'cite', sessionId: 'S1', seconds: 754 });
-    expect(classifyWikiUrl('cite:a-B_9@1.125')).toEqual({ kind: 'cite', sessionId: 'a-B_9', seconds: 1.125 });
+    expect(classifyWikiUrl('cite:a-B_9@1.125')).toEqual({
+      kind: 'cite',
+      sessionId: 'a-B_9',
+      seconds: 1.125,
+    });
     expect(classifyWikiUrl('wiki:abc')).toEqual({ kind: 'wiki', pageId: 'abc' });
   });
 

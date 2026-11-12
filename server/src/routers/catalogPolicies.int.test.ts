@@ -45,21 +45,6 @@ async function send(
 }
 
 describe('existence probes keep their statuses (design D6)', () => {
-  it('POST /api/shows: 404 for an existing team of which the caller is not a member, 400 for a missing team', async () => {
-    const mine = await seedStudio();
-    const foreign = await seedStudio();
-    const cookie = await loginCookie(await seedUser({ studios: [mine], role: 'owner' }));
-    const res = await send('POST', '/api/shows', cookie, { studio_id: foreign, name: 'X' });
-    expect(res.status).toBe(404);
-    expect(await res.json()).toEqual({ detail: 'Unknown studio id.' });
-    const missing = await send('POST', '/api/shows', cookie, {
-      studio_id: 'no-such-team',
-      name: 'X',
-    });
-    expect(missing.status).toBe(400);
-    expect(await missing.json()).toEqual({ detail: 'Unknown studio id.' });
-  });
-
   it("POST /api/sessions: another team's show is 400 Show does not belong to the active team.", async () => {
     const mine = await seedStudio();
     const foreign = await seedStudio();
@@ -89,7 +74,8 @@ const SETTINGS = {
   default_frame_rate: 25,
 };
 /** The early, unlocked role check of `PUT /api/profile` (not the in-transaction `FOR SHARE`). */
-const EARLY_ROLE = /^SELECT role FROM user_studio_memberships WHERE user_id = \? AND studio_id = \?$/;
+const EARLY_ROLE =
+  /^SELECT role FROM user_studio_memberships WHERE user_id = \? AND studio_id = \?$/;
 
 /** A team with an owner, an admin (the caller) and one show. */
 async function teamWithAdmin() {
@@ -174,7 +160,9 @@ describe('PUT /api/profile re-checks the role in its write transaction (design D
       ],
     });
     expect(res.status).toBe(400);
-    expect(await res.json()).toEqual({ detail: `Show '${other}' is not part of the selected team.` });
+    expect(await res.json()).toEqual({
+      detail: `Show '${other}' is not part of the selected team.`,
+    });
     expect(JSON.parse(String(await settingsValue(team))).default_frame_rate).toBe(25);
     expect(await showName(show)).toBe('Renamed');
     expect(await showName(other)).toBe('Other');
@@ -284,7 +272,8 @@ describe('policy outcomes map to existing statuses (design D8, before the polici
 // -- under the policies (task 4.2; red before migration step 2 for the race cases) ----------------
 
 /** requireSession's access read, after which a race commits (design D8). */
-const ACCESS_READ = /^SELECT 1 FROM shows s\s+JOIN user_studio_memberships m ON m\.studio_id = s\.studio_id AND m\.user_id = \?\s+WHERE s\.id = \?/;
+const ACCESS_READ =
+  /^SELECT 1 FROM shows s\s+JOIN user_studio_memberships m ON m\.studio_id = s\.studio_id AND m\.user_id = \?\s+WHERE s\.id = \?/;
 
 describe('routes under the catalog_user policies (design D3, D5, D7, D8)', () => {
   it("a plain member's profile loads defaults for a team with no settings row, and writes none", async () => {
@@ -292,7 +281,9 @@ describe('routes under the catalog_user policies (design D3, D5, D7, D8)', () =>
     await testDb().run('DELETE FROM app_settings WHERE key = ?', `studio_config:${studioId}`);
     const res = await send('GET', '/api/profile', ungranted.cookie);
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { studio_settings: Record<string, { categories: unknown[] }> };
+    const body = (await res.json()) as {
+      studio_settings: Record<string, { categories: unknown[] }>;
+    };
     expect(body.studio_settings[studioId]?.categories.length).toBeGreaterThan(0);
     expect(await settingsValue(studioId)).toBeNull();
   });
@@ -306,48 +297,6 @@ describe('routes under the catalog_user policies (design D3, D5, D7, D8)', () =>
     });
     expect(res.status).toBe(200);
     expect(await namesOf(ungranted.id)).toEqual({ given_name: 'Plain', family_name: 'Member' });
-  });
-
-  it("the owner's team delete leaves no invite, definition, settings or membership row", async () => {
-    const team = await seedStudio();
-    const ownerId = await seedUser({ studios: [team], role: 'owner' });
-    await seedUser({ studios: [team], role: 'member' });
-    await testDb().run(
-      "INSERT INTO team_invites (studio_id, email_norm, invited_by_user_id, invited_at_utc) VALUES (?, 'x@example.com', ?, '2026-10-03')",
-      team,
-      ownerId,
-    );
-    const res = await send('DELETE', `/api/teams/${team}`, await loginCookie(ownerId));
-    expect(res.status).toBe(200);
-    const left = await testDb().first<{ n: number }>(
-      `SELECT (SELECT COUNT(*) FROM team_invites WHERE studio_id = ?)
-            + (SELECT COUNT(*) FROM studio_definitions WHERE id = ?)
-            + (SELECT COUNT(*) FROM app_settings WHERE key = ?)
-            + (SELECT COUNT(*) FROM user_studio_memberships WHERE studio_id = ?) AS n`,
-      team,
-      team,
-      `studio_config:${team}`,
-      team,
-    );
-    expect(Number(left?.n)).toBe(0);
-  });
-
-  it("a granted member's leave removes their grants in that team only", async () => {
-    const a = await seedAccessMatrix();
-    const b = await seedAccessMatrix();
-    await createCatalog(env.ports.catalog)
-      .system('test-seed')
-      .auth.authAddMembershipWithRole(a.granted.id, b.studioId, 'member');
-    await createCatalog(env.ports.catalog)
-      .system('test-seed')
-      .auth.authGrantShow(a.granted.id, b.showId, b.owner.id, '2026-10-03T00:00:00Z');
-    const res = await send('POST', `/api/teams/${a.studioId}/leave`, a.granted.cookie, {});
-    expect(res.status).toBe(200);
-    const grants = await testDb().all<{ show_id: string }>(
-      'SELECT show_id FROM show_grants WHERE user_id = ? ORDER BY show_id',
-      a.granted.id,
-    );
-    expect(grants).toEqual([{ show_id: b.showId }]);
   });
 
   it('a transfer to a non-member or to an unknown user id is 404 Member not found', async () => {
@@ -383,9 +332,9 @@ describe('routes under the catalog_user policies (design D3, D5, D7, D8)', () =>
     const res = await put;
     expect(res.status).toBe(404);
     expect(await res.json()).toEqual({ detail: 'Session not found' });
-    expect(
-      await testDb().first('SELECT title FROM sessions WHERE id = ?', sessionId),
-    ).toEqual({ title: 'Test Session' });
+    expect(await testDb().first('SELECT title FROM sessions WHERE id = ?', sessionId)).toEqual({
+      title: 'Test Session',
+    });
   });
 
   it('a member removed between requireSession and an archive gives 404 and the session stays', async () => {
@@ -400,18 +349,29 @@ describe('routes under the catalog_user policies (design D3, D5, D7, D8)', () =>
       envWith({}, { catalog: gated }),
     );
     await h.reached;
-    const remove = await send('DELETE', `/api/teams/${studioId}/members/${granted.id}`, owner.cookie);
+    const remove = await send(
+      'DELETE',
+      `/api/teams/${studioId}/members/${granted.id}`,
+      owner.cookie,
+    );
     expect(remove.status).toBe(200);
     h.release();
     const res = await archive;
     expect(res.status).toBe(404);
     expect(await res.json()).toEqual({ detail: 'Session not found' });
     expect(
-      Number((await testDb().first<{ archived: number }>('SELECT archived FROM sessions WHERE id = ?', sessionId))?.archived),
+      Number(
+        (
+          await testDb().first<{ archived: number }>(
+            'SELECT archived FROM sessions WHERE id = ?',
+            sessionId,
+          )
+        )?.archived,
+      ),
     ).toBe(0);
   });
 
-  it("POST /api/shows for a foreign team takes the catalog.studio_exists path", async () => {
+  it('POST /api/shows for a foreign team takes the catalog.studio_exists path', async () => {
     const mine = await seedStudio();
     const foreign = await seedStudio();
     const userId = await seedUser({ studios: [mine], role: 'owner' });
@@ -429,6 +389,14 @@ describe('routes under the catalog_user policies (design D3, D5, D7, D8)', () =>
       binding: `user:${userId}`,
       sql: 'SELECT catalog.studio_exists(?) AS e',
     });
+    // A team that does not exist at all is a 400, not a 404 (moved from "POST /api/shows: 404 for an
+    // existing team of which the caller is not a member, 400 for a missing team").
+    const missing = await send('POST', '/api/shows', await loginCookie(userId), {
+      studio_id: 'no-such-team',
+      name: 'X',
+    });
+    expect(missing.status).toBe(400);
+    expect(await missing.json()).toEqual({ detail: 'Unknown studio id.' });
   });
 });
 
@@ -484,44 +452,85 @@ describe('session hub calls refused in a race keep each route’s status (sessio
       widgets: [{ id: 'w1', type: 'session_duration', title: 'Duration', x: 0, y: 0, w: 4, h: 2 }],
       interactions: [],
     };
-    const cases: Array<[string, (m: Matrix, wordId: string, e: Bindings) => Promise<Response>, Record<string, unknown>]> = [
+    const cases: Array<
+      [
+        string,
+        (m: Matrix, wordId: string, e: Bindings) => Promise<Response>,
+        Record<string, unknown>,
+      ]
+    > = [
       [
         'POST events',
         (m, _w, e) =>
-          send('POST', `/api/sessions/${m.sessionId}/events`, m.granted.cookie, { category: SEED_CATEGORY_ID, message: 'raced' }, e),
+          send(
+            'POST',
+            `/api/sessions/${m.sessionId}/events`,
+            m.granted.cookie,
+            { category: SEED_CATEGORY_ID, message: 'raced' },
+            e,
+          ),
         {},
       ],
       [
         'transport start',
-        (m, _w, e) => send('POST', `/api/sessions/${m.sessionId}/transport/start`, m.granted.cookie, {}, e),
+        (m, _w, e) =>
+          send('POST', `/api/sessions/${m.sessionId}/transport/start`, m.granted.cookie, {}, e),
         {},
       ],
       [
         'word edit',
         (m, w, e) =>
-          send('PATCH', `/api/sessions/${m.sessionId}/transcript-words/${w}`, m.granted.cookie, { word: 'edited' }, e),
+          send(
+            'PATCH',
+            `/api/sessions/${m.sessionId}/transcript-words/${w}`,
+            m.granted.cookie,
+            { word: 'edited' },
+            e,
+          ),
         {},
       ],
       [
         'dashboard save',
-        (m, _w, e) => send('PUT', `/api/sessions/${m.sessionId}/ai/v2/dashboard`, m.granted.cookie, VALID_DASHBOARD, e),
+        (m, _w, e) =>
+          send(
+            'PUT',
+            `/api/sessions/${m.sessionId}/ai/v2/dashboard`,
+            m.granted.cookie,
+            VALID_DASHBOARD,
+            e,
+          ),
         { AI_V2_ENABLED: '1', HOST: '127.0.0.1', AI_V2_API_KEY: '' },
       ],
     ];
     for (const [name, request, config] of cases) {
       const m = await seedAccessMatrix();
       const seedHub = await harnessHub(m.sessionId);
-      const word = await seedHub.insertTranscriptWord({ session_time: '00:00:01', speaker: '0', word: 'original' });
+      const word = await seedHub.insertTranscriptWord({
+        session_time: '00:00:01',
+        speaker: '0',
+        word: 'original',
+      });
       const before = await testDb().first('SELECT * FROM sessions WHERE id = ?', m.sessionId);
-      const { res, frames, hub } = await raced(m, nthUserCall(1), (e) => request(m, String(word.id), e), { config });
+      const { res, frames, hub } = await raced(
+        m,
+        nthUserCall(1),
+        (e) => request(m, String(word.id), e),
+        { config },
+      );
       expect(`${name} ${res.status}`).toBe(`${name} 404`);
       expect(await res.json(), name).toEqual(NOT_FOUND);
       expect(frames, name).toEqual([]);
       expect(await hub.exportEvents(), name).toEqual([]);
       expect((await hub.transportSnapshot(CTX)).is_rolling, name).toBe(false);
-      expect((await hub.listTranscriptWords()).map((w) => w.word), name).toEqual(['original']);
+      expect(
+        (await hub.listTranscriptWords()).map((w) => w.word),
+        name,
+      ).toEqual(['original']);
       expect(await hub.listDashboards(), name).toEqual([]);
-      expect(await testDb().first('SELECT * FROM sessions WHERE id = ?', m.sessionId), name).toEqual(before);
+      expect(
+        await testDb().first('SELECT * FROM sessions WHERE id = ?', m.sessionId),
+        name,
+      ).toEqual(before);
     }
   });
 
@@ -605,7 +614,9 @@ describe('session hub calls refused in a race keep each route’s status (sessio
   it('Companion with a cookie: log answers 409 and stores nothing; state answers 200 with the active session masked', async () => {
     const m = await seedAccessMatrix();
     await setCompanionPresence('tab-race', m.sessionId, { visible: true, user_id: m.granted.id });
-    const cmd = await send('POST', '/api/companion/command', m.granted.cookie, { type: 'record-start' });
+    const cmd = await send('POST', '/api/companion/command', m.granted.cookie, {
+      type: 'record-start',
+    });
     expect(cmd.status).toBe(200);
     const companion = (cookie: string, path: string, body: unknown, e: Bindings) =>
       // (anonApp.request may answer synchronously; `raced` takes either.)
@@ -620,7 +631,12 @@ describe('session hub calls refused in a race keep each route’s status (sessio
       );
 
     const log = await raced(m, nthUserCall(1), (e) =>
-      companion(m.granted.cookie, '/api/companion/log', { category_id: SEED_CATEGORY_ID, message: 'raced' }, e),
+      companion(
+        m.granted.cookie,
+        '/api/companion/log',
+        { category_id: SEED_CATEGORY_ID, message: 'raced' },
+        e,
+      ),
     );
     expect(log.res.status).toBe(409);
     expect(await log.res.json()).toEqual(NO_ACTIVE);

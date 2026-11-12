@@ -1,27 +1,11 @@
 # Merged by agent-lifecycle-template scripts/init.sh. See AGENTS.md.
 schema: spec-driven
-rules:
-  proposal:
-  - 'First line after the title is `Tier: 0`, `Tier: 1` or `Tier: 2`, set with the risk-tier skill.'
-  - Include a Non-goals section. Scope is fixed once approved.
-  - Leave `Approved-by:` for the human; never write it yourself.
-  design:
-  - List every assumption with the command that tests it and the observed output.
-  tasks:
-  - Tasks are the only plan of record. Each task names the test written first.
-  - 'Tick a task only with evidence: the command run and a short excerpt of its output.'
-operations:
-  apply:
-    guidance:
-    - Write the failing test first, then the code, then run scripts/check-change.sh.
-    - If the spec proves wrong, stop, update the artifacts, re-review the delta and ask for re-approval.
-  archive:
-    guidance:
-    - Archive only when check-change.sh passes and every task is ticked with evidence.
-    - After archiving a new capability, replace the placeholder `## Purpose` in openspec/specs/<capability>/spec.md.
-context: 'This repo follows the agent lifecycle in AGENTS.md. Every change declares a risk tier
+# The OpenSpec change lifecycle (proposals, tiers, tasks, archive) is retired: work arrives as
+# factory jobs. openspec/specs/ stays the living description of behavior; a job that changes
+# behavior updates the relevant spec in the same job. scripts/check-change.sh validates the specs.
+context: 'openspec/specs/ describes what the system does now. A factory job that changes behavior
 
-  (0, 1 or 2) in proposal.md; the tier decides which phases run. tasks.md is the only plan.
+  updates the relevant spec in the same job. openspec/changes/archive/ is history; add no new changes.
 
   '
 lifecycle:
@@ -49,9 +33,7 @@ lifecycle:
   - scripts/sync-skills.sh
   - scripts/lib/check_change.py
   - scripts/lib/adopt.py
-  - .claude/hooks/guard-approval.sh
   - .claude/hooks/stop-check.sh
-  grandfathered_changes: []
   # Paths the pg and integration tests depend on (ci-db-test-selection D1). When a PR changes none,
   # those vitest projects are skipped. Read from the merge-base, like test_globs.
   db_test_paths:
@@ -66,17 +48,6 @@ lifecycle:
   - scripts/lib/check_change.py
   - .github/workflows/**
   - openspec/config.yaml
-  high_risk_paths:
-  - AGENTS.md
-  - CLAUDE.md
-  - .claude/**
-  - .github/**
-  - scripts/**
-  - openspec/config.yaml
-  - '**/auth/**'
-  - '**/migrations/**'
-  - packages/contract/**
-  - server/src/routers/**
   agent_guide_max_lines: 150
   override_labels:
     tests_with_code: no-test-needed

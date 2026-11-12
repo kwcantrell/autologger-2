@@ -63,13 +63,15 @@ export interface AuthStoreFacade {
     role: TeamRole,
   ) => Promise<boolean>;
   authCountEnabledAdmins: (studioId: string) => Promise<number>;
-  authListTeamMembers: (studioId: string) => Promise<Array<{
-    id: string;
-    email: string;
-    given_name: string;
-    family_name: string;
-    role: TeamRole;
-  }>>;
+  authListTeamMembers: (studioId: string) => Promise<
+    Array<{
+      id: string;
+      email: string;
+      given_name: string;
+      family_name: string;
+      role: TeamRole;
+    }>
+  >;
   authUpsertInvite: (studioId: string, emailNorm: string, invitedByUserId: string) => Promise<void>;
   authListInvitesForTeam: (studioId: string) => Promise<Row[]>;
   authDeleteInvite: (studioId: string, emailNorm: string) => Promise<number>;
@@ -191,7 +193,11 @@ export class AuthStore implements AuthStoreFacade {
 
   /** The user path's name edit (catalog-policies D2, A29): only the two name columns, which is
    * all `catalog_user` may update in `users`. False for a missing or disabled user. */
-  async authUpdateUserNames(userId: string, givenName: string, familyName: string): Promise<boolean> {
+  async authUpdateUserNames(
+    userId: string,
+    givenName: string,
+    familyName: string,
+  ): Promise<boolean> {
     const r = await this.db.run(
       'UPDATE users SET given_name = ?, family_name = ? WHERE id = ? AND disabled_at_utc IS NULL',
       givenName,
@@ -221,7 +227,9 @@ export class AuthStore implements AuthStoreFacade {
   /** All (studio_id, role) pairs for a user, one query — the profile assembler's
    * `auth.user.teams[].role` field (teams-self-serve) needs role alongside id/name
    * without an N+1 over authGetMembershipRole per team. */
-  async authListMembershipsForUser(userId: string): Promise<Array<{ studioId: string; role: TeamRole }>> {
+  async authListMembershipsForUser(
+    userId: string,
+  ): Promise<Array<{ studioId: string; role: TeamRole }>> {
     const results = await this.db.all<Row>(
       'SELECT studio_id, role FROM user_studio_memberships WHERE user_id = ? ORDER BY studio_id',
       userId,
@@ -392,7 +400,11 @@ export class AuthStore implements AuthStoreFacade {
    * old owner becomes admin, in one transaction (owner-bootstrap D3). Demote first: the one-owner
    * index is checked row by row, so promoting first would collide with the old owner's row. Throws
    * (rolling back) when the source is not the owner or the target has no membership. */
-  async authTransferOwnership(studioId: string, fromUserId: string, toUserId: string): Promise<void> {
+  async authTransferOwnership(
+    studioId: string,
+    fromUserId: string,
+    toUserId: string,
+  ): Promise<void> {
     await this.db.tx(async (t) => {
       const demoted = await t.run(
         `UPDATE user_studio_memberships SET role = 'admin'
@@ -507,7 +519,11 @@ export class AuthStore implements AuthStoreFacade {
 
   /** Idempotent upsert of a pending invite (one row per team+email; re-inviting
    * refreshes invited_by/invited_at). */
-  async authUpsertInvite(studioId: string, emailNorm: string, invitedByUserId: string): Promise<void> {
+  async authUpsertInvite(
+    studioId: string,
+    emailNorm: string,
+    invitedByUserId: string,
+  ): Promise<void> {
     await this.db.run(
       `INSERT INTO team_invites (studio_id, email_norm, invited_by_user_id, invited_at_utc)
        VALUES (?, ?, ?, ?)

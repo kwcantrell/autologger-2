@@ -76,7 +76,9 @@ describe('resolveLlmRoute (ai-sdk-agent-harness D1)', () => {
   });
 
   it('gives null for that row once the email is removed, or with CLAUDE_CLI_PATH blank', async () => {
-    expect(await resolveLlmRoute(env({ CLAUDE_CLI_EMAILS: 'other@example.com' }, [CLI_ROW]), USER)).toBeNull();
+    expect(
+      await resolveLlmRoute(env({ CLAUDE_CLI_EMAILS: 'other@example.com' }, [CLI_ROW]), USER),
+    ).toBeNull();
     expect(await resolveLlmRoute(env({ CLAUDE_CLI_EMAILS: '' }, [CLI_ROW]), USER)).toBeNull();
     for (const path of ['', '   ']) {
       expect(await resolveLlmRoute(env({ CLAUDE_CLI_PATH: path }, [CLI_ROW]), USER)).toBeNull();

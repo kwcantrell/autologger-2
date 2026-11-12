@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PROVIDER_TEST_DETAIL } from '@autologger/contract';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createBindings } from '../node/config';
+import { testBindings } from '../test/bindings';
 import { PROVIDER_HOSTS, ProviderTester } from './providerTester';
 
 interface Seen {
@@ -249,7 +249,7 @@ describe('ProviderTester wiring (provider-credentials "Fixed hosts can\'t be ove
     const hostile = new Proxy(base, {
       get: (t, k) => (k in t ? t[k as string] : 'http://127.0.0.1:1'),
     }) as Record<string, string>;
-    const { bindings, close } = createBindings(hostile);
+    const { bindings, close } = testBindings(hostile);
     try {
       expect(bindings.ports.providerTester.hosts).toEqual(PROVIDER_HOSTS);
     } finally {

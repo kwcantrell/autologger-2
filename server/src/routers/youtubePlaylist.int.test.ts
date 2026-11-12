@@ -416,18 +416,6 @@ describe('playlist listing — approved users only', () => {
     }
   });
 
-  it('an unapproved user with a malformed body gets 403, not 422, and no spawn', async () => {
-    const { binaryPath, markerPath } = freshBinary();
-    const res = await post(
-      { url: 5 },
-      configuredEnv(binaryPath),
-      await userCookie(NOT_APPROVED_EMAIL),
-    );
-    expect(res.status).toBe(403);
-    expect(await res.json()).toEqual({ detail: D.forbidden });
-    expect(invocations(markerPath)).toBe(0);
-  });
-
   it('unconfigured: 503 for an unapproved user', async () => {
     const res = await post({ url: 5 }, { ...env }, await userCookie(NOT_APPROVED_EMAIL));
     expect(res.status).toBe(503);

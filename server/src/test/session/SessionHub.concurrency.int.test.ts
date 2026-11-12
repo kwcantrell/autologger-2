@@ -9,6 +9,13 @@
 
 import type { EventRpc } from '@autologger/domain';
 import {
+  SessionHubClosedError,
+  SessionTxMisuseError,
+} from '@autologger/session-core/asyncSessionSql';
+import type { EventStore } from '@autologger/session-core/eventStore';
+import { SessionHub } from '@autologger/session-core/SessionHub';
+import type { SessionCore } from '@autologger/session-core/sessionCore';
+import {
   CatalogTxMisuseError,
   connectPostgres,
   type PgClient,
@@ -17,16 +24,9 @@ import {
   PostgresCatalogDb,
 } from '@autologger/storage';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import {
-  SessionHubClosedError,
-  SessionTxMisuseError,
-} from '@autologger/session-core/asyncSessionSql';
-import type { EventStore } from '@autologger/session-core/eventStore';
-import { SessionHub } from '@autologger/session-core/SessionHub';
-import type { SessionCore } from '@autologger/session-core/sessionCore';
 import { testDatabase } from '../harness';
-import { type SlowStorage, slowStorage } from './slowStorage';
 import { createSessionRow, openTestHub, sessionDb, testRegistry, testStorage } from './sessionRows';
+import { type SlowStorage, slowStorage } from './slowStorage';
 
 const unhandled: unknown[] = [];
 const trap = (reason: unknown): void => {

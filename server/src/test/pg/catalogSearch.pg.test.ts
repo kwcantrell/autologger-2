@@ -8,6 +8,7 @@ import { resolve } from 'node:path';
 import postgres from 'postgres';
 import { afterEach, describe, expect, it } from 'vitest';
 import { type ConnOptions, connOptions, createTestDatabase } from '../../../../test/pg/testDb';
+import { replayMigration } from './appRoleLimit';
 import { seedPolicyFixture, T } from './policyFixture';
 import { holdRoleGuardLock } from './roleGuardLock';
 
@@ -544,7 +545,7 @@ describe('the catalog search migration backfill (catalog-search D4, task 2.4)', 
     expect(earlier.at(-1)).toBe('20261018000000_claude_cli_provider.sql');
     for (const f of earlier) {
       const text = readFileSync(resolve(MIGRATIONS, f), 'utf8');
-      await sql.begin((tx) => tx.unsafe(text));
+      await replayMigration(sql, text);
     }
     await sql.unsafe(
       `insert into catalog.sessions (id, title) values ('a', 'A'), ('b', 'B'), ('c', 'C')`,
@@ -570,7 +571,7 @@ describe('the catalog search migration backfill (catalog-search D4, task 2.4)', 
           word text, start_sec double precision, end_sec double precision, ordinal bigint)`;
     }
     const text = readFileSync(resolve(MIGRATIONS, SEARCH_MIGRATION), 'utf8');
-    await sql.begin((tx) => tx.unsafe(text));
+    await replayMigration(sql, text);
     const got = await chunks(sql);
     expect(got).toEqual(expectedChunks('a', a));
     expect(got.length).toBeGreaterThan(3);

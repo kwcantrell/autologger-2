@@ -4,8 +4,8 @@
 
 import { AsyncResource } from 'node:async_hooks';
 import { describe, expect, it } from 'vitest';
-import { slowStorage } from './slowStorage';
 import { createSessionRow, TEST_CALLER, testRegistry, testStorage } from './sessionRows';
+import { slowStorage } from './slowStorage';
 
 const CTX = { frameRate: 24, startOffsetFrames: 0 };
 

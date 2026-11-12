@@ -1,7 +1,7 @@
 # 0001: Three risk tiers decide how much process a change gets
 
 - Date: 2026-09-29
-- Status: Accepted
+- Status: Superseded by 0034 (2026-11-12)
 - Rule: AGENTS.md "Risk tiers"; check `risk-floor`
 
 ## Context

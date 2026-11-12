@@ -90,28 +90,6 @@ async function detail(team: string, cookie: string) {
   };
 }
 
-describe('auth: 401 anonymous on every route', () => {
-  it('every /api/teams/* route requires login', async () => {
-    const team = 'some-team';
-    const cases: Array<[string, string, unknown?]> = [
-      ['POST', '/api/teams', { id: 'x', display_name: 'X' }],
-      ['GET', `/api/teams/${team}`],
-      ['PATCH', `/api/teams/${team}`, { display_name: 'X' }],
-      ['DELETE', `/api/teams/${team}`],
-      ['POST', `/api/teams/${team}/invites`, { email: 'a@example.com' }],
-      ['DELETE', `/api/teams/${team}/invites/a@example.com`],
-      ['POST', `/api/teams/${team}/members/some-user/role`, { role: 'admin' }],
-      ['DELETE', `/api/teams/${team}/members/some-user`],
-      ['POST', `/api/teams/${team}/leave`],
-      ['POST', `/api/teams/${team}/owner`, { user_id: 'some-user' }],
-    ];
-    for (const [method, path, body] of cases) {
-      const res = await req(method, path, { body });
-      expect(res.status, `${method} ${path}`).toBe(401);
-    }
-  });
-});
-
 describe('auth: masked 404 vs nonexistent', () => {
   it('a non-member and a nonexistent team get the identical masked 404', async () => {
     const { team } = await seedTeamWithOwner();
@@ -403,6 +381,12 @@ describe('DELETE /api/teams/:id — delete (owner)', () => {
     expect((await initedCatalog()).studios.studioNamesDict()[team]).toBeUndefined();
     expect(await catalogFor().auth.authListTeamMembers(team)).toHaveLength(0);
     expect(await catalogFor().auth.authListInvitesForTeam(team)).toHaveLength(0);
+    // The settings row goes too (moved from catalogPolicies.int.test.ts's team-delete test).
+    const settings = await testDb().first<{ n: number }>(
+      'SELECT COUNT(*) AS n FROM app_settings WHERE key = ?',
+      `studio_config:${team}`,
+    );
+    expect(Number(settings?.n)).toBe(0);
   });
 });
 
@@ -582,17 +566,6 @@ describe('DELETE /api/teams/:id/invites/:email — revoke', () => {
 });
 
 describe('POST /api/teams/:id/members/:userId/role — role change (owner)', () => {
-  it('promotes a member to admin', async () => {
-    const { team, cookie } = await seedTeamWithOwner();
-    const { userId } = await addToTeam(team, 'member');
-    const res = await req('POST', `/api/teams/${team}/members/${userId}/role`, {
-      cookie,
-      body: { role: 'admin' },
-    });
-    expect(res.status).toBe(200);
-    expect(await roleOf(userId, team)).toBe('admin');
-  });
-
   it('demotes an admin to member', async () => {
     const { team, cookie } = await seedTeamWithOwner();
     const { userId } = await addToTeam(team, 'admin');

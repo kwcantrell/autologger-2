@@ -18,7 +18,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 // the behavioural backstop. The scan is mutation-checked against synthetic trees below.
 
 /** `all(` or `first(`, then the first argument when it is a quoted or template literal. */
-const READ_CALL = /\b(?:all|first)(?:<[^>]*>)?\(\s*('(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*"|`(?:[^`\\]|\\.)*`)/g;
+const READ_CALL =
+  /\b(?:all|first)(?:<[^>]*>)?\(\s*('(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*"|`(?:[^`\\]|\\.)*`)/g;
 const WRITE = /\b(INSERT|UPDATE|DELETE)\b/i;
 
 function storeFiles(root: string): string[] {
@@ -112,7 +113,10 @@ function scanVersionedUpdates(root: string): { missing: string[]; updates: numbe
   const missing: string[] = [];
   let updates = 0;
   const files = fs.existsSync(dir)
-    ? fs.readdirSync(dir).filter((f) => f.endsWith('.ts') && !f.endsWith('.test.ts')).sort()
+    ? fs
+        .readdirSync(dir)
+        .filter((f) => f.endsWith('.ts') && !f.endsWith('.test.ts'))
+        .sort()
     : [];
   for (const f of files) {
     const text = fs.readFileSync(path.join(dir, f), 'utf8');
@@ -148,7 +152,9 @@ describe('every update of a versioned table advances version (session-row-versio
         ].join('\n'),
       );
       expect(scanVersionedUpdates(root)).toEqual({
-        missing: ['packages/session-core/src/aStore.ts: UPDATE session_events SET category = ? WHERE session_id = ? AND id = ?'],
+        missing: [
+          'packages/session-core/src/aStore.ts: UPDATE session_events SET category = ? WHERE session_id = ? AND id = ?',
+        ],
         updates: 2,
       });
     } finally {

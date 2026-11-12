@@ -25,7 +25,11 @@ async function storedVersion(
   table: string,
   rowId: string,
 ): Promise<number> {
-  const [r] = await rawRows(storage, table, { columns: 'version', where: 'id = ?', binds: [rowId] });
+  const [r] = await rawRows(storage, table, {
+    columns: 'version',
+    where: 'id = ?',
+    binds: [rowId],
+  });
   return Number(r?.version);
 }
 
@@ -51,7 +55,9 @@ describe('row versions (design D3)', () => {
       });
     expect((await update('two'))?.event.version).toBe(2);
     expect((await update('three', 'gone'))?.event.version).toBe(3);
-    expect(await hub.maybeRelinkOrphans({ validIds: ['cam'], labelToIds: { camera: ['cam'] } })).toBe(1);
+    expect(
+      await hub.maybeRelinkOrphans({ validIds: ['cam'], labelToIds: { camera: ['cam'] } }),
+    ).toBe(1);
     expect(await storedVersion(storage, 'session_events', event.event_id)).toBe(4);
     const listed = await hub.listEvents({ limit: 10, offset: 0 });
     expect(listed.events.map((e) => e.version)).toEqual([4]);

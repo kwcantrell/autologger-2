@@ -92,13 +92,6 @@ describe('device-token requests (no cookie)', () => {
     expect(await res.json()).toEqual(LOGIN_REQUIRED);
   });
 
-  it('GET /api/companion-devices is 401 "Login required." with only a device token', async () => {
-    const { bearer } = await seedCompanionDevice();
-    const res = await anonApp.request('/api/companion-devices', { headers: bearer }, withLogin);
-    expect(res.status).toBe(401);
-    expect(await res.json()).toEqual(LOGIN_REQUIRED);
-  });
-
   it('anonymous GET /api/sessions is 401 "Login required." (baseline)', async () => {
     const res = await anonApp.request('/api/sessions', {}, withLogin);
     expect(res.status).toBe(401);

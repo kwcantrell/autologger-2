@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Batch Import: folders and playlists - AutoLogger Help</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="site-header"><nav class="topnav" aria-label="Help navigation"><a class="brand" href="index.html">AutoLogger Help</a><ul><li><a href="index.html">Home</a></li><li><a href="index.html#getting-started">Getting started</a></li><li><a href="index.html#running-a-session">Running a session</a></li><li><a href="index.html#after-the-session">After the session</a></li><li><a href="index.html#analysis">Analysis</a></li><li><a href="index.html#team-administration">Team administration</a></li><li><a href="index.html#hardware">Hardware</a></li></ul></nav></header>
+<main class="content">
+<p class="crumb"><a href="index.html">Help</a> &rsaquo; <a href="index.html#running-a-session">Running a session</a></p>
+<h1>Batch Import: folders and playlists</h1>
+<p class="lead">Batch Import brings in many recordings at once: a folder of audio files from your computer, a
+YouTube playlist, or both. It creates one session per recording in the chosen show, without you
+opening each one. It is used by members preparing an archive or a season.</p>
+<h2>How to import a folder of audio files</h2>
+<ol>
+  <li>Click <strong>Import</strong> in the sidebar (under <strong>New session</strong>). The
+    <strong>Batch Import</strong> dialog opens.</li>
+  <li>Choose the <strong>Show</strong>.</li>
+  <li>Click <strong>Import Audio</strong> and pick a folder. Its name appears under the button.</li>
+  <li>Click <strong>Start Import</strong>.</li>
+  <li>Watch the progress list: each recording shows as completed, skipped, uploading or failed.
+    The list stays until you close the dialog.</li>
+</ol>
+<h3>How files become sessions</h3>
+<ul>
+  <li>Supported files: MP3, WAV, AIFF, M4A, MP4, OGG, WEBM and FLAC.</li>
+  <li>Each file becomes a session named after the file (without its extension).</li>
+  <li>Files in the same folder named with <code>-1</code>, <code>-2</code>, <code>-3</code>&hellip;
+    endings (for example <em>Episode 12-1</em> and <em>Episode 12-2</em>) are joined in order into
+    one session called <em>Episode 12</em>. The numbers must start at 1 with no gaps; otherwise each
+    file is imported on its own. Joined parts may be at most 150 MB together.</li>
+  <li>If the show already has a session with that name, the recording is skipped as &ldquo;already
+    in the system&rdquo;.</li>
+</ul>
+
+<h2>How to import a YouTube playlist</h2>
+<ol>
+  <li>In <strong>Batch Import</strong>, choose the <strong>Show</strong>.</li>
+  <li>Click <strong>Import YouTube Playlist</strong>, paste the playlist link (public or unlisted)
+    and click <strong>Load playlist</strong>.</li>
+  <li>The playlist's videos appear, all importable ones ticked. Use <strong>Select all</strong>,
+    <strong>Select none</strong>, or type <strong>From</strong> and <strong>To</strong> positions
+    and click <strong>Apply range</strong>. Greyed videos cannot be imported and say why
+    (unavailable, live now, upcoming, or over 4 hours).</li>
+  <li>Leave <strong>Use publish date</strong> ticked to date each session by its video.</li>
+  <li>Optionally tick <strong>Autogenerate after import</strong> and choose steps (see below).</li>
+  <li>Click <strong>Start Import</strong>. Videos are imported one at a time, each into a new
+    session named after the video's title. Videos already in the show are skipped.</li>
+</ol>
+
+<h2>How to fill in transcripts and more after a playlist import</h2>
+<ol>
+  <li>Tick <strong>Autogenerate after import</strong>.</li>
+  <li>Choose the <strong>Steps</strong>: <strong>Transcripts</strong>, <strong>Log
+    events</strong>, <strong>Topics</strong> and <strong>Wiki</strong>, and how wiki output is
+    handled.</li>
+  <li>Click <strong>Start Import</strong> and confirm <strong>Import and autogenerate</strong>.
+    When the import ends, a <a href="batch-autogenerate.html">batch autogenerate</a> job starts for
+    the videos this import brought in.</li>
+</ol>
+
+<h2>Importing logs at the same time</h2>
+<p><strong>Import Logs</strong> in the same dialog adds events from a Google Sheets workbook; see
+<a href="sheets-log-import.html">Importing logs from Google Sheets</a>. When you run several parts
+together, AutoLogger imports the folder first, then the playlist, then the logs, so logs can match
+sessions the audio import just created.</p>
+
+<h2>Permissions and requirements</h2>
+<ul>
+  <li><strong>Import</strong> appears only if the current team has a show you can open.</li>
+  <li>Playlist import needs YouTube import enabled on the server; if not, the playlist will not
+    load and you see why. Ask your administrator to enable it.</li>
+  <li><strong>Autogenerate after import</strong> appears only for owners and admins, needs your
+    own transcription and language-model accounts, and covers at most 1000 videos.</li>
+</ul>
+
+<h2>Common problems</h2>
+<ul>
+  <li><strong>Start Import is greyed out.</strong> Choose a show and at least one of: a folder,
+    a ticked playlist video, or a logs link. With autogenerate ticked, the reason is shown under
+    it (for example &ldquo;Pick at least one step.&rdquo;).</li>
+  <li><strong>Closing the dialog stops the run.</strong> Sessions already imported are kept.
+    Clicking outside the dialog or pressing <kbd>Esc</kbd> does not close it while it runs.</li>
+  <li><strong>&ldquo;Still importing &hellip; on the server&rdquo;.</strong> Run the import again
+    later; the unfinished session is picked up rather than duplicated.</li>
+</ul>
+<h2>Related</h2>
+<ul class="related"><li><a href="youtube-import.html">Importing audio from YouTube</a></li><li><a href="sheets-log-import.html">Importing logs from Google Sheets</a></li><li><a href="batch-autogenerate.html">Batch autogenerate</a></li><li><a href="creating-sessions.html">Creating a session</a></li></ul>
+</main>
+<footer class="site-footer"><p><a href="index.html">AutoLogger Help</a> &middot; Help for people
+who use AutoLogger. For problems these pages don't cover, contact your team's owner or your
+server administrator.</p></footer>
+</body>
+</html>

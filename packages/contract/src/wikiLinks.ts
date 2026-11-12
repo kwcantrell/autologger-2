@@ -61,9 +61,9 @@ const SCHEME_RE = /^(cite|wiki):/i;
 /** Parse a URL against the exact grammar; `null` for anything else (including upper-case schemes). */
 export function classifyWikiUrl(url: string): WikiTarget | null {
   const cite = CITE_RE.exec(url);
-  if (cite) return { kind: 'cite', sessionId: cite[1]!, seconds: Number(cite[2]) };
+  if (cite) return { kind: 'cite', sessionId: cite[1], seconds: Number(cite[2]) };
   const wiki = WIKI_RE.exec(url);
-  if (wiki) return { kind: 'wiki', pageId: wiki[1]! };
+  if (wiki) return { kind: 'wiki', pageId: wiki[1] };
   return null;
 }
 
@@ -101,11 +101,16 @@ export function parseWikiLinks(body: string): WikiLinksResult {
               ? { pageId: target.pageId }
               : {};
         links.push({
-          kind: scheme[1]!.toLowerCase() as 'cite' | 'wiki',
+          kind: scheme[1].toLowerCase() as 'cite' | 'wiki',
           source: node.type,
           url: node.url,
-          label: node.type === 'definition' ? (node.label ?? node.identifier ?? '') : plainText(node),
-          position: { line: start?.line ?? 0, column: start?.column ?? 0, offset: start?.offset ?? 0 },
+          label:
+            node.type === 'definition' ? (node.label ?? node.identifier ?? '') : plainText(node),
+          position: {
+            line: start?.line ?? 0,
+            column: start?.column ?? 0,
+            offset: start?.offset ?? 0,
+          },
           valid: target !== null,
           ...fields,
         });

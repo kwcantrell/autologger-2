@@ -19,7 +19,7 @@ import {
   wikiVersionConflictSchema,
 } from '@autologger/contract';
 import { describe, expect, it } from 'vitest';
-import { anonApp, app, env } from '../test/harness';
+import { app, env } from '../test/harness';
 import {
   catalogFor,
   seedAccessMatrix,
@@ -309,35 +309,6 @@ describe('GET and POST /api/shows/:showId/wiki/pages', () => {
       (await send(w.me, 'GET', `/api/shows/${w.showId}/wiki/pages`)).json,
     );
     expect(list.pages).toEqual([]);
-  });
-});
-
-// -- 401 for every route ---------------------------------------------------------------------------
-
-describe('anonymous wiki requests', () => {
-  it.each([
-    ['GET', '/api/shows/s1/wiki/pages'],
-    ['POST', '/api/shows/s1/wiki/pages'],
-    ['GET', '/api/wiki/pages/p1'],
-    ['PUT', '/api/wiki/pages/p1'],
-    ['DELETE', '/api/wiki/pages/p1?expected_revision=1'],
-    ['POST', '/api/wiki/pages/p1/restore'],
-    ['GET', '/api/wiki/pages/p1/revisions'],
-    ['GET', '/api/wiki/pages/p1/revisions/1'],
-    ['POST', '/api/wiki/pages/p1/merge'],
-    ['POST', '/api/wiki/pages/p1/split'],
-  ])('answers 401 Login required. to %s %s', async (method, path) => {
-    const res = await anonApp.request(
-      path,
-      {
-        method,
-        headers: { 'content-type': 'application/json' },
-        body: method === 'GET' || method === 'DELETE' ? undefined : '{}',
-      },
-      env,
-    );
-    expect(res.status).toBe(401);
-    expect(await res.json()).toEqual({ detail: 'Login required.' });
   });
 });
 

@@ -1,7 +1,7 @@
 # 0005: Subagents implement on plain branches, not worktrees
 
 - Date: 2026-09-29
-- Status: Accepted
+- Status: Superseded by 0034 (2026-11-12)
 - Rule: Non-negotiable 5
 
 ## Context
