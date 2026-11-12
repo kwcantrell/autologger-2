@@ -77,7 +77,10 @@ beforeEach(() => {
     mkdirSync(join(specs, name), { recursive: true });
     writeFileSync(join(specs, name, 'spec.md'), `# ${name}\n`);
   }
-  write('style.css', 'body { font-family: system-ui, sans-serif; }\n.icon { background: url("img/icon.svg"); }\n');
+  write(
+    'style.css',
+    'body { font-family: system-ui, sans-serif; }\n.icon { background: url("img/icon.svg"); }\n',
+  );
   write('img/icon.svg', '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"></svg>\n');
   write(
     'index.html',
@@ -107,7 +110,10 @@ describe('passing fixture', () => {
   it('allows external navigation links in <a href>', () => {
     write(
       'logging.html',
-      page('Live logging', `${FEATURE_BODY}<p><a href="https://bitfocus.io/companion">Companion</a></p>`),
+      page(
+        'Live logging',
+        `${FEATURE_BODY}<p><a href="https://bitfocus.io/companion">Companion</a></p>`,
+      ),
     );
     assert.deepEqual(run(), []);
   });
@@ -136,7 +142,10 @@ describe('rule a: manifest covers exactly the spec directories', () => {
       'package-architecture': { excluded: '' },
     });
     const errors = run();
-    assert.ok(errors.some((e) => /"package-architecture" must have either/.test(e)), errors.join('\n'));
+    assert.ok(
+      errors.some((e) => /"package-architecture" must have either/.test(e)),
+      errors.join('\n'),
+    );
   });
 });
 
@@ -147,19 +156,28 @@ describe('rule b: manifest pages exist and are linked from index.html', () => {
   });
 
   it('fails when a manifest page is not linked from index.html', () => {
-    write('index.html', page('AutoLogger help', '<ul><li><a href="teams.html">Teams</a></li></ul>'));
+    write(
+      'index.html',
+      page('AutoLogger help', '<ul><li><a href="teams.html">Teams</a></li></ul>'),
+    );
     assertRule('b', /manifest page logging\.html is not linked from index\.html/);
   });
 });
 
 describe('rule c: relative references resolve inside the site', () => {
   it('fails on a broken relative link', () => {
-    write('logging.html', page('Live logging', `${FEATURE_BODY}<a href="exports.html">Exports</a>`));
+    write(
+      'logging.html',
+      page('Live logging', `${FEATURE_BODY}<a href="exports.html">Exports</a>`),
+    );
     assertRule('c', /logging\.html: a\[href\] "exports\.html" does not resolve/);
   });
 
   it('fails on a missing image', () => {
-    write('logging.html', page('Live logging', `${FEATURE_BODY}<img src="img/missing.png" alt="">`));
+    write(
+      'logging.html',
+      page('Live logging', `${FEATURE_BODY}<img src="img/missing.png" alt="">`),
+    );
     assertRule('c', /img\[src\] "img\/missing\.png" does not resolve/);
   });
 
@@ -187,16 +205,25 @@ describe('rule d: no scripts and no external assets', () => {
   });
 
   it('fails on an inline event handler', () => {
-    write('logging.html', page('Live logging', `${FEATURE_BODY}<button onclick="go()">Go</button>`));
+    write(
+      'logging.html',
+      page('Live logging', `${FEATURE_BODY}<button onclick="go()">Go</button>`),
+    );
     assertRule('d', /onclick/);
   });
 
   it('fails on an external stylesheet', () => {
     write(
       'teams.html',
-      page('Teams', FEATURE_BODY).replace('href="style.css"', 'href="https://cdn.example.com/x.css"'),
+      page('Teams', FEATURE_BODY).replace(
+        'href="style.css"',
+        'href="https://cdn.example.com/x.css"',
+      ),
     );
-    assertRule('d', /teams\.html: <link href="https:\/\/cdn\.example\.com\/x\.css"> references an external/);
+    assertRule(
+      'd',
+      /teams\.html: <link href="https:\/\/cdn\.example\.com\/x\.css"> references an external/,
+    );
   });
 
   it('fails on a protocol-relative image', () => {
@@ -205,14 +232,20 @@ describe('rule d: no scripts and no external assets', () => {
   });
 
   it('fails on an external font in the stylesheet', () => {
-    write('style.css', '@font-face { font-family: X; src: url("http://fonts.example.com/x.woff2"); }\n');
+    write(
+      'style.css',
+      '@font-face { font-family: X; src: url("http://fonts.example.com/x.woff2"); }\n',
+    );
     assertRule('d', /style\.css: url\(\)\/@import "http:\/\/fonts\.example\.com\/x\.woff2"/);
   });
 
   it('fails on an external @import in a <style> block', () => {
     write(
       'teams.html',
-      page('Teams', FEATURE_BODY).replace('</head>', '<style>@import "https://fonts.example.com/a.css";</style></head>'),
+      page('Teams', FEATURE_BODY).replace(
+        '</head>',
+        '<style>@import "https://fonts.example.com/a.css";</style></head>',
+      ),
     );
     assertRule('d', /style url\(\) "https:\/\/fonts\.example\.com\/a\.css"/);
   });
@@ -242,7 +275,10 @@ describe('rule e: feature pages have a title and a How to heading', () => {
 
 describe('rule f: no source paths or config assignments', () => {
   it('fails on a source file path', () => {
-    write('logging.html', page('Live logging', `${FEATURE_BODY}<p>See web/src/pages for details.</p>`));
+    write(
+      'logging.html',
+      page('Live logging', `${FEATURE_BODY}<p>See web/src/pages for details.</p>`),
+    );
     assertRule('f', /logging\.html: contains a source path \("web\/src"\)/);
   });
 

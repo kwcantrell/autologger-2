@@ -42,7 +42,8 @@ function stripComments(html) {
 /** Every tag in the HTML as { name, attrs } with lower-cased names. */
 function parseTags(html) {
   const tags = [];
-  const tagRe = /<([a-zA-Z][a-zA-Z0-9-]*)((?:\s+[^\s=>/]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+))?)*)\s*\/?>/g;
+  const tagRe =
+    /<([a-zA-Z][a-zA-Z0-9-]*)((?:\s+[^\s=>/]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+))?)*)\s*\/?>/g;
   const attrRe = /([^\s=>/]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+)))?/g;
   for (const m of html.matchAll(tagRe)) {
     const attrs = {};
@@ -65,7 +66,10 @@ function cssRefs(css) {
 }
 
 function decodeEntities(s) {
-  return s.replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+  return s
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
 }
 
 /** Resolve a relative reference from a file in the site; null when it is not a local file ref. */
@@ -133,7 +137,9 @@ function checkManifest(siteDir, specsDir, errors) {
   const pages = new Set();
   for (const [name, entry] of Object.entries(specs)) {
     if (!specDirs.includes(name)) {
-      errors.push(`rule a: manifest.json names spec "${name}", which does not exist in openspec/specs`);
+      errors.push(
+        `rule a: manifest.json names spec "${name}", which does not exist in openspec/specs`,
+      );
     }
     const hasPages = Array.isArray(entry?.pages) && entry.pages.length > 0;
     const hasExcluded = typeof entry?.excluded === 'string' && entry.excluded.trim() !== '';
@@ -206,7 +212,8 @@ function checkHtmlPage(siteDir, file, errors) {
       }
     }
     if (attrs.style !== undefined) {
-      for (const r of cssRefs(decodeEntities(attrs.style))) refs.push({ ref: r, kind: 'style url()' });
+      for (const r of cssRefs(decodeEntities(attrs.style)))
+        refs.push({ ref: r, kind: 'style url()' });
     }
     for (const [attr, value] of Object.entries(attrs)) {
       if (/^on[a-z]+$/.test(attr)) {
@@ -220,7 +227,9 @@ function checkHtmlPage(siteDir, file, errors) {
     const assetAttrs = name === 'a' || name === 'area' ? [] : ['href', 'src', 'poster', 'data'];
     for (const attr of assetAttrs) {
       if (attrs[attr] !== undefined && EXTERNAL.test(attrs[attr].trim())) {
-        errors.push(`rule d: ${file}: <${name} ${attr}="${attrs[attr]}"> references an external resource`);
+        errors.push(
+          `rule d: ${file}: <${name} ${attr}="${attrs[attr]}"> references an external resource`,
+        );
       }
     }
     if (attrs.srcset !== undefined && EXTERNAL.test(attrs.srcset.trim())) {
@@ -260,7 +269,9 @@ function checkContent(file, html, errors) {
   }
   const env = html.match(ENV_ASSIGNMENT);
   if (env) {
-    errors.push(`rule f: ${file}: contains a config assignment ("${env[0]}"); end-user docs must not`);
+    errors.push(
+      `rule f: ${file}: contains a config assignment ("${env[0]}"); end-user docs must not`,
+    );
   }
 }
 
@@ -314,7 +325,9 @@ function parseArgs(argv, repoRoot) {
     if ((arg === '--site' || arg === '--specs') && argv[i + 1]) {
       opts[arg === '--site' ? 'siteDir' : 'specsDir'] = resolve(argv[++i]);
     } else {
-      throw new Error(`unknown argument: ${arg}\nusage: check-docs-site.mjs [--site <dir>] [--specs <dir>]`);
+      throw new Error(
+        `unknown argument: ${arg}\nusage: check-docs-site.mjs [--site <dir>] [--specs <dir>]`,
+      );
     }
   }
   return opts;
@@ -336,5 +349,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     process.exit(1);
   }
   const count = listFiles(opts.siteDir).filter((f) => f.endsWith('.html')).length;
-  console.log(`docs-site check passed: ${count} page(s) in ${relative(process.cwd(), opts.siteDir) || '.'}`);
+  console.log(
+    `docs-site check passed: ${count} page(s) in ${relative(process.cwd(), opts.siteDir) || '.'}`,
+  );
 }
