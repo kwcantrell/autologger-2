@@ -46,3 +46,6 @@ openspec/changes/**/qa/**/*.png
 **/.impeccable/hook.cache.json
 **/.impeccable/hook.pending.json
 **/.impeccable/config.local.json
+
+# vitest coverage reports (npm run test:coverage -w server)
+coverage/

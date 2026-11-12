@@ -22,6 +22,17 @@ export const PG_MAX_WORKERS = 2;
 
 export default defineConfig({
   test: {
+    // `npm run test:coverage -w server` (vitest run --coverage): v8 coverage of the server's full
+    // run (unit + integration + pg) over the server's and the workspace packages' sources, which
+    // the server imports as TypeScript (hence allowExternal). Off unless --coverage is passed.
+    coverage: {
+      provider: 'v8',
+      include: ['src/**/*.ts', '../packages/*/src/**/*.ts'],
+      exclude: ['**/*.test.ts', '**/*.d.ts', 'src/test/**', '../packages/*/src/**/test/**'],
+      allowExternal: true,
+      reporter: ['text-summary', 'json-summary', 'json'],
+      reportsDirectory: './coverage',
+    },
     projects: [
       {
         test: {
