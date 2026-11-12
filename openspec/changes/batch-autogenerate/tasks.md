@@ -337,12 +337,12 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
 
 ## 8. Verification
 
-- [ ] 8.1 Dev stack (`make dev-up`): as an admin with a dev provider, run a job over three sessions
+- [x] 8.1 Dev stack (`make dev-up`): as an admin with a dev provider, run a job over three sessions
   of a test show (one without audio, one already transcribed) in `accept` mode; restart the `api`
   container during the second session's topics step; record the report (outcomes per step), that
   the job resumed within 90 s, that no partial topic set was kept, and a batch revision's note in
   the page history. Repeat once in `pending` mode.
-  Evidence:
+  Evidence: owner-run browser check on autologger-dev, 2026-11-11, dev-preview 1a6119d5 (main + youtube-playlist-import e33a627b + batch-autogenerate bc6782ca); migration 20261025000000 applied, worker polling without errors after it. Owner reported in chat: "both checks pass" (this check and youtube-playlist-import V.2).
 - [x] 8.2 Tier 2 consistency read (`consistency-read` skill) over specs, design, code and tests;
   every finding fixed or escalated.
   Evidence: a fresh reviewer appended `## Consistency read 2026-11-10` to panel.md with 3 [major] findings, each now ticked with `Resolved:`.
