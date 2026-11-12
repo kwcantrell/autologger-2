@@ -1254,7 +1254,10 @@ bypasses the adapter's bindings fails closed too.
 and the user read) and load the request's studio registry on a catalog bound to the system task
 `auth-resolve`. After resolution, the catalog the routes receive SHALL be bound to the signed-in
 user, or unbound when there is none, and SHALL carry the registry snapshot loaded during
-resolution. A route that serves a request with no user and needs the catalog SHALL ask for a
+resolution. The one other user binding is the batch autogenerate worker's
+(batch-autogenerate): before each session of a job it binds a catalog to the job's recorded
+initiator, after re-reading that account under its system binding, and runs that session's work
+under it. A route that serves a request with no user and needs the catalog SHALL ask for a
 system binding explicitly.
 
 **One binding per transaction.** A transaction SHALL run under the binding of the catalog that
@@ -1269,7 +1272,8 @@ session. A hub resolved from the registry SHALL expose its storage operations on
 bound to a session caller; there SHALL be no unbound path to them. A session caller SHALL be
 either:
 - a user: the signed-in user of the request that makes the call, or, for work a request started
-  and that outlives it (an AI turn's tool calls, a log-import job), the user who started it; or
+  and that outlives it (an AI turn's tool calls, a log-import job, a batch autogenerate job), the
+  user who started it; or
 - a named system task, for calls no user makes: opening a hub (its seed rows and stale-lease
   cleanup), the recording lease alarm, operator scripts, and a request's undo steps, which remove
   only what that same request wrote or the snapshot it is replacing, after one of its later steps
@@ -1286,7 +1290,8 @@ system binding and system session caller in the production sources of `server/sr
 `server/scripts` and the packages with its file and reason, and SHALL fail when the list differs
 from a reviewed allowlist in either direction (a new call site, a new reason, a reason moved to
 another file, or an allowlist entry no longer used), or when a reason is not a string literal. The
-catalog's user binding SHALL be created only by the authentication middleware, and a user session
+catalog's user binding SHALL be created only by the authentication middleware and the batch
+autogenerate worker, and a user session
 caller only in the reviewed files that take it from the request's signed-in user or from the user
 recorded on a job the request started, and the session storage only in the composition root and
 the operator scripts; the repository test SHALL fail on either elsewhere, and on a caller written as
@@ -1309,7 +1314,8 @@ create and revoke, each scoped by user id in SQL),
 catalog facade store: the provider routes' read, save and delete, and the credential lookup for a
 request or a log-import job, each scoped by user id in SQL; and the boot check of the provider-key
 check value), `access-loss-check`,
-`team-invite` and `team-create`. The `session-mirror` reason was retired with the mirror (ADR 0021
+`team-invite`, `team-create` and `autogenerate-worker` (the batch autogenerate worker's claim,
+lease, item updates and initiator re-read; its session work runs as the initiator). The `session-mirror` reason was retired with the mirror (ADR 0021
 slice 7b-1), the `session-hub` reason with the per-call caller (slice 7b-2), and the
 `companion-token` reason with `API_TOKEN` (slice 9d): a Companion call runs as the device's user.
 
@@ -1382,6 +1388,12 @@ slice 7b-1), the `session-hub` reason with the per-call caller (slice 7b-2), and
 - **THEN** the credential read runs under the system binding `provider-credentials` through
   `Bindings.ports.providerCredentials`, scoped by that user's id, and the hub's writes run as
   `catalog_user` with that user's id
+
+#### Scenario: A batch job's session work runs as its initiator
+- **WHEN** the batch autogenerate worker processes a session of a job started by user U
+- **THEN** the job's claim and item updates run as `catalog_system` under `autogenerate-worker`,
+  and every catalog and session statement of the session's steps runs as `catalog_user` with U's
+  id
 
 ### Requirement: Version checks are atomic with the session write
 The session hub's update and delete operations for events, transcript words and topics SHALL take
