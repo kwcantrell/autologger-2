@@ -1,11 +1,13 @@
 # The enforced gates. Make the `gates`, `secrets`, `dependency-review` and `db-tests` jobs
-# required status checks in the main branch ruleset. Actions are pinned to full commit SHAs;
+# required status checks in the main branch ruleset. Factory PRs (body: the job's ship.md) need
+# nothing in the PR body; only the `no-test-needed` label is read. Actions are pinned to full commit SHAs;
 # Dependabot keeps them current.
 name: lifecycle
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, edited, labeled, unlabeled]
+    # No `edited`: no gate reads the PR body. Labels still matter (the no-test-needed override).
+    types: [opened, synchronize, reopened, labeled, unlabeled]
   push:
     # supabase-migration: the full suite after every merge (ci-db-test-selection D4).
     branches: [main, supabase-migration]
@@ -34,6 +36,7 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
+      # The openspec gate runs `openspec validate --specs --strict`, so the CLI stays, pinned.
       - name: Install gate tooling
         run: |
           npm install --global @fission-ai/openspec@1.13.2
@@ -46,6 +49,8 @@ jobs:
           cache: npm
       - name: Install the stack
         run: npm ci
+      # The `commands` gate runs the root `npm test`, which includes the gate script's own tests
+      # (scripts/lib/test_check_change.py).
       - name: Run lifecycle gates
         env:
           EVENT: ${{ github.event_name }}
