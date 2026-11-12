@@ -199,6 +199,7 @@ Web tests: `cd web && npx vitest run <files>`. Gates run through `scripts/check-
   record that the run continues.
 - [ ] 5.2 `scripts/check-change.sh --stage hook` green, then `GITHUB_BASE_REF=main
   scripts/check-change.sh` (all gates, as CI) green.
-- [ ] 5.3 Tier 2 consistency read (`consistency-read` skill) over specs, design, code and tests by a
+- [x] 5.3 Tier 2 consistency read (`consistency-read` skill) over specs, design, code and tests by a
   fresh reviewer, appended to `panel.md`; every finding fixed or escalated. Verify:
   `scripts/check-change.sh --only panel` passes with no open critical.
+  Evidence: `panel.md` "## Consistency read 2026-11-12" (fresh reviewer; scope change: no) with one `[major]` (no test for a job-list read that does not answer), fixed by the `BatchImportModal.test.tsx` case "a job-list read that never answers: the confirm opens without the warning after the 5 s wait": red with the race removed -> `TestingLibraryElementError: Unable to find role="alertdialog"` (pia-5.3-red.log), green -> `Tests  58 passed (58)` (pia-5.3-green.log); `GITHUB_BASE_REF=main scripts/check-change.sh --only panel` -> `PASS  panel  11 finding(s), no open criticals` (pia-5.3-panel.log)

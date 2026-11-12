@@ -1236,6 +1236,30 @@ describe('BatchImportModal — Autogenerate after import', () => {
     });
   });
 
+  describe('confirm when the job list does not answer (owner decision 6)', () => {
+    afterEach(() => vi.useRealTimers());
+
+    it('a job-list read that never answers: the confirm opens without the warning after the 5 s wait', async () => {
+      await armed();
+      jobsImpl = () => new Promise(() => {}); // never answers
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      fireEvent.click(startButton());
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(4_900);
+      });
+      expect(screen.queryByRole('alertdialog')).toBeNull();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(200);
+      });
+      const dialog = await confirmDialog();
+      expect(dialog.textContent).not.toContain(LIVE_WARNING);
+      expect(dialog.textContent).toContain('Import 2 videos');
+      vi.useRealTimers();
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Start' }));
+      await screen.findByText('Completed First video 1');
+    });
+  });
+
   describe('dialog during a run (design D13)', () => {
     function hangingRun() {
       let signal: AbortSignal | undefined;
