@@ -174,10 +174,26 @@ function parseMetadataJson(stdout: string): YtDlpMetadata | null {
   return null;
 }
 
-interface RunResult {
+export interface RunResult {
   exitCode: number | null;
   stdout: string;
+  /** The first `maxStderrBytes` of stderr (empty when the option is absent or 0). Never
+   * surfaced to a client: callers only classify it (youtube-playlist-import D3). */
+  stderr: string;
   timedOut: boolean;
+  /** Stdout passed `maxStdoutBytes`; the process group was killed (youtube-playlist-import D3). */
+  overflow: boolean;
+}
+
+export interface RunYtDlpOptions {
+  cwd: string;
+  env: Record<string, string>;
+  timeoutMs: number;
+  /** Kill the whole process group and report `overflow: true` once stdout exceeds this many
+   * bytes. Absent: unbounded (the import's single `--dump-json` object). */
+  maxStdoutBytes?: number;
+  /** Keep the first N bytes of stderr. Default 0: stderr is drained and discarded. */
+  maxStderrBytes?: number;
 }
 
 /** Kill `child`'s entire process group (not just the one pid) — a hang-timeout
@@ -211,11 +227,15 @@ function killProcessGroup(child: ChildProcess): void {
  * calls `unref()` and the group's last member exiting on its own reaps it.
  * Never throws: spawn failure surfaces as `exitCode: null` via the child's
  * own `error` event, uniformly with a non-zero exit for the caller's
- * purposes. */
-function runYtDlpProcess(
+ * purposes.
+ *
+ * youtube-playlist-import D3 adds the optional output bounds: `maxStdoutBytes` (the same
+ * group kill, reported as `overflow`) and `maxStderrBytes` (keep a prefix for
+ * classification). The import's spawns pass neither and behave as before. */
+export function runYtDlpProcess(
   binaryPath: string,
   argv: string[],
-  opts: { cwd: string; env: Record<string, string>; timeoutMs: number },
+  opts: RunYtDlpOptions,
 ): Promise<RunResult> {
   return new Promise((resolve) => {
     let settled = false;
@@ -228,30 +248,54 @@ function runYtDlpProcess(
         detached: true,
       });
     } catch {
-      resolve({ exitCode: null, stdout: '', timedOut: false });
+      resolve({ exitCode: null, stdout: '', stderr: '', timedOut: false, overflow: false });
       return;
     }
 
-    let stdout = '';
+    const stdoutChunks: Buffer[] = [];
+    let stdoutBytes = 0;
+    const stderrChunks: Buffer[] = [];
+    let stderrBytes = 0;
+    const maxStderrBytes = opts.maxStderrBytes ?? 0;
     let timedOut = false;
+    let overflow = false;
     const timer = setTimeout(() => {
       timedOut = true;
       killProcessGroup(child);
     }, opts.timeoutMs);
 
     child.stdout?.on('data', (chunk: Buffer) => {
-      stdout += chunk.toString('utf8');
+      if (overflow) return;
+      if (opts.maxStdoutBytes !== undefined && stdoutBytes + chunk.length > opts.maxStdoutBytes) {
+        overflow = true;
+        killProcessGroup(child);
+        return;
+      }
+      stdoutChunks.push(chunk);
+      stdoutBytes += chunk.length;
     });
     // Drain stderr so a chatty child can never stall on a full pipe buffer;
-    // its content is never surfaced to the caller (no upstream-body-echo
-    // posture, matching `DeepgramUpstreamError`'s discipline).
-    child.stderr?.on('data', () => {});
+    // only a bounded prefix is kept (when asked), and its content is never
+    // surfaced to the caller's client (no upstream-body-echo posture,
+    // matching `DeepgramUpstreamError`'s discipline).
+    child.stderr?.on('data', (chunk: Buffer) => {
+      if (stderrBytes >= maxStderrBytes) return;
+      const kept = chunk.subarray(0, maxStderrBytes - stderrBytes);
+      stderrChunks.push(kept);
+      stderrBytes += kept.length;
+    });
 
     const finish = (exitCode: number | null): void => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      resolve({ exitCode, stdout, timedOut });
+      resolve({
+        exitCode,
+        stdout: Buffer.concat(stdoutChunks).toString('utf8'),
+        stderr: Buffer.concat(stderrChunks).toString('utf8'),
+        timedOut,
+        overflow,
+      });
     };
     child.on('error', () => finish(null));
     child.on('close', (code) => finish(code));
@@ -286,7 +330,11 @@ async function locateProducedFile(tempDir: string): Promise<{ path: string; ext:
  * `.netrc` needs no flag — it is OFF by default and `--ignore-config` prevents
  * any config from turning it on with `--netrc`, so an explicit disable flag
  * (which yt-dlp does not have) is neither needed nor valid. */
-const LOCKDOWN_ARGV = ['--ignore-config', '--no-plugin-dirs', '--no-warnings'];
+export const LOCKDOWN_ARGV: readonly string[] = [
+  '--ignore-config',
+  '--no-plugin-dirs',
+  '--no-warnings',
+];
 
 /** The flag portion of each spawn's argv (everything before the `--` URL
  * terminator), factored out so the real-binary flag-validity smoke test

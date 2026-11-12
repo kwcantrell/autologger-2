@@ -1,4 +1,4 @@
-import { apiFetch } from '../../../api/client';
+import { ApiError, apiFetch } from '../../../api/client';
 import type {
   AudioSegmentsResponse,
   ProfilePayload,
@@ -39,6 +39,27 @@ export function formatFailedLine(stem: string, detail: string): string {
   return `Failed ${stem}: ${detail}`;
 }
 
+/**
+ * The text of a failed request for a progress line (youtube-playlist-import D5): a validation
+ * `detail` array (zod issues, `422`) becomes `<path joined with .>: <message>` joined with `; `,
+ * since `apiFetch` would otherwise give its `JSON.stringify` text; any other error its message.
+ */
+export function formatErrorDetail(err: unknown, fallback: string): string {
+  if (err instanceof ApiError) {
+    const detail = (err.body as { detail?: unknown } | undefined)?.detail;
+    if (Array.isArray(detail)) {
+      const parts = detail.map((issue) => {
+        const { path, message } = (issue ?? {}) as { path?: unknown; message?: unknown };
+        const where = Array.isArray(path) ? path.map(String).join('.') : '';
+        const what = typeof message === 'string' ? message : 'invalid';
+        return where ? `${where}: ${what}` : what;
+      });
+      if (parts.length > 0) return parts.join('; ');
+    }
+  }
+  return err instanceof Error && err.message ? err.message : fallback;
+}
+
 export function sessionMatchesStem(session: Session, stem: string): boolean {
   return session.episode === stem || session.title === stem;
 }
@@ -50,13 +71,13 @@ export function findMatchingSession(
   return sessions.find((s) => sessionMatchesStem(s, stem));
 }
 
-function throwIfAborted(signal: AbortSignal): void {
+export function throwIfAborted(signal: AbortSignal): void {
   if (signal.aborted) {
     throw new DOMException('Aborted', 'AbortError');
   }
 }
 
-function isAbortError(err: unknown): boolean {
+export function isAbortError(err: unknown): boolean {
   return err instanceof DOMException && err.name === 'AbortError';
 }
 
@@ -69,7 +90,7 @@ function allSessions(response: SessionsResponse): Session[] {
   return [...response.active, ...response.archived];
 }
 
-async function alignActiveShow(
+export async function alignActiveShow(
   profile: ProfilePayload,
   showId: string,
   signal: AbortSignal,
@@ -86,13 +107,13 @@ async function alignActiveShow(
   }
 }
 
-async function fetchSessions(signal: AbortSignal): Promise<Session[]> {
+export async function fetchSessions(signal: AbortSignal): Promise<Session[]> {
   throwIfAborted(signal);
   const response = await apiFetch<SessionsResponse>('sessions', { signal });
   return allSessions(response);
 }
 
-async function createSessionForStem(
+export async function createSessionForStem(
   showId: string,
   stem: string,
   profile: ProfilePayload,
@@ -212,7 +233,7 @@ async function resumableSessionFor(
  * (modal close / unmount), otherwise the ghost session would match
  * `findMatchingSession` on the next run and the stem would be skipped forever.
  */
-async function deleteSession(sessionId: string): Promise<void> {
+export async function deleteSession(sessionId: string): Promise<void> {
   await apiFetch(`sessions/${encodeURIComponent(sessionId)}`, {
     method: 'DELETE',
   });

@@ -1,0 +1,50 @@
+{
+  "_type": "playlist",
+  "id": "PLBB231211A4F62143",
+  "title": "Team Fortress 2 [2010 Version]",
+  "availability": "public",
+  "playlist_count": 3,
+  "channel": "Wickman Wish",
+  "channel_id": "UCKSpbfbl5kRQpTdL7kMc-1Q",
+  "extractor": "youtube:tab",
+  "extractor_key": "YoutubeTab",
+  "webpage_url": "https://www.youtube.com/playlist?list=PLBB231211A4F62143",
+  "entries": [
+    {
+      "_type": "url",
+      "ie_key": "Youtube",
+      "id": "RlJy2Kt8Be0",
+      "url": "https://www.youtube.com/watch?v=RlJy2Kt8Be0",
+      "title": "Let's Play Team Fortress 2 [2010] - Intro",
+      "duration": 629,
+      "live_status": null,
+      "availability": null,
+      "channel": "Wickman Wish",
+      "channel_id": "UCKSpbfbl5kRQpTdL7kMc-1Q"
+    },
+    {
+      "_type": "url",
+      "ie_key": "Youtube",
+      "id": "me4As6zyJk4",
+      "url": "https://www.youtube.com/watch?v=me4As6zyJk4",
+      "title": null,
+      "duration": null,
+      "live_status": null,
+      "availability": null,
+      "channel": null,
+      "channel_id": null
+    },
+    {
+      "_type": "url",
+      "ie_key": "Youtube",
+      "id": "SvtxuD_Abf0",
+      "url": "https://www.youtube.com/watch?v=SvtxuD_Abf0",
+      "title": "Let's Play Team Fortress 2 [2010] - Medic [3/4]",
+      "duration": 16606,
+      "live_status": null,
+      "availability": null,
+      "channel": "Wickman Wish",
+      "channel_id": "UCKSpbfbl5kRQpTdL7kMc-1Q"
+    }
+  ]
+}

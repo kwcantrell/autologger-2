@@ -192,8 +192,9 @@ echo "select email_norm, approved_at_utc, note from catalog.account_approvals or
 
 ### Run features: approved users only
 
-Six routes start paid or egress-making runs: `POST …/ai/chat`, `…/ai/v2/design`,
-`…/topics/generate`, `…/events/generate`, `…/youtube-import` and `…/transcript-words/generate`.
+Seven routes start paid or egress-making runs: `POST …/ai/chat`, `…/ai/v2/design`,
+`…/topics/generate`, `…/events/generate`, `…/youtube-import`, `…/transcript-words/generate` and
+`POST /api/youtube/playlist-entries` (the playlist listing, which makes requests to YouTube).
 Only approved users may start them (run-status-and-sweeper, ADR 0021 slice 9c):
 - **Who:** the bootstrap owner (`BOOTSTRAP_OWNER_EMAIL`) is always approved, and the optional
   `RUN_FEATURE_EMAILS` (comma-separated) adds others. Entries match the user's verified login email
@@ -203,7 +204,7 @@ Only approved users may start them (run-status-and-sweeper, ADR 0021 slice 9c):
   (`make <env>-up`). Removing works the same way.
 - **Refusal:** anyone else gets **403** `{"detail":"This feature is limited to approved users on
   this server."}`, right after the route's configuration `503` and before anything is claimed or
-  spawned. The AI v2 answer and dashboard routes are not gated. The web shows the detail.
+  spawned (for the playlist listing, also before its body `422`). The AI v2 answer and dashboard routes are not gated. The web shows the detail.
 - **Log import:** a job whose creator is not approved skips transcript generation for sessions with
   no transcript words, logging `Skipped transcript generation: limited to approved users on this
   server.`, and those sessions fail. An existing transcript is still used.
@@ -264,6 +265,20 @@ directory only (config/plugin/secret-exfil lockdown — no inherited `process.en
 cannot discover an `ffmpeg` installed elsewhere on the host's normal `PATH`. If a given video
 needs `ffmpeg` for post-processing (format merging/remuxing), `ffmpeg` must be co-located next
 to the resolved `yt-dlp` binary or that import fails (`502`) for that video.
+
+**Playlists (youtube-playlist-import).** Batch Import's "Import YouTube Playlist" lists a playlist
+with `POST /api/youtube/playlist-entries {url}` and then, in the browser, creates one session per
+checked video (named after its title) and calls `…/youtube-import` for each, one at a time. The
+listing is behind the same gate as the import (the unavailable `503`, the approved-user `403`). It
+accepts `youtube.com`, `www.`, `m.` or `music.youtube.com` links of the form `/playlist?list=…` or
+`/watch?v=…&list=…` (treated as the playlist); Mix and radio lists (`list=RD…`) and anything else
+are refused with `400` before any spawn, and private lists (including Watch Later and Liked
+videos) come back as the private-or-nonexistent `502`. It runs one flat-playlist `yt-dlp` call
+(metadata only, no downloads, no cookies) against the canonical
+`https://www.youtube.com/playlist?list=<id>` with the import's lockdown, bounded to 5000 entries
+(longer lists come back `truncated`), 16 MiB of output, 60 s, and two listings at once per server
+process (a third gets the busy `503`). Each entry says whether it can be imported (`unavailable`,
+`live`, `upcoming`, or `too_long` at 4 hours or more). The listing writes nothing.
 
 ### Google Sheets log import
 
@@ -785,6 +800,7 @@ server/src/
     profile.ts               GET /api/studio, GET|PUT /api/profile
     shows.ts                 GET|POST /api/shows, GET /api/shows/:showId (full show shape)
     sessions.ts              list/create/update/archive/restore/delete; local-audio-import; youtube-import (config-gated)
+    youtubePlaylist.ts       POST /api/youtube/playlist-entries (playlist listing; yt-dlp-gated, 2 at once)
     events.ts                events CRUD, transport, status, lease, WebSocket upgrade
     audio.ts                 upload/list/range-download, waveform, sync-from-disk
     companion.ts             Companion presence + state + log/transport/command (WS relay),
@@ -910,8 +926,12 @@ packages/                 Source-only npm workspace packages (no build step; ser
                              routers/sessions.ts then claims the session's youtube-import run
                              lease for the cross-process check
     youtubeImportScratch.ts  Startup sweep of stale per-request temp dirs
+    ytdlpPlaylist.ts         Bounded flat-playlist listing spawn (5000 entries, 16 MiB, 60 s)
+    playlistEntries.ts       projectPlaylist: yt-dlp's playlist JSON → the listing's 200 body
+    playlistListingGuard.ts  Two listings per process (singleton); a third is the busy 503
     index.ts                 Package barrel; exports MEDIA_IMPORT_FIXTURES_DIR
-  media-import/fixtures/   fake-ytdlp.mjs, moved from server/src/test/fixtures/ (design D4).
+  media-import/fixtures/   fake-ytdlp.mjs, moved from server/src/test/fixtures/ (design D4);
+                             playlist-*.json, trimmed real flat-playlist output (youtube-playlist-import).
                              resolveYtDlpPath deliberately stays in server/src/env.ts (gate
                              ruling E2) — PATH-probing at boot is composition-root work, not a
                              service's
@@ -1066,6 +1086,7 @@ Content-coding is transport applied above the frozen representation: the decoded
 | `POST /api/shows/:showId/log-import` → **404** show/no show access · **503** unconfigured · **400** bad body · **200** `{ job_id }` configured success (public Sheets log import job; see "Google Sheets log import" above) | — |
 | `GET /api/log-import/:jobId` → **404** unknown/not-creator · **200** `{ status, lines, error }` | — |
 | `POST …/youtube-import` → **503** unconfigured · **403** not an approved user · **400** bad/non-allowlisted url · **409** concurrent-session · **200** `{ok: true}` configured success · **502** download/extract/bound/container/blob-write failure (see "YouTube audio import" above) | `routers/sessions.py` |
+| `POST /api/youtube/playlist-entries` `{url}` (1–2048 characters) → **503** `{"detail":"YouTube import is unavailable on this deployment."}` no `yt-dlp` · **403** not an approved user · **422** `{detail: [zod issues]}` body not JSON or not `{url}` · **400** `{"detail":"url must be a YouTube playlist link: youtube.com/playlist?list=… or youtube.com/watch?v=…&list=…."}` · **400** `{"detail":"Mix and radio lists can't be imported; use a regular playlist link."}` (`list=RD…`) · **503** `{"detail":"Playlist listing is busy; try again."}` two listings already running in this process · **502** `{"detail":"This playlist is private or does not exist. Only public and unlisted playlists can be imported."}` · **502** `{"detail":"Listing the playlist timed out."}` (60 s) · **502** `{"detail":"Failed to list the playlist."}` any other failure (including over 16 MiB of output) · **200** `{playlist: {id, title, url}, entries: [{index, video_id, url, title, duration_s, importable, reason}], truncated}` (at most 5000 entries in playlist order, `index` 1-based with gaps where a malformed id was dropped; `url` `https://www.youtube.com/watch?v=<id>`; `title` null when YouTube reports none; `reason` `unavailable`\|`live`\|`upcoming`\|`too_long`\|null, `importable` exactly when null). No refusal up to the busy `503` spawns anything; no writes, no cookies, no downloads (see "YouTube audio import" above) | `routers/youtubePlaylist.ts` (new, youtube-playlist-import) |
 | `POST …/ai/chat` `{message, claude_session_id?: string \| null, history?: [{role: "user"\|"assistant", text}]}` (`history` ≤ 40 entries, 1–8000 chars each, 64 000 total) → **503** `{"detail":"Add a language model in Settings → Advanced to use the assistant."}` no caller route · **403** not an approved user · **422** invalid body (including `history`, before any model request) or a foreign/stale `claude_session_id` on the CLI route · **409** concurrent-turn · **200** `text/event-stream` `delta`/`tool`/`done {claude_session_id}` (a string on the CLI route, `null` on the AI SDK route, which ignores the request's `claude_session_id`)/`error {detail}` (see "AI chat" below) | `routers/ai.ts` (new, ai-topics-chat) |
 | `POST …/ai/v2/design` → **503** unconfigured/credentials · **403** not an approved user · **200** `text/event-stream` configured (SSE: `delta`\|`question`\|`dashboard`\|`done`\|`error`) · `POST …/ai/v2/answer` → answer round trip, **200** `{ok:true}` (see "AI v2 dashboards" below) | `routers/aiV2.ts` (new, ai-v2-dashboards) |
 | `GET\|PUT\|DELETE …/ai/v2/dashboard` → dashboard persistence: **200** `{config}` (GET: `{config:null}` if none) \| `{ok:true}` (DELETE), **422** invalid/bounds-exceeded, **400** malformed | `routers/aiV2.ts` (new, ai-v2-dashboards) |
@@ -1264,7 +1285,7 @@ only: nothing reads `server/.env`. The stacks take values from OpenBao
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | *(required)* | Google OAuth credentials. The server refuses to boot when either, or `PUBLIC_BASE_URL`, is blank. |
 | `FRAME_BUS_SECRET` | *(required)* | Signs every session frame bus message (HMAC-SHA256, at least 32 characters, server-only; set in OpenBao). `main.ts` refuses to boot without it. Rotate it by restarting every process together. |
 | `BOOTSTRAP_OWNER_EMAIL` | *(required)* | The bootstrap owner's email. A sign-in whose verified Google email matches it (trimmed, ASCII case-insensitive) becomes owner of every team with no owner. The server refuses to boot when it is blank or non-ASCII, and logs it masked (domain plus a short hash). |
-| `RUN_FEATURE_EMAILS` | *(empty = the bootstrap owner only)* | Comma-separated emails of users approved for the run features (AI chat, AI v2 design, topic and event generation, YouTube import, transcript generation); the bootstrap owner is always approved. Others get `403`. A non-ASCII entry refuses boot. See "Run features: approved users only". |
+| `RUN_FEATURE_EMAILS` | *(empty = the bootstrap owner only)* | Comma-separated emails of users approved for the run features (AI chat, AI v2 design, topic and event generation, YouTube import, YouTube playlist listing, transcript generation); the bootstrap owner is always approved. Others get `403`. A non-ASCII entry refuses boot. See "Run features: approved users only". |
 | `CLAUDE_CLI_EMAILS` | *(empty = nobody)* | Comma-separated emails that may choose "Claude CLI (operator)" as their language model (with `CLAUDE_CLI_PATH` set); matched trimmed, ASCII case-insensitive; the bootstrap owner is not implicitly listed. Set per stack in OpenBao. See "AI chat (AI SDK or Claude CLI)". |
 | `SIGNUPS` | *(empty = open on dev, closed on stage and prod)* | `open` or `closed` (trimmed, case-insensitive). While closed, only existing accounts, the bootstrap owner and emails approved in the last 7 days can sign in. Any other value is refused by `make <env>-up` before compose starts and by the server at boot (never printed). Boot logs `sign-ups: open` or `sign-ups: closed`. See "Closed sign-ups". |
 | `AI_CHAT_MAX_STEPS` / `AI_CHAT_MAX_TOKENS` | `8` / `400000` | AI SDK chat turn: model steps (1–50) and the per-turn token budget. |

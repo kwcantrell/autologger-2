@@ -24,6 +24,7 @@ import {
   fetchYoutubeAudio,
   MAX_DURATION_SECONDS,
   OUTPUT_TEMPLATE,
+  runYtDlpProcess,
   YtDlpError,
 } from './ytdlp';
 
@@ -416,5 +417,75 @@ describe('fetchYoutubeAudio — spawn contract', () => {
     // path its `$(...)`/`>` payload names.
     expect(existsSync(join(tempDir, 'pwned'))).toBe(false);
     expect(existsSync('/tmp/pwned')).toBe(false);
+  });
+});
+
+// ── runYtDlpProcess output bounds (youtube-playlist-import D3, task 2.1) ────
+
+/** True while `pid` exists. `kill(pid, 0)` probes without signalling. */
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+describe('runYtDlpProcess — stdout/stderr bounds', () => {
+  it('kills the process group and reports overflow once stdout passes maxStdoutBytes', async () => {
+    const tempDir = makeTempDir();
+    const binaryPath = makeBinary(tempDir);
+    writeStubControl(tempDir, { mode: 'playlist-flood' });
+
+    const result = await runYtDlpProcess(binaryPath, ['--flat-playlist'], {
+      cwd: tempDir,
+      env: buildYtDlpChildEnv(process.env, binaryPath),
+      timeoutMs: 10_000,
+      maxStdoutBytes: 1024 * 1024,
+    });
+
+    expect(result.overflow).toBe(true);
+    expect(result.timedOut).toBe(false);
+    expect(Buffer.byteLength(result.stdout)).toBeLessThanOrEqual(1024 * 1024);
+    const pid = Number(readFileSync(join(tempDir, 'child-pid.txt'), 'utf8'));
+    expect(isAlive(pid)).toBe(false);
+  }, 15_000);
+
+  it('keeps only the first maxStderrBytes of stderr', async () => {
+    const tempDir = makeTempDir();
+    const binaryPath = makeBinary(tempDir);
+    writeStubControl(tempDir, { mode: 'playlist-missing' });
+
+    const result = await runYtDlpProcess(binaryPath, ['--flat-playlist'], {
+      cwd: tempDir,
+      env: buildYtDlpChildEnv(process.env, binaryPath),
+      timeoutMs: 10_000,
+      maxStderrBytes: 10,
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toBe('ERROR: [yo');
+    expect(result.overflow).toBe(false);
+  });
+
+  it('without bounds keeps no stderr and never reports overflow (the import spawns)', async () => {
+    const tempDir = makeTempDir();
+    const binaryPath = makeBinary(tempDir);
+    writeStubControl(tempDir, { mode: 'playlist-missing' });
+
+    const result = await runYtDlpProcess(binaryPath, ['--flat-playlist'], {
+      cwd: tempDir,
+      env: buildYtDlpChildEnv(process.env, binaryPath),
+      timeoutMs: 10_000,
+    });
+
+    expect(result).toEqual({
+      exitCode: 1,
+      stdout: '',
+      stderr: '',
+      timedOut: false,
+      overflow: false,
+    });
   });
 });

@@ -39,6 +39,7 @@ import { teamsRouter } from './routers/teams';
 import { transcribeRouter } from './routers/transcribe';
 import { wikiRouter } from './routers/wiki';
 import { wikiSuggestionsRouter } from './routers/wikiSuggestions';
+import { youtubePlaylistRouter } from './routers/youtubePlaylist';
 
 /** The Next.js frontend bridge (nextjs-frontend-migration, design D1) — the
  * minimal seam app.ts's catch-all consumes: given the raw Node req/res pair
@@ -267,6 +268,8 @@ export function wireApp(
   app.route('/', wikiSuggestionsRouter);
   app.route('/', teamsRouter);
   app.route('/', sessionsRouter);
+  // youtube-playlist-import D1: the stateless playlist listing, beside the session routes.
+  app.route('/', youtubePlaylistRouter);
   app.route('/', logImportRouter);
   app.route('/', eventsRouter);
   app.route('/', audioRouter);

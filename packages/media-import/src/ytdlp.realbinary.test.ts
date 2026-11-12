@@ -16,8 +16,12 @@
 // It skips deterministically when no yt-dlp is installed (e.g. CI without one).
 
 import { spawnSync } from 'node:child_process';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { downloadFlags, PROBE_FLAGS } from './ytdlp';
+import { listYoutubePlaylist, PLAYLIST_ERROR_DETAILS, PLAYLIST_FLAGS } from './ytdlpPlaylist';
 
 function resolveYtDlp(): string | null {
   const candidate = (process.env.YTDLP_PATH || '').trim() || 'yt-dlp';
@@ -47,4 +51,36 @@ describe('yt-dlp real-binary flag validity', () => {
   it.skipIf(!binary)('every downloadFlags option is a real yt-dlp option', () => {
     expect(optionParseOutput(downloadFlags(1))).not.toMatch(/no such option/i);
   });
+
+  // youtube-playlist-import task 2.4: the listing spawn's flags.
+  it.skipIf(!binary)('every PLAYLIST_FLAGS option is a real yt-dlp option', () => {
+    expect(optionParseOutput(PLAYLIST_FLAGS)).not.toMatch(/no such option/i);
+  });
+});
+
+// youtube-playlist-import (design Risks "[Stderr classification is text-matching]"): the
+// private-or-nonexistent 502 depends on yt-dlp's stderr wording, so a real yt-dlp must still
+// classify a missing list that way. Needs network: runs only with YTDLP_NETWORK_TESTS=1.
+const network = process.env.YTDLP_NETWORK_TESTS === '1';
+
+describe('yt-dlp real-binary playlist classification (network)', () => {
+  it.skipIf(!binary || !network)(
+    'a nonexistent PL list is classified private-or-nonexistent',
+    async () => {
+      const listId = `PL${'a'.repeat(32)}`;
+      const tempDir = mkdtempSync(join(tmpdir(), 'ytdlp-real-playlist-'));
+      try {
+        const err = await listYoutubePlaylist({
+          listId,
+          href: `https://www.youtube.com/playlist?list=${listId}`,
+          tempDir,
+          binaryPath: binary as string,
+        }).catch((e: unknown) => e);
+        expect((err as Error).message).toBe(PLAYLIST_ERROR_DETAILS.privateOrMissing);
+      } finally {
+        rmSync(tempDir, { recursive: true, force: true });
+      }
+    },
+    90_000,
+  );
 });

@@ -10,8 +10,15 @@
 // E2): probing the host's `PATH` at boot is the composition root's job — a
 // service receives its configuration rather than discovering it from the
 // deployment environment.
+//
+// youtube-playlist-import adds the playlist listing: ytdlpPlaylist.ts (the bounded
+// flat-playlist spawn), playlistEntries.ts (projection to the contract shape) and
+// playlistListingGuard.ts (two listings per process).
 
 export * from './fixturesDir';
+export * from './playlistEntries';
+export * from './playlistListingGuard';
 export * from './youtubeImportGuard';
 export * from './youtubeImportScratch';
 export * from './ytdlp';
+export * from './ytdlpPlaylist';

@@ -320,7 +320,7 @@ sessionsRouter.delete('/api/sessions/:sessionId', async (c) => {
 // YouTube import (design D1/D2/D3/D6/D7/D8/D9). Detail text kept IDENTICAL to
 // the pre-pipeline stub's for the not-configured case (api-contract-freeze:
 // "byte-for-byte unchanged" for deployments with no yt-dlp available).
-const YOUTUBE_IMPORT_NOT_CONFIGURED_DETAIL = 'YouTube import is unavailable on this deployment.';
+export const YOUTUBE_IMPORT_NOT_CONFIGURED_DETAIL = 'YouTube import is unavailable on this deployment.';
 const YOUTUBE_IMPORT_BAD_BODY_DETAIL = 'Invalid youtube-import request body.';
 const YOUTUBE_IMPORT_BAD_URL_DETAIL =
   'url must be an http(s) link to youtube.com, youtu.be, or music.youtube.com.';
