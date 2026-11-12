@@ -16,8 +16,11 @@ import { promisify } from 'node:util';
 import type { TestProject } from 'vitest/node';
 import sharedSetup from '../../../test/pg/globalSetup';
 
+/** The app role's connection limit in this container (integrationConnectionBudget.ts). */
+export const INTEGRATION_APP_ROLE_LIMIT = 280;
+
 const SETTINGS = [
-  'alter role autologger_app connection limit 280',
+  `alter role autologger_app connection limit ${INTEGRATION_APP_ROLE_LIMIT}`,
   'alter system set fsync = off',
   'alter system set synchronous_commit = off',
   'alter system set full_page_writes = off',
