@@ -40,5 +40,5 @@ RUN set -eu; \
     test -d /module/autologger/node_modules
 
 # ---- runtime ----
-FROM ghcr.io/bitfocus/companion/companion:v4.3.4@sha256:7fddb11a82ed4934c6ef3d34782963bac9b12916f31be525b81df87bb2458df5
+FROM ghcr.io/bitfocus/companion/companion:v5.1.3@sha256:923f35eb015d89180dc50ca61dee5680735840ac55b9b6aec33b1ccdd964acc2
 COPY --from=module /module/autologger /app/module-local-dev/autologger
