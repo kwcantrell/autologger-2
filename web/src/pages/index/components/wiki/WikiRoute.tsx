@@ -323,6 +323,7 @@ export function WikiRoute() {
   const pending = useWikiSuggestions(showId);
   const pendingCount = pending.data?.suggestions.length ?? 0;
   // Also when the count badge arrives, since it widens the Suggestions tab.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: tab and pendingCount are the triggers (scroll the active tab into view when it changes or the badge widens it)
   useEffect(() => {
     const active = tabRow.current?.querySelector('[role="tab"][data-state="active"]');
     active?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
