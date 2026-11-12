@@ -1,7 +1,7 @@
 # 0002: A human approves every tier 1-2 change before code
 
 - Date: 2026-09-29
-- Status: Accepted
+- Status: Superseded by 0034 (2026-11-12)
 - Rule: Non-negotiable 2; checks `approval`, `panel`; PreToolUse hook `guard-approval.sh`
 
 ## Context

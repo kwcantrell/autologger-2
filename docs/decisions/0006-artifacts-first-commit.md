@@ -1,7 +1,7 @@
 # 0006: The first commit on a branch is the approved artifacts
 
 - Date: 2026-09-29
-- Status: Proposed
+- Status: Superseded by 0034 (2026-11-12)
 - Rule: Non-negotiable 6; check `artifacts-first`
 
 ## Context

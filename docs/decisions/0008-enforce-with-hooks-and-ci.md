@@ -1,7 +1,7 @@
 # 0008: Rules that must hold are hooks or CI checks, not prose
 
 - Date: 2026-09-29
-- Status: Accepted
+- Status: Superseded by 0034 (2026-11-12)
 - Rule: Non-negotiable 8; `lifecycle.yml`, `.claude/settings.json`, main ruleset
 
 ## Context

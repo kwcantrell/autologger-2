@@ -1,7 +1,7 @@
 # 0014: Grandfather changes that predate the lifecycle, within bounds
 
 - Date: 2026-09-29
-- Status: Accepted
+- Status: Superseded by 0034 (2026-11-12)
 - Rule: `lifecycle.grandfathered_changes`; check `change`
 
 ## Context
