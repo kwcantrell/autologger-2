@@ -349,9 +349,9 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
     - Queued cancel: pg `autogenerateJobs.pg.test.ts` red (`× a queued cancel ends every item cancelled/cancelled`, ba-cr1-red.log), then green 88/88 (ba-cr1-green.log). The route test and the recaptured `autogenerateCancel` fixture pass.
     - Session gate on retry and the instruction bound: `worker.test.ts`/`steps.test.ts` red, 4 failed (ba-cr-red.log), then green 28/28 (ba-cr-green.log).
     - Full pg with `--maxWorkers=4`: `Tests 362 passed | 1 skipped` (ba-cr-pg.log). The affected integration files: 129 passed plus the fixture rerun 69/69 (ba-cr-int.log).
-- [ ] 8.3 `scripts/check-change.sh --stage hook` green, then `scripts/check-change.sh` (all gates,
+- [x] 8.3 `scripts/check-change.sh --stage hook` green, then `scripts/check-change.sh` (all gates,
   as CI) green with `GITHUB_BASE_REF=main`.
-  Evidence:
+  Evidence: 2026-11-11, after rebasing onto main 5ad0ca05 (audit-fix-2026-11, #141) and `npm ci`: `GITHUB_BASE_REF=main scripts/check-change.sh` -> every gate PASS (`audit  ran ['audit']`, `commands  ran ['typecheck', 'test']`, `panel 20 finding(s), no open criticals`, `evidence`, `artifacts-first`, `tests-with-code 45 source / 37 test file(s)`) except `tasks 1 unticked task(s)`, this task (log `gate2-batch-autogenerate.log`); `--stage hook` exit 0 (ba-8.3-hook2.log, rerun before the push). CI on #140 before the rebase: db-shard 1-3, db-tests, dependency-review and secrets pass; gates failed only on audit + tasks.
 
 ## 9. Hand-off to the playlist import (proposal "Follow-up")
 
