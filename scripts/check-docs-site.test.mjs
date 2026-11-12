@@ -226,6 +226,14 @@ describe('rule d: no scripts and no external assets', () => {
     );
   });
 
+  it('fails on an http: stylesheet with no slashes', () => {
+    write(
+      'teams.html',
+      page('Teams', FEATURE_BODY).replace('href="style.css"', 'href="http:x.css"'),
+    );
+    assertRule('d', /teams\.html: <link href="http:x\.css"> references an external/);
+  });
+
   it('fails on a protocol-relative image', () => {
     write('teams.html', page('Teams', `${FEATURE_BODY}<img src="//img.example.com/a.png" alt="">`));
     assertRule('d', /<img src="\/\/img\.example\.com\/a\.png">/);

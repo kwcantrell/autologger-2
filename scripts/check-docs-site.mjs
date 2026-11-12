@@ -20,7 +20,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const EXTERNAL = /^(?:[a-z][a-z0-9+.-]*:)?\/\//i; // http://, https://, //host
+const EXTERNAL = /^(?:(?:[a-z][a-z0-9+.-]*:)?\/\/|https?:)/i; // http://, https://, //host, http:x
 const SCHEME = /^[a-z][a-z0-9+.-]*:/i; // mailto:, tel:, data:, http:, ...
 const SOURCE_PATH = /\b(?:server\/src|web\/src)\b|(?<![\w-])packages\//;
 const ENV_ASSIGNMENT = /\b[A-Z][A-Z0-9]*_[A-Z0-9_]*=/;
