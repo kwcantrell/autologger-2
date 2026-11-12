@@ -185,7 +185,7 @@ Web tests: `cd web && npx vitest run <files>`. Gates run through `scripts/check-
 
 ## 5. Verification
 
-- [ ] 5.1 Dev stack owner check (`make dev-up`, autologger-dev with a dev provider, the owner in
+- [x] 5.1 Dev stack owner check (`make dev-up`, autologger-dev with a dev provider, the owner in
   the browser): as an owner, load a short playlist of 3 videos into a test show where one title
   already exists, tick Autogenerate after import with Transcripts and Topics, confirm (record the
   confirm text: 3 videos, at most 6 runs), and let it run. Record the progress lines (one skipped,
@@ -197,8 +197,10 @@ Web tests: `cd web && npx vitest run <files>`. Gates run through `scripts/check-
   key, record the non-blocking warning and that Start Import stays enabled (the dev stack's
   `PROVIDER_DEV_MODE` fallback then lets the job start, design D6). Press Escape mid-run and
   record that the run continues.
-- [ ] 5.2 `scripts/check-change.sh --stage hook` green, then `GITHUB_BASE_REF=main
+  Evidence: owner-run browser check on autologger-dev, 2026-11-12, branch playlist-import-autogenerate at d9a8a8eb (deployed by `ansible-playbook playbooks/autologger.yml --limit autologger-dev -e autologger_env_branch=playlist-import-autogenerate`, PLAY RECAP ok=45 changed=2 failed=0; the checkout was then fast-forwarded to d9a8a8eb, test-only). The owner was given every step above and reported in chat: "check passed". The individual confirm and progress-line texts were not transcribed into this log.
+- [x] 5.2 `scripts/check-change.sh --stage hook` green, then `GITHUB_BASE_REF=main
   scripts/check-change.sh` (all gates, as CI) green.
+  Evidence: 2026-11-12 on d9a8a8eb + this tick: `GITHUB_BASE_REF=main scripts/check-change.sh --stage hook` -> exit 0, every gate PASS (log `pia-5.2-hook.log`); `GITHUB_BASE_REF=main scripts/check-change.sh` -> every gate PASS (`approval`, `panel 11 finding(s), no open criticals`, `evidence`, `artifacts-first`, `tests-with-code 7 source / 5 test file(s)`, `commands ran ['typecheck', 'test']`, `audit`) except `tasks 1 unticked task(s)`, this task (log `pia-5.2-pr.log`).
 - [x] 5.3 Tier 2 consistency read (`consistency-read` skill) over specs, design, code and tests by a
   fresh reviewer, appended to `panel.md`; every finding fixed or escalated. Verify:
   `scripts/check-change.sh --only panel` passes with no open critical.
