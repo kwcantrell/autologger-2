@@ -51,26 +51,25 @@ Web tests: `cd web && npx vitest run <files>`. Gates run through `scripts/check-
 
 - [ ] 2.1 Test first, `web/src/pages/index/batchImport/playlistRunner.test.ts`: with
   `onSessionImported`, a run over five entries (created and completed; skipped as already in the
-  system; definite failure; unknown outcome later confirmed by a segment; unknown outcome never
-  confirmed) reports exactly the ids of the first and fourth; a retry into this import's own empty
-  session that completes is reported; a `409` still-importing retry is not; after a `403` ends the
-  part, the ids completed before it are reported and nothing after; an abort reports nothing more;
-  every progress line is byte-identical to the same run without the callback; interrupted-run case
-  (design D2): an entry whose name matches this import's remembered own session that has
-  segments is skipped with the unchanged `Skipped … (already in system)` line, reported, and its
-  key forgotten (a second run over the same entry then skips it without reporting); a name match
-  that is not remembered, or remembered for another video, is skipped and not reported. Verify:
-  red before 2.2, green after.
+  system; definite failure; created with an unknown outcome later confirmed by a segment; unknown
+  outcome never confirmed) reports exactly the ids of the first and fourth; a retry into this
+  import's own empty session from an earlier run that completes (`Completed` logged) is NOT
+  reported, nor is a retry whose unknown outcome is later confirmed; a `409` still-importing retry
+  is not; a name match that is this import's remembered own session with segments is skipped with
+  the unchanged line and not reported, and its remembered key is left as today; after a `403`
+  ends the part, the ids completed before it are reported and nothing after; an abort reports
+  nothing more; every progress line and every memory call is identical to the same run without the
+  callback (owner decision 5, design D2). Verify: red before 2.2, green after.
 - [ ] 2.2 `playlistRunner.ts`: optional `onSessionImported(sessionId)` in
-  `RunPlaylistImportOptions`, called at the two `Completed` points and at the remembered-own-
-  session-with-audio skip, which also forgets the key. Verify: 2.1 and the whole
-  existing `playlistRunner.test.ts` green.
+  `RunPlaylistImportOptions`, called at the two `Completed` points only for a session created in
+  this run (not when `retrying`); no other behavior change. Verify: 2.1 and the whole existing
+  `playlistRunner.test.ts` green.
 
 ## 3. End-of-run start (design D4, D5, D12)
 
 - [ ] 3.1 Test first, new `web/src/pages/index/batchImport/autogenerateAfterImport.test.ts`
   (mocked `apiFetch`/`fetch`, injected `readProfile` and `listShowSessionIds`): no ids → the
-  "no video was imported by this import" line and no request; a profile whose `auth.user.id`
+  "no video was imported in this run" line and no request; a profile whose `auth.user.id`
   differs from `confirmedUserId` → the different-user line and no preview or start; a failed
   profile read → "the request failed" and no preview; a preview `404 Session not found` → one
   `listShowSessionIds` call, the left-out line with the dropped count, and exactly one more preview
@@ -150,8 +149,8 @@ Web tests: `cd web && npx vitest run <files>`. Gates run through `scripts/check-
     after this import will not start unless it has finished by then." first in the confirm with
     Start still enabled, and confirming runs the import; a list with only `finished`, `cancelled`
     or `failed` jobs, a `500`, and a network error each open the confirm without the warning;
-  - a confirmed run in which the runner reports a retried session from an earlier run passes its
-    id in `session_ids` (owner decision 5);
+  - a confirmed run passes in `session_ids` exactly the ids the runner reported, so a retried
+    session from an earlier run (not reported) is not sent (owner decision 5);
   - account switch (design D12): the user id recorded at the confirm is passed as
     `confirmedUserId`;
   - a confirmed run (mocked runner and `startAutogenerateAfterImport`) calls the start once after
