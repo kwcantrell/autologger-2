@@ -2,9 +2,11 @@
 
 ## Context
 
-See proposal.md (Why, owner decisions). Base: main 1902e271 (youtube-playlist-import #139 and
-batch-autogenerate #140 merged; both change dirs still unarchived, so their specs are read from
-`openspec/changes/{youtube-playlist-import,batch-autogenerate}/specs/`).
+See proposal.md (Why, owner decisions). Base: main 7e6a642d, where youtube-playlist-import (#139)
+and batch-autogenerate (#140) are merged and archived (#144, `openspec/changes/archive/2026-11-11-*`)
+and their specs are synced into `openspec/specs/`. The MODIFIED "Batch Import modal layout and
+actions" restates the synced `openspec/specs/batch-audio-import/spec.md` text with this change's
+additions.
 
 - The playlist import is a browser loop (`web/src/pages/index/batchImport/playlistRunner.ts`,
   `runPlaylistImport`), driven by `BatchImportModal.tsx` Start Import after the folder part and
@@ -29,7 +31,7 @@ progress line; the step/wiki options shared with Settings rather than copied.
 skip/create/import/wait logic or its lines, no server code, no new query keys beyond what the
 preview hook already uses.
 
-## Assumptions (each checked on 1902e271; command → observed output)
+## Assumptions (each checked on 1902e271; no file outside `openspec/` changed up to 7e6a642d: `git diff --stat 1902e271 7e6a642d -- . ':!openspec'` → empty; command → observed output)
 
 | # | Assumption | Command | Observed |
 | --- | --- | --- | --- |
@@ -45,6 +47,11 @@ preview hook already uses.
 | A10 | No file this change touches is in `lifecycle.high_risk_paths` | python `fnmatch` of the Impact files against `openspec/config.yaml` `high_risk_paths` | `[]` |
 | A11 | The themed confirm takes a React node message (Settings already passes one) | `grep -n "message:" web/src/shared/ui/ConfirmDialog.tsx` | `25:  message: ReactNode;` |
 | A12 | The log part may itself generate transcripts for sessions it syncs | `grep -n "Transcript required" -A4 openspec/specs/sheets-log-import/spec.md` | "Otherwise it SHALL attempt transcript generation via the existing DeepGram-backed generate path" |
+| A13 | `GET /api/me/providers` tells the browser the saved `llm`/`stt` rows, approval and Claude CLI permission, and the web already reads it through a fixture-checked type | `sed -n 80,94p server/src/routers/providers.ts; grep -n "me/providers'" web/src/api/hooks/useProviders.ts; grep -n "const check: ProvidersResponse" web/src/api/types.conformance.test.ts` | `llm: of('llm'), stt: of('stt'), run_features_allowed: runFeatureAllowed(…), claude_cli_allowed: claudeCliAllowed(…)`; `27: queryFn: () => apiFetch<ProvidersResponse>('me/providers')`; `991: const check: ProvidersResponse = providersList;` |
+| A14 | The start's LLM check is "no `llm` row → none; keyless row → only `claude-cli` while allowed; else the decrypted key" | `sed -n 65,91p server/src/auth/providerResolve.ts` | `if (row === null) return null; if (row.key === null) { return row.provider === 'claude-cli' && claudeCliAllowed(env.config, user) ? { kind: 'cli' } : null; }` then `decrypt` → `null` on failure |
+| A15 | The start's STT check falls back to the deployment's `DEEPGRAM_API_KEY` only with `PROVIDER_DEV_MODE`, which the browser cannot see, and that mode is on only for `NODE_ENV` development or test | `sed -n 20,40p server/src/auth/providerResolve.ts; grep -n PROVIDER_DEV_MODE server/src/node/config.ts` | `if (env.config.PROVIDER_DEV_MODE === true && fallback) { return { apiKey: fallback, … } }`; `248: PROVIDER_DEV_MODE: procEnv.NODE_ENV === 'development' \|\| procEnv.NODE_ENV === 'test',` |
+| A17 | The web reads the team's job list through one fixture-checked site | `grep -n "apiFetch<AutogenerateJobListResponse>" web/src/api/hooks/useAutogenerateJobs.ts; grep -n "AutogenerateJobListResponse = autogenerateList" web/src/api/types.conformance.test.ts` | `52: queryFn: () => apiFetch<AutogenerateJobListResponse>(base(teamId)),`; `971: const list: AutogenerateJobListResponse = autogenerateList;` |
+| A16 | The blocked order is stt, then llm, then approval | `grep -n "unconfigured-stt\|unconfigured-llm\|not-approved" server/src/autogenerate/service.ts` | `blockedFor`: `return 'unconfigured-stt'`, then `return 'unconfigured-llm'`, then `return 'not-approved'` |
 
 ## Decisions
 
@@ -65,8 +72,8 @@ non-abort error in a later entry still count (that error lands in the modal's ou
 today). Skipped, failed, unconfirmed and still-importing entries never reach the callback.
 
 The retry-into-own-unfinished-session path logs `Completed` too, so it qualifies: this run
-attached its audio, and it was never "already in system". (Owner decision 1 says "created AND
-attached"; this reads "created" as "created by this import", see Open questions Q1.)
+attached its audio, and it was never "already in system" (owner decision 5, 2026-11-12, which
+closed the former open question Q1).
 
 ### D3. When: after the last part, unless aborted
 
@@ -115,17 +122,37 @@ A `409` is told apart by its body: `job_id` (live job) versus `sessions` (change
 does. After a `201` (and after an unknown start) the modal invalidates
 `autogenerateKeys.all(teamId)` so Settings shows the job.
 
-### D6. Up-front check: preview over the run's show
+### D6. Up-front check: the preview, else the provider status (panel finding 1)
 
 While ticked (and a step is ticked, no run in progress), the modal runs the existing
 `useAutogeneratePreview(teamId, {show_ids: [showId], steps, wiki_mode}, enabled)` hook with the
-same 400 ms debounce as Settings. Only a `200` with non-null `blocked` disables Start Import (with
-the blocked text). A `400` (show with no sessions yet, A3, or over 1000) or any error leaves Start
-Import enabled: the check is advisory and the end-of-run preview is authoritative.
-*Alternative*: `GET /api/me/providers` (`llm`, `stt`, `run_features_allowed`). Rejected: it
-misses the Claude CLI route that `callerLlmRoute` resolves, so it would block users the start
-route admits. *Cost*: one preview over the show's sessions while the box is ticked; members never
-trigger it.
+same 400 ms debounce as Settings. A `200` is exact: its `blocked` is the server's own rule.
+
+The preview resolves the scope before it computes `blocked` (A3), so a show with no sessions yet,
+the normal case for a first playlist import into a new show, answers `400` and says nothing about
+providers. For that case (and any other non-`200` or no answer) the modal derives the verdict from
+`GET /api/me/providers` through the existing `useProviders` hook (A13), mirroring `blockedFor`'s
+order (A16) and `resolveLlmRoute`'s rule (A14): Transcripts and `stt === null` →
+`unconfigured-stt`; an LLM step and (`llm === null`, or `llm.provider === 'claude-cli'` and not
+`claude_cli_allowed`) → `unconfigured-llm`; `!run_features_allowed` → `not-approved`. The
+derivation is a pure function in `autogenerateModel.ts`, tested against each rule. If that read
+fails too, there is no verdict and Start Import stays enabled.
+
+Residuals (the end-of-run start reports the server's answer, and the confirm says providers are
+checked again when the import ends):
+- a saved key the server cannot decrypt reads as configured in the browser but refuses at the
+  start (`503`);
+- with `PROVIDER_DEV_MODE` and a deployment `DEEPGRAM_API_KEY` (dev stacks only, A15) the browser
+  sees no `stt` row and blocks Transcripts for an empty show although the start would accept it;
+  the owner saves an STT key or unticks Transcripts. A production build (`NODE_ENV` not development
+  or test) has no such fallback, so there the derivation matches the server except for the
+  undecryptable-key case.
+
+*Alternatives*: (a) provider status only: rejected, the preview is exact whenever the show has
+sessions and costs nothing extra; (b) a new "can I start" route, or computing `blocked` before the
+scope in the preview: rejected, both are contract changes the owner asked to avoid; (c) the
+preview over some other show of the team: rejected, it may be empty too, and it would read sessions
+of shows the run never touches.
 
 ### D7. Visibility from the profile's role in the active team
 
@@ -153,6 +180,18 @@ skipped and failed videos drop out; N×S matches Settings' `max_runs = sessions 
 warning from the shared confirm body. The 1000-entry ceiling (A8) disables Start Import up front
 instead of failing at the end.
 
+### D10. Live-job warning at confirm (owner decision 6)
+
+On Start Import with the box ticked, the modal awaits `refetch()` of the existing
+`useAutogenerateJobs(teamId, enabled, false)` query (the same hook, query key and `GET
+/api/teams/:teamId/autogenerate-jobs` the Settings section uses; type `AutogenerateJobListResponse`,
+fixture `autogenerateList`, A17), then opens the confirm. A `queued` or `running` job in that list
+puts the warning first; any error or a missing answer means no warning. A refetch at that moment
+rather than a cached read, because the warning is about "now"; the query is enabled only while the
+box is ticked, so a member never sends it. It only warns: a job that ends during the import is the
+normal case for a long playlist, and the end-of-run `409` line (D5) covers the rest.
+*Alternative*: block Start Import while a job is live. Rejected by the owner (warn only).
+
 ## Risks / Trade-offs
 
 - [The team gets a live job while the import runs, so the end-of-run start answers `409`] → one
@@ -160,8 +199,9 @@ instead of failing at the end.
   sessions. No queueing (Non-goal).
 - [The user closes the modal right after the start was sent] → the job may exist; the modal is
   gone, so no line. Settings lists it. Documented in the spec's abort rule.
-- [The up-front check passes but the end-of-run start is blocked (key removed mid-run)] → the
-  end-of-run preview's `blocked` or the start's `503`/`403` becomes one line.
+- [The up-front check passes but the end-of-run start is blocked (key removed mid-run, or a
+  residual of D6)] → the end-of-run preview's `blocked` or the start's `503`/`403` becomes one
+  line; the confirm says providers are checked again when the import ends.
 - [Spend on the user's provider accounts for up to 1000 × 4 runs] → the same bound and confirm as
   Settings; the confirm states the maximum and the own-accounts note.
 - [Long imports: the job starts only after hours of importing] → by design (one job, owner decision
@@ -176,9 +216,4 @@ ordinary batch jobs, managed in Settings.
 
 ## Open Questions
 
-- **Q1.** Owner decision 1 says "created AND attached audio to". This design also counts a retry
-  into this import's own unfinished session left by an earlier run (logged `Completed`). If the
-  owner wants it excluded, the runner reports only the create-path completions; the spec's
-  "Qualifying sessions" sentence and one test change, nothing else.
-- **Q2.** Should the up-front check also read the team's job list and warn at confirm when a job
-  is already live? Left out to keep one extra request; the end-of-run `409` line covers it.
+None. Q1 was closed by owner decision 5 and Q2 by owner decision 6 (both 2026-11-12).
