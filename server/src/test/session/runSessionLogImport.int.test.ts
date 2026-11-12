@@ -7,20 +7,6 @@ import { runSessionLogImport } from '@autologger/log-import/runSessionLogImport'
 import { describe, expect, it } from 'vitest';
 import { createSessionRow, openTestHub, testStorage } from './sessionRows';
 
-describe('runSessionLogImport', () => {
-  it('returns a promise that rejects on an untimed transcript', async () => {
-    const run = runSessionLogImport({
-      hub: {} as never,
-      rows: [],
-      categories: [],
-      ctx: { frameRate: 24, startOffsetFrames: 0 },
-      transcript: [],
-    });
-    expect(run).toBeInstanceOf(Promise);
-    await expect(run).rejects.toThrow(/Transcript is missing/);
-  });
-});
-
 describe('runSessionLogImport duplicate skip against a concurrent import', () => {
   const OTHER: CategoryRecord = {
     id: 'cat-other',

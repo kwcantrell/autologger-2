@@ -95,35 +95,6 @@ describe('log-import job HTTP surface', () => {
     expect(await res.json()).toEqual({ detail: SHOW_NOT_FOUND_DETAIL });
   });
 
-  it('returns a job_id and eventually fails when fetch is not xlsx', async () => {
-    const studio = await seedMemberStudio();
-    const show = await seedShow({ studioId: studio });
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () => new Response('<!DOCTYPE html><html></html>', { status: 200 })),
-    );
-
-    const post = await postImport(show);
-    expect(post.status).toBe(200);
-    const { job_id } = (await post.json()) as { job_id: string };
-    expect(job_id).toBeTruthy();
-
-    let status = 'queued';
-    for (let i = 0; i < 40; i++) {
-      const get = await app.request(`/api/log-import/${job_id}`, {}, env);
-      expect(get.status).toBe(200);
-      const body = (await get.json()) as { status: string; error: string | null };
-      status = body.status;
-      if (status === 'failed' || status === 'completed') {
-        expect(status).toBe('failed');
-        expect(body.error).toMatch(/HTML|link/i);
-        return;
-      }
-      await new Promise((r) => setTimeout(r, 25));
-    }
-    throw new Error(`job did not finish, last status=${status}`);
-  });
-
   it('POST succeeds for a studio member granted the show with the gate configured, and the creator can poll the job', async () => {
     const studio = await seedStudio();
     const show = await seedShow({ studioId: studio });

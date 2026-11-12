@@ -10,6 +10,7 @@
     "dev": "tsx src/bootGuardCli.ts && NEXT_TELEMETRY_DISABLED=1 tsx watch --exclude \"../web/**\" --exclude \"../web/.next/**\" src/main.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "test:real": "RUN_REAL_AI_TESTS=1 vitest run real.test",
     "fixtures:capture": "UPDATE_API_FIXTURES=1 vitest run --project integration src/routers/apiResponseFixtures.int.test.ts",
     "merge-audio": "tsx scripts/merge-session-audio.ts",
@@ -41,6 +42,7 @@
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^26.1.1",
+    "@vitest/coverage-v8": "^4.1.12",
     "typescript": "^5.7.2",
     "vitest": "^4.1.10"
   }

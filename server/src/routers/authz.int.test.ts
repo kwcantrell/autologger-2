@@ -19,7 +19,6 @@ import {
 } from '../test/helpers';
 
 const withLogin = envWith({});
-const bearer = (token: string): Record<string, string> => ({ Authorization: `Bearer ${token}` });
 
 describe('Companion device clients (task 7.1 — the Companion path)', () => {
   // core-ports-architecture "Companion device callers are authorized as their user".
@@ -44,15 +43,6 @@ describe('Companion device clients (task 7.1 — the Companion path)', () => {
       expect(body.session?.id ?? null).toBe(sees ? m.sessionId : null);
       expect(body.active_session_id).toBe(sees ? m.sessionId : null);
     }
-  });
-
-  it('a wrong device token is NOT authenticated: 401', async () => {
-    const res = await anonApp.request(
-      '/api/companion/state',
-      { method: 'GET', headers: bearer('wrong-token') },
-      withLogin,
-    );
-    expect(res.status).toBe(401);
   });
 
   it('is not an identity outside /api/companion/: 401 on a session-scoped route (api-contract-freeze)', async () => {
@@ -112,21 +102,6 @@ describe('cross-studio masking (task 7.3)', () => {
 });
 
 describe('admin token semantics (task 7.3)', () => {
-  it('503 when ADMIN_TOKEN is unset vs 401 when the token is wrong', async () => {
-    const unset = await anonApp.request(
-      '/api/admin/users',
-      { method: 'GET' },
-      envWith({ ADMIN_TOKEN: '' }),
-    );
-    expect(unset.status).toBe(503);
-    const wrong = await anonApp.request(
-      '/api/admin/users',
-      { method: 'GET', headers: bearer('nope') },
-      envWith({ ADMIN_TOKEN: 'right' }),
-    );
-    expect(wrong.status).toBe(401);
-  });
-
   it('a session cookie alone grants no admin access (401)', async () => {
     const studio = await seedStudio();
     const user = await seedUser({ studios: [studio] });

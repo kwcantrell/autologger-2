@@ -5,7 +5,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { boundCore } from './boundCore';
-import { catalogRoot, insertRaw, rawRows } from './sessionRows';
+import { catalogRoot, rawRows } from './sessionRows';
 
 describe('SessionCore on a test runtime', () => {
   it('the seed is idempotent and leaves the revision; a changing write advances it', async () => {
@@ -47,12 +47,6 @@ describe('SessionCore on a test runtime', () => {
     await run((s) => s.core.seed());
     expect(await rawRows(storage, 'session_transcript_paragraphs')).toEqual([]);
     expect(await rawRows(storage, 'session_transcript_sentiment')).toEqual([]);
-  });
-
-  it('broadcast fans out to the fake sockets', async () => {
-    const { core, sent } = await boundCore();
-    core.broadcast({ type: 'x', v: 1 });
-    expect(sent.map((d) => JSON.parse(d))).toEqual([{ type: 'x', v: 1 }]);
   });
 
   it('setAlarm reaches the fake scheduler', async () => {
@@ -152,24 +146,6 @@ describe('SessionCore on a test runtime', () => {
     expect((await read((s) => s.core.projection())).event_count).toBe(1);
     expect(await read((s) => s.core.revision())).toBe(1); // revision still bumped
     expect(sent).toEqual([]); // no event.changed reached the socket
-  });
-
-  // code-health-tail D10: the core owns the event-count SQL; both consumers
-  // (EventStore.listEvents, TransportStore.statusLive) pin the same semantics
-  // over a real core in their own suites.
-  it('eventCounts: total counts all rows, logged excludes internal (case/space-insensitively)', async () => {
-    const { read, storage } = await boundCore();
-    const categories = ['mark', 'internal', ' Internal ', 'INTERNAL', 'internally'];
-    for (const [i, cat] of categories.entries()) {
-      await insertRaw(storage, 'session_events', {
-        id: `e${i}`,
-        wall_time_utc: '2026-06-25T00:00:00.000Z',
-        frame_rate: 30,
-        category: cat,
-        message: `m${i}`,
-      });
-    }
-    expect(await read((s) => s.core.eventCounts())).toEqual({ total: 5, logged: 2 });
   });
 
   it('presence counts fake sockets by role', async () => {

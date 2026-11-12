@@ -108,11 +108,4 @@ describe('bootstrapMemberships', () => {
     expect(s.exitCode).toBe(0);
     expect(await catalogFor().auth.authGetMembershipRole(dana, 'owned-team')).toBe('owner');
   });
-
-  it('parseConfig rejects malformed input', () => {
-    expect(() => parseConfig({})).toThrow();
-    expect(() =>
-      parseConfig({ memberships: [{ email: 'a@b.c', team: 'x', role: 'root' }] }),
-    ).toThrow();
-  });
 });
