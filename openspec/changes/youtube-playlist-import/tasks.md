@@ -299,14 +299,14 @@ Test commands: packages are `npx vitest run <files>` from the package directory
   evidence), and `scripts/check-change.sh --stage hook` before finishing; `openspec validate
   youtube-playlist-import --strict`.
   Evidence: the gate summary lines (ypi-V.1.log).
-- [ ] V.2 On the dev stack (`make dev-up`, branch deployed to autologger-dev), as the bootstrap
+- [x] V.2 On the dev stack (`make dev-up`, branch deployed to autologger-dev), as the bootstrap
   owner: load `https://www.youtube.com/playlist?list=PLBB231211A4F62143` (29 entries) in Batch
   Import; a Mix link (`400`) and `list=WL` (private-or-nonexistent `502`) show their details; check positions 1–3 with "Use publish date"
   on into a test show; three sessions are created with the video titles, audio attached and
   `episode_date` set; re-running the same selection skips all three "already in system"; a
   playlist with an unavailable entry (`PLsyOSbh5bs16vubvKePAQ1x3PhKavfBIl`) shows it greyed.
   Delete the test sessions after.
-  Evidence: the progress lines and session titles observed (ypi-V.2.log).
+  Evidence: owner-run browser check on autologger-dev, 2026-11-11, dev-preview 1a6119d5 (main + youtube-playlist-import e33a627b + batch-autogenerate bc6782ca), deployed by `ansible-playbook playbooks/autologger.yml --limit autologger-dev -e autologger_env_branch=dev-preview` (PLAY RECAP ok=50 changed=5 failed=0). Owner reported in chat: "both checks pass" (this check and batch-autogenerate 8.1).
 - [x] V.3 Tier 2 consistency read (`consistency-read` skill) over the whole branch against D1–D8
   and the three spec deltas; record it in `panel.md`.
   Evidence: the panel.md section and its findings line. 2026-11-10: `## Consistency read 2026-11-09` in panel.md, 3 major findings, all ticked Resolved (2d503a0f, c61ea26c); `scripts/check-change.sh --only panel` -> `PASS  panel  12 finding(s), no open criticals`.
