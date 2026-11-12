@@ -33,7 +33,6 @@ lifecycle:
   - scripts/sync-skills.sh
   - scripts/lib/check_change.py
   - scripts/lib/adopt.py
-  - .claude/hooks/guard-approval.sh
   - .claude/hooks/stop-check.sh
   # Paths the pg and integration tests depend on (ci-db-test-selection D1). When a PR changes none,
   # those vitest projects are skipped. Read from the merge-base, like test_globs.
