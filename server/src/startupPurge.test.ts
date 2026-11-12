@@ -37,7 +37,7 @@ describe('purgeExpiredAtBoot', () => {
   it('main.ts awaits it before the server listens', () => {
     const main = readFileSync(join(__dirname, 'main.ts'), 'utf8');
     const purge = main.indexOf('await purgeExpiredAtBoot(');
-    expect(purge).toBeGreaterThan(main.indexOf('createBindings(process.env)'));
+    expect(purge).toBeGreaterThan(main.search(/createBindings\(process\.env\)/));
     expect(purge).toBeLessThan(main.indexOf('serve('));
   });
 });
