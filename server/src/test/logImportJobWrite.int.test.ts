@@ -1,7 +1,7 @@
 // The log-import job store over the server's real Postgres KV (shared-request-state D4): a failed
 // record write is warned about and carried by the next one. The package's unit suite covers this
 // over its in-memory kv; on the server tier it used to be reached only by a job whose last write
-// landed after its test's teardown had closed the catalog (job 006), which the harness no longer
+// landed after its test's teardown had closed the catalog, which the harness no longer
 // lets happen by chance.
 
 import { afterEach, expect, it, vi } from 'vitest';

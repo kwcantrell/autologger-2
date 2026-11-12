@@ -36,9 +36,15 @@ describe('purgeExpiredAtBoot', () => {
 
   it('main.ts awaits it before the server listens', () => {
     const main = readFileSync(join(__dirname, 'main.ts'), 'utf8');
-    const purge = main.indexOf('await purgeExpiredAtBoot(');
-    expect(purge).toBeGreaterThan(main.search(/createBindings\(process\.env\)/));
-    expect(purge).toBeLessThan(main.indexOf('serve('));
+    // Each anchor matches the code statement, not a comment that mentions it. The bindings anchor
+    // is a regex so this file never holds the literal call text that test/bindings.test.ts guards.
+    const anchors = [
+      /^\s*created = createBindings\(process\.env\b/m,
+      /^await purgeExpiredAtBoot\(/m,
+      /^const server = serve\(/m,
+    ].map((re) => main.search(re));
+    expect(anchors).not.toContain(-1);
+    expect([...anchors].sort((a, b) => a - b)).toEqual(anchors);
   });
 });
 

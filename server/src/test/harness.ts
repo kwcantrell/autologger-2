@@ -44,7 +44,7 @@ let current: {
   defaultUser: Promise<{ id: string; cookie: string }> | null;
 } | null = null;
 
-/** The clone the next test will get, made while this one runs (job 006): every test still gets a
+/** The clone the next test will get, made while this one runs: every test still gets a
  * clone nothing has touched, without waiting for `create database`. A failed clone rejects in the
  * test that takes it. */
 let nextDb: Promise<TestDatabase> | null = null;

@@ -1,4 +1,4 @@
-// test/bindings.ts is the one hermetic way tests build bindings (job 006): it never resolves the
+// test/bindings.ts is the one hermetic way tests build bindings (bindings.ts): it never resolves the
 // operator's credentials file under the real $HOME, it restores HOME whatever happens, and no other
 // test file builds bindings without it.
 
