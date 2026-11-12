@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI and transcription accounts - AutoLogger Help</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="site-header"><nav class="topnav" aria-label="Help navigation"><a class="brand" href="index.html">AutoLogger Help</a><ul><li><a href="index.html">Home</a></li><li><a href="index.html#getting-started">Getting started</a></li><li><a href="index.html#running-a-session">Running a session</a></li><li><a href="index.html#after-the-session">After the session</a></li><li><a href="index.html#analysis">Analysis</a></li><li><a href="index.html#team-administration">Team administration</a></li><li><a href="index.html#hardware">Hardware</a></li></ul></nav></header>
+<main class="content">
+<p class="crumb"><a href="index.html">Help</a> &rsaquo; <a href="index.html#team-administration">Team administration</a></p>
+<h1>AI and transcription accounts</h1>
+<p class="lead">Transcripts, topics, the Assistant, auto-generated events and wiki suggestions run on your own
+provider accounts, so each person's usage is billed to them. Every member who uses these features
+sets them up once in Settings &rarr; Advanced.</p>
+<h2>How to add a language model</h2>
+<ol>
+  <li>Open <strong>Settings</strong> and choose <strong>Advanced</strong> under
+    <strong>You</strong>.</li>
+  <li>On the <strong>Language model</strong> tab, choose the <strong>Provider</strong>:
+    <strong>OpenAI-compatible</strong>, <strong>Anthropic</strong>, <strong>OpenAI</strong> or
+    <strong>Google</strong>.</li>
+  <li>For OpenAI-compatible, fill in the <strong>Base URL</strong> of the service.</li>
+  <li>Type the <strong>Model</strong> name your provider gives you.</li>
+  <li>Paste your <strong>API key</strong>.</li>
+  <li>Click <strong>Save</strong>. The card shows <strong>Connected</strong>.</li>
+  <li>Click <strong>Test connection</strong> to check the saved key and model.</li>
+</ol>
+<p>The language model powers the Assistant, topic generation, event generation and wiki
+updates.</p>
+
+<h2>How to add speech to text</h2>
+<ol>
+  <li>In <strong>Advanced</strong>, open the <strong>Speech to text</strong> tab.</li>
+  <li>Choose <strong>DeepGram</strong> as the <strong>Provider</strong>.</li>
+  <li>Optionally set the <strong>Model</strong> (<em>nova-3</em> supports speaker labels).</li>
+  <li>Paste your DeepGram <strong>API key</strong> and click <strong>Save</strong>.</li>
+  <li>Click <strong>Test connection</strong>. It checks the key with a quarter second of
+    silence.</li>
+</ol>
+
+<h2>How to replace or remove a key</h2>
+<ul>
+  <li>To replace it, click <strong>Replace</strong>, paste the new key and click
+    <strong>Save</strong>.</li>
+  <li>To remove it, click <strong>Remove</strong> and confirm. Features that use it stop working
+    until you add one again.</li>
+</ul>
+
+<h2>Things to know</h2>
+<ul>
+  <li>Keys are stored encrypted, used only for your own requests and jobs, and never shown again
+    after you save them. The card only shows the last four characters.</li>
+  <li>Session content (audio for transcription; transcript and topics for AI) is sent to the
+    provider you choose, and that account pays for it.</li>
+  <li>Some servers also offer <strong>Claude CLI (operator)</strong>, available only to operator
+    accounts.</li>
+  <li>&ldquo;Transcription and AI features are limited to approved users on this server.&rdquo; If
+    you see this, ask your administrator to approve your account.</li>
+</ul>
+
+<h2>Common problems</h2>
+<ul>
+  <li><strong>The test fails.</strong> Check the key, model name and (for OpenAI-compatible) base
+    URL. Save your changes first: the test checks the saved choice.</li>
+</ul>
+<h2>Related</h2>
+<ul class="related"><li><a href="transcripts.html">Transcripts</a></li><li><a href="topics.html">Topics</a></li><li><a href="ai-assistant.html">The AI Assistant</a></li><li><a href="batch-autogenerate.html">Batch autogenerate</a></li></ul>
+</main>
+<footer class="site-footer"><p><a href="index.html">AutoLogger Help</a> &middot; Help for people
+who use AutoLogger. For problems these pages don't cover, contact your team's owner or your
+server administrator.</p></footer>
+</body>
+</html>

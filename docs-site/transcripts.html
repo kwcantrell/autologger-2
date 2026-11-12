@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Transcripts - AutoLogger Help</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="site-header"><nav class="topnav" aria-label="Help navigation"><a class="brand" href="index.html">AutoLogger Help</a><ul><li><a href="index.html">Home</a></li><li><a href="index.html#getting-started">Getting started</a></li><li><a href="index.html#running-a-session">Running a session</a></li><li><a href="index.html#after-the-session">After the session</a></li><li><a href="index.html#analysis">Analysis</a></li><li><a href="index.html#team-administration">Team administration</a></li><li><a href="index.html#hardware">Hardware</a></li></ul></nav></header>
+<main class="content">
+<p class="crumb"><a href="index.html">Help</a> &rsaquo; <a href="index.html#after-the-session">After the session</a></p>
+<h1>Transcripts</h1>
+<p class="lead">The Transcript tab holds a word-by-word transcript of the session's audio, with speaker labels,
+lined up with the session timecode. Members generate it after recording or importing audio, then
+correct it by hand.</p>
+<h2>How to generate a transcript</h2>
+<ol>
+  <li>Make sure the session has audio (recorded or imported).</li>
+  <li>Open the <strong>Transcript</strong> tab.</li>
+  <li>Click <strong>Auto generate</strong>. The tab shows &ldquo;Generating transcript&hellip; this
+    may take a couple minutes.&rdquo;</li>
+  <li>When it finishes, rows appear with <strong>Session Time</strong>, <strong>Speaker</strong>
+    and <strong>Word(s)</strong>. The count shows the number of words.</li>
+</ol>
+<p>Generating again replaces the whole transcript with a new one.</p>
+
+<h2>How to correct a transcript</h2>
+<ol>
+  <li>Click into a row's <strong>Session Time</strong>, <strong>Speaker</strong> or
+    <strong>Word(s)</strong> field.</li>
+  <li>Type the correction.</li>
+  <li>Click or tab out of the field to save it.</li>
+</ol>
+<p>To add a missing row, click <strong>Insert</strong>. To hear a word, click its jump button. If
+someone else changed the same row, the <strong>Row changed</strong> dialog lets you choose
+<strong>Overwrite</strong> or <strong>Keep theirs</strong>.</p>
+
+<h2>Only one transcription at a time</h2>
+<p>The server transcribes one session at a time. While another session is being transcribed, the
+toolbar shows &ldquo;Transcribing &ldquo;<em>session name</em>&rdquo;&hellip;&rdquo; with the time
+elapsed; click the name to open that session. Wait for it to finish, then generate yours.</p>
+
+<h2>Requirements and privacy</h2>
+<ul>
+  <li>Transcription uses your own speech-to-text account (DeepGram). Add it in Settings &rarr;
+    Advanced (see <a href="ai-and-transcription-accounts.html">AI and transcription
+    accounts</a>). The session's audio is sent to DeepGram's cloud and billed to your key.</li>
+  <li>On some servers transcription is limited to approved users; ask your administrator if you
+    are told so.</li>
+</ul>
+
+<h2>Common problems</h2>
+<ul>
+  <li><strong>&ldquo;Transcription needs your own speech-to-text key.&rdquo;</strong> Add a
+    DeepGram key in Settings &rarr; Advanced. You can still add rows by hand with
+    <strong>Insert</strong>.</li>
+  <li><strong>&ldquo;No transcript yet.&rdquo;</strong> Click <strong>Auto generate</strong>.</li>
+  <li><strong>Speakers are labelled oddly.</strong> Speaker labels come from the transcription
+    service; correct them in the <strong>Speaker</strong> field.</li>
+</ul>
+<h2>Related</h2>
+<ul class="related"><li><a href="topics.html">Topics</a></li><li><a href="ai-assistant.html">The AI Assistant</a></li><li><a href="exports.html">Exporting a session</a></li><li><a href="ai-and-transcription-accounts.html">AI and transcription accounts</a></li></ul>
+</main>
+<footer class="site-footer"><p><a href="index.html">AutoLogger Help</a> &middot; Help for people
+who use AutoLogger. For problems these pages don't cover, contact your team's owner or your
+server administrator.</p></footer>
+</body>
+</html>

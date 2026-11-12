@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reviewing and editing the Event Feed - AutoLogger Help</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="site-header"><nav class="topnav" aria-label="Help navigation"><a class="brand" href="index.html">AutoLogger Help</a><ul><li><a href="index.html">Home</a></li><li><a href="index.html#getting-started">Getting started</a></li><li><a href="index.html#running-a-session">Running a session</a></li><li><a href="index.html#after-the-session">After the session</a></li><li><a href="index.html#analysis">Analysis</a></li><li><a href="index.html#team-administration">Team administration</a></li><li><a href="index.html#hardware">Hardware</a></li></ul></nav></header>
+<main class="content">
+<p class="crumb"><a href="index.html">Help</a> &rsaquo; <a href="index.html#after-the-session">After the session</a></p>
+<h1>Reviewing and editing the Event Feed</h1>
+<p class="lead">The Event Feed tab lists every event logged in a session, with its timecode, wall-clock time,
+event button and message. Members use it to correct the log during and after a session.</p>
+<h2>What you see</h2>
+<p>Each row shows a jump button, the time, the <strong>Event</strong> (the event button that logged
+it) and the <strong>Message</strong>. Events created by Auto generate carry a small sparkle mark
+(&ldquo;auto-generated&rdquo;). Click a column heading to sort by it.</p>
+
+<h2>How to choose the time display</h2>
+<ol>
+  <li>Click <strong>Time display</strong> in the feed toolbar.</li>
+  <li>Choose <strong>Session Time</strong> (the session timecode) or <strong>World Clock</strong>
+    (the real time of day the event was logged).</li>
+</ol>
+
+<h2>How to filter the feed</h2>
+<ol>
+  <li>Click <strong>Filter</strong>.</li>
+  <li>Tick or untick event buttons to show or hide their events. The menu stays open so you can
+    change several at once.</li>
+  <li>Tick <strong>Internal</strong> to also show automatic entries such as &ldquo;Recording 1
+    Started&rdquo;.</li>
+</ol>
+
+<h2>How to fix an event while the session is live</h2>
+<ol>
+  <li>While timecode is rolling (or audio is recording), click into a row's time, event or message
+    field.</li>
+  <li>Make the change. Choose a different event button from the <strong>Category</strong> list if
+    needed.</li>
+  <li>Click or tab out of the row. The change is saved and an &ldquo;Updated.&rdquo; message
+    confirms it.</li>
+</ol>
+<p>Your unsaved text is kept even if new events push the row off screen.</p>
+
+<h2>How to edit many rows after the session (batch edit)</h2>
+<ol>
+  <li>Stop the timecode and any recording.</li>
+  <li>Click <strong>Edit</strong> in the feed toolbar.</li>
+  <li>Change times, event buttons and messages in as many rows as you like. To remove a row, click
+    <strong>Delete row</strong>; click <strong>Restore row</strong> (UNDELETE) to change your
+    mind.</li>
+  <li>Click <strong>Save changes</strong> to apply everything, or <strong>Cancel</strong> (or press
+    <kbd>Esc</kbd>) to discard. Discarding asks <strong>Discard changes</strong>; choose
+    <strong>Keep editing</strong> to go back.</li>
+</ol>
+
+<h2>How to delete a single row</h2>
+<ol>
+  <li>Hover over the row and click <strong>Delete row</strong>.</li>
+  <li>Confirm <strong>Delete log row</strong>. This cannot be undone.</li>
+</ol>
+
+<h2>When someone else changed the same row</h2>
+<p>If another person saved a change to a row after you started editing it, a <strong>Row
+changed</strong> dialog shows their version next to yours. Choose <strong>Overwrite</strong> to save
+yours, or <strong>Keep theirs</strong> to drop your edit. For a delete, choose <strong>Delete
+anyway</strong> or <strong>Keep theirs</strong>. Closing the dialog saves nothing and keeps your
+draft.</p>
+
+<h2>Permissions</h2>
+<p>Anyone who can open the show can edit its events. Auto-generated events cannot be edited or
+deleted one by one; to replace them, regenerate (see <a href="auto-generate-events.html">Auto-generating
+events</a>).</p>
+
+<h2>Common problems</h2>
+<ul>
+  <li><strong>Edit is greyed out.</strong> Batch edit is &ldquo;Available when timecode is stopped
+    and audio is not recording.&rdquo;</li>
+  <li><strong>&ldquo;Save stopped. The remaining changes are still pending.&rdquo;</strong> Some
+    rows could not be saved. Fix the reported problem and click <strong>Save changes</strong>
+    again.</li>
+  <li><strong>&ldquo;No events logged.&rdquo;</strong> Nothing has been logged yet; roll timecode
+    and use the event buttons.</li>
+</ul>
+<h2>Related</h2>
+<ul class="related"><li><a href="live-logging.html">Live logging with timecode</a></li><li><a href="auto-generate-events.html">Auto-generating events</a></li><li><a href="timeline-and-playback.html">Timeline and playback</a></li><li><a href="exports.html">Exporting a session</a></li></ul>
+</main>
+<footer class="site-footer"><p><a href="index.html">AutoLogger Help</a> &middot; Help for people
+who use AutoLogger. For problems these pages don't cover, contact your team's owner or your
+server administrator.</p></footer>
+</body>
+</html>

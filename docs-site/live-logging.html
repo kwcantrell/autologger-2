@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Live logging with timecode - AutoLogger Help</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="site-header"><nav class="topnav" aria-label="Help navigation"><a class="brand" href="index.html">AutoLogger Help</a><ul><li><a href="index.html">Home</a></li><li><a href="index.html#getting-started">Getting started</a></li><li><a href="index.html#running-a-session">Running a session</a></li><li><a href="index.html#after-the-session">After the session</a></li><li><a href="index.html#analysis">Analysis</a></li><li><a href="index.html#team-administration">Team administration</a></li><li><a href="index.html#hardware">Hardware</a></li></ul></nav></header>
+<main class="content">
+<p class="crumb"><a href="index.html">Help</a> &rsaquo; <a href="index.html#running-a-session">Running a session</a></p>
+<h1>Live logging with timecode</h1>
+<p class="lead">Live logging is the core of AutoLogger: while a session's timecode rolls, members press event
+buttons (or number keys) to stamp events at the current timecode. This page is for the operator
+running the session.</p>
+<h2>The transport buttons</h2>
+<table>
+  <thead><tr><th>Button</th><th>What it does</th><th>When it works</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Play or pause audio</strong></td><td>Plays recorded audio from the
+      playhead.</td><td>While stopped and the session has audio.</td></tr>
+    <tr><td><strong>Roll timecode</strong></td><td>Starts the session clock. Status changes to
+      ROLLING.</td><td>While stopped.</td></tr>
+    <tr><td><strong>Record audio</strong></td><td>Records from your microphone. Status changes to
+      REC.</td><td>Only while timecode is rolling.</td></tr>
+    <tr><td><strong>Stop timecode</strong></td><td>Stops the clock (and any recording).</td><td>While
+      rolling or recording.</td></tr>
+  </tbody>
+</table>
+<p>Hover over a button to see its name. Next to them are <strong>Previous marker</strong>,
+<strong>Next marker</strong> and the <strong>Keyboard shortcuts</strong> button.</p>
+
+<h2>How to log a live session</h2>
+<ol>
+  <li>Open the session.</li>
+  <li>Click <strong>Roll timecode</strong>. The status shows <strong>ROLLING</strong>, the timecode
+    starts counting, and the show's event buttons appear in the timeline strip.</li>
+  <li>When something happens, click its event button or press its number key
+    (<kbd>1</kbd> for the first button through <kbd>9</kbd> for the ninth). A &ldquo;Logged.&rdquo;
+    message confirms it, and the event appears in the <strong>Event Feed</strong> and as a marker
+    on the timeline.</li>
+  <li>When the session ends, click <strong>Stop timecode</strong>.</li>
+</ol>
+
+<h2>How each kind of event button behaves</h2>
+<ul>
+  <li><strong>Button</strong>: logs one event named after the button.</li>
+  <li><strong>On / Off</strong>: each press logs the next state (its <em>On label</em>, then its
+    <em>Off label</em>), so you can mark when something starts and stops.</li>
+  <li><strong>Dropdown</strong>: opens <strong>Choose option</strong>. Click an option to log it.
+    If the option needs context, AutoLogger asks you to <strong>Add context</strong>: type it and
+    press <kbd>Enter</kbd> or click <strong>Log</strong> (<strong>Back</strong> returns to the
+    options).</li>
+  <li><strong>Text</strong>: opens <strong>Log note</strong>. Type the <strong>Note</strong> and
+    press <kbd>Enter</kbd> or click <strong>Log</strong>.</li>
+</ul>
+<p>Dropdown and text events are stamped at the moment you pressed the button, not when you finish
+typing.</p>
+
+<h2>Several people at once</h2>
+<p>Everyone with the session open sees the same timecode and events live. Any member can roll or
+stop the timecode, and a Stream Deck running the <a href="companion-module.html">Companion
+module</a> can drive the same session. Only one browser can record audio at a time.</p>
+
+<h2>Permissions and set-up</h2>
+<p>Anyone who can open the show can log. The event buttons, their order and their number keys are
+set per show by owners and admins in <a href="event-buttons.html">Event buttons</a>. Only the first
+nine buttons have a number key.</p>
+
+<h2>Common problems</h2>
+<ul>
+  <li><strong>No event buttons.</strong> Buttons appear only while timecode is rolling. If they
+    still do not appear, the show has no buttons yet; ask an owner or admin.</li>
+  <li><strong>&ldquo;Unresolved recording&rdquo; dialog.</strong> The log shows a recording that
+    started but never stopped (for example after a crash). If someone else may still be recording,
+    click <strong>Cancel</strong>. Only click <strong>Add synthetic stop</strong> if that recording
+    really ended.</li>
+  <li><strong>Leaving the session while rolling.</strong> If you started the timecode in this
+    browser, leaving the session stops it.</li>
+</ul>
+<h2>Related</h2>
+<ul class="related"><li><a href="keyboard-shortcuts.html">Keyboard shortcuts</a></li><li><a href="event-buttons.html">Event buttons</a></li><li><a href="event-feed.html">Reviewing and editing the Event Feed</a></li><li><a href="recording-audio.html">Recording audio</a></li><li><a href="companion-module.html">Stream Deck and the Companion module</a></li></ul>
+</main>
+<footer class="site-footer"><p><a href="index.html">AutoLogger Help</a> &middot; Help for people
+who use AutoLogger. For problems these pages don't cover, contact your team's owner or your
+server administrator.</p></footer>
+</body>
+</html>

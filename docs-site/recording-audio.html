@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Recording audio - AutoLogger Help</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="site-header"><nav class="topnav" aria-label="Help navigation"><a class="brand" href="index.html">AutoLogger Help</a><ul><li><a href="index.html">Home</a></li><li><a href="index.html#getting-started">Getting started</a></li><li><a href="index.html#running-a-session">Running a session</a></li><li><a href="index.html#after-the-session">After the session</a></li><li><a href="index.html#analysis">Analysis</a></li><li><a href="index.html#team-administration">Team administration</a></li><li><a href="index.html#hardware">Hardware</a></li></ul></nav></header>
+<main class="content">
+<p class="crumb"><a href="index.html">Help</a> &rsaquo; <a href="index.html#running-a-session">Running a session</a></p>
+<h1>Recording audio</h1>
+<p class="lead">Members can record a session's audio straight from the browser while timecode rolls. AutoLogger
+saves the recording in short pieces as it goes, so little is lost if the connection or browser
+fails. This page is for the operator who records.</p>
+<h2>How to record</h2>
+<ol>
+  <li>Open the session and click <strong>Roll timecode</strong>.</li>
+  <li>Click <strong>Record audio</strong> (the microphone button).</li>
+  <li>If your browser asks for microphone access, allow it.</li>
+  <li>The status shows <strong>REC</strong>, with a <strong>Microphone level</strong> meter and the
+    recording's running time. An internal &ldquo;Recording 1 Started&rdquo; event is logged.</li>
+  <li>To stop recording but keep timecode rolling, click <strong>Stop recording audio</strong>. To
+    stop both, click <strong>Stop timecode</strong>.</li>
+  <li>While the last audio is saved you see <strong>Saving Audio...</strong>. Wait for it to finish
+    before closing the tab.</li>
+</ol>
+
+<h2>Tips while recording</h2>
+<ul>
+  <li><strong>Keep the tab visible.</strong> Browsers may slow down or pause a hidden tab. If the
+    tab was in the background, AutoLogger tells you how long, so you can check the audio.</li>
+  <li><strong>Your screen stays awake</strong> while recording on devices that allow it.</li>
+  <li><strong>If the microphone disconnects</strong>, AutoLogger tries to pick it up again and
+    carries on. If it cannot, recording stops and what was captured is saved.</li>
+  <li>Leaving the page while recording asks you to confirm, because you could lose the latest
+    audio.</li>
+</ul>
+
+<h2>How to rescue audio that did not upload</h2>
+<p>If some recorded pieces could not be uploaded, a banner appears above the workspace: &ldquo;N
+recorded audio chunks could not be uploaded. Keep this tab open until they are retried, downloaded,
+or discarded.&rdquo;</p>
+<ol>
+  <li>Click <strong>Retry all</strong> (or <strong>Retry</strong> on one piece) to try again.</li>
+  <li>If you were signed out, sign in again in another tab, then press <strong>Retry</strong>.</li>
+  <li>Click <strong>Download</strong> to save a piece to your computer as a backup.</li>
+  <li>Only if you are sure you do not need it, click <strong>Discard</strong> (or
+    <strong>Discard remaining</strong>) and confirm. This cannot be undone.</li>
+</ol>
+<p>If the browser closed during a recording, the next time you open AutoLogger in that browser it
+offers the recovered audio with <strong>Upload all</strong>, <strong>Download all</strong> and
+<strong>Discard recovered</strong>. Some browsers (Safari) keep unsent recordings for only 7 days
+without a visit.</p>
+
+<h2>Permissions</h2>
+<p>Anyone who can open the show can record. Only one browser tab, window or person can record a
+session at a time; while someone else records, your transport buttons are disabled.</p>
+
+<h2>Common problems</h2>
+<ul>
+  <li><strong>Record audio is greyed out.</strong> Roll timecode first. It is also disabled while
+    another client records, and briefly shows &ldquo;Recovering unsent audio&hellip;&rdquo; while
+    AutoLogger checks this browser for unsent recordings.</li>
+  <li><strong>&ldquo;Microphone access denied.&rdquo;</strong> Allow the microphone in your
+    browser's site settings and try again.</li>
+  <li><strong>&ldquo;Another window, tab, or user now holds the recording lease.&rdquo;</strong>
+    Someone else started recording this session; your recording has stopped.</li>
+</ul>
+<h2>Related</h2>
+<ul class="related"><li><a href="live-logging.html">Live logging with timecode</a></li><li><a href="timeline-and-playback.html">Timeline and playback</a></li><li><a href="youtube-import.html">Importing audio from YouTube</a></li><li><a href="batch-import.html">Batch Import: folders and playlists</a></li></ul>
+</main>
+<footer class="site-footer"><p><a href="index.html">AutoLogger Help</a> &middot; Help for people
+who use AutoLogger. For problems these pages don't cover, contact your team's owner or your
+server administrator.</p></footer>
+</body>
+</html>
