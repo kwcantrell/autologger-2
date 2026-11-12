@@ -56,3 +56,4 @@ Four facts shaped the design:
 - **The quote check is a pass/fail oracle** over the transcripts of sessions a target's pending suggestion cites. Since a member could insert such a row directly, it reaches any session of the show, but never beyond what the producer can already read.
 - **Suggestions accumulate.** One pending per target; retention is a later change.
 - **Drop or revisit if:** reviewers routinely reject citations that pass the check, real runs often fail the quote match on noisy transcripts, or a background run is wanted (that would need a non-human author and a different credential story).
+- **Background run:** ADR 0033 (batch autogenerate) answers that trigger: the human initiator is the author, the credential is the initiator's, and auto-accept is limited to new pages and additions-only rewrites.

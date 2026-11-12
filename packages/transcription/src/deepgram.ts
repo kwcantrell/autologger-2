@@ -57,9 +57,13 @@ export function providerDispatcher(): Agent {
  * code, timeout, or parse failure) — it MUST NEVER embed the verbatim
  * upstream response body or the API key. */
 export class DeepgramUpstreamError extends Error {
-  constructor(message: string) {
+  /** The provider's HTTP status when it answered one (batch-autogenerate A21: a `429` is a rate
+   * limit the batch worker backs off on); undefined for a timeout or an unreadable answer. */
+  readonly status: number | undefined;
+  constructor(message: string, status?: number) {
     super(message);
     this.name = 'DeepgramUpstreamError';
+    this.status = status;
   }
 }
 
@@ -178,7 +182,10 @@ export async function transcribeGroup(
 
   if (!res.ok) {
     // Deliberately does not read/echo the response body.
-    throw new DeepgramUpstreamError(`DeepGram upstream request failed (status ${res.status}).`);
+    throw new DeepgramUpstreamError(
+      `DeepGram upstream request failed (status ${res.status}).`,
+      res.status,
+    );
   }
 
   let body: DeepgramListenResponse;

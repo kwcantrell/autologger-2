@@ -66,6 +66,9 @@ const TABLES = [
   'session_audio_seams',
   // closed-signups D2: the emails a developer approved for a first sign-in.
   'account_approvals',
+  // batch-autogenerate D1: batch jobs and their per-session, per-step items.
+  'autogenerate_jobs',
+  'autogenerate_items',
 ];
 // companion-devices D1: the tables with no catalog_user policy and no catalog_user privilege.
 // byo-ai-providers D1: plus the two provider tables.
@@ -107,6 +110,8 @@ const KEY_COLUMN: Record<string, string> = {
   media_uploads: 'id',
   session_audio_seams: 'session_id',
   account_approvals: 'email_norm',
+  autogenerate_jobs: 'id',
+  autogenerate_items: 'job_id',
 };
 const MIGRATIONS = resolve(import.meta.dirname, '../../../../supabase/migrations');
 const MIGRATION = resolve(MIGRATIONS, '20261001000000_catalog_schema.sql');
@@ -711,11 +716,83 @@ const EXPECTED_SCHEMA: SchemaRecord = {
     primaryKey: ['email_norm'],
     foreignKeys: [],
   },
+  // batch-autogenerate D1: one row per batch job, cascading with its team.
+  autogenerate_jobs: {
+    columns: [
+      'id text collate C not null',
+      'team_id text collate C not null',
+      'initiator_user_id text collate C not null',
+      'initiator_name text collate C not null',
+      'scope text collate C not null',
+      'show_ids_json text collate C',
+      'steps text collate C not null',
+      'wiki_mode text collate C not null',
+      "status text collate C not null default 'queued'::text",
+      'stop_reason text collate C',
+      'consecutive_stt_failures smallint not null default 0',
+      'consecutive_llm_failures smallint not null default 0',
+      'session_count integer not null',
+      'locked_by text collate C',
+      'locked_until_ms bigint',
+      'cancel_requested_at_ms bigint',
+      'cancel_requested_by_user_id text collate C',
+      'cancel_requested_by_name text collate C',
+      'created_at_ms bigint not null',
+      'started_at_ms bigint',
+      'finished_at_ms bigint',
+      'updated_at_ms bigint not null',
+    ],
+    primaryKey: ['id'],
+    foreignKeys: [
+      'FOREIGN KEY (initiator_user_id) REFERENCES catalog.users(id)',
+      'FOREIGN KEY (team_id) REFERENCES catalog.studio_definitions(id) ON DELETE CASCADE',
+    ],
+  },
+  // batch-autogenerate D1: one row per session and selected step of a job.
+  autogenerate_items: {
+    columns: [
+      'job_id text collate C not null',
+      'session_id text collate C not null',
+      'step text collate C not null',
+      'ordinal integer not null',
+      'step_order smallint not null',
+      'effective_date text collate C',
+      "status text collate C not null default 'pending'::text",
+      'outcome text collate C',
+      'attempts smallint not null default 0',
+      "run_ids text collate C not null default ''::text",
+      "own_topic_ids text collate C not null default ''::text",
+      'kept_edited integer',
+      'wiki_accepted integer',
+      'wiki_pending integer',
+      'started_at_ms bigint',
+      'finished_at_ms bigint',
+    ],
+    primaryKey: ['job_id', 'session_id', 'step'],
+    foreignKeys: [
+      'FOREIGN KEY (job_id) REFERENCES catalog.autogenerate_jobs(id) ON DELETE CASCADE',
+    ],
+  },
   // owner-bootstrap D1: the role check and at most one owner per team.
   $checks: [
     // closed-signups D2: a printable-ASCII, lowercase local@domain; a note of at most 200.
     "catalog.account_approvals account_approvals_email_norm_check CHECK (((email_norm ~ '^[!-~]+@[!-~]+$'::text) AND (email_norm = lower(email_norm))))",
     'catalog.account_approvals account_approvals_note_check CHECK (((note IS NULL) OR (char_length(note) <= 200)))',
+    // batch-autogenerate D1: fixed vocabularies; each outcome only with its item status.
+    "catalog.autogenerate_items autogenerate_items_outcome CHECK (((outcome IS NULL) OR (outcome = ANY (ARRAY['present'::text, 'no-audio'::text, 'no-speech'::text, 'no-transcript'::text, 'no-anchors'::text, 'no-instructions'::text, 'busy'::text, 'access-lost'::text, 'session-gone'::text, 'earlier-step-failed'::text, 'unconfigured'::text, 'provider-failed'::text, 'rate-limited'::text, 'too-large'::text, 'missing-audio-file'::text, 'unreadable'::text, 'generation-failed'::text, 'interrupted'::text, 'cancelled'::text, 'job-stopped'::text]))))",
+    'catalog.autogenerate_items autogenerate_items_outcome_status CHECK (\n' +
+      "CASE\n    WHEN (status = 'skipped'::text) THEN ((outcome IS NOT NULL) AND (outcome = ANY (ARRAY['present'::text, 'no-audio'::text, 'no-speech'::text, 'no-transcript'::text, 'no-anchors'::text, 'no-instructions'::text, 'busy'::text, 'access-lost'::text, 'session-gone'::text, 'earlier-step-failed'::text])))\n" +
+      "    WHEN (status = 'failed'::text) THEN ((outcome IS NOT NULL) AND (outcome = ANY (ARRAY['unconfigured'::text, 'provider-failed'::text, 'rate-limited'::text, 'too-large'::text, 'missing-audio-file'::text, 'unreadable'::text, 'generation-failed'::text, 'interrupted'::text])))\n" +
+      "    WHEN (status = 'cancelled'::text) THEN ((outcome IS NOT NULL) AND (outcome = ANY (ARRAY['cancelled'::text, 'job-stopped'::text])))\n" +
+      '    ELSE (outcome IS NULL)\nEND)',
+    "catalog.autogenerate_items autogenerate_items_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'running'::text, 'done'::text, 'skipped'::text, 'failed'::text, 'cancelled'::text])))",
+    "catalog.autogenerate_items autogenerate_items_step_check CHECK ((step = ANY (ARRAY['transcript'::text, 'events'::text, 'topics'::text, 'wiki'::text])))",
+    "catalog.autogenerate_jobs autogenerate_jobs_scope_check CHECK ((scope = ANY (ARRAY['shows'::text, 'sessions'::text])))",
+    'catalog.autogenerate_jobs autogenerate_jobs_session_count_check CHECK (((session_count >= 1) AND (session_count <= 1000)))',
+    "catalog.autogenerate_jobs autogenerate_jobs_status_check CHECK ((status = ANY (ARRAY['queued'::text, 'running'::text, 'finished'::text, 'cancelled'::text, 'failed'::text])))",
+    "catalog.autogenerate_jobs autogenerate_jobs_stop_reason CHECK ((((status = ANY (ARRAY['cancelled'::text, 'failed'::text])) = (stop_reason IS NOT NULL)) AND ((status = 'cancelled'::text) = (NOT (stop_reason IS DISTINCT FROM 'cancelled'::text)))))",
+    "catalog.autogenerate_jobs autogenerate_jobs_stop_reason_check CHECK ((stop_reason = ANY (ARRAY['cancelled'::text, 'initiator-unavailable'::text, 'initiator-role-lost'::text, 'not-approved'::text, 'unconfigured-stt'::text, 'unconfigured-llm'::text, 'provider-failing'::text])))",
+    "catalog.autogenerate_jobs autogenerate_jobs_wiki_mode_check CHECK ((wiki_mode = ANY (ARRAY['accept'::text, 'pending'::text])))",
     'catalog.companion_devices companion_devices_name_check CHECK (((char_length(name) >= 1) AND (char_length(name) <= 80)))',
     'catalog.companion_presence companion_presence_client_id_check CHECK (((char_length(client_id) >= 1) AND (char_length(client_id) <= 256)))',
     // media-worker D2, D12, D5, D7.
@@ -761,6 +838,12 @@ const EXPECTED_SCHEMA: SchemaRecord = {
     'catalog.wiki_suggestions wiki_suggestions_title_check CHECK (((char_length(btrim(title)) >= 1) AND (char_length(btrim(title)) <= 200)))',
   ],
   $indexes: [
+    // batch-autogenerate D1.
+    'CREATE INDEX idx_autogenerate_items_order ON catalog.autogenerate_items USING btree (job_id, ordinal, step_order)',
+    'CREATE INDEX idx_autogenerate_items_session ON catalog.autogenerate_items USING btree (session_id, step)',
+    "CREATE INDEX idx_autogenerate_jobs_due ON catalog.autogenerate_jobs USING btree (created_at_ms) WHERE (status = ANY (ARRAY['queued'::text, 'running'::text]))",
+    "CREATE UNIQUE INDEX idx_autogenerate_jobs_live ON catalog.autogenerate_jobs USING btree (team_id) WHERE (status = ANY (ARRAY['queued'::text, 'running'::text]))",
+    'CREATE INDEX idx_autogenerate_jobs_team ON catalog.autogenerate_jobs USING btree (team_id, created_at_ms DESC)',
     'CREATE INDEX idx_companion_devices_user ON catalog.companion_devices USING btree (user_id)',
     'CREATE INDEX idx_companion_presence_user ON catalog.companion_presence USING btree (user_id, updated_at_ms)',
     // media-worker D2, D12, D7.
@@ -980,6 +1063,12 @@ describe('the app role (design D3)', () => {
               values ('up', 'se', 'u', 'audio/wav', 1, 1, 1, '[]', 1, 1)`;
     await sql`insert into session_audio_seams (session_id, recording_ordinal, started_at_utc,
                 segment_id, source_key) values ('se', 1, ${t}, 'a', 'k')`;
+    // batch-autogenerate D1.
+    await sql`insert into autogenerate_jobs (id, team_id, initiator_user_id, initiator_name, scope,
+                steps, wiki_mode, session_count, created_at_ms, updated_at_ms)
+              values ('aj', 'st', 'u', 'U', 'shows', 'wiki', 'accept', 1, 1, 1)`;
+    await sql`insert into autogenerate_items (job_id, session_id, step, ordinal, step_order)
+              values ('aj', 'se', 'wiki', 0, 3)`;
     // closed-signups D2: only postgres writes an approval; catalog_system reads and deletes it.
     await connect(db.admin)`select catalog.approve_account('e@example.com')`;
     for (const table of TABLES) {
@@ -1330,6 +1419,8 @@ describe('row-level security on every catalog table (catalog-roles D1, D2; catal
         insert into catalog.team_invites (studio_id, email_norm, invited_by_user_id, invited_at_utc) values ('st-o', 'e', 'other', '${t}');
         insert into catalog.show_grants (user_id, show_id, granted_at_utc) values ('other', 'sh-o', '${t}');
         select catalog.approve_account('o@example.com');
+        insert into catalog.autogenerate_jobs (id, team_id, initiator_user_id, initiator_name, scope, steps, wiki_mode, session_count, created_at_ms, updated_at_ms) values ('aj-o', 'st-o', 'other', 'O', 'shows', 'wiki', 'accept', 1, 1, 1);
+        insert into catalog.autogenerate_items (job_id, session_id, step, ordinal, step_order) values ('aj-o', 'se-o', 'wiki', 0, 3);
       `);
     const counts: Record<string, number> = {};
     for (const table of TABLES) {

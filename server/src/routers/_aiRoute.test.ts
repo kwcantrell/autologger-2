@@ -71,7 +71,7 @@ describe('sdkTurnSpec: the response-byte cap is the turn’s own (D4 step 3, tas
 
   it('chat: steps × 4000 × 400 (1 step: 1.6 MB), whatever maxOutputTokens says', async () => {
     const origin = await streaming(3 * 1024 * 1024);
-    const spec = sdkTurnSpec(ctx, routeAt(origin), 'chat', {
+    const spec = sdkTurnSpec(ctx.env, routeAt(origin), 'chat', {
       maxSteps: 1,
       maxTotalTokens: 1,
       maxOutputTokens: 128_000,
@@ -85,7 +85,7 @@ describe('sdkTurnSpec: the response-byte cap is the turn’s own (D4 step 3, tas
 
   it('generation: steps × maxOutputTokens × 400 (2 steps × 1000: 800 KB)', async () => {
     const origin = await streaming(3 * 1024 * 1024);
-    const spec = sdkTurnSpec(ctx, routeAt(origin), 'topics', {
+    const spec = sdkTurnSpec(ctx.env, routeAt(origin), 'topics', {
       maxSteps: 2,
       maxTotalTokens: 1,
       maxOutputTokens: 1000,
@@ -99,7 +99,7 @@ describe('sdkTurnSpec: the response-byte cap is the turn’s own (D4 step 3, tas
 
   it('a stream under the cap passes whole', async () => {
     const origin = await streaming(512 * 1024);
-    const spec = sdkTurnSpec(ctx, routeAt(origin), 'events', {
+    const spec = sdkTurnSpec(ctx.env, routeAt(origin), 'events', {
       maxSteps: 2,
       maxTotalTokens: 1,
       maxOutputTokens: 1000,

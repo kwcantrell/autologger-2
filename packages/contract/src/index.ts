@@ -6,5 +6,7 @@
 // `cite:`/`wiki:` link parser (show-wiki design D4).
 
 export * from './aiV2Catalog';
+export * from './autogenerate';
 export * from './schemas';
 export * from './wikiLinks';
+export * from './wikiSafeSuggestion';

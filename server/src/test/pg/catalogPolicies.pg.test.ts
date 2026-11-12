@@ -603,8 +603,9 @@ describe('the catalog_user policies as installed', () => {
     // and the revisions' select and insert policies. show-wiki-ai D1: plus the suggestions' select,
     // insert and update policies. media-worker D2, D7, D12: plus the media_jobs select and insert
     // policies and the uploads' and seams' `_user_all` (mediaSchema.pg.test.ts runs their rules).
-    // closed-signups D2: account_approvals adds none.
-    expect(rows).toHaveLength(49);
+    // closed-signups D2: account_approvals adds none. batch-autogenerate D2: plus the jobs' select,
+    // insert and update and the items' select and insert (autogenerateJobs.pg.test.ts runs them).
+    expect(rows).toHaveLength(54);
     for (const p of rows) {
       expect(p.qual, `${p.policyname} using`).not.toBe('true');
       expect(p.with_check, `${p.policyname} with check`).not.toBe('true');
@@ -625,7 +626,14 @@ describe('the catalog_user policies as installed', () => {
     ];
     const systemOnly = ['kv', ...extra];
     // media-worker D2, D7, D12: the three media tables have both.
-    const media = ['media_jobs', 'media_uploads', 'session_audio_seams'];
+    // batch-autogenerate D2: so do the two job tables.
+    const media = [
+      'media_jobs',
+      'media_uploads',
+      'session_audio_seams',
+      'autogenerate_jobs',
+      'autogenerate_items',
+    ];
     for (const table of [...Object.keys(RULES), ...extra, ...media]) {
       const rows = await admin`select roles::text[] as roles from pg_policies
                                where schemaname = 'catalog' and tablename = ${table}`;

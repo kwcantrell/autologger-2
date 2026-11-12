@@ -9,6 +9,7 @@ export type SettingsSectionId =
   | 'members'
   | 'shows'
   | 'team-details'
+  | 'batch-autogenerate'
   | 'show-details'
   | 'event-buttons';
 
@@ -38,6 +39,8 @@ export const SETTINGS_SECTION_GROUPS: readonly SettingsSectionGroup[] = [
       { id: 'members', label: 'Members' },
       { id: 'shows', label: 'Shows' },
       { id: 'team-details', label: 'Team details' },
+      // batch-autogenerate D15: listed only for an owner or admin of at least one team.
+      { id: 'batch-autogenerate', label: 'Batch autogenerate' },
     ],
   },
   {
@@ -54,6 +57,9 @@ export const SETTINGS_SECTIONS: readonly { id: SettingsSectionId; label: string 
 
 /** Where an open with no named section lands before any section was visited this page load. */
 export const DEFAULT_SETTINGS_SECTION: SettingsSectionId = 'show-details';
+
+/** Sections listed only for an owner or admin of at least one team (batch-autogenerate D15). */
+export const MANAGER_ONLY_SECTIONS: readonly SettingsSectionId[] = ['batch-autogenerate'];
 
 export const settingsTabId = (id: SettingsSectionId) => `settings-tab-${id}`;
 export const settingsPanelId = (id: SettingsSectionId) => `settings-section-${id}`;

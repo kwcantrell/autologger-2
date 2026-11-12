@@ -202,6 +202,16 @@ export interface AiMcpTurnContext {
    * quote match reads, and the run's proposals map, which the wiki run reads after the turn.
    * Only wiki turns carry it; the wiki tools are registered by `tools`, never by its presence. */
   readonly wiki?: WikiTurnState;
+  /** batch-autogenerate D7 topics — the batch topics turn's id allocator: `create_topic` asks it
+   * for each topic's id before inserting (it records the id on the job's item first). A refusal
+   * (a throw) makes that call and every later call of the turn a tool error with no insert. */
+  readonly topicIds?: TopicIdAllocator;
+}
+
+/** Hands out a topic id once it is recorded where a later attempt can find it (batch-autogenerate
+ * D7 "Fenced write-ahead"); throws when it cannot record it. */
+export interface TopicIdAllocator {
+  allocate(): Promise<string>;
 }
 
 /** How much of a turn's transcript snapshot the model actually fetched
@@ -285,6 +295,8 @@ interface TurnRegistration {
   readonly createdEvents: CreatedEventsCounter;
   /** The turn's paged-transcript memo + coverage counter (D1/D6). */
   readonly pageState: TurnPageState;
+  /** batch-autogenerate D7: set once the turn's topic id allocator refused; latches. */
+  readonly topicIdRefused: { value: boolean };
 }
 
 /** The registration's memoized pagination of its word snapshot — packed on
@@ -727,6 +739,9 @@ interface ToolBuildContext {
   readonly pageState: TurnPageState;
   /** A wiki turn's port, word snapshot and proposals (show-wiki-ai D3); undefined otherwise. */
   readonly wiki: WikiTurnState | undefined;
+  /** The batch topics turn's id allocator and its refusal latch (batch-autogenerate D7). */
+  readonly topicIds: TopicIdAllocator | undefined;
+  readonly topicIdRefused: { value: boolean };
 }
 
 /**
@@ -819,7 +834,7 @@ const TOOL_BUILDERS: Record<AiMcpToolName, (server: ToolSink, ctx: ToolBuildCont
     });
   },
 
-  create_topic: (server, { registry, sessionId, caller }) => {
+  create_topic: (server, { registry, sessionId, caller, topicIds, topicIdRefused }) => {
     server.tool(
       'create_topic',
       'Create one topic on this session. The ordinal is assigned by the server.',
@@ -842,10 +857,32 @@ const TOOL_BUILDERS: Record<AiMcpToolName, (server: ToolSink, ctx: ToolBuildCont
             isError: true,
           };
         }
+        // batch-autogenerate D7: a batch turn records each topic's id before the insert. A refusal
+        // inserts nothing, and the latch refuses every later call of the turn.
+        let id: string | undefined;
+        if (topicIds !== undefined) {
+          if (!topicIdRefused.value) {
+            try {
+              id = await topicIds.allocate();
+            } catch {
+              topicIdRefused.value = true;
+            }
+          }
+          if (topicIdRefused.value || id === undefined) {
+            return {
+              content: [{ type: 'text', text: 'Topics can no longer be created in this run.' }],
+              isError: true,
+            };
+          }
+        }
         // Hub resolved at call time (D3). insertTopic is the transactional,
         // server-assigned-ordinal manual-insert path; topics have no WS emission,
         // and this path introduces none.
-        const topic = await (await registry.get(sessionId)).as(caller).insertTopic(parsed.data);
+        const hub = (await registry.get(sessionId)).as(caller);
+        const topic =
+          id === undefined
+            ? await hub.insertTopic(parsed.data)
+            : await hub.insertTopic(parsed.data, id);
         return { content: [{ type: 'text', text: JSON.stringify(topic) }] };
       },
     );
@@ -987,6 +1024,8 @@ function registerTurnTools(
     pagedWords: reg.context?.pagedWords,
     pageState: reg.pageState,
     wiki: reg.context?.wiki,
+    topicIds: reg.context?.topicIds,
+    topicIdRefused: reg.topicIdRefused,
   };
   for (const name of turnToolNames(reg)) {
     TOOL_BUILDERS[name](sink, ctx);
@@ -1021,6 +1060,7 @@ function newTurnRegistration(
     caller,
     context,
     createdEvents: { count: 0, reserved: 0 },
+    topicIdRefused: { value: false },
     pageState: {
       words: context?.generation?.words ?? context?.pagedWords,
       pages: null,

@@ -11,6 +11,7 @@ import { Catalog, type CatalogFacade, UNBOUND_DB } from './catalog';
 import type { WikiLinksParser } from './wikiStore';
 
 export * from './authStore';
+export * from './autogenerateStore';
 export * from './catalog';
 export * from './profileAssembler';
 export * from './searchStore';

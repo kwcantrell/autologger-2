@@ -6,6 +6,7 @@
 
 import type { CatalogDb, CatalogRoot } from '@autologger/ports';
 import { AuthStore, type AuthStoreFacade } from './authStore';
+import { AutogenerateStore, type AutogenerateStoreFacade } from './autogenerateStore';
 import { ProfileAssembler, type ProfileAssemblerFacade } from './profileAssembler';
 import { type CatalogSearchResult, type SearchParams, SearchStore } from './searchStore';
 import { SessionIndexStore, type SessionIndexStoreFacade } from './sessionIndexStore';
@@ -16,6 +17,7 @@ import { type WikiFacade, WikiSuggestionStore } from './wikiSuggestionStore';
 
 export type { AuthUser, ProfileCtx, Row } from '@autologger/domain';
 export type { AuthStoreFacade } from './authStore';
+export type { AutogenerateStoreFacade } from './autogenerateStore';
 export type { ProfileAssemblerFacade } from './profileAssembler';
 export type { SessionIndexStoreFacade } from './sessionIndexStore';
 export type { ShowsStoreFacade } from './showsStore';
@@ -40,6 +42,8 @@ export interface CatalogFacade {
   readonly profile: ProfileAssemblerFacade;
   /** The show wiki (show-wiki design D1-D4) and its AI suggestions (show-wiki-ai D2). */
   readonly wiki: WikiFacade;
+  /** Batch autogenerate jobs and items (batch-autogenerate design D1-D3). */
+  readonly autogenerate: AutogenerateStoreFacade;
   init: () => Promise<void>;
   /** Runs `fn` on a Catalog bound to one catalog transaction (async-catalog-stores D3). */
   tx: <T>(fn: (cat: CatalogFacade) => Promise<T>) => Promise<T>;
@@ -92,6 +96,7 @@ export class Catalog implements CatalogFacade {
   readonly sessions: SessionIndexStore;
   readonly profile: ProfileAssembler;
   readonly wiki: WikiSuggestionStore;
+  readonly autogenerate: AutogenerateStore;
   /** Private (`#`), so the stores stay the only enumerable fields. */
   readonly #db: CatalogDb;
   readonly #root: CatalogRoot | undefined;
@@ -111,6 +116,7 @@ export class Catalog implements CatalogFacade {
     this.sessions = new SessionIndexStore(db, this.studios, this.shows);
     this.profile = new ProfileAssembler(this.studios, this.auth, this.shows);
     this.wiki = new WikiSuggestionStore(db, opts.wikiLinks);
+    this.autogenerate = new AutogenerateStore(db);
   }
 
   /** Refresh the studio registry; must run once per request before registry reads. */

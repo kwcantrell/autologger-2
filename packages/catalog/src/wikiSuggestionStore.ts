@@ -246,6 +246,8 @@ export type WikiSuggestionStoreFacade = Pick<
   | 'pendingFor'
   | 'pendingNewPages'
   | 'sessionPageId'
+  | 'pendingOfRun'
+  | 'anyOfRun'
 >;
 
 /** The whole `catalog.wiki` surface: pages and suggestions. */
@@ -383,7 +385,10 @@ export class WikiSuggestionStore extends WikiStore implements WikiFacade {
   async acceptSuggestion(
     id: string,
     input: WikiSuggestionAcceptInput,
+    opts: { batchJobId?: string } = {},
   ): Promise<WikiSuggestionAcceptResult | null> {
+    // batch-autogenerate D12: a batch job's accept is the same transaction; only the note says so.
+    const batch = opts.batchJobId === undefined ? '' : ` (batch ${opts.batchJobId})`;
     this.parser();
     const newId = crypto.randomUUID();
     return this.write(async (t) => {
@@ -401,7 +406,7 @@ export class WikiSuggestionStore extends WikiStore implements WikiFacade {
         }
         const edited =
           title.trim() !== s.title || bodyMd !== s.body_md || !sameList(aliases, s.aliases);
-        const note = `accepted suggestion ${id}${edited ? ' (edited)' : ''}`;
+        const note = `accepted suggestion ${id}${edited ? ' (edited)' : ''}${batch}`;
         const updated = await this.updateInTx(
           t,
           s.page_id,
@@ -423,7 +428,7 @@ export class WikiSuggestionStore extends WikiStore implements WikiFacade {
             aliases,
             sessionId: s.kind === 'session' ? s.session_id : null,
           },
-          `created from suggestion ${id}`,
+          `created from suggestion ${id}${batch}`,
         );
         created = true;
       }
@@ -432,6 +437,30 @@ export class WikiSuggestionStore extends WikiStore implements WikiFacade {
       if (!after) throw new Error(`wiki suggestion ${id} vanished inside its own transaction`);
       return { page, suggestion: withoutBody(after), created };
     });
+  }
+
+  /** The pending suggestions one run stored for a session, in proposal order (batch-autogenerate
+   * D12: the job accepts in that order). `saveRun` inserts a run's rows in proposal order in one
+   * transaction with one timestamp, so their physical order is the proposal order. */
+  async pendingOfRun(sessionId: string, runId: string): Promise<string[]> {
+    const rows = await this.#sdb.all<{ id: string }>(
+      `select id from wiki_suggestions where session_id = ? and run_id = ? and status = 'pending'
+       order by created_at_utc, ctid`,
+      sessionId,
+      runId,
+    );
+    return rows.map((r) => r.id);
+  }
+
+  /** Whether a run stored any suggestion for the session (batch-autogenerate D7 wiki: a resumed
+   * wiki step whose run stored its suggestions makes no second run). */
+  async anyOfRun(sessionId: string, runId: string): Promise<boolean> {
+    const row = await this.#sdb.first(
+      'select 1 as x from wiki_suggestions where session_id = ? and run_id = ? limit 1',
+      sessionId,
+      runId,
+    );
+    return row !== null;
   }
 
   /** Dismisses a pending suggestion; `null` when missing or not accessible. */

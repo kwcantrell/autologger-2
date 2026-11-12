@@ -15,11 +15,7 @@
 //   inaccessible suggestion both answer `404 Suggestion not found.`, before any body is parsed.
 // - The store's errors map through the wiki routes' `wikiError`. No route sets a cookie.
 
-import { aiChatTurns } from '@autologger/ai-runtime/aiChatRegistry';
-import { allTranscriptPagesServed } from '@autologger/ai-runtime/aiMcpServer';
-import { sdkFailureSuffix, sdkFallbackSuffix } from '@autologger/ai-runtime/sdkTurn';
-import { generateWikiTurn } from '@autologger/ai-runtime/wikiGenerate';
-import type { WikiSuggestion, WikiSuggestionDetail } from '@autologger/catalog';
+import type { WikiSuggestionDetail } from '@autologger/catalog';
 import {
   WIKI_DETAIL,
   WIKI_SUGGESTION_DETAIL,
@@ -29,19 +25,15 @@ import {
 import type { Context } from 'hono';
 import { Hono } from 'hono';
 import type { AppEnv } from '../appEnv';
-import { wikiGenerateMaxBudgetUsd, wikiGenerateTimeoutSec, wikiSdkLimits } from '../env';
+import { runWiki } from '../generation/wiki';
 import { ApiError } from '../httpError';
-import { callerLlmRoute, sdkTurnSpec } from './_aiRoute';
-import { claimAiLease } from './_aiSlot';
 import {
-  getSessionHub,
-  requireRunFeature,
+  principalOf,
+  RUN_FEATURE_FORBIDDEN_DETAIL,
   requireSession,
   requireShowAccess,
   requireUser,
-  sessionCaller,
 } from './_helpers';
-import { wikiToolPortFor } from './_wikiToolPort';
 import { wikiError } from './wiki';
 
 export const wikiSuggestionsRouter = new Hono<AppEnv>();
@@ -68,87 +60,25 @@ wikiSuggestionsRouter.post('/api/sessions/:sessionId/wiki/generate', async (c) =
   const sessionId = c.req.param('sessionId');
   // 1. The masked 404, also for a session with no show (requireSession).
   const session = await requireSession(c, sessionId);
-  const showId = String(session.show_id);
-
-  // 2. The caller's AI route, resolved per request (503 before any slot, lease or spawn).
-  const route = await callerLlmRoute(c);
-  if (route === null) throw new ApiError(503, D.noLanguageModel);
-  // 3. Approved users only (403).
-  requireRunFeature(c);
-
-  // 4. The transcript precondition (400).
-  const words = await (await getSessionHub(c, sessionId)).listTranscriptWords();
-  if (words.length === 0) throw new ApiError(400, D.noTranscript);
-
-  // 5. Single-flight: the shared per-session slot, then the session's `ai-turn` lease (409).
-  const proc = aiChatTurns.tryAcquire(sessionId);
-  if (!proc.ok) throw new ApiError(409, D.busy);
-  const slot = await claimAiLease(c, sessionId, proc);
-  if (slot === null) throw new ApiError(409, D.busy);
-
-  try {
-    const runId = crypto.randomUUID();
-    const port = wikiToolPortFor(c, showId, sessionId);
-    const common = {
-      clock: c.env.ports.clock,
-      registry: c.env.ports.sessions,
-      caller: sessionCaller(c),
-      sessionId,
-      sessionTitle: session.title == null ? '' : String(session.title),
-      port,
-      timeoutMs: wikiGenerateTimeoutSec(c.env.config) * 1000,
-    };
-    // Resolves once no tool body of the turn is still running (generateWikiTurn drains them).
-    const { outcome, proposals, pageCoverage } = await generateWikiTurn(
-      route.kind === 'cli'
-        ? {
-            ...common,
-            cliPath: c.env.config.CLAUDE_CLI_PATH.trim(),
-            maxBudgetUsd: wikiGenerateMaxBudgetUsd(c.env.config),
-          }
-        : {
-            ...common,
-            sdk: {
-              ...sdkTurnSpec(c, route, 'wiki', wikiSdkLimits(c.env.config)),
-              kind: 'wiki' as const,
-            },
-          },
-    );
-    const fullyRead = allTranscriptPagesServed(pageCoverage);
-
-    if (outcome.ok && fullyRead) {
-      let stored: WikiSuggestion[];
-      try {
-        stored = await c.get('catalog').wiki.saveRun(showId, sessionId, runId, proposals);
-      } catch {
-        // Content-free: the store's error can carry proposal text, so only the count is logged.
-        console.warn(
-          `[wiki/generate] session=${sessionId}: storing ${proposals.length} suggestion(s) failed`,
-        );
-        throw new ApiError(502, D.failed);
-      }
-      if (outcome.outputCapFallback !== undefined) {
-        console.info(
-          `[wiki/generate] session=${sessionId}: AI turn succeeded${sdkFallbackSuffix(outcome)}`,
-        );
-      }
-      return c.json({ suggestions: stored });
-    }
-
-    // Any other ending stores nothing. Logged for the operator, content-free; never the response.
-    console.warn(
-      `[wiki/generate] session=${sessionId}: wiki update failed — ` +
-        (!outcome.ok
-          ? `AI turn failed (${outcome.detail})` +
-            sdkFailureSuffix(outcome.failure, outcome.ending, outcome.summary) +
-            sdkFallbackSuffix(outcome)
-          : `AI turn read only ${pageCoverage.servedPages} of ${pageCoverage.totalPages} ` +
-            `transcript page(s)${sdkFallbackSuffix(outcome)}`),
-    );
-    throw new ApiError(502, D.failed);
-  } finally {
-    // Lease, then slot, before the response (session-run-leases D4).
-    await slot.release();
+  // 2-5. The shared runner (batch-autogenerate D6): the caller's AI route (503), the approved-user
+  // 403, the transcript 400, the shared slot and its lease (409), then the turn.
+  const out = await runWiki(principalOf(c), sessionId, { row: session });
+  switch (out.kind) {
+    case 'ok':
+      return c.json({ suggestions: out.suggestions });
+    case 'unconfigured':
+      throw new ApiError(503, D.noLanguageModel);
+    case 'forbidden':
+      throw new ApiError(403, RUN_FEATURE_FORBIDDEN_DETAIL);
+    case 'precondition':
+      throw new ApiError(400, D.noTranscript);
+    case 'busy':
+      throw new ApiError(409, D.busy);
+    case 'failed':
+      throw new ApiError(502, D.failed);
+    case 'stopped':
+      // Only a batch step (with `batch` options) ends here.
+      throw new Error('wiki route: unexpected stopped outcome');
   }
 });
 

@@ -79,6 +79,16 @@ export type { SessionProjection, TransportState } from './sessionCore';
 export type { Topic } from './topicStore';
 export type { TranscriptWord } from './transcriptStore';
 
+/** The sentinel of `replaceTranscriptWordsRemapped(…, { onlyIfEmpty: true })` (batch-autogenerate
+ * design D7): the session already had transcript words when the replace ran, so nothing was
+ * written. */
+export class TranscriptNotEmptyError extends Error {
+  override name = 'TranscriptNotEmptyError';
+  constructor() {
+    super('the session already has transcript words');
+  }
+}
+
 /** A transcript replace's input, as `replaceTranscriptWordsRemapped`'s `remap` returns it. */
 export interface RemappedTranscript {
   words: Array<{
@@ -363,6 +373,7 @@ export interface SessionHubFacade {
    * transaction (S9). A `remap` that throws writes nothing. Synchronous by type; keep it pure. */
   replaceTranscriptWordsRemapped: (
     remap: (events: EventRpc[]) => RemappedTranscript,
+    opts?: { onlyIfEmpty?: boolean },
   ) => Promise<TranscriptWord[]>;
   listTranscriptEnrichment: () => Promise<{
     paragraphs: TranscriptParagraph[];
@@ -371,12 +382,15 @@ export interface SessionHubFacade {
 
   // --- topic RPCs ---
   listTopics: () => Promise<Topic[]>;
-  insertTopic: (data: {
-    session_time: string;
-    duration_sec: number;
-    topic_level: number;
-    summary: string;
-  }) => Promise<Topic>;
+  insertTopic: (
+    data: {
+      session_time: string;
+      duration_sec: number;
+      topic_level: number;
+      summary: string;
+    },
+    id?: string,
+  ) => Promise<Topic>;
   updateTopic: {
     (topicId: string, patch: TopicPatch): Promise<Topic | null>;
     (
@@ -1481,8 +1495,16 @@ export class SessionHubView implements SessionHubFacade {
    * `remap` turns them into the words and enrichment to store, and the replace runs, all in one
    * transaction, so the remap and the replace see one set of recording anchors. A `remap` that
    * throws (the zero-word guard's `no_speech`) rolls back and writes nothing. */
-  replaceTranscriptWordsRemapped(remap: (events: EventRpc[]) => RemappedTranscript) {
+  replaceTranscriptWordsRemapped(
+    remap: (events: EventRpc[]) => RemappedTranscript,
+    opts: { onlyIfEmpty?: boolean } = {},
+  ) {
     return this.inTxn(async (s) => {
+      // batch-autogenerate D7: a batch transcript is written only into a still-empty transcript;
+      // the count runs inside the replace's own transaction, and the sentinel rolls it back.
+      if (opts.onlyIfEmpty === true && (await s.transcript.listTranscriptWords()).length > 0) {
+        throw new TranscriptNotEmptyError();
+      }
       const { words, enrichment } = remap(await s.events.exportEvents());
       return s.transcript.replaceTranscriptWords(words, enrichment);
     });
@@ -1498,8 +1520,11 @@ export class SessionHubView implements SessionHubFacade {
   listTopics() {
     return this.read((s) => s.topics.listTopics());
   }
-  insertTopic(data: Parameters<TopicStore['insertTopic']>[0]) {
-    return this.inTxn((s) => s.topics.insertTopic(data));
+  /** `id`: a caller-chosen topic id (batch-autogenerate D7: recorded on the job item first). */
+  insertTopic(data: Parameters<TopicStore['insertTopic']>[0], id?: string) {
+    return this.inTxn((s) =>
+      id === undefined ? s.topics.insertTopic(data) : s.topics.insertTopic(data, id),
+    );
   }
   updateTopic(topicId: string, patch: TopicPatch): Promise<Topic | null>;
   updateTopic(

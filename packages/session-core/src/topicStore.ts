@@ -51,13 +51,15 @@ export class TopicStore {
     );
   }
 
-  async insertTopic(data: {
-    session_time: string;
-    duration_sec: number;
-    topic_level: number;
-    summary: string;
-  }): Promise<Topic> {
-    const id = crypto.randomUUID();
+  async insertTopic(
+    data: {
+      session_time: string;
+      duration_sec: number;
+      topic_level: number;
+      summary: string;
+    },
+    id: string = crypto.randomUUID(),
+  ): Promise<Topic> {
     const ordinal = await nextOrdinal(this.core, 'session_topics');
     await this.core.db.run(
       `INSERT INTO session_topics (session_id, id, session_time, duration_sec, topic_level, summary, ordinal, created_at_utc)
@@ -113,7 +115,10 @@ export class TopicStore {
 
   /** With `expect` (session-row-versions D4), a stale version returns the stored topic as a
    * conflict and deletes nothing; with `expect.overwrite`, the delete is audited (D5). */
-  async deleteTopic(topicId: string, expect?: VersionExpectation): Promise<boolean | { conflict: Topic }> {
+  async deleteTopic(
+    topicId: string,
+    expect?: VersionExpectation,
+  ): Promise<boolean | { conflict: Topic }> {
     if (expect === undefined) {
       const r = await this.core.db.run(
         'DELETE FROM session_topics WHERE session_id = ? AND id = ?',

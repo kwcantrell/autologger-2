@@ -149,6 +149,11 @@ const ALLOWLIST: readonly { file: string; reason: string; why: string }[] = [
     why: 'the invite transaction looks users up by email and adds their memberships',
   },
   {
+    file: 'packages/catalog/src/autogenerateStore.ts',
+    reason: 'autogenerate-worker',
+    why: "batch-autogenerate D2, D4: the batch worker's claim, lease, item and job writes and the initiator re-read; the session work runs as the initiator",
+  },
+  {
     file: 'server/src/routers/teams.ts',
     reason: 'team-create',
     why: "the create transaction purges a recreated team's leftover rows",
@@ -161,11 +166,17 @@ const IMPLEMENTING = new Set([
   'packages/storage/src/postgresCatalogStore.ts',
   'packages/storage/src/postgresSessionSql.ts',
 ]);
-const USER_BINDERS = new Set(['server/src/middleware/auth.ts']);
+const USER_BINDERS = new Set([
+  'server/src/middleware/auth.ts',
+  // batch-autogenerate D4: the batch worker binds each session's work to the job's initiator.
+  'server/src/autogenerate/principal.ts',
+]);
 /** Where `userCaller(` may appear (session-content-policies D7, D9). */
 const USER_SESSION_CALLERS = new Set([
   'server/src/routers/_helpers.ts',
   'server/src/routers/logImport.ts',
+  // batch-autogenerate D4: the user recorded on a batch job (its initiator).
+  'server/src/autogenerate/principal.ts',
 ]);
 /** Where `new PostgresSessionDb(` may appear (session-content-policies D9). */
 const SESSION_DB_BUILDERS = new Set([

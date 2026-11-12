@@ -406,6 +406,64 @@ describe('DELETE /api/teams/:id — delete (owner)', () => {
   });
 });
 
+// batch-autogenerate D1 (task 1.5): jobs go with their team; a team with a live job still has
+// shows, so the existing 400 answers first (no adminDeleteStudio change).
+describe('DELETE /api/teams/:id — batch autogenerate jobs', () => {
+  const insertJob = (id: string, team: string, by: string, status: string) =>
+    testDb().run(
+      `INSERT INTO autogenerate_jobs (id, team_id, initiator_user_id, initiator_name, scope,
+         show_ids_json, steps, wiki_mode, status, session_count, created_at_ms, finished_at_ms,
+         updated_at_ms)
+       VALUES (?, ?, ?, 'Owner', 'shows', '[]', 'wiki', 'accept', ?, 1, 1, ?, 1)`,
+      id,
+      team,
+      by,
+      status,
+      status === 'finished' ? 2 : null,
+    );
+  const jobsOf = async (team: string) =>
+    (
+      await testDb().first<{ n: number }>(
+        'SELECT count(*)::int AS n FROM autogenerate_jobs WHERE team_id = ?',
+        team,
+      )
+    )?.n;
+
+  it('deletes a team with only finished jobs and no shows, and its jobs with it', async () => {
+    const { team, ownerId, cookie } = await seedTeamWithOwner();
+    await insertJob(`job-f-${team}`, team, ownerId, 'finished');
+    await testDb().run(
+      `INSERT INTO autogenerate_items (job_id, session_id, step, ordinal, step_order, status)
+       VALUES (?, 'gone-session', 'wiki', 0, 3, 'done')`,
+      `job-f-${team}`,
+    );
+    expect(await jobsOf(team)).toBe(1);
+    const res = await req('DELETE', `/api/teams/${team}`, { cookie });
+    expect(res.status).toBe(200);
+    expect(await jobsOf(team)).toBe(0);
+    expect(
+      (
+        await testDb().first<{ n: number }>(
+          'SELECT count(*)::int AS n FROM autogenerate_items WHERE job_id = ?',
+          `job-f-${team}`,
+        )
+      )?.n,
+    ).toBe(0);
+  });
+
+  it('a team with a live job still has shows and answers the existing 400', async () => {
+    const { team, ownerId, cookie } = await seedTeamWithOwner();
+    await seedShow({ studioId: team });
+    await insertJob(`job-r-${team}`, team, ownerId, 'running');
+    const res = await req('DELETE', `/api/teams/${team}`, { cookie });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      detail: 'Team still has 1 show(s); delete or move them first.',
+    });
+    expect(await jobsOf(team)).toBe(1);
+  });
+});
+
 describe('POST /api/teams/:id/invites — email invites', () => {
   it('grants immediate membership to an existing matching user (uniform 200, no pending row)', async () => {
     const { team, cookie } = await seedTeamWithAdmin();

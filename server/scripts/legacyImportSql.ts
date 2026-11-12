@@ -26,7 +26,7 @@ export const EXPECTED_LEGACY_MIGRATIONS = [
 /** The newest `supabase/migrations` version this map was written against (design D6). The emitted
  * import refuses a target whose newest applied migration differs; a unit test pins it to the
  * newest file in the checkout, so a new migration makes this file be reviewed. */
-export const TARGET_SCHEMA_VERSION = '20261024000000';
+export const TARGET_SCHEMA_VERSION = '20261025000000';
 
 export type ColType = 'text' | 'int' | 'real';
 export type Value = string | bigint | number | null;
@@ -443,8 +443,9 @@ export function importPreamble(header: string[]): string {
     `CREATE TEMP TABLE ${IDS_TABLE} (kind text collate "C" NOT NULL, id text collate "C" NOT NULL) ON COMMIT DROP;`,
     `CREATE TEMP TABLE ${EXPECTED_TABLE} (tbl text collate "C" NOT NULL, n bigint NOT NULL) ON COMMIT DROP;`,
     '',
-    '-- Nothing else creates or changes a team, show or session while the import decides and writes.',
-    'LOCK TABLE catalog.studio_definitions, catalog.shows, catalog.sessions, catalog.app_settings IN SHARE ROW EXCLUSIVE MODE;',
+    '-- Nothing else creates or changes a team, show or session, or starts a batch autogenerate',
+    '-- job, while the import decides and writes.',
+    'LOCK TABLE catalog.studio_definitions, catalog.shows, catalog.sessions, catalog.app_settings, catalog.autogenerate_jobs IN SHARE ROW EXCLUSIVE MODE;',
     '',
     `COPY ${IDS_TABLE} (kind, id) FROM STDIN;`,
   ].join('\n')}\n`;
@@ -555,6 +556,10 @@ export function collisionBlock(mode: CollisionMode): string {
       : [];
   return [
     ...common,
+    '  -- batch-autogenerate D1: a team with a queued or running batch job is never replaced (an',
+    '  -- operator cancels it first); finished jobs go with the team (on delete cascade).',
+    "  SELECT count(*) INTO n FROM catalog.autogenerate_jobs WHERE team_id = st AND status IN ('queued', 'running');",
+    "  IF n > 0 THEN RAISE EXCEPTION 'legacy import refused: team % has a batch autogenerate job in progress; cancel it first', st; END IF;",
     '  -- --replace never touches another team: an imported show or session id that belongs elsewhere refuses.',
     `  SELECT count(*) INTO n FROM catalog.shows s JOIN ${IDS_TABLE} i ON i.kind = 'show' AND i.id = s.id WHERE s.studio_id <> st;`,
     `  IF n > 0 THEN RAISE EXCEPTION 'legacy import refused: % show id(s) belong to another team', n; END IF;`,

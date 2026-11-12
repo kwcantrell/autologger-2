@@ -35,7 +35,7 @@ import { streamSSE } from 'hono/streaming';
 import type { AppEnv } from '../appEnv';
 import { aiChatMaxBudgetUsd, aiChatSdkLimits, aiChatTimeoutSec } from '../env';
 import { ApiError } from '../httpError';
-import { callerLlmRoute, sdkTurnSpec } from './_aiRoute';
+import { requestLlmRoute, sdkTurnSpec } from './_aiRoute';
 import { claimAiLease } from './_aiSlot';
 import { requireRunFeature, requireSession, requireUser, sessionCaller } from './_helpers';
 
@@ -124,7 +124,7 @@ aiRouter.post('/api/sessions/:sessionId/ai/chat', async (c) => {
   // 3. Configuration gate — 503, before body parse and before any spawn or model request: the
   // caller's route (ai-sdk-agent-harness D1), resolved per request — the Claude CLI for an
   // allowlisted caller who chose it, the AI SDK on the caller's own credential, or none.
-  const route = await callerLlmRoute(c);
+  const route = await requestLlmRoute(c);
   if (route === null) {
     throw new ApiError(503, NOT_CONFIGURED_DETAIL);
   }
@@ -207,7 +207,7 @@ aiRouter.post('/api/sessions/:sessionId/ai/chat', async (c) => {
               ...common,
               // ai-sdk-agent-harness D3, D6: the caller's own credential through the guarded
               // fetch, with the client's history as real roles.
-              sdk: sdkTurnSpec(c, route, 'chat', aiChatSdkLimits(c.env.config), body.history),
+              sdk: sdkTurnSpec(c.env, route, 'chat', aiChatSdkLimits(c.env.config), body.history),
             },
       );
       // Only a CLI turn issues a session id; an AI SDK turn's `done` carries null and records no

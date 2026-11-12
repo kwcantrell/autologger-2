@@ -23,6 +23,7 @@ import {
   copyField,
   copyLine,
   copyText,
+  importPreamble,
   realText,
   rowHash,
   TARGET_SCHEMA_VERSION,
@@ -155,6 +156,13 @@ describe('the target schema version', () => {
       .sort()
       .at(-1);
     expect(newest).toBe(TARGET_SCHEMA_VERSION);
+  });
+
+  // batch-autogenerate D1, R11: a batch job start cannot slip in while the import decides.
+  it('locks the batch autogenerate jobs table with the teams, shows and sessions', () => {
+    expect(importPreamble([])).toMatch(
+      /LOCK TABLE [^;]*\bcatalog\.autogenerate_jobs\b[^;]* IN SHARE ROW EXCLUSIVE MODE;/,
+    );
   });
 
   it('every target column of the map exists in the migrations', () => {

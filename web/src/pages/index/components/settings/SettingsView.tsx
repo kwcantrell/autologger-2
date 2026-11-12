@@ -8,6 +8,7 @@ import { useConfirm } from '../../../../shared/ui/ConfirmDialog';
 import { isOverlayOpen } from '../../../../shared/ui/overlayOpen';
 import { SETTINGS_SECTION_CONTENT } from './SettingsSections';
 import {
+  MANAGER_ONLY_SECTIONS,
   SETTINGS_SECTION_GROUPS,
   SETTINGS_SECTIONS,
   SETTINGS_VIEW_SELECTOR,
@@ -46,6 +47,9 @@ export interface SettingsSectionProps {
   onGoToSection: (id: SettingsSectionId) => void;
   /** AppShell's close-session path, for a save that changes the active team. */
   onCloseSession: () => void;
+  /** Whether this section is the one shown (a visited section stays mounted while hidden; a
+   * section that polls fetches only while shown — batch-autogenerate D15). */
+  active?: boolean;
 }
 
 export interface SettingsViewProps {
@@ -78,6 +82,12 @@ export function SettingsView({
   const rootRef = useRef<HTMLDivElement>(null);
   const headingId = useId();
   const { data: profile } = useProfile();
+  // batch-autogenerate D15: the manager-only sections are listed only for an owner or admin of at
+  // least one team.
+  const managesATeam = (profile?.auth?.user?.teams ?? []).some(
+    (t) => t.role === 'owner' || t.role === 'admin',
+  );
+  const listed = (id: SettingsSectionId) => managesATeam || !MANAGER_ONLY_SECTIONS.includes(id);
   // The view owns the shows scope (the drafts' saved baseline and the shows query), so every
   // show-backed section saves the same thing whichever sections were visited, and the query runs
   // only while the view is mounted, i.e. open.
@@ -270,18 +280,20 @@ export function SettingsView({
                           </span>
                         )}
                       </div>
-                      {group.sections.map((s) => (
-                        <TabsTrigger
-                          key={s.id}
-                          variant="nav"
-                          value={s.id}
-                          id={settingsTabId(s.id)}
-                          aria-controls={settingsPanelId(s.id)}
-                          className="max-md:w-auto max-md:shrink-0 max-md:border max-md:border-(--si-line) max-md:px-3 max-md:py-1.5"
-                        >
-                          {s.label}
-                        </TabsTrigger>
-                      ))}
+                      {group.sections
+                        .filter((s) => listed(s.id))
+                        .map((s) => (
+                          <TabsTrigger
+                            key={s.id}
+                            variant="nav"
+                            value={s.id}
+                            id={settingsTabId(s.id)}
+                            aria-controls={settingsPanelId(s.id)}
+                            className="max-md:w-auto max-md:shrink-0 max-md:border max-md:border-(--si-line) max-md:px-3 max-md:py-1.5"
+                          >
+                            {s.label}
+                          </TabsTrigger>
+                        ))}
                     </Fragment>
                   );
                 })}
@@ -302,7 +314,11 @@ export function SettingsView({
                     className="flex max-w-[860px] flex-col gap-[18px] px-8 pt-6 pb-10 max-md:px-4 max-md:pt-[18px] max-md:pb-7"
                   >
                     {visited.has(id) && (
-                      <Content onGoToSection={goToSection} onCloseSession={onCloseSession} />
+                      <Content
+                        onGoToSection={goToSection}
+                        onCloseSession={onCloseSession}
+                        active={section === id}
+                      />
                     )}
                   </TabsContent>
                 );

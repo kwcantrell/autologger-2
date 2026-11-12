@@ -3,6 +3,8 @@
 import { stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createCatalog } from '@autologger/catalog';
+import { parseWikiLinks } from '@autologger/contract';
 import type { MediaSql } from '@autologger/ports/media';
 import { DataDirLockedError, FrameBusSecretError } from '@autologger/storage';
 import { mediaJobs } from '@autologger/storage/mediaJobs';
@@ -12,6 +14,8 @@ import { createNodeWebSocket } from '@hono/node-ws';
 import { Hono } from 'hono';
 import { wireApp } from './app';
 import type { AppEnv } from './appEnv';
+import { createWorkerPorts } from './autogenerate/ports';
+import { AutogenerateWorker } from './autogenerate/worker';
 import { ProviderKeysSecretError, verifyProviderKeysCheck } from './auth/providerKeyCrypto';
 import { checkBootEnv } from './bootGuard';
 import { maskBootstrapOwnerEmail, runFeatureEmails } from './env';
@@ -137,6 +141,16 @@ const mediaApply = startMediaApply({
   blobs: bindings.ports.mediaBlobs,
   clock: bindings.ports.clock,
 });
+// batch-autogenerate D3: this process claims and runs at most one batch autogenerate job at a
+// time, polling every 15 s (README "Batch autogenerate").
+const autogenerateWorker = new AutogenerateWorker(
+  createWorkerPorts({
+    env: bindings,
+    root: createCatalog(bindings.ports.catalog, { wikiLinks: parseWikiLinks }),
+    workerId: `autogenerate-${process.pid}-${crypto.randomUUID()}`,
+  }),
+);
+autogenerateWorker.start();
 const port = Number(process.env.PORT || '8787');
 const hostname = bindings.config.HOST;
 
@@ -204,6 +218,9 @@ for (const sig of ['SIGINT', 'SIGTERM'] as const) {
     clearInterval(leaseSweepTimer);
     clearInterval(mediaSweepTimer);
     mediaApply.stop();
+    // A batch step in flight stops writing at its next fenced write; its lease lapses and another
+    // process resumes the job (batch-autogenerate D11).
+    autogenerateWorker.stop();
     const failsafe = setTimeout(() => process.exit(1), 5000);
     failsafe.unref();
     const serverClosed = new Promise<void>((resolve) => server.close(() => resolve()));

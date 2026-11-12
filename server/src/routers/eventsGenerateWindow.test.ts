@@ -1,16 +1,17 @@
 // POST …/events/generate: from the resolved transcript word snapshot to the per-session AI slot is
 // an await-free window holding no storage call (async-session-callers D4; core-ports-architecture
 // "Server code never drops or misuses a promise"). The window starts after the awaited snapshot
-// statement (async-session-hub D12).
+// statement (async-session-hub D12). batch-autogenerate D6 (amended, owner 2026-11-09): the code moved
+// to the shared runner `server/src/generation/events.ts`; path and literal retargeted, same invariant.
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 describe('event-generation word-snapshot window', () => {
   it('has no await and no catalog call between the snapshot and tryAcquire', () => {
-    const src = readFileSync(join(__dirname, 'events.ts'), 'utf8');
+    const src = readFileSync(join(__dirname, '..', 'generation', 'events.ts'), 'utf8');
     const snapshot =
-      'const transcriptWords = await (await getSessionHub(c, sessionId)).listTranscriptWords();';
+      'const transcriptWords = await (await hubFor(p, sessionId)).listTranscriptWords();';
     const at = src.indexOf(snapshot);
     expect(at).toBeGreaterThan(0);
     const start = at + snapshot.length;

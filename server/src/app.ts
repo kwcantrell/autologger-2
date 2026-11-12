@@ -24,6 +24,7 @@ import { aiV2Router } from './routers/aiV2';
 import { audioRouter } from './routers/audio';
 import { audioUploadsRouter } from './routers/audioUploads';
 import { authRouter } from './routers/auth';
+import { autogenerateRouter } from './routers/autogenerate';
 import { companionRouter } from './routers/companion';
 import { companionDevicesRouter } from './routers/companionDevices';
 import { eventsRouter } from './routers/events';
@@ -267,6 +268,7 @@ export function wireApp(
   app.route('/', wikiRouter);
   app.route('/', wikiSuggestionsRouter);
   app.route('/', teamsRouter);
+  app.route('/', autogenerateRouter);
   app.route('/', sessionsRouter);
   // youtube-playlist-import D1: the stateless playlist listing, beside the session routes.
   app.route('/', youtubePlaylistRouter);

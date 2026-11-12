@@ -18,6 +18,7 @@ describe('Catalog facade', () => {
   it('carries no flat delegate methods (the compat shim is gone)', () => {
     expect(Object.keys(catalog).sort()).toEqual([
       'auth',
+      'autogenerate',
       'profile',
       'sessions',
       'shows',

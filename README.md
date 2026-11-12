@@ -1114,6 +1114,11 @@ Content-coding is transport applied above the frozen representation: the decoded
 | `POST /api/teams` · `GET\|PATCH\|DELETE /api/teams/{id}` | `routers/teams.ts` (new, teams-self-serve) |
 | `POST …/invites` · `DELETE …/invites/{email}` · `POST …/members/{userId}/role` · `DELETE …/members/{userId}` · `POST …/leave` · `POST …/owner` (transfer ownership, owner only: **200** `{ok: true}`) | `routers/teams.ts` (new, teams-self-serve; owner-bootstrap) |
 | `PUT\|DELETE /api/teams/{id}/shows/{showId}/grants/{userId}` (show grants, owner or admin; no body) → **401** signed out · **404** `Team not found` non-member · **403** `Admin role required.` member · **404** `Show not found.` unknown or other team's show · PUT: **404** `Member not found` non-member target, **200** `{ok: true}` (idempotent; an owner or admin target stores nothing) · DELETE: **200** `{ok: true}` always (idempotent). The team detail carries `members[].show_ids` for owner and admin callers | `routers/teams.ts` (new, show-grants) |
+| `POST /api/teams/{teamId}/autogenerate-jobs/preview` (batch autogenerate estimate, owner or admin; scope body `{show_ids \| session_ids, steps, wiki_mode?}`) → **401** · **404** `Team not found` non-member · **403** `Admin role required.` member · **422** zod 4 issues (both scopes, neither, an empty or over-long list, repeated steps) · **404** `Show not found.` / `Session not found` · **400** `No sessions to process.` / `A batch job can process at most 1000 sessions.` · **200** `{sessions, steps, runs, max_runs, blocked}`; writes nothing | `routers/autogenerate.ts` (new, batch-autogenerate) |
+| `POST /api/teams/{teamId}/autogenerate-jobs` (start; the scope body plus `expected_sessions`) → **401** · **404** · **403** · **422** · **404** · **400** as for the preview · **503** no speech-to-text key (transcript selected) / no language model (an AI step selected) · **403** the run-feature detail (not an approved user) · **409** `{detail: "A batch job is already running for this team.", job_id}` · **409** `{detail: "The sessions changed since the estimate.", sessions}` · **201** `{job}` | `routers/autogenerate.ts` (new, batch-autogenerate) |
+| `GET /api/teams/{teamId}/autogenerate-jobs` → **401** · **404** · **403** · **200** `{jobs}` (the team's 20 newest, newest first) | `routers/autogenerate.ts` (new, batch-autogenerate) |
+| `GET /api/teams/{teamId}/autogenerate-jobs/{jobId}` → **401** · **404** · **403** · **404** `Job not found.` · **200** `{job, sessions: [{session_id, title, show_id, effective_date, ordinal, steps: [{step, status, outcome, detail, wiki_accepted, wiki_pending, kept_edited}]}]}` | `routers/autogenerate.ts` (new, batch-autogenerate) |
+| `POST /api/teams/{teamId}/autogenerate-jobs/{jobId}/cancel` (no body) → **401** · **404** · **403** · **404** `Job not found.` · **409** `{detail: "Job already ended.", status}` · **200** `{job}` (a queued job is `cancelled`; a running one records the cancel and stops after its current step; a repeat is **200**) | `routers/autogenerate.ts` (new, batch-autogenerate) |
 | `GET /sessions/:id` (SPA shell) | (app.ts frontend bridge) |
 | `GET /teams` (SPA shell) | (app.ts frontend bridge) |
 | `GET /search` (SPA shell; the query string has no server semantics; `/search/…` and `/search/` stay **404**) | (app.ts frontend bridge; catalog-search) |
@@ -1830,6 +1835,53 @@ sudo env "PATH=$PATH" npx tsx server/scripts/convertWavToFlac.ts --cleanup --blo
 `pg_dump -Fc` (README "Backup") after step 3 and before step 5: a dump from before the conversion
 references WAVs that the cleanup deletes. Export `referenced.csv` right before the cleanup, never
 reuse an old one. The app needs no restart.
+
+### Batch autogenerate
+
+A studio's owners and admins can fill its missing transcripts, auto-generated events, topics and
+wiki updates across many sessions in one background job (Settings → Team → **Batch
+autogenerate**; routes under `/api/teams/{teamId}/autogenerate-jobs`, ADR 0033).
+
+- **Who.** Only owners and admins of the team see the section, start, read and cancel jobs; every
+  owner and admin sees every job of the team and can cancel it. Starting also needs an approved
+  user (`RUN_FEATURE_EMAILS`). The job runs **as its initiator**, on the initiator's own provider
+  keys; it stores only the initiator's user id, never a key or token. Before each session it
+  re-reads the account, the team role and the approval (a disabled account, a lost role or approval
+  stops the job) and checks the session as the initiator (`session-gone` / `access-lost` skip it).
+- **What runs.** Per session, in the order transcript → events → topics → wiki, each selected
+  step runs only where its output is missing: transcript when the session has no words (a
+  transcript typed in meanwhile wins), events when it has no auto-generated event, topics when it
+  has no topic; the wiki update always runs on a session with words. Sessions run oldest first by
+  episode date (else the start date, else the creation date; undated last). A failed step skips
+  the rest of its session; a missing precondition (no audio, no transcript, no timecodes, no
+  instruction) skips the steps that depend on it.
+- **One at a time.** One `queued` or `running` job per team (a second start answers **409**), one
+  session at a time, sharing each session's single-flight with the manual buttons: a busy session
+  is retried every 15 s for 10 minutes, then skipped `busy`; a manual run meanwhile gets its usual
+  **409**.
+- **Cancel** stops after the current step (a provider call in flight is not killed).
+- **Resume.** Every API process polls every 15 s and claims at most one job under a 60 s lease
+  renewed every 10 s; after a restart another process resumes the job within about 90 s. An
+  interrupted step's own partial topics and events (recorded on the job before they were written)
+  are deleted and the step re-runs; a row a person edited is kept and counts as present. A step
+  interrupted three times is `failed` `interrupted`.
+- **Provider stop.** A rate limit (`429`) is retried after 30, 60, 120, 240 and 480 s, then the step
+  fails `rate-limited`. Three sessions in a row whose speech-to-text (or language-model) step
+  failed with a provider, generation or rate-limit failure stop the job `provider-failing`.
+- **Wiki output, safe changes only.** In "Add new pages and additions" mode (the default) the job
+  accepts, as the initiator, only suggestions that create a new page or add to an existing one
+  (title unchanged, every alias kept, every existing line kept in order); anything that removes or
+  changes text stays in the Suggestions inbox. Each batch revision's note is `accepted suggestion
+  <id> (batch <job id>)` or `created from suggestion <id> (batch <job id>)`; revert one from the
+  page history like any revision. "Leave all as suggestions" accepts nothing.
+- **Legacy import.** `--replace` and `--replace-live` refuse a team with a `queued` or `running`
+  job (`legacy import refused: team <id> has a batch autogenerate job in progress; cancel it
+  first`); cancel the job in Settings first. Deleting a team deletes its finished jobs.
+- **Rollback.** Cancel live jobs (or wait for them), revert the code, then
+  `drop table catalog.autogenerate_items; drop table catalog.autogenerate_jobs;
+  drop function catalog.autogenerate_jobs_user_guard();
+  drop function catalog.autogenerate_jobs_cancel_queued_items();` (migration `20261025000000` header).
+  Pages changed by batch accepts keep their revisions.
 
 ### Media jobs
 

@@ -60,6 +60,8 @@ export class TranscriptGenerateError extends Error {
     message: string,
     /** in_flight only: the session whose identifiers `message` names (always the requested one). */
     readonly holderSessionId?: string,
+    /** upstream only: the provider's HTTP status, when it answered one (batch-autogenerate A21). */
+    readonly upstreamStatus?: number,
   ) {
     super(message);
     this.name = 'TranscriptGenerateError';
@@ -93,6 +95,9 @@ export interface GenerateTranscriptDeps {
   signal?: AbortSignal | null;
   /** Optional catalog title lookup for enriched 409 detail (lock-status). */
   resolveSessionTitle?: (sessionId: string) => string | null | Promise<string | null>;
+  /** batch-autogenerate D7: write only into a still-empty transcript. The replace then rejects
+   * with session-core's `TranscriptNotEmptyError` and writes nothing. */
+  onlyIfEmpty?: boolean;
 }
 
 /** The `in_flight` refusal for `deps.sessionId` (run-status-and-sweeper D3): the holder-named
@@ -213,7 +218,12 @@ export async function generateTranscriptWords(
         });
       } catch (err) {
         if (err instanceof DeepgramUpstreamError) {
-          throw new TranscriptGenerateError('upstream', UPSTREAM_FAILURE_DETAIL);
+          throw new TranscriptGenerateError(
+            'upstream',
+            UPSTREAM_FAILURE_DETAIL,
+            undefined,
+            err.status,
+          );
         }
         throw err;
       }
@@ -244,7 +254,9 @@ export async function generateTranscriptWords(
     // the finally below releases the lease and then the session's run only after the replace
     // has committed.
     const hub = await deps.getHub();
-    return await hub.replaceTranscriptWordsRemapped((events) => {
+    const remap = (
+      events: Parameters<Parameters<typeof hub.replaceTranscriptWordsRemapped>[0]>[0],
+    ) => {
       const anchors = recordingStartAnchors(events);
       const remappedWords = remapTranscriptWords(
         enrichmentGroups,
@@ -259,7 +271,10 @@ export async function generateTranscriptWords(
         words: remappedWords,
         enrichment: remapTranscriptEnrichment(enrichmentGroups, segmentInfo, anchors),
       };
-    });
+    };
+    return await (deps.onlyIfEmpty === true
+      ? hub.replaceTranscriptWordsRemapped(remap, { onlyIfEmpty: true })
+      : hub.replaceTranscriptWordsRemapped(remap));
   } finally {
     // The lease, then the session's run (session-run-leases D4 step 3), then the scratch dir.
     if (lease !== null) await lease.release();

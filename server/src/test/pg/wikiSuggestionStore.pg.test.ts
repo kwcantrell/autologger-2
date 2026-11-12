@@ -518,6 +518,85 @@ describe('acceptSuggestion', () => {
   });
 });
 
+// batch-autogenerate task 3.5 (design D12; show-wiki "A batch job accepts suggestions as its
+// initiator"): the batch option only appends ` (batch <job id>)` to the note.
+describe('acceptSuggestion as a batch job', () => {
+  it('notes an existing page `accepted suggestion <id> (batch <job>)`, resolved by the bound user', async () => {
+    const page = await topic('Batch accept', { bodyMd: 'A' });
+    const [s] = await owner().wiki.saveRun('s1', 'sd', 'run-b1', [
+      edit(page.id, 1, 'Batch accept', 'A\nnew'),
+    ]);
+    const id = s?.id as string;
+    const out = await as('granted').wiki.acceptSuggestion(
+      id,
+      { expectedRevision: 1 },
+      { batchJobId: 'job-7' },
+    );
+    expect(out?.page).toMatchObject({ revision: 2, updated_by_name: 'granted Fixture' });
+    expect((await owner().wiki.getRevision(page.id, 2))?.note).toBe(
+      `accepted suggestion ${id} (batch job-7)`,
+    );
+    expect(out?.suggestion).toMatchObject({
+      status: 'accepted',
+      resolved_by_name: 'granted Fixture',
+    });
+    const [r] = await sys`select resolved_by from wiki_suggestions where id = ${id}`;
+    expect(r?.resolved_by).toBe('granted');
+  });
+
+  it('notes a new page `created from suggestion <id> (batch <job>)`', async () => {
+    const [s] = await owner().wiki.saveRun('s1', 'sd', 'run-b2', [fresh('Batch new page')]);
+    const id = s?.id as string;
+    const out = await owner().wiki.acceptSuggestion(id, {}, { batchJobId: 'job-8' });
+    expect((await owner().wiki.getRevision(out?.page.id as string, 1))?.note).toBe(
+      `created from suggestion ${id} (batch job-8)`,
+    );
+  });
+
+  it('every refusal of the manual accept still refuses: stale, title clash, resolved', async () => {
+    const page = await topic('Batch stale', { bodyMd: 'r1' });
+    const [s] = await owner().wiki.saveRun('s1', 'sd', 'run-b3', [
+      edit(page.id, 1, 'Batch stale', 'suggested'),
+    ]);
+    await owner().wiki.updatePage(page.id, { expectedRevision: 1, bodyMd: 'person' });
+    expect(
+      await rejection(
+        owner().wiki.acceptSuggestion(
+          s?.id as string,
+          { expectedRevision: 1 },
+          { batchJobId: 'j' },
+        ),
+      ),
+    ).toBeInstanceOf(WikiConflictError);
+    await topic('Batch clash');
+    const [n] = await owner().wiki.saveRun('s1', 'sd', 'run-b4', [fresh('Batch clash two')]);
+    await owner().wiki.updatePage((await topic('Batch clash two holder')).id, {
+      expectedRevision: 1,
+      title: 'Batch clash two',
+    });
+    expect(
+      await rejection(owner().wiki.acceptSuggestion(n?.id as string, {}, { batchJobId: 'j' })),
+    ).toBeInstanceOf(WikiTitleTakenError);
+    const [d] = await owner().wiki.saveRun('s1', 'sd', 'run-b5', [fresh('Batch dismissed')]);
+    await owner().wiki.dismissSuggestion(d?.id as string);
+    expect(
+      await rejection(owner().wiki.acceptSuggestion(d?.id as string, {}, { batchJobId: 'j' })),
+    ).toBeInstanceOf(WikiSuggestionResolvedError);
+  });
+
+  it('lists a run’s pending suggestion ids in proposal order', async () => {
+    const [a, b] = await owner().wiki.saveRun('s1', 'sd', 'run-b6', [
+      fresh('Run order one'),
+      fresh('Run order two'),
+    ]);
+    expect(await owner().wiki.pendingOfRun('sd', 'run-b6')).toEqual([a?.id, b?.id]);
+    await owner().wiki.dismissSuggestion(a?.id as string);
+    expect(await owner().wiki.pendingOfRun('sd', 'run-b6')).toEqual([b?.id]);
+    expect(await owner().wiki.anyOfRun('sd', 'run-b6')).toBe(true);
+    expect(await owner().wiki.anyOfRun('sd', 'no-run')).toBe(false);
+  });
+});
+
 describe('dismissSuggestion', () => {
   it('records the reviewer and changes no page; a superseded one is resolved', async () => {
     const page = await topic('Dismiss me', { bodyMd: 'r1' });

@@ -12,20 +12,21 @@ import {
   type SessionFrameBus,
   type SessionHubFacade,
   type SqlValue,
-  type TimecodeCtx,
   userCaller,
   type VersionExpectation,
 } from '@autologger/session-core';
 import type { Context } from 'hono';
 import type { AppEnv } from '../appEnv';
 import { runFeatureAllowed } from '../env';
+import { type GenerationPrincipal, RUN_FEATURE_FORBIDDEN_DETAIL } from '../generation/principal';
 import { ApiError } from '../httpError';
 
-export function timecodeCtx(row: Row): TimecodeCtx {
-  return {
-    frameRate: Number(row.frame_rate ?? 24.0),
-    startOffsetFrames: Number(row.start_offset_frames ?? 0),
-  };
+export { timecodeCtx } from '../generation/principal';
+
+/** The request's generation principal (batch-autogenerate D6): the signed-in user, the request's
+ * catalog and its session caller, for the shared runners. */
+export function principalOf(c: Context<AppEnv>): GenerationPrincipal {
+  return { user: requireUser(c), catalog: c.get('catalog'), caller: sessionCaller(c), env: c.env };
 }
 
 /** The signed-in route's session caller (session-content-policies D7): every hub call it makes
@@ -64,8 +65,7 @@ export function requireUser(c: Context<AppEnv>): AuthUser {
 }
 
 /** The run routes' refusal of a user who is not approved (run-status-and-sweeper D9). */
-export const RUN_FEATURE_FORBIDDEN_DETAIL =
-  'This feature is limited to approved users on this server.';
+export { RUN_FEATURE_FORBIDDEN_DETAIL };
 
 /** The approved-user gate of the six run routes (run-status-and-sweeper D9): 403 unless the
  * signed-in user's email is the bootstrap owner's or in `RUN_FEATURE_EMAILS`. Each route calls it
