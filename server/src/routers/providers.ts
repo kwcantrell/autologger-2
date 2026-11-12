@@ -103,7 +103,11 @@ providersRouter.put('/api/me/providers/:kind', async (c) => {
   if (body.provider === CLAUDE_CLI_PROVIDER) {
     // Only `llm` accepts it (the `stt` schema refuses it above).
     if (!claudeCliAllowed(c.env.config, user)) throw new ApiError(403, CLI_FORBIDDEN);
-    const cli = await c.env.ports.providerCredentials.putKeyless(user.id, 'llm', CLAUDE_CLI_PROVIDER);
+    const cli = await c.env.ports.providerCredentials.putKeyless(
+      user.id,
+      'llm',
+      CLAUDE_CLI_PROVIDER,
+    );
     console.info(`provider credential saved user=${user.id} kind=${kind}`);
     return c.json(toWire(cli));
   }

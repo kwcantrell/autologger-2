@@ -168,7 +168,7 @@ function redactDatabaseError(err: unknown): unknown[] {
     const { code, table_name, binding } = e;
     return [{ name: e.name, code, table_name, binding }];
   }
-  if (!e || e.name !== 'PostgresError') return [err];
+  if (e?.name !== 'PostgresError') return [err];
   const { code, constraint_name, table_name } = e;
   return [{ name: e.name, code, constraint_name, table_name }];
 }

@@ -15,8 +15,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { Bindings } from '../../appEnv';
 import { app, env, envWith } from '../harness';
 import { seededSession } from '../helpers';
-import { slowStorage } from './slowStorage';
 import { type TestHub, type TestRegistry, testRegistry } from './sessionRows';
+import { slowStorage } from './slowStorage';
 
 const LOCAL_ROLLING_DETAIL =
   'Local audio import is refused while this session is actively recording; stop the recording and try again.';

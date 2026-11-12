@@ -3,13 +3,13 @@
 // about access keep calling hub members as they were written. Free of the harness, so the opt-in
 // real AI tests can use it. Test infrastructure.
 
-import { systemCaller } from '@autologger/session-core/sessionCaller';
 import {
   SessionHub,
   type SessionHubEntry,
   SessionHubRegistry,
   type SessionHubView,
 } from '@autologger/session-core/SessionHub';
+import { systemCaller } from '@autologger/session-core/sessionCaller';
 
 /** The caller of the harness's own storage calls (session-content-policies D12): a system task, so
  * raw reads and writes see every row. */

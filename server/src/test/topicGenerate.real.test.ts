@@ -37,8 +37,8 @@ import {
 import { generateTopicsTurn } from '@autologger/ai-runtime/topicGenerate';
 import type { Clock, Config } from '@autologger/ports';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { realSessionRegistry } from './realSessionStorage';
 import { topicGenerateMaxBudgetUsd, topicGenerateTimeoutSec } from '../env';
+import { realSessionRegistry } from './realSessionStorage';
 import { TEST_CALLER, type TestRegistry } from './session/testHub';
 
 // ai-runtime-package (task 2.2) — a plain real-time clock literal, defined

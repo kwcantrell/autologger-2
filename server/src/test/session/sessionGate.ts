@@ -65,7 +65,8 @@ export function sessionGate(): SessionGate {
 /** The `n`th (from 1) user-bound call of `kind` (any kind when omitted). */
 export function nthUserCall(n: number, kind?: GateKind): GateMatch {
   let seen = 0;
-  return (k, caller) => caller.kind === 'user' && (kind === undefined || k === kind) && ++seen === n;
+  return (k, caller) =>
+    caller.kind === 'user' && (kind === undefined || k === kind) && ++seen === n;
 }
 
 /** The next call made as the system task `reason`. */

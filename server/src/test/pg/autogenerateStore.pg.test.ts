@@ -54,7 +54,7 @@ beforeAll(async () => {
   await session('a', 'so2', { episode: '2024-03-01', started: '2024-03-01T12:00:00Z' });
   await session('b', 'so2', { episode: '2024-03-01', started: '2024-03-01T09:00:00Z' });
   // so3: content for the preview counts.
-  for (const id of ['p1', 'p2', 'p3']) await session(id, 'so3', { episode: '2024-01-0' + id[1] });
+  for (const id of ['p1', 'p2', 'p3']) await session(id, 'so3', { episode: `2024-01-0${id[1]}` });
   await sys`insert into session_transcript_words (session_id, id, ordinal, created_at_utc)
             values ('p1', 'w1', 0, ${NOW})`;
   await sys`insert into session_events (session_id, id, wall_time_utc, frame_rate, category,

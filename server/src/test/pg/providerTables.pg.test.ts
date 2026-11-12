@@ -304,7 +304,9 @@ describe('the provider tables keep their constraints (design D1)', () => {
     // A keyed row with any one of the five key columns null is refused (the partial-null case).
     for (const col of Object.keys(KEY) as (keyof typeof KEY)[]) {
       expect(
-        await code(row('u2', { provider: 'anthropic', model: 'm', key: { ...KEY, [col]: 'null' } })),
+        await code(
+          row('u2', { provider: 'anthropic', model: 'm', key: { ...KEY, [col]: 'null' } }),
+        ),
       ).toBe('23514');
     }
     // A claude-cli row with a key (whole or partial), a base URL, or kind stt is refused.
@@ -325,9 +327,9 @@ describe('the provider tables keep their constraints (design D1)', () => {
     expect(await code(row('u2', { provider: 'anthropic', model: 'm', key: KEY }))).toBe('ok');
     expect(await code(insertCredential('u2', 'stt'))).toBe('ok');
     expect(
-      (await sys`select kind, provider from user_provider_credentials where user_id = 'u2' order by kind`).map(
-        (r) => `${r.kind}:${r.provider}`,
-      ),
+      (
+        await sys`select kind, provider from user_provider_credentials where user_id = 'u2' order by kind`
+      ).map((r) => `${r.kind}:${r.provider}`),
     ).toEqual(['llm:anthropic', 'stt:deepgram']);
   });
 

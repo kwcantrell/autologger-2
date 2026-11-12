@@ -5,8 +5,8 @@ import { profileUpdateBodySchema } from '@autologger/contract';
 import {
   normalizeEventPaletteNine,
   studioToApiDict,
-  validateCategoriesList,
   ValidationError,
+  validateCategoriesList,
   validateEventPalettePreset,
 } from '@autologger/domain';
 import type { Config } from '@autologger/ports';
@@ -102,7 +102,9 @@ profileRouter.put('/api/profile', async (c) => {
             fields.categories_json = JSON.stringify(validateCategoriesList(ent.categories));
           }
           if (ent.event_palette != null) {
-            fields.event_palette_json = JSON.stringify(normalizeEventPaletteNine(ent.event_palette));
+            fields.event_palette_json = JSON.stringify(
+              normalizeEventPaletteNine(ent.event_palette),
+            );
           }
           if (ent.event_palette_preset != null) {
             fields.event_palette_preset = validateEventPalettePreset(ent.event_palette_preset);

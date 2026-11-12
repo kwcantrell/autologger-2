@@ -218,7 +218,9 @@ export class StudioRegistry implements StudioRegistryFacade {
    * handle; the per-request snapshot can be stale, so writes that need the team re-check here,
    * inside their transaction (catalog-concurrency-hazards D3). */
   async studioExists(studioId: string): Promise<boolean> {
-    return (await this.db.first<Row>('SELECT 1 FROM studio_definitions WHERE id = ?', studioId)) !== null;
+    return (
+      (await this.db.first<Row>('SELECT 1 FROM studio_definitions WHERE id = ?', studioId)) !== null
+    );
   }
 
   /** Whether a team definition with this id exists at all, whatever the caller's memberships

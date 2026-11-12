@@ -44,7 +44,11 @@ async function unreachableSession(): Promise<string> {
   return seedSession({ showId });
 }
 
-const eventBody = (message: string, extra: Record<string, unknown> = {}, wall = '2026-10-10T00:00:00.000Z') => ({
+const eventBody = (
+  message: string,
+  extra: Record<string, unknown> = {},
+  wall = '2026-10-10T00:00:00.000Z',
+) => ({
   category: SEED_CATEGORY_ID,
   message,
   wall_time_utc: wall,
@@ -68,42 +72,69 @@ describe('events: PUT and DELETE with a version', () => {
     expect(stale.status).toBe(409);
     expect(stale.json).toEqual({ detail: 'Version conflict.', current: current.json });
     const staleDelete = await call('DELETE', `${base}/${id}?version=2`);
-    expect(staleDelete).toEqual({ status: 409, json: { detail: 'Version conflict.', current: current.json } });
+    expect(staleDelete).toEqual({
+      status: 409,
+      json: { detail: 'Version conflict.', current: current.json },
+    });
     expect((await call('DELETE', `${base}/${id}?version=3`)).status).toBe(200);
-    expect((await call('PUT', `${base}/${id}`, eventBody('gone', { version: 3 }))).json).toEqual({ detail: 'Event not found.' });
+    expect((await call('PUT', `${base}/${id}`, eventBody('gone', { version: 3 }))).json).toEqual({
+      detail: 'Event not found.',
+    });
     expect((await call('DELETE', `${base}/${id}?version=3`)).status).toBe(404);
   });
 
   it('answers in order: 404 session, 422, 400, then 409', async () => {
     const other = await unreachableSession();
-    expect((await call('PUT', `/api/sessions/${other}/events/x`, eventBody('m', { version: 1 }))).status).toBe(404);
-    expect((await call('DELETE', `/api/sessions/${other}/events/x?version=abc`)).json).toEqual({ detail: 'Session not found' });
+    expect(
+      (await call('PUT', `/api/sessions/${other}/events/x`, eventBody('m', { version: 1 }))).status,
+    ).toBe(404);
+    expect((await call('DELETE', `/api/sessions/${other}/events/x?version=abc`)).json).toEqual({
+      detail: 'Session not found',
+    });
     const { sessionId } = await seededSession();
     const base = `/api/sessions/${sessionId}/events`;
-    const id = (await call('POST', base, { category: SEED_CATEGORY_ID, message: 'm' })).json.event_id as string;
+    const id = (await call('POST', base, { category: SEED_CATEGORY_ID, message: 'm' })).json
+      .event_id as string;
     await call('PUT', `${base}/${id}`, eventBody('n'));
-    expect((await call('PUT', `${base}/${id}`, eventBody('m', { overwrite: true }))).status).toBe(422);
+    expect((await call('PUT', `${base}/${id}`, eventBody('m', { overwrite: true }))).status).toBe(
+      422,
+    );
     for (const q of ['version=abc', 'version=0', 'overwrite=1', 'version=1&overwrite=yes']) {
       expect((await call('DELETE', `${base}/${id}?${q}`)).status, q).toBe(422);
     }
-    const unknownCategory = await call('PUT', `${base}/${id}`, { ...eventBody('m', { version: 1 }), category: 'nope' });
-    expect(unknownCategory).toEqual({ status: 400, json: { detail: 'Unknown category for this studio profile.' } });
+    const unknownCategory = await call('PUT', `${base}/${id}`, {
+      ...eventBody('m', { version: 1 }),
+      category: 'nope',
+    });
+    expect(unknownCategory).toEqual({
+      status: 400,
+      json: { detail: 'Unknown category for this studio profile.' },
+    });
   });
 
   it('an overwrite after a conflict is recorded; a stale overwrite is refused and not recorded', async () => {
     const { sessionId } = await seededSession();
     const base = `/api/sessions/${sessionId}/events`;
-    const id = (await call('POST', base, { category: SEED_CATEGORY_ID, message: 'm' })).json.event_id as string;
+    const id = (await call('POST', base, { category: SEED_CATEGORY_ID, message: 'm' })).json
+      .event_id as string;
     await call('PUT', `${base}/${id}`, eventBody('theirs'));
     const conflict = await call('PUT', `${base}/${id}`, eventBody('mine', { version: 1 }));
     expect(conflict.status).toBe(409);
     const v = (conflict.json.current as { version: number }).version;
     await call('PUT', `${base}/${id}`, eventBody('third'));
-    const staleOverwrite = await call('PUT', `${base}/${id}`, eventBody('mine', { version: v, overwrite: true }));
+    const staleOverwrite = await call(
+      'PUT',
+      `${base}/${id}`,
+      eventBody('mine', { version: v, overwrite: true }),
+    );
     expect(staleOverwrite.status).toBe(409);
     expect(await audits(sessionId)).toEqual([]);
     const fresh = (staleOverwrite.json.current as { version: number }).version;
-    const overwrite = await call('PUT', `${base}/${id}`, eventBody('mine', { version: fresh, overwrite: true }));
+    const overwrite = await call(
+      'PUT',
+      `${base}/${id}`,
+      eventBody('mine', { version: fresh, overwrite: true }),
+    );
     expect(overwrite.status).toBe(200);
     expect(overwrite.json.message).toBe('mine');
     expect(await audits(sessionId)).toEqual([
@@ -126,15 +157,23 @@ describe('transcript words and topics: PATCH and DELETE with a version', () => {
       expect(current.status).toBe(200);
       expect(current.json.version).toBe(2);
       const stale = await call('PATCH', `${base}/${id}`, { [field]: 'c', version: 1 });
-      expect(stale).toEqual({ status: 409, json: { detail: 'Version conflict.', current: current.json } });
+      expect(stale).toEqual({
+        status: 409,
+        json: { detail: 'Version conflict.', current: current.json },
+      });
       expect(await call('DELETE', `${base}/${id}?version=1`)).toEqual({
         status: 409,
         json: { detail: 'Version conflict.', current: current.json },
       });
-      expect((await call('PATCH', `${base}/${id}`, { [field]: 'd', overwrite: true })).status).toBe(422);
+      expect((await call('PATCH', `${base}/${id}`, { [field]: 'd', overwrite: true })).status).toBe(
+        422,
+      );
       expect((await call('DELETE', `${base}/${id}?overwrite=1`)).status).toBe(422);
       const other = await unreachableSession();
-      expect((await call('PATCH', `/api/sessions/${other}/${kind}/${id}`, { [field]: 'x', version: 1 })).status).toBe(404);
+      expect(
+        (await call('PATCH', `/api/sessions/${other}/${kind}/${id}`, { [field]: 'x', version: 1 }))
+          .status,
+      ).toBe(404);
       expect((await call('DELETE', `${base}/${id}?version=2`)).status).toBe(204);
       expect(await call('PATCH', `${base}/${id}`, { [field]: 'e', version: 2 })).toEqual({
         status: 404,
@@ -152,7 +191,9 @@ describe('transcript words and topics: PATCH and DELETE with a version', () => {
       expect(empty.json.version).toBe(1);
       expect(await audits(sessionId)).toEqual([]);
       expect((await call('DELETE', `${base}/${id}?version=1&overwrite=1`)).status).toBe(204);
-      expect(await audits(sessionId)).toEqual([{ table_name: table, row_id: id, replaced_version: 1 }]);
+      expect(await audits(sessionId)).toEqual([
+        { table_name: table, row_id: id, replaced_version: 1 },
+      ]);
     });
   }
 });
@@ -162,9 +203,19 @@ describe('routes outside the check accept no version', () => {
     const { sessionId } = await seededSession();
     await setCompanionPresence('c-vc', sessionId);
     const H = { ...J, ...(await seedCompanionDevice()).bearer };
-    const log = await call('POST', '/api/companion/log', { category_id: SEED_CATEGORY_ID, message: 'x', version: 99, overwrite: true }, H);
+    const log = await call(
+      'POST',
+      '/api/companion/log',
+      { category_id: SEED_CATEGORY_ID, message: 'x', version: 99, overwrite: true },
+      H,
+    );
     expect(log.status).toBe(200);
-    const transport = await call('POST', '/api/companion/transport', { action: 'toggle', version: 99 }, H);
+    const transport = await call(
+      'POST',
+      '/api/companion/transport',
+      { action: 'toggle', version: 99 },
+      H,
+    );
     expect(transport.status).toBe(200);
   });
 });

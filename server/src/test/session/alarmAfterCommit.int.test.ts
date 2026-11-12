@@ -8,8 +8,8 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { LeaseStore } from '@autologger/session-core/leaseStore';
 import type { SessionStorage } from '@autologger/session-core/sessionCore';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { slowStorage } from './slowStorage';
 import { createSessionRow, openTestHub, testStorage } from './sessionRows';
+import { slowStorage } from './slowStorage';
 
 afterEach(() => vi.restoreAllMocks());
 

@@ -55,7 +55,9 @@ describe('studio settings defaults', () => {
     const team = await seedStudio();
     await testDb().run('DELETE FROM app_settings WHERE key = ?', `studio_config:${team}`);
     const blob = await (await initedCatalog()).studios.getStudioSettingsBlob(team);
-    expect(withoutIds(blob as Blob)).toEqual(withoutIds(defaultSettingsBlob(team) as unknown as Blob));
+    expect(withoutIds(blob as Blob)).toEqual(
+      withoutIds(defaultSettingsBlob(team) as unknown as Blob),
+    );
     expect(await settingsRows(team)).toEqual([]);
   });
 
@@ -67,7 +69,9 @@ describe('studio settings defaults', () => {
       `studio_config:${team}`,
     );
     const blob = await (await initedCatalog()).studios.getStudioSettingsBlob(team);
-    expect(withoutIds(blob as Blob)).toEqual(withoutIds(defaultSettingsBlob(team) as unknown as Blob));
+    expect(withoutIds(blob as Blob)).toEqual(
+      withoutIds(defaultSettingsBlob(team) as unknown as Blob),
+    );
     expect(await settingsRows(team)).toEqual([{ value: '{not json' }]);
   });
 

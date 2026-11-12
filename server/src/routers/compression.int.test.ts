@@ -56,11 +56,13 @@ function variesOnAcceptEncoding(res: Response): boolean {
 }
 
 async function gunzipJson(res: Response): Promise<unknown> {
-  return await new Response(res.body!.pipeThrough(new DecompressionStream('gzip'))).json();
+  if (!res.body) throw new Error('expected a response body');
+  return await new Response(res.body.pipeThrough(new DecompressionStream('gzip'))).json();
 }
 
 async function gunzipText(res: Response): Promise<string> {
-  return await new Response(res.body!.pipeThrough(new DecompressionStream('gzip'))).text();
+  if (!res.body) throw new Error('expected a response body');
+  return await new Response(res.body.pipeThrough(new DecompressionStream('gzip'))).text();
 }
 
 /** Seed enough transcript words that the JSON list body clears the

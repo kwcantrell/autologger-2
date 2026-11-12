@@ -1,7 +1,7 @@
 // catalog-policies design D11: the test-only retry counter. A fake `CatalogRoot` stands in for
 // the adapter: its `tx` re-runs the body on a `40001`/`40P01` up to five runs, as the adapter does.
 
-import { mkdtempSync, readFileSync, existsSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { CatalogDb, CatalogRoot } from '@autologger/ports';

@@ -3,9 +3,9 @@
 // over it, and raw reads and writes of the session tables with `session_id` filled in. Test
 // infrastructure.
 
-import type { Row, SessionStorage, SqlValue } from '@autologger/session-core/sessionCore';
-import type { SessionHubEntry } from '@autologger/session-core/SessionHub';
 import type { Clock } from '@autologger/ports';
+import type { SessionHubEntry } from '@autologger/session-core/SessionHub';
+import type { Row, SessionStorage, SqlValue } from '@autologger/session-core/sessionCore';
 import { PostgresCatalogDb, PostgresSessionDb } from '@autologger/storage';
 import type { vi } from 'vitest';
 import { env } from '../harness';
@@ -35,7 +35,6 @@ export function catalogRoot(): PostgresCatalogDb {
 export function sessionDb(root: PostgresCatalogDb = catalogRoot()): PostgresSessionDb {
   return new PostgresSessionDb(root);
 }
-
 
 let made = 0;
 
