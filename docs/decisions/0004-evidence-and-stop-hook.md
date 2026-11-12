@@ -1,7 +1,7 @@
 # 0004: Evidence, not claims, and a Stop hook that checks
 
 - Date: 2026-09-29
-- Status: Accepted
+- Status: Superseded by 0034 (2026-11-12)
 - Rule: Non-negotiable 4; checks `evidence`, `commands`; Stop hook `stop-check.sh`
 
 ## Context

@@ -1,7 +1,7 @@
 # 0003: tasks.md is the only plan
 
 - Date: 2026-09-29
-- Status: Accepted
+- Status: Superseded by 0034 (2026-11-12)
 - Rule: Non-negotiable 1; check `tasks`
 
 ## Context

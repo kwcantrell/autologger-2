@@ -1,7 +1,7 @@
 # 0016: tasks.md-only edits to existing archives are not a change
 
 - Date: 2026-09-29
-- Status: Accepted
+- Status: Superseded by 0034 (2026-11-12)
 - Rule: check `change` (`exempt_archives`); changed paths read NUL-separated with `--no-renames`;
   artifacts-first and size read git paths the same way (exact-git-paths)
 
