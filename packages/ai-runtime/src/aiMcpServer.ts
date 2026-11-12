@@ -50,7 +50,7 @@
 
 import { randomBytes } from 'node:crypto';
 import http from 'node:http';
-import type { AddressInfo } from 'node:net';
+import type { AddressInfo, Socket } from 'node:net';
 import { topicCreateSchema } from '@autologger/contract';
 import {
   type CategoryDef,
@@ -1130,6 +1130,8 @@ export function registerSdkTurn(
  */
 export class AiMcpListener {
   private httpServer: http.Server | null = null;
+  /** The open sockets of `httpServer`, so `close()` can find connections that never sent a byte. */
+  private sockets = new Set<Socket>();
   /** The first `start()`'s promise, kept in a wrapper so the memo check tests an object, not a
    * promise (promise hygiene, async-session-hub D9). */
   private started: { promise: Promise<void> } | null = null;
@@ -1142,10 +1144,21 @@ export class AiMcpListener {
    * NEVER a non-loopback address. Resolves once listening. */
   start(): Promise<void> {
     if (this.started) return this.started.promise;
+    const sockets = new Set<Socket>();
     const server = http.createServer((req, res) => {
+      // A response that was in flight when `close()` ran leaves its socket open for keep-alive.
+      // Once it is done, drop that socket (and any other now-idle one) so `close()` can resolve.
+      res.once('close', () => {
+        if (!server.listening) server.closeIdleConnections();
+      });
       void this.handle(req, res);
     });
+    server.on('connection', (socket: Socket) => {
+      sockets.add(socket);
+      socket.once('close', () => sockets.delete(socket));
+    });
     this.httpServer = server;
+    this.sockets = sockets;
     const started = {
       promise: new Promise<void>((resolve, reject) => {
         const onError = (err: Error): void => reject(err);
@@ -1213,14 +1226,28 @@ export class AiMcpListener {
     return this.turns.size;
   }
 
-  /** Stop the listener and drop all registrations. */
+  /**
+   * Stop the listener and drop all registrations. Resolves once every connection is gone: idle
+   * keep-alive connections and connections that never sent a byte are dropped at once, and a
+   * request already in flight still gets its whole response before its connection is dropped.
+   *
+   * `server.close()` alone closes only the connections Node counts as idle, those that finished a
+   * request. A client's connection pool (undici, behind `fetch`) can open a connection and never
+   * send a request on it. Node counts that connection as active, so the close would wait until
+   * the client's own keep-alive timer (4 s in undici) drops it.
+   */
   async close(): Promise<void> {
     this.turns.clear();
     const server = this.httpServer;
+    const sockets = this.sockets;
     this.httpServer = null;
     this.started = null;
     if (server === null) return;
-    await new Promise<void>((resolve) => server.close(() => resolve()));
+    const closed = new Promise<void>((resolve) => server.close(() => resolve()));
+    for (const socket of sockets) {
+      if (socket.bytesRead === 0) socket.destroy();
+    }
+    await closed;
   }
 
   private async handle(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
