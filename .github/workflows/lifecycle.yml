@@ -1,7 +1,7 @@
 # The enforced gates. Make the `gates`, `secrets`, `dependency-review` and `db-tests` jobs
 # required status checks in the main branch ruleset. Factory PRs (body: the job's ship.md) need
-# nothing in the PR body; only the `no-test-needed` label is read. Actions are pinned to full commit SHAs;
-# Dependabot keeps them current.
+# nothing in the PR body; only the `no-test-needed` label is read. Actions are pinned to full
+# commit SHAs; Dependabot keeps them current.
 name: lifecycle
 
 on:
