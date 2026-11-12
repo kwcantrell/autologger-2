@@ -191,10 +191,12 @@ endpoints' existing `note` field (show-wiki "A batch job accepts suggestions as 
 
 The run-starting routes `POST /api/sessions/:id/ai/chat`, `POST /api/sessions/:id/ai/v2/design`,
 `POST /api/sessions/:id/topics/generate`, `POST /api/sessions/:id/events/generate`,
-`POST /api/sessions/:id/youtube-import` and `POST /api/sessions/:id/transcript-words/generate` SHALL
+`POST /api/sessions/:id/youtube-import`, `POST /api/sessions/:id/transcript-words/generate` and
+`POST /api/youtube/playlist-entries` SHALL
 respond `403 {"detail": "This feature is limited to approved users on this server."}` to a logged-in
-user who may access the session but whose verified login email is not an approved user
-(run-status-and-sweeper D9). The bootstrap owner (`BOOTSTRAP_OWNER_EMAIL`) SHALL always be an
+user who may access the session (for the session routes) but whose verified login email is not an
+approved user (run-status-and-sweeper D9; youtube-playlist-import adds the playlist listing, which
+makes outbound requests to YouTube). The bootstrap owner (`BOOTSTRAP_OWNER_EMAIL`) SHALL always be an
 approved user, and `RUN_FEATURE_EMAILS`, a comma-separated list whose entries are trimmed and whose
 blank entries are dropped, SHALL add approved users to it; unset, blank or all-blank (such as `,`)
 SHALL mean the bootstrap owner alone. Every match SHALL use the bootstrap-owner rule (trimmed,
@@ -204,7 +206,8 @@ the route's configuration `503` (so every earlier refusal of the route's frozen 
 keeps its place), and before the in-process slot, the run lease and any subprocess or provider
 call. For `ai/v2/design` it SHALL run after both the configuration `503` and the agent-credentials
 `503`, that is after the whole shared AI v2 guard prologue, and SHALL NOT be part of that prologue,
-which the AI v2 answer route also runs and which stays ungated. Each route's own ordered
+which the AI v2 answer route also runs and which stays ungated. For `youtube/playlist-entries` it
+SHALL run after the configuration `503` and before the body `422`. Each route's own ordered
 requirement or status table SHALL list the `403` at that step. The batch autogenerate start route (`POST /api/teams/:teamId/autogenerate-jobs`) SHALL apply the
 same rule to its caller, the job's initiator, at the step its status table lists, and the job
 SHALL re-check it before every session it processes (batch-autogenerate). No other route SHALL be
@@ -213,26 +216,26 @@ affected.
 #### Scenario: A user who is not approved is refused before any work
 
 - **WHEN** a member of the session's show whose email is not in `RUN_FEATURE_EMAILS` posts to any of
-  the six routes on a configured deployment
+  the seven routes on a configured deployment
 - **THEN** the response is `403` with the fixed detail, no subprocess or provider call is made, no
   in-process slot is taken, and no run lease row is written
 
 #### Scenario: Unset list means the bootstrap owner
 
-- **WHEN** `RUN_FEATURE_EMAILS` is unset and the bootstrap owner posts to one of the six routes
+- **WHEN** `RUN_FEATURE_EMAILS` is unset and the bootstrap owner posts to one of the seven routes
 - **THEN** the request proceeds to the route's existing behavior
 
 #### Scenario: An all-blank list means the bootstrap owner alone
 
 - **WHEN** `RUN_FEATURE_EMAILS` is `,` (only blank entries), and the bootstrap owner and then
-  another member of the session's show post to one of the six routes on a configured deployment
+  another member of the session's show post to one of the seven routes on a configured deployment
 - **THEN** the bootstrap owner's request proceeds to the route's existing behavior, and the other
   member's request is answered `403` with the fixed detail
 
 #### Scenario: Granting someone keeps the owner approved
 
 - **WHEN** `RUN_FEATURE_EMAILS` names only another member's address, and the bootstrap owner posts to
-  one of the six routes on a configured deployment
+  one of the seven routes on a configured deployment
 - **THEN** the bootstrap owner's request proceeds to the route's existing behavior, and the named
   member is admitted too
 
@@ -240,6 +243,12 @@ affected.
 
 - **WHEN** a user who is not approved posts to a route whose feature is not configured
 - **THEN** the response is the route's existing `503`, not `403`
+
+#### Scenario: The playlist listing refuses a user who is not approved before reading the body
+
+- **WHEN** a signed-in user who is not approved posts a malformed body to
+  `POST /api/youtube/playlist-entries` on a deployment with `yt-dlp`
+- **THEN** the response is `403` with the fixed detail, not `422`, and no subprocess is spawned
 
 #### Scenario: A batch job's initiator must be approved
 

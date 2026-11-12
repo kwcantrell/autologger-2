@@ -482,6 +482,7 @@ posture). For a team the caller is a member of without the required role, they S
 | transfer ownership | yes | `403` | `403` |
 | grant or revoke show grants | yes | yes | `403` |
 | create a show, change team or show settings | yes | yes | `403` |
+| preview, start, view or cancel a batch autogenerate job | yes | yes | `403` |
 | leave | `409` | yes | yes |
 
 No operation on this surface SHALL target the owner: removing the owner or changing the owner's
@@ -517,6 +518,11 @@ reaches only the shows they hold a grant for. There are no built-in teams: every
   open a session of S in their team
 - **THEN** the first three get the session, and the member without a grant gets the masked
   `404`
+
+#### Scenario: Batch autogenerate is a manager operation
+- **WHEN** an admin and a plain member of the same team each list the team's batch autogenerate
+  jobs
+- **THEN** the admin gets `200` and the member gets `403`
 
 ### Requirement: Show grants
 A show grant SHALL be a `(user, show)` pair that gives a `member` full session access in that

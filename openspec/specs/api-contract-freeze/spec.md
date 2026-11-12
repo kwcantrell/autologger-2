@@ -2040,10 +2040,12 @@ their current frozen `503`.
 
 The run-starting routes `POST /api/sessions/:id/ai/chat`, `POST /api/sessions/:id/ai/v2/design`,
 `POST /api/sessions/:id/topics/generate`, `POST /api/sessions/:id/events/generate`,
-`POST /api/sessions/:id/youtube-import` and `POST /api/sessions/:id/transcript-words/generate` SHALL
+`POST /api/sessions/:id/youtube-import`, `POST /api/sessions/:id/transcript-words/generate` and
+`POST /api/youtube/playlist-entries` SHALL
 respond `403 {"detail": "This feature is limited to approved users on this server."}` to a logged-in
-user who may access the session but whose verified login email is not an approved user
-(run-status-and-sweeper D9). The bootstrap owner (`BOOTSTRAP_OWNER_EMAIL`) SHALL always be an
+user who may access the session (for the session routes) but whose verified login email is not an
+approved user (run-status-and-sweeper D9; youtube-playlist-import adds the playlist listing, which
+makes outbound requests to YouTube). The bootstrap owner (`BOOTSTRAP_OWNER_EMAIL`) SHALL always be an
 approved user, and `RUN_FEATURE_EMAILS`, a comma-separated list whose entries are trimmed and whose
 blank entries are dropped, SHALL add approved users to it; unset, blank or all-blank (such as `,`)
 SHALL mean the bootstrap owner alone. Every match SHALL use the bootstrap-owner rule (trimmed,
@@ -2053,32 +2055,36 @@ the route's configuration `503` (so every earlier refusal of the route's frozen 
 keeps its place), and before the in-process slot, the run lease and any subprocess or provider
 call. For `ai/v2/design` it SHALL run after both the configuration `503` and the agent-credentials
 `503`, that is after the whole shared AI v2 guard prologue, and SHALL NOT be part of that prologue,
-which the AI v2 answer route also runs and which stays ungated. Each route's own ordered
-requirement or status table SHALL list the `403` at that step. No other route SHALL be affected.
+which the AI v2 answer route also runs and which stays ungated. For `youtube/playlist-entries` it
+SHALL run after the configuration `503` and before the body `422`. Each route's own ordered
+requirement or status table SHALL list the `403` at that step. The batch autogenerate start route (`POST /api/teams/:teamId/autogenerate-jobs`) SHALL apply the
+same rule to its caller, the job's initiator, at the step its status table lists, and the job
+SHALL re-check it before every session it processes (batch-autogenerate). No other route SHALL be
+affected.
 
 #### Scenario: A user who is not approved is refused before any work
 
 - **WHEN** a member of the session's show whose email is not in `RUN_FEATURE_EMAILS` posts to any of
-  the six routes on a configured deployment
+  the seven routes on a configured deployment
 - **THEN** the response is `403` with the fixed detail, no subprocess or provider call is made, no
   in-process slot is taken, and no run lease row is written
 
 #### Scenario: Unset list means the bootstrap owner
 
-- **WHEN** `RUN_FEATURE_EMAILS` is unset and the bootstrap owner posts to one of the six routes
+- **WHEN** `RUN_FEATURE_EMAILS` is unset and the bootstrap owner posts to one of the seven routes
 - **THEN** the request proceeds to the route's existing behavior
 
 #### Scenario: An all-blank list means the bootstrap owner alone
 
 - **WHEN** `RUN_FEATURE_EMAILS` is `,` (only blank entries), and the bootstrap owner and then
-  another member of the session's show post to one of the six routes on a configured deployment
+  another member of the session's show post to one of the seven routes on a configured deployment
 - **THEN** the bootstrap owner's request proceeds to the route's existing behavior, and the other
   member's request is answered `403` with the fixed detail
 
 #### Scenario: Granting someone keeps the owner approved
 
 - **WHEN** `RUN_FEATURE_EMAILS` names only another member's address, and the bootstrap owner posts to
-  one of the six routes on a configured deployment
+  one of the seven routes on a configured deployment
 - **THEN** the bootstrap owner's request proceeds to the route's existing behavior, and the named
   member is admitted too
 
@@ -2086,6 +2092,18 @@ requirement or status table SHALL list the `403` at that step. No other route SH
 
 - **WHEN** a user who is not approved posts to a route whose feature is not configured
 - **THEN** the response is the route's existing `503`, not `403`
+
+#### Scenario: The playlist listing refuses a user who is not approved before reading the body
+
+- **WHEN** a signed-in user who is not approved posts a malformed body to
+  `POST /api/youtube/playlist-entries` on a deployment with `yt-dlp`
+- **THEN** the response is `403` with the fixed detail, not `422`, and no subprocess is spawned
+
+#### Scenario: A batch job's initiator must be approved
+
+- **WHEN** an admin of a team whose email is not an approved user posts a valid start request to
+  `POST /api/teams/:teamId/autogenerate-jobs` on a configured deployment
+- **THEN** the response is `403` with the fixed detail and no job is created
 
 ### Requirement: Companion device tokens authenticate only the Companion surface
 The server SHALL NOT read `API_TOKEN`; there is no shared Companion secret (ADR 0021 slice 9d,
@@ -3176,3 +3194,305 @@ treat unrecognized codes as a generic sign-in failure).
 #### Scenario: The default follows the stack
 - **WHEN** `SIGNUPS` is unset and the stack is `dev`, `stage` or `prod`
 - **THEN** sign-ups are open on `dev` and closed on `stage` and `prod`, and the boot log says which
+
+### Requirement: YouTube playlist listing endpoint
+
+`POST /api/youtube/playlist-entries` SHALL list the entries of one public or unlisted YouTube
+playlist without downloading any media (youtube-playlist-import). It is login-gated like every
+`/api/*` route and is not scoped to a session or show. The request body SHALL be
+`{ "url": string }` with `url` 1–2048 characters; unknown body keys are ignored. A body that is
+not JSON or fails this schema SHALL be answered with the frozen validation shape ("Validation error
+bodies carry zod 4 issues"): `422 {"detail": [...zod issues]}` (a body that is not JSON is one
+issue at path `[]`). `POST /api/sessions/:id/youtube-import` keeps its own `400` body refusal
+unchanged.
+
+The URL SHALL be accepted only when all of these hold, checked on the parsed URL:
+
+- the scheme is `http` or `https` and the lowercased hostname is exactly `youtube.com`,
+  `www.youtube.com`, `m.youtube.com` or `music.youtube.com`;
+- the path is `/playlist` or `/watch`;
+- the `list` query parameter matches `^[A-Za-z0-9_-]{2,64}$`.
+
+A `/watch` URL with a `list` parameter SHALL be treated as that playlist; its `v` parameter is
+ignored. A list id beginning `RD` (Mix and radio lists) SHALL be refused with its own `400` detail
+below. Private lists (including Watch Later and Liked videos) are not recognized by id; YouTube
+reports them as nonexistent, which gives the private-or-nonexistent `502`.
+
+Responses, decided in this order (each later row only when no earlier row applies):
+
+| Status | When | Body |
+| --- | --- | --- |
+| `401` | not logged in | `{"detail":"Login required."}` |
+| `503` | no `yt-dlp` available (the `youtube-import` gate) | `{"detail":"YouTube import is unavailable on this deployment."}` |
+| `403` | not an approved user ("Run features are limited to approved users") | `{"detail":"This feature is limited to approved users on this server."}` |
+| `422` | body not JSON, or not `{url: string}` within 1–2048 characters | `{"detail":[…zod issues]}` |
+| `400` | `url` fails the host, path or `list` rules above | `{"detail":"url must be a YouTube playlist link: youtube.com/playlist?list=… or youtube.com/watch?v=…&list=…."}` |
+| `400` | list id begins `RD` | `{"detail":"Mix and radio lists can't be imported; use a regular playlist link."}` |
+| `503` | two listings are already running in this server process | `{"detail":"Playlist listing is busy; try again."}` |
+| `502` | YouTube reports the playlist private or nonexistent | `{"detail":"This playlist is private or does not exist. Only public and unlisted playlists can be imported."}` |
+| `502` | the listing ran longer than 60 seconds | `{"detail":"Listing the playlist timed out."}` |
+| `502` | any other listing failure, including output over 16 MiB or output that is not a playlist | `{"detail":"Failed to list the playlist."}` |
+| `200` | the listing ran | the object below |
+
+No `422` or `400` row, nor the busy `503`, SHALL spawn a subprocess or make an outbound request.
+
+The `200` body SHALL be exactly:
+
+```
+{ "playlist": { "id": string, "title": string, "url": string },
+  "entries":  [{ "index": number, "video_id": string, "url": string,
+                 "title": string | null, "duration_s": number | null,
+                 "importable": boolean,
+                 "reason": "unavailable" | "live" | "upcoming" | "too_long" | null }],
+  "truncated": boolean }
+```
+
+- `playlist.id` is the validated list id; `playlist.url` is
+  `https://www.youtube.com/playlist?list=<id>`; `playlist.title` is YouTube's title for the
+  playlist, or `""` when none is reported.
+- `entries` are in playlist order, at most 5000. `index` is the 1-based position in that order.
+  An entry whose video id does not match `^[A-Za-z0-9_-]{11}$` is left out, and the positions of
+  the remaining entries are not renumbered.
+- `url` is `https://www.youtube.com/watch?v=<video_id>`, which `youtube-import` accepts unchanged.
+- `title` is the reported video title with control characters (U+0000–U+001F, U+007F–U+009F)
+  removed and at most 500 characters; it is `null` when YouTube reports no title.
+- `duration_s` is the reported duration in seconds, or `null` when none is reported.
+- `reason` is the first that applies of: `unavailable` (no title, or a title of exactly
+  `[Private video]` or `[Deleted video]`), `live` (a live stream in progress), `upcoming` (a
+  scheduled premiere or stream), `too_long` (a duration of 14,400 seconds or more, which the
+  `youtube-import` download filter `duration < 14400` refuses); otherwise `null`. `importable`
+  is `true` exactly when `reason` is `null`.
+- `truncated` is `true` exactly when 5000 entries were returned and the playlist reports more
+  than 5000 (`playlist_count`); hidden, deleted or dropped entries do not make it `true`.
+- An empty playlist SHALL give `200` with `entries: []`.
+- The endpoint SHALL set no cookies, SHALL write nothing to the catalog or blob store, and SHALL
+  download no media.
+
+#### Scenario: A public playlist is listed
+- **WHEN** an approved user posts `{"url":"https://www.youtube.com/playlist?list=PLBB231211A4F62143"}`
+  on a deployment with `yt-dlp`
+- **THEN** the response is `200` with `playlist.id` `PLBB231211A4F62143`, one entry per listed
+  video in playlist order with `index` starting at 1, each entry's `url` of the form
+  `https://www.youtube.com/watch?v=<video_id>`, and `truncated` `false`
+
+#### Scenario: A watch link with a list is the playlist
+- **WHEN** the posted `url` is `https://www.youtube.com/watch?v=RlJy2Kt8Be0&list=PLBB231211A4F62143`
+- **THEN** the response lists the playlist `PLBB231211A4F62143`, not the single video
+
+#### Scenario: Mix lists are refused before any spawn
+- **WHEN** the posted `url` is `https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=RDdQw4w9WgXcQ`
+- **THEN** the response is `400` with the Mix detail and no subprocess is spawned
+
+#### Scenario: Non-playlist links are refused before any spawn
+- **WHEN** the posted `url` is `https://www.youtube.com/watch?v=dQw4w9WgXcQ` (no `list`),
+  `https://youtu.be/dQw4w9WgXcQ?list=PLx`, `https://www.youtube.com/@channel`, or a host such as
+  `youtube.com.evil.com`
+- **THEN** the response is `400` with the playlist-link detail and no subprocess is spawned
+
+#### Scenario: A malformed body is a zod 4 validation error
+- **WHEN** an approved user posts `{}` or `{"url": 5}`
+- **THEN** the response is `422`, `detail` is an array with an issue at path `["url"]`, and no
+  subprocess is spawned
+
+#### Scenario: A private or missing playlist is a clear 502
+- **WHEN** YouTube reports that the requested playlist does not exist or is private, as it does
+  for `https://www.youtube.com/playlist?list=WL`
+- **THEN** the response is `502` with the private-or-nonexistent detail
+
+#### Scenario: Unavailable entries are listed but not importable
+- **WHEN** a playlist holds a deleted video (no title reported) and a 5-hour video
+- **THEN** both appear in `entries` at their positions with `importable` `false` and `reason`
+  `unavailable` and `too_long` respectively
+
+#### Scenario: Unconfigured deployment answers 503 before the approval check
+- **WHEN** a user who is not approved posts to the route on a deployment with no `yt-dlp`
+- **THEN** the response is `503` with the `youtube-import` unavailable detail
+
+#### Scenario: A third concurrent listing is busy
+- **WHEN** two listings are running in the server process and a third request with a valid URL
+  arrives
+- **THEN** the response is `503` `{"detail":"Playlist listing is busy; try again."}` and no
+  subprocess is spawned for it
+
+### Requirement: Batch autogenerate job object
+Every batch autogenerate endpoint that returns a job SHALL return exactly this object:
+
+```
+{ "id": string, "team_id": string,
+  "status": "queued" | "running" | "finished" | "cancelled" | "failed",
+  "stop_reason": null | "cancelled" | "initiator-unavailable" | "initiator-role-lost"
+                 | "not-approved" | "unconfigured-stt" | "unconfigured-llm"
+                 | "provider-failing",
+  "scope": "shows" | "sessions", "show_ids": [string] | null,
+  "steps": ["transcript" | "events" | "topics" | "wiki"],
+  "wiki_mode": "accept" | "pending",
+  "initiator_id": string, "initiator_name": string,
+  "cancel_requested_by_name": string | null, "cancel_requested_at_utc": string | null,
+  "created_at_utc": string, "started_at_utc": string | null, "finished_at_utc": string | null,
+  "sessions": number,
+  "counts": { "pending": number, "running": number, "done": number,
+              "skipped": number, "failed": number, "cancelled": number },
+  "current": { "session_id": string, "step": string } | null }
+```
+
+- **`steps`** lists the selected steps in run order; **`show_ids`** is null for a session-list job.
+- **`counts`** counts item rows (one per session and selected step) by status.
+- **`current`** names the item now running, or null.
+- **`*_name`** follows the wiki page object's rule: given and family name recorded at the time,
+  never an email.
+- **`stop_reason`** is `cancelled` exactly when `status` is `cancelled`, one of the other values
+  exactly when `status` is `failed`, and null otherwise.
+
+Every item SHALL carry an outcome from this fixed list, each with its fixed detail, or null:
+
+| Outcome | Item status | Detail |
+| --- | --- | --- |
+| `present` | `skipped` | `Already had output; left unchanged.` |
+| `no-audio` | `skipped` | `The session has no audio to transcribe.` |
+| `no-speech` | `skipped` | `No speech was found in the audio.` |
+| `no-transcript` | `skipped` | `The session has no transcript words.` |
+| `no-anchors` | `skipped` | `The transcript has no timecodes to place events on.` |
+| `no-instructions` | `skipped` | `No event button on this show has a generation instruction.` |
+| `busy` | `skipped` | `The session stayed busy for 10 minutes.` |
+| `access-lost` | `skipped` | `The initiator can no longer access this session.` |
+| `session-gone` | `skipped` | `The session no longer exists.` |
+| `earlier-step-failed` | `skipped` | `Skipped because an earlier step failed.` |
+| `unconfigured` | `failed` | `No provider is configured for this step.` |
+| `provider-failed` | `failed` | `The provider request failed.` |
+| `rate-limited` | `failed` | `The provider kept refusing with a rate limit.` |
+| `too-large` | `failed` | `The audio is over the provider's size limit.` |
+| `missing-audio-file` | `failed` | `An audio file of the session is missing.` |
+| `unreadable` | `failed` | `The audio could not be read.` |
+| `generation-failed` | `failed` | `Generation failed.` |
+| `interrupted` | `failed` | `Interrupted three times; not retried.` |
+| `cancelled` | `cancelled` | `Cancelled before it started.` |
+| `job-stopped` | `cancelled` | `The job stopped before this step.` |
+
+`done`, `pending` and `running` items have a null outcome and detail. An outcome SHALL appear
+only with the item status its row gives. No other text SHALL appear in an outcome or detail.
+
+#### Scenario: A finished job reports its counts
+- **WHEN** a job over 2 sessions with steps transcript and topics ends with 3 items `done` and 1
+  `skipped`
+- **THEN** the job object has `status` `finished`, `stop_reason` null, `sessions` 2 and `counts`
+  `{"pending":0,"running":0,"done":3,"skipped":1,"failed":0,"cancelled":0}`
+
+### Requirement: Batch autogenerate endpoints
+The server SHALL expose these JSON routes. All require a logged-in user (`401
+{"detail":"Login required."}`), set no cookie, and decide, before anything else of their own, the
+team family's masked `404 {"detail":"Team not found"}` for a team the caller is not a member of
+and `403 {"detail":"Admin role required."}` for a `member`, in that order, before reading any
+body.
+
+**Scope body** (preview and start):
+
+```
+{ "show_ids"?: [string], "session_ids"?: [string],
+  "steps": ["transcript" | "events" | "topics" | "wiki"],
+  "wiki_mode"?: "accept" | "pending" }
+```
+
+Exactly one of `show_ids` and `session_ids` SHALL be present and non-empty (at most 200 and 1000
+ids); `steps` SHALL be non-empty without duplicates; `wiki_mode` defaults to `accept`. A body that
+fails this schema (or, on start, lacks a non-negative integer `expected_sessions`) SHALL be
+answered `422 {"detail": [...]}` with the zod 4 issues ("Validation error bodies carry zod 4
+issues"). These routes SHALL NOT use the team routes' `400` string detail: that is a listed
+exception for the team management family only, and these routes are not part of it.
+
+**`POST /api/teams/:teamId/autogenerate-jobs/preview`** takes the scope body:
+
+| Status | When | Body |
+| --- | --- | --- |
+| `422` | the body fails the schema | `{"detail": [<zod 4 issue>]}` |
+| `404` | a show id is not a show of the team | `{"detail":"Show not found."}` |
+| `404` | a session id is not an accessible, non-deleted session of the team | `{"detail":"Session not found"}` |
+| `400` | no candidate session | `{"detail":"No sessions to process."}` |
+| `400` | more than 1000 candidate sessions | `{"detail":"A batch job can process at most 1000 sessions."}` |
+| `200` | otherwise | `{"sessions": number, "steps": [string], "runs": {<step>: number}, "max_runs": number, "blocked": null \| "unconfigured-stt" \| "unconfigured-llm" \| "not-approved"}` |
+
+- `runs` has one key per selected step: the sessions whose output for that step is missing now
+  (for `wiki`, every candidate session). `max_runs` is `sessions × steps`.
+- `blocked` names the first reason the caller could not start this job now, in the start route's
+  order, or null. The preview writes nothing.
+
+**`POST /api/teams/:teamId/autogenerate-jobs`** takes the scope body plus a required
+`"expected_sessions": number`:
+
+| Status | When | Body |
+| --- | --- | --- |
+| `422` | the body fails the schema | `{"detail": [<zod 4 issue>]}` |
+| `404` | show or session not in scope, as for preview | as for preview |
+| `400` | no candidate session, or more than 1000 | as for preview |
+| `503` | `transcript` is selected and the caller has no speech-to-text credential | `{"detail":"Add a speech-to-text key in Settings → Advanced to generate transcripts."}` |
+| `503` | `events`, `topics` or `wiki` is selected and the caller has no AI route | `{"detail":"Add a language model in Settings → Advanced to autogenerate."}` |
+| `403` | the caller isn't an approved user | the existing run-feature 403 |
+| `409` | the team has a `queued` or `running` job | `{"detail":"A batch job is already running for this team.","job_id":string}` |
+| `409` | the candidate count differs from `expected_sessions` | `{"detail":"The sessions changed since the estimate.","sessions":number}` |
+| `201` | the job was created | `{"job": <job object>}` |
+
+The job, its item rows and its candidate order SHALL be written in one transaction, so two
+concurrent starts for one team create exactly one job and the other answers the first `409`.
+
+**`GET /api/teams/:teamId/autogenerate-jobs`** SHALL answer `200 {"jobs": [<job object>]}`, the
+team's 20 newest jobs, newest first. Query parameters are ignored.
+
+**`GET /api/teams/:teamId/autogenerate-jobs/:jobId`** SHALL answer `200`:
+
+```
+{ "job": <job object>,
+  "sessions": [{ "session_id": string, "title": string, "show_id": string,
+                 "effective_date": string | null, "ordinal": number,
+                 "steps": [{ "step": string, "status": "pending" | "running" | "done"
+                                       | "skipped" | "failed" | "cancelled",
+                             "outcome": string | null, "detail": string | null,
+                             "wiki_accepted": number | null, "wiki_pending": number | null,
+                             "kept_edited": number | null }] }] }
+```
+
+in processing order; `title` is the session's current title, or `""` when it no longer exists;
+`wiki_accepted` and `wiki_pending` are numbers only on a `done` wiki item; `kept_edited` is the
+number of the item's own partial events or topics it kept because a person had edited them, a
+number only on an ended events or topics item. A job id that doesn't
+exist or belongs to another team answers `404 {"detail":"Job not found."}`.
+
+**`POST /api/teams/:teamId/autogenerate-jobs/:jobId/cancel`** takes no body (any body is ignored):
+
+| Status | When | Body |
+| --- | --- | --- |
+| `404` | as for the job read | `{"detail":"Job not found."}` |
+| `409` | the job already ended | `{"detail":"Job already ended.","status":string}` |
+| `200` | the cancel was recorded (repeating it is `200` too) | `{"job": <job object>}` |
+
+A `queued` job is `cancelled` in the `200` body; a `running` job stays `running` with
+`cancel_requested_by_name` set until its current step ends.
+
+A wiki revision written by a batch accept SHALL carry the note `accepted suggestion <id> (batch
+<job id>)`, or `created from suggestion <id> (batch <job id>)` for a new page, in the wiki revision
+endpoints' existing `note` field (show-wiki "A batch job accepts suggestions as its initiator").
+
+#### Scenario: Start, then a second start
+- **WHEN** an admin previews 12 sessions and starts with `expected_sessions` 12, and another admin
+  of the team then starts a job
+- **THEN** the first answer is `201` with a `queued` or `running` job, and the second is `409`
+  with the first job's `job_id`
+
+#### Scenario: Unconfigured initiator
+- **WHEN** an owner with no `llm` credential, who does not resolve to the Claude CLI, starts a job
+  with `topics` selected
+- **THEN** the response is the language-model `503` and no job is created
+
+#### Scenario: Member and outsider
+- **WHEN** a plain member of team T and a user outside T each call
+  `GET /api/teams/T/autogenerate-jobs`
+- **THEN** the member gets `403 {"detail":"Admin role required."}` and the outsider gets the
+  masked `404`, byte-identical to the answer for a team id that doesn't exist
+
+#### Scenario: Cancel a finished job
+- **WHEN** an admin cancels a job whose status is `finished`
+- **THEN** the response is `409 {"detail":"Job already ended.","status":"finished"}` and the job
+  is unchanged
+
+#### Scenario: An invalid scope body is a 422
+- **WHEN** an admin posts a preview with both `show_ids` and `session_ids`, and a start without
+  `expected_sessions`
+- **THEN** both responses are `422` with `detail` an array of zod 4 issues, and no job is created
