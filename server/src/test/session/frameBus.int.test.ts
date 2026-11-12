@@ -1,6 +1,6 @@
 // The Postgres frame bus across two server processes (session-frame-bus D1-D3, D8; ADR 0021 slice
 // 9a; core-ports-architecture "Session frames reach every process in commit order"). Two
-// `createBindings({ frameBus: 'postgres' })` instances over the test database stand in for two
+// `testBindings(…, { frameBus: 'postgres' })` instances over the test database stand in for two
 // processes: each has its own catalog adapter, registry and bus, and a socket is a recording stand-in
 // attached to a process's hub. Every process, the writer included, delivers from its listener.
 // The 300-session revoke is task 5.1's (sessionWs.access.int.test.ts). The `1012` cases
@@ -23,7 +23,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { connOptions } from '../../../../test/pg/testDb';
 import { wireApp } from '../../app';
 import type { AppEnv } from '../../appEnv';
-import { createBindings } from '../../node/config';
+import { testBindings } from '../bindings';
 import { defaultUser, testDatabase } from '../harness';
 import { seededSession } from '../helpers';
 import { catalogRoot, createSessionRow } from './sessionRows';
@@ -32,7 +32,7 @@ const CTX = { frameRate: 24, startOffsetFrames: 0 };
 const SECRET = 'x'.repeat(40);
 const CALLER = systemCaller('test-frame-bus');
 
-type Made = ReturnType<typeof createBindings>;
+type Made = ReturnType<typeof testBindings>;
 const made: Array<{ m: Made; dir: string }> = [];
 afterEach(async () => {
   for (const { m, dir } of made.splice(0)) {
@@ -46,7 +46,7 @@ afterEach(async () => {
 async function process_(frameBusClock?: Clock): Promise<Made> {
   const db = testDatabase();
   const dir = mkdtempSync(join(tmpdir(), 'autologger-bus-'));
-  const m = createBindings(
+  const m = testBindings(
     {
       // shared-blob-volume D8 category 1: sibling DATA_DIR and BLOB_DIR under one temp dir.
       DATA_DIR: join(dir, 'data'),

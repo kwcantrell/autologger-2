@@ -55,7 +55,7 @@ import { recordingStartAnchors } from '@autologger/transcription';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Bindings } from '../appEnv';
 import { resolveYtDlpPath } from '../env';
-import { createBindings } from '../node/config';
+import { testBindings } from '../test/bindings';
 import { anonApp, app, env, envWith } from '../test/harness';
 import {
   catalogFor,
@@ -536,7 +536,7 @@ describe('crash-orphan scratch-dir sweep (design D6, re-run of the startup wirin
     // The catalog is never queried here (the adapter connects lazily); any reachable settings do.
     const pg = { PGHOST: '127.0.0.1', PGPORT: '1', PGUSER: 'u', PGPASSWORD: 'p', PGDATABASE: 'd' };
     try {
-      const boot = createBindings({
+      const boot = testBindings({
         ...pg,
         DATA_DIR: dataDir,
         BLOB_DIR: blobDir,
@@ -558,7 +558,7 @@ describe('crash-orphan scratch-dir sweep (design D6, re-run of the startup wirin
       expect(existsSync(survivorDir)).toBe(true);
 
       // Re-run the startup wiring — THIS is what sweeps stray import temp dirs.
-      const reboot = createBindings({
+      const reboot = testBindings({
         ...pg,
         DATA_DIR: dataDir,
         BLOB_DIR: blobDir,

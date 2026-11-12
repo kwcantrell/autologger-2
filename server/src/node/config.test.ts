@@ -1,7 +1,6 @@
-// Startup wiring for createBindings() -- notably the NEW_USER_ALL_TEAMS
-// deprecation warning (design D5, teams-self-serve). Plain node tier (no
-// setup.int.ts harness needed): createBindings builds its own temp-dir
-// bindings from a procEnv object, same shape test/harness.ts uses per test.
+// Startup wiring for createBindings -- notably the NEW_USER_ALL_TEAMS deprecation warning (design
+// D5, teams-self-serve). Plain node tier (no setup.int.ts harness needed): each test builds its own
+// temp-dir bindings from a procEnv object through test/bindings.ts, which shims HOME.
 
 import {
   existsSync,
@@ -14,13 +13,13 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { createServer } from 'node:net';
-import { homedir, tmpdir } from 'node:os';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { acquireDataDirLock, DataDirLockedError } from '@autologger/storage';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ProviderKeysSecretError } from '../auth/providerKeyCrypto';
 import { loopbackHostname } from '../env';
-import { createBindings } from './config';
+import { testBindings } from '../test/bindings';
 
 let dir: string;
 // shared-blob-volume D8 category 1: each env's BLOB_DIR is a sibling temp dir, never inside DATA_DIR.
@@ -57,7 +56,7 @@ describe('createBindings -- NEW_USER_ALL_TEAMS deprecation (design D5)', () => {
   it('logs a one-time startup warning when NEW_USER_ALL_TEAMS is truthy', async () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {
-      const { close } = createBindings(freshProcEnv({ NEW_USER_ALL_TEAMS: '1' }));
+      const { close } = testBindings(freshProcEnv({ NEW_USER_ALL_TEAMS: '1' }));
       try {
         expect(warnSpy).toHaveBeenCalledTimes(1);
         expect(warnSpy.mock.calls[0]?.join(' ')).toMatch(/NEW_USER_ALL_TEAMS.*deprecated/i);
@@ -72,7 +71,7 @@ describe('createBindings -- NEW_USER_ALL_TEAMS deprecation (design D5)', () => {
   it('does not warn when NEW_USER_ALL_TEAMS is unset/falsy', async () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {
-      const { close } = createBindings(freshProcEnv({ NEW_USER_ALL_TEAMS: '0' }));
+      const { close } = testBindings(freshProcEnv({ NEW_USER_ALL_TEAMS: '0' }));
       try {
         expect(warnSpy).not.toHaveBeenCalled();
       } finally {
@@ -90,7 +89,7 @@ describe('createBindings -- SIGNUPS (closed-signups D1)', () => {
   async function bootLines(overrides: Record<string, string | undefined>): Promise<string[]> {
     const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
     try {
-      const { bindings, close } = createBindings(freshProcEnv(overrides));
+      const { bindings, close } = testBindings(freshProcEnv(overrides));
       await close();
       expect(bindings.config.SIGNUPS).toBe(overrides.SIGNUPS ?? '');
       expect(bindings.config.AUTOLOGGER_STACK).toBe(overrides.AUTOLOGGER_STACK ?? '');
@@ -148,10 +147,11 @@ describe('createBindings -- AI_V2_CREDENTIAL_SOURCE_PATH has NO environment over
       const anyKeyIsAttackerControlled = new Proxy(base as Record<string, unknown>, {
         get: (t, k) => (k in t ? t[k as string] : '/etc/attacker'),
       }) as unknown as Record<string, string>;
-      const { bindings, close } = createBindings(anyKeyIsAttackerControlled);
+      // `home` is what homedir() returned during construction (testBindings shims HOME).
+      const { bindings, close, home } = testBindings(anyKeyIsAttackerControlled);
       try {
         expect(bindings.config.AI_V2_CREDENTIAL_SOURCE_PATH).toBe(
-          join(homedir(), '.claude', '.credentials.json'),
+          join(home, '.claude', '.credentials.json'),
         );
         expect(bindings.config.AI_V2_CREDENTIAL_SOURCE_PATH).not.toBe('/etc/passwd');
         expect(bindings.config.AI_V2_CREDENTIAL_SOURCE_PATH).not.toBe('/etc/shadow');
@@ -165,9 +165,7 @@ describe('createBindings -- AI_V2_CREDENTIAL_SOURCE_PATH has NO environment over
 describe('createBindings -- DATA_DIR is required and absolute (retire-host-dev D1)', () => {
   it('throws without DATA_DIR, with an empty one, or with a relative one', () => {
     for (const v of [undefined, '', 'data', './data']) {
-      expect(() => createBindings({ ...freshProcEnv(), DATA_DIR: v }), String(v)).toThrow(
-        /DATA_DIR/,
-      );
+      expect(() => testBindings({ ...freshProcEnv(), DATA_DIR: v }), String(v)).toThrow(/DATA_DIR/);
     }
   });
 });
@@ -179,7 +177,7 @@ describe('createBindings -- one server per DATA_DIR (retire-host-dev D2)', () =>
     mkdirSync(scratch, { recursive: true });
     const lock = acquireDataDirLock(dir);
     try {
-      expect(() => createBindings(env)).toThrow(DataDirLockedError);
+      expect(() => testBindings(env)).toThrow(DataDirLockedError);
       expect(existsSync(scratch)).toBe(true); // the sweep never ran
       expect(existsSync(join(dir, 'catalog.db'))).toBe(false);
       expect(existsSync(join(dir, 'sessions'))).toBe(false); // nothing was created
@@ -189,15 +187,15 @@ describe('createBindings -- one server per DATA_DIR (retire-host-dev D2)', () =>
   });
   it('releases the lock on close, so the same DATA_DIR can boot again', async () => {
     const env = freshProcEnv();
-    await createBindings(env).close();
-    await createBindings(env).close();
+    await testBindings(env).close();
+    await testBindings(env).close();
   });
 });
 
 describe('createBindings -- one effective host (retire-host-dev D3)', () => {
   it('defaults HOST to loopback outside production, and the loopback checks agree', async () => {
     for (const NODE_ENV of [undefined, 'development']) {
-      const b = createBindings({ ...freshProcEnv(), NODE_ENV });
+      const b = testBindings({ ...freshProcEnv(), NODE_ENV });
       try {
         expect(b.bindings.config.HOST).toBe('127.0.0.1');
         expect(loopbackHostname(b.bindings.config)).toBe(true);
@@ -207,13 +205,13 @@ describe('createBindings -- one effective host (retire-host-dev D3)', () => {
     }
   });
   it('defaults HOST to every interface in production, and keeps an explicit HOST', async () => {
-    const p = createBindings({ ...freshProcEnv(), NODE_ENV: 'production' });
+    const p = testBindings({ ...freshProcEnv(), NODE_ENV: 'production' });
     try {
       expect(p.bindings.config.HOST).toBe('0.0.0.0');
     } finally {
       await p.close();
     }
-    const e = createBindings({ ...freshProcEnv(), HOST: '10.1.2.3' });
+    const e = testBindings({ ...freshProcEnv(), HOST: '10.1.2.3' });
     try {
       expect(e.bindings.config.HOST).toBe('10.1.2.3');
     } finally {
@@ -226,15 +224,15 @@ describe('createBindings -- the catalog is Postgres (catalog-on-postgres D1)', (
   it('refuses each missing PG* setting by name, before taking the DATA_DIR lock', async () => {
     const env = freshProcEnv();
     for (const k of ['PGHOST', 'PGPORT', 'PGUSER', 'PGPASSWORD', 'PGDATABASE']) {
-      expect(() => createBindings({ ...env, [k]: undefined }), k).toThrow(new RegExp(k));
-      expect(() => createBindings({ ...env, [k]: '' }), k).toThrow(new RegExp(k));
+      expect(() => testBindings({ ...env, [k]: undefined }), k).toThrow(new RegExp(k));
+      expect(() => testBindings({ ...env, [k]: '' }), k).toThrow(new RegExp(k));
     }
     expect(existsSync(join(dir, 'sessions'))).toBe(false); // nothing was created
-    await createBindings(env).close(); // and the lock was never held
+    await testBindings(env).close(); // and the lock was never held
   });
 
   it('opens no catalog.db, and close() returns a promise', async () => {
-    const b = createBindings(freshProcEnv());
+    const b = testBindings(freshProcEnv());
     const closed = b.close();
     expect(closed).toBeInstanceOf(Promise);
     await closed;
@@ -250,7 +248,7 @@ describe('createBindings -- the catalog is Postgres (catalog-on-postgres D1)', (
     await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
     try {
       const port = (server.address() as { port: number }).port;
-      const b = createBindings(freshProcEnv({ PGPORT: String(port) }));
+      const b = testBindings(freshProcEnv({ PGPORT: String(port) }));
       await new Promise((r) => setTimeout(r, 300));
       await b.close();
       expect(connections).toBe(0);
@@ -262,13 +260,13 @@ describe('createBindings -- the catalog is Postgres (catalog-on-postgres D1)', (
 
 describe('createBindings -- BOOTSTRAP_OWNER_EMAIL (owner-bootstrap D8)', () => {
   it('passes the value through to Config, and defaults to empty', async () => {
-    const set = createBindings(freshProcEnv());
+    const set = testBindings(freshProcEnv());
     try {
       expect(set.bindings.config.BOOTSTRAP_OWNER_EMAIL).toBe('bootstrap-owner@example.com');
     } finally {
       await set.close();
     }
-    const unset = createBindings(freshProcEnv({ BOOTSTRAP_OWNER_EMAIL: undefined }));
+    const unset = testBindings(freshProcEnv({ BOOTSTRAP_OWNER_EMAIL: undefined }));
     try {
       expect(unset.bindings.config.BOOTSTRAP_OWNER_EMAIL).toBe('');
     } finally {
@@ -280,14 +278,14 @@ describe('createBindings -- BOOTSTRAP_OWNER_EMAIL (owner-bootstrap D8)', () => {
 describe('createBindings -- AI_PROVIDER (run-status-and-sweeper D1)', () => {
   it('refuses an unknown AI_PROVIDER before taking the DATA_DIR lock', async () => {
     const env = freshProcEnv();
-    expect(() => createBindings({ ...env, AI_PROVIDER: 'openai' })).toThrow(
+    expect(() => testBindings({ ...env, AI_PROVIDER: 'openai' })).toThrow(
       'AI_PROVIDER must be one of: claude_cli (got "openai")',
     );
     expect(existsSync(join(dir, 'sessions'))).toBe(false); // nothing was created
-    await createBindings(env).close(); // and the lock was never held
+    await testBindings(env).close(); // and the lock was never held
   });
   it('carries claude_cli on Config when unset', async () => {
-    const b = createBindings(freshProcEnv());
+    const b = testBindings(freshProcEnv());
     try {
       expect(b.bindings.config.AI_PROVIDER).toBe('claude_cli');
     } finally {
@@ -315,20 +313,20 @@ describe('createBindings -- BLOB_DIR (shared-blob-volume D1-D4)', () => {
       ['/', /BLOB_DIR and DATA_DIR must be separate/], // '/' overlaps everything
     ];
     for (const [v, re] of refused) {
-      expect(() => createBindings({ ...env, BLOB_DIR: v }), String(v)).toThrow(re);
+      expect(() => testBindings({ ...env, BLOB_DIR: v }), String(v)).toThrow(re);
     }
     expect(readdirSync(dir)).toEqual([]); // no lock file, no tmp, no blobs
     expect(readdirSync(blobDir)).toEqual([]);
-    await createBindings(env).close(); // and the lock was never held
+    await testBindings(env).close(); // and the lock was never held
   });
 
   it('a second server with another DATA_DIR and the same BLOB_DIR boots', async () => {
     const a = freshProcEnv();
     const b = freshProcEnv({ BLOB_DIR: a.BLOB_DIR });
     expect(b.DATA_DIR).not.toBe(a.DATA_DIR);
-    const first = createBindings(a);
+    const first = testBindings(a);
     try {
-      const second = createBindings(b);
+      const second = testBindings(b);
       await second.close();
     } finally {
       await first.close();
@@ -336,7 +334,7 @@ describe('createBindings -- BLOB_DIR (shared-blob-volume D1-D4)', () => {
   });
 
   it('creates BLOB_DIR/.tmp and DATA_DIR/tmp, not DATA_DIR/blobs; the store writes to BLOB_DIR', async () => {
-    const b = createBindings(freshProcEnv());
+    const b = testBindings(freshProcEnv());
     try {
       expect(existsSync(join(blobDir, '.tmp'))).toBe(true);
       expect(existsSync(join(dir, 'tmp'))).toBe(true);
@@ -364,7 +362,7 @@ describe('createBindings -- BLOB_DIR (shared-blob-volume D1-D4)', () => {
     utimesSync(join(tmp, 'put-young'), aMinuteAgo, aMinuteAgo);
     const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
     try {
-      await createBindings(env).close();
+      await testBindings(env).close();
       expect(readdirSync(tmp).sort()).toEqual(['other-old', 'put-young']);
     } finally {
       infoSpy.mockRestore();
@@ -381,7 +379,7 @@ describe('createBindings -- BLOB_DIR (shared-blob-volume D1-D4)', () => {
     writeFileSync(join(dir, 'blobs', 'audio', 'sid-2', '0001_c.webm'), 'c');
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {
-      await createBindings(env).close();
+      await testBindings(env).close();
       const lines = warnSpy.mock.calls.map((c) => c.join(' ')).filter((l) => /legacy/.test(l));
       expect(lines).toEqual([LEGACY_LINE]);
       // never read, moved or deleted
@@ -396,10 +394,10 @@ describe('createBindings -- BLOB_DIR (shared-blob-volume D1-D4)', () => {
   it('does not warn when DATA_DIR/blobs is empty or missing', async () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {
-      await createBindings(freshProcEnv()).close(); // missing
+      await testBindings(freshProcEnv()).close(); // missing
       const env = freshProcEnv();
       mkdirSync(join(dir, 'blobs', 'audio', 'sid-1'), { recursive: true }); // empty dirs only
-      await createBindings(env).close();
+      await testBindings(env).close();
       expect(warnSpy).not.toHaveBeenCalled();
     } finally {
       warnSpy.mockRestore();
@@ -416,7 +414,7 @@ describe('createBindings -- PROVIDER_DEV_MODE (byo-ai-providers D3)', () => {
     ['Development', false],
     [undefined, false],
   ])('NODE_ENV %s gives PROVIDER_DEV_MODE %s, so production mode is the default', async (nodeEnv, dev) => {
-    const set = createBindings(freshProcEnv({ NODE_ENV: nodeEnv }));
+    const set = testBindings(freshProcEnv({ NODE_ENV: nodeEnv }));
     try {
       expect(set.bindings.config.PROVIDER_DEV_MODE).toBe(dev);
     } finally {
@@ -431,7 +429,7 @@ describe('createBindings -- PROVIDER_KEYS_SECRET (byo-ai-providers D2)', () => {
       const env = freshProcEnv({ PROVIDER_KEYS_SECRET: value });
       let err: unknown;
       try {
-        createBindings(env, { providerKeys: 'required' });
+        testBindings(env, { providerKeys: 'required' });
       } catch (e) {
         err = e;
       }
@@ -439,12 +437,12 @@ describe('createBindings -- PROVIDER_KEYS_SECRET (byo-ai-providers D2)', () => {
       expect((err as Error).message).toMatch(/PROVIDER_KEYS_SECRET/);
       expect((err as Error).message).not.toContain('c2hvcnQ=');
       expect(existsSync(join(dir, 'sessions'))).toBe(false);
-      await createBindings(env).close(); // and the lock was never held
+      await testBindings(env).close(); // and the lock was never held
     }
   });
 
   it('without the option, a missing secret becomes a per-process random cipher that round-trips', async () => {
-    const set = createBindings(freshProcEnv({ PROVIDER_KEYS_SECRET: undefined }));
+    const set = testBindings(freshProcEnv({ PROVIDER_KEYS_SECRET: undefined }));
     try {
       const c = set.bindings.ports.providerKeys;
       const b = { userId: 'u', kind: 'stt' as const, provider: 'deepgram', origin: null };
@@ -456,10 +454,10 @@ describe('createBindings -- PROVIDER_KEYS_SECRET (byo-ai-providers D2)', () => {
 
   it('a set secret is used, so two bindings on it share the check value', async () => {
     const secret = Buffer.alloc(32, 7).toString('base64');
-    const a = createBindings(freshProcEnv({ PROVIDER_KEYS_SECRET: secret }));
+    const a = testBindings(freshProcEnv({ PROVIDER_KEYS_SECRET: secret }));
     const checkA = a.bindings.ports.providerKeys.checkValue();
     await a.close();
-    const b = createBindings(freshProcEnv({ PROVIDER_KEYS_SECRET: secret }), {
+    const b = testBindings(freshProcEnv({ PROVIDER_KEYS_SECRET: secret }), {
       providerKeys: 'required',
     });
     try {

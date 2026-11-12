@@ -513,7 +513,7 @@ describe('callback -- invite materialization (task 3.1, design D2)', () => {
     const uid = String((await cat.auth.authGetUserByGoogleSub('sub-no-blanket-grant'))?.id);
     expect(await cat.auth.authListStudioIdsForUser(uid)).toHaveLength(0);
     // Note: the one-time startup deprecation warning (design D5) fires from
-    // node/config.ts's createBindings() at process boot, not per-request --
+    // node/config.ts's createBindings at process boot, not per-request --
     // this envWith() overlay never calls createBindings, so the warning
     // cannot be observed from here. See the dedicated createBindings-level
     // test below for that assertion.
