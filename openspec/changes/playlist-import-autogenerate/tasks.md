@@ -34,12 +34,16 @@ Web tests: `cd web && npx vitest run <files>`. Gates run through `scripts/check-
   LLM step with `llm` null and for a `claude-cli` `llm` with `claude_cli_allowed` false (but not
   when allowed), `not-approved` for `run_features_allowed` false, the first in that order when
   several apply, and null for a fully configured user or when only steps that need nothing missing
-  are ticked; the confirm body renders the optional lead
+  are ticked; `useDebounced` delays a value by the given ms and keeps only the last change (fake
+  timers); the confirm body renders the optional lead
   sentence first, the own-accounts sentence, and the auto-accept warning only in `accept` mode with
   Wiki ticked. Verify: red before 1.2 (module not found), green after.
 - [ ] 1.2 Create `components/autogenerate/{autogenerateModel.ts,AutogenerateOptions.tsx}` by moving
-  the constants, the Steps and Wiki output groups and the confirm body out of
-  `settings/BatchAutogenerateSection.tsx`, which then renders them. Verify: 1.1 green;
+  the constants, `useDebounced`, the Steps and Wiki output groups and the confirm body out of
+  `settings/BatchAutogenerateSection.tsx`, which then renders them; move the two `apiFetch` calls
+  of `useAutogeneratePreview` and `useStartAutogenerateJob` into exported
+  `previewAutogenerateJob(teamId, body, signal?)` / `startAutogenerateJob(teamId, body, signal?)`
+  in `useAutogenerateJobs.ts`, called by the hooks (design D8, finding F). Verify: 1.1 green;
   `BatchAutogenerateSection.test.tsx` green with no assertion changed (imports only);
   `npm run typecheck` exit 0; biome clean.
 
@@ -51,16 +55,28 @@ Web tests: `cd web && npx vitest run <files>`. Gates run through `scripts/check-
   confirmed) reports exactly the ids of the first and fourth; a retry into this import's own empty
   session that completes is reported; a `409` still-importing retry is not; after a `403` ends the
   part, the ids completed before it are reported and nothing after; an abort reports nothing more;
-  every progress line is byte-identical to the same run without the callback. Verify: red before
-  2.2, green after.
+  every progress line is byte-identical to the same run without the callback; interrupted-run case
+  (design D2): an entry whose name matches this import's remembered own session that has
+  segments is skipped with the unchanged `Skipped … (already in system)` line, reported, and its
+  key forgotten (a second run over the same entry then skips it without reporting); a name match
+  that is not remembered, or remembered for another video, is skipped and not reported. Verify:
+  red before 2.2, green after.
 - [ ] 2.2 `playlistRunner.ts`: optional `onSessionImported(sessionId)` in
-  `RunPlaylistImportOptions`, called at the two `Completed` points only. Verify: 2.1 and the whole
+  `RunPlaylistImportOptions`, called at the two `Completed` points and at the remembered-own-
+  session-with-audio skip, which also forgets the key. Verify: 2.1 and the whole
   existing `playlistRunner.test.ts` green.
 
-## 3. End-of-run start (design D4, D5)
+## 3. End-of-run start (design D4, D5, D12)
 
 - [ ] 3.1 Test first, new `web/src/pages/index/batchImport/autogenerateAfterImport.test.ts`
-  (mocked `apiFetch`/`fetch`): no ids → the "no video was imported" line and no request; ids →
+  (mocked `apiFetch`/`fetch`, injected `readProfile` and `listShowSessionIds`): no ids → the
+  "no video was imported by this import" line and no request; a profile whose `auth.user.id`
+  differs from `confirmedUserId` → the different-user line and no preview or start; a failed
+  profile read → "the request failed" and no preview; a preview `404 Session not found` → one
+  `listShowSessionIds` call, the left-out line with the dropped count, and exactly one more preview
+  and start over the remaining ids (the same for a start `404`); a second `404` → the `<detail>`
+  line and no third preview; every id gone → the "no video" line after the left-out line; a failed
+  session-list read → "the request failed"; ids →
   preview body `{session_ids, steps (run order), wiki_mode}` to
   `teams/<team>/autogenerate-jobs/preview`, then start with the same scope and
   `expected_sessions` = the preview's `sessions` (deliberately different from the id count in one
@@ -70,17 +86,20 @@ Web tests: `cd web && npx vitest run <files>`. Gates run through `scripts/check-
   `409 {detail, sessions}`, `400`, `403` (both details), `404` and `503` (both details) → the
   `<detail>` line; preview `400`/`404` → the `<detail>` line; preview `422`, `500` and a network
   error → "the request failed"; start `422` → "the request failed"; start `500`, a non-JSON `524`
-  and a network error → "may have started"; no case sends a second start; an abort before or during
-  either request resolves null with no further request; the function never rejects except with
+  and a network error → "may have started"; no case except the single `404` re-scope sends a
+  second preview or start; an abort before or during
+  either request resolves `[]` with no further request; the function never rejects except with
   `AbortError`. Verify: red before 3.2, green after.
-- [ ] 3.2 `autogenerateAfterImport.ts`: `startAutogenerateAfterImport`, using the existing client
-  types `AutogeneratePreviewResponse` and `AutogenerateJobResponse` and the typed 409 bodies.
+- [ ] 3.2 `autogenerateAfterImport.ts`: `startAutogenerateAfterImport`, calling
+  `previewAutogenerateJob` / `startAutogenerateJob` from task 1.2 (no new `apiFetch` site) and
+  reading the typed 409 bodies.
   Verify: 3.1 green; `npm run typecheck` exit 0.
 - [ ] 3.3 Test first, web API-response conformance for the new call sites (spec
   web-api-response-conformance "Every response-consuming site has a recorded conformance verdict"):
   run `cd web && npx vitest run src/apiResponseShapes.repo.test.ts src/api/types.conformance.test.ts`
-  after 3.2. If the guard names a new site (the two `apiFetch<…>` calls in
-  `autogenerateAfterImport.ts`), add a verdict entry per site: endpoint
+  after 1.2 and 3.2. The end-of-run start calls the hook file's fetch functions, so its
+  `apiFetch` sites are the moved ones in `useAutogenerateJobs.ts`. If the guard names a moved or
+  new site, add a verdict entry per site: endpoint
   `POST /api/teams/:teamId/autogenerate-jobs/preview` → `AutogeneratePreviewResponse` and
   `POST /api/teams/:teamId/autogenerate-jobs` → `AutogenerateJobResponse`, CONFORMS against the
   batch-autogenerate captures `autogeneratePreview` / `autogenerateStart` (types.conformance lines
@@ -94,7 +113,7 @@ Web tests: `cd web && npx vitest run <files>`. Gates run through `scripts/check-
   called through a new `apiFetch<…>` site, add its CONFORMS verdict against that fixture.
   Verify: both test files green.
 
-## 4. Modal: checkbox, options, up-front check, confirm, wiring (design D3, D6, D7, D9)
+## 4. Modal: checkbox, options, up-front check, confirm, wiring (design D3, D6, D7, D9-D13)
 
 - [ ] 4.1 Test first, `web/src/pages/index/components/BatchImportModal.test.tsx`:
   - the checkbox is absent with no playlist loaded, absent for a `member` of the active team (and
@@ -102,14 +121,25 @@ Web tests: `cd web && npx vitest run <files>`. Gates run through `scripts/check-
     an `admin`;
   - ticking shows the shared options with all four steps and the accept mode; controls are
     disabled during a run; reopening the modal resets them;
-  - the up-front preview is sent with `show_ids: [showId]`, debounced, only while ticked; a
-    `blocked` answer shows its text and disables Start Import, unticking re-enables it; a `400`
-    preview (empty show) falls back to `GET /api/me/providers`: `stt` null with Transcripts ticked
-    shows the speech-to-text text and disables Start Import, a configured user stays enabled; when
-    both the preview and the provider read fail Start Import stays enabled; no step ticked and
-    more than 1000 checked entries each disable Start Import with their texts (spec scenario
-    "Autogenerate options can disable Start Import"), and "A playlist alone enables Start Import"
-    still holds with the box unticked;
+  - arming (design D11): loading another link, a failed listing and closing the modal each untick
+    the box and reset the steps; a ticked box with every entry unchecked and a folder chosen leaves
+    Start Import enabled and shows no confirm (spec scenario "A ticked box with no checked entry
+    does not narrow Start Import"), and sends no preview;
+  - the up-front preview is sent with `show_ids: [showId]`, debounced, only while armed; while it
+    is pending Start Import is disabled with "Checking your providers…"; after the steps change,
+    the previous answer (placeholder data) is not used and Start Import stays disabled until the
+    new one arrives (stale case); a `200` `blocked` answer shows its text and disables Start
+    Import, unticking re-enables it; a `400` preview (empty show) with `stt` null in
+    `GET /api/me/providers` and Transcripts ticked shows the speech-to-text text plus "Your
+    providers are checked again when the import ends." as a warning with Start Import enabled
+    (fallback-warning case); a configured user shows no warning; both reads failing show nothing
+    and leave Start Import enabled; no step ticked and more than 1000 checked entries each disable
+    Start Import with their texts ("Autogenerate options can disable Start Import"), and "A
+    playlist alone enables Start Import" still holds with the box unticked;
+  - late block: with the confirm open, the preview for the current selection is refreshed to a
+    `blocked` answer; confirming runs nothing, shows the block and disables Start Import;
+  - dialog (design D13): during a run, Escape and a pointer-down outside leave the modal open and
+    the runner's signal unaborted; Close aborts it; with no run in progress Escape still closes;
   - the confirm says the providers are checked again when the import ends;
   - Start Import with the box ticked opens the confirm with
     `Import 12 videos, then autogenerate on up to 12 sessions, at most 24 runs.` (12 entries, 2
@@ -122,6 +152,8 @@ Web tests: `cd web && npx vitest run <files>`. Gates run through `scripts/check-
     or `failed` jobs, a `500`, and a network error each open the confirm without the warning;
   - a confirmed run in which the runner reports a retried session from an earlier run passes its
     id in `session_ids` (owner decision 5);
+  - account switch (design D12): the user id recorded at the confirm is passed as
+    `confirmedUserId`;
   - a confirmed run (mocked runner and `startAutogenerateAfterImport`) calls the start once after
     the log part with exactly the ids the runner reported, the team id captured at Start Import,
     and the confirmed steps and mode, and appends its line after every import line; a part ending
@@ -129,7 +161,9 @@ Web tests: `cd web && npx vitest run <files>`. Gates run through `scripts/check-
   Verify: red before 4.2, green after.
 - [ ] 4.2 `BatchImportModal.tsx`: visibility from the profile role (D7), the options group under the
   picker, the job-list read before the confirm via `useAutogenerateJobs` (D10), `useAutogeneratePreview` then `useProviders` with `blockedFromProviders` for the up-front
-  check (D6), the themed confirm (`useConfirm`), the
+  check (D6) with the pending/stale rule and the post-confirm re-check, arming and reset (D11),
+  `closeOnOverlayClick={!isImporting}` and the ignored `onOpenChange(false)` during a run (D13),
+  the confirmed user id (D12), the themed confirm (`useConfirm`), the
   `onSessionImported` collector, the end-of-run call after the existing parts and the
   `autogenerateKeys.all(teamId)` invalidation after a `201` or an unknown start. Verify: 4.1 and
   the whole existing `BatchImportModal.test.tsx` green; `npm run typecheck` exit 0; biome clean.
@@ -150,8 +184,9 @@ Web tests: `cd web && npx vitest run <files>`. Gates run through `scripts/check-
   while that job is still running to record the confirm's live-job warning (Start still enabled)
   and the end-of-run live-job line. As a `member` of the team, record
   that the checkbox is not shown. In a new empty show, with Transcripts ticked and no saved STT
-  key, record what the up-front check shows (the dev stack's `PROVIDER_DEV_MODE` fallback makes
-  the block a known false positive there, design D6).
+  key, record the non-blocking warning and that Start Import stays enabled (the dev stack's
+  `PROVIDER_DEV_MODE` fallback then lets the job start, design D6). Press Escape mid-run and
+  record that the run continues.
 - [ ] 5.2 `scripts/check-change.sh --stage hook` green, then `GITHUB_BASE_REF=main
   scripts/check-change.sh` (all gates, as CI) green.
 - [ ] 5.3 Tier 2 consistency read (`consistency-read` skill) over specs, design, code and tests by a

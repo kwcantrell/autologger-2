@@ -63,17 +63,23 @@ route, no contract delta, and the authorization is exactly the start route's.
 the playlist import has no server-side job (youtube-playlist-import Non-goals), and a new route
 would be a contract change (tier 2).
 
-### D2. Which sessions qualify: every `Completed` line of the playlist part
+### D2. Which sessions qualify: `Completed` lines and this import's own audio-bearing sessions
 
-`runPlaylistImport` gains an optional `onSessionImported(sessionId)` callback, called exactly where
-it logs `Completed <name>` (A4), and nowhere else. The modal collects the ids in an array owned by
+`runPlaylistImport` gains an optional `onSessionImported(sessionId)` callback, called where it logs
+`Completed <name>` (A4) and at one skip point: a name match that is this import's remembered own
+session (`findImportSession(playlistImportKey(showId, videoId)) === existing.id`) with segments > 0,
+i.e. audio an earlier, interrupted run brought in (the browser closed mid-import, or an unknown
+outcome that landed after the wait). There the runner keeps its `Skipped … (already in system)`
+line, calls the callback and forgets the key, as it does after a `Completed`, so a third run sees
+an ordinary existing session (no repeated wiki runs over it). Nowhere else. The modal collects the ids in an array owned by
 that Start Import. A callback, not a return value, so the ids completed before an unexpected
 non-abort error in a later entry still count (that error lands in the modal's outer `catch` as
 today). Skipped, failed, unconfirmed and still-importing entries never reach the callback.
 
 The retry-into-own-unfinished-session path logs `Completed` too, so it qualifies: this run
 attached its audio, and it was never "already in system" (owner decision 5, 2026-11-12, which
-closed the former open question Q1).
+closed the former open question Q1). The interrupted-run case extends decision 5 (panel, tier-2
+finding C, orchestrator); the owner confirms it at approval (proposal decision 5).
 
 ### D3. When: after the last part, unless aborted
 
@@ -94,22 +100,37 @@ string-detail `404 Session not found` on preview or start. The `409` "sessions c
 therefore not expected for an id scope; if it ever arrives it is a string-detail refusal like the
 others (no re-preview loop, unlike Settings, which re-asks because a show scope can change under
 the user).
+
+**One re-scope on `404 Session not found`** (panel finding E). One deleted or hidden session would
+otherwise sink the whole job. On that answer from the preview or the start, the module calls an
+injected `listShowSessionIds()` once: the runner's own fresh read (read the profile, re-align the
+active show if another tab changed it, `fetchSessions`, keep `show_id === showId`; existing
+`runner.ts` sites). It keeps the qualifying ids still listed, logs how many were dropped, and runs
+preview → start once more over the rest. This is a re-scope over a different, smaller set, not a
+retry of the same request: the start was refused (`404`, nothing written, A1/A2), so a second
+start cannot create a duplicate job. A second `404` ends it with the string-detail line. No other
+answer leads to any repeated request.
 *Alternative*: skip the preview and send `expected_sessions` = id count. Rejected: the preview is
 also the last `blocked` check, and its `max_runs` feeds the progress line, at the cost of one
 read-only request.
 
-### D5. Failure handling: one line, never a throw, never a retry
+### D5. Failure handling: lines, never a throw, never a retry
 
 A new module `batchImport/autogenerateAfterImport.ts` exports
-`startAutogenerateAfterImport({teamId, sessionIds, steps, wikiMode, signal}): Promise<string | null>`
-returning the one progress line (null only on abort). It never throws except `AbortError`; the
+`startAutogenerateAfterImport({teamId, sessionIds, steps, wikiMode, confirmedUserId, readProfile,
+listShowSessionIds, signal}): Promise<string[]>` returning its progress lines (one, or the
+re-scope line plus one; empty only on abort). It first reads the profile and stops with the
+different-user line when `auth.user.id` differs from `confirmedUserId` (D12). It never throws except `AbortError`; the
 modal appends the line. Mapping (spec table):
 
 | Where | Answer | Line | Why |
 | --- | --- | --- | --- |
-| before | no qualifying id | not started: no video was imported in this run | owner decision 1 |
+| before | no qualifying id | not started: no video was imported by this import | owner decision 1 |
+| before | profile read: another user | not started: you are signed in as a different user… | D12 |
+| before | profile read fails | not started: the request failed + Settings pointer | |
+| preview/start | `404 Session not found`, first time | re-scope line, then preview → start once more (D4) | finding E |
 | preview | `200`, `blocked` set | not started: Settings' blocked text | same words as Settings (shared model) |
-| preview | `400`/`403`/`404` string detail | not started: `<detail>` + Settings pointer | e.g. `Session not found`, `Admin role required.` (role lost mid-run) |
+| preview | `400`/`403`/`404` string detail (a `404` after the re-scope, or `Team not found`) | not started: `<detail>` + Settings pointer | e.g. `Admin role required.` (role lost mid-run) |
 | preview | `422`, other JSON, ≥500, network | not started: the request failed + Settings pointer | preview writes nothing, so the outcome is certain |
 | start | `201` | started for N sessions (at most M runs); Settings pointer | |
 | start | `409` with `job_id` | a batch job is already running for this team; start one for this show in Settings when it ends | owner decision 3; gap-fill makes a later show-wide job safe |
@@ -122,37 +143,36 @@ A `409` is told apart by its body: `job_id` (live job) versus `sessions` (change
 does. After a `201` (and after an unknown start) the modal invalidates
 `autogenerateKeys.all(teamId)` so Settings shows the job.
 
-### D6. Up-front check: the preview, else the provider status (panel finding 1)
+### D6. Up-front check: only the exact preview blocks (panel finding 1, tier-2 finding A)
 
-While ticked (and a step is ticked, no run in progress), the modal runs the existing
-`useAutogeneratePreview(teamId, {show_ids: [showId], steps, wiki_mode}, enabled)` hook with the
-same 400 ms debounce as Settings. A `200` is exact: its `blocked` is the server's own rule.
+While autogenerate is armed (a step ticked, no run in progress), the modal runs the existing
+`useAutogeneratePreview(teamId, {show_ids: [showId], steps, wiki_mode}, enabled)` hook with the same
+400 ms debounce as Settings (`useDebounced`, D8). A `200` is exact: its `blocked` is the server's
+own rule, and only that hard-disables Start Import.
 
-The preview resolves the scope before it computes `blocked` (A3), so a show with no sessions yet,
-the normal case for a first playlist import into a new show, answers `400` and says nothing about
-providers. For that case (and any other non-`200` or no answer) the modal derives the verdict from
-`GET /api/me/providers` through the existing `useProviders` hook (A13), mirroring `blockedFor`'s
-order (A16) and `resolveLlmRoute`'s rule (A14): Transcripts and `stt === null` →
-`unconfigured-stt`; an LLM step and (`llm === null`, or `llm.provider === 'claude-cli'` and not
-`claude_cli_allowed`) → `unconfigured-llm`; `!run_features_allowed` → `not-approved`. The
-derivation is a pure function in `autogenerateModel.ts`, tested against each rule. If that read
-fails too, there is no verdict and Start Import stays enabled.
+**No stale verdict.** The hook keeps the previous answer as placeholder data (`keepPreviousData`),
+which Settings uses to avoid flicker. The modal ignores it: the verdict counts only when the query
+is not `isPlaceholderData` and its key equals the current (debounced and live) body. While the
+debounce or the request is pending, the verdict is "pending" and Start Import is disabled
+("Checking your providers…"), so a click can never ride on an answer for other steps.
 
-Residuals (the end-of-run start reports the server's answer, and the confirm says providers are
-checked again when the import ends):
-- a saved key the server cannot decrypt reads as configured in the browser but refuses at the
-  start (`503`);
-- with `PROVIDER_DEV_MODE` and a deployment `DEEPGRAM_API_KEY` (dev stacks only, A15) the browser
-  sees no `stt` row and blocks Transcripts for an empty show although the start would accept it;
-  the owner saves an STT key or unticks Transcripts. A production build (`NODE_ENV` not development
-  or test) has no such fallback, so there the derivation matches the server except for the
-  undecryptable-key case.
+**Empty or oversized show.** The preview resolves the scope before it computes `blocked` (A3), so
+a show with no sessions yet answers `400`. The modal then reads `GET /api/me/providers` (existing
+`useProviders`, A13) and `blockedFromProviders(steps, providers)` (pure, `autogenerateModel.ts`)
+mirrors `blockedFor`'s order (A16) and `resolveLlmRoute` (A14). Its result is only a **warning**
+with "Your providers are checked again when the import ends.": it guesses, and it guesses wrong in
+two known cases (an undecryptable saved key; the dev-only `PROVIDER_DEV_MODE` Deepgram fallback,
+A15), so it must not stop a legitimate import. The end-of-run preview is the authority there.
 
-*Alternatives*: (a) provider status only: rejected, the preview is exact whenever the show has
-sessions and costs nothing extra; (b) a new "can I start" route, or computing `blocked` before the
-scope in the preview: rejected, both are contract changes the owner asked to avoid; (c) the
-preview over some other show of the team: rejected, it may be empty too, and it would read sessions
-of shows the run never touches.
+**Re-check after the confirm.** The confirm is a modal await; the preview can refresh while it is
+open (refocus). After it resolves `true`, the modal reads the current verdict again and runs
+nothing if it is now a block (or pending for a changed selection, which cannot happen while the
+confirm holds focus, but is treated the same).
+
+*Alternatives*: (a) a hard block from the provider status: rejected (false blocks, finding A);
+(b) a new "can I start" route, or `blocked` before the scope in the preview: contract changes the
+owner asked to avoid; (c) the preview over some other show: may be empty too, and reads sessions
+the run never touches.
 
 ### D7. Visibility from the profile's role in the active team
 
@@ -164,19 +184,29 @@ Hidden is a convenience; the routes refuse a member regardless (A5).
 
 Move from `BatchAutogenerateSection.tsx` into `web/src/pages/index/components/autogenerate/`:
 `autogenerateModel.ts` (`AUTOGENERATE_STEPS` with labels in run order, `stepLabel`, the wiki mode
-labels, `BLOCKED_TEXT`, `orderedSteps`, `maxRuns`) and `AutogenerateOptions.tsx` (the Steps
+labels, `BLOCKED_TEXT`, `orderedSteps`, `maxRuns`, `useDebounced`, and the new
+`blockedFromProviders`) and `AutogenerateOptions.tsx` (the Steps
 checkbox group and the Wiki output radio group, controlled, with an `idPrefix` so the modal and
 Settings never share element ids, and a `disabled` prop), plus `AutogenerateConfirmMessage` (the
 Settings confirm body, with an optional lead sentence so the modal can put its import sentence
 first). Settings renders them with unchanged output; its existing test file must stay green
 unchanged except for imports.
 
+**Fetch functions** (finding F). `useAutogenerateJobs.ts` gains plain exported
+`previewAutogenerateJob(teamId, body, signal?)` and `startAutogenerateJob(teamId, body, signal?)`,
+which hold the existing `apiFetch<AutogeneratePreviewResponse>` and
+`apiFetch<AutogenerateJobResponse>` calls; `useAutogeneratePreview`'s `queryFn` and
+`useStartAutogenerateJob`'s `mutationFn` call them, and so does `autogenerateAfterImport.ts`. The
+response-consuming sites stay where they are (same file, same types, both fixture-checked, A7), so
+the end-of-run start adds none; task 3.3 records the guard's output, and a verdict entry only if
+the guard keys the moved calls as new sites.
+
 ### D9. Confirm wording and estimate
 
 N = checked entries (all importable, A9), S = ticked steps:
 `Import N videos, then autogenerate on up to N sessions, at most N×S runs.` "Up to", because
 skipped and failed videos drop out; N×S matches Settings' `max_runs = sessions × steps`. Then
-"Only videos imported in this run are included.", the own-accounts sentence and the auto-accept
+"Only videos this import brings in are included." (D2), the own-accounts sentence and the auto-accept
 warning from the shared confirm body. The 1000-entry ceiling (A8) disables Start Import up front
 instead of failing at the end.
 
@@ -187,10 +217,38 @@ On Start Import with the box ticked, the modal awaits `refetch()` of the existin
 /api/teams/:teamId/autogenerate-jobs` the Settings section uses; type `AutogenerateJobListResponse`,
 fixture `autogenerateList`, A17), then opens the confirm. A `queued` or `running` job in that list
 puts the warning first; any error or a missing answer means no warning. A refetch at that moment
-rather than a cached read, because the warning is about "now"; the query is enabled only while the
-box is ticked, so a member never sends it. It only warns: a job that ends during the import is the
+rather than a cached read, because the warning is about "now"; the query is enabled only while
+autogenerate is armed (D11), so a member never sends it. It only warns: a job that ends during the import is the
 normal case for a long playlist, and the end-of-run `409` line (D5) covers the rest.
 *Alternative*: block Start Import while a job is live. Rejected by the owner (warn only).
+
+### D11. Group state and arming (tier-2 finding B)
+
+The checkbox and options live in modal state keyed to the loaded listing: whenever `playlist`
+becomes null (a new link starts loading, a listing fails) the modal resets them to defaults, and
+closing the modal unmounts it. `armed = groupShown && ticked && playlistSelection.indexes.length > 0`.
+Only `armed` narrows Start Import, triggers the up-front check and the confirm, and makes the run
+collect ids; a ticked box with no checked entry behaves as unticked, so a folder-only or logs-only
+run is never blocked or prompted by a hidden or empty playlist choice.
+
+### D12. The run belongs to the user who confirmed (tier-2 finding D)
+
+At the confirm the modal records `profile.auth.user.id`. The run may last hours, and sign-out
+and sign-in as another user in the same browser keeps the modal mounted. Before any autogenerate
+request the module reads `GET /api/profile` (existing `ProfilePayload` site) and compares; a
+different user gets the different-user line and no request, so one person's confirm never spends
+another person's providers. A failed read is "the request failed".
+
+### D13. A run is not interrupted by a stray Escape or click (tier-2 finding C)
+
+Closing aborts the run (batch-audio-import "Progress reporting"), and before this change an
+accidental overlay click or Escape during an hours-long run silently lost both the remaining
+entries and the end-of-run job. While `isImporting`, the modal passes `closeOnOverlayClick={false}`
+to the shared `Dialog` (which prevents pointer-down/interact-outside on desktop and makes the
+mobile drawer non-dismissible) and its `onOpenChange(false)` handler ignores the request (the
+Escape path on desktop). The explicit Close button still calls `handleClose`, which aborts as
+today. With D2's interrupted-run rule, a deliberate close followed by a rerun still gets the
+videos that finished on the server into the next run's job.
 
 ## Risks / Trade-offs
 
@@ -199,6 +257,10 @@ normal case for a long playlist, and the end-of-run `409` line (D5) covers the r
   sessions. No queueing (Non-goal).
 - [The user closes the modal right after the start was sent] → the job may exist; the modal is
   gone, so no line. Settings lists it. Documented in the spec's abort rule.
+- [The up-front check is pending for a slow preview, so Start Import waits] → bounded by the
+  preview's latency; a failed preview falls through to the non-blocking provider warning.
+- [The re-scope's session list misses sessions because the active show was switched elsewhere] →
+  the re-read re-aligns the active show first, as the playlist runner does before every entry.
 - [The up-front check passes but the end-of-run start is blocked (key removed mid-run, or a
   residual of D6)] → the end-of-run preview's `blocked` or the start's `503`/`403` becomes one
   line; the confirm says providers are checked again when the import ends.

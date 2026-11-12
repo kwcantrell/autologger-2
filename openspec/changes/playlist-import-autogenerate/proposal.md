@@ -9,8 +9,8 @@ hours later with no second prompt, the change fixes an ordering guarantee (the j
 after every import part, design D3) and a no-retry rule for a start whose outcome may be unknown
 (design D5).
 
-Panel: assumption tester, 2026-11-12: 4 major findings, each resolved in the artifacts
-(`panel.md`); the failure-and-abuse and scope-and-simplicity reviewers run after these fixes.
+Panel: tier 2, 2026-11-12: the assumption tester (4 major) and then the failure-and-abuse and
+scope-and-simplicity reviewers (6 major), each finding resolved in the artifacts (`panel.md`).
 
 ## Why
 
@@ -40,6 +40,12 @@ checkbox to a small follow-up change named `playlist-import-autogenerate`, since
 5. **A retried session counts** (owner, 2026-11-12, after the panel). A session an earlier run of
    this import created and left without audio, which this run imports into and completes,
    qualifies like a session this run created.
+   **Extension pending owner confirmation at approval** (orchestrator, 2026-11-12, tier-2 panel
+   finding C): this import's own remembered session that already has audio from an earlier,
+   interrupted run of this import (closed mid-import, or an unknown outcome that landed later) is
+   skipped as "already in system" on the rerun but also qualifies, and is then forgotten. The rule
+   becomes "this import's own session that has audio from this or an earlier interrupted run of
+   this import".
 6. **Warn about a live job at confirm** (owner, 2026-11-12, answering design Q2). When Start Import
    opens the confirm, the modal reads the team's jobs (existing
    `GET /api/teams/:teamId/autogenerate-jobs`); if one is `queued` or `running`, the confirm warns
@@ -57,22 +63,27 @@ contract change.
   by default), and while ticked the step checkboxes and the wiki mode radio, shared with Settings
   through one extracted options component and model (labels, run order, blocked texts, confirm
   wording). The Settings section renders the same component; its behavior does not change.
-- **Up-front check.** While ticked, the modal asks the existing preview route, over the run's show,
-  whether the user could start a job with those steps now (`blocked`). When the preview cannot
-  answer (a show with no sessions yet, or over 1000), it derives the same verdict from the user's
-  provider status (`GET /api/me/providers`, which Settings → Advanced already reads). A blocked
-  reason is shown in Settings' words and Start Import is disabled until the user changes the steps
-  or unticks the box. The confirm says providers are checked again when the import ends.
-  Start Import is also disabled while ticked with no step, or with more than 1000 videos checked
+- **Arming.** The options apply only while the group is shown, ticked and at least one entry is
+  checked; hiding the group (new link, failed listing, no playlist) unticks it and resets them.
+- **Up-front check.** While armed, the modal asks the existing preview route, over the run's show,
+  whether the user could start a job with those steps now (`blocked`). Only that exact `200`
+  answer for the current selection blocks Start Import, and Start Import waits while it is pending
+  (no stale answer). When the preview cannot answer (a show with no sessions yet, or over 1000), a
+  non-blocking warning is derived from the user's provider status (`GET /api/me/providers`, which
+  Settings → Advanced already reads). After the confirm the current verdict is checked again.
+  Start Import is also disabled while armed with no step, or with more than 1000 videos checked
   (the job's session cap).
+- **Runs are not dropped by accident.** While a run is in progress the modal ignores Escape and
+  clicks outside it; the Close button still aborts.
 - **Confirm.** Start Import with the box ticked reads the team's job list, then opens a themed
   confirm: a warning first when the team has a live job (owner decision 6), the number of checked
   videos, "then autogenerate on up to N sessions, at most N × S runs", the own-provider-accounts
   note and, in auto-accept mode, Settings' wiki warning. Cancel starts nothing.
 - **End-of-run start.** The playlist runner reports each session it completes; after the last part
   of Start Import (folder, playlist, logs) the modal previews the job with exactly those
-  `session_ids` and starts it with the preview's `sessions` as `expected_sessions`. One progress
-  line reports the result: started (with the session count and a pointer to Settings → Batch
+  `session_ids` and starts it with the preview's `sessions` as `expected_sessions`, provided the
+  signed-in user is still the one who confirmed. If a session vanished (`404`), it re-scopes once
+  to the sessions still listed and logs how many it left out. One progress line reports the result: started (with the session count and a pointer to Settings → Batch
   autogenerate), or why not (no qualifying session, a live job for the team, blocked, refused, or a
   network failure whose outcome is unknown), each pointing to Settings → Batch autogenerate.
 - **Docs**: the README "YouTube audio import" section gains a sentence on the checkbox.
@@ -86,8 +97,8 @@ None.
 ### Modified Capabilities
 
 - `batch-audio-import`: MODIFIED "Batch Import modal layout and actions" (the group's place, the
-  narrowed Start Import enable rule, the confirm before the run, the autogenerate start after the
-  log part), written against the text `youtube-playlist-import` synced into `openspec/specs/`
+  narrowed Start Import enable rule while armed, the confirm before the run, the autogenerate start
+  after the log part, no Escape/overlay close during a run), written against the text `youtube-playlist-import` synced into `openspec/specs/`
   (archive PR #144); ADDED "YouTube playlist import can autogenerate afterwards" (the checkbox, its options
   and visibility, the up-front check, the confirm, the qualifying sessions, the end-of-run start and
   its progress lines).
