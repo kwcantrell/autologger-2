@@ -24,6 +24,11 @@ function readJson(path) {
   return JSON.parse(readFileSync(path, 'utf8'));
 }
 
+// The real path of the `tsc` bin that node_modules/typescript itself declares.
+function typescriptBin() {
+  return realpathSync(join(TYPESCRIPT_DIR, readJson(join(TYPESCRIPT_DIR, 'package.json')).bin.tsc));
+}
+
 // The `tsc` that `npm run` finds from `dir`: npm puts each ancestor's node_modules/.bin on PATH,
 // nearest first, up to the workspace root.
 function resolveTsc(dir) {
@@ -70,23 +75,19 @@ describe('tsc resolves to TypeScript 7', () => {
   it('the root node_modules/.bin/tsc belongs to node_modules/typescript and prints 7.x', () => {
     const tsc = resolveTsc(ROOT);
     assert.ok(tsc, 'no node_modules/.bin/tsc at the root');
-    const typescriptDir = realpathSync(TYPESCRIPT_DIR);
-    assert.ok(
-      tsc.startsWith(typescriptDir + '/'),
-      `root tsc resolves to ${tsc}, not inside ${typescriptDir}`,
-    );
+    assert.equal(tsc, typescriptBin(), 'root node_modules/.bin/tsc is not the typescript package bin');
     const run = spawnSync(tsc, ['--version'], { encoding: 'utf8' });
     assert.equal(run.status, 0, run.stderr);
     assert.match(run.stdout, /^Version 7\./);
   });
 
-  it('every workspace that runs tsc resolves to the root TypeScript 7 binary', () => {
-    const rootTsc = resolveTsc(ROOT);
+  it('every workspace that runs tsc resolves to the tsc of node_modules/typescript', () => {
+    const expected = typescriptBin();
     const workspaces = workspacesRunningTsc();
     assert.ok(workspaces.length > 0, 'found no workspace that runs tsc');
     const wrong = workspaces
       .map((ws) => ({ ws, tsc: resolveTsc(join(ROOT, ws)) }))
-      .filter(({ tsc }) => tsc !== rootTsc);
+      .filter(({ tsc }) => tsc !== expected);
     assert.deepEqual(wrong, []);
   });
 });
