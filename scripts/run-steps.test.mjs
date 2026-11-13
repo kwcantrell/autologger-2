@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -10,6 +10,14 @@ const RUNNER = fileURLToPath(new URL('./run-steps.mjs', import.meta.url));
 
 function run(steps, env = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'run-steps-'));
+  try {
+    return runIn(dir, steps, env);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+function runIn(dir, steps, env) {
   const file = join(dir, 'steps.json');
   writeFileSync(file, JSON.stringify(steps));
   const r = spawnSync(process.execPath, [RUNNER, '--steps', file], {
@@ -50,19 +58,47 @@ test('output is grouped per step, not interleaved', () => {
   assert.match(r.out, /===== two: ok =====\ny1\ny2\ny3\ny4\ny5\n/);
 });
 
+// Each step waits for the other's marker file: only steps that overlap can both finish.
+const rendezvous = (mine, other) =>
+  `touch ${mine}; for i in $(seq 100); do [ -e ${other} ] && exit 0; sleep 0.1; done; exit 1`;
+
+function withTmp(fn) {
+  const dir = mkdtempSync(join(tmpdir(), 'run-steps-rv-'));
+  try {
+    return fn(dir);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 test('steps run concurrently by default', () => {
-  const started = Date.now();
-  const r = run([1, 2, 3].map((n) => ({ name: `s${n}`, cmd: 'sleep 1' })));
-  assert.equal(r.code, 0);
-  assert.ok(Date.now() - started < 2500, 'three 1s steps should overlap');
+  withTmp((tmp) => {
+    const r = run([
+      { name: 's1', cmd: rendezvous(`${tmp}/a`, `${tmp}/b`) },
+      { name: 's2', cmd: rendezvous(`${tmp}/b`, `${tmp}/a`) },
+    ]);
+    assert.equal(r.code, 0, r.out);
+    assert.match(r.out, /all 2 steps passed/);
+  });
 });
 
 test('CHECK_CONCURRENCY=1 runs steps one at a time in declared order', () => {
-  const slow = { name: 'slow first', cmd: 'sleep 0.5; echo slow' };
-  const fast = { name: 'fast second', cmd: 'echo fast' };
-  const serial = run([slow, fast], { CHECK_CONCURRENCY: '1' });
-  assert.ok(serial.out.indexOf('===== slow first') < serial.out.indexOf('===== fast second'));
-  const parallel = run([slow, fast], { CHECK_CONCURRENCY: '2' });
-  assert.ok(parallel.out.indexOf('===== fast second') < parallel.out.indexOf('===== slow first'));
-  assert.match(serial.out, /concurrency 1\)/);
+  withTmp((tmp) => {
+    // `second` fails unless `first` has already finished; `first` finishes only after `second` starts
+    // when they overlap, so the output order differs between the two modes.
+    const first = { name: 'first', cmd: `echo first; touch ${tmp}/first-done` };
+    const second = { name: 'second', cmd: `[ -e ${tmp}/first-done ] && echo second` };
+    const serial = run([first, second], { CHECK_CONCURRENCY: '1' });
+    assert.equal(serial.code, 0, serial.out);
+    assert.ok(serial.out.indexOf('===== first') < serial.out.indexOf('===== second'));
+    assert.match(serial.out, /concurrency 1\)/);
+  });
+  withTmp((tmp) => {
+    // `slow` cannot finish until `fast` has run, so with 2 slots `fast` reports first.
+    const slow = { name: 'slow first', cmd: `for i in $(seq 100); do [ -e ${tmp}/fast ] && exit 0; sleep 0.1; done; exit 1` };
+    const fast = { name: 'fast second', cmd: `touch ${tmp}/fast; echo fast` };
+    const parallel = run([slow, fast], { CHECK_CONCURRENCY: '2' });
+    assert.equal(parallel.code, 0, parallel.out);
+    assert.ok(parallel.out.indexOf('===== fast second') < parallel.out.indexOf('===== slow first'));
+  });
 });
