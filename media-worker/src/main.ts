@@ -216,9 +216,11 @@ export class MediaWorker {
     const fence = { id: job.id, workerId: this.d.workerId, nowMs: this.d.now() };
     const ms = Date.now() - t0;
     try {
+      // A lost lease logs only after this attempt's files are gone, so `lease-lost` means the
+      // worker is finished with the job: nothing of this attempt is left on disk to observe.
       if (lost) {
-        this.d.log('lease-lost', { job: job.id });
         await removeAttemptFiles(this.d.blobDir, job.id, job.attempts).catch(() => {});
+        this.d.log('lease-lost', { job: job.id });
         return;
       }
       if (r.shutdown) {
@@ -261,8 +263,8 @@ export class MediaWorker {
           this.d.log('job-failed', { job: job.id, error: outcome.error, final: outcome.final, ms });
       }
       if (!ok) {
-        this.d.log('lease-lost', { job: job.id });
         await removeAttemptFiles(this.d.blobDir, job.id, job.attempts).catch(() => {});
+        this.d.log('lease-lost', { job: job.id });
       }
     } catch {
       this.d.log('db-error', { lane, job: job.id });

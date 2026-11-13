@@ -9,9 +9,24 @@ import {
   MEDIA_MIN_FREE_BYTES,
   MEDIA_SMALL_LANE_MAX_BYTES,
 } from '@autologger/storage/mediaLimits';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { JobOutcome } from './jobs/types';
 import { MediaWorker, WORKER_DEFAULTS, type WorkerDeps } from './main';
+
+// `removeAttemptFiles` can be made slow on demand, so a test can tell "logged, then cleaned up"
+// from "cleaned up, then logged": with a delay, anything that only waits for the log line sees
+// the attempt's files still on disk unless the worker removes them before it logs.
+const removal = vi.hoisted(() => ({ delayMs: 0 }));
+vi.mock('./output', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./output')>();
+  return {
+    ...actual,
+    removeAttemptFiles: async (...args: Parameters<typeof actual.removeAttemptFiles>) => {
+      if (removal.delayMs > 0) await new Promise((r) => setTimeout(r, removal.delayMs));
+      return actual.removeAttemptFiles(...args);
+    },
+  };
+});
 
 const MiB = 1024 * 1024;
 const GiB = 1024 * MiB;
@@ -129,6 +144,7 @@ beforeEach(async () => {
   logs.length = 0;
 });
 afterEach(async () => {
+  removal.delayMs = 0;
   await worker?.stop(0);
   worker = null;
   await rm(join(blobDir, '..'), { recursive: true, force: true });
@@ -266,6 +282,7 @@ describe('MediaWorker', () => {
   });
 
   it('a finish that affects 0 rows drops the result, removes only this attempt’s files and logs', async () => {
+    removal.delayMs = 100; // `lease-lost` must still mean the files are already gone
     const q = fakeQueue();
     q.push(mkJob('j1', 'ingest', 1000));
     q.loseLease();
@@ -291,6 +308,7 @@ describe('MediaWorker', () => {
   });
 
   it('a lost lease never deletes the re-claimer’s output (interleaving across an expired lease)', async () => {
+    removal.delayMs = 100; // `lease-lost` must still mean this attempt's files are already gone
     const q = fakeQueue();
     q.push(mkJob('jx', 'merge', 1000));
     let aborted = false;
@@ -310,7 +328,6 @@ describe('MediaWorker', () => {
     q.loseLease();
     worker?.start();
     await until(() => aborted && logs.some((l) => l.event === 'lease-lost'));
-    await new Promise((r) => setTimeout(r, 20));
     expect(await readdir(join(blobDir, 'media', 'jx'))).toEqual(['merged-a2.webm']);
   });
 
