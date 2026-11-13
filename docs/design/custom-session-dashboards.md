@@ -548,10 +548,10 @@ for the token's user.
 | `list_shows` | `studio_id, cursor?, limit?` | `{show_id, name, show_code, can_access}` | 50 / 200 | member of the studio (masked `Studio not found`) | shows, same `can_access` rule as `/api/profile` |
 | `list_sessions` | `show_id, cursor?, limit?, include_hidden?` | `{session_id, title, date, archived, hidden}` | 50 / 200 | `requireShowAccess` | session index |
 | `get_session` | `session_id` | `{session_id, show_id, studio_id, title, date, fps, counts: {events, words, paragraphs, topics, wiki_pages}, revision}` | — | reader | session index row, hub counts |
-| `list_events` | `session_id, cursor?, limit?` | the event wire shape of `GET /api/sessions/:id/events` (`EventRpc`) | 200 / 500 | reader | `SessionHub.listEvents` |
-| `list_transcript_paragraphs` | `session_id, cursor?, limit?` | `{ordinal, speaker, session_time, start_sec, end_sec, text}` | 100 / 300 | reader | `listTranscriptEnrichment().paragraphs` |
-| `list_transcript_words` | `session_id, cursor?, limit?` | `{ordinal, session_time, speaker, word, start_sec, end_sec}` | 1,000 / 3,000 | reader | `listTranscriptWords` |
-| `list_topics` | `session_id, cursor?, limit?` | `{id, session_time, duration_sec, topic_level, summary, …}` (the topics wire shape) | 200 / 500 | reader | `listTopics` |
+| `list_events` | `session_id, cursor?, limit?` | the event wire shape of `GET /api/sessions/:id/events` (`EventRpc`) | 200 / 500 | reader | `SessionHub.listEventsAfter`, keyed by `(wall_time_utc, id)` (section 5.2) |
+| `list_transcript_paragraphs` | `session_id, cursor?, limit?` | `{ordinal, speaker, session_time, start_sec, end_sec, text}` | 100 / 300 | reader | `SessionHub.listTranscriptParagraphsAfter`, keyed by `(ordinal, id)` (section 5.2) |
+| `list_transcript_words` | `session_id, cursor?, limit?` | `{ordinal, session_time, speaker, word, start_sec, end_sec}` | 1,000 / 3,000 | reader | `SessionHub.listTranscriptWordsAfter`, keyed by `(ordinal, id)` (section 5.2) |
+| `list_topics` | `session_id, cursor?, limit?` | `{id, session_time, duration_sec, topic_level, summary, …}` (the topics wire shape) | 200 / 500 | reader | `SessionHub.listTopicsAfter`, keyed by `(ordinal, id)` (section 5.2) |
 | `get_session_aggregates` | `session_id` | the `aggregates.ts` results (talk time, event counts by category, topic timeline), each `{available, reason?}` | — | reader | hub rows through `packages/ai-runtime/src/aggregates.ts` |
 | `list_wiki_pages` | `session_id, cursor?, limit?` | `{page_id, kind, title, aliases, revision, association: "session_page" \| "cites_session" \| "linked_from_session_page", body_chars}` | 20 / 50 | reader | associated pages (section 5.4) |
 | `get_wiki_page` | `session_id, page_id, offset?, max_chars?` | `{page_id, kind, title, revision, body_md (slice), offset, next_offset, body_chars}` | 20,000 / 40,000 chars | reader, **and** the page is associated with that session | `wikiStore.getPage` under the user binding (RLS) |
@@ -931,7 +931,9 @@ type DashboardQuery =
 - **Shapes and limits.** Each kind returns exactly the item shape, paging contract and limits of
   the matching read tool in section 5.3. Both are served by one query service
   (`server/src/dashboards/query.ts`), so the MCP tools, `dashboard_data` and the web route can't
-  drift.
+  drift. The paged kinds (`events`, `transcript_paragraphs`, `transcript_words`, `topics`) read
+  each page through the same keyed `…After` hub read as their tool (section 5.2), never a
+  whole-session read.
 - **Hook behavior.**
   - Each hook returns `{data, error, loading, hasMore, loadMore}`.
   - `useEvents({all: true})` and the other `all: true` forms follow cursors up to the render
@@ -1019,7 +1021,8 @@ The parent (the web page, on the app origin) answers each query from the frame b
 
 - The call goes **from the parent**, with the viewer's `HttpOnly` cookie, which the browser
   attaches.
-- The route runs `requireSession` as the viewer and calls the same query service.
+- The route runs `requireSession` as the viewer and calls the same query service, so each
+  paged query reads one page through the keyed `…After` hub reads of section 5.2.
 - The route, and `GET /api/custom-dashboards/:dashboardId`, count on the dashboard query window
   of section 5.1 (900 a minute and 9,000 an hour per user, 3,000 a minute per session). Past
   it they answer `429` `{detail: "Rate limit exceeded; retry in N s."}` with `Retry-After`, and
@@ -1058,7 +1061,7 @@ The frame never holds the cookie, a token or a URL it could call:
 | `CUSTOM_DASHBOARDS_ENABLED` | — | Opt-in. `1`, `true` or `yes` enables, case-insensitively after trimming, as `AI_V2_ENABLED` does. Unset, empty or anything else means **off**. |
 | `PUBLIC_BASE_URL` | already required in every stack | When the flag is on, it must parse as an `https:` origin with no path, query or fragment. Otherwise boot is refused, naming the variable. The flag can't be turned on in the dev stack's `http://localhost` setup; use a stage with `STAGE_PUBLIC_BASE_URL`. |
 | `DASHBOARD_RUNTIME_ORIGIN` | yes | An `https:` origin with no path and no explicit port, whose host differs from `PUBLIC_BASE_URL`'s. A host equal to the app's is refused. A same-site host is allowed, with a boot warning that recommends a separate registrable domain. No port, so that `https://<host>` built from the router's host variable is the same origin. |
-| `ROUTER_DASHBOARD_RUNTIME_HOST` | in the split topology | The runtime host name for the router (section 10.3): a bare, lower-case DNS host name, with no scheme, port, path or wildcard. `compose.yaml` passes `${ROUTER_DASHBOARD_RUNTIME_HOST:-}` to both `router` and `api`. When it is present in the api's environment and the flag is on, the boot guard refuses to start unless it equals the host of `DASHBOARD_RUNTIME_ORIGIN`, naming both variables. The dev single-process stack doesn't set it. |
+| `ROUTER_DASHBOARD_RUNTIME_HOST` | in the split topology | The runtime host name for the router (section 10.3): a bare, lower-case DNS host name, with no scheme, port, path or wildcard. `compose.yaml` passes `${ROUTER_DASHBOARD_RUNTIME_HOST:-}` to both `router` and `api`. When the flag is on and `ROUTER_CUSTOM_DASHBOARDS` is present in the api's environment, the boot guard refuses to start unless `ROUTER_DASHBOARD_RUNTIME_HOST` is set and equals the host of `DASHBOARD_RUNTIME_ORIGIN` (both lower-cased), naming both variables. The dev single-process stack doesn't set it. |
 | `MCP_SIGNING_SECRET` | yes | At least 32 characters, server-only, kept in OpenBao like `FRAME_BUS_SECRET`. It signs bindings and consent CSRF tokens. Rotating it invalidates open Views and pending consents only. |
 | `MCP_ALLOWED_ORIGINS` | no | Extra `Origin` values accepted on `/mcp`, beyond `https://claude.ai`. A comma-separated list of exact origins: each is `https:`, has a host, and has no path, query, fragment, user info or wildcard (an explicit port is allowed). Entries are trimmed, and stored in their serialized form (`new URL(x).origin`). Boot refuses any other entry, naming the variable. |
 
@@ -1133,8 +1136,8 @@ flag is on. Its messages name variables, never values (web-frontend-platform).
     - *Boot guard, on/off pair.* When `ROUTER_CUSTOM_DASHBOARDS` is present in the api's
       environment (only the split-topology stacks set it), the boot guard refuses to start
       unless it is `on` exactly when the flag is on, and names both variables.
-    - *Boot guard, runtime host.* When the flag is on and `ROUTER_CUSTOM_DASHBOARDS` is present,
-      the boot guard refuses to start unless `ROUTER_DASHBOARD_RUNTIME_HOST` is set and equals
+    - *Boot guard, runtime host.* When the flag is on and `ROUTER_CUSTOM_DASHBOARDS` is present
+      in the api's environment, the boot guard refuses to start unless `ROUTER_DASHBOARD_RUNTIME_HOST` is set and equals
       the host of `DASHBOARD_RUNTIME_ORIGIN` (both lower-cased), naming both variables. An unset
       or different value would otherwise send runtime-host GETs past the host rule to
       `web:3000`, which serves Next's 404 into every dashboard frame, and would put the wrong
@@ -1403,9 +1406,10 @@ passes `scripts/check-change.sh`. Dependencies are merge order.
     differ; and when the host of the api's resolved `DASHBOARD_RUNTIME_ORIGIN` differs from
     `ROUTER_DASHBOARD_RUNTIME_HOST`.
   - The boot guard refuses to start, naming both variables, when `ROUTER_CUSTOM_DASHBOARDS` is
-    present and disagrees with the flag, and, with the flag on, when
-    `ROUTER_DASHBOARD_RUNTIME_HOST` is missing or differs from the host of
-    `DASHBOARD_RUNTIME_ORIGIN`. It starts when they agree or the router variables are absent.
+    present in the api's environment and disagrees with the flag, and when the flag is on and
+    `ROUTER_CUSTOM_DASHBOARDS` is present in the api's environment, unless
+    `ROUTER_DASHBOARD_RUNTIME_HOST` is set and equals the host of `DASHBOARD_RUNTIME_ORIGIN`
+    (both lower-cased). It starts when they agree or `ROUTER_CUSTOM_DASHBOARDS` is absent.
   - With both on, a GET of `https://<runtime host>/runtime/v1/frame.html` through the router
     reaches the api, not `web:3000` (`test_router.sh` row).
   - With both on, a document from `web:3000` carries exactly
