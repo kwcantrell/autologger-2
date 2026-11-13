@@ -10,36 +10,41 @@
 // group's routes don't match (a genuinely unmatched path, e.g.
 // `/sessions/a/b`, `/does-not-exist`, or the retired `/admin/users`),
 // matching pre-change behavior: status stays `404`, only the body changes to
-// Next's not-found HTML (`api-contract-freeze` delta). Because it sits
-// OUTSIDE the route group's root layout, it has no parent `<html>`/`<body>`
-// to inherit and must supply its own -- Next.js requires this for a root
-// not-found file when there is no root `app/layout.page.tsx` (the root
-// layout lives inside the `(index)` group; see its comment). The second
-// group, `(admin)`, was retired with the `/admin/users` page
+// Next's not-found HTML (`api-contract-freeze` delta). The second group,
+// `(admin)`, was retired with the `/admin/users` page
 // (remove-admin-users-page).
+//
+// No `<html>`/`<body>` of its own (Next 16 upgrade, job 014). Under Next 15
+// this page rendered in the root not-found boundary, outside the `(index)`
+// route group's root layout, so it had to supply its own document. Under
+// Next 16 it renders in the `(index)` layout's own not-found boundary, inside
+// that layout's `<body>` (which is also why it picks up the app's global
+// stylesheet, accepted as job 014's decision 3). A second `<html>` there
+// nested one document in another: in dev, React logged "In HTML, <html>
+// cannot be a child of <body>" and three more errors per 404, and the dev
+// overlay showed a red "4 Issues" badge. So the page renders only its
+// content, and the layout supplies the document. Pinned by
+// `server/src/node/nextFrontendDev.test.ts` (dev) and
+// `web/src/shared/theme/tailwindBuild.test.ts` (production build).
 //
 // Statically rendered (design D9.1 -- no dynamic export, no data
 // dependency), and contains no user- or session-derived data.
 export default function RootNotFound() {
   return (
-    <html lang="en">
-      <body>
-        <div
-          style={{
-            display: 'flex',
-            minHeight: '100vh',
-            alignItems: 'center',
-            justifyContent: 'center',
-            fontFamily: 'sans-serif',
-            textAlign: 'center',
-          }}
-        >
-          <div>
-            <h1>404 — Not Found</h1>
-            <p>This page doesn&apos;t exist.</p>
-          </div>
-        </div>
-      </body>
-    </html>
+    <div
+      style={{
+        display: 'flex',
+        minHeight: '100vh',
+        alignItems: 'center',
+        justifyContent: 'center',
+        fontFamily: 'sans-serif',
+        textAlign: 'center',
+      }}
+    >
+      <div>
+        <h1>404 — Not Found</h1>
+        <p>This page doesn&apos;t exist.</p>
+      </div>
+    </div>
   );
 }

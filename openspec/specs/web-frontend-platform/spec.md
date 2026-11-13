@@ -213,6 +213,11 @@ theme/body attributes, stylesheet and font references, and a static loading skel
 rather than an empty mount node, and the not-found page SHALL be statically rendered.
 The skeleton SHALL contain no user- or session-derived data.
 
+The not-found page SHALL render inside the index layout's document and SHALL NOT render an
+`<html>` or `<body>` of its own. Under Next 16 the page renders in that layout's not-found
+boundary, inside the layout's `<body>`, and so also picks up the app's global stylesheet; a
+second document nested there is invalid markup, which React reports as errors in development.
+
 The document for the **router-known paths** SHALL additionally emit `<link rel="preload"
 as="font" type="font/woff2" crossorigin>` for the three font faces on the critical path — the
 Barlow latin subset at weights 400 and 600 (the UI face's body and emphasis weights) and the
@@ -244,6 +249,13 @@ Two properties of those preloads are load-bearing:
 - **WHEN** `GET /` or `GET` of an unknown path is fetched
 - **THEN** the response has no `Link` header, and the font preloads are present only as
   `<link>` elements in the document
+
+#### Scenario: The not-found page is one document
+- **WHEN** `GET` of an unknown path (e.g. `/does-not-exist`, `/sessions/a/b`) is fetched, in
+  production or in development
+- **THEN** the response is `404`, and the page tree it carries has exactly one `<html>` and one
+  `<body>`, the index layout's, with the not-found content inside them
+- **AND** in development, rendering it logs no React error
 
 #### Scenario: Critical fonts are preloaded with matching URLs
 - **WHEN** `GET /` is fetched without executing JavaScript

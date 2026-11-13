@@ -18,8 +18,10 @@
 // files building into `web/.next` at once would race). On Next 16 the root not-found page picks
 // up the app's global stylesheet; 15.5 rendered it unstyled. The human accepted that change
 // (job 014, decision 3) and kept everything else: status `404`, response headers, and the page's
-// own content and inline styles. The suite boots the standalone server the production image runs
-// (`.next/standalone/web/server.js`) and asserts all of it, so a later change in either
+// own content and inline styles. The page renders no `<html>`/`<body>` of its own (proof round 3
+// F1: nested in the layout's `<body>` it raised React errors in dev). The suite boots the
+// standalone server the production image runs (`.next/standalone/web/server.js`) and asserts all
+// of it, so a later change in either
 // direction (the stylesheet dropped again, or the page's own markup changed) fails here.
 
 import { type ChildProcess, spawn, spawnSync } from 'node:child_process';
@@ -210,8 +212,17 @@ describe.each(UNKNOWN_PATHS)('not-found page for GET %s (standalone server)', (p
     const boundary = after.indexOf('"notFound":');
     expect(boundary, 'a not-found boundary after the stylesheet link').toBeGreaterThan(-1);
     const fallback = after.slice(boundary + '"notFound":'.length);
-    expect(fallback.startsWith('[["$","html",null,{"lang":"en"')).toBe(true);
+    // The page's own content, with no `<html>` of its own: the layout supplies the document
+    // (a second `<html>` nested in the layout's `<body>` raised React errors in dev, proof round 3
+    // F1).
+    expect(fallback.startsWith('[["$","div",null,{"style":')).toBe(true);
     expect(fallback.indexOf(NOT_FOUND_H1)).toBeGreaterThan(-1);
     expect(fallback.indexOf(NOT_FOUND_STYLE)).toBeLessThan(fallback.indexOf('"forbidden":'));
+  });
+
+  it('is one HTML document: the layout has the only <html> and <body> (job 014, F1)', () => {
+    const flight = flightData(get().body);
+    expect(flight.match(/\["\$","html",/g)).toHaveLength(1);
+    expect(flight.match(/\["\$","body",/g)).toHaveLength(1);
   });
 });
