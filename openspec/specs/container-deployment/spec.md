@@ -44,6 +44,14 @@ Neither image SHALL contain any of the following:
 `node_modules`, `.next`, and VCS metadata. Dockerfile `COPY` instructions SHALL name the
 source paths above explicitly, never a whole workspace directory.
 
+An image's dependencies SHALL be the tree `npm ci` installs from the committed lockfile in the
+image's deps stage, copied whole: the root `node_modules` and every workspace's nested
+`node_modules` (such as `packages/transcription/node_modules`), and nothing else. The `api` and
+`media-worker` installs SHALL omit dev dependencies. The build of the `api`, `media-worker` and
+`dev` images SHALL fail when the shipped tree differs from that install or from the lockfile:
+a package missing or at another version, a broken workspace link, or a lockfile package nested
+in a shipped workspace's `node_modules` that the install lacks.
+
 #### Scenario: api image boots API-only
 - **WHEN** the `api` image starts with a valid environment
 - **THEN** the server logs its API-only warning, `/api/*` and `/auth/*` respond normally, and
@@ -59,6 +67,12 @@ source paths above explicitly, never a whole workspace directory.
   and `server/.env`
 - **THEN** neither image contains a file named `catalog.db`, a `server/data` directory, or
   any `.env` file other than `.env.example`, and no `~/.claude` credential is present
+
+#### Scenario: Workspace-nested dependencies ship with the image
+- **WHEN** the lockfile installs a package nested in a workspace's `node_modules` at a
+  version other than the hoisted copy (as `packages/transcription/node_modules/undici`)
+- **THEN** each image that ships that workspace resolves the nested version from it, and a
+  build whose runtime stage leaves the nested copy out fails
 
 #### Scenario: media-worker image carries only the worker
 - **WHEN** the `media-worker` image filesystem is listed

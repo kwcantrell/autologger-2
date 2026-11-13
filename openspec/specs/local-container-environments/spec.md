@@ -163,7 +163,9 @@ No target SHALL remove a prod volume or run `docker volume prune` or
 ### Requirement: Dev environment runs the hot-reload single process with every integration
 The dev environment SHALL run the repo's single-process `npm run dev` in a container built
 from a `dev` target of `docker/Dockerfile`. The image SHALL include:
-- the workspace dependencies for `server`, `web`, and `packages/*`;
+- the workspace dependencies for `server`, `web`, and `packages/*`, as the full tree `npm ci`
+  installs from the lockfile, workspace-nested `node_modules` included (see container-deployment
+  "Two images built from one repository");
 - the pinned Claude CLI, with `CLAUDE_CLI_PATH` set to it;
 - the pinned yt-dlp and deno in one directory, with `YTDLP_PATH` set to that yt-dlp.
 

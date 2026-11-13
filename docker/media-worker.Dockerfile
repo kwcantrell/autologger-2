@@ -35,6 +35,11 @@ FROM manifests AS worker-deps
 RUN --mount=type=cache,target=/root/.npm \
     npm ci --omit=dev --omit=peer --workspace=media-worker --include-workspace-root=false \
  && test ! -e node_modules/better-sqlite3
+# Stage every node_modules npm ci wrote (the root's and any workspace's nested one, e.g.
+# packages/transcription/node_modules/undici) under /deps at the same relative paths, so the
+# runtime stage copies the whole lockfile tree and nothing else (as docker/Dockerfile api-deps).
+RUN mkdir -p /deps \
+ && find . -type d -name node_modules -prune | while read -r d; do mkdir -p "/deps/${d%/node_modules}" && mv "$d" "/deps/$d"; done
 
 FROM manifests AS worker-src
 COPY media-worker/src media-worker/src
@@ -49,9 +54,14 @@ RUN find media-worker packages -type f \( -name '*.test.*' -o -name '*.spec.*' \
 FROM ${FFMPEG_IMAGE} AS media-worker
 COPY --from=node /usr/local/bin/node /usr/local/bin/node
 WORKDIR /app
-COPY --from=worker-deps /app/node_modules ./node_modules
+COPY --from=worker-deps /deps/ ./
 COPY --from=worker-src /app/media-worker media-worker
 COPY --from=worker-src /app/packages packages
+# Fail the build unless the shipped tree is the one npm ci installed from the lockfile
+# (docker/verify-node-modules.mjs; bind-mounted, so neither file lands in the image).
+RUN --mount=type=bind,source=docker/verify-node-modules.mjs,target=/tmp/verify/verify-node-modules.mjs \
+    --mount=type=bind,source=package-lock.json,target=/tmp/verify/package-lock.json \
+    node /tmp/verify/verify-node-modules.mjs --root /app --lockfile /tmp/verify/package-lock.json --omit dev,peer
 ENV NODE_ENV=production
 USER 10001:10001
 # The base image's ENTRYPOINT (/ffmpegwrapper.sh, an s6 uid switcher) is replaced: the worker

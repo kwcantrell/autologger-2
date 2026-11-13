@@ -82,6 +82,11 @@ RUN --mount=type=cache,target=/root/.npm \
     npm ci --omit=dev --workspace=server --include-workspace-root=false \
  && node -e "const D=require('better-sqlite3');new D(':memory:').close();console.log('better-sqlite3 native binding loads')" \
  || (echo 'better-sqlite3 failed to load' >&2; exit 1)
+# Stage every node_modules npm ci wrote (the root's and any workspace's nested one, e.g.
+# packages/transcription/node_modules/undici) under /deps at the same relative paths, so the
+# runtime stage copies the whole lockfile tree and nothing else.
+RUN mkdir -p /deps \
+ && find . -type d -name node_modules -prune | while read -r d; do mkdir -p "/deps/${d%/node_modules}" && mv "$d" "/deps/$d"; done
 
 # api-src: server + package sources, test files pruned BEFORE the final COPY so they never
 # exist in any api image layer.
@@ -139,10 +144,15 @@ RUN --mount=type=cache,target=/root/.npm \
     npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
 COPY --from=tools /opt/ytdlp /opt/ytdlp
 WORKDIR /app
-COPY --from=api-deps /app/node_modules ./node_modules
+COPY --from=api-deps /deps/ ./
 COPY --from=api-src /app/server server
 COPY --from=api-src /app/packages packages
 COPY server/package.json server/package.json
+# Fail the build unless the shipped tree is the one npm ci installed from the lockfile
+# (docker/verify-node-modules.mjs; bind-mounted, so neither file lands in the image).
+RUN --mount=type=bind,source=docker/verify-node-modules.mjs,target=/tmp/verify/verify-node-modules.mjs \
+    --mount=type=bind,source=package-lock.json,target=/tmp/verify/package-lock.json \
+    node /tmp/verify/verify-node-modules.mjs --root /app --lockfile /tmp/verify/package-lock.json --omit dev
 # Volume mount points, owned by the runtime user so a fresh named volume (initialised from
 # these dirs) is writable on first start. settings.json carries DISABLE_AUTOUPDATER because
 # the server strips unlisted env vars from the CLI child; the ENV below covers direct
@@ -183,6 +193,9 @@ RUN --mount=type=cache,target=/root/.npm \
     npm ci --workspace=server --workspace=web --workspace='packages/*' --include-workspace-root=false
 RUN node -e "const D=require('better-sqlite3');new D(':memory:').close();console.log('better-sqlite3 native binding loads')" \
  || { echo 'better-sqlite3 failed to load' >&2; exit 1; }
+# Same /deps staging as api-deps.
+RUN mkdir -p /deps \
+ && find . -type d -name node_modules -prune | while read -r d; do mkdir -p "/deps/${d%/node_modules}" && mv "$d" "/deps/$d"; done
 
 # dev: deps + baked configs only. Source subtrees are bind-mounted (read-only) by compose.dev.yaml
 # onto the empty mount points created below; config/manifest/lockfile changes need a rebuild.
@@ -192,7 +205,7 @@ RUN --mount=type=cache,target=/root/.npm \
     npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
 COPY --from=tools /opt/ytdlp /opt/ytdlp
 WORKDIR /app
-COPY --chown=node:node --from=dev-deps /app/node_modules ./node_modules
+COPY --chown=node:node --from=dev-deps /deps/ ./
 COPY --chown=node:node --from=manifests /app/ ./
 COPY --chown=node:node server/tsconfig.json server/tsconfig.json
 COPY --chown=node:node web/next.config.ts web/tsconfig.json web/tsconfig.node.json web/postcss.config.mjs web/next-env.d.ts web/
@@ -216,9 +229,14 @@ RUN mkdir -p server/src server/scripts web/src web/public web/.next \
       packages/storage/src packages/transcription/src \
       /data /blobs /home/node/.claude \
  && printf '{\n  "env": { "DISABLE_AUTOUPDATER": "1" }\n}\n' > /home/node/.claude/settings.json \
- && find /app -path /app/node_modules -prune -o -exec chown node:node {} + \
+ && find /app -name node_modules -prune -o -exec chown node:node {} + \
  && chown -R node:node /data /home/node \
  && chown node:node /blobs
+# Fail the build unless the shipped tree is the one npm ci installed from the lockfile
+# (docker/verify-node-modules.mjs; bind-mounted, so neither file lands in the image).
+RUN --mount=type=bind,source=docker/verify-node-modules.mjs,target=/tmp/verify/verify-node-modules.mjs \
+    --mount=type=bind,source=package-lock.json,target=/tmp/verify/package-lock.json \
+    node /tmp/verify/verify-node-modules.mjs --root /app --lockfile /tmp/verify/package-lock.json
 ENV NODE_ENV=development \
     DATA_DIR=/data \
     BLOB_DIR=/blobs \
