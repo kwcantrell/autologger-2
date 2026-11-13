@@ -89,16 +89,25 @@ describe('mergeAudioSegments', () => {
     expect(group.packets).toBe(a.packets + b.packets + c.packets);
     expect(merged.packets).toBe(a.packets + b.packets + c.packets);
 
-    // Per-segment cumulative offsets, in input order.
+    // Per-segment cumulative offsets, in input order. The media-processing spec makes seam
+    // offsets the inputs' cumulative *untrimmed* lengths (every packet at its exact Opus TOC
+    // duration, media-worker D.8), not their trimmed play lengths: computeDuration() trims the
+    // Opus pre-skip since mediabunny 1.63 and misses the WebM's undurationed last block, so it
+    // is not the reference here. ffprobe: seg1 31, seg2 21, seg5 26 packets, each 20 ms.
+    expect([a.packets, b.packets, c.packets]).toEqual([31, 21, 26]);
+    const [untrimmedA, untrimmedB, untrimmedC] = [0.62, 0.42, 0.52];
     expect(group.segments).toHaveLength(3);
     expect(group.segments[0].path).toBe(seg1);
-    expect(group.segments[0].offsetSeconds).toBeCloseTo(0, 1);
+    expect(group.segments[0].offsetSeconds).toBeCloseTo(0, 6);
     expect(group.segments[1].path).toBe(seg2);
-    expect(group.segments[1].offsetSeconds).toBeCloseTo(a.duration, 1);
+    expect(group.segments[1].offsetSeconds).toBeCloseTo(untrimmedA, 6);
     expect(group.segments[2].path).toBe(segOgg);
-    expect(group.segments[2].offsetSeconds).toBeCloseTo(a.duration + b.duration, 1);
+    expect(group.segments[2].offsetSeconds).toBeCloseTo(untrimmedA + untrimmedB, 6);
 
-    expect(group.durationSeconds).toBeCloseTo(a.duration + b.duration + c.duration, 1);
+    expect(group.durationSeconds).toBeCloseTo(untrimmedA + untrimmedB + untrimmedC, 6);
+    // The merged WebM carries its last packet's duration (mediabunny >= 1.63 writes it), so
+    // reading the output back gives the same untrimmed length the merge reports.
+    expect(merged.duration).toBeCloseTo(group.durationSeconds, 6);
   });
 
   it('remuxes a single segment into its own group', async () => {
