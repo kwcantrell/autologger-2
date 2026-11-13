@@ -15,9 +15,19 @@
 // default `headersTimeout`/`bodyTimeout` (300s) is below that, so requests go
 // through a dedicated undici `Agent` with both timeouts raised above the
 // provider ceiling (design D3) instead of relying on Node's global dispatcher.
+//
+// undici 8's dispatchers accept only the v2 handler API (`onRequestStart`,
+// `onResponseStart`, ...), but Node's built-in `fetch` (undici 6 in Node 22,
+// 7 in Node 24) dispatches with v1 handlers (`onConnect`, `onHeaders`, ...).
+// Passing a plain undici 8 `Agent` to the global `fetch` therefore fails every
+// request with `UND_ERR_INVALID_ARG`. `BuiltinFetchAgent` routes dispatches
+// through undici's `Dispatcher1Wrapper`, the adapter its v7->v8 migration
+// guide documents for "legacy v1 handler consumers such as Node.js built-in
+// fetch". The wrapper also forces `allowH2: false`, keeping requests on
+// HTTP/1.1 as under undici 7 (whose `allowH2` default was `false`).
 
 import { createReadStream } from 'node:fs';
-import { Agent } from 'undici';
+import { Agent, type Dispatcher, Dispatcher1Wrapper } from 'undici';
 import type { CodecFamily } from './audioMerge';
 
 const DEEPGRAM_LISTEN_URL = 'https://api.deepgram.com/v1/listen';
@@ -41,15 +51,42 @@ export function contentTypeForFamily(family: CodecFamily): string {
  * provider call's dispatcher raises both above the ceiling (design D3). */
 export const PROVIDER_TIMEOUT_MS = 11 * 60 * 1000;
 
+/** An undici 8 `Agent` that Node's built-in `fetch` can drive: every
+ * dispatch goes through `Dispatcher1Wrapper`, which adapts v1 handlers to
+ * the v2 API and pins the request to HTTP/1.1. Timeouts, keep-alive and
+ * pooling are the plain `Agent`'s. */
+class BuiltinFetchAgent extends Agent {
+  readonly #v1: Dispatcher1Wrapper;
+
+  constructor(options: Agent.Options) {
+    super(options);
+    const dispatchV2 = (opts: Agent.DispatchOptions, handler: Dispatcher.DispatchHandler) =>
+      super.dispatch(opts, handler);
+    // The wrapper only needs a `dispatch` to delegate to; handing it this
+    // Agent's own (super) dispatch avoids a second, unclosable pool.
+    this.#v1 = new Dispatcher1Wrapper({ dispatch: dispatchV2 } as unknown as Dispatcher);
+  }
+
+  override dispatch(opts: Agent.DispatchOptions, handler: Dispatcher.DispatchHandler): boolean {
+    return this.#v1.dispatch(opts, handler);
+  }
+}
+
+/** A new provider dispatcher whose `headersTimeout`/`bodyTimeout` are
+ * `timeoutMs`. Exported for tests only (they need a short timeout). */
+export function createProviderDispatcher(timeoutMs: number = PROVIDER_TIMEOUT_MS): Agent {
+  return new BuiltinFetchAgent({
+    headersTimeout: timeoutMs,
+    bodyTimeout: timeoutMs,
+  });
+}
+
 let sharedDispatcher: Agent | undefined;
 
 /** Lazily-created, process-wide dispatcher with timeouts raised above
  * DeepGram's 10-minute processing ceiling. Exported for tests only. */
 export function providerDispatcher(): Agent {
-  sharedDispatcher ??= new Agent({
-    headersTimeout: PROVIDER_TIMEOUT_MS,
-    bodyTimeout: PROVIDER_TIMEOUT_MS,
-  });
+  sharedDispatcher ??= createProviderDispatcher();
   return sharedDispatcher;
 }
 

@@ -1,16 +1,20 @@
 // Unit tests for the DeepGram pre-recorded transcription client. `fetch` is
 // mocked (vi.stubGlobal) — no real network/provider calls.
 
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createReadStream, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Agent } from 'undici';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
   contentTypeForFamily,
+  createProviderDispatcher,
   DeepgramUpstreamError,
   extractEnrichment,
   PROVIDER_TIMEOUT_MS,
+  providerDispatcher,
   transcribeGroup,
 } from './deepgram';
 import { TRANSCRIPTION_FIXTURES_DIR } from './fixturesDir';
@@ -419,5 +423,121 @@ describe('extractEnrichment', () => {
     expect(() => extractEnrichment(null as never)).not.toThrow();
     expect(() => extractEnrichment(undefined as never)).not.toThrow();
     expect(extractEnrichment(undefined as never)).toEqual({ paragraphs: [], sentiments: [] });
+  });
+});
+
+// The tests above mock `fetch`, so they cannot see whether Node's built-in
+// `fetch` can actually drive the `undici` package's dispatcher. undici 8's
+// dispatchers accept only the v2 handler API, while Node's bundled fetch
+// (undici 6 in Node 22, 7 in Node 24) dispatches with v1 handlers. These
+// tests run the real built-in `fetch` against a local HTTP server.
+describe('providerDispatcher with Node built-in fetch', () => {
+  type Handler = (req: IncomingMessage, res: ServerResponse) => void;
+  let server: Server;
+  let origin: string;
+  let handle: Handler;
+
+  beforeAll(async () => {
+    server = createServer((req, res) => handle(req, res));
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  });
+
+  afterAll(async () => {
+    server.closeAllConnections();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
+  type FetchDispatcher = NonNullable<RequestInit['dispatcher']>;
+
+  it('streams a request body and reads the response through the provider dispatcher', async () => {
+    handle = (req, res) => {
+      let bytes = 0;
+      req.on('data', (chunk: Buffer) => {
+        bytes += chunk.length;
+      });
+      req.on('end', () => {
+        res.setHeader('content-type', 'application/json');
+        res.end(
+          JSON.stringify({
+            bytes,
+            contentType: req.headers['content-type'],
+            authorization: req.headers.authorization,
+            httpVersion: req.httpVersion,
+          }),
+        );
+      });
+    };
+
+    const res = await fetch(`${origin}/v1/listen`, {
+      method: 'POST',
+      headers: { Authorization: 'Token k', 'Content-Type': 'audio/webm' },
+      body: createReadStream(filePath) as unknown as RequestInit['body'],
+      duplex: 'half',
+      dispatcher: providerDispatcher() as unknown as FetchDispatcher,
+    } as RequestInit);
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      bytes: Buffer.byteLength('fake audio bytes'),
+      contentType: 'audio/webm',
+      authorization: 'Token k',
+      httpVersion: '1.1',
+    });
+  });
+
+  it('keeps HTTP/1.1 only: dispatches with allowH2 disabled, as undici 7 did by default', async () => {
+    handle = (_req, res) => res.end('ok');
+    const spy = vi.spyOn(Agent.prototype, 'dispatch');
+    try {
+      const res = await fetch(`${origin}/`, {
+        dispatcher: providerDispatcher() as unknown as FetchDispatcher,
+      });
+      expect(await res.text()).toBe('ok');
+      expect(spy).toHaveBeenCalled();
+      for (const [opts] of spy.mock.calls) {
+        expect((opts as { allowH2?: boolean }).allowH2).toBe(false);
+      }
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('applies the configured headersTimeout to built-in fetch', async () => {
+    handle = (_req, res) => {
+      setTimeout(() => res.end('late'), 2_000);
+    };
+    const agent = createProviderDispatcher(200);
+    try {
+      const err = await fetch(`${origin}/slow-headers`, {
+        dispatcher: agent as unknown as FetchDispatcher,
+      }).then(
+        () => undefined,
+        (e: unknown) => e,
+      );
+      expect((err as { cause?: { code?: string } }).cause?.code).toBe('UND_ERR_HEADERS_TIMEOUT');
+    } finally {
+      await agent.destroy();
+    }
+  });
+
+  it('applies the configured bodyTimeout to built-in fetch', async () => {
+    handle = (_req, res) => {
+      res.write('partial');
+      setTimeout(() => res.end('rest'), 2_000);
+    };
+    const agent = createProviderDispatcher(200);
+    try {
+      const res = await fetch(`${origin}/slow-body`, {
+        dispatcher: agent as unknown as FetchDispatcher,
+      });
+      const err = await res.text().then(
+        () => undefined,
+        (e: unknown) => e,
+      );
+      expect((err as { cause?: { code?: string } }).cause?.code).toBe('UND_ERR_BODY_TIMEOUT');
+    } finally {
+      await agent.destroy();
+    }
   });
 });
