@@ -48,10 +48,14 @@ const SUPABASE_KEYS = ['POSTGRES_PASSWORD', 'SUPABASE_ROLES_PASSWORD', 'APP_DB_P
 // them (another checkout runs the old stack): accepted, never format-checked, never passed to
 // compose, and named once in a warning.
 const RETIRED_KEYS = ['ANON_KEY', 'SERVICE_ROLE_KEY', 'SECRET_KEY_BASE', 'REALTIME_DB_ENC_KEY', 'SUPABASE_PORT'];
+// Custom session dashboards (ADR 0035, design section 10.3): the router's two settings, which
+// compose also passes to the api so the boot guard can compare them. Split topology only; the dev
+// single-process stack has no router.
+const ROUTER_DASHBOARD_KEYS = ['ROUTER_CUSTOM_DASHBOARDS', 'ROUTER_DASHBOARD_RUNTIME_HOST'];
 const COMPOSE_KEYS = {
   dev: ['DEV_PORT', 'DEV_COMPANION_PORT', ...SUPABASE_KEYS, ...RETIRED_KEYS],
-  stage: ['STAGE_PORT', ...SUPABASE_KEYS, ...RETIRED_KEYS],
-  prod: ['ROUTER_PORT', 'WEB_TAG', 'API_TAG', 'MEDIA_TAG', 'PUBLIC_BASE_URL', ...SUPABASE_KEYS, ...RETIRED_KEYS],
+  stage: ['STAGE_PORT', ...ROUTER_DASHBOARD_KEYS, ...SUPABASE_KEYS, ...RETIRED_KEYS],
+  prod: ['ROUTER_PORT', 'WEB_TAG', 'API_TAG', 'MEDIA_TAG', 'PUBLIC_BASE_URL', ...ROUTER_DASHBOARD_KEYS, ...SUPABASE_KEYS, ...RETIRED_KEYS],
 };
 // Per-key value formats: strong, URL-safe, and safe for busybox echo and psql backticks.
 const KEY_FORMAT = {
@@ -60,6 +64,10 @@ const KEY_FORMAT = {
   APP_DB_PASSWORD: /^[0-9a-f]{32,}$/,
   MEDIA_DB_PASSWORD: /^[0-9a-f]{32,}$/,
   JWT_SECRET: /^[A-Za-z0-9_-]{40,}$/,
+  // Design section 10.3: `on` or `off` (empty is `off` through the compose default); a bare lower-case DNS host name (no scheme, port, path,
+  // space, brace, quote or wildcard) or empty. The same rules check-envs.sh applies.
+  ROUTER_CUSTOM_DASHBOARDS: /^(on|off)?$/,
+  ROUTER_DASHBOARD_RUNTIME_HOST: /^([a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*)?$/,
 };
 // The services each secret value may appear in (spec invariant 16); per stack where it differs.
 // drop-unused-supabase-services D3: rest, realtime, storage and supabase-gw are gone.

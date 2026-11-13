@@ -88,8 +88,8 @@ A secret may hold only these keys:
   | Environment | Compose keys |
   | --- | --- |
   | `dev` | `DEV_PORT`, `DEV_COMPANION_PORT`, plus the Supabase keys |
-  | `stage` | `STAGE_PORT`, plus the Supabase keys |
-  | `prod` | `ROUTER_PORT`, `WEB_TAG`, `API_TAG`, `MEDIA_TAG`, `PUBLIC_BASE_URL`, plus the Supabase keys |
+  | `stage` | `STAGE_PORT`, `ROUTER_CUSTOM_DASHBOARDS`, `ROUTER_DASHBOARD_RUNTIME_HOST`, plus the Supabase keys |
+  | `prod` | `ROUTER_PORT`, `WEB_TAG`, `API_TAG`, `MEDIA_TAG`, `PUBLIC_BASE_URL`, `ROUTER_CUSTOM_DASHBOARDS`, `ROUTER_DASHBOARD_RUNTIME_HOST`, plus the Supabase keys |
 
   Every environment also accepts the retired Supabase keys (see "Retired keys" below), and
   ignores them.
@@ -119,6 +119,13 @@ Other rules:
   short value and names the variable, never the value. Its companions `CUSTOM_DASHBOARDS_ENABLED`,
   `DASHBOARD_RUNTIME_ORIGIN`, `MCP_ALLOWED_ORIGINS` and `MCP_REFRESH_GRACE_SECONDS` are not secrets
   but are set in the same KV secret. See README "Environment variables".
+- **`ROUTER_CUSTOM_DASHBOARDS` and `ROUTER_DASHBOARD_RUNTIME_HOST`** (custom session dashboards,
+  split topology) are compose keys of stage and prod, not container allowlist keys: compose
+  passes them to both the `router` and the `api` service. Set `ROUTER_CUSTOM_DASHBOARDS` to `on`
+  exactly when `CUSTOM_DASHBOARDS_ENABLED` is on (`off`, or unset, otherwise), and
+  `ROUTER_DASHBOARD_RUNTIME_HOST` to the bare lower-case host of `DASHBOARD_RUNTIME_ORIGIN`, in the
+  same KV secret. `compose-run` refuses any other format, and the api refuses to boot when they
+  disagree with the flag or the origin. Turning them on is the operator's step.
 - **Every stack needs Google sign-in** (require-login). `compose-run` refuses dev, stage and prod
   unless both `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` are set, and the server refuses to boot
   without them. Dev needs its own Google OAuth client (authorized redirect

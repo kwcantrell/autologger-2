@@ -211,6 +211,43 @@ them.
 - **THEN** the gzipped and identity responses, and their headers, match what `api` returns
   when addressed directly
 
+### Requirement: Custom-dashboard router rules exist only with the router setting on
+The router SHALL read `ROUTER_CUSTOM_DASHBOARDS` (`on` or `off`; unset or empty means `off`) and
+`ROUTER_DASHBOARD_RUNTIME_HOST` from its environment, and `compose.yaml` SHALL pass both, with the
+same values, to the `router` and `api` services. One line placed after rule 5 and before rule 6
+SHALL import the snippet named by the setting: `custom-dashboards-off`, which is empty, or
+`custom-dashboards-on`. With the setting unset or `off`, the adapted configuration SHALL be
+byte-identical to the committed baseline, and every request SHALL be answered as it was before
+the snippets existed, including on the API-only `api` image.
+
+The `on` snippet SHALL send these to `api:8787`, for `GET` and `HEAD`, matched as exact raw-URI
+paths (a query string allowed) with the file's CEL style and no decoded placeholder:
+`/.well-known/oauth-protected-resource`, `/.well-known/oauth-protected-resource/mcp`,
+`/.well-known/oauth-authorization-server`, `/oauth/authorize`, `/oauth/authorize/resume` and
+`/mcp`. Look-alikes (`/mcpx`, `/mcp/x`) and percent-encoded spellings (`/%6Dcp`) SHALL still go
+to `web`. It SHALL also send every request whose `Host` is `ROUTER_DASHBOARD_RUNTIME_HOST` to the
+api, and SHALL add `Content-Security-Policy: frame-src https://<runtime host>/runtime/v1/frame.html`
+to every response for another host that has no `Content-Security-Policy` of its own, leaving an
+existing policy unchanged and adding nothing to runtime-host responses. Each added `reverse_proxy`
+SHALL set `X-Forwarded-For {client_ip}` and `compression off` like the existing api rules.
+
+#### Scenario: Routes with the router on
+- **WHEN** the router runs with `ROUTER_CUSTOM_DASHBOARDS=on` and a runtime host
+- **THEN** a `GET` of each listed path reaches `api`, `/mcpx`, `/mcp/x` and `/%6Dcp` reach `web`,
+  and a `GET` of `https://<runtime host>/runtime/v1/frame.html` reaches `api`
+
+#### Scenario: The frame-src policy with the router on
+- **WHEN** a document from `web` is requested with the router on
+- **THEN** it carries exactly the `frame-src` policy, an `api` response with its own policy keeps
+  it, and a runtime-host response does not carry the app's policy
+
+#### Scenario: Router off is the router of today
+- **WHEN** `ROUTER_CUSTOM_DASHBOARDS` is unset or `off`
+- **THEN** no response gains a `Content-Security-Policy`, and `GET`, `HEAD`, `POST`, `PUT` and
+  `DELETE` on those paths and on the runtime host get the answer recorded from the router before
+  the snippets existed on the same stack (Next's HTML not-found page for the `GET`s, not the
+  api's plain-text `404`)
+
 ### Requirement: Deployment behind a TLS-terminating proxy is configured explicitly
 The compose defaults and deployment documentation SHALL set:
 - `PUBLIC_BASE_URL` to the public HTTPS origin;
@@ -256,6 +293,11 @@ plain HTTP and raw TCP, and SHALL print case names and statuses only. It SHALL c
 - the shell routes served by `web` with `200` and no `Set-Cookie`;
 - the request list of "Differential parity with the single-process server", compared with a
   committed expectation table of status and header presence;
+- the custom-dashboard rows, per the router's own `ROUTER_CUSTOM_DASHBOARDS` mode: `GET`, `HEAD`,
+  `POST`, `PUT` and `DELETE` on each custom-dashboard path and on the runtime host, compared with
+  a committed table of status, `Set-Cookie` presence, the compared headers (`Content-Type`
+  included) and a body hash, recorded with `--record`; which upstream answered; and the
+  `frame-src` policy rows of "Custom-dashboard router rules exist only with the router setting on";
 - stray upgrades closed with no bytes written, and the session WebSocket path still proxied;
 - traversal to a non-Companion route with a live Companion device token, including a non-GET and
   a query string carrying a dot-segment;
