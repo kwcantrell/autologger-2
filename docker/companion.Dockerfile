@@ -15,9 +15,9 @@ RUN set -eu; find /ctx -type f | sort > /ctx-listing.txt; \
 # ---- module: build and package the module ----
 # Deviation from design D9 step 4 (an EMPTY node_modules/): Companion treats extra-module-path
 # modules as unpackaged and resolves `@companion-module/base/package.json` from the module dir
-# to learn the API version (verified live on v4.3.4: "Failed to get module api version"). The
-# bundle itself is still self-contained; node_modules only carries that package (non-empty, so
-# the entrypoint still skips its yarn install).
+# to learn the API version (verified live on v4.3.4: "Failed to get module api version"; v5.1.3
+# keeps the same lookup). The bundle itself is still self-contained; node_modules only carries
+# that package (non-empty, so the entrypoint still skips its yarn install).
 FROM ${NODE_IMAGE} AS module
 WORKDIR /src
 # Forces the audit stage (and its build-log listing + allowlist assertion) into every build.
@@ -40,5 +40,5 @@ RUN set -eu; \
     test -d /module/autologger/node_modules
 
 # ---- runtime ----
-FROM ghcr.io/bitfocus/companion/companion:v4.3.4@sha256:7fddb11a82ed4934c6ef3d34782963bac9b12916f31be525b81df87bb2458df5
+FROM ghcr.io/bitfocus/companion/companion:v5.1.3@sha256:923f35eb015d89180dc50ca61dee5680735840ac55b9b6aec33b1ccdd964acc2
 COPY --from=module /module/autologger /app/module-local-dev/autologger
