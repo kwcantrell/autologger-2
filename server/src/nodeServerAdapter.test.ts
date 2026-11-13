@@ -14,6 +14,10 @@
 // - RESPONSE_ALREADY_SENT (the frontend bridge's sentinel, src/app.ts) leaves
 //   the raw response exactly as written and never leaks its marker header;
 // - status, headers, bodies and Range responses pass through unchanged;
+// - null-body responses (204, c.redirect) carry no content-type. 1.x added
+//   `text/plain; charset=UTF-8` to them; dropping it is the one observable
+//   change of the 2.x upgrade, accepted by the human for job 009
+//   (api-contract-freeze "Null-body responses carry no Content-Type");
 // - @hono/node-ws upgrades still open, echo and reject as before.
 
 import { randomBytes } from 'node:crypto';
@@ -64,6 +68,7 @@ beforeAll(async () => {
     return c.json({ ok: true, n: 1 }, 201);
   });
   app.get('/api/empty', (c) => c.body(null, 204));
+  app.get('/api/redirect', (c) => c.redirect('/?login_error=provider_error'));
   app.get('/api/range', (c) => {
     // Same shape as the audio/export routers' 206 responses.
     const m = /^bytes=(\d+)-(\d+)$/.exec(c.req.header('range') ?? '');
@@ -153,6 +158,20 @@ describe('@hono/node-server adapter', () => {
   it('keeps a 204 empty', async () => {
     const res = await fetch(`${base}/api/empty`);
     expect(res.status).toBe(204);
+    expect(await res.text()).toBe('');
+  });
+
+  it('sends a 204 with no content-type', async () => {
+    const res = await fetch(`${base}/api/empty`);
+    expect(res.status).toBe(204);
+    expect(res.headers.get('content-type')).toBeNull();
+  });
+
+  it('sends a c.redirect 302 with its Location and no content-type', async () => {
+    const res = await fetch(`${base}/api/redirect`, { redirect: 'manual' });
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toBe('/?login_error=provider_error');
+    expect(res.headers.get('content-type')).toBeNull();
     expect(await res.text()).toBe('');
   });
 

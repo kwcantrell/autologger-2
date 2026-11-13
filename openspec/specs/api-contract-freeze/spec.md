@@ -165,6 +165,25 @@ verified `sub`, the approval by email), so a refused sign-in never reaches Supab
 - **THEN** the server responds `302` with `Location: /?login_error=email_unverified`, sets no
   cookie, does not call Supabase Auth, and creates or changes no account
 
+### Requirement: Null-body responses carry no Content-Type
+A response the server sends with no body, namely every `204` (for example
+`DELETE /api/companion-devices/:id`) and every redirect the app issues (for example the
+`302`s from `GET /auth/google/callback`), SHALL carry no `Content-Type` header. Status
+codes, `Location` and every other header on these responses are unchanged. This amends the
+frozen contract: on `@hono/node-server` 1.x these responses carried
+`Content-Type: text/plain; charset=UTF-8`, which the adapter added by default; 2.x does not,
+and the change was accepted by a human decision (factory job 009).
+
+#### Scenario: A 204 route sends no Content-Type
+- **WHEN** a signed-in user revokes one of their Companion devices with
+  `DELETE /api/companion-devices/:id`
+- **THEN** the response is `204` with an empty body and no `Content-Type` header
+
+#### Scenario: A redirect sends no Content-Type
+- **WHEN** Google redirects to `/auth/google/callback?error=x`
+- **THEN** the server responds `302` with `Location: /?login_error=provider_error`, an
+  empty body, and no `Content-Type` header
+
 ### Requirement: Session deep-link HTML route
 `GET /sessions/:id`, where `:id` is a single non-empty path segment, SHALL respond
 `200` with the index shell HTML — the same page identity served at `/` (same route
