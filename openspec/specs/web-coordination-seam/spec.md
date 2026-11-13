@@ -399,7 +399,7 @@ chased further:
   literal dynamic `import(...)`, used at the loaders in `AppShell.tsx` and `SessionRoute.tsx`.
   Those literal specifiers **are** resolved by the check; only a computed argument escapes it.
 - `import.meta.glob(...)` — Vite's build-time bundling primitive; the check does not resolve its
-  glob argument. The production bundler is now Next/webpack, which does not implement it, so this
+  glob argument. The production bundler is now Next/Turbopack, which does not implement it, so this
   bypass no longer describes a way to get package code into a shipped bundle; it is retained
   because Vite survives as the test transform and such a file would still resolve there.
 - `typeof import('...')` in type position — a distinct AST node the check does not walk; it erases

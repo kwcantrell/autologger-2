@@ -75,7 +75,7 @@ describe('decideUpgradeRoute (pure)', () => {
   it('destroys a non-/api upgrade that fails the allowlist decision, in dev or prod', () => {
     expect(
       decideUpgradeRoute({
-        path: '/_next/webpack-hmr',
+        path: '/_next/hmr',
         dev: true,
         frontendAvailable: true,
         allowed: false,
@@ -83,7 +83,7 @@ describe('decideUpgradeRoute (pure)', () => {
     ).toBe('destroy');
     expect(
       decideUpgradeRoute({
-        path: '/_next/webpack-hmr',
+        path: '/_next/hmr',
         dev: false,
         frontendAvailable: true,
         allowed: false,
@@ -94,7 +94,7 @@ describe('decideUpgradeRoute (pure)', () => {
   it('routes an allowed non-/api upgrade to the frontend only in dev with a frontend available', () => {
     expect(
       decideUpgradeRoute({
-        path: '/_next/webpack-hmr',
+        path: '/_next/hmr',
         dev: true,
         frontendAvailable: true,
         allowed: true,
@@ -105,7 +105,7 @@ describe('decideUpgradeRoute (pure)', () => {
   it('destroys an allowed non-/api upgrade in prod even though it passed the allowlist (D6.5)', () => {
     expect(
       decideUpgradeRoute({
-        path: '/_next/webpack-hmr',
+        path: '/_next/hmr',
         dev: false,
         frontendAvailable: true,
         allowed: true,
@@ -116,7 +116,7 @@ describe('decideUpgradeRoute (pure)', () => {
   it('destroys an allowed non-/api upgrade in dev when no frontend is available (API-only / HTTP-test callers)', () => {
     expect(
       decideUpgradeRoute({
-        path: '/_next/webpack-hmr',
+        path: '/_next/hmr',
         dev: true,
         frontendAvailable: false,
         allowed: true,
@@ -218,7 +218,7 @@ describe('installUpgradeDispatcher', () => {
       dev: true,
       frontend: { upgradeHandler },
     });
-    const req = fakeReq('/_next/webpack-hmr');
+    const req = fakeReq('/_next/hmr');
     const socket = fakeSocket();
     listener(req, socket, head);
     await new Promise((r) => setImmediate(r));
@@ -234,7 +234,7 @@ describe('installUpgradeDispatcher', () => {
       dev: true,
       frontend: { upgradeHandler },
     });
-    const req = fakeReq('/_next/webpack-hmr', '203.0.113.9'); // outside the allowlist
+    const req = fakeReq('/_next/hmr', '203.0.113.9'); // outside the allowlist
     const socket = fakeSocket();
     listener(req, socket, head);
     expect(socket.destroy).toHaveBeenCalledTimes(1);
@@ -248,7 +248,7 @@ describe('installUpgradeDispatcher', () => {
       dev: false,
       frontend: { upgradeHandler },
     });
-    const req = fakeReq('/_next/webpack-hmr');
+    const req = fakeReq('/_next/hmr');
     const socket = fakeSocket();
     listener(req, socket, head);
     expect(socket.destroy).toHaveBeenCalledTimes(1);
@@ -257,7 +257,7 @@ describe('installUpgradeDispatcher', () => {
 
   it('destroys a non-/api upgrade in dev when no frontend was constructed (API-only boot)', () => {
     const { listener } = install({ config: baseConfig, dev: true, frontend: null });
-    const req = fakeReq('/_next/webpack-hmr');
+    const req = fakeReq('/_next/hmr');
     const socket = fakeSocket();
     listener(req, socket, head);
     expect(socket.destroy).toHaveBeenCalledTimes(1);
@@ -271,7 +271,7 @@ describe('installUpgradeDispatcher', () => {
       dev: true,
       frontend: { upgradeHandler },
     });
-    const req = fakeReq('/_next/webpack-hmr');
+    const req = fakeReq('/_next/hmr');
     const socket = fakeSocket();
     expect(() => listener(req, socket, head)).not.toThrow();
     expect(socket.destroy).toHaveBeenCalledTimes(1);
@@ -283,7 +283,7 @@ describe('installUpgradeDispatcher', () => {
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const upgradeHandler = vi.fn().mockRejectedValue(new Error('boom'));
     const { listener } = install({ config: baseConfig, dev: true, frontend: { upgradeHandler } });
-    const req = fakeReq('/_next/webpack-hmr');
+    const req = fakeReq('/_next/hmr');
     const socket = fakeSocket();
     listener(req, socket, head);
     await new Promise((r) => setImmediate(r));

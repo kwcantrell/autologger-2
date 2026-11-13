@@ -172,7 +172,7 @@ describe('real upgrade dispatcher (server/src/upgradeDispatch.ts, wired the way 
     const { port, close } = await bootDispatcherServer({ dev: true, frontend });
     closeServer = close;
 
-    const data = await rawUpgradeProbe(port, '/_next/webpack-hmr');
+    const data = await rawUpgradeProbe(port, '/_next/hmr');
     expect(data).toContain('FRONTEND-HIT');
     expect(frontend.upgradeHandler).toHaveBeenCalledTimes(1);
   });
@@ -189,7 +189,7 @@ describe('real upgrade dispatcher (server/src/upgradeDispatch.ts, wired the way 
     });
     closeServer = close;
 
-    const data = await rawUpgradeProbe(port, '/_next/webpack-hmr');
+    const data = await rawUpgradeProbe(port, '/_next/hmr');
     expect(data).toBe('');
     expect(frontend.upgradeHandler).not.toHaveBeenCalled();
   });
@@ -201,7 +201,7 @@ describe('real upgrade dispatcher (server/src/upgradeDispatch.ts, wired the way 
     const { port, close } = await bootDispatcherServer({ dev: false, frontend });
     closeServer = close;
 
-    const data = await rawUpgradeProbe(port, '/_next/webpack-hmr');
+    const data = await rawUpgradeProbe(port, '/_next/hmr');
     expect(data).toBe('');
     expect(frontend.upgradeHandler).not.toHaveBeenCalled();
   });

@@ -46,20 +46,23 @@ export interface NextAppLike {
   getRequestHandler(): (incoming: IncomingMessage, outgoing: ServerResponse) => Promise<void>;
   /** NextCustomServer's `upgradeHandler` property GETTER (valid only after
    * `prepare()`), NOT its confusingly-similar `getUpgradeHandler()` METHOD.
-   * The two are disjoint code paths in `next@15.5.23` and only this one
-   * works (root cause of the task-4.3 dev-HMR regression, fixed here):
+   * The two are disjoint code paths in `next@15.5.23` and still in
+   * `next@16.4.6` (re-verified for the Next 16 upgrade, job 014; pinned by
+   * nextFrontend.test.ts), and only this one works (root cause of the
+   * task-4.3 dev-HMR regression, fixed here):
    *   - `getUpgradeHandler()` (method) returns
    *     `this.server.getUpgradeHandler()` — the internal render
    *     `NextServer`'s handler, which calls `next-server.js`'s
    *     `handleUpgrade()`: a documented NO-OP ("The web server does not
    *     support web sockets, it's only used for HMR in development"). Routing
-   *     the browser's `/_next/webpack-hmr` upgrade there silently drops it:
+   *     the browser's HMR upgrade (`/_next/webpack-hmr` under Next 15,
+   *     `/_next/hmr` under Next 16) there silently drops it:
    *     no 101 is ever written, the socket sits in CONNECTING forever (which
    *     probes read as "open"), and the hot reloader never learns the client
    *     exists — so no HMR push ever reaches the tab.
    *   - `upgradeHandler` (getter) returns the router-server's real upgrade
-   *     dispatcher (`router-server.js`), whose dev branch routes
-   *     `/_next/webpack-hmr` to `hotReloader.onHMR(...)` — completing the
+   *     dispatcher (`router-server.js`), whose dev branch routes the HMR
+   *     path to `hotReloader.onHMR(...)` — completing the
    *     handshake and registering the client with the broadcaster that
    *     publishes compile events. This is also exactly the handler Next's own
    *     `setupWebSocketHandler` self-attach would have bound (the attach this
@@ -85,8 +88,9 @@ export type NextFactory = (opts: {
  * package script hitting the same URL in isolation usually succeeded, which
  * masked the bug in task 3.1-3.3's manual real-server probes.
  *
- * Root cause, traced via the real `next@15.5.23` CJS source
- * (`next/dist/server/next.js`, `NextCustomServer`): `getRequestHandler()`
+ * Root cause, traced via the real `next@15.5.23` CJS source, and unchanged
+ * in `next@16.4.6` (`next/dist/server/next.js`, `NextCustomServer`; pinned
+ * by nextFrontend.test.ts): `getRequestHandler()`
  * returns a wrapper that, on its FIRST invocation, calls
  * `setupWebSocketHandler(this.options.httpServer, req)` as an undocumented
  * side effect. That method does `customServer.on('upgrade', (req, socket,

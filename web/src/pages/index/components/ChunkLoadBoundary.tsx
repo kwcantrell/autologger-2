@@ -29,12 +29,15 @@ import { RouteState } from './RouteState';
 // Naming note: "chunk" here means a *JavaScript bundle chunk*, NOT the audio
 // chunks that `chunkUploadQueue` / `ChunkRescueBanner` / `chunkLeaveWarning`
 // own. The two vocabularies are unrelated; `ChunkLoad*` matches the
-// `ChunkLoadError` name webpack itself throws, which is the disambiguator.
+// `ChunkLoadError` name the bundler runtime itself throws, which is the
+// disambiguator.
 
 /**
  * Message shapes the various bundlers/engines use for a failed dynamic import.
- * webpack (what Next uses) throws an `Error` with `name === 'ChunkLoadError'`
- * and a "Loading chunk N failed" message; the ESM-native paths (used by the
+ * Turbopack (what Next 16 uses; its runtime throws `Error` with
+ * `name === 'ChunkLoadError'` and a "Failed to load chunk …" message) and
+ * webpack (Next 15) both set `name === 'ChunkLoadError'`, webpack with a
+ * "Loading chunk N failed" message; the ESM-native paths (used by the
  * vitest/browser dev transform, and by Next in some edge cases) throw the
  * engine's own wording, which differs per browser. A stale HTML document
  * served in place of a deleted chunk yields the MIME-type variant.
@@ -50,8 +53,8 @@ const CHUNK_ERROR_PATTERNS: readonly RegExp[] = [
 
 /**
  * True iff `error` looks like a failed dynamic import rather than a bug in the
- * loaded code. Deliberately name-first (`ChunkLoadError` is webpack's own
- * class) with message matching as the cross-engine fallback — there is no
+ * loaded code. Deliberately name-first (`ChunkLoadError` is the name both
+ * webpack's and Turbopack's runtimes give the error) with message matching as the cross-engine fallback — there is no
  * structured signal available in either case.
  */
 export function isChunkLoadError(error: unknown): boolean {

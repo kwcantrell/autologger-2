@@ -12,6 +12,18 @@ import type { NextConfig } from 'next';
 // - skipTrailingSlashRedirect: true — trailing-slash shell paths reach the catch-all
 //   unnormalized instead of Next's default 308 redirect, so they keep 404ing like today
 //   (D3 trailing-slash decision).
+// - experimental.validateRSCRequestHeaders: false (Next 16 upgrade, job 014): Next 16 answers an
+//   RSC request (`RSC: 1` header) whose `_rsc` cache-busting query is missing or wrong with a
+//   `307` to the URL with the expected hash, a guard against CDNs that cache by URL and ignore
+//   `Vary`. Next 15.5 answered the same request `200 text/x-component`, and that disposition is
+//   pinned (`docker/scripts/test_router.sh`, "GET /teams (RSC)"), so the guard is off to keep the
+//   frozen contract. Every shell and RSC response here is `private, no-cache, no-store`, so no
+//   shared cache should store one; turning the guard on is a contract change for a human to make.
+// - reactMaxHeadersLength: 0 (Next 16 upgrade, job 014): the React that Next 16 bundles turns
+//   the layout's body `<link rel="preload">` font tags (and, on a 404, the stylesheet) into a
+//   `Link:` response header, budgeted by this option (default 6000). Next 15.5 sent no `Link`
+//   header on `/` or a 404, and response headers are part of the frozen HTTP contract, so a
+//   zero budget keeps them as they were. The preloads still render as `<link>` tags in the HTML.
 //
 // - pageExtensions (task 2.3 build-gate fix, discovered running `next build`, not
 //   anticipated by design.md): Next's `findPagesDir` (`next/dist/lib/find-pages-dir.js`)
@@ -32,18 +44,24 @@ import type { NextConfig } from 'next';
 //   (`layout.page.tsx`, `page.page.tsx`, `not-found.page.tsx`) opt in explicitly. This is a
 //   documented community pattern for exactly this "pre-existing `pages/`-named directory
 //   during a Pages->App migration" collision, not a novel scheme.
-// - webpack(): Next's built-in `next-image-loader` handles the image extensions the app's
-//   static `import x from './y.png'` sites rely on (task 1.2), but ships no default rule
-//   for `.webm` (a video, not an image) — `loadingVideo.ts`'s webm import otherwise fails
-//   webpack's default "parse as JS" fallback ("Module parse failed: Unexpected character").
-//   `asset/resource` mirrors Vite's default asset-import behavior (emits the file, returns
-//   a plain string URL) — matching the `string | { src }` union already declared for these
-//   modules (`web/src/types/assets.d.ts`, task 1.2) and landing under the already-declared
-//   `/_next/static/*` path family (D6.4), not new surface.
+// - turbopack.rules['*.webm'] (was a `webpack()` hook until the Next 16 upgrade, job 014):
+//   Next's built-in image handling covers the image extensions the app's static
+//   `import x from './y.png'` sites rely on (task 1.2), but ships no default rule for `.webm`
+//   (a video, not an image) — `loadingVideo.ts`'s webm import otherwise fails as an unknown
+//   module type. `type: 'asset'` mirrors Vite's default asset-import behavior (emits the file,
+//   returns a plain string URL) — matching the `string | { src }` union already declared for
+//   these modules (`web/src/types/assets.d.ts`, task 1.2) and landing under the
+//   already-declared `/_next/static/*` path family (D6.4), not new surface. Next 16 builds and
+//   serves dev with Turbopack by default and refuses a build that has a `webpack()` hook and no
+//   `turbopack` config, so the rule moved here; it is the same webpack `asset/resource` rule
+//   in Turbopack's terms. Nothing runs webpack any more, so the hook was removed rather than
+//   kept as dead config.
 // - allowedDevOrigins (dev-layout-fix, 2026-08-13; lever pre-approved in design.md D1):
 //   dev-only — silences (and, when a future Next flips warn→block, keeps allowing) the
 //   "Cross origin request detected from 127.0.0.1 to /_next/* resource" warning. Mechanism
-//   (verified in next@15.5.23 `router-server.js` → `block-cross-site.js`): dev requests to
+//   (verified in next@15.5.23 `router-server.js` → `block-cross-site.js`, and unchanged in
+//   next@16.4.6 `router-utils/block-cross-site-dev.js`, which blocks unlisted origins by
+//   default, so the list below keeps the same effect): dev requests to
 //   `/_next/*`/`/__nextjs*` (incl. the HMR WS upgrade) compare the browser's `Origin`
 //   hostname against `['*.localhost', 'localhost', opts.hostname]` + `allowedDevOrigins`.
 //   Our embedded custom server instantiates `next({ dev, dir })` with no `hostname` option,
@@ -74,14 +92,16 @@ const nextConfig: NextConfig = {
     unoptimized: true,
   },
   poweredByHeader: false,
+  reactMaxHeadersLength: 0,
+  experimental: {
+    validateRSCRequestHeaders: false,
+  },
   skipTrailingSlashRedirect: true,
   pageExtensions: ['page.tsx', 'page.ts'],
-  webpack(config) {
-    config.module.rules.push({
-      test: /\.webm$/,
-      type: 'asset/resource',
-    });
-    return config;
+  turbopack: {
+    rules: {
+      '*.webm': { type: 'asset' },
+    },
   },
 };
 
