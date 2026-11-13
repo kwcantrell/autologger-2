@@ -112,6 +112,13 @@ Other rules:
 - **`GOOGLE_CLIENT_ID` is also read by GoTrue** (gotrue-sign-in D3), as the audience of the ID
   tokens it accepts. It is public, so it has no secret scope. `GOOGLE_CLIENT_SECRET` stays with
   the app only.
+- **`MCP_SIGNING_SECRET`** (custom session dashboards, ADR 0035) is a secret, stored like
+  `FRAME_BUS_SECRET`: a plain string in the stack's KV secret, mapped into the app container by
+  `docker/secrets-env.yaml`. It is required, at least 32 characters after trimming, only while
+  `CUSTOM_DASHBOARDS_ENABLED` is on; with the flag off it is never read. Boot refuses a missing or
+  short value and names the variable, never the value. Its companions `CUSTOM_DASHBOARDS_ENABLED`,
+  `DASHBOARD_RUNTIME_ORIGIN` and `MCP_ALLOWED_ORIGINS` are not secrets but are set in the same KV
+  secret. See README "Environment variables".
 - **Every stack needs Google sign-in** (require-login). `compose-run` refuses dev, stage and prod
   unless both `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` are set, and the server refuses to boot
   without them. Dev needs its own Google OAuth client (authorized redirect
