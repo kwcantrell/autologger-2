@@ -449,8 +449,8 @@ The documentation SHALL state:
 
 ### Requirement: Dev Companion container runs this repo's module
 The dev environment SHALL include a `companion` service. The service SHALL:
-- run `ghcr.io/bitfocus/companion/companion` pinned by digest to `v4.3.4`, the version the
-  module's base-API check targets;
+- run `ghcr.io/bitfocus/companion/companion` pinned by digest to `v5.1.3`, whose accepted
+  module-API range includes the module's `1.14.x` base;
 - load this repository's `companion/` module, compiled (`npm run build -w companion`) and
   packaged (`companion-module-build`) in `docker/companion.Dockerfile`, through Companion's
   local-dev module directory;

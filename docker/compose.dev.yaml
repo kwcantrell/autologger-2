@@ -141,7 +141,7 @@ services:
   # itself is told `--admin-address 127.0.0.1` (via `command:`; the entrypoint's own `--admin-address ::`
   # comes first and the appended flag wins), so the ungated admin UI listens on loopback inside
   # the namespace and only the gate sidecar can reach it. Residual: Satellite TCP 16622 / WS 16623
-  # are hard-coded 0.0.0.0 listeners in 4.3.4 with no flag/env/config off-switch, so they stay
+  # are hard-coded all-interface listeners in 5.1.3 with no flag/env/config off-switch, so they stay
   # reachable (ungated) from the host via the bridge IP and from the dev network. NEVER publish
   # 8000, 16622 or 16623.
   companion:

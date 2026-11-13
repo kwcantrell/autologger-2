@@ -2515,7 +2515,7 @@ own home volume). **AI v2**: works on the login in dev; in stage and prod it nee
 
 ### Dev Companion
 
-Dev runs Bitfocus Companion `v4.3.4` (pinned by digest) with this repo's module built and
+Dev runs Bitfocus Companion `v5.1.3` (pinned by digest) with this repo's module built and
 packaged in `docker/companion.Dockerfile`. Its admin UI sits behind its own gate on host
 loopback. The connection is entered once by hand (not provisioned):
 
@@ -2533,11 +2533,13 @@ Notes:
 - The log-event action needs an **active session with live presence**: open a session in a
   browser at <http://127.0.0.1:8787> first (see "Connecting Bitfocus Companion to a server").
 - Companion's own admin address is `127.0.0.1` inside its namespace. Its **Satellite ports
-  16622/16623** are hard-bound on all interfaces in 4.3.4 and stay reachable from the host via
+  16622/16623** are hard-bound on all interfaces in 5.1.3 and stay reachable from the host via
   the container IP (not from the LAN), ungated. Accepted, low impact: presses reach only the dev
   `/api/companion/*` endpoints, with no spend and no secrets.
-- Companion sends **Sentry error reports by default**. Only its user-config key
-  `detailed_data_collection` controls that; it is not seeded here.
+- Companion sends **Sentry error reports by default**. In 5.1.3 only the `SENTRY_DISABLE`
+  environment variable turns that off; it is not set here. Its user-config key
+  `detailed_data_collection` (on by default, not seeded here) controls the separate usage
+  statistics, not Sentry.
 - The Companion build prints a build-context listing (`context-audit`) only on **uncached**
   builds; the build fails if a file outside the allowlist enters the context.
 
@@ -2912,7 +2914,8 @@ the server: after the deploy that retired `API_TOKEN` (ADR 0021 slice 9d), re-pa
 with a device token. A `401` shows **Device token invalid or revoked** on the connection.
 
 > `@companion-module/base` is pinned to `~1.14.0` (stable 1.x). Companion 4.3.4 rejects the
-> newer 2.1.x line, and its 2.0.x alpha removed the `runEntrypoint` API this module uses. A
+> newer 2.1.x line, and its 2.0.x alpha removed the `runEntrypoint` API this module uses. The
+> dev Companion, 5.1.3, accepts `~0.6 || 1 - 1.15.x || 2 - 2.2.x`, so 1.14.x loads there too. A
 > root `package.json` `overrides` keeps `@companion-module/tools` on the same 1.14.x base so
 > the packaged manifest's `apiVersion` is correct.
 
