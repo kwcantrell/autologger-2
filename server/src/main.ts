@@ -17,7 +17,7 @@ import type { AppEnv } from './appEnv';
 import { ProviderKeysSecretError, verifyProviderKeysCheck } from './auth/providerKeyCrypto';
 import { createWorkerPorts } from './autogenerate/ports';
 import { AutogenerateWorker } from './autogenerate/worker';
-import { checkBootEnv } from './bootGuard';
+import { bootWarnings, checkBootEnv } from './bootGuard';
 import { maskBootstrapOwnerEmail, runFeatureEmails } from './env';
 import { startMediaApply } from './mediaApply';
 import { createBindings } from './node/config';
@@ -39,6 +39,8 @@ if (refusal) {
   console.error(`autologger: ${refusal}`);
   process.exit(1);
 }
+// custom session dashboards (design §10.1): once at boot, naming variables and never values.
+for (const w of bootWarnings(process.env)) console.warn(`autologger: ${w}`);
 
 let created: ReturnType<typeof createBindings>;
 try {

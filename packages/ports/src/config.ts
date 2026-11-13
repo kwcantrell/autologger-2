@@ -120,6 +120,19 @@ export interface Config {
    * fetches from docs.google.com. Optional so existing full-object `Config`
    * literals elsewhere (pre-dating this field) keep type-checking. */
   SHEETS_LOG_IMPORT_ENABLED?: string;
+  /** Custom session dashboards (ADR 0035, design §10.1). An explicit opt-in flag, parsed as
+   * `AI_V2_ENABLED` (`customDashboardsEnabled` in env.ts); off by default. The three settings
+   * after it are read and checked only when it is on (`checkBootEnv`). Optional so existing
+   * full-object `Config` literals keep type-checking. */
+  CUSTOM_DASHBOARDS_ENABLED?: string;
+  /** The sandbox runtime's `https:` origin: no path, no explicit port, a host other than
+   * `PUBLIC_BASE_URL`'s. */
+  DASHBOARD_RUNTIME_ORIGIN?: string;
+  /** Server-only, at least 32 characters, kept in OpenBao like `FRAME_BUS_SECRET`. Never logged. */
+  MCP_SIGNING_SECRET?: string;
+  /** Extra `Origin` values accepted on `/mcp` beyond `https://claude.ai`: a comma-separated list
+   * of exact `https:` origins. */
+  MCP_ALLOWED_ORIGINS?: string;
   /** YouTube audio import (youtube-audio-import, design D2). NOT a raw env
    * string like the fields above — it's the absolute yt-dlp binary path
    * resolved ONCE at startup (`resolveYtDlpPath` in env.ts, called from the

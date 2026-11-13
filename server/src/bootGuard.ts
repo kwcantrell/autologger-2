@@ -3,11 +3,24 @@
 // approved-users entry must be ASCII (run-status-and-sweeper D9).
 // The stacks set AUTOLOGGER_STACK (docker/secrets-env.yaml), an absolute DATA_DIR, an absolute
 // BLOB_DIR outside it (shared-blob-volume D1) and the catalog's PG* settings (catalog-on-postgres
-// D2); a host run has none. Messages name variables only, never their values.
+// D2); a host run has none. With CUSTOM_DASHBOARDS_ENABLED on, the custom-dashboards settings are
+// checked too (ADR 0035, design §10.1); off, they are never read. Messages name variables only,
+// never their values.
 
 import { isAbsolute, resolve, sep } from 'node:path';
 import type { Config } from '@autologger/ports';
-import { signupsMode } from './env';
+import {
+  customDashboardsEnabled,
+  dashboardRuntimeOrigin,
+  exactHttpsOrigin,
+  MCP_SIGNING_SECRET_MIN_LENGTH,
+  mcpAllowedOrigins,
+  mcpSigningSecretValid,
+  publicBaseUrl,
+  sameHost,
+  sameSite,
+  signupsMode,
+} from './env';
 
 /** The environments docker/scripts/compose-run.mjs sets as AUTOLOGGER_STACK. */
 export const STACKS: readonly string[] = ['dev', 'stage', 'prod'];
@@ -88,5 +101,75 @@ export function checkBootEnv(env: Record<string, string | undefined>): string | 
   if (signupsMode(signups) === 'invalid') {
     return 'SIGNUPS must be open or closed, or unset (unset follows the stack: open on dev, closed on stage and prod); fix it in OpenBao, see docs/openbao-secrets.md.';
   }
+  return customDashboardsRefusal(env);
+}
+
+/** The custom-dashboards settings (ADR 0035, design §10.1) as a `Config`, for the env.ts reads. */
+function customDashboardsConfig(env: Record<string, string | undefined>): Config {
+  return {
+    CUSTOM_DASHBOARDS_ENABLED: env.CUSTOM_DASHBOARDS_ENABLED,
+    PUBLIC_BASE_URL: env.PUBLIC_BASE_URL,
+    DASHBOARD_RUNTIME_ORIGIN: env.DASHBOARD_RUNTIME_ORIGIN,
+    MCP_SIGNING_SECRET: env.MCP_SIGNING_SECRET,
+    MCP_ALLOWED_ORIGINS: env.MCP_ALLOWED_ORIGINS,
+    IP_ALLOWLIST: env.IP_ALLOWLIST,
+  } as Config;
+}
+
+/**
+ * Design §10.1: with `CUSTOM_DASHBOARDS_ENABLED` on, refuse an unsafe setup; with it off, read
+ * nothing. A refusal message naming the variable and no value, or null.
+ */
+export function customDashboardsRefusal(env: Record<string, string | undefined>): string | null {
+  const cfg = customDashboardsConfig(env);
+  if (!customDashboardsEnabled(cfg)) return null;
+  const app = exactHttpsOrigin(publicBaseUrl(cfg), { allowPort: true });
+  if (app === null) {
+    return "CUSTOM_DASHBOARDS_ENABLED is on, so PUBLIC_BASE_URL must be an https: origin with no path, query or fragment (the dev stack's http://localhost setup cannot turn it on); fix it in OpenBao, see docs/openbao-secrets.md.";
+  }
+  const runtime = dashboardRuntimeOrigin(cfg);
+  if (runtime === null) {
+    return 'CUSTOM_DASHBOARDS_ENABLED is on, so DASHBOARD_RUNTIME_ORIGIN must be set to an https: origin with no path and no explicit port, whose host has no trailing dot or empty label; fix it in OpenBao, see docs/openbao-secrets.md.';
+  }
+  // `app` and `runtime` are both non-null here, so `new URL()` cannot throw. Keep the two checks
+  // above ahead of this one: moved below it, a bad value would throw instead of being refused.
+  if (sameHost(new URL(runtime).hostname, new URL(app).hostname)) {
+    return "CUSTOM_DASHBOARDS_ENABLED is on, so DASHBOARD_RUNTIME_ORIGIN must have a host other than PUBLIC_BASE_URL's (the dashboard runtime needs its own origin); fix it in OpenBao, see docs/openbao-secrets.md.";
+  }
+  if (!mcpSigningSecretValid(cfg)) {
+    return `CUSTOM_DASHBOARDS_ENABLED is on, so MCP_SIGNING_SECRET must be set to at least ${MCP_SIGNING_SECRET_MIN_LENGTH} characters; set it in OpenBao, see docs/openbao-secrets.md.`;
+  }
+  if (mcpAllowedOrigins(cfg) === null) {
+    return 'CUSTOM_DASHBOARDS_ENABLED is on, so every MCP_ALLOWED_ORIGINS entry must be an exact https: origin (no wildcard, path, query, fragment or user info; a port is allowed); fix it in OpenBao, see docs/openbao-secrets.md.';
+  }
   return null;
+}
+
+/**
+ * Design §10.1 and §10.3: warnings for a setup `checkBootEnv` accepts but the operator should
+ * know about, logged once at boot by main.ts. Empty with the flag off. They name variables and
+ * never values.
+ */
+export function bootWarnings(env: Record<string, string | undefined>): string[] {
+  const cfg = customDashboardsConfig(env);
+  if (!customDashboardsEnabled(cfg)) return [];
+  const out: string[] = [];
+  const app = exactHttpsOrigin(publicBaseUrl(cfg), { allowPort: true });
+  const runtime = dashboardRuntimeOrigin(cfg);
+  // Both `new URL()` calls below sit behind the null checks, so they cannot throw.
+  if (app !== null && runtime !== null) {
+    const appHost = new URL(app).hostname;
+    const runtimeHost = new URL(runtime).hostname;
+    if (!sameHost(appHost, runtimeHost) && sameSite(appHost, runtimeHost)) {
+      out.push(
+        'DASHBOARD_RUNTIME_ORIGIN is on the same site as PUBLIC_BASE_URL: a separate registrable domain is recommended for the dashboard runtime (docs/design/custom-session-dashboards.md section 9.2).',
+      );
+    }
+  }
+  if ((cfg.IP_ALLOWLIST ?? '').trim()) {
+    out.push(
+      "CUSTOM_DASHBOARDS_ENABLED is on and IP_ALLOWLIST is set: add Anthropic's connector egress range, from Claude's connector documentation, so /mcp and the OAuth token and registration endpoints work (docs/design/custom-session-dashboards.md section 10.3).",
+    );
+  }
+  return out;
 }
