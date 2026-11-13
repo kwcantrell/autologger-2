@@ -3,7 +3,7 @@
 - Status: Proposed. Awaiting human approval of this design and of
   [ADR 0035](../decisions/0035-custom-session-dashboards-mcp-app.md).
 - Date: 2026-11-13
-- Inputs: the fourteen human decisions recorded in ADR 0035. This document gives the mechanism.
+- Inputs: the seventeen human decisions recorded in ADR 0035. This document gives the mechanism.
   It reopens none of those decisions; where it names something the human hasn't decided yet, it
   says so under **Open questions** (section 13.3).
 
@@ -195,7 +195,7 @@ All are mounted only when the flag is on (section 10).
 | `POST /oauth/register` | RFC 7591 DCR, public clients only | none; rate-limited | `201` client information; `400` `{error: "invalid_redirect_uri" \| "invalid_client_metadata"}`; `429` |
 | `GET /oauth/authorize` | Validates the request, then shows the consent page, or sends the user to Google first | session cookie, if any | `200` consent HTML; `302` to Google; `302` back to `redirect_uri` with an error once that URI is validated; `400` HTML when `client_id` or `redirect_uri` is invalid (never redirect to an unvalidated URI) |
 | `POST /oauth/authorize` | The consent decision (approve or deny) | session cookie plus a CSRF token | `200` HTML page that navigates to `redirect_uri` with `code`, `state` and `iss`, or with `error=access_denied` (section 4.4, "Returning to the client"); `400` HTML for a bad CSRF token or a dead request |
-| `POST /oauth/token` | `authorization_code` and `refresh_token` grants, form-urlencoded | public client (`client_id` in the body) | `200` `{access_token, token_type: "Bearer", expires_in: 3600, refresh_token, scope}`; `400` `{error: "invalid_grant" \| "invalid_request" \| "unsupported_grant_type" \| "invalid_client"}`; `429` |
+| `POST /oauth/token` | `authorization_code` and `refresh_token` grants, form-urlencoded | public client (`client_id` in the body) | `200` `{access_token, token_type: "Bearer", expires_in, refresh_token, scope}`, where `expires_in` is 3600, or less when the grant's 90-day cap (section 4.5) is nearer; `400` `{error: "invalid_grant" \| "invalid_request" \| "unsupported_grant_type" \| "invalid_client"}`; `429` |
 | `POST /oauth/revoke` | RFC 7009: revoke an access or refresh token, and with it the grant | public client | always `200`, even for unknown tokens (RFC 7009 §2.2) |
 | `GET /api/oauth/connected-apps` | The "Connected apps" list | session cookie (`/api` login gate) | `200` `{apps: [{grant_id, client_name, redirect_host, created_at, last_used_at}]}` |
 | `DELETE /api/oauth/connected-apps/:grantId` | Revoke one grant | session cookie | `204`; masked `404` for another user's or an unknown grant |
@@ -288,7 +288,8 @@ re-approval, because DCR gives every connection a new client.
 **Approve** does the following:
 
 - `take`s `mcpauthz:<id>`, so a request is approved at most once.
-- Creates a grant row `(user, client, scope, resource)`.
+- Creates a grant row `(user, client, scope, resource)`, whose `expires_at` is 90 days after
+  its creation (the hard cap of ADR 0035 decision 16, section 4.5).
 - Issues `code` = 32 random bytes in base64url, stored as KV
   `mcpcode:<sha256(code)>` → `{grant_id, client_id, redirect_uri, code_challenge, resource, scope}`
   with a 60 s TTL.
@@ -329,16 +330,41 @@ Both grants require `client_id` to match the stored client and the client to be 
     `mcp oauth: code reuse, grant <id> revoked` (ids only), and answers `400 invalid_grant`. An
     attacker who replays an intercepted code therefore ends the chain the legitimate client got
     from it.
+- **Grant cap (ADR 0035 decision 16).** Every grant expires 90 days after its creation
+  (`mcp_grants.expires_at_utc`), whatever refreshes happen. No token outlives its grant: an
+  access token expires at the earlier of 1 h after issue and the grant's `expires_at`, and a
+  refresh token at the earlier of 30 days after issue and the grant's `expires_at`. Past the
+  cap, every refresh answers `400 invalid_grant` and `/mcp` answers `401`, so the user
+  reconnects, which creates a new grant with its own 90 days. The cap is fixed, not a setting.
 - **`refresh_token`**:
   - Hashes the token and runs one statement:
     `UPDATE mcp_refresh_tokens SET used_at = now WHERE token_hash = $1 AND used_at IS NULL AND expires_at > now RETURNING grant_id`.
-  - **If a row returns**, it checks the grant is not revoked and the user is enabled, then issues
-    a new access token and a new refresh token in the same transaction. The new refresh token
-    expires 30 days after issue; each rotation restarts the 30 days.
-  - **If no row returns but the hash exists with `used_at` set**, that is **reuse**. The grant is
-    revoked (`revoked_at`, with every access and refresh token of the grant deleted) in its own
-    transaction. The server logs `mcp oauth: refresh reuse, grant <id> revoked` (ids only) and
-    answers `400 invalid_grant`.
+  - **If a row returns**, it checks the grant is not revoked, not past its `expires_at`, and the
+    user is enabled, then issues a new access token and a new refresh token in the same
+    transaction. The new refresh token expires 30 days after issue, or at the grant's
+    `expires_at` if that is earlier; each rotation restarts the 30 days but never moves the cap.
+    In the same transaction it seals the successor response onto the spent row
+    (`successor_sealed`, below), for the grace window.
+  - **If no row returns but the hash exists with `used_at` set**, that is **reuse**.
+    - **Inside the grace window (ADR 0035 decision 17)** the reuse is not treated as theft. All
+      of these must hold: `now - used_at` is at most `MCP_REFRESH_GRACE_SECONDS` (default 30,
+      section 10.1); the request's `client_id` is the grant's client (the same client presents
+      the same token); the grant is not revoked or past its cap; and the row's
+      `successor_sealed` is present. The server then answers `200` with the successor already
+      issued at that rotation: the same `access_token` and `refresh_token`, with `expires_in`
+      recomputed from the stored expiry. It mints nothing, writes no token row, and logs
+      `mcp oauth: refresh reuse within grace, grant <id>` (ids only).
+    - **Otherwise**, including any reuse after the window, the grant is revoked (`revoked_at`,
+      with every access and refresh token of the grant deleted) in its own transaction. The
+      server logs `mcp oauth: refresh reuse, grant <id> revoked` (ids only) and answers
+      `400 invalid_grant`.
+    - **How the successor is kept without storing a usable token.** `successor_sealed` is the
+      successor's `{access_token, refresh_token, access_expires_at}` encrypted with AES-256-GCM
+      under a key derived by HKDF-SHA256 from the **spent raw refresh token** (info
+      `mcp-refresh-grace`). Only a caller holding the spent token can open it, and the server
+      stores only that token's hash, so a database dump still yields nothing usable. The sweep
+      clears `successor_sealed` once the window has passed (section 4.9). A row whose seal
+      doesn't open is handled as reuse outside the window.
   - An unknown or expired token answers `400 invalid_grant`.
 - **Token format:** access tokens are `alm_` and refresh tokens `alr_`, each followed by 32
   random bytes in base64url. Only `sha256(token)` (hex) is stored. Access tokens expire 3600 s
@@ -356,8 +382,9 @@ Both grants require `client_id` to match the stored client and the client to be 
 - **Token checks:**
   - It hashes the token and reads `mcp_access_tokens` ⋈ `mcp_grants` as a system read under
     the existing reason `auth-resolve`.
-  - It requires the token unexpired, the grant unrevoked and `resource = RESOURCE`, which is the
-    audience check (RFC 8707). A token minted for another resource is refused.
+  - It requires the token unexpired, the grant unrevoked and not past its 90-day
+    `expires_at` (section 4.5), and `resource = RESOURCE`, which is the audience check
+    (RFC 8707). A token minted for another resource is refused.
   - It then reads the user with `authGetUserById`, which refuses disabled accounts.
 - **On success** it sets:
   - `c.set('user', user)`;
@@ -399,7 +426,9 @@ catalog.mcp_grants (
   user_id text not null references catalog.users(id) on delete cascade,
   client_id text not null references catalog.mcp_clients(id) on delete cascade,
   scope text not null, resource text not null,
-  created_at_utc text not null, last_used_at_utc text, revoked_at_utc text
+  created_at_utc text not null,
+  expires_at_utc text not null,                -- created_at + 90 days, the hard cap (section 4.5)
+  last_used_at_utc text, revoked_at_utc text
 )
 catalog.mcp_access_tokens (
   token_hash text primary key,                 -- hex sha256
@@ -409,7 +438,8 @@ catalog.mcp_access_tokens (
 catalog.mcp_refresh_tokens (
   token_hash text primary key,
   grant_id text not null references catalog.mcp_grants(id) on delete cascade,
-  issued_at_utc text not null, expires_at_utc text not null, used_at_utc text
+  issued_at_utc text not null, expires_at_utc text not null, used_at_utc text,
+  successor_sealed text                        -- set at rotation, cleared after the grace window
 )
 catalog.mcp_rate_windows (                     -- shape of provider_test_windows
   bucket text not null, window_start_ms bigint not null, count int not null,
@@ -426,8 +456,8 @@ neither is the `Authorization` header.
 - **Settings › Connected apps** is a new section beside `CompanionDevicesSection`
   (`web/src/pages/index/components/settings/`). It lists the signed-in user's live grants from
   `GET /api/oauth/connected-apps`: client name (as text), redirect host, connected and last-used
-  times. Each row has a Revoke button, which calls `DELETE /api/oauth/connected-apps/:grantId`.
-  That sets `revoked_at` and deletes the grant's tokens in one transaction. The client's next
+  times. A live grant is one not revoked and not past its 90-day cap (section 4.5). Each row
+  has a Revoke button, which calls `DELETE /api/oauth/connected-apps/:grantId`. That sets `revoked_at` and deletes the grant's tokens in one transaction. The client's next
   call gets `401` and has to reconnect.
 - **With the flag off**, the section doesn't render: the list route doesn't exist, the web
   treats `404` as "feature off", and the profile shape is unchanged.
@@ -444,9 +474,12 @@ deletes:
 
 - expired access tokens;
 - refresh tokens expired more than a day ago;
-- revoked grants older than 30 days;
+- the `successor_sealed` value of any refresh token used more than `MCP_REFRESH_GRACE_SECONDS`
+  ago (set to null, so no successor outlives its grace window);
+- grants revoked more than 30 days ago, and grants whose 90-day cap passed more than 30 days ago
+  (their tokens cascade);
 - clients with no live grant that are over 24 h old and never authorized, or whose last grant
-  ended more than 30 days ago;
+  ended (revoked or capped) more than 30 days ago;
 - rate windows older than an hour.
 
 Each delete is bounded (`LIMIT 1000` per tick). KV entries expire by TTL through the existing
@@ -1063,6 +1096,7 @@ The frame never holds the cookie, a token or a URL it could call:
 | `DASHBOARD_RUNTIME_ORIGIN` | yes | An `https:` origin with no path and no explicit port, whose host differs from `PUBLIC_BASE_URL`'s. A host equal to the app's is refused. A same-site host is allowed, with a boot warning that recommends a separate registrable domain. No port, so that `https://<host>` built from the router's host variable is the same origin. |
 | `ROUTER_DASHBOARD_RUNTIME_HOST` | in the split topology | The runtime host name for the router (section 10.3): a bare, lower-case DNS host name, with no scheme, port, path or wildcard. `compose.yaml` passes `${ROUTER_DASHBOARD_RUNTIME_HOST:-}` to both `router` and `api`. When the flag is on and `ROUTER_CUSTOM_DASHBOARDS` is present in the api's environment, the boot guard refuses to start unless `ROUTER_DASHBOARD_RUNTIME_HOST` is set and equals the host of `DASHBOARD_RUNTIME_ORIGIN` (both lower-cased), naming both variables. The dev single-process stack doesn't set it. |
 | `MCP_SIGNING_SECRET` | yes | At least 32 characters, server-only, kept in OpenBao like `FRAME_BUS_SECRET`. It signs bindings and consent CSRF tokens. Rotating it invalidates open Views and pending consents only. |
+| `MCP_REFRESH_GRACE_SECONDS` | no | The refresh-reuse grace window of ADR 0035 decision 17 (section 4.5), in whole seconds. Unset or empty means the default, `30`. Otherwise it must be a decimal integer from `0` to `60`; `0` turns the window off (every reuse revokes). Boot refuses any other value, naming the variable. Read by the token endpoint (J3). |
 | `MCP_ALLOWED_ORIGINS` | no | Extra `Origin` values accepted on `/mcp`, beyond `https://claude.ai`. A comma-separated list of exact origins: each is `https:`, has a host, and has no path, query, fragment, user info or wildcard (an explicit port is allowed). Entries are trimmed, and stored in their serialized form (`new URL(x).origin`). Boot refuses any other entry, naming the variable. |
 
 The boot guard (`server/src/bootGuard.ts`, `checkBootEnv`) applies these checks only when the
@@ -1211,12 +1245,12 @@ treated as attacker-controlled from the moment it is saved.
 | --- | --- | --- | --- |
 | T1 | **Prompt injection through session content into dashboard code.** A transcript line, event note, topic or wiki page tells Claude to write code that exfiltrates data or misleads viewers. | **(a)** The sandbox closes the network paths: no `fetch`, XHR, WebSocket or beacon (`connect-src 'none'`), an opaque origin, and the only data channel is queries for the bound session, under the viewer's permissions (sections 8 and 9). **The sandbox alone does not stop exfiltration:** the frame can navigate itself with the data in the URL (`location`, an anchor click, a meta refresh; section 8.2 step 2). That path is closed by the embedder's `frame-src`, pinned to the exact frame URL: the View's own meta CSP in Claude (section 8.1) and the app's `frame-src` header on every app document on the web (section 9.2). A navigation back to the frame URL carries data only to our own runtime host, which refuses a query string, and a second `load` ends the dashboard. **(b)** Validation refuses network, eval and DOM-escape identifiers and non-allowlisted imports as an early signal (section 7). **(c)** Only managers can save, and saves are attributed with revisions, so a bad dashboard is traceable and revertible (section 6). **(d)** The MCP surface has no session-data writes and no tools beyond dashboards (decision 11), so an injected instruction can't change session data. **(e)** The View never calls `ui/message` or `ui/update-model-context`, so a rendered dashboard can't inject back into the conversation. | A dashboard can still **show** false or misleading content about data the viewer can read (a fake "0 events", an injected banner). Attribution, revisions and manager-only writes are the control. A user is asked to approve a save in Claude's tool-approval UI, per their client settings. |
 | T2 | **Malicious TSX tries to reach the host bridge, the user's tools, other sessions, cookies or the network.** | **Host bridge and tools:** the code runs in a nested frame, not in the View. It has no reference to the host's `window.parent` channel: its parent is the View, which listens only on a private `MessagePort` and implements only `query` and `pong`. `dashboard_data` is app-only and needs a binding the frame never sees. **Other sessions:** queries carry no session field; the View or web parent adds its pinned binding or route session; the server re-checks `requireSession` per query (section 8.3). **Cookies and storage:** opaque origin (no `allow-same-origin`) on a separate host from the app, and the app cookie is host-only. **Network:** `connect-src 'none'`, `frame-src 'none'`, `worker-src 'none'`, `form-action 'none'`; no `allow-popups`, `allow-top-navigation` or `allow-forms`; `img-src` limited to `data:` and `blob:`, so there is no image beacon; `Referrer-Policy: no-referrer`; `X-DNS-Prefetch-Control: off`. **Self-navigation:** the embedder's `frame-src` pinned to the frame URL (View meta CSP, app header), the runtime host's `404` for a query string, and the parent's stop on a second `load` (section 8.2). **Early refusal:** the section 7.3 denylist and the refused intrinsic elements (`meta`, `link`, `base`, `form` and others). | Browser sandbox or CSP bugs, and a host or browser that doesn't enforce the embedder's `frame-src` on a child's own navigation (section 13.4). The runtime build job (J8, and J9 for the web parent) adds a browser test that runs a hostile dashboard and records the result of each attempt as evidence. **Blocked:** `fetch`, an image beacon, `top.location`, `parent.postMessage`, `document.cookie`, `window.open`, a form post, and self-navigation by `location` assignment, by `location` reached through the `Function` constructor, by an anchor click and by a meta refresh, each to another origin; a navigation of the frame to the frame URL with a query string (refused by the host, and the dashboard stopped). **Observed, not claimed blocked:** `<link rel="dns-prefetch">`, `preconnect` and `prefetch` hints created at run time; CSP doesn't reliably govern them, so a DNS lookup can leak a few bytes in a host name. Side channels (timing, CPU) within the frame are not addressed. |
-| T3 | **Token theft and replay.** | Tokens are 256-bit random values stored only as SHA-256 hashes (a database dump yields nothing usable). Access tokens last 1 h and are audience-bound to `RESOURCE` (RFC 8707). Refresh tokens rotate, and a reused one revokes the whole grant chain (section 4.5). PKCE `S256` is mandatory. Codes are one-shot, last 60 s and are `take`n atomically, and a replayed code revokes the grant it produced (section 4.5). Redirect URIs must match exactly. `iss` is returned in the authorization response (RFC 9207, against mix-up). `state` is required. Tokens are accepted only in the `Authorization` header on exactly `/mcp`, never in a query string and never on `/api`. Tokens, codes and headers are never logged. Users revoke through Connected apps. Consent pages can't be framed and carry an HMAC CSRF token. The `Lax` cookie blocks cross-site consent POSTs. | A stolen **access** token works for at most 1 h, within the user's own permissions. A stolen refresh token used before the client's next refresh gets one rotation, then the client's own refresh trips reuse detection and revokes it. A lost refresh response logs the user out of the connector (accepted, ADR 0035). DCR is open: a phishing client can register any name, which the consent page labels as client-supplied, showing the real redirect host. |
+| T3 | **Token theft and replay.** | Tokens are 256-bit random values stored only as SHA-256 hashes (a database dump yields nothing usable). Access tokens last 1 h and are audience-bound to `RESOURCE` (RFC 8707). Every grant has a 90-day hard cap from its creation, and no token outlives it (ADR 0035 decision 16). Refresh tokens rotate, and a reused one revokes the whole grant chain, except a reuse by the same client within the 30 s grace window (`MCP_REFRESH_GRACE_SECONDS`, ADR 0035 decision 17), which gets the successor already issued and mints nothing (section 4.5). The successor kept for the window is sealed under a key derived from the spent token, so a database dump still yields nothing usable. PKCE `S256` is mandatory. Codes are one-shot, last 60 s and are `take`n atomically, and a replayed code revokes the grant it produced (section 4.5). Redirect URIs must match exactly. `iss` is returned in the authorization response (RFC 9207, against mix-up). `state` is required. Tokens are accepted only in the `Authorization` header on exactly `/mcp`, never in a query string and never on `/api`. Tokens, codes and headers are never logged. Users revoke through Connected apps. Consent pages can't be framed and carry an HMAC CSRF token. The `Lax` cookie blocks cross-site consent POSTs. | A stolen **access** token works for at most 1 h, within the user's own permissions. A stolen refresh token used before the client's next refresh gets one rotation, then the client's own refresh trips reuse detection and revokes it. If the two uses fall within 30 s of each other, the second gets the same successor instead, so attacker and client share one chain until a later reuse outside the window revokes it; the window lets a racing replay receive only the token already issued, never a new one. Any stolen chain ends at the grant's 90-day cap at the latest. A lost refresh response retried after the 30 s window logs the user out of the connector (accepted, ADR 0035). DCR is open: a phishing client can register any name, which the consent page labels as client-supplied, showing the real redirect host. |
 | T4 | **Privilege drift after a role change or removal from a studio.** | Tokens carry no roles or studios. Every tool re-reads access through `requireSession` and `requireTeamRole`, and writes re-check inside the transaction with `requireTeamRoleIn` (`FOR SHARE`), so a demotion racing a save either waits for it or fails it (team-management "Concurrent team and ownership writes"). A disabled account fails token lookup. A deleted user cascades grants. Open Views re-check on every `dashboard_data` call. | A removed user's grant stays listed until they revoke it or it ages out, but it authorizes nothing they can't currently do. A View already showing data keeps showing what it fetched until reload. |
 | T5 | **Template data leaking across sessions or shows.** | Templates store **code, never data**. Every render fetches from the session it is opened for, under the viewer's permissions. The applicability rule (section 6.3) masks templates outside their studio or shows. **Reads by id** (`get_dashboard`, `list_dashboard_revisions`) and the row-level security policy follow the visibility-by-id rule (section 6.3): a template's source is readable only by a manager of its studio or by a user who can access a show it applies to, so a member restricted away from those shows, or one who just lost the grant, gets `Dashboard not found` even with the id. `show_ids` are validated against the studio. Templates never cross studios. | Agent-written code can embed **literal text** copied from the session it was designed on (a quote, a name). That text is visible wherever the template applies, including to a viewer who can't read the source session. Mitigations: only managers, who can read every show of the studio, can save; the tool description for templates tells Claude not to embed session data; `source_session_id` is recorded for audit. Reviewing for literals is the author's job. This is a residual the human accepts with decision 6. |
 | T6 | **Denial of service through large reads or heavy dashboards.** | **Reads:** every list tool is cursor-paged with item and 40,000-character caps (section 5.2), and each page is a keyed hub read of at most `limit` rows, so no page reads a whole transcript (section 5.2). Model-visible tools: 120 calls a minute and 2,000 an hour per user. Dashboard queries, from `dashboard_data` and from the web query routes alike: 900 a minute and 9,000 an hour per user, and 3,000 a minute per session across users, with `429` on the web (section 5.1). `/mcp` bodies are capped at 512 KiB. **Registration and token abuse:** per-address windows (IPv6 by `/64`), a global client cap, and 24 h cleanup of unused clients. **Heavy dashboards:** source and compiled size caps, 20 per session and 100 templates per studio; the per-mount budget (4 in flight, 300 queries, 20 MB), which a frame reload can't reset because a second `load` stops the dashboard (section 8.4); a watchdog that removes a frame that stops answering pings; a height clamp. **Server:** the query service reads through the hub with the existing statement timeouts (core-ports-architecture "Root catalog statements are time-bounded"). | The associated-wiki scan of section 5.4 still reads the show's live page bodies for each `list_wiki_pages` page; it is bounded by the windows, and a citation index is open question 4. A dashboard can still use a lot of CPU within its frame until the watchdog fires (6 s). Many viewers opening one popular session at once can meet its per-session window and see the rate-limited state; the numbers are open question 9. |
 | T7 | **Consent phishing and open redirect.** | No redirect ever goes to an unvalidated `redirect_uri`, and errors before validation are plain HTML. Only `https:` or loopback redirect URIs are accepted. The consent page shows the redirect host prominently. Consent is asked every time. | A user who approves a hostile client's consent gives it their own read access. That is inherent to OAuth, and Connected apps is the undo. |
-| T8 | **Cross-process races.** | Codes and pending requests are `take`n from KV. Refresh rotation is one conditional `UPDATE … RETURNING`. Revision writes compare and set. Rate windows live in the catalog. | none known |
+| T8 | **Cross-process races.** | Codes and pending requests are `take`n from KV. Refresh rotation is one conditional `UPDATE … RETURNING`, and the grace-window successor is sealed onto the spent row in the rotation's own transaction, so a concurrent refresh that loses the `UPDATE` finds it. Revision writes compare and set. Rate windows live in the catalog. | none known |
 | T9 | **The runtime origin used for something else.** | The api serves only `/runtime/v1/*` on that host and answers `404` to everything else there, sets no cookies on it, and the boot check refuses the app's own host. | The runtime is a public "run code with no network" page. Framing it elsewhere gives an attacker nothing they couldn't do in their own page. |
 
 ## 12. Contract impact
@@ -1312,6 +1346,12 @@ passes `scripts/check-change.sh`. Dependencies are merge order.
   - The 11th registration in an hour from one IPv4 address, or from two addresses in one IPv6
     `/64`, gets `429`.
   - Unused clients are swept after 24 h.
+  - The tables carry the 90-day cap and the grace window's storage of section 4.7
+    (`mcp_grants.expires_at_utc` not null, `mcp_refresh_tokens.successor_sealed`).
+  - The sweep deletes a grant whose 90-day cap passed more than 30 days ago and keeps one whose
+    cap passed less than 30 days ago, and it nulls `successor_sealed` on a refresh token used
+    more than `MCP_REFRESH_GRACE_SECONDS` ago while keeping it on one used inside the window
+    (pg tests with an injected clock).
   - The tables are system-only (pg test: `catalog_user` gets `42501`).
   - With the flag off, every route answers as today (int test against the frontend-bridge and
     `404` answers).
@@ -1338,12 +1378,32 @@ passes `scripts/check-change.sh`. Dependencies are merge order.
     produced (its access and refresh tokens stop working).
   - Refresh rotates, and reuse revokes the grant along with all its tokens.
   - Refresh tokens expire after 30 days.
+  - **The 90-day grant cap** (ADR 0035 decision 16), with an injected clock: a new grant's
+    `expires_at` is 90 days after its creation; a refresh token issued 70 days into a grant
+    expires at the cap, not 30 days later, and an access token issued within the last hour
+    before the cap expires at the cap (`expires_in` below 3600); refreshing every day still
+    gets `invalid_grant` once the grant is 90 days old, and the grant's last access token gets
+    `401` on `/mcp` past the cap.
+  - **The grace window** (ADR 0035 decision 17), with an injected clock and the default
+    `MCP_REFRESH_GRACE_SECONDS`:
+    - a reuse of a rotated refresh token by the same client 29 s after its rotation answers
+      `200` with exactly the `access_token` and `refresh_token` that rotation issued, writes no
+      new token row, and leaves the grant live;
+    - a reuse 31 s after its rotation revokes the grant and all its tokens and answers
+      `invalid_grant`;
+    - a reuse inside the window with another client's `client_id` doesn't get the successor;
+    - two concurrent refreshes of one token both answer `200` with the same tokens;
+    - with `MCP_REFRESH_GRACE_SECONDS=0`, a reuse 1 s after rotation revokes the grant;
+    - a database row's `successor_sealed` doesn't contain either raw token.
+  - Boot is refused, naming `MCP_REFRESH_GRACE_SECONDS`, when the flag is on and its value isn't
+    an integer from `0` to `60` (`bootGuard.test.ts`).
   - A disabled user can't refresh.
   - The callback with an `mcp:` state redirects to resume; with a `1` state it redirects to `/`
     exactly as before (the existing callback tests still pass unchanged).
   - Token and IPv6 `/64` rate limits.
 - *Depends on:* J2.
-- *Specs:* `mcp-authorization`, `api-contract-freeze` ("OAuth callback failure redirect").
+- *Specs:* `mcp-authorization`, `api-contract-freeze` ("OAuth callback failure redirect"),
+  `web-frontend-platform` (the `MCP_REFRESH_GRACE_SECONDS` boot check).
 
 **J4. Connected apps.**
 - *Goal:* the two `/api/oauth/connected-apps` routes and the Settings section.
@@ -1540,7 +1600,9 @@ ADR 0035 moves to Accepted when J1 merges.
 
 1. **CIMD.** Should a later job add Client ID Metadata Documents beside DCR? The 2026-07-28
    revision prefers CIMD, and Claude uses it when advertised.
-2. **A hard cap on grant lifetime.** Each refresh token lasts 30 days from its own issue, so an
+2. **Decided (ADR 0035 decision 16, 2026-11-13): grants have a 90-day hard cap**, built in
+   sections 4.5 to 4.9 and J2/J3. The question was:
+   **A hard cap on grant lifetime.** Each refresh token lasts 30 days from its own issue, so an
    active connection never expires. Should there be a hard cap, for example 90 days from the
    grant's creation, after which the user reconnects? The security review recommends one: a
    connector that is never reconnected otherwise lives forever, which sits badly with how least
@@ -1571,7 +1633,8 @@ ADR 0035 moves to Accepted when J1 merges.
      Caddy picks the snippet by pasting the variable's value into a snippet name, and it can't
      map those spellings onto `custom-dashboards-on`. So the router needs one exact value, and
      the boot check keeps the two in step.
-7. **Builder-chosen environment variable names.** `CUSTOM_DASHBOARDS_ENABLED`,
+7. **Decided (ADR 0035 decision 15, 2026-11-13): the names are confirmed as designed.** The
+   question was: **Builder-chosen environment variable names.** `CUSTOM_DASHBOARDS_ENABLED`,
    `DASHBOARD_RUNTIME_ORIGIN`, `MCP_SIGNING_SECRET` and `MCP_ALLOWED_ORIGINS` (section 10.1),
    and the router variables `ROUTER_CUSTOM_DASHBOARDS` and `ROUTER_DASHBOARD_RUNTIME_HOST`
    (item 6). The names are a design choice the approver should confirm.
@@ -1600,13 +1663,15 @@ ADR 0035 moves to Accepted when J1 merges.
     scope and redirect URI until the user revokes it in Connected apps. That means one click
     fewer on reconnects, but a stored approval a hostile client could reuse silently. This is a
     design choice the approver should confirm.
-12. **A grace window for concurrent refreshes.** Two refreshes of the same token in parallel
+12. **Decided (ADR 0035 decision 17, 2026-11-13): a 30 s grace window, configurable as
+    `MCP_REFRESH_GRACE_SECONDS`** (section 10.1), built in section 4.5 and J2/J3. The question
+    was: **A grace window for concurrent refreshes.** Two refreshes of the same token in parallel
     (Claude retrying, or two tabs) trip reuse detection and revoke the grant, as a lost refresh
     response does (accepted in ADR 0035). A common mitigation is a short grace window: a reuse
     within a few seconds of the rotation gets the already-issued successor instead of a
     revocation. It weakens detection for those seconds. ADR 0035 already names a grace window
     as a new human decision if the logouts prove frequent; this item asks whether to decide it
-    now. The design keeps strict detection until the human says otherwise.
+    now.
 13. **The `frame-src` header on app-host responses (section 9.2, section 12).** With the flag
     on, existing routes gain a `Content-Security-Policy: frame-src …` header. It restricts only
     frames, and it is the control that stops a dashboard navigating its frame to an attacker.

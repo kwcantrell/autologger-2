@@ -29,8 +29,9 @@ Four facts make this a design decision, not a feature job:
   and cleanup of expired rows. 016 found that the split topology's router sends every GET outside
   `/api` and `/auth` to the web container, so new GET routes need router rules.
 
-The human made fourteen decisions at intake (2026-11-13). This ADR records them and the reasoning
-behind each. The design doc gives the mechanism.
+The human made fourteen decisions at intake (2026-11-13), and three more (15–17) the same day,
+answering open questions 7, 2 and 12 of the design. This ADR records them and the reasoning behind
+each. The design doc gives the mechanism.
 
 ## Decision
 
@@ -80,9 +81,19 @@ human decision; the reasoning follows it.
    with no network and an opaque origin. Its only capability is a typed query API, answered by
    the View, for the one session the View was opened for. It can't call tools, write anything or
    reach other sessions. *Why:* the code is untrusted, possibly steered by prompt injection in
-   session content. The boundary is the browser's sandbox, so it doesn't rely on reviewing the
-   code. The narrow API means a hostile dashboard can at worst show wrong data about a session
-   the viewer can already read.
+   session content. The boundary is the browser's iframe sandbox **together with** the embedding
+   page's `frame-src` policy, pinned to the exact frame URL; neither alone is enough, and
+   together they don't rely on reviewing the code.
+   - The sandbox (no `allow-same-origin`, no network) stops cookies and storage, network
+     fetches, the user's tools and other sessions.
+   - The sandbox doesn't stop the frame navigating itself (`location`, an anchor click, a meta
+     refresh) and carrying session data out in the URL. The embedder's `frame-src` stops that:
+     the browser checks it on every navigation of the child frame, so the frame can't leave the
+     frame URL.
+
+   The mechanism is in the design: the View's meta CSP (§8.1), the app's `frame-src` header on
+   the web (§9.2), and threats T1 and T2 (§11). The narrow API means a hostile dashboard can at
+   worst show wrong data about a session the viewer can already read.
 10. **A separate origin for the web runtime, plus an import allowlist enforced at save.** The
     web viewer loads the same sandbox runtime from its own origin. The server refuses to save TSX
     that imports anything but React, the shadcn set and the data hooks. *Why:*
@@ -107,6 +118,33 @@ human decision; the reasoning follows it.
 14. **Design and ADR first, then a sequence of factory jobs.** *Why:* the feature crosses auth,
     the contract and the router. Small, ordered, independently mergeable jobs each get their own
     proof and review.
+15. **Environment variable names are confirmed as designed:** `CUSTOM_DASHBOARDS_ENABLED`,
+    `DASHBOARD_RUNTIME_ORIGIN`, `MCP_SIGNING_SECRET`, `MCP_ALLOWED_ORIGINS`,
+    `ROUTER_CUSTOM_DASHBOARDS` and `ROUTER_DASHBOARD_RUNTIME_HOST` (decided 2026-11-13, design
+    open question 7). *Why:* the names follow the repo's existing patterns (`AI_V2_ENABLED` for
+    the flag, `FRAME_BUS_SECRET` for a server-only secret, the `ROUTER_` prefix of
+    `ROUTER_PORT` for router settings), and fixing them now lets J1 and the router job build against stable names
+    instead of renaming operator settings after they ship.
+16. **Grants have a 90-day hard cap.** A grant expires 90 days after its creation, whatever
+    refreshes happen. The user then reconnects. Refresh tokens still rotate, with 30 days from
+    each issue, but never past the grant's cap (decided 2026-11-13, design open question 2).
+    *Why:* with only per-token expiry, an active connection never expires, so a connector that
+    is never reconnected lives forever. That sits badly with least privilege as applied
+    elsewhere. A fixed cap bounds how long any one consent, and any undetected stolen chain,
+    can last, at the cost of one reconnect every 90 days.
+17. **Refresh reuse has a 30-second grace window.** A reuse of a rotated refresh token within
+    30 seconds of its rotation is not treated as theft: it returns the successor token already
+    issued, and mints nothing new. This applies only when the same client presents the same
+    refresh token. Any reuse after 30 seconds still revokes the whole grant chain. The window is
+    configurable, defaulting to 30 seconds (decided 2026-11-13, design open question 12).
+    *Why:*
+    - Strict detection logs a user out of the connector whenever a refresh response is lost in
+      transit, or two refreshes race (Claude retrying, or two tabs).
+    - Okta (refresh-token rotation "grace period", 30 s by default) and Auth0 (rotation "reuse
+      interval") offer the same mitigation for the same reason.
+    - Inside the window, a racing replay only receives the token already issued. It doesn't
+      fork the chain or get anything new, and once the window closes, a reuse by either party
+      still revokes the chain.
 
 **The `ai-v2-dashboards` rule reversed, for this new dashboard kind only.** `ai-v2-dashboards`
 "No agent-authored markup is ever rendered" stays in force for v2 dashboards. Their widgets still
@@ -124,8 +162,9 @@ Dashboards tab.
 - **Extend the v2 widget catalog instead of running code.** Safer, but it can't express
   components Claude designs, which is the point of the request (decision 7).
 - **Render agent TSX on the app origin after review or linting.** Rejected: static checks can't
-  prove untrusted JavaScript harmless. The sandbox has to be the boundary, and the allowlist is
-  only an early refusal.
+  prove untrusted JavaScript harmless. The sandbox, together with the embedder's `frame-src`
+  pinned to the frame URL, has to be the boundary (decision 9), and the allowlist is only an
+  early refusal.
 - **Let the sandbox fetch data itself with a scoped token.** Rejected: it gives agent code a
   credential and a network path. Answering typed queries from the trusted parent keeps both out
   of the sandbox (decisions 9 and 10).
@@ -178,16 +217,19 @@ build job merges.
 - **More moving parts to run:**
   - A second public hostname for the runtime origin, and router rules for the new GET paths.
   - Anthropic's connector egress range has to be allowed when `IP_ALLOWLIST` is set.
-- **Reuse detection can log a user out of the connector.** A refresh response lost in transit
-  makes the client retry with a spent token, which revokes the chain. The user reconnects. This
-  is accepted to keep detection strict.
+- **Reuse detection can still log a user out of the connector.** A refresh response lost in
+  transit makes the client retry with a spent token. Within the 30 s grace window (decision 17)
+  the retry gets the successor already issued. A retry after the window revokes the chain and
+  the user reconnects. This is accepted to keep detection strict outside the window.
+- **Every connection ends after 90 days** (decision 16). The user reconnects, however active the
+  connection was.
 - **The MCP spec is moving.** The design targets protocol revision 2025-11-25, through the SDK
   already pinned. Revision 2026-07-28 drops transport sessions and prefers CIMD. A later job can
   add CIMD (advertised beside DCR) and the new transport once Claude and the SDK use them.
 - **Drop or revisit if:**
-  - the sandbox is shown to leak (a network request, a cookie or a tool call from dashboard
-    code);
+  - the boundary is shown to leak: a network request, a cookie or a tool call from dashboard
+    code, or a self-navigation by dashboard code that carries data out of the frame URL;
   - Claude stops supporting MCP Apps or DCR;
   - owners don't use templates or the Claude path;
-  - the reuse-detection logouts are frequent enough to need a grace window, which would be a new
-    human decision.
+  - the reuse-detection logouts outside the grace window are still frequent, or the window is
+    seen being exploited, either of which would be a new human decision about its length.
