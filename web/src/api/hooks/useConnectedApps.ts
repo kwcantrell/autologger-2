@@ -23,6 +23,9 @@ export function useConnectedApps() {
     queryFn: () => apiFetch<ConnectedAppListResponse>('oauth/connected-apps'),
     // The probe is one request: a `404` is the answer, not a fault to retry.
     retry: (count, err) => !isFeatureOff(err) && count < 2,
+    // The view and the section share this query; remounting the section must not restart a
+    // failed query (that would flip it back to pending and drop the tab while it retries).
+    retryOnMount: false,
     staleTime: 60_000,
   });
 }
@@ -33,5 +36,7 @@ export function useRevokeConnectedApp() {
     mutationFn: (grantId: string) =>
       apiFetch<void>(`oauth/connected-apps/${encodeURIComponent(grantId)}`, { method: 'DELETE' }),
     onSuccess: () => qc.invalidateQueries({ queryKey: connectedAppKeys.list() }),
+    // A 404 (already revoked elsewhere) leaves a stale row; refetch to clear it.
+    onError: () => qc.invalidateQueries({ queryKey: connectedAppKeys.list() }),
   });
 }

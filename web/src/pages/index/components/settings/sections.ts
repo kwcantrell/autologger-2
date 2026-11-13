@@ -61,11 +61,11 @@ export const SETTINGS_SECTIONS: readonly { id: SettingsSectionId; label: string 
 /** Where an open with no named section lands before any section was visited this page load. */
 export const DEFAULT_SETTINGS_SECTION: SettingsSectionId = 'show-details';
 
-/** Sections listed only for an owner or admin of at least one team (batch-autogenerate D15). */
 /** Sections listed only while `CUSTOM_DASHBOARDS_ENABLED` is on, found by probing the section's
  * list route (a `404` means off). */
 export const FLAG_GATED_SECTIONS: readonly SettingsSectionId[] = ['connected-apps'];
 
+/** Sections listed only for an owner or admin of at least one team (batch-autogenerate D15). */
 export const MANAGER_ONLY_SECTIONS: readonly SettingsSectionId[] = ['batch-autogenerate'];
 
 export const settingsTabId = (id: SettingsSectionId) => `settings-tab-${id}`;

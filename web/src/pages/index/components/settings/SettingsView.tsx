@@ -1,6 +1,6 @@
 import { ChevronLeftIcon } from 'lucide-react';
 import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
-import { useConnectedApps } from '../../../../api/hooks/useConnectedApps';
+import { isFeatureOff, useConnectedApps } from '../../../../api/hooks/useConnectedApps';
 import { useProfile } from '../../../../api/hooks/useProfile';
 import { Button } from '../../../../shared/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../../../shared/components/ui/tabs';
@@ -92,7 +92,8 @@ export function SettingsView({
   // custom session dashboards J4: Connected apps is listed only once its list route has answered
   // (a `404` means the flag is off). The section reads the same query, so this is one request.
   const connectedApps = useConnectedApps();
-  const connectedAppsOn = connectedApps.isSuccess;
+  const connectedAppsOn =
+    connectedApps.isSuccess || (connectedApps.isError && !isFeatureOff(connectedApps.error));
   const listed = (id: SettingsSectionId) =>
     (managesATeam || !MANAGER_ONLY_SECTIONS.includes(id)) &&
     (connectedAppsOn || !FLAG_GATED_SECTIONS.includes(id));

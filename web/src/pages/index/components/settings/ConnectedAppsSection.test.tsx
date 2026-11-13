@@ -192,6 +192,22 @@ describe('Settings › Connected apps with the flag on', () => {
   });
 });
 
+describe('Settings › Connected apps when the list fails', () => {
+  it('keeps the tab listed and shows the error detail on a 500', async () => {
+    mockedApiFetch.mockImplementation(async (path: string) => {
+      if (path === 'oauth/connected-apps') throw new ApiError(500, 'boom');
+      if (path.startsWith('shows')) return { shows: [] };
+      throw new Error(`unexpected apiFetch: ${path}`);
+    });
+    renderView();
+    // The hook retries a non-404 twice (1s, 2s backoff) before the query settles in error.
+    const tab = await screen.findByRole('tab', { name: 'Connected apps' }, { timeout: 6000 });
+    fireEvent.mouseDown(tab, { button: 0 });
+    const panel = document.getElementById('settings-section-connected-apps') as HTMLElement;
+    await within(panel).findByText('boom');
+  }, 10000);
+});
+
 describe('Settings › Connected apps with the flag off', () => {
   it('makes exactly one request, which gets 404, and renders no section', async () => {
     featureOn = false;

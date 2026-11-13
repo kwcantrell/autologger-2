@@ -71,7 +71,12 @@ vi.mock('../../../../api/hooks/useProfile', () => ({
 }));
 // The view probes the connected-apps list to decide whether to list that section (J4).
 vi.mock('../../../../api/hooks/useConnectedApps', () => ({
-  useConnectedApps: () => ({ isSuccess: probe.connectedApps }),
+  useConnectedApps: () => ({
+    isSuccess: probe.connectedApps,
+    isError: false,
+    error: null,
+  }),
+  isFeatureOff: () => false,
 }));
 // The view owns the shows scope; with no profile its query is disabled (no team, no request).
 vi.mock('../../../../api/hooks/useShows', () => ({
