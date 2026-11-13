@@ -50,6 +50,24 @@ and the framework's flight/RSC variants of the shell routes. The image optimizer
 (`/_next/image`) SHALL NOT be served (`images.unoptimized`), and the framework's
 `X-Powered-By` header and build/dev telemetry egress SHALL be disabled.
 
+Flight/RSC requests (`RSC: 1`) SHALL keep the framework's RSC request validation, Next 16's
+default: `web/next.config.ts` SHALL NOT set `experimental.validateRSCRequestHeaders: false`. A
+flight request is answered with the `text/x-component` payload only when its `_rsc` query matches
+the hash the framework derives from the request's router headers. A flight request without that
+query, or with a wrong value, SHALL get a `307` to the same path carrying the expected `_rsc`
+value, with no body, `Content-Type`, `Vary` or `Cache-Control`. This keeps a cache that keys on
+the URL and ignores `Vary` from storing a flight payload under a document URL. Next 15 answered
+such a request `200 text/x-component`; the change was a deliberate decision with the Next 16
+upgrade (job 014, 2026-11-13).
+
+#### Scenario: A flight request without the cache-busting query is redirected
+- **WHEN** `GET /teams` is requested in production with `RSC: 1`, no router-state headers and
+  no `_rsc` query
+- **THEN** the response is `307` with `Location: /teams?_rsc`, sets no cookie, and carries no
+  `Content-Type`, `Vary` or `Cache-Control`
+- **AND** the same request to `/teams?_rsc` is answered `200` with `Content-Type:
+  text/x-component`
+
 #### Scenario: API routes never reach the frontend bridge
 - **WHEN** any `/api/*` or `/auth/*` request is handled
 - **THEN** it is answered by the mounted Hono router, and the frontend bridge is not
