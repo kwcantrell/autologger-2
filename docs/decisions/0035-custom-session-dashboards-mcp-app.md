@@ -123,8 +123,8 @@ human decision; the reasoning follows it.
     `ROUTER_CUSTOM_DASHBOARDS` and `ROUTER_DASHBOARD_RUNTIME_HOST` (decided 2026-11-13, design
     open question 7). *Why:* the names follow the repo's existing patterns (`AI_V2_ENABLED` for
     the flag, `FRAME_BUS_SECRET` for a server-only secret, the `ROUTER_` prefix of
-    `ROUTER_PORT` for router settings), and fixing them now lets J1 and the router job build against stable names
-    instead of renaming operator settings after they ship.
+    `ROUTER_PORT` for router settings), and fixing them now lets J1 and the router job build
+    against stable names instead of renaming operator settings after they ship.
 16. **Grants have a 90-day hard cap.** A grant expires 90 days after its creation, whatever
     refreshes happen. The user then reconnects. Refresh tokens still rotate, with 30 days from
     each issue, but never past the grant's cap (decided 2026-11-13, design open question 2).
