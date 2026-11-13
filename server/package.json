@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=22"
+    "node": ">=22.22.2"
   },
   "scripts": {
     "dev": "tsx src/bootGuardCli.ts && NEXT_TELEMETRY_DISABLED=1 tsx watch --exclude \"../web/**\" --exclude \"../web/.next/**\" src/main.ts",
