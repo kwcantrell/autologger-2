@@ -12,13 +12,14 @@ import type { NextConfig } from 'next';
 // - skipTrailingSlashRedirect: true — trailing-slash shell paths reach the catch-all
 //   unnormalized instead of Next's default 308 redirect, so they keep 404ing like today
 //   (D3 trailing-slash decision).
-// - experimental.validateRSCRequestHeaders: false (Next 16 upgrade, job 014): Next 16 answers an
-//   RSC request (`RSC: 1` header) whose `_rsc` cache-busting query is missing or wrong with a
-//   `307` to the URL with the expected hash, a guard against CDNs that cache by URL and ignore
-//   `Vary`. Next 15.5 answered the same request `200 text/x-component`, and that disposition is
-//   pinned (`docker/scripts/test_router.sh`, "GET /teams (RSC)"), so the guard is off to keep the
-//   frozen contract. Every shell and RSC response here is `private, no-cache, no-store`, so no
-//   shared cache should store one; turning the guard on is a contract change for a human to make.
+// - RSC request validation stays ON, Next 16's default (job 014, human decision 2026-11-13):
+//   Next 16 answers an RSC request (`RSC: 1` header) whose `_rsc` cache-busting query is missing
+//   or does not match the router-state headers with a `307` to the same URL carrying the expected
+//   `_rsc` hash, a guard against caches that key on the URL and ignore `Vary`. Next 15.5 answered
+//   the same request `200 text/x-component`. The human chose to keep the guard and accept the
+//   `307`; the "GET /teams (RSC)" row of `docker/scripts/test_router.sh` and the
+//   `api-contract-freeze` / `web-frontend-platform` specs were amended to match. Do not set
+//   `experimental.validateRSCRequestHeaders: false` to get the old `200` back.
 // - reactMaxHeadersLength: 0 (Next 16 upgrade, job 014): the React that Next 16 bundles turns
 //   the layout's body `<link rel="preload">` font tags (and, on a 404, the stylesheet) into a
 //   `Link:` response header, budgeted by this option (default 6000). Next 15.5 sent no `Link`
@@ -93,9 +94,6 @@ const nextConfig: NextConfig = {
   },
   poweredByHeader: false,
   reactMaxHeadersLength: 0,
-  experimental: {
-    validateRSCRequestHeaders: false,
-  },
   skipTrailingSlashRedirect: true,
   pageExtensions: ['page.tsx', 'page.ts'],
   turbopack: {

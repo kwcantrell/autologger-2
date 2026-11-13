@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { NextConfig } from 'next';
+import { defaultConfig } from 'next/dist/server/config-shared';
 import { describe, expect, it } from 'vitest';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -53,8 +54,11 @@ describe('web/next.config.ts under Next 16', () => {
     expect(nextConfig.reactMaxHeadersLength).toBe(0);
   });
 
-  it('answers an RSC request without a matching _rsc query as Next 15 did, not with a 307', () => {
-    expect(nextConfig.experimental?.validateRSCRequestHeaders).toBe(false);
+  // Human decision 2026-11-13: keep Next 16's RSC request validation, and with it the `307` to
+  // `?_rsc=<hash>` that an `RSC: 1` request without the matching query gets.
+  it('leaves RSC request validation at Next 16 default, on', () => {
+    expect(nextConfig.experimental?.validateRSCRequestHeaders).toBeUndefined();
+    expect(defaultConfig.experimental?.validateRSCRequestHeaders).toBe(true);
   });
 
   it('keeps the settings the frozen routes and headers depend on', () => {
