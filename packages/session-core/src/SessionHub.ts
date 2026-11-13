@@ -190,6 +190,33 @@ export interface SessionHubFacade {
     revision: number;
   }>;
   exportEvents: () => Promise<EventRpc[]>;
+  /** Keyed reads (custom session dashboards J5; mcp-session-data "Keyed session reads"): the rows
+   * after `after` in the store's own order, at most `limit`, with the session's count and revision
+   * read in the same snapshot. `after: null` starts at the first row. */
+  listEventsAfter: (input: {
+    after: { wall_time_utc: string; id: string } | null;
+    limit: number;
+  }) => Promise<{ events: EventRpc[]; total: number; revision: number }>;
+  listTranscriptWordsAfter: (input: {
+    after: { ordinal: number; id: string } | null;
+    limit: number;
+  }) => Promise<{ words: TranscriptWord[]; total: number; revision: number }>;
+  listTranscriptParagraphsAfter: (input: {
+    after: { ordinal: number; id: string } | null;
+    limit: number;
+  }) => Promise<{ paragraphs: TranscriptParagraph[]; total: number; revision: number }>;
+  listTopicsAfter: (input: {
+    after: { ordinal: number; id: string } | null;
+    limit: number;
+  }) => Promise<{ topics: Topic[]; total: number; revision: number }>;
+  /** The session's row counts and revision, in one snapshot (J5 `get_session`). */
+  contentCounts: () => Promise<{
+    events: number;
+    words: number;
+    paragraphs: number;
+    topics: number;
+    revision: number;
+  }>;
   /** `mergeMetadata` receives the stored `metadata_json` and returns the JSON to store; the read,
    * the merge and the write are one transaction (S3). Synchronous by type; keep it pure. */
   /** session-row-versions D4/D5: `expect` is the expected version and whether the edit is an
@@ -1068,6 +1095,37 @@ export class SessionHubView implements SessionHubFacade {
   }
   listEvents(input: Parameters<EventStore['listEvents']>[0]) {
     return this.read((s) => s.events.listEvents(input));
+  }
+  listEventsAfter(input: Parameters<EventStore['listEventsAfter']>[0]) {
+    return this.read((s) => s.events.listEventsAfter(input));
+  }
+  listTranscriptWordsAfter(input: Parameters<TranscriptStore['listTranscriptWordsAfter']>[0]) {
+    return this.read(async (s) => ({
+      ...(await s.transcript.listTranscriptWordsAfter(input)),
+      revision: await s.core.revision(),
+    }));
+  }
+  listTranscriptParagraphsAfter(
+    input: Parameters<TranscriptStore['listTranscriptParagraphsAfter']>[0],
+  ) {
+    return this.read(async (s) => ({
+      ...(await s.transcript.listTranscriptParagraphsAfter(input)),
+      revision: await s.core.revision(),
+    }));
+  }
+  listTopicsAfter(input: Parameters<TopicStore['listTopicsAfter']>[0]) {
+    return this.read(async (s) => ({
+      ...(await s.topics.listTopicsAfter(input)),
+      revision: await s.core.revision(),
+    }));
+  }
+  contentCounts() {
+    return this.read(async (s) => {
+      const events = (await s.core.eventCounts()).total;
+      const { words, paragraphs } = await s.transcript.transcriptCounts();
+      const topics = await s.topics.countTopics();
+      return { events, words, paragraphs, topics, revision: await s.core.revision() };
+    });
   }
   getEvent(eventId: string) {
     return this.read((s) => s.events.getEvent(eventId));

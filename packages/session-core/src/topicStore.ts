@@ -3,7 +3,7 @@
 
 import { isoZ } from '@autologger/domain';
 import type { Row, SessionCore, VersionExpectation } from './sessionCore';
-import { buildPatch, nextOrdinal, staleVersion } from './storeHelpers';
+import { buildPatch, countRows, keyedOrdinalPage, nextOrdinal, staleVersion } from './storeHelpers';
 
 export interface Topic {
   id: string;
@@ -41,6 +41,21 @@ export class TopicStore {
         this.core.sessionId,
       )
     ).map(topicRow);
+  }
+
+  /** The topics after `after` in the store's own order, `(ordinal, id)`, at most `limit` of them,
+   * with the topic count (custom session dashboards J5; mcp-session-data "Keyed session reads"). */
+  async listTopicsAfter(input: {
+    after: { ordinal: number; id: string } | null;
+    limit: number;
+  }): Promise<{ topics: Topic[]; total: number }> {
+    const rows = await keyedOrdinalPage(this.core, 'session_topics', input.after, input.limit);
+    return { topics: rows.map(topicRow), total: await countRows(this.core, 'session_topics') };
+  }
+
+  /** The session's topic count. */
+  countTopics(): Promise<number> {
+    return countRows(this.core, 'session_topics');
   }
 
   private topic(topicId: string): Promise<Row | null> {

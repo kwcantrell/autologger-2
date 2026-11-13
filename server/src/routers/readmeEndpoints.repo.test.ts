@@ -177,6 +177,14 @@ const ROUTES: { file: string; method: string; path: string; readme: string; stat
       readme: 'POST /oauth/revoke',
       statuses: ['200', '400'],
     },
+    // custom session dashboards J5 (api-contract-freeze "MCP endpoint route"): flag-gated.
+    {
+      file: 'server/src/routers/mcp.ts',
+      method: 'all',
+      path: "'/mcp'",
+      readme: 'POST /mcp',
+      statuses: ['200', '202', '401', '403', '405', '413'],
+    },
   ];
 
 describe('README "Endpoints" lists the media-worker, batch autogenerate and MCP OAuth routes', () => {

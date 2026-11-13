@@ -97,6 +97,12 @@ export interface AuthStoreFacade {
   ) => Promise<void>;
   authRevokeShow: (userId: string, showId: string) => Promise<number>;
   authRevokeGrantsInStudio: (userId: string, studioId: string) => Promise<number>;
+  // custom session dashboards J5 (design 4.6): the `/mcp` access-token lookup.
+  authResolveMcpAccessToken: (
+    tokenHash: string,
+    resource: string,
+    nowIso: string,
+  ) => Promise<{ user: Row; grantId: string; clientId: string } | null>;
 }
 
 /** The show access rule (show-grants D2), as one SQL predicate over a show `s` joined to the
@@ -127,6 +133,37 @@ export class AuthStore implements AuthStoreFacade {
    * existing/new split so a disabled match can redirect (account_disabled)
    * instead of falling into the new-user branch and tripping the unique
    * `google_sub` constraint (the former latent 500). */
+  /**
+   * The `/mcp` bearer lookup (custom session dashboards J5; design 4.6): the enabled user, grant
+   * and client of the access token with this hex SHA-256, when the token is unexpired, its grant
+   * is not revoked and not past its 90-day cap, and the grant's resource is `resource` (the
+   * RFC 8707 audience check). Null otherwise. A system read (`auth-resolve`): the token tables
+   * are system-only.
+   */
+  async authResolveMcpAccessToken(
+    tokenHash: string,
+    resource: string,
+    nowIso: string,
+  ): Promise<{ user: Row; grantId: string; clientId: string } | null> {
+    if (!tokenHash) return null;
+    const row = await this.db.first<Row>(
+      `SELECT u.*, g.id AS mcp_grant_id, g.client_id AS mcp_client_id
+         FROM mcp_access_tokens t
+         JOIN mcp_grants g ON g.id = t.grant_id
+         JOIN users u ON u.id = g.user_id
+        WHERE t.token_hash = ? AND t.expires_at_utc > ?
+          AND g.revoked_at_utc IS NULL AND g.expires_at_utc > ? AND g.resource = ?
+          AND u.disabled_at_utc IS NULL`,
+      tokenHash,
+      nowIso,
+      nowIso,
+      resource,
+    );
+    if (row === null) return null;
+    const { mcp_grant_id, mcp_client_id, ...user } = row;
+    return { user, grantId: String(mcp_grant_id), clientId: String(mcp_client_id) };
+  }
+
   async authGetUserByGoogleSubAny(googleSub: string): Promise<Row | null> {
     return this.db.first<Row>('SELECT * FROM users WHERE google_sub = ?', googleSub);
   }

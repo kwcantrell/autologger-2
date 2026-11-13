@@ -2141,6 +2141,8 @@ const SERVER_SRC_LAYER_DIRS = [
   'routers',
   'generation',
   'autogenerate',
+  // custom session dashboards J5: the session query service and the `/mcp` read tools.
+  'dashboards',
 ];
 
 /** Matches `*.test.ts`, `*.int.test.ts` (both end in `.test.ts`), and the

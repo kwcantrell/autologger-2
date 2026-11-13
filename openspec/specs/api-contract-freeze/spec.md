@@ -2203,6 +2203,15 @@ treated exactly as its literal form. On every other path, including every other 
 other credential SHALL be handled exactly as a request that carries no credential. `ADMIN_TOKEN`
 handling on `/api/admin/*` is unchanged.
 
+**The one exception: `/mcp`** (custom session dashboards J5; ADR 0035 decision 2). On a `POST` to
+exactly `/mcp` while `CUSTOM_DASHBOARDS_ENABLED` is on, an MCP access token in the
+`Authorization: Bearer` header SHALL decide the caller and a session cookie SHALL be ignored
+(mcp-session-data "The /mcp bearer"). Device tokens SHALL stay Companion-only: a device token on
+`/mcp` is refused like any unknown token. MCP access tokens SHALL be accepted nowhere else: on
+every other path, `/api/*` included, a request carrying only an MCP token SHALL be handled exactly
+as a request with no credential. With the flag off, `/mcp` has no bearer branch and a Bearer there
+is ignored as anywhere else.
+
 The lookup SHALL run on every request, so a revoked device or a disabled user is refused on its
 next request. A device's last-used time SHALL be updated at most once a minute per device, after
 the lookup, and its failure SHALL only log a warning; it SHALL NOT delay or fail the request.
@@ -2264,6 +2273,12 @@ unchanged.
   sent with a live device's token as a `Bearer`
 - **THEN** the first two get `401` `{"detail": "Login required."}` and the third gets `200`
   with the frozen state shape, exactly as `/api/sessions` and `/api/companion/state` do
+
+#### Scenario: An MCP token opens only /mcp
+- **WHEN** the flag is on and `GET /api/sessions`, `GET /api/companion-devices` and
+  `GET /api/profile` are each sent with a live MCP access token as a `Bearer` and no session
+  cookie
+- **THEN** each response is identical to the same request sent with no `Authorization` header
 
 #### Scenario: A Bearer decides the Companion caller even with a cookie
 - **WHEN** `GET /api/companion/state` is sent with a valid session cookie and a `Bearer` that no
@@ -3639,3 +3654,29 @@ shape is unchanged.
 - **WHEN** the flag is off and `GET /api/oauth/connected-apps` and
   `DELETE /api/oauth/connected-apps/<id>` are sent with a session cookie
 - **THEN** each answers exactly what an unmounted `/api/oauth/*` path answers
+
+### Requirement: MCP endpoint route
+This route is additive and flag-gated (ADR 0035 decisions 2 and 11; custom session dashboards J5).
+It SHALL exist only while `CUSTOM_DASHBOARDS_ENABLED` is on, and SHALL be listed in the README
+endpoint table as flag-gated. Its behavior is specified in `mcp-session-data`:
+
+- `POST /mcp` → `200` a JSON-RPC answer, `202` for a notification, `401 {"detail": "Login
+  required."}` with the `WWW-Authenticate` challenge, `403 {"detail": "Origin not allowed."}`,
+  `413` for a body over 512 KiB, or the transport's `400`, `406` and `415` JSON-RPC errors;
+- `GET /mcp`, `DELETE /mcp` and every other method → `405` with `Allow: POST`.
+
+It sets no cookie and reads no session cookie. With the flag off, every method on `/mcp` SHALL
+answer exactly what it answered before the route existed: `GET` and `HEAD` reach the frontend
+bridge, other methods get Hono's `404`, and a Bearer there is ignored. No existing route, status,
+body or header changes, except the Companion-token rule's `/mcp` exception (requirement "Companion
+device tokens authenticate only the Companion surface").
+
+#### Scenario: Absent when off
+- **WHEN** the flag is off and `GET`, `POST`, `DELETE` and `HEAD` are sent to `/mcp`, with and
+  without a Bearer
+- **THEN** each answer is identical to the same request to an unmounted path, with no
+  `WWW-Authenticate` or `Allow` header
+
+#### Scenario: Present when on
+- **WHEN** the flag is on and `POST /mcp` is sent with no credentials
+- **THEN** it answers `401` with the challenge

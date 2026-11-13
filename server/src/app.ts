@@ -30,6 +30,7 @@ import { companionDevicesRouter } from './routers/companionDevices';
 import { eventsRouter } from './routers/events';
 import { exportsRouter } from './routers/exports';
 import { logImportRouter } from './routers/logImport';
+import { mcpRouter } from './routers/mcp';
 import { oauthRouter } from './routers/oauth';
 import { profileRouter } from './routers/profile';
 import { providersRouter } from './routers/providers';
@@ -386,6 +387,8 @@ export function wireApp(
   // answering only with CUSTOM_DASHBOARDS_ENABLED on; with it off each falls through to what an
   // unmatched path gets (the frontend bridge below, or Hono's 404).
   app.route('/', oauthRouter);
+  // custom session dashboards J5 (mcp-session-data): `POST /mcp`, flag-gated the same way.
+  app.route('/', mcpRouter);
 
   // Frontend bridge (nextjs-frontend-migration, design D1 "Custom-server
   // shape"; spec "Next.js frontend served through the Hono bridge"): every

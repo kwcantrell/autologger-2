@@ -236,6 +236,42 @@ const SELECT_PAGE = `select ${PAGE_COLUMNS}
   from wiki_pages p left join wiki_revisions r on r.page_id = p.id and r.revision = p.revision
   where p.id = ?`;
 
+/** A live page as the associated-pages read sees it: the list fields plus the current body. */
+export interface WikiAssociationRow {
+  id: string;
+  kind: WikiKind;
+  title: string;
+  aliases: string[];
+  session_id: string | null;
+  revision: number;
+  body_md: string;
+}
+
+interface AssociationDbRow {
+  id: string;
+  kind: WikiKind;
+  title: string;
+  session_id: string | null;
+  revision: number;
+  body_md: string;
+  aliases_json: unknown;
+}
+
+const ASSOCIATION_COLUMNS =
+  'p.id, p.kind, p.title, p.session_id, p.revision, p.body_md, r.aliases_json';
+
+function associationOf(r: AssociationDbRow): WikiAssociationRow {
+  return {
+    id: r.id,
+    kind: r.kind,
+    title: r.title,
+    aliases: jsonStrings(r.aliases_json),
+    session_id: r.session_id ?? null,
+    revision: Number(r.revision),
+    body_md: r.body_md,
+  };
+}
+
 function jsonStrings(v: unknown): string[] {
   const raw = typeof v === 'string' ? (JSON.parse(v) as unknown) : v;
   return Array.isArray(raw) ? raw.map(String) : [];
@@ -298,6 +334,8 @@ export type WikiStoreFacade = Pick<
   WikiStore,
   | 'listPages'
   | 'getPage'
+  | 'listAssociationCandidates'
+  | 'listLivePagesByIds'
   | 'listRevisions'
   | 'getRevision'
   | 'createPage'
@@ -359,6 +397,49 @@ export class WikiStore implements WikiStoreFacade {
       };
     });
     return { pages, truncated: rows.length > WIKI_LIST_CAP };
+  }
+
+  /**
+   * The raw material of a session's associated pages (custom session dashboards J5; design 5.4;
+   * mcp-session-data "Associated wiki pages"): the live, unmerged pages of show `showId` that are
+   * the session's own page (`kind = 'session'` and `session_id = sessionId`) or whose current body
+   * holds `cite:<sessionId>@` (compared case-insensitively). The caller confirms each citation with
+   * the citation parser. Under the caller's binding, so the wiki policies apply; the scan never
+   * leaves the show.
+   */
+  async listAssociationCandidates(
+    showId: string,
+    sessionId: string,
+  ): Promise<WikiAssociationRow[]> {
+    const rows = await this.db.all<AssociationDbRow>(
+      `select ${ASSOCIATION_COLUMNS}
+       from wiki_pages p left join wiki_revisions r on r.page_id = p.id and r.revision = p.revision
+       where p.show_id = ? and p.deleted_at_utc is null and p.merged_into is null
+         and ((p.kind = 'session' and p.session_id = ?)
+              or strpos(lower(p.body_md), lower('cite:' || ?::text || '@')) > 0)
+       order by p.id`,
+      showId,
+      sessionId,
+      sessionId,
+    );
+    return rows.map(associationOf);
+  }
+
+  /** The live, unmerged pages of show `showId` among `ids` (at most `WIKI_MAX_LINKS`), by id;
+   * under the caller's binding. */
+  async listLivePagesByIds(showId: string, ids: readonly string[]): Promise<WikiAssociationRow[]> {
+    const unique = [...new Set(ids)].slice(0, WIKI_MAX_LINKS);
+    if (unique.length === 0) return [];
+    const rows = await this.db.all<AssociationDbRow>(
+      `select ${ASSOCIATION_COLUMNS}
+       from wiki_pages p left join wiki_revisions r on r.page_id = p.id and r.revision = p.revision
+       where p.show_id = ? and p.deleted_at_utc is null and p.merged_into is null
+         and p.id in (${unique.map(() => '?').join(', ')})
+       order by p.id`,
+      showId,
+      ...unique,
+    );
+    return rows.map(associationOf);
   }
 
   /** The page, including merged and deleted pages; `null` when missing or not accessible. */

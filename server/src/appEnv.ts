@@ -91,6 +91,9 @@ export interface Variables {
   /** The Companion device a request authenticated with (companion-devices D2), or null for a
    * cookie or anonymous request. Set only on `/api/companion/*`. */
   companionDevice: { id: string } | null;
+  /** The MCP grant a `/mcp` request authenticated with (custom session dashboards J5, design
+   * 4.6), or null for every other request. Set only on `/mcp` with the flag on. */
+  mcpGrant: { id: string; clientId: string } | null;
 }
 
 export type AppEnv = { Bindings: Bindings; Variables: Variables };

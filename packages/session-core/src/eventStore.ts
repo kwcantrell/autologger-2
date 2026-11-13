@@ -177,6 +177,39 @@ export class EventStore {
     };
   }
 
+  /** The events after `after` in the store's own order, `(wall_time_utc, id)`, at most `limit`
+   * of them: a keyed read, never an offset, so one page reads at most `limit` rows (custom session
+   * dashboards J5; mcp-session-data "Keyed session reads"). `after: null` starts at the first
+   * event. `total` is the session's event count. */
+  async listEventsAfter(input: {
+    after: { wall_time_utc: string; id: string } | null;
+    limit: number;
+  }): Promise<{ events: EventRpc[]; total: number; revision: number }> {
+    const limit = Math.max(0, Math.trunc(input.limit));
+    const rows =
+      input.after === null
+        ? await this.core.all(
+            'SELECT * FROM session_events WHERE session_id = ? ORDER BY wall_time_utc, id LIMIT ?',
+            this.core.sessionId,
+            limit,
+          )
+        : await this.core.all(
+            `SELECT * FROM session_events
+              WHERE session_id = ? AND (wall_time_utc, id) > (?::text, ?::text)
+              ORDER BY wall_time_utc, id LIMIT ?`,
+            this.core.sessionId,
+            input.after.wall_time_utc,
+            input.after.id,
+            limit,
+          );
+    const counts = await this.core.eventCounts();
+    return {
+      events: rows.map((r) => eventRowToRpc(r)),
+      total: counts.total,
+      revision: await this.core.revision(),
+    };
+  }
+
   async getEvent(eventId: string): Promise<EventRpc | null> {
     const r = await this.event(eventId);
     return r ? eventRowToRpc(r) : null;

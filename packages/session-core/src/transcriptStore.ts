@@ -3,7 +3,7 @@
 
 import { isoZ } from '@autologger/domain';
 import type { Row, SessionCore, VersionExpectation } from './sessionCore';
-import { buildPatch, nextOrdinal, staleVersion } from './storeHelpers';
+import { buildPatch, countRows, keyedOrdinalPage, nextOrdinal, staleVersion } from './storeHelpers';
 
 export interface TranscriptWord {
   id: string;
@@ -121,6 +121,50 @@ export class TranscriptStore {
         this.core.sessionId,
       )
     ).map(wordRow);
+  }
+
+  /** The words after `after` in the store's own order, `(ordinal, id)`, at most `limit` of them
+   * (custom session dashboards J5; mcp-session-data "Keyed session reads"), with the word count. */
+  async listTranscriptWordsAfter(input: {
+    after: { ordinal: number; id: string } | null;
+    limit: number;
+  }): Promise<{ words: TranscriptWord[]; total: number }> {
+    const rows = await keyedOrdinalPage(
+      this.core,
+      'session_transcript_words',
+      input.after,
+      input.limit,
+    );
+    return {
+      words: rows.map(wordRow),
+      total: await countRows(this.core, 'session_transcript_words'),
+    };
+  }
+
+  /** The persisted paragraphs after `after` in `(ordinal, id)` order, at most `limit` of them,
+   * with the paragraph count (custom session dashboards J5). */
+  async listTranscriptParagraphsAfter(input: {
+    after: { ordinal: number; id: string } | null;
+    limit: number;
+  }): Promise<{ paragraphs: TranscriptParagraph[]; total: number }> {
+    const rows = await keyedOrdinalPage(
+      this.core,
+      'session_transcript_paragraphs',
+      input.after,
+      input.limit,
+    );
+    return {
+      paragraphs: rows.map(paragraphRow),
+      total: await countRows(this.core, 'session_transcript_paragraphs'),
+    };
+  }
+
+  /** The session's word and paragraph counts. */
+  async transcriptCounts(): Promise<{ words: number; paragraphs: number }> {
+    return {
+      words: await countRows(this.core, 'session_transcript_words'),
+      paragraphs: await countRows(this.core, 'session_transcript_paragraphs'),
+    };
   }
 
   private word(wordId: string): Promise<Row | null> {
