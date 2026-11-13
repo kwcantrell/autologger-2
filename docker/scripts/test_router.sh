@@ -225,6 +225,55 @@ const DASH_EXPECTED = {
     "DELETE [runtime host] /api/profile": "401 | - | - | - | application/json | - | - | - | 7355b61d35e034bc",
   },
   on: {
+// Recorded with --record on the job's stack (same web image, api image built from the J6 commit)
+// with ROUTER_CUSTOM_DASHBOARDS=on, the runtime host set, and the api's flag on. The routes behind
+// the new paths are whatever the api has mounted at that commit; re-record when a later job (J5, J8)
+// changes an answer, and say so in that job.
+    "GET /.well-known/oauth-protected-resource": "200 | - | - | - | application/json | - | - | - | 83079eff7bf393e0",
+    "GET /.well-known/oauth-protected-resource/mcp": "200 | - | - | - | application/json | - | - | - | 83079eff7bf393e0",
+    "GET /.well-known/oauth-authorization-server": "200 | - | - | - | application/json | - | - | - | 1ae7f7c20e6effbc",
+    "GET /oauth/authorize": "400 | - | - | - | text/html; charset=UTF-8 | - | - | no-store | 80ddb0ba713e499f",
+    "GET /oauth/authorize/resume": "400 | - | - | - | text/html; charset=UTF-8 | - | - | no-store | 1176e7f682f20652",
+    "GET /mcp": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "GET [runtime host] /runtime/v1/frame.html": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "GET [runtime host] /runtime/v1/assets/x.js": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "GET [runtime host] /api/profile": "200 | - | - | - | application/json | - | Accept-Encoding | - | 8dc89bf93caf8d20",
+    "HEAD /.well-known/oauth-protected-resource": "200 | - | - | - | application/json | - | - | - | -",
+    "HEAD /.well-known/oauth-protected-resource/mcp": "200 | - | - | - | application/json | - | - | - | -",
+    "HEAD /.well-known/oauth-authorization-server": "200 | - | - | - | application/json | - | - | - | -",
+    "HEAD /oauth/authorize": "400 | - | - | - | text/html; charset=UTF-8 | - | - | no-store | -",
+    "HEAD /oauth/authorize/resume": "400 | - | - | - | text/html; charset=UTF-8 | - | - | no-store | -",
+    "HEAD /mcp": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | -",
+    "HEAD [runtime host] /runtime/v1/frame.html": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | -",
+    "HEAD [runtime host] /runtime/v1/assets/x.js": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | -",
+    "HEAD [runtime host] /api/profile": "200 | - | - | - | application/json | - | Accept-Encoding | - | -",
+    "POST /.well-known/oauth-protected-resource": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "POST /.well-known/oauth-protected-resource/mcp": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "POST /.well-known/oauth-authorization-server": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "POST /oauth/authorize": "400 | - | - | - | text/html; charset=UTF-8 | - | - | no-store | 4909666fb2d534cd",
+    "POST /oauth/authorize/resume": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "POST /mcp": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "POST [runtime host] /runtime/v1/frame.html": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "POST [runtime host] /runtime/v1/assets/x.js": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "POST [runtime host] /api/profile": "401 | - | - | - | application/json | - | - | - | 7355b61d35e034bc",
+    "PUT /.well-known/oauth-protected-resource": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "PUT /.well-known/oauth-protected-resource/mcp": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "PUT /.well-known/oauth-authorization-server": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "PUT /oauth/authorize": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "PUT /oauth/authorize/resume": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "PUT /mcp": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "PUT [runtime host] /runtime/v1/frame.html": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "PUT [runtime host] /runtime/v1/assets/x.js": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "PUT [runtime host] /api/profile": "401 | - | - | - | application/json | - | - | - | 7355b61d35e034bc",
+    "DELETE /.well-known/oauth-protected-resource": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "DELETE /.well-known/oauth-protected-resource/mcp": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "DELETE /.well-known/oauth-authorization-server": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "DELETE /oauth/authorize": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "DELETE /oauth/authorize/resume": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "DELETE /mcp": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "DELETE [runtime host] /runtime/v1/frame.html": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "DELETE [runtime host] /runtime/v1/assets/x.js": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "DELETE [runtime host] /api/profile": "401 | - | - | - | application/json | - | - | - | 7355b61d35e034bc",
   },
 };
 const dashKey = (m, p, rt) => `${m} ${rt ? '[runtime host] ' : ''}${p}`;
@@ -250,13 +299,14 @@ const c = chunk ? await http('GET', chunk) : { status: 0, h: {} };
 check('GET /_next/static/<chunk> from the shell -> 200 immutable', c.status === 200 && /immutable/.test(c.h['cache-control'] ?? ''), `${c.status} ${c.h['cache-control'] ?? '-'}`);
 
 // ---- Custom dashboards: which upstream answered, and the frame-src policy
-// Next marks every answer of web:3000 with X-Powered-By: Next.js; the API-only api image does not.
-const fromWeb = (r) => r.h['x-powered-by'] === 'Next.js' && (r.h['content-type'] ?? '').includes('text/html');
+// Next's answers (the shell and its not-found page) are HTML with a `Vary: rsc, ...` header; the
+// API-only api image answers plain text (or JSON) and never sets it.
+const fromWeb = (r) => (r.h['content-type'] ?? '').includes('text/html') && /(^|,\s*)rsc(,|$)/.test(r.h.vary ?? '');
 const csp = (r) => r.h['content-security-policy'];
 const FRAME_SRC = `frame-src https://${RT_HOST}/runtime/v1/frame.html`;
 for (const p of DASH_PATHS) {
   const r = dashGot[dashKey('GET', p, false)].r;
-  if (DASH_ON) check(`dashboards on: GET ${p} reaches the api, not web:3000`, !fromWeb(r) && r.h['x-powered-by'] !== 'Next.js', `${r.status} ${r.h['content-type'] ?? '-'}`);
+  if (DASH_ON) check(`dashboards on: GET ${p} reaches the api, not web:3000`, !fromWeb(r), `${r.status} ${r.h['content-type'] ?? '-'}`);
   else check(`dashboards off: GET ${p} is still Next's HTML not-found page from web:3000, not the api's plain-text 404`, fromWeb(r) && r.status === 404 && !/^Not Found$/.test(r.body), `${r.status} ${r.h['content-type'] ?? '-'}`);
 }
 if (DASH_ON) {
