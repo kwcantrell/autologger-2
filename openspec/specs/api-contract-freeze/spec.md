@@ -3552,3 +3552,32 @@ endpoints' existing `note` field (show-wiki "A batch job accepts suggestions as 
 - **WHEN** an admin posts a preview with both `show_ids` and `session_ids`, and a start without
   `expected_sessions`
 - **THEN** both responses are `422` with `detail` an array of zod 4 issues, and no job is created
+
+### Requirement: MCP OAuth discovery and registration routes
+These routes are additive and flag-gated (ADR 0035 decision 5; custom session dashboards J2). They
+SHALL exist only while `CUSTOM_DASHBOARDS_ENABLED` is on, and SHALL be listed in the README
+endpoint table as flag-gated. Their behavior is specified in `mcp-authorization` ("Discovery
+metadata", "Dynamic client registration", "Registration is rate-limited per source address and
+capped"):
+
+- `GET /.well-known/oauth-protected-resource` and
+  `GET /.well-known/oauth-protected-resource/mcp` → `200` the protected-resource metadata;
+- `GET /.well-known/oauth-authorization-server` → `200` the authorization-server metadata;
+- `POST /oauth/register` → `201` the client information, `400 {error: "invalid_redirect_uri" |
+  "invalid_client_metadata", error_description}`, or `429 {detail}`.
+
+None of them reads a session cookie or a Bearer, and none sets a cookie. With the flag off, every
+method on these paths SHALL answer exactly what it answered before they existed: `GET` and `HEAD`
+reach the frontend bridge, and other methods get Hono's `404`. No existing route, status, body or
+header changes, whatever the flag.
+
+#### Scenario: Absent when off
+- **WHEN** the flag is off and `POST /oauth/register` and `GET /.well-known/oauth-authorization-server`
+  are sent to the API-only server
+- **THEN** both answer Hono's plain `404 Not Found`, identical to an unmounted path, with no
+  `Cache-Control` header
+
+#### Scenario: Present when on
+- **WHEN** the flag is on and `GET /.well-known/oauth-authorization-server` is sent with no
+  credentials
+- **THEN** it answers `200` with the authorization-server metadata

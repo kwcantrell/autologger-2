@@ -612,7 +612,7 @@ describe('the catalog_user policies as installed', () => {
     }
   });
 
-  it('every table except kv, the two Companion tables, the provider tables and account_approvals has a catalog_user policy, and every table a catalog_system one', async () => {
+  it('every table except kv, the two Companion tables, the provider tables, account_approvals and the MCP OAuth tables has a catalog_user policy, and every table a catalog_system one', async () => {
     // companion-devices D1: companion_devices and companion_presence are system-only, like kv.
     // byo-ai-providers D1: so are user_provider_credentials and provider_key_check.
     // closed-signups D2: so is account_approvals.
@@ -623,6 +623,12 @@ describe('the catalog_user policies as installed', () => {
       'provider_key_check',
       'provider_test_windows',
       'account_approvals',
+      // custom session dashboards J2 (design 4.7): the five MCP OAuth tables.
+      'mcp_clients',
+      'mcp_grants',
+      'mcp_access_tokens',
+      'mcp_refresh_tokens',
+      'mcp_rate_windows',
     ];
     const systemOnly = ['kv', ...extra];
     // media-worker D2, D7, D12: the three media tables have both.

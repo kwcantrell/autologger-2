@@ -32,6 +32,13 @@ const SESSION_TABLES = [
   'session_dashboards',
   'session_meta',
 ];
+const MCP_TABLES = [
+  'mcp_clients',
+  'mcp_grants',
+  'mcp_access_tokens',
+  'mcp_refresh_tokens',
+  'mcp_rate_windows',
+];
 const TABLES = [
   'users',
   'user_studio_memberships',
@@ -73,6 +80,8 @@ const TABLES = [
   // batch-autogenerate D1: batch jobs and their per-session, per-step items.
   'autogenerate_jobs',
   'autogenerate_items',
+  // custom session dashboards J2 (design 4.7): the MCP OAuth server's storage.
+  ...MCP_TABLES,
 ];
 // companion-devices D1: the tables with no catalog_user policy and no catalog_user privilege.
 // byo-ai-providers D1: plus the two provider tables.
@@ -85,6 +94,8 @@ const SYSTEM_ONLY = [
   'provider_test_windows',
   // closed-signups D2: written only by postgres, read and deleted by the OAuth callback.
   'account_approvals',
+  // custom session dashboards J2: read and written only under mcp-oauth and mcp-sweep.
+  ...MCP_TABLES,
 ];
 const KEY_COLUMN: Record<string, string> = {
   users: 'id',
@@ -116,6 +127,11 @@ const KEY_COLUMN: Record<string, string> = {
   account_approvals: 'email_norm',
   autogenerate_jobs: 'id',
   autogenerate_items: 'job_id',
+  mcp_clients: 'id',
+  mcp_grants: 'id',
+  mcp_access_tokens: 'token_hash',
+  mcp_refresh_tokens: 'token_hash',
+  mcp_rate_windows: 'bucket',
 };
 const MIGRATIONS = resolve(import.meta.dirname, '../../../../supabase/migrations');
 const MIGRATION = resolve(MIGRATIONS, '20261001000000_catalog_schema.sql');
@@ -526,6 +542,69 @@ const EXPECTED_SCHEMA: SchemaRecord = {
     primaryKey: ['user_id', 'kind'],
     foreignKeys: ['FOREIGN KEY (user_id) REFERENCES catalog.users(id) ON DELETE CASCADE'],
   },
+  // custom session dashboards J2 (design 4.7): the MCP OAuth server's tables.
+  mcp_clients: {
+    columns: [
+      'id text collate C not null',
+      'client_name text collate C not null',
+      'redirect_uris_json text collate C not null',
+      'registered_from text collate C not null',
+      'created_at_utc text collate C not null',
+      'last_authorized_at_utc text collate C',
+    ],
+    primaryKey: ['id'],
+    foreignKeys: [],
+  },
+  mcp_grants: {
+    columns: [
+      'id text collate C not null',
+      'user_id text collate C not null',
+      'client_id text collate C not null',
+      'scope text collate C not null',
+      'resource text collate C not null',
+      'created_at_utc text collate C not null',
+      // ADR 0035 decision 16: the 90-day cap.
+      'expires_at_utc text collate C not null',
+      'last_used_at_utc text collate C',
+      'revoked_at_utc text collate C',
+    ],
+    primaryKey: ['id'],
+    foreignKeys: [
+      'FOREIGN KEY (client_id) REFERENCES catalog.mcp_clients(id) ON DELETE CASCADE',
+      'FOREIGN KEY (user_id) REFERENCES catalog.users(id) ON DELETE CASCADE',
+    ],
+  },
+  mcp_access_tokens: {
+    columns: [
+      'token_hash text collate C not null',
+      'grant_id text collate C not null',
+      'expires_at_utc text collate C not null',
+    ],
+    primaryKey: ['token_hash'],
+    foreignKeys: ['FOREIGN KEY (grant_id) REFERENCES catalog.mcp_grants(id) ON DELETE CASCADE'],
+  },
+  mcp_refresh_tokens: {
+    columns: [
+      'token_hash text collate C not null',
+      'grant_id text collate C not null',
+      'issued_at_utc text collate C not null',
+      'expires_at_utc text collate C not null',
+      'used_at_utc text collate C',
+      // ADR 0035 decision 17: the grace window's sealed successor.
+      'successor_sealed text collate C',
+    ],
+    primaryKey: ['token_hash'],
+    foreignKeys: ['FOREIGN KEY (grant_id) REFERENCES catalog.mcp_grants(id) ON DELETE CASCADE'],
+  },
+  mcp_rate_windows: {
+    columns: [
+      'bucket text collate C not null',
+      'window_start_ms bigint not null',
+      'count integer not null',
+    ],
+    primaryKey: ['bucket', 'window_start_ms'],
+    foreignKeys: [],
+  },
   provider_test_windows: {
     columns: [
       'user_id text collate C not null',
@@ -799,6 +878,8 @@ const EXPECTED_SCHEMA: SchemaRecord = {
     "catalog.autogenerate_jobs autogenerate_jobs_wiki_mode_check CHECK ((wiki_mode = ANY (ARRAY['accept'::text, 'pending'::text])))",
     'catalog.companion_devices companion_devices_name_check CHECK (((char_length(name) >= 1) AND (char_length(name) <= 80)))',
     'catalog.companion_presence companion_presence_client_id_check CHECK (((char_length(client_id) >= 1) AND (char_length(client_id) <= 256)))',
+    // custom session dashboards J2: a client name of 1-100 characters.
+    'catalog.mcp_clients mcp_clients_client_name_check CHECK (((char_length(client_name) >= 1) AND (char_length(client_name) <= 100)))',
     // media-worker D2, D12, D5, D7.
     "catalog.media_jobs media_jobs_error_code CHECK (((error IS NULL) OR (error = ANY (ARRAY['decode-failed'::text, 'mixed-codecs'::text, 'verify-mismatch'::text, 'interleaved-input'::text, 'missing-blob'::text, 'timeout'::text, 'low-disk'::text, 'internal'::text, 'invalid-result'::text, 'inputs-changed'::text]))))",
     'catalog.media_jobs media_jobs_input_bytes_check CHECK ((input_bytes >= 0))',
@@ -850,6 +931,12 @@ const EXPECTED_SCHEMA: SchemaRecord = {
     'CREATE INDEX idx_autogenerate_jobs_team ON catalog.autogenerate_jobs USING btree (team_id, created_at_ms DESC)',
     'CREATE INDEX idx_companion_devices_user ON catalog.companion_devices USING btree (user_id)',
     'CREATE INDEX idx_companion_presence_user ON catalog.companion_presence USING btree (user_id, updated_at_ms)',
+    // custom session dashboards J2: grant and token lookups, and the sweeper's client age.
+    'CREATE INDEX idx_mcp_access_tokens_grant ON catalog.mcp_access_tokens USING btree (grant_id)',
+    'CREATE INDEX idx_mcp_clients_created ON catalog.mcp_clients USING btree (created_at_utc)',
+    'CREATE INDEX idx_mcp_grants_client ON catalog.mcp_grants USING btree (client_id)',
+    'CREATE INDEX idx_mcp_grants_user ON catalog.mcp_grants USING btree (user_id)',
+    'CREATE INDEX idx_mcp_refresh_tokens_grant ON catalog.mcp_refresh_tokens USING btree (grant_id)',
     // media-worker D2, D12, D7.
     "CREATE INDEX idx_media_jobs_due ON catalog.media_jobs USING btree (run_after_ms, created_at_ms) WHERE (status = 'queued'::text)",
     "CREATE UNIQUE INDEX idx_media_jobs_live ON catalog.media_jobs USING btree (kind, session_id, target) WHERE (status = ANY (ARRAY['queued'::text, 'running'::text, 'done'::text]))",
@@ -1075,6 +1162,16 @@ describe('the app role (design D3)', () => {
               values ('aj', 'st', 'u', 'U', 'shows', 'wiki', 'accept', 1, 1, 1)`;
       await sql`insert into autogenerate_items (job_id, session_id, step, ordinal, step_order)
               values ('aj', 'se', 'wiki', 0, 3)`;
+      // custom session dashboards J2.
+      await sql`insert into mcp_clients (id, client_name, redirect_uris_json, registered_from,
+                created_at_utc) values ('alc', 'C', '[]', 'x', ${t})`;
+      await sql`insert into mcp_grants (id, user_id, client_id, scope, resource, created_at_utc,
+                expires_at_utc) values ('g', 'u', 'alc', 'dashboards', 'r', ${t}, ${t})`;
+      await sql`insert into mcp_access_tokens (token_hash, grant_id, expires_at_utc)
+              values ('a', 'g', ${t})`;
+      await sql`insert into mcp_refresh_tokens (token_hash, grant_id, issued_at_utc, expires_at_utc)
+              values ('r', 'g', ${t}, ${t})`;
+      await sql`insert into mcp_rate_windows (bucket, window_start_ms, count) values ('b', 1, 1)`;
       // closed-signups D2: only postgres writes an approval; catalog_system reads and deletes it.
       await connect(db.admin)`select catalog.approve_account('e@example.com')`;
       for (const table of TABLES) {

@@ -141,8 +141,31 @@ export function parseIpAllowlist(raw: string): Net[] | null {
   return out.length ? out : null;
 }
 
+/** A client address as a version and a numeric value, or null when it doesn't parse. Brackets, a
+ * zone id and an IPv4-mapped IPv6 prefix are removed first, as for the allowlist match. */
+export function parseClientAddress(addr: string): { version: 4 | 6; value: bigint } | null {
+  return parseAddr(unmapV4(normalizeEntry(addr)));
+}
+
+/**
+ * The source a per-address limit counts (custom dashboards design section 4.3): an IPv4 address alone (an IPv4-mapped IPv6
+ * address counts as its IPv4 address), an IPv6 address by its /64 prefix, written
+ * `a:b:c:d::/64`. An address that doesn't parse (none at all, in a test without a socket) counts
+ * as `unknown`.
+ */
+export function rateLimitSource(addr: string): string {
+  const parsed = parseClientAddress(addr);
+  if (parsed === null) return 'unknown';
+  if (parsed.version === 4) {
+    const v = parsed.value;
+    return [24n, 16n, 8n, 0n].map((s) => ((v >> s) & 0xffn).toString()).join('.');
+  }
+  const prefix = parsed.value >> 64n;
+  const groups = [48n, 32n, 16n, 0n].map((s) => ((prefix >> s) & 0xffffn).toString(16));
+  return `${groups.join(':')}::/64`;
+}
 export function ipInAllowlist(addr: string, nets: Net[]): boolean {
-  const parsed = parseAddr(unmapV4(normalizeEntry(addr)));
+  const parsed = parseClientAddress(addr);
   if (parsed === null) return false;
   return nets.some(
     (net) =>
@@ -169,7 +192,9 @@ function effectiveClientIpFrom(input: {
   return input.remoteAddress ?? '';
 }
 
-function effectiveClientIp(c: Context<AppEnv>): string {
+/** The request's client address under the same TRUST_PROXY rule as the allowlist ('' when the
+ * request has no socket, as in `app.request()` tests without TRUST_PROXY). */
+export function effectiveClientIp(c: Context<AppEnv>): string {
   return effectiveClientIpFrom({
     config: c.env.config,
     remoteAddress: c.env.incoming?.socket?.remoteAddress,

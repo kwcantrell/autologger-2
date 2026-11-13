@@ -20,6 +20,8 @@ export * from './dataDirLock';
 export * from './frameBusEnvelope';
 export * from './kvStore';
 export * from './leaseDirectory';
+// custom session dashboards J2 (ADR 0035): the MCP OAuth store and sweeper on `catalog.mcp_*`.
+export * from './mcpOAuth';
 export * from './postgresCatalogStore';
 export * from './postgresFrameBus';
 export * from './postgresSessionSql';

@@ -23,6 +23,8 @@ import {
   PostgresCompanionDeviceStore,
   PostgresFrameBus,
   PostgresLeaseDirectory,
+  PostgresMcpOAuthStore,
+  PostgresMcpOAuthSweeper,
   PostgresPresence,
   PostgresProviderCredentialStore,
   PostgresSessionDb,
@@ -223,6 +225,10 @@ export function createBindings(
       providerKeys,
       // byo-ai-providers D5: always the frozen constant hosts; no environment or config is read.
       providerTester: new ProviderTester(),
+      // custom session dashboards J2: bind their own reviewed reasons, system:mcp-oauth and
+      // system:mcp-sweep.
+      mcpOAuth: new PostgresMcpOAuthStore(catalogDb, clock),
+      mcpOAuthSweeper: new PostgresMcpOAuthSweeper(catalogDb, clock),
     },
     config: {
       PUBLIC_BASE_URL: procEnv.PUBLIC_BASE_URL || '',

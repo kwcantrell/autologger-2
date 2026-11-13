@@ -1314,8 +1314,13 @@ create and revoke, each scoped by user id in SQL),
 catalog facade store: the provider routes' read, save and delete, and the credential lookup for a
 request or a log-import job, each scoped by user id in SQL; and the boot check of the provider-key
 check value), `access-loss-check`,
-`team-invite`, `team-create` and `autogenerate-worker` (the batch autogenerate worker's claim,
-lease, item updates and initiator re-read; its session work runs as the initiator). The `session-mirror` reason was retired with the mirror (ADR 0021
+`team-invite`, `team-create`, `autogenerate-worker` (the batch autogenerate worker's claim,
+lease, item updates and initiator re-read; its session work runs as the initiator), `mcp-oauth`
+(the `McpOAuthStore` of `packages/storage`, on `bindSystem('mcp-oauth')` and wired as
+`Bindings.ports.mcpOAuth`: MCP OAuth client registration and the shared rate-limit windows, with
+`CUSTOM_DASHBOARDS_ENABLED` on; mcp-authorization) and `mcp-sweep` (the `McpOAuthSweeper` of
+`packages/storage`, on `bindSystem('mcp-sweep')` and wired as `Bindings.ports.mcpOAuthSweeper`:
+the once-a-minute MCP OAuth cleanup, every user's rows, run only with the flag on). The `session-mirror` reason was retired with the mirror (ADR 0021
 slice 7b-1), the `session-hub` reason with the per-call caller (slice 7b-2), and the
 `companion-token` reason with `API_TOKEN` (slice 9d): a Companion call runs as the device's user.
 
@@ -1388,6 +1393,13 @@ slice 7b-1), the `session-hub` reason with the per-call caller (slice 7b-2), and
 - **THEN** the credential read runs under the system binding `provider-credentials` through
   `Bindings.ports.providerCredentials`, scoped by that user's id, and the hub's writes run as
   `catalog_user` with that user's id
+
+#### Scenario: MCP OAuth storage runs under its reviewed reasons
+- **WHEN** a client registers through `POST /oauth/register` with the flag on, and the OAuth
+  sweeper runs
+- **THEN** the rate-window and client writes run as `catalog_system` under `mcp-oauth` through
+  `Bindings.ports.mcpOAuth`, and the sweep's deletes under `mcp-sweep` through
+  `Bindings.ports.mcpOAuthSweeper`
 
 #### Scenario: A batch job's session work runs as its initiator
 - **WHEN** the batch autogenerate worker processes a session of a job started by user U
