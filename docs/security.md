@@ -261,6 +261,38 @@ These live in the forge, not the repo, so the template can't apply them:
   selects `registered_from` (the registering address) or any token material. Client names are
   client-supplied and the web renders them as text. A grant with no tokens (a failed code
   exchange) is not listed. With the flag off the routes answer as unmounted paths.
+- **The public MCP endpoint and its read tools** (custom session dashboards J5, ADR
+  [0035](decisions/0035-custom-session-dashboards-mcp-app.md) decisions 2 and 11; threats T1, T4,
+  T5, T6 of `docs/design/custom-session-dashboards.md`). With `CUSTOM_DASHBOARDS_ENABLED` on,
+  `POST /mcp` serves a Claude client the read tools of `mcp-session-data`; with it off `/mcp`
+  answers as an unmounted path and the auth middleware has no `/mcp` branch. **Credential scope:**
+  an MCP access token is accepted only on a `POST` to exactly `/mcp` (the decoded path), where the
+  cookie is ignored; it is looked up by SHA-256 under `auth-resolve` and must be unexpired, minted
+  for `PUBLIC_BASE_URL` + `/mcp`, of a grant neither revoked nor past its 90-day cap, of an enabled
+  user. A device token is not accepted there, and an MCP token is ignored on `/api/*` like any
+  Bearer outside `/api/companion/`. **Authorization (T4, T5):** the token carries no role; every
+  tool re-checks `requireSession` (masked `Session not found`), `requireShowAccess` or studio
+  membership on every call, under the token user's catalog binding, so a demotion, removal, grant
+  revocation or disabled account takes effect on the next call, and the wiki row policies apply to
+  every wiki read. Cursors carry no authority and are refused for another tool or scope.
+  **Prompt injection (T1):** there is no tool that writes session data, wiki pages or catalog
+  rows (a pinned tool list, each `readOnlyHint`), so injected instructions in session content can
+  make Claude read, not change, what the user can already read; tool descriptions call session
+  content data. **DNS rebinding:** a request with an `Origin` other than `https://claude.ai` or an
+  exact `MCP_ALLOWED_ORIGINS` entry gets `403`. **Denial of service (T6):** bodies over 512 KiB get
+  `413` before parsing; each list page is a keyed read of at most `limit` rows (clamped per tool)
+  and at most 40,000 characters; each user gets 120 tool calls a minute and 2,000 an hour in
+  catalog windows shared by every process. **Errors:** a refusal is one of a few fixed texts;
+  anything unexpected answers `Internal error.` and is logged by error name and code only; the
+  `Authorization` header and tokens are never logged. **Residuals:** `list_wiki_pages`,
+  `get_wiki_page` and `get_session` re-run the associated-pages scan on every call, which reads the
+  bodies of the show's live pages that mention `cite:<session>@` and parses them (no citation
+  index, section 13.3 item 4); it is bounded by the tool window. A citation spelled with Markdown
+  escapes or entities inside `cite:<id>@` slips the database pre-filter and is not counted as
+  associated (it still renders as a citation). `get_session_aggregates` reads the session's whole
+  transcript, topics and events to compute its small result. The window counts calls, not their
+  cost. Stateless serving means no per-connection state to exhaust, but each request builds a
+  fresh server.
 - PUBLIC keeps `CONNECT` on every database and `TEMP` on `postgres`, so `autologger_app` can
   connect to databases where it has no grants and create session-local temp tables. Revoking
   them from PUBLIC would change what GoTrue (`supabase_auth_admin`) gets; slice 6 revisits it.

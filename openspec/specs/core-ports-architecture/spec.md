@@ -1251,8 +1251,9 @@ catalog table (catalog-database "The app connects as a least-privilege role"), s
 bypasses the adapter's bindings fails closed too.
 
 **Request binding.** The authentication middleware SHALL resolve the caller (the session lookup
-and the user read) and load the request's studio registry on a catalog bound to the system task
-`auth-resolve`. After resolution, the catalog the routes receive SHALL be bound to the signed-in
+and the user read, or, on exactly `/mcp` with `CUSTOM_DASHBOARDS_ENABLED` on, the MCP access-token
+lookup joined to its grant and user) and load the request's studio registry on a catalog bound to
+the system task `auth-resolve`. After resolution, the catalog the routes receive SHALL be bound to the signed-in
 user, or unbound when there is none, and SHALL carry the registry snapshot loaded during
 resolution. The one other user binding is the batch autogenerate worker's
 (batch-autogenerate): before each session of a job it binds a catalog to the job's recorded
@@ -1318,7 +1319,8 @@ check value), `access-loss-check`,
 lease, item updates and initiator re-read; its session work runs as the initiator), `mcp-oauth`
 (the `McpOAuthStore` of `packages/storage`, on `bindSystem('mcp-oauth')` and wired as
 `Bindings.ports.mcpOAuth`: MCP OAuth client registration and the shared rate-limit windows, with
-`CUSTOM_DASHBOARDS_ENABLED` on; mcp-authorization) and `mcp-sweep` (the `McpOAuthSweeper` of
+`CUSTOM_DASHBOARDS_ENABLED` on, the `/mcp` grant's throttled last-used update, and the `/mcp` model
+tool window; mcp-authorization, mcp-session-data) and `mcp-sweep` (the `McpOAuthSweeper` of
 `packages/storage`, on `bindSystem('mcp-sweep')` and wired as `Bindings.ports.mcpOAuthSweeper`:
 the once-a-minute MCP OAuth cleanup, every user's rows, run only with the flag on). The `session-mirror` reason was retired with the mirror (ADR 0021
 slice 7b-1), the `session-hub` reason with the per-call caller (slice 7b-2), and the
@@ -1400,6 +1402,13 @@ slice 7b-1), the `session-hub` reason with the per-call caller (slice 7b-2), and
 - **THEN** the rate-window and client writes run as `catalog_system` under `mcp-oauth` through
   `Bindings.ports.mcpOAuth`, and the sweep's deletes under `mcp-sweep` through
   `Bindings.ports.mcpOAuthSweeper`
+
+#### Scenario: An MCP call runs as the token's user
+- **WHEN** a Claude client calls `list_events` on `POST /mcp` with a live access token, the flag
+  on
+- **THEN** the token lookup runs as `catalog_system` under `auth-resolve`, the grant's last-used
+  update and the rate window under `mcp-oauth`, and the tool's catalog reads and every hub read run
+  as `catalog_user` with the token's user's id
 
 #### Scenario: A batch job's session work runs as its initiator
 - **WHEN** the batch autogenerate worker processes a session of a job started by user U
@@ -1693,10 +1702,14 @@ key-value purge.
 
 ### Requirement: Authentication and authorization are distinct seams for every caller
 
-Request **authentication** (resolving identity from the session cookie, or from a Companion
-device token) SHALL be performed once in middleware; a device token SHALL be honoured only on
-paths under `/api/companion/`, where it resolves to the device's user (see `api-contract-freeze`
-"Companion device tokens authenticate only the Companion surface"). `API_TOKEN` SHALL NOT be read.
+Request **authentication** (resolving identity from the session cookie, from a Companion
+device token, or from an MCP access token) SHALL be performed once in middleware; a device token
+SHALL be honoured only on paths under `/api/companion/`, where it resolves to the device's user
+(see `api-contract-freeze` "Companion device tokens authenticate only the Companion surface"), and
+an MCP access token only on a `POST` to exactly `/mcp` with `CUSTOM_DASHBOARDS_ENABLED` on, where
+it resolves to its grant's user (mcp-session-data "The /mcp bearer"). Every MCP read tool
+authorizes a session through `requireSession` and a show through `requireShowAccess`, like any
+session-scoped route. `API_TOKEN` SHALL NOT be read.
 The middleware's path decisions (login required, device-token scope) SHALL use the same
 percent-decoded path the router matches, so a request that reaches an `/api/*` handler is always
 judged as an `/api/*` request. Resource **authorization** (existence + show access + admin-token checks; show access is the
@@ -1722,6 +1735,11 @@ so its default-deny requirements are out of scope for this capability.)
 #### Scenario: A device token is not an identity outside the Companion surface
 - **WHEN** a request bearing only a live Companion device token accesses a session-scoped route outside `/api/companion/`
 - **THEN** it is rejected by the single middleware login decision with `401`, and `requireSession` is never reached
+
+#### Scenario: An MCP token is not an identity outside /mcp
+- **WHEN** a request bearing only a live MCP access token accesses `/api/sessions`
+- **THEN** it is rejected by the single middleware login decision with `401`, exactly as a request
+  with no credential
 
 #### Scenario: Percent-encoded API prefix is gated like the literal one
 - **WHEN** `GET /%61pi/sessions` or `GET /%61pi/companion/state` is sent with no session cookie and no `Authorization` header

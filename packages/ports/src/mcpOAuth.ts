@@ -157,6 +157,11 @@ export interface McpOAuthStore {
    * `clientId`'s. Returns the revoked grant's id, or null when no such token is the client's.
    */
   revokeByToken(tokenHash: string, clientId: string): Promise<string | null>;
+  /**
+   * Sets the grant's `last_used_at_utc` to the clock's now, at most once a minute (a conditional
+   * update; design 4.6, custom session dashboards J5). True when it wrote.
+   */
+  touchGrant(grantId: string): Promise<boolean>;
 }
 
 /** What one sweep deleted or cleared, per kind (each bounded by the sweep's limit). */

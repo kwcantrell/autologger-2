@@ -42,6 +42,8 @@ export const MCP_SWEEP_LIMIT = 1000;
 /** The refresh grace window's default, in seconds (ADR 0035 decision 17); the server reads
  * `MCP_REFRESH_GRACE_SECONDS` (`mcpRefreshGraceSeconds` in env.ts). */
 export const MCP_REFRESH_GRACE_DEFAULT_SECONDS = 30;
+/** A grant's `last_used_at_utc` is updated at most once per this interval (design 4.6). */
+export const MCP_GRANT_TOUCH_MS = MINUTE;
 /** Every grant's hard cap, from its creation (ADR 0035 decision 16). Fixed, not a setting. */
 export const MCP_GRANT_CAP_MS = 90 * DAY;
 /** An access token's life, cut short by the grant's cap (design 4.5). */
@@ -411,6 +413,18 @@ export class PostgresMcpOAuthStore implements McpOAuthStore {
       await revokeIn(t, row.grant_id, nowIso);
       return row.grant_id;
     });
+  }
+
+  async touchGrant(grantId: string): Promise<boolean> {
+    const now = this.clock.now();
+    const r = await this.db.run(
+      `UPDATE mcp_grants SET last_used_at_utc = ?
+        WHERE id = ? AND (last_used_at_utc IS NULL OR last_used_at_utc < ?)`,
+      iso(now),
+      grantId,
+      iso(now - MCP_GRANT_TOUCH_MS),
+    );
+    return r.changes > 0;
   }
 }
 

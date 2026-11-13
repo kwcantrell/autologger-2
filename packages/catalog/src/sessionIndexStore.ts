@@ -44,7 +44,7 @@ export interface SessionIndexStoreFacade {
     sessionId: string,
     opts?: { includeHidden?: boolean },
   ) => Promise<Row | null>;
-  listSessionsForShow: (showId: string) => Promise<Row[]>;
+  listSessionsForShow: (showId: string, opts?: { includeHidden?: boolean }) => Promise<Row[]>;
   listSessionIdsForShows: (showIds: readonly string[]) => Promise<string[]>;
   createSessionIndex: (opts: {
     showId: string;
@@ -126,13 +126,19 @@ export class SessionIndexStore implements SessionIndexStoreFacade {
     return this.db.first<Row>(q, sessionId);
   }
 
-  async listSessionsForShow(showId: string): Promise<Row[]> {
+  /** The show's sessions, newest first; hidden ones only with `includeHidden` (custom session
+   * dashboards J5 `list_sessions`). */
+  async listSessionsForShow(
+    showId: string,
+    opts: { includeHidden?: boolean } = {},
+  ): Promise<Row[]> {
     return this.db.all<Row>(
       `SELECT s.*, sh.show_code AS show_code, sh.name AS show_name
        FROM sessions s LEFT JOIN shows sh ON sh.id = s.show_id
-       WHERE s.show_id = ? AND COALESCE(s.ui_hidden, 0) = 0
+       WHERE s.show_id = ? AND (?::boolean OR COALESCE(s.ui_hidden, 0) = 0)
        ORDER BY s.created_at_utc DESC`,
       showId,
+      opts.includeHidden === true,
     );
   }
 

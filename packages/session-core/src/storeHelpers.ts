@@ -44,3 +44,45 @@ export async function nextOrdinal(core: SessionCore, table: string): Promise<num
   );
   return Number(r?.n ?? 0);
 }
+
+/** The tables a keyed `(ordinal, id)` page reads; a closed list, so the name is never input. */
+export type OrdinalTable =
+  | 'session_transcript_words'
+  | 'session_transcript_paragraphs'
+  | 'session_topics';
+
+/** One keyed page of an `(ordinal, id)`-ordered session table: the rows after `after`, at most
+ * `limit` of them, in the order the whole reads use (`ORDER BY ordinal, id`). */
+export function keyedOrdinalPage(
+  core: SessionCore,
+  table: OrdinalTable,
+  after: { ordinal: number; id: string } | null,
+  limit: number,
+): Promise<Row[]> {
+  const n = Math.max(0, Math.trunc(limit));
+  if (after === null) {
+    return core.all(
+      `SELECT * FROM ${table} WHERE session_id = ? ORDER BY ordinal, id LIMIT ?`,
+      core.sessionId,
+      n,
+    );
+  }
+  return core.all(
+    `SELECT * FROM ${table}
+      WHERE session_id = ? AND (ordinal, id) > (?::bigint, ?::text)
+      ORDER BY ordinal, id LIMIT ?`,
+    core.sessionId,
+    Math.trunc(after.ordinal),
+    after.id,
+    n,
+  );
+}
+
+/** The session's row count in one of the `(ordinal, id)` tables. */
+export async function countRows(core: SessionCore, table: OrdinalTable): Promise<number> {
+  const r = await core.first(
+    `SELECT COUNT(*) AS c FROM ${table} WHERE session_id = ?`,
+    core.sessionId,
+  );
+  return Number(r?.c ?? 0);
+}

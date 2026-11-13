@@ -62,6 +62,9 @@
     "mcp-authorization": {
       "excluded": "Not user-facing yet: the OAuth server for Claude connectors exists only with the custom dashboards flag on, and has no user-facing screen until Connected apps (a later job)."
     },
+    "mcp-session-data": {
+      "excluded": "Not user-facing yet: the MCP endpoint and its read tools exist only with the custom dashboards flag on, and are used through a Claude connector, not an AutoLogger screen."
+    },
     "media-processing": {
       "pages": [
         "recording-audio.html",
