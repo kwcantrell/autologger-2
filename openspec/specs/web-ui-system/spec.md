@@ -330,7 +330,7 @@ The chunk boundary is an **overlay** boundary with a `null` fallback, a discipli
 The Settings view SHALL mount a section's content on that section's first visit, not on open, and SHALL NOT unmount it on a later section switch while the view stays open. Each navigation control's `aria-controls` target SHALL resolve to a present element whether or not that section's content has mounted. (The requirement keeps its historical name.)
 
 The view's sections are:
-- **You:** Account, Companion devices, Advanced.
+- **You:** Account, Companion devices, Connected apps (only while the connected-apps list answers, that is with `CUSTOM_DASHBOARDS_ENABLED` on), Advanced.
 - **Team:** Members, Shows, Team details.
 - **Show:** Show details, Event buttons.
 
@@ -346,7 +346,7 @@ Deferral SHALL NOT change what a save writes, and SHALL NOT arm the unsaved-chan
   Companion devices content mounts only on its first visit
 
 #### Scenario: Advanced is listed after Companion devices
-- **WHEN** the Settings view is open for any role
+- **WHEN** the Settings view is open for any role, with the connected-apps feature off
 - **THEN** the "You" group's navigation lists Account, Companion devices and then Advanced, and
   the Advanced content mounts only on its first visit
 
@@ -588,6 +588,47 @@ Settings" does not apply to it.
 #### Scenario: A member manages their own devices
 - **WHEN** a plain member of a team, with no grants, opens Settings
 - **THEN** the Companion devices section is enabled, and it lists only that member's devices
+
+### Requirement: Settings manages the user's connected apps
+The Settings view SHALL have a **Connected apps** section, in the "You" group after Companion
+devices, available to every signed-in user whatever their team role, but only while the feature is
+on (custom session dashboards J4, ADR 0035 decision 5). It SHALL use the existing Settings parts and
+the shared component vocabulary, and it SHALL show and change only the signed-in user's own grants,
+through the routes of api-contract-freeze "MCP connected-apps routes".
+
+- **Probe.** When the Settings view opens it SHALL request `GET /api/oauth/connected-apps` once. A
+  `404` means the feature is off: the section SHALL NOT be listed in the navigation, SHALL render
+  nothing, and no other request for it SHALL be made (the `404` SHALL NOT be retried). A success
+  lists the section; its content reads the same query rather than requesting again.
+- **List.** The section SHALL list each grant's client name, redirect host, created time, and
+  last-used time or "Never". Client names are client-supplied and SHALL render as text, never as
+  HTML.
+- **Revoke.** Each grant SHALL offer Revoke, which SHALL ask through the themed confirm dialog and
+  then delete the grant and refresh the list.
+- **Errors.** A failed list (other than `404`) or revoke SHALL show the response's `detail` and
+  change nothing else.
+
+The section acts immediately; it has no save bar and no unsaved state, so "Honest save model in
+Settings" does not apply to it.
+
+#### Scenario: Listing grants
+- **WHEN** the feature is on and the user opens Connected apps
+- **THEN** each grant shows its client name, redirect host, created time and last-used time or
+  "Never", and the list was requested once
+
+#### Scenario: A client name with markup
+- **WHEN** a grant's client name is `<img src=x onerror=alert(1)><b>Evil</b>`
+- **THEN** the name appears as that literal text, and no `img` or `b` element exists in the section
+
+#### Scenario: Revoking asks first
+- **WHEN** the user presses Revoke and declines, then presses it again and confirms
+- **THEN** after declining the grant is still listed and no request was sent; after confirming the
+  grant is deleted and no longer listed
+
+#### Scenario: Feature off
+- **WHEN** the Settings view opens and the list answers `404`
+- **THEN** exactly one request was made, "Connected apps" is not in the navigation, and the section
+  renders nothing
 
 ### Requirement: Settings manages the user's AI providers
 The Settings view SHALL have an **Advanced** section, in the "You" group after Companion devices,

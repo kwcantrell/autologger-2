@@ -3,6 +3,7 @@ import { AccountSection } from './AccountSection';
 import { AdvancedSection } from './AdvancedSection';
 import { BatchAutogenerateSection } from './BatchAutogenerateSection';
 import { CompanionDevicesSection } from './CompanionDevicesSection';
+import { ConnectedAppsSection } from './ConnectedAppsSection';
 import { EventButtonsSection } from './EventButtonsSection';
 import { MembersSection } from './MembersSection';
 import type { SettingsSectionProps } from './SettingsView';
@@ -25,6 +26,7 @@ export const SETTINGS_SECTION_CONTENT: Record<
 > = {
   account: AccountSection,
   'companion-devices': CompanionDevicesSection,
+  'connected-apps': ConnectedAppsSection,
   advanced: AdvancedSection,
   members: MembersSection,
   shows: ShowsSection,

@@ -1317,3 +1317,143 @@ describe('with the flag off every J3 path answers as an unmounted path does (des
     },
   );
 });
+
+// ── J4: Connected apps (design 4.8) ─────────────────────────────────────────────────────────
+
+describe('GET and DELETE /api/oauth/connected-apps (design 4.8)', () => {
+  const list = (e: Bindings, caller: Caller) =>
+    anonApp.request('/api/oauth/connected-apps', { headers: { cookie: caller.cookie } }, e);
+  const del = (e: Bindings, caller: Caller, id: string) =>
+    anonApp.request(
+      `/api/oauth/connected-apps/${encodeURIComponent(id)}`,
+      { method: 'DELETE', headers: { cookie: caller.cookie } },
+      e,
+    );
+
+  it('lists only the signed-in user live grants in the specified shape, never registered_from', async () => {
+    const t = await timed();
+    const mine = await connected(t.env);
+    const other = await connected(t.env, await signedIn2());
+    const res = await list(t.env, mine.caller);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('cache-control')).toBe('no-store');
+    const body = (await bodyOf(res)) as { apps: Json[] };
+    expect(body.apps).toEqual([
+      {
+        grant_id: mine.grantId,
+        client_name: 'Claude <b>bold</b>',
+        redirect_host: 'claude.ai',
+        created_at: iso(T0),
+        last_used_at: null,
+      },
+    ]);
+    for (const a of body.apps) expect(Object.keys(a)).not.toContain('registered_from');
+    expect(JSON.stringify(body)).not.toContain('registered_from');
+    expect(JSON.stringify(body)).not.toContain(other.grantId);
+    // The registering address is stored, but never selected by the list.
+    const row = await testDb().first<{ registered_from: string }>(
+      'SELECT registered_from FROM mcp_clients WHERE id = ?',
+      mine.clientId,
+    );
+    expect(JSON.stringify(body)).not.toContain(String(row?.registered_from));
+  });
+
+  it('does not list a grant a failed code exchange left with no tokens', async () => {
+    const t = await timed();
+    const caller = await signedIn();
+    const clientId = await registerClient(t.env);
+    const { challenge } = pkce();
+    const target = await consentTo(t.env, caller, clientId, challenge);
+    const code = target.searchParams.get('code') as string;
+    const bad = await exchange(t.env, {
+      client_id: clientId,
+      code,
+      code_verifier: pkce().verifier,
+    });
+    expect(bad.status).toBe(400);
+    const g = await testDb().first<{ id: string }>(
+      'SELECT id FROM mcp_grants WHERE client_id = ?',
+      clientId,
+    );
+    expect(g?.id).toBeTruthy();
+    expect(await tokenCounts(String(g?.id))).toEqual({ access: 0, refresh: 0 });
+    expect(await bodyOf(await list(t.env, caller))).toEqual({ apps: [] });
+  });
+
+  it('DELETE revokes the grant and its tokens: 204, refresh gets invalid_grant, lookup finds no token', async () => {
+    const t = await timed();
+    const c = await connected(t.env);
+    expect(await accessRow(c.access)).not.toBeNull();
+    const res = await del(t.env, c.caller, c.grantId);
+    expect(res.status).toBe(204);
+    expect(await res.text()).toBe('');
+    await expectRevoked(c.grantId);
+    // The token lookup (the row `/mcp` will resolve a bearer through) no longer finds the token.
+    expect(await accessRow(c.access)).toBeNull();
+    expect(await refreshRow(c.refresh)).toBeNull();
+    expect(await bodyOf(await refresh(t.env, c.clientId, c.refresh))).toEqual({
+      error: 'invalid_grant',
+    });
+    expect(await bodyOf(await list(t.env, c.caller))).toEqual({ apps: [] });
+  });
+
+  it('another user grant id gets the same masked 404 as an unknown id, and stays live', async () => {
+    const t = await timed();
+    const mine = await connected(t.env);
+    const intruder = await signedIn2();
+    const foreign = await del(t.env, intruder, mine.grantId);
+    const unknown = await del(t.env, intruder, 'alg_nope');
+    expect(foreign.status).toBe(404);
+    expect(unknown.status).toBe(404);
+    expect(await bodyOf(foreign)).toEqual(await bodyOf(unknown));
+    expect((await grantRow(mine.grantId))?.revoked_at_utc).toBeNull();
+    expect(await tokenCounts(mine.grantId)).toEqual({ access: 1, refresh: 1 });
+    // Revoking an already revoked grant is the same masked 404.
+    expect((await del(t.env, mine.caller, mine.grantId)).status).toBe(204);
+    expect((await del(t.env, mine.caller, mine.grantId)).status).toBe(404);
+  });
+
+  it('needs a session cookie: 401 without one, and a Bearer never authenticates', async () => {
+    const t = await timed();
+    const c = await connected(t.env);
+    for (const [method, path] of [
+      ['GET', '/api/oauth/connected-apps'],
+      ['DELETE', `/api/oauth/connected-apps/${c.grantId}`],
+    ]) {
+      const none = await anonApp.request(path, { method }, t.env);
+      expect(none.status, `${method} ${path}`).toBe(401);
+      const bearer = await anonApp.request(
+        path,
+        { method, headers: { authorization: `Bearer ${c.access}` } },
+        t.env,
+      );
+      expect(bearer.status, `${method} ${path} bearer`).toBe(401);
+    }
+    expect((await grantRow(c.grantId))?.revoked_at_utc).toBeNull();
+  });
+
+  it.each(OFF_VALUES)(
+    'with the flag off both routes answer as an unmounted path does (flag %j)',
+    async (flag) => {
+      const caller = await signedIn();
+      const e = envWith(flag);
+      const control = await snapshot(
+        await anonApp.request('/api/oauth/not-a-route', { headers: { cookie: caller.cookie } }, e),
+      );
+      for (const [method, path] of [
+        ['GET', '/api/oauth/connected-apps'],
+        ['DELETE', '/api/oauth/connected-apps/alg_x'],
+      ]) {
+        const res = await anonApp.request(path, { method, headers: { cookie: caller.cookie } }, e);
+        expect(res.status, `${method} ${path}`).toBe(404);
+        expect(await snapshot(res), `${method} ${path}`).toEqual(control);
+      }
+    },
+  );
+});
+
+/** A second signed-in user, distinct from `signedIn()`'s. */
+async function signedIn2(): Promise<Caller> {
+  const userId = await seedUser({ email: 'second-user@example.com' });
+  return { userId, cookie: await loginCookie(userId) };
+}

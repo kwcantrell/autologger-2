@@ -1537,6 +1537,62 @@ describe('companion devices', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Connected apps (custom session dashboards J4, design 4.8): the list with one used and one
+// never-used grant, as `useConnectedApps.ts` types it. Flag on; rows seeded directly.
+// ---------------------------------------------------------------------------
+
+describe('connected apps', () => {
+  it('GET /api/oauth/connected-apps matches the captured fixture', async () => {
+    const userId = await seedUser({ email: 'ann@example.com', sub: 'sub-ann' });
+    const cookie = await loginCookie(userId);
+    const DAY = 86_400_000;
+    const now = Date.now();
+    const iso = (ms: number) => new Date(ms).toISOString();
+    const db = testDb();
+    await db.run(
+      `INSERT INTO mcp_clients (id, client_name, redirect_uris_json, registered_from, created_at_utc)
+       VALUES ('alc_fixture', 'Claude', '["https://claude.ai/api/mcp/auth_callback"]', '203.0.113.9', ?)`,
+      iso(now - 10 * DAY),
+    );
+    for (const [id, created, used] of [
+      ['alg_used', now - 5 * DAY, now - DAY],
+      ['alg_never', now - DAY, null],
+    ] as const) {
+      await db.run(
+        `INSERT INTO mcp_grants (id, user_id, client_id, scope, resource, created_at_utc, expires_at_utc, last_used_at_utc)
+         VALUES (?, ?, 'alc_fixture', 'dashboards', 'https://example.com/mcp', ?, ?, ?)`,
+        id,
+        userId,
+        iso(created),
+        iso(created + 90 * DAY),
+        used === null ? null : iso(used),
+      );
+      await db.run(
+        'INSERT INTO mcp_access_tokens (token_hash, grant_id, expires_at_utc) VALUES (?, ?, ?)',
+        `hash-${id}`,
+        id,
+        iso(now + 3_600_000),
+      );
+    }
+    const res = await app.request(
+      '/api/oauth/connected-apps',
+      { method: 'GET', headers: { Cookie: cookie } },
+      { ...envWith({ CUSTOM_DASHBOARDS_ENABLED: '1' }) },
+    );
+    const body = await expectCapturedResponse(
+      { name: 'connectedAppsList', endpoint: 'GET /api/oauth/connected-apps', format: 'json' },
+      res,
+    );
+    expect(body).toMatchObject({
+      apps: [
+        { grant_id: 'alg_never', last_used_at: null },
+        { grant_id: 'alg_used', client_name: 'Claude', redirect_host: 'claude.ai' },
+      ],
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Provider credentials (byo-ai-providers task 6.1, design D6): the list with both kinds, one save
 // and one connection-test result, as `useProviders.ts` types them. The key never appears; only
 // its last four characters do.

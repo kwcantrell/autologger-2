@@ -794,6 +794,24 @@ export interface CompanionDeviceCreatedResponse {
   token: string;
 }
 
+// Connected apps (custom session dashboards J4; api-contract-freeze "MCP connected-apps
+// routes"). Present only with `CUSTOM_DASHBOARDS_ENABLED` on; with it off the list answers `404`.
+
+/** One live OAuth grant (`GET /api/oauth/connected-apps`). `client_name` is client-supplied text. */
+export interface ConnectedApp {
+  grant_id: string;
+  client_name: string;
+  /** The client's registered redirect host(s), e.g. `claude.ai`. */
+  redirect_host: string;
+  created_at: string;
+  /** `null` until a token of the grant is first used. */
+  last_used_at: string | null;
+}
+
+export interface ConnectedAppListResponse {
+  apps: ConnectedApp[];
+}
+
 // --- Provider credentials (byo-ai-providers D4, D6; api-contract-freeze "Provider credential
 // routes") ---
 

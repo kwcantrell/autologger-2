@@ -59,7 +59,9 @@ import {
   publicBaseUrl,
   sessionCookieName,
 } from '../env';
+import { ApiError } from '../httpError';
 import { effectiveClientIp, rateLimitSource } from '../middleware/ipAllowlist';
+import { requireUser } from './_helpers';
 
 export const oauthRouter = new Hono<AppEnv>();
 
@@ -602,5 +604,59 @@ oauthRouter.post(
       if (grantId !== null) console.info(`mcp oauth: grant ${grantId} revoked by its client`);
     }
     return c.body(null, 200);
+  }),
+);
+
+// ── Connected apps (J4, design 4.8) ─────────────────────────────────────────────────────────
+// The signed-in user's own grants, under the `/api` login gate (a session cookie, never a Bearer).
+// With the flag off these fall through like every other route of this router, so the web reads
+// the list's 404 as "feature off". The user id in every store call is the isolation: another
+// user's grant id answers the same masked 404 as an unknown one. `registered_from` is never
+// selected, so it cannot reach the wire.
+
+const CONNECTED_APP_NOT_FOUND = 'Connected app not found.';
+
+/** The distinct redirect hosts of a client, in registration order ("claude.ai"). */
+function redirectHost(uris: string[]): string {
+  const hosts: string[] = [];
+  for (const u of uris) {
+    try {
+      const h = new URL(u).host;
+      if (!hosts.includes(h)) hosts.push(h);
+    } catch {
+      // A stored URI is validated at registration; skip one that doesn't parse.
+    }
+  }
+  return hosts.join(', ');
+}
+
+oauthRouter.get(
+  '/api/oauth/connected-apps',
+  flagGated(async (c) => {
+    const user = requireUser(c);
+    const apps = await c.env.ports.mcpOAuth.listConnectedApps(user.id);
+    c.header('Cache-Control', 'no-store');
+    return c.json({
+      apps: apps.map((a) => ({
+        grant_id: a.grant_id,
+        client_name: a.client_name,
+        redirect_host: redirectHost(a.redirect_uris),
+        created_at: a.created_at_utc,
+        last_used_at: a.last_used_at_utc,
+      })),
+    });
+  }),
+);
+
+oauthRouter.delete(
+  '/api/oauth/connected-apps/:grantId',
+  flagGated(async (c) => {
+    const user = requireUser(c);
+    const grantId = c.req.param('grantId') ?? '';
+    if (!(await c.env.ports.mcpOAuth.revokeUserGrant(user.id, grantId))) {
+      throw new ApiError(404, CONNECTED_APP_NOT_FOUND);
+    }
+    console.info(`mcp oauth: grant ${grantId} revoked by user ${user.id}`);
+    return c.body(null, 204);
   }),
 );

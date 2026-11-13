@@ -3619,3 +3619,23 @@ success redirect for an `mcp:` state (requirement "OAuth callback failure redire
   cookie
 - **THEN** each answers Hono's plain `404 Not Found`, identical to an unmounted path, and nothing
   is stored
+
+### Requirement: MCP connected-apps routes
+These routes are additive and flag-gated (ADR 0035 decision 5; custom session dashboards J4). They
+SHALL exist only while `CUSTOM_DASHBOARDS_ENABLED` is on, and SHALL be listed in the README endpoint
+table as flag-gated. Their behavior is specified in `mcp-authorization` ("Connected apps"):
+
+- `GET /api/oauth/connected-apps` → `200 {apps: [{grant_id, client_name, redirect_host, created_at,
+  last_used_at}]}`;
+- `DELETE /api/oauth/connected-apps/:grantId` → `204` with no body, or the masked `404
+  {detail: "Connected app not found."}` for an unknown id, another user's grant or a revoked one.
+
+Both are cookie-only under the `/api` login gate (`401` without a session; a Bearer never
+authenticates them). With the flag off, every method on these paths SHALL answer exactly what it
+answered before they existed. No existing route, status, body or header changes, and the profile
+shape is unchanged.
+
+#### Scenario: Absent when off
+- **WHEN** the flag is off and `GET /api/oauth/connected-apps` and
+  `DELETE /api/oauth/connected-apps/<id>` are sent with a session cookie
+- **THEN** each answers exactly what an unmounted `/api/oauth/*` path answers

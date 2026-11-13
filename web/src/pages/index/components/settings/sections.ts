@@ -5,6 +5,7 @@
 export type SettingsSectionId =
   | 'account'
   | 'companion-devices'
+  | 'connected-apps'
   | 'advanced'
   | 'members'
   | 'shows'
@@ -29,6 +30,8 @@ export const SETTINGS_SECTION_GROUPS: readonly SettingsSectionGroup[] = [
     sections: [
       { id: 'account', label: 'Account' },
       { id: 'companion-devices', label: 'Companion devices' },
+      // custom session dashboards J4: listed only when the connected-apps list answers (flag on).
+      { id: 'connected-apps', label: 'Connected apps' },
       // byo-ai-providers D6: the user's own AI and transcription provider credentials.
       { id: 'advanced', label: 'Advanced' },
     ],
@@ -59,6 +62,10 @@ export const SETTINGS_SECTIONS: readonly { id: SettingsSectionId; label: string 
 export const DEFAULT_SETTINGS_SECTION: SettingsSectionId = 'show-details';
 
 /** Sections listed only for an owner or admin of at least one team (batch-autogenerate D15). */
+/** Sections listed only while `CUSTOM_DASHBOARDS_ENABLED` is on, found by probing the section's
+ * list route (a `404` means off). */
+export const FLAG_GATED_SECTIONS: readonly SettingsSectionId[] = ['connected-apps'];
+
 export const MANAGER_ONLY_SECTIONS: readonly SettingsSectionId[] = ['batch-autogenerate'];
 
 export const settingsTabId = (id: SettingsSectionId) => `settings-tab-${id}`;
