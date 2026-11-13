@@ -101,8 +101,17 @@ describe('the sealed successor', () => {
 
   it('refuses a tampered or malformed seal', () => {
     const sealed = sealSuccessor(SPENT, SECRET, SUCCESSOR, ROW);
-    const flipped = `${sealed.slice(0, -2)}${sealed.endsWith('A') ? 'B' : 'A'}${sealed.slice(-1)}`;
-    expect(openSuccessor(SPENT, SECRET, flipped, ROW)).toBeNull();
+    // Flip one bit of a decoded byte (nonce, ciphertext, tag), so the tampered seal always differs
+    // from the genuine one. Swapping a base64url character can be a no-op when it already holds
+    // that character, and the final character's low bits can be padding the decoder ignores.
+    const raw = Buffer.from(sealed.slice('v1.'.length), 'base64url');
+    for (const at of [0, 12, Math.floor(raw.length / 2), raw.length - 1]) {
+      const bytes = Buffer.from(raw);
+      bytes[at] ^= 0x01;
+      const flipped = `v1.${bytes.toString('base64url')}`;
+      expect(flipped, `byte ${at}`).not.toBe(sealed);
+      expect(openSuccessor(SPENT, SECRET, flipped, ROW), `byte ${at}`).toBeNull();
+    }
     for (const bad of ['', 'v1.', 'v2.abcd', 'v1.!!!!', sealed.slice(3)]) {
       expect(openSuccessor(SPENT, SECRET, bad, ROW), bad).toBeNull();
     }
