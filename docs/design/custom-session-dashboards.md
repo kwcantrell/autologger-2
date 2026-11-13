@@ -944,6 +944,9 @@ flag is on. Its messages name variables, never values (web-frontend-platform).
     it is `on` exactly when the flag is on, and names both variables. The router depends on a
     healthy api, so a mismatched pair never serves traffic. The dev single-process stack sets no
     router variable, so the check doesn't apply there.
+  - **For the approver.** The router setting, its name, its `on`/`off` values and the need for
+    two agreeing settings in the split topology are design choices, not human decisions. They
+    are open question 6 in section 13.3.
   - **With the flag off the router config is byte-identical to today's.** Adapting the gated
     Caddyfile with the variable unset, or set to `off`, produces exactly the committed
     `docker/scripts/caddy-adapt.baseline.json`; with `on`, the only differences are the new rules
@@ -1258,6 +1261,36 @@ ADR 0035 moves to Accepted when J1 merges.
    adding one.
 5. **Protocol revision 2026-07-28** (no transport sessions, header checks). Adopt it when Claude
    and the SDK do.
+6. **The router setting `ROUTER_CUSTOM_DASHBOARDS` (section 10.3).** This is a design choice
+   the approver should confirm; human decision 13 names one opt-in flag, and this adds a second
+   operator setting beside it.
+   - **Name and values.** `ROUTER_CUSTOM_DASHBOARDS`, and its only allowed values are `on` and
+     `off`. Unset or empty resolves to `off`; `check-envs.sh` refuses anything else.
+   - **Two settings must agree in the split topology.** There the operator sets both
+     `CUSTOM_DASHBOARDS_ENABLED` and `ROUTER_CUSTOM_DASHBOARDS`, and boot refuses to start when
+     they disagree, naming both variables. The router setting can't turn anything on by itself.
+     The dev single-process stack sets no router variable, only the flag.
+   - **Why one setting isn't enough.** The flag accepts `1`, `true` or `yes` (any case), but
+     Caddy picks the snippet by pasting the variable's value into a snippet name, and it can't
+     map those spellings onto `custom-dashboards-on`. So the router needs one exact value, and
+     the boot check keeps the two in step.
+7. **Builder-chosen environment variable names.** `CUSTOM_DASHBOARDS_ENABLED`,
+   `DASHBOARD_RUNTIME_ORIGIN`, `MCP_SIGNING_SECRET` and `MCP_ALLOWED_ORIGINS` (section 10.1),
+   and `ROUTER_CUSTOM_DASHBOARDS` (item 6). The names are a design choice the approver should
+   confirm.
+8. **Builder-chosen size limits.** The section 6.4 caps (100,000-character source, 300,000-
+   character compiled JS, 1–200-character title, 20 dashboards per session, 100 templates per
+   studio, 100 `show_ids` per template, 60 import specifiers) and the 512 KiB `/mcp` body cap
+   (section 5.1). The 20 kept revisions are human decision 12, not part of this item. These
+   numbers are a design choice the approver should confirm.
+9. **Builder-chosen paging and rate limits.** The per-tool default and maximum `limit` values
+   of section 5.3, the 40,000-character page cap of section 5.2, the per-user 120 tool calls a
+   minute and 2,000 an hour (section 5.1), and the token-endpoint windows of section 4.5 (30 a
+   minute per client, 60 per source address). These numbers are a design choice the approver
+   should confirm.
+10. **A single OAuth scope, `dashboards` (section 4.1).** One scope covers the read and write
+    tools, and roles decide what a token can do. This is a design choice the approver should
+    confirm.
 
 ### 13.4 Assumptions to re-check at build time
 
