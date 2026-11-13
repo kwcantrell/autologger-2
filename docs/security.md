@@ -217,6 +217,42 @@ These live in the forge, not the repo, so the template can't apply them:
   An attacker can fill the cap with throwaway clients for up to 24 h (the sweep), blocking new
   registrations; the cap is checked in one statement, so concurrent registrations at the cap can
   pass it by a few. A fixed window allows up to 20 registrations across a window boundary.
+- **MCP OAuth authorization, consent, tokens and revocation** (custom session dashboards J3, ADR
+  [0035](decisions/0035-custom-session-dashboards-mcp-app.md) decisions 5, 16, 17; threats T3, T7,
+  T8 of `docs/design/custom-session-dashboards.md`). With `CUSTOM_DASHBOARDS_ENABLED` on,
+  `GET`/`POST /oauth/authorize`, `GET /oauth/authorize/resume`, `POST /oauth/token` and
+  `POST /oauth/revoke` exist; with it off they answer as unmounted paths and the Google callback
+  never sees an `mcp:` state. **Open redirect and phishing (T7):** nothing redirects until the
+  client and an exactly matching registered `redirect_uri` are validated (errors before that are
+  plain `400` HTML); consent is asked on every authorization, shows the redirect host in bold and
+  labels the client name as client-supplied text; the pages are server-rendered with escaping and
+  carry `default-src 'none'`, a hash-only `style-src`, `form-action 'self'`,
+  `frame-ancestors 'none'` and `X-Frame-Options: DENY` against clickjacking; the return to the
+  client is a `200` page built from the stored URI, never from form fields. **Forged consent:** the
+  form's CSRF token is an HMAC under `MCP_SIGNING_SECRET` of the request id and the session
+  cookie's hash, checked before the request is taken, and the `Lax` cookie is not sent on a
+  cross-site POST. **Token theft (T3):** PKCE `S256` is mandatory and compared in constant time;
+  codes are 256-bit, one-shot (atomic KV take) and live 60 s, and a replayed code revokes the grant
+  it produced; access and refresh tokens are 256-bit, stored only as SHA-256, live 1 h and 30 days,
+  and never outlive the grant's 90-day cap; refresh tokens rotate, and a reuse revokes the whole
+  grant except a same-client reuse within `MCP_REFRESH_GRACE_SECONDS` (default 30 s), which gets the
+  successor already issued and mints nothing; a live token presented by another client is refused
+  before any write; a disabled user can't refresh. Tokens, codes and verifiers are never logged
+  (log lines carry grant and client ids only). **Abuse:** the token endpoint allows 30 requests a
+  minute per client and 60 per source address (IPv6 by `/64`), in catalog windows shared by every
+  process. **Races (T8):** a refresh is one SERIALIZABLE transaction; two concurrent refreshes of
+  one token both get the one successor. **Residuals:** for up to the grace window plus one sweep
+  tick the spent row holds the live successor tokens, sealed with AES-256-GCM under a key derived
+  from the spent token *and* `MCP_SIGNING_SECRET` (the approved salt), with the row bound as AAD;
+  a database dump plus a spent token opens nothing without the live secret, but a party holding
+  all three can, and rotating the secret voids open seals (a retry in the window then revokes).
+  Two racing uses of one stolen refresh token within the window share one chain until a later
+  reuse outside it revokes the grant. A lost refresh response retried after the window logs the
+  connector out. `POST /oauth/revoke` is unauthenticated apart from `client_id` (public clients)
+  and is not rate-limited; it revokes only a grant of the named client, so it can't be used to
+  revoke another client's tokens, and it answers `200` either way. A code whose exchange failed
+  (wrong verifier) leaves its grant with no tokens until its cap. Consent is per authorization,
+  so a user who approves a hostile client gives it their own read access until they revoke it.
 - PUBLIC keeps `CONNECT` on every database and `TEMP` on `postgres`, so `autologger_app` can
   connect to databases where it has no grants and create session-local temp tables. Revoking
   them from PUBLIC would change what GoTrue (`supabase_auth_admin`) gets; slice 6 revisits it.

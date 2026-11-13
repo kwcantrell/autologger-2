@@ -12,7 +12,10 @@ import { createHash } from 'node:crypto';
 import { accessSync, constants } from 'node:fs';
 import { delimiter, join } from 'node:path';
 import type { Config } from '@autologger/ports';
-import { FRAME_BUS_SECRET_MIN_LENGTH } from '@autologger/storage';
+import {
+  FRAME_BUS_SECRET_MIN_LENGTH,
+  MCP_REFRESH_GRACE_DEFAULT_SECONDS,
+} from '@autologger/storage';
 
 export function sessionCookieName(env: Config): string {
   return (env.SESSION_COOKIE || '').trim() || 'autologger_sid';
@@ -545,6 +548,25 @@ export function mcpAllowedOrigins(env: Config): string[] | null {
     if (!out.includes(origin)) out.push(origin);
   }
   return out;
+}
+
+/** `MCP_REFRESH_GRACE_SECONDS`'s default: ADR 0035 decision 17's 30 s, the storage sweeper's own
+ * default, so the two cannot drift. */
+export const MCP_REFRESH_GRACE_DEFAULT = MCP_REFRESH_GRACE_DEFAULT_SECONDS;
+/** `MCP_REFRESH_GRACE_SECONDS`'s largest accepted value (section 13.3 item 14 (b)). */
+export const MCP_REFRESH_GRACE_MAX = 60;
+
+/**
+ * The refresh grace window in whole seconds (design §10.1): unset, empty or blank means 30;
+ * otherwise a decimal integer from 0 to 60 (`0` turns the window off). Null for any other value,
+ * which the boot guard refuses while the flag is on.
+ */
+export function mcpRefreshGraceSeconds(env: Config): number | null {
+  const v = (env.MCP_REFRESH_GRACE_SECONDS ?? '').trim();
+  if (v === '') return MCP_REFRESH_GRACE_DEFAULT;
+  if (!/^[0-9]{1,2}$/.test(v)) return null;
+  const n = Number(v);
+  return n <= MCP_REFRESH_GRACE_MAX ? n : null;
 }
 
 /** Whether two `URL.hostname` values name the same host, ignoring trailing dots on either side

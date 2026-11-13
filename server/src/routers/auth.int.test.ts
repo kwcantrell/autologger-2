@@ -3,7 +3,7 @@ import postgres from 'postgres';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { connOptions } from '../../../test/pg/testDb';
 import type { Bindings } from '../appEnv';
-import { putOauthState } from '../auth/identity';
+import { putMcpOauthState, putOauthState } from '../auth/identity';
 import { GatedCatalog } from '../test/gatedCatalog';
 import { anonApp, env, envWith, testDatabase } from '../test/harness';
 import { catalogFor, loginCookie, seedStudio, seedUser, testDb } from '../test/helpers';
@@ -1252,5 +1252,84 @@ describe('callback -- closed sign-ups (closed-signups 3.1)', () => {
     const all = lines.join('\n').toLowerCase();
     expect(all).not.toContain('log.me');
     expect(all).not.toContain('example.com');
+  });
+});
+
+// custom session dashboards J3 (design 4.4; api-contract-freeze "OAuth callback failure redirect"):
+// a sign-in that `GET /oauth/authorize` started holds `mcp:<request id>` and resumes it; every
+// other state, and every failure, is unchanged.
+describe('callback -- MCP authorization resume', () => {
+  const REQUEST = 'AbCdEfGhIjKlMnOpQrStUv';
+  const MCP_ON = envWith({
+    GOOGLE_CLIENT_ID: CLIENT,
+    GOOGLE_CLIENT_SECRET: 'secret',
+    PUBLIC_BASE_URL: 'http://127.0.0.1:8787',
+    SIGNUPS: 'open',
+    CUSTOM_DASHBOARDS_ENABLED: '1',
+  });
+
+  async function mcpCallback(stateValue: string, sub: string, envOverride: Bindings = MCP_ON) {
+    const idToken = await mintIdToken({
+      privateKey: KP.privateKey,
+      kid: KP.kid,
+      audience: CLIENT,
+      claims: { sub, email: `${sub}@b.com`, email_verified: true, given_name: 'A' },
+    });
+    mockGoogleToken({ id_token: idToken });
+    mockGoogleJwks(KP.publicJwk);
+    mockGoTrue({ id: `gt-${sub}`, sub });
+    const state = `state-${sub}`;
+    await env.ports.kv.put(`csrf:${state}`, stateValue, { expirationTtl: 1800 });
+    return anonApp.request(`/auth/google/callback?code=abc&state=${state}`, {}, envOverride);
+  }
+
+  it('an mcp: state redirects to resume the authorization, with the session cookie set', async () => {
+    const res = await mcpCallback(`mcp:${REQUEST}`, 'sub-mcp-resume');
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toBe(`/oauth/authorize/resume?request=${REQUEST}`);
+    expect(res.headers.get('set-cookie')).toContain('autologger_sid=');
+  });
+
+  it('a state written by putMcpOauthState round-trips to the same resume location', async () => {
+    const idToken = await mintIdToken({
+      privateKey: KP.privateKey,
+      kid: KP.kid,
+      audience: CLIENT,
+      claims: { sub: 'sub-mcp-put', email: 'put@b.com', email_verified: true },
+    });
+    mockGoogleToken({ id_token: idToken });
+    mockGoogleJwks(KP.publicJwk);
+    mockGoTrue({ id: 'gt-sub-mcp-put', sub: 'sub-mcp-put' });
+    await putMcpOauthState(env.ports.kv, 'state-mcp-put', REQUEST);
+    const res = await anonApp.request(
+      '/auth/google/callback?code=abc&state=state-mcp-put',
+      {},
+      MCP_ON,
+    );
+    expect(res.headers.get('location')).toBe(`/oauth/authorize/resume?request=${REQUEST}`);
+  });
+
+  it('a 1 state with the flag on still redirects to / exactly as before', async () => {
+    const res = await mcpCallback('1', 'sub-mcp-web');
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toBe('/');
+    expect(res.headers.get('set-cookie')).toContain('autologger_sid=');
+  });
+
+  it('with the flag off, or a malformed id, an mcp: state goes to / like any other', async () => {
+    const off = await mcpCallback(`mcp:${REQUEST}`, 'sub-mcp-off', OAUTH_ENV);
+    expect(off.headers.get('location')).toBe('/');
+    const bad = await mcpCallback('mcp:../../evil?x=1', 'sub-mcp-bad');
+    expect(bad.headers.get('location')).toBe('/');
+  });
+
+  it('a failure keeps its /?login_error redirect for an mcp: state', async () => {
+    await env.ports.kv.put('csrf:state-mcp-err', `mcp:${REQUEST}`, { expirationTtl: 1800 });
+    const res = await anonApp.request(
+      '/auth/google/callback?error=access_denied&state=state-mcp-err',
+      {},
+      MCP_ON,
+    );
+    expect(res.headers.get('location')).toBe('/?login_error=provider_error');
   });
 });

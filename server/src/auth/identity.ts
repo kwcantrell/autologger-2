@@ -6,7 +6,11 @@ import type { AuthUser, CatalogFacade } from '@autologger/catalog';
 import type { KvStore } from '@autologger/ports';
 
 const SESSION_PREFIX = 'session:'; // session:<sha256(token)> -> userId
-const CSRF_PREFIX = 'csrf:'; // csrf:<state> -> "1"
+const CSRF_PREFIX = 'csrf:'; // csrf:<state> -> "1", or "mcp:<request id>" (custom dashboards J3)
+/** The value a web sign-in's state holds. */
+export const WEB_OAUTH_STATE = '1';
+/** The prefix of a state issued by `GET /oauth/authorize` (design 4.4): `mcp:<request id>`. */
+export const MCP_OAUTH_STATE_PREFIX = 'mcp:';
 
 async function sha256Hex(s: string): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
@@ -34,15 +38,30 @@ export function timingSafeEqual(a: string, b: string): boolean {
 // -- OAuth CSRF state (replaces oauth_csrf_tokens + 30-min expiry) -------------
 
 export async function putOauthState(kv: KvStore, state: string, ttlSeconds = 1800): Promise<void> {
-  await kv.put(`${CSRF_PREFIX}${state}`, '1', { expirationTtl: ttlSeconds });
+  await kv.put(`${CSRF_PREFIX}${state}`, WEB_OAUTH_STATE, { expirationTtl: ttlSeconds });
 }
 
-/** Delete and return true if the state existed (one-shot). One atomic take, so of two
- * concurrent callbacks carrying the same state exactly one succeeds (async-catalog-stores D4). */
-export async function takeOauthState(kv: KvStore, state: string): Promise<boolean> {
+/** A state for the Google sign-in that `GET /oauth/authorize` starts (custom dashboards J3, design
+ * 4.4): the same prefix and TTL, holding `mcp:<request id>` so the callback resumes it. Written
+ * only with `CUSTOM_DASHBOARDS_ENABLED` on. */
+export async function putMcpOauthState(
+  kv: KvStore,
+  state: string,
+  requestId: string,
+  ttlSeconds = 1800,
+): Promise<void> {
+  await kv.put(`${CSRF_PREFIX}${state}`, `${MCP_OAUTH_STATE_PREFIX}${requestId}`, {
+    expirationTtl: ttlSeconds,
+  });
+}
+
+/** Delete and return the state's stored value if it existed (one-shot), or null. One atomic take,
+ * so of two concurrent callbacks carrying the same state exactly one succeeds
+ * (async-catalog-stores D4). */
+export async function takeOauthState(kv: KvStore, state: string): Promise<string | null> {
   // No state is ever stored with NUL, and the catalog refuses it as text (catalog-on-postgres D5).
-  if (state.includes('\u0000')) return false;
-  return (await kv.take(`${CSRF_PREFIX}${state}`)) !== null;
+  if (state.includes('\u0000')) return null;
+  return kv.take(`${CSRF_PREFIX}${state}`);
 }
 
 export function newOauthState(): string {

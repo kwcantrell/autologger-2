@@ -13,8 +13,10 @@ import {
   customDashboardsEnabled,
   dashboardRuntimeOrigin,
   exactHttpsOrigin,
+  MCP_REFRESH_GRACE_MAX,
   MCP_SIGNING_SECRET_MIN_LENGTH,
   mcpAllowedOrigins,
+  mcpRefreshGraceSeconds,
   mcpSigningSecretValid,
   publicBaseUrl,
   sameHost,
@@ -112,6 +114,7 @@ function customDashboardsConfig(env: Record<string, string | undefined>): Config
     DASHBOARD_RUNTIME_ORIGIN: env.DASHBOARD_RUNTIME_ORIGIN,
     MCP_SIGNING_SECRET: env.MCP_SIGNING_SECRET,
     MCP_ALLOWED_ORIGINS: env.MCP_ALLOWED_ORIGINS,
+    MCP_REFRESH_GRACE_SECONDS: env.MCP_REFRESH_GRACE_SECONDS,
     IP_ALLOWLIST: env.IP_ALLOWLIST,
   } as Config;
 }
@@ -141,6 +144,9 @@ export function customDashboardsRefusal(env: Record<string, string | undefined>)
   }
   if (mcpAllowedOrigins(cfg) === null) {
     return 'CUSTOM_DASHBOARDS_ENABLED is on, so every MCP_ALLOWED_ORIGINS entry must be an exact https: origin (no wildcard, path, query, fragment or user info; a port is allowed); fix it in OpenBao, see docs/openbao-secrets.md.';
+  }
+  if (mcpRefreshGraceSeconds(cfg) === null) {
+    return `CUSTOM_DASHBOARDS_ENABLED is on, so MCP_REFRESH_GRACE_SECONDS must be unset, empty, or a whole number of seconds from 0 to ${MCP_REFRESH_GRACE_MAX} (0 turns the refresh grace window off); fix it in OpenBao, see docs/openbao-secrets.md.`;
   }
   return null;
 }

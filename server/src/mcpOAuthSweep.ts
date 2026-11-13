@@ -1,12 +1,13 @@
 // The MCP OAuth cleanup loop (ADR 0035 decisions 16, 17; design
 // docs/design/custom-session-dashboards.md section 4.9; mcp-authorization "Cleanup"). main.ts
 // starts it only with `CUSTOM_DASHBOARDS_ENABLED` on, in every process, once a minute like the
-// lease sweeper. Each tick runs `McpOAuthSweeper.sweepOnce` with the refresh grace window, which
-// is the 30 s default until J3 adds `MCP_REFRESH_GRACE_SECONDS`. Warn-only: a failed tick logs its
+// lease sweeper. Each tick runs `McpOAuthSweeper.sweepOnce` with the refresh grace window that
+// main.ts reads from `MCP_REFRESH_GRACE_SECONDS` (30 s when unset; J3). Warn-only: a failed tick logs its
 // error kind and the next tick tries again.
 
-import type { McpOAuthSweeper } from '@autologger/ports';
+import type { Config, McpOAuthSweeper } from '@autologger/ports';
 import { MCP_REFRESH_GRACE_DEFAULT_SECONDS } from '@autologger/storage';
+import { mcpRefreshGraceSeconds } from './env';
 
 export const MCP_SWEEP_INTERVAL_MS = 60_000;
 
@@ -28,14 +29,17 @@ export async function sweepMcpOAuthOnce(
   }
 }
 
-/** Starts the once-a-minute sweep; unref'd, and cleared by main.ts on shutdown. */
+/** Starts the once-a-minute sweep with the grace window `MCP_REFRESH_GRACE_SECONDS` sets; unref'd, and cleared by main.ts on shutdown. */
 export function startMcpOAuthSweeper(
   sweeper: McpOAuthSweeper,
+  config: Config,
   warn: (msg: string) => void = console.warn,
   intervalMs = MCP_SWEEP_INTERVAL_MS,
 ): NodeJS.Timeout {
+  // The boot guard has refused an invalid value with the flag on, so the fallback is never used.
+  const graceSeconds = mcpRefreshGraceSeconds(config) ?? MCP_REFRESH_GRACE_DEFAULT_SECONDS;
   const timer = setInterval(() => {
-    void sweepMcpOAuthOnce(sweeper, warn);
+    void sweepMcpOAuthOnce(sweeper, warn, graceSeconds);
   }, intervalMs);
   timer.unref();
   return timer;

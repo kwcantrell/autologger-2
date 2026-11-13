@@ -361,12 +361,29 @@ describe('checkBootEnv with CUSTOM_DASHBOARDS_ENABLED', () => {
     }
   });
 
+  it('refuses an MCP_REFRESH_GRACE_SECONDS that is not a whole number from 0 to 60, naming it', () => {
+    for (const bad of ['61', '100', '-1', '+5', '5.5', '1e1', 'thirty', '3 0', '060']) {
+      refusedNaming(
+        { ...on, MCP_REFRESH_GRACE_SECONDS: bad },
+        /MCP_REFRESH_GRACE_SECONDS must be unset, empty, or a whole number of seconds from 0 to 60/,
+        [bad],
+      );
+    }
+  });
+
+  it('boots with MCP_REFRESH_GRACE_SECONDS unset, empty or from 0 to 60 (unset or empty is 30)', () => {
+    for (const v of [undefined, '', '  ', '0', '1', '30', '60', ' 15 ']) {
+      expect(checkBootEnv({ ...on, MCP_REFRESH_GRACE_SECONDS: v }), JSON.stringify(v)).toBeNull();
+    }
+  });
+
   it('with the flag off, boots exactly as before whatever the four settings hold', () => {
     const invalid = {
       PUBLIC_BASE_URL: 'http://localhost:8787',
       DASHBOARD_RUNTIME_ORIGIN: 'http://localhost:8787/path',
       MCP_SIGNING_SECRET: 'short',
       MCP_ALLOWED_ORIGINS: '*, http://x.example/path',
+      MCP_REFRESH_GRACE_SECONDS: '999',
       IP_ALLOWLIST: '10.0.0.0/8',
     };
     for (const flag of [undefined, '', '0', 'false', 'no', 'off', 'on', 'enabled', '2', ' ']) {

@@ -1,23 +1,27 @@
 // Auth routes — ported from src/autologger/web/routers/auth.py.
 
 import { normalizeEmail } from '@autologger/domain';
+import type { Config } from '@autologger/ports';
 import { type Context, Hono } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import type { AppEnv } from '../appEnv';
 import { exchangeGoogleIdToken, IdentityUnavailableError } from '../auth/gotrue';
 import {
   createLoginSession,
+  MCP_OAUTH_STATE_PREFIX,
   newOauthState,
   normalizeOauthStateParam,
   putOauthState,
   revokeLoginSession,
   takeOauthState,
 } from '../auth/identity';
+import { MCP_REQUEST_ID } from '../auth/mcpTokens';
 import {
   asciiEmailNorm,
   bootstrapEmailMatch,
   bootstrapOwnerEmail,
   cookieSecureForRequest,
+  customDashboardsEnabled,
   googleClientId,
   googleClientSecret,
   oauthConfigured,
@@ -118,7 +122,8 @@ authRouter.get('/auth/google/callback', async (c) => {
     return c.redirect('/?login_error=missing_params', 302);
   }
 
-  if (!(await takeOauthState(c.env.ports.kv, state))) {
+  const stateValue = await takeOauthState(c.env.ports.kv, state);
+  if (stateValue === null) {
     console.warn(
       'OAuth callback: invalid or expired OAuth state',
       sanitizeForLog(state),
@@ -349,8 +354,23 @@ authRouter.get('/auth/google/callback', async (c) => {
     secure: cookieSecureForRequest(c.env.config, c.req.raw),
     path: '/',
   });
-  return c.redirect('/', 302);
+  // custom dashboards J3 (design 4.4; api-contract-freeze "OAuth callback failure redirect"): a
+  // sign-in that `GET /oauth/authorize` started resumes that authorization. Only that endpoint
+  // writes an `mcp:` state, and only with the flag on; every other state goes to `/` as before.
+  const resume = mcpResumeLocation(stateValue, c.env.config);
+  return c.redirect(resume ?? '/', 302);
 });
+
+/** Where a successful sign-in goes for an `mcp:<id>` state with the flag on, or null (go to `/`).
+ * The id is checked against its issued shape, so the `Location` is always well formed. */
+function mcpResumeLocation(stateValue: string, config: Config): string | null {
+  if (!stateValue.startsWith(MCP_OAUTH_STATE_PREFIX) || !customDashboardsEnabled(config)) {
+    return null;
+  }
+  const id = stateValue.slice(MCP_OAUTH_STATE_PREFIX.length);
+  if (!MCP_REQUEST_ID.test(id)) return null;
+  return `/oauth/authorize/resume?request=${id}`;
+}
 
 async function logout(c: Context<AppEnv>): Promise<Response> {
   const cookie = getCookie(c, sessionCookieName(c.env.config));
