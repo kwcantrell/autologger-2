@@ -258,6 +258,27 @@ describe('the /mcp bearer (design 4.6)', () => {
     expect(res.headers.get('www-authenticate')).toBe(CHALLENGE);
   });
 
+  it('refuses a token whose grant carries revoked_at_utc even with its tokens still in place', async () => {
+    // The storage revoke deletes the tokens too; this pins the lookup's own revoked_at check.
+    const e = onEnv();
+    const userId = await seedUser();
+    const { token, grantId } = await mintToken(userId);
+    expect((await post(e, init, { authorization: `Bearer ${token}` })).status).toBe(200);
+    await testDb().run(
+      'UPDATE mcp_grants SET revoked_at_utc = ? WHERE id = ?',
+      iso(Date.now()),
+      grantId,
+    );
+    const left = await testDb().first<{ n: number }>(
+      'SELECT count(*)::int AS n FROM mcp_access_tokens WHERE grant_id = ?',
+      grantId,
+    );
+    expect(left?.n).toBe(1);
+    const res = await post(e, init, { authorization: `Bearer ${token}` });
+    expect(res.status).toBe(401);
+    expect(res.headers.get('www-authenticate')).toBe(CHALLENGE);
+  });
+
   it("refuses a disabled user's token", async () => {
     const e = onEnv();
     const userId = await seedUser();

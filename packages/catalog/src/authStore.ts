@@ -133,6 +133,10 @@ export class AuthStore implements AuthStoreFacade {
    * existing/new split so a disabled match can redirect (account_disabled)
    * instead of falling into the new-user branch and tripping the unique
    * `google_sub` constraint (the former latent 500). */
+  async authGetUserByGoogleSubAny(googleSub: string): Promise<Row | null> {
+    return this.db.first<Row>('SELECT * FROM users WHERE google_sub = ?', googleSub);
+  }
+
   /**
    * The `/mcp` bearer lookup (custom session dashboards J5; design 4.6): the enabled user, grant
    * and client of the access token with this hex SHA-256, when the token is unexpired, its grant
@@ -162,10 +166,6 @@ export class AuthStore implements AuthStoreFacade {
     if (row === null) return null;
     const { mcp_grant_id, mcp_client_id, ...user } = row;
     return { user, grantId: String(mcp_grant_id), clientId: String(mcp_client_id) };
-  }
-
-  async authGetUserByGoogleSubAny(googleSub: string): Promise<Row | null> {
-    return this.db.first<Row>('SELECT * FROM users WHERE google_sub = ?', googleSub);
   }
 
   async authGetUserById(userId: string): Promise<Row | null> {
