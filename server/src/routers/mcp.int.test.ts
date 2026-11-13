@@ -258,6 +258,23 @@ describe('the /mcp bearer (design 4.6)', () => {
     expect(res.headers.get('www-authenticate')).toBe(CHALLENGE);
   });
 
+  it('refuses a token after the user revokes its grant in Connected apps (DELETE, then 401)', async () => {
+    const e = onEnv();
+    const userId = await seedUser();
+    const cookie = await loginCookie(userId);
+    const { token, grantId } = await mintToken(userId);
+    expect((await post(e, init, { authorization: `Bearer ${token}` })).status).toBe(200);
+    const del = await anonApp.request(
+      `/api/oauth/connected-apps/${grantId}`,
+      { method: 'DELETE', headers: { cookie } },
+      e,
+    );
+    expect(del.status).toBe(204);
+    const res = await post(e, init, { authorization: `Bearer ${token}` });
+    expect(res.status).toBe(401);
+    expect(res.headers.get('www-authenticate')).toBe(CHALLENGE);
+  });
+
   it('refuses a token whose grant carries revoked_at_utc even with its tokens still in place', async () => {
     // The storage revoke deletes the tokens too; this pins the lookup's own revoked_at check.
     const e = onEnv();
