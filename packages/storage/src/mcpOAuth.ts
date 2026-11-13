@@ -11,6 +11,7 @@ import type {
   CatalogDb,
   Clock,
   McpClient,
+  McpConnectedApp,
   McpIssuedTokens,
   McpMintedTokens,
   McpOAuthStore,
@@ -338,6 +339,57 @@ export class PostgresMcpOAuthStore implements McpOAuthStore {
   async revokeGrant(grantId: string): Promise<boolean> {
     const nowIso = iso(this.clock.now());
     return this.db.tx((t) => revokeIn(t, grantId, nowIso));
+  }
+
+  async listConnectedApps(userId: string): Promise<McpConnectedApp[]> {
+    const nowIso = iso(this.clock.now());
+    const rows = await this.db.all<{
+      grant_id: string;
+      client_name: string;
+      redirect_uris_json: string;
+      created_at_utc: string;
+      last_used_at_utc: string | null;
+    }>(
+      `SELECT g.id AS grant_id, c.client_name, c.redirect_uris_json, g.created_at_utc,
+              g.last_used_at_utc
+         FROM mcp_grants g JOIN mcp_clients c ON c.id = g.client_id
+        WHERE g.user_id = ? AND g.revoked_at_utc IS NULL AND g.expires_at_utc > ?
+          AND (EXISTS (SELECT 1 FROM mcp_access_tokens a
+                        WHERE a.grant_id = g.id AND a.expires_at_utc > ?)
+               OR EXISTS (SELECT 1 FROM mcp_refresh_tokens r
+                           WHERE r.grant_id = g.id AND r.expires_at_utc > ?))
+        ORDER BY g.created_at_utc DESC, g.id`,
+      userId,
+      nowIso,
+      nowIso,
+      nowIso,
+    );
+    return rows.map((r) => {
+      const uris: unknown = JSON.parse(r.redirect_uris_json);
+      return {
+        grant_id: r.grant_id,
+        client_name: r.client_name,
+        redirect_uris: Array.isArray(uris)
+          ? uris.filter((u): u is string => typeof u === 'string')
+          : [],
+        created_at_utc: r.created_at_utc,
+        last_used_at_utc: r.last_used_at_utc,
+      };
+    });
+  }
+
+  async revokeUserGrant(userId: string, grantId: string): Promise<boolean> {
+    const nowIso = iso(this.clock.now());
+    return this.db.tx(async (t) => {
+      const row = await t.first<{ id: string }>(
+        `SELECT id FROM mcp_grants WHERE id = ? AND user_id = ? AND revoked_at_utc IS NULL
+          FOR UPDATE`,
+        grantId,
+        userId,
+      );
+      if (row === null) return false;
+      return revokeIn(t, grantId, nowIso);
+    });
   }
 
   async revokeByToken(tokenHash: string, clientId: string): Promise<string | null> {

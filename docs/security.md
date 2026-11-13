@@ -253,6 +253,14 @@ These live in the forge, not the repo, so the template can't apply them:
   revoke another client's tokens, and it answers `200` either way. A code whose exchange failed
   (wrong verifier) leaves its grant with no tokens until its cap. Consent is per authorization,
   so a user who approves a hostile client gives it their own read access until they revoke it.
+- **Connected apps** (custom session dashboards J4, ADR 0035 decision 5): with the flag on,
+  `GET /api/oauth/connected-apps` and `DELETE /api/oauth/connected-apps/:grantId` let a signed-in
+  user list and revoke their own grants. They sit behind the `/api` login gate (session cookie
+  only; a Bearer never authenticates them). Every store call carries the caller's user id, so
+  another user's grant id answers the same masked `404` as an unknown one, and the list never
+  selects `registered_from` (the registering address) or any token material. Client names are
+  client-supplied and the web renders them as text. A grant with no tokens (a failed code
+  exchange) is not listed. With the flag off the routes answer as unmounted paths.
 - PUBLIC keeps `CONNECT` on every database and `TEMP` on `postgres`, so `autologger_app` can
   connect to databases where it has no grants and create session-local temp tables. Revoking
   them from PUBLIC would change what GoTrue (`supabase_auth_admin`) gets; slice 6 revisits it.

@@ -299,3 +299,76 @@ describe('the MCP OAuth store (design 4.3)', () => {
     });
   });
 });
+
+describe('Connected apps on the store (design 4.8)', () => {
+  async function seed() {
+    const e = await env();
+    await e.db.run(
+      `INSERT INTO users (id, google_sub, email, created_at_utc) VALUES ('u2', 'u2-sub', 'u2@example.com', 'now')`,
+    );
+    await e.client('alc_c', e.T0 - 10 * DAY, e.T0 - 10 * DAY);
+    return e;
+  }
+
+  it('lists only the user live grants that hold a token, newest first, without registered_from', async () => {
+    const e = await seed();
+    // Live with a refresh token; live with an access token only; a newer live one.
+    await e.grant('g_old', 'alc_c', e.T0 - 5 * DAY);
+    await e.refresh('r_old', 'g_old', { expiresAt: e.T0 + DAY });
+    await e.grant('g_acc', 'alc_c', e.T0 - 4 * DAY);
+    await e.access('a_acc', 'g_acc', e.T0 + HOUR);
+    await e.grant('g_new', 'alc_c', e.T0 - DAY);
+    await e.refresh('r_new', 'g_new', { expiresAt: e.T0 + DAY });
+    // Not listed: no tokens, revoked, past the cap, only expired tokens, another user's.
+    await e.grant('g_empty', 'alc_c', e.T0 - 3 * DAY);
+    await e.grant('g_rev', 'alc_c', e.T0 - 3 * DAY, { revokedAt: e.T0 - DAY });
+    await e.refresh('r_rev', 'g_rev', { expiresAt: e.T0 + DAY });
+    await e.grant('g_cap', 'alc_c', e.T0 - 100 * DAY, { expiresAt: e.T0 - 10 * DAY });
+    await e.refresh('r_cap', 'g_cap', { expiresAt: e.T0 + DAY });
+    await e.grant('g_stale', 'alc_c', e.T0 - 60 * DAY);
+    await e.refresh('r_stale', 'g_stale', { expiresAt: e.T0 - DAY });
+    await e.db.run(
+      `INSERT INTO mcp_grants (id, user_id, client_id, scope, resource, created_at_utc, expires_at_utc)
+       VALUES ('g_other', 'u2', 'alc_c', 'dashboards', 'https://example.com/mcp', ?, ?)`,
+      iso(e.T0 - DAY),
+      iso(e.T0 + 80 * DAY),
+    );
+    await e.refresh('r_other', 'g_other', { expiresAt: e.T0 + DAY });
+
+    const apps = await e.store.listConnectedApps('u1');
+    expect(apps.map((a) => a.grant_id)).toEqual(['g_new', 'g_acc', 'g_old']);
+    expect(apps[0]).toEqual({
+      grant_id: 'g_new',
+      client_name: 'Claude',
+      redirect_uris: ['https://claude.ai/api/mcp/auth_callback'],
+      created_at_utc: iso(e.T0 - DAY),
+      last_used_at_utc: null,
+    });
+    for (const a of apps) expect(Object.keys(a)).not.toContain('registered_from');
+    expect((await e.store.listConnectedApps('u2')).map((a) => a.grant_id)).toEqual(['g_other']);
+  });
+
+  it('revokeUserGrant revokes the user own grant and deletes its tokens, and nothing else', async () => {
+    const e = await seed();
+    await e.grant('g1', 'alc_c', e.T0 - DAY);
+    await e.refresh('r1', 'g1', { expiresAt: e.T0 + DAY });
+    await e.access('a1', 'g1', e.T0 + HOUR);
+    await e.grant('g2', 'alc_c', e.T0 - DAY);
+    await e.access('a2', 'g2', e.T0 + HOUR);
+
+    expect(await e.store.revokeUserGrant('u2', 'g1')).toBe(false);
+    expect(await e.store.revokeUserGrant('u1', 'g_unknown')).toBe(false);
+    expect(await e.ids('mcp_access_tokens', 'token_hash')).toEqual(['a1', 'a2']);
+
+    expect(await e.store.revokeUserGrant('u1', 'g1')).toBe(true);
+    expect(await e.ids('mcp_access_tokens', 'token_hash')).toEqual(['a2']);
+    expect(await e.ids('mcp_refresh_tokens', 'token_hash')).toEqual([]);
+    const g = await e.db.first<{ revoked_at_utc: string | null }>(
+      "SELECT revoked_at_utc FROM mcp_grants WHERE id = 'g1'",
+    );
+    expect(g?.revoked_at_utc).toBe(iso(e.T0));
+    // A second revoke is the same masked miss.
+    expect(await e.store.revokeUserGrant('u1', 'g1')).toBe(false);
+    expect((await e.store.listConnectedApps('u1')).map((a) => a.grant_id)).toEqual(['g2']);
+  });
+});

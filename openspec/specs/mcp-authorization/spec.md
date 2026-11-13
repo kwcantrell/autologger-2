@@ -1,7 +1,7 @@
 # mcp-authorization Specification
 
 ## Purpose
-Lets a Claude client connect to AutoLogger as a custom connector through AutoLogger's own OAuth 2.1 authorization server, behind `CUSTOM_DASHBOARDS_ENABLED` (ADR 0035 decision 5; design `docs/design/custom-session-dashboards.md` section 4). This capability covers discovery, dynamic client registration, the OAuth storage and its cleanup (J2), and authorization with consent, the token endpoint and revocation (J3). Connected apps are added by a later job (J4).
+Lets a Claude client connect to AutoLogger as a custom connector through AutoLogger's own OAuth 2.1 authorization server, behind `CUSTOM_DASHBOARDS_ENABLED` (ADR 0035 decision 5; design `docs/design/custom-session-dashboards.md` section 4). This capability covers discovery, dynamic client registration, the OAuth storage and its cleanup (J2), and authorization with consent, the token endpoint and revocation (J3). Connected apps, where a user lists and revokes their grants, are added by J4.
 
 ## Requirements
 
@@ -18,8 +18,9 @@ written to the OAuth tables, and the OAuth sweeper SHALL NOT run.
 - **WHEN** the flag is unset, `0` or `off`, and `GET`, `HEAD`, `POST`, `PUT`, `DELETE` and
   `OPTIONS` are sent to `/.well-known/oauth-protected-resource`,
   `/.well-known/oauth-protected-resource/mcp`, `/.well-known/oauth-authorization-server`,
-  `/oauth/register`, `/oauth/authorize`, `/oauth/authorize/resume`, `/oauth/token` and
-  `/oauth/revoke`, with and without a session cookie
+  `/oauth/register`, `/oauth/authorize`, `/oauth/authorize/resume`, `/oauth/token`,
+  `/oauth/revoke`, `/api/oauth/connected-apps` and `/api/oauth/connected-apps/<id>`, with and
+  without a session cookie
 - **THEN** the `GET` and `HEAD` requests reach the frontend bridge, each answer is byte for byte
   the answer of an unmounted path such as `/oauth/not-a-route`, and no client, rate window or KV
   entry is stored
@@ -408,3 +409,40 @@ SHALL answer `400 {error: "invalid_request"}`. Every answer carries `Cache-Contr
 #### Scenario: Another client's token
 - **WHEN** a client posts a token of another client's grant
 - **THEN** the answer is `200` and nothing is revoked
+
+### Requirement: Connected apps
+`GET /api/oauth/connected-apps` SHALL answer `200 {apps: [{grant_id, client_name, redirect_host,
+created_at, last_used_at}]}` with the signed-in user's own live grants, newest first, and
+`Cache-Control: no-store`. A live grant is one that is not revoked, is not past its 90-day cap, and
+still holds an unexpired access or refresh token: a grant that a failed code exchange left with no
+tokens SHALL NOT be listed. `client_name` is client-supplied text. `redirect_host` is the host of
+the client's registered redirect URIs (distinct hosts joined by `, `). `last_used_at` is `null`
+until a token of the grant is used. The response SHALL NOT include `registered_from` or any other
+field of `mcp_clients` beyond those named, and never another user's grant.
+
+`DELETE /api/oauth/connected-apps/:grantId` SHALL revoke one of the signed-in user's own grants
+exactly as `POST /oauth/revoke` does (`revoked_at_utc` set and every access and refresh token of
+the grant deleted, in one transaction) and answer `204` with no body. An unknown id, another
+user's grant, and an already revoked grant SHALL all answer the same masked `404
+{detail: "Connected app not found."}`, and nothing SHALL change. Afterwards the grant's refresh
+token gets `invalid_grant` and its access token is no longer found by the token lookup.
+
+Both routes read the session cookie only (the `/api` login gate answers `401` without one) and
+SHALL NOT authenticate by Bearer. With the flag off they SHALL answer as an unmounted path does (see
+"The OAuth server exists only with the flag on"), so a client reads the list's `404` as "feature
+off".
+
+#### Scenario: Only the caller's live grants are listed
+- **WHEN** two users each hold a grant, and one more grant of the first user has no tokens after a
+  failed code exchange
+- **THEN** the first user's list holds exactly their one connected grant, with no
+  `registered_from` anywhere in the body, and the second user's grant never appears
+
+#### Scenario: Revoking a connected app
+- **WHEN** the user sends `DELETE /api/oauth/connected-apps/<grantId>` for their grant
+- **THEN** the answer is `204`, the grant is revoked with no tokens left, a refresh with its refresh
+  token answers `invalid_grant`, and the list no longer shows it
+
+#### Scenario: Another user's grant
+- **WHEN** a user sends `DELETE` with another user's grant id, and again with an unknown id
+- **THEN** both answer the same `404` and the other user's grant stays live

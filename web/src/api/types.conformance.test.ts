@@ -66,6 +66,7 @@ import { autogenerateSessionsChanged } from '../../../fixtures/api-responses/aut
 import { autogenerateStart } from '../../../fixtures/api-responses/autogenerateStart';
 import companionDeviceCreate from '../../../fixtures/api-responses/companionDeviceCreate.json';
 import companionDevicesList from '../../../fixtures/api-responses/companionDevicesList.json';
+import connectedAppsList from '../../../fixtures/api-responses/connectedAppsList.json';
 import eventCreate from '../../../fixtures/api-responses/eventCreate.json';
 import eventDeleteConflict from '../../../fixtures/api-responses/eventDeleteConflict.json';
 import eventsList from '../../../fixtures/api-responses/eventsList.json';
@@ -155,6 +156,7 @@ import type {
   Category,
   CompanionDeviceCreatedResponse,
   CompanionDeviceListResponse,
+  ConnectedAppListResponse,
   EventsResponse,
   EventVersionConflict,
   LogEvent,
@@ -952,6 +954,17 @@ describe('Companion devices — the responses `useCompanionDevices.ts` types (co
   it('the POST capture is assignable to CompanionDeviceCreatedResponse, the one body with the token', () => {
     const check: CompanionDeviceCreatedResponse = companionDeviceCreate;
     expect(check.token).toMatch(/^ald_#{43}$/);
+  });
+});
+
+describe('Connected apps — the response `useConnectedApps.ts` types (custom dashboards J4)', () => {
+  it('the GET capture is assignable to ConnectedAppListResponse, with a used and a never-used grant', () => {
+    const check: ConnectedAppListResponse = connectedAppsList;
+    const [never, used] = check.apps;
+    expect(never.last_used_at).toBeNull();
+    expect(used.last_used_at).toMatch(/^####-##-##T/);
+    // The list never carries the registering address.
+    expect('registered_from' in never).toBe(false);
   });
 });
 

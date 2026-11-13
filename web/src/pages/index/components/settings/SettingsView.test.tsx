@@ -28,6 +28,7 @@ const probe = vi.hoisted(() => ({
   dirty: {} as Record<string, boolean>,
   discards: {} as Record<string, number>,
   profile: undefined as unknown,
+  connectedApps: false,
 }));
 
 vi.mock('./SettingsSections', async () => {
@@ -36,6 +37,7 @@ vi.mock('./SettingsSections', async () => {
   const ids = [
     'account',
     'companion-devices',
+    'connected-apps',
     'advanced',
     'members',
     'shows',
@@ -66,6 +68,15 @@ vi.mock('../../../../api/hooks/useEvents', () => ({ useLogEvent: vi.fn() }));
 vi.mock('../../../../shared/components/Toast', () => ({ showToast: vi.fn() }));
 vi.mock('../../../../api/hooks/useProfile', () => ({
   useProfile: () => ({ data: probe.profile }),
+}));
+// The view probes the connected-apps list to decide whether to list that section (J4).
+vi.mock('../../../../api/hooks/useConnectedApps', () => ({
+  useConnectedApps: () => ({
+    isSuccess: probe.connectedApps,
+    isError: false,
+    error: null,
+  }),
+  isFeatureOff: () => false,
 }));
 // The view owns the shows scope; with no profile its query is disabled (no team, no request).
 vi.mock('../../../../api/hooks/useShows', () => ({
@@ -110,10 +121,30 @@ beforeEach(() => {
   probe.mounts = {};
   probe.dirty = {};
   probe.discards = {};
+  probe.connectedApps = false;
 });
 
 afterEach(() => {
   vi.clearAllMocks();
+});
+
+describe('Connected apps is listed only when the feature answers (J4)', () => {
+  it('is absent from the navigation while the probe has not succeeded', () => {
+    renderStrict(<Shell initial={{ section: 'show-details' }} />);
+    expect(screen.queryByRole('tab', { name: 'Connected apps' })).toBeNull();
+  });
+
+  it('is listed after Companion devices once the probe succeeded', () => {
+    probe.connectedApps = true;
+    renderStrict(<Shell initial={{ section: 'show-details' }} />);
+    const tabs = screen.getAllByRole('tab').map((t) => t.textContent);
+    expect(tabs.slice(0, 4)).toEqual([
+      'Account',
+      'Companion devices',
+      'Connected apps',
+      'Advanced',
+    ]);
+  });
 });
 
 describe('Settings modal defers inactive tab content', () => {

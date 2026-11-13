@@ -1,5 +1,6 @@
 import { ChevronLeftIcon } from 'lucide-react';
 import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { isFeatureOff, useConnectedApps } from '../../../../api/hooks/useConnectedApps';
 import { useProfile } from '../../../../api/hooks/useProfile';
 import { Button } from '../../../../shared/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../../../shared/components/ui/tabs';
@@ -8,6 +9,7 @@ import { useConfirm } from '../../../../shared/ui/ConfirmDialog';
 import { isOverlayOpen } from '../../../../shared/ui/overlayOpen';
 import { SETTINGS_SECTION_CONTENT } from './SettingsSections';
 import {
+  FLAG_GATED_SECTIONS,
   MANAGER_ONLY_SECTIONS,
   SETTINGS_SECTION_GROUPS,
   SETTINGS_SECTIONS,
@@ -87,7 +89,14 @@ export function SettingsView({
   const managesATeam = (profile?.auth?.user?.teams ?? []).some(
     (t) => t.role === 'owner' || t.role === 'admin',
   );
-  const listed = (id: SettingsSectionId) => managesATeam || !MANAGER_ONLY_SECTIONS.includes(id);
+  // custom session dashboards J4: Connected apps is listed only once its list route has answered
+  // (a `404` means the flag is off). The section reads the same query, so this is one request.
+  const connectedApps = useConnectedApps();
+  const connectedAppsOn =
+    connectedApps.isSuccess || (connectedApps.isError && !isFeatureOff(connectedApps.error));
+  const listed = (id: SettingsSectionId) =>
+    (managesATeam || !MANAGER_ONLY_SECTIONS.includes(id)) &&
+    (connectedAppsOn || !FLAG_GATED_SECTIONS.includes(id));
   // The view owns the shows scope (the drafts' saved baseline and the shows query), so every
   // show-backed section saves the same thing whichever sections were visited, and the query runs
   // only while the view is mounted, i.e. open.

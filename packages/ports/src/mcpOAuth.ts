@@ -100,6 +100,17 @@ export type McpRefreshResult =
   | { kind: 'invalid' }
   | { kind: 'revoked'; grantId: string };
 
+/** One live grant of a user, joined to its client, for the Connected apps list (design 4.8).
+ * Deliberately has no `registered_from`: the registering address never leaves the store. */
+export interface McpConnectedApp {
+  grant_id: string;
+  client_name: string;
+  redirect_uris: string[];
+  created_at_utc: string;
+  /** Null until a token of the grant is first used. */
+  last_used_at_utc: string | null;
+}
+
 export interface McpOAuthStore {
   /**
    * Counts one hit in the fixed window of `windowMs` that holds the clock's now, for `bucket`,
@@ -131,6 +142,16 @@ export interface McpOAuthStore {
   /** Revokes a grant: sets `revoked_at_utc` (once) and deletes its tokens, in one transaction.
    * True when the grant exists. */
   revokeGrant(grantId: string): Promise<boolean>;
+  /**
+   * The user's live grants, newest first: not revoked, not past the cap, and still holding an
+   * unexpired token. A grant a failed code exchange left with no tokens is not listed.
+   */
+  listConnectedApps(userId: string): Promise<McpConnectedApp[]>;
+  /**
+   * Revokes one of the user's own live grants like `revokeGrant`. False, changing nothing, when
+   * the id is unknown, another user's, or already revoked.
+   */
+  revokeUserGrant(userId: string, grantId: string): Promise<boolean>;
   /**
    * RFC 7009: revokes the grant of the access or refresh token with this hash when that grant is
    * `clientId`'s. Returns the revoked grant's id, or null when no such token is the client's.
