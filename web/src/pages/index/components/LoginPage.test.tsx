@@ -133,16 +133,16 @@ describe('LoginPage anchors', () => {
   });
 });
 
+function ConsumeOnLogin({ loggedIn }: { loggedIn: boolean }) {
+  useLoginReturnConsume(loggedIn);
+  return null;
+}
+
 describe('LoginPage -> post-login consume round trip', () => {
   // Simulates the real app flow end to end: LoginPage stashes on sign-in
   // click; after the OAuth round-trip the app re-renders logged in, and the
   // consume hook (as wired into AppShell) validates and replace-navigates
   // to the stashed path, clearing it.
-  function ConsumeOnLogin({ loggedIn }: { loggedIn: boolean }) {
-    useLoginReturnConsume(loggedIn);
-    return null;
-  }
-
   let navigateCalls: Array<[string, { replace?: boolean } | undefined]>;
 
   beforeEach(() => {

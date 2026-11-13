@@ -73,16 +73,14 @@ describe('login is always required (require-login)', () => {
 // gate-decoded-path D2: Hono routes on the percent-decoded path, so the gate must judge that same
 // path. `/%61pi/x` IS `/api/x` to the router (and the Caddy router forwards it as such).
 describe('encoded spellings of /api paths get the literal path’s answer', () => {
-  it.each([
-    '/%61pi/sessions',
-    '/a%70i/sessions',
-    '/%61%70%69/sessions',
-    '/api/s%65ssions',
-  ])('%s with no credentials is 401 Login required', async (path) => {
-    const res = await anonApp.request(path, { method: 'GET' }, withLogin);
-    expect(res.status).toBe(401);
-    expect(await res.json()).toEqual({ detail: 'Login required.' });
-  });
+  it.each(['/%61pi/sessions', '/a%70i/sessions', '/%61%70%69/sessions', '/api/s%65ssions'])(
+    '%s with no credentials is 401 Login required',
+    async (path) => {
+      const res = await anonApp.request(path, { method: 'GET' }, withLogin);
+      expect(res.status).toBe(401);
+      expect(await res.json()).toEqual({ detail: 'Login required.' });
+    },
+  );
 
   it('/%61pi/companion/state: 401 without the token, 200 with it', async () => {
     const anon = await anonApp.request('/%61pi/companion/state', { method: 'GET' }, withLogin);
@@ -109,18 +107,18 @@ describe('encoded spellings of /api paths get the literal path’s answer', () =
     expect(res.status).toBe(200);
   });
 
-  it.each([
-    '/%61pi/admin/users',
-    '/api/%61dmin/users',
-  ])('%s keeps the admin-token rules', async (path) => {
-    const res = await anonApp.request(
-      path,
-      { method: 'GET', headers: adminHeader('wrong') },
-      envWith({ ADMIN_TOKEN: 'right' }),
-    );
-    expect(res.status).toBe(401);
-    expect(await res.json()).toEqual({ detail: 'Invalid or missing admin token.' });
-  });
+  it.each(['/%61pi/admin/users', '/api/%61dmin/users'])(
+    '%s keeps the admin-token rules',
+    async (path) => {
+      const res = await anonApp.request(
+        path,
+        { method: 'GET', headers: adminHeader('wrong') },
+        envWith({ ADMIN_TOKEN: 'right' }),
+      );
+      expect(res.status).toBe(401);
+      expect(await res.json()).toEqual({ detail: 'Invalid or missing admin token.' });
+    },
+  );
 
   it('every registered /api route answers /%61pi<rest> exactly as /api<rest>', async () => {
     const routes = anonApp.routes.filter((r) => r.method !== 'ALL' && r.path.startsWith('/api/'));

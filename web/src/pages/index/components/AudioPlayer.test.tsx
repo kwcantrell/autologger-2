@@ -191,22 +191,21 @@ describe('AudioPlayer global Space handler', () => {
     expect(ref.current?.isPlaying()).toBe(true);
   });
 
-  it.each([
-    'dialog',
-    'alertdialog',
-    'menu',
-  ])('does not toggle playback while a [role="%s"] is open', (role) => {
-    const ref = renderPlayer();
-    const dialog = document.createElement('div');
-    dialog.setAttribute('role', role);
-    document.body.appendChild(dialog);
-    try {
-      fireEvent.keyDown(document.body, { code: 'Space' });
-      expect(ref.current?.isPlaying()).toBe(false);
-    } finally {
-      dialog.remove();
-    }
-  });
+  it.each(['dialog', 'alertdialog', 'menu'])(
+    'does not toggle playback while a [role="%s"] is open',
+    (role) => {
+      const ref = renderPlayer();
+      const dialog = document.createElement('div');
+      dialog.setAttribute('role', role);
+      document.body.appendChild(dialog);
+      try {
+        fireEvent.keyDown(document.body, { code: 'Space' });
+        expect(ref.current?.isPlaying()).toBe(false);
+      } finally {
+        dialog.remove();
+      }
+    },
+  );
 
   it('does not toggle playback when Space activates a focused button (spec scenario)', () => {
     const ref = renderPlayer();

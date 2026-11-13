@@ -153,15 +153,15 @@ describe('LazyChunk chunk-load failure', () => {
   });
 });
 
+function Exploding(): never {
+  throw new Error("Cannot read properties of undefined (reading 'events')");
+}
+
 describe('LazyChunk non-chunk render errors', () => {
   // Policy (documented in ChunkLoadBoundary): NOT rethrown (that restores the
   // blank-island failure mode) and NOT silently swallowed — a visible generic
   // state plus a console log, and deliberately no Retry, since re-rendering
   // the same broken code with the same props just throws again.
-  function Exploding(): never {
-    throw new Error("Cannot read properties of undefined (reading 'events')");
-  }
-
   it('renders a generic error state with no Retry, and logs the real error', async () => {
     const load: Loader = () =>
       Promise.resolve({ default: Exploding as unknown as ComponentType<LoadedProps> });

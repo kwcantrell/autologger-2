@@ -114,15 +114,18 @@ describe('consumeLoginReturnStash', () => {
     ['https://evil.com/x', 'https://evil.com/x'],
     ['a same-origin non-router path', '/admin/users'],
     ['a segment under /teams', '/teams/x'],
-  ])('discards a malicious/out-of-router stash (%s) without navigating, and clears it', (_label, value) => {
-    sessionStorage.setItem(LOGIN_RETURN_STASH_KEY, value);
-    const navigateFn = vi.fn();
+  ])(
+    'discards a malicious/out-of-router stash (%s) without navigating, and clears it',
+    (_label, value) => {
+      sessionStorage.setItem(LOGIN_RETURN_STASH_KEY, value);
+      const navigateFn = vi.fn();
 
-    consumeLoginReturnStash(navigateFn);
+      consumeLoginReturnStash(navigateFn);
 
-    expect(navigateFn).not.toHaveBeenCalled();
-    expect(sessionStorage.getItem(LOGIN_RETURN_STASH_KEY)).toBeNull();
-  });
+      expect(navigateFn).not.toHaveBeenCalled();
+      expect(sessionStorage.getItem(LOGIN_RETURN_STASH_KEY)).toBeNull();
+    },
+  );
 
   it('does nothing when no stash is present', () => {
     const navigateFn = vi.fn();

@@ -43,31 +43,36 @@ const ANCHORLESS_FIXTURE = {
   reason: NO_TIMING_REASON,
 };
 
-describe.each([MANUAL_ENTRY_FIXTURE, ANCHORLESS_FIXTURE])('degraded rendering — $scenario', ({
-  reason,
-}) => {
-  it('session_duration: renders "unavailable" naming the reason, never a 0:00:00 timecode', () => {
-    renderStrict(<SessionDurationWidget data={{ available: false, reason, durationSec: null }} />);
-    expect(screen.getByTestId('aiv2-widget-unavailable')).toBeTruthy();
-    expect(screen.getByText(reason)).toBeTruthy();
-    expect(screen.queryByText('00:00:00')).toBeNull();
-    expect(screen.queryByText(/^0:00/)).toBeNull();
-  });
+describe.each([MANUAL_ENTRY_FIXTURE, ANCHORLESS_FIXTURE])(
+  'degraded rendering — $scenario',
+  ({ reason }) => {
+    it('session_duration: renders "unavailable" naming the reason, never a 0:00:00 timecode', () => {
+      renderStrict(
+        <SessionDurationWidget data={{ available: false, reason, durationSec: null }} />,
+      );
+      expect(screen.getByTestId('aiv2-widget-unavailable')).toBeTruthy();
+      expect(screen.getByText(reason)).toBeTruthy();
+      expect(screen.queryByText('00:00:00')).toBeNull();
+      expect(screen.queryByText(/^0:00/)).toBeNull();
+    });
 
-  it('talk_time_by_speaker: renders "unavailable" naming the reason, never a zero-width bar per speaker', () => {
-    renderStrict(<TalkTimeBySpeakerWidget data={{ available: false, reason, bySpeaker: [] }} />);
-    expect(screen.getByTestId('aiv2-widget-unavailable')).toBeTruthy();
-    expect(screen.getByText(reason)).toBeTruthy();
-    expect(screen.queryAllByTestId('aiv2-talk-time-row')).toHaveLength(0);
-  });
+    it('talk_time_by_speaker: renders "unavailable" naming the reason, never a zero-width bar per speaker', () => {
+      renderStrict(<TalkTimeBySpeakerWidget data={{ available: false, reason, bySpeaker: [] }} />);
+      expect(screen.getByTestId('aiv2-widget-unavailable')).toBeTruthy();
+      expect(screen.getByText(reason)).toBeTruthy();
+      expect(screen.queryAllByTestId('aiv2-talk-time-row')).toHaveLength(0);
+    });
 
-  it('event_density: renders "unavailable" naming the reason, never "0.0 events per minute"', () => {
-    renderStrict(<EventDensityWidget data={{ available: false, reason, eventsPerMinute: null }} />);
-    expect(screen.getByTestId('aiv2-widget-unavailable')).toBeTruthy();
-    expect(screen.getByText(reason)).toBeTruthy();
-    expect(screen.queryByText('0.0')).toBeNull();
-  });
-});
+    it('event_density: renders "unavailable" naming the reason, never "0.0 events per minute"', () => {
+      renderStrict(
+        <EventDensityWidget data={{ available: false, reason, eventsPerMinute: null }} />,
+      );
+      expect(screen.getByTestId('aiv2-widget-unavailable')).toBeTruthy();
+      expect(screen.getByText(reason)).toBeTruthy();
+      expect(screen.queryByText('0.0')).toBeNull();
+    });
+  },
+);
 
 describe('degraded rendering — transcript_excerpt (partial degradation, D2b)', () => {
   it('renders the real quote while honestly showing "—" for timestamp and "Speaker N" for an unresolved name — never a fabricated 0:00 or invented name', () => {

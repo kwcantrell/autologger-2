@@ -82,22 +82,21 @@ describe('useZoomRail global +/- handler', () => {
     expect(getZoom()).toBeGreaterThan(1);
   });
 
-  it.each([
-    'dialog',
-    'alertdialog',
-    'menu',
-  ])('does not zoom while a [role="%s"] is open', (role) => {
-    renderStrict(<Harness />);
-    const dialog = document.createElement('div');
-    dialog.setAttribute('role', role);
-    document.body.appendChild(dialog);
-    try {
-      fireEvent.keyDown(document.body, { code: 'Equal' });
-      expect(getZoom()).toBe(1);
-    } finally {
-      dialog.remove();
-    }
-  });
+  it.each(['dialog', 'alertdialog', 'menu'])(
+    'does not zoom while a [role="%s"] is open',
+    (role) => {
+      renderStrict(<Harness />);
+      const dialog = document.createElement('div');
+      dialog.setAttribute('role', role);
+      document.body.appendChild(dialog);
+      try {
+        fireEvent.keyDown(document.body, { code: 'Equal' });
+        expect(getZoom()).toBe(1);
+      } finally {
+        dialog.remove();
+      }
+    },
+  );
 
   it('does not zoom when the keydown was already defaultPrevented', () => {
     renderStrict(<Harness />);

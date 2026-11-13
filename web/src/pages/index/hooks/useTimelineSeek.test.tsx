@@ -41,12 +41,20 @@ const COVERING_CLIP: AudioClipLite = {
   missingAudio: false,
 };
 
-/** `renderHook`'s `wrapper` option — publishes `clips` via `AudioClipsContext`,
- *  the same mechanism `SessionWorkspace` uses in production. */
+/** The clips the next `renderHook` publishes; set by {@link withClips}. */
+let wrapperClips: AudioClipLite[] = [];
+
+/** Publishes {@link wrapperClips} via `AudioClipsContext`, the same mechanism
+ *  `SessionWorkspace` uses in production. Defined once, at module level, so its identity is
+ *  stable across renders. */
+function ClipsWrapper({ children }: { children: ReactNode }) {
+  return <AudioClipsProvider clips={wrapperClips}>{children}</AudioClipsProvider>;
+}
+
+/** `renderHook`'s `wrapper` option — publishes `clips` for that render. */
 function withClips(clips: AudioClipLite[]) {
-  return function Wrapper({ children }: { children: ReactNode }) {
-    return <AudioClipsProvider clips={clips}>{children}</AudioClipsProvider>;
-  };
+  wrapperClips = clips;
+  return ClipsWrapper;
 }
 
 let scrubMock: ReturnType<typeof vi.fn<(sec: number | null) => void>>;

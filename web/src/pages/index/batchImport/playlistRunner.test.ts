@@ -248,17 +248,16 @@ describe('runPlaylistImport — show alignment and the fresh list', () => {
 });
 
 describe('runPlaylistImport — skip and retry', () => {
-  it.each([
-    'both',
-    'title',
-    'episode',
-  ] as const)('skips on a %s match in the run show', async (field) => {
-    sessions = [sessionRow('old', 'One', SHOW, field === 'both' ? 'both' : field)];
-    const { last } = await run([E1]);
-    expect(last.lines).toEqual(['Skipped One (already in system)']);
-    expect(createCalls()).toHaveLength(0);
-    expect(importCalls()).toHaveLength(0);
-  });
+  it.each(['both', 'title', 'episode'] as const)(
+    'skips on a %s match in the run show',
+    async (field) => {
+      sessions = [sessionRow('old', 'One', SHOW, field === 'both' ? 'both' : field)];
+      const { last } = await run([E1]);
+      expect(last.lines).toEqual(['Skipped One (already in system)']);
+      expect(createCalls()).toHaveLength(0);
+      expect(importCalls()).toHaveLength(0);
+    },
+  );
 
   it('a remembered, segment-less session for the same show and video is imported into (no create)', async () => {
     sessions = [sessionRow('mine', 'One')];
@@ -328,13 +327,13 @@ describe('runPlaylistImport — create and import', () => {
     expect(memory.size).toBe(0);
   });
 
-  it.each([
-    true,
-    false,
-  ])('every youtube-import of the run carries use_publish_date: %s', async (flag) => {
-    await run([E1, E2], { usePublishDate: flag });
-    expect(imports.map((i) => i.body.use_publish_date)).toEqual([flag, flag]);
-  });
+  it.each([true, false])(
+    'every youtube-import of the run carries use_publish_date: %s',
+    async (flag) => {
+      await run([E1, E2], { usePublishDate: flag });
+      expect(imports.map((i) => i.body.use_publish_date)).toEqual([flag, flag]);
+    },
+  );
 
   it('invalidates the sessions query after each create', async () => {
     const onSessionCreated = vi.fn();
@@ -384,25 +383,26 @@ describe('runPlaylistImport — failures', () => {
     expect(last.lines).toEqual(['Failed One: episode: Too big; a.0.b: Bad']);
   });
 
-  it.each([
-    401, 403, 503,
-  ])('a %i ends the playlist part with a not-attempted line', async (status) => {
-    importImpl = async (sessionId, n) => {
-      if (n === 2)
-        throw jsonError(status, 'This feature is limited to approved users on this server.');
-      segments[sessionId] = 1;
-      return { ok: true };
-    };
-    const five = [E1, E2, E3, entry(4, 'Four', 'ddddddddddd'), entry(5, 'Five', 'eeeeeeeeeee')];
-    const { last } = await run(five);
-    expect(last.lines).toEqual([
-      'Completed One',
-      'Failed Two: This feature is limited to approved users on this server.',
-      '3 checked videos were not attempted.',
-    ]);
-    expect(importCalls()).toHaveLength(2);
-    expect(createCalls()).toHaveLength(2);
-  });
+  it.each([401, 403, 503])(
+    'a %i ends the playlist part with a not-attempted line',
+    async (status) => {
+      importImpl = async (sessionId, n) => {
+        if (n === 2)
+          throw jsonError(status, 'This feature is limited to approved users on this server.');
+        segments[sessionId] = 1;
+        return { ok: true };
+      };
+      const five = [E1, E2, E3, entry(4, 'Four', 'ddddddddddd'), entry(5, 'Five', 'eeeeeeeeeee')];
+      const { last } = await run(five);
+      expect(last.lines).toEqual([
+        'Completed One',
+        'Failed Two: This feature is limited to approved users on this server.',
+        '3 checked videos were not attempted.',
+      ]);
+      expect(importCalls()).toHaveLength(2);
+      expect(createCalls()).toHaveLength(2);
+    },
+  );
 });
 
 describe('runPlaylistImport — unknown outcome (no JSON answer)', () => {

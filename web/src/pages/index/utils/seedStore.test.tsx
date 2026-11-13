@@ -56,24 +56,55 @@ describe('followServer', () => {
   });
 });
 
+/** Writes one seed on mount. */
+function Consumer({ seeds }: { seeds: SeedStore<Row> }) {
+  useEffect(() => {
+    seeds.set('a', row('a', 'typed over', 7));
+  }, [seeds]);
+  return null;
+}
+
+/** A feed that owns the store and can unmount its {@link Consumer}. */
+function ToggledFeed({
+  onStore,
+  onSetShown,
+}: {
+  onStore: (seeds: SeedStore<Row>) => void;
+  onSetShown: (set: (v: boolean) => void) => void;
+}) {
+  const seeds = useSeedStore<Row>();
+  onStore(seeds);
+  const [shown, set] = useState(true);
+  onSetShown(set);
+  return shown ? <Consumer seeds={seeds} /> : null;
+}
+
+/** A feed that reports each render's store and a way to re-render it. */
+function CountingFeed({
+  onRender,
+}: {
+  onRender: (seeds: SeedStore<Row>, rerender: () => void) => void;
+}) {
+  const seeds = useSeedStore<Row>();
+  const [, setN] = useState(0);
+  onRender(seeds, () => setN((n) => n + 1));
+  return null;
+}
+
 describe('useSeedStore', () => {
   it('keeps an entry after the consumer that wrote it unmounts', () => {
     let store: SeedStore<Row> | null = null;
-    function Consumer({ seeds }: { seeds: SeedStore<Row> }) {
-      useEffect(() => {
-        seeds.set('a', row('a', 'typed over', 7));
-      }, [seeds]);
-      return null;
-    }
     let setShown: (v: boolean) => void = () => {};
-    function Feed() {
-      const seeds = useSeedStore<Row>();
-      store = seeds;
-      const [shown, set] = useState(true);
-      setShown = set;
-      return shown ? <Consumer seeds={seeds} /> : null;
-    }
-    render(<Feed />);
+    render(
+      <ToggledFeed
+        onStore={(seeds) => {
+          store = seeds;
+        }}
+        onSetShown={(set) => {
+          setShown = set;
+        }}
+      />,
+    );
     act(() => setShown(false));
     expect(store).not.toBeNull();
     expect((store as unknown as SeedStore<Row>).get('a')?.version).toBe(7);
@@ -83,15 +114,15 @@ describe('useSeedStore', () => {
     const seen: Array<SeedStore<Row>> = [];
     let renders = 0;
     let bump: () => void = () => {};
-    function Feed() {
-      const seeds = useSeedStore<Row>();
-      renders += 1;
-      seen.push(seeds);
-      const [, setN] = useState(0);
-      bump = () => setN((n) => n + 1);
-      return null;
-    }
-    render(<Feed />);
+    render(
+      <CountingFeed
+        onRender={(seeds, rerender) => {
+          renders += 1;
+          seen.push(seeds);
+          bump = rerender;
+        }}
+      />,
+    );
     const before = renders;
     act(() => {
       seen[0].set('a', row('a', 'x', 1));

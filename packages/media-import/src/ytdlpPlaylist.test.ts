@@ -138,24 +138,25 @@ describe('listYoutubePlaylist — failures', () => {
     ['playlist-garbage', PLAYLIST_ERROR_DETAILS.generic],
     ['playlist-fail', PLAYLIST_ERROR_DETAILS.generic],
   ];
-  it.each(
-    cases,
-  )('%s raises YtDlpError with the fixed detail and no stderr text', async (mode, detail) => {
-    const dir = makeDir();
-    const binaryPath = makeBinary(dir);
-    stub(dir, { mode });
+  it.each(cases)(
+    '%s raises YtDlpError with the fixed detail and no stderr text',
+    async (mode, detail) => {
+      const dir = makeDir();
+      const binaryPath = makeBinary(dir);
+      stub(dir, { mode });
 
-    const err = await listYoutubePlaylist({
-      listId: LIST_ID,
-      href: HREF,
-      tempDir: dir,
-      binaryPath,
-    }).catch((e: unknown) => e);
+      const err = await listYoutubePlaylist({
+        listId: LIST_ID,
+        href: HREF,
+        tempDir: dir,
+        binaryPath,
+      }).catch((e: unknown) => e);
 
-    expect(err).toBeInstanceOf(YtDlpError);
-    expect((err as Error).message).toBe(detail);
-    expect((err as Error).message).not.toMatch(/ERROR|youtube:tab|unviewable/);
-  });
+      expect(err).toBeInstanceOf(YtDlpError);
+      expect((err as Error).message).toBe(detail);
+      expect((err as Error).message).not.toMatch(/ERROR|youtube:tab|unviewable/);
+    },
+  );
 
   it('the fixed details are the contract strings', () => {
     expect(PLAYLIST_ERROR_DETAILS).toEqual({

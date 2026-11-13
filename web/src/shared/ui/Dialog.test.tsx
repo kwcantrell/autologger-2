@@ -23,6 +23,27 @@ afterEach(() => {
   window.matchMedia = realMatchMedia;
 });
 
+/** Opens a mobile sheet from a trigger button, for the focus-on-open case. */
+function Harness() {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button type="button" onClick={() => setOpen(true)}>
+        Delete row
+      </button>
+      <Dialog open={open} onOpenChange={setOpen} title="Delete row?">
+        <button type="button">Keep</button>
+      </Dialog>
+    </>
+  );
+}
+
+/** A child with its own state, to prove the dialog content is not remounted. */
+function DraftInput() {
+  const [text, setText] = useState('');
+  return <input aria-label="Draft" value={text} onChange={(e) => setText(e.target.value)} />;
+}
+
 describe('Dialog (desktop)', () => {
   it('renders a dialog named by its title', () => {
     setMobile(false);
@@ -86,19 +107,6 @@ describe('Dialog (mobile bottom sheet)', () => {
 
   it('moves focus into the sheet on open (not left on the trigger behind it)', async () => {
     setMobile(true);
-    function Harness() {
-      const [open, setOpen] = useState(false);
-      return (
-        <>
-          <button type="button" onClick={() => setOpen(true)}>
-            Delete row
-          </button>
-          <Dialog open={open} onOpenChange={setOpen} title="Delete row?">
-            <button type="button">Keep</button>
-          </Dialog>
-        </>
-      );
-    }
     render(<Harness />);
     const trigger = screen.getByRole('button', { name: 'Delete row' });
     trigger.focus();
@@ -109,14 +117,10 @@ describe('Dialog (mobile bottom sheet)', () => {
 
   it('a vetoed close keeps the same sheet node and child state, and resets the drag transform', async () => {
     setMobile(true);
-    function Child() {
-      const [text, setText] = useState('');
-      return <input aria-label="Draft" value={text} onChange={(e) => setText(e.target.value)} />;
-    }
     // Parent vetoes every close (a dirty form's "Keep editing" pattern).
     render(
       <Dialog open onOpenChange={() => {}} title="Settings">
-        <Child />
+        <DraftInput />
       </Dialog>,
     );
     const sheet = await screen.findByRole('dialog', { name: 'Settings' });
@@ -157,13 +161,9 @@ describe('Dialog keeps its open-time mode across a breakpoint change', () => {
       dispatchEvent: () => false,
     })) as unknown as typeof window.matchMedia;
 
-    function Child() {
-      const [text, setText] = useState('');
-      return <input aria-label="Draft" value={text} onChange={(e) => setText(e.target.value)} />;
-    }
     render(
       <Dialog open onOpenChange={() => {}} title="Settings">
-        <Child />
+        <DraftInput />
       </Dialog>,
     );
     const card = screen.getByRole('dialog', { name: 'Settings' });
