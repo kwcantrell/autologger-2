@@ -393,6 +393,19 @@ describe('secret validation (D1 step 4, H5, H6)', () => {
       assert.throws(() => validateSecrets(kv([secret('BAO_TOKEN', 'x')]), names), /BAO_TOKEN/, env);
     }
   });
+  it('router custom-dashboards keys (J6) are compose keys of stage and prod only, with their formats checked', () => {
+    for (const env of ['stage', 'prod']) {
+      const names = allowedNames(env);
+      for (const [k, v] of [['ROUTER_CUSTOM_DASHBOARDS', 'on'], ['ROUTER_CUSTOM_DASHBOARDS', 'off'], ['ROUTER_CUSTOM_DASHBOARDS', ''], ['ROUTER_DASHBOARD_RUNTIME_HOST', ''], ['ROUTER_DASHBOARD_RUNTIME_HOST', 'dashboards.example.com']]) {
+        assert.equal(validateSecrets(kv([secret(k, v)]), names).get(k), v, `${env} ${k}=${v}`);
+      }
+      for (const v of ['true', 'ON', 'on x', ' on']) assert.throws(() => validateSecrets(kv([secret('ROUTER_CUSTOM_DASHBOARDS', v)]), names), /ROUTER_CUSTOM_DASHBOARDS.*bad-format/, `${env} [${v}]`);
+      for (const v of ['https://x.example.com', 'x.example.com:8443', 'x.example.com/p', 'x y.example.com', 'x.example.com}', 'x"y.example.com', '*.example.com', 'x.example.com.', 'X.example.com', 'a..b']) {
+        assert.throws(() => validateSecrets(kv([secret('ROUTER_DASHBOARD_RUNTIME_HOST', v)]), names), /ROUTER_DASHBOARD_RUNTIME_HOST.*bad-format/, `${env} [${v}]`);
+      }
+    }
+    assert.throws(() => validateSecrets(kv([secret('ROUTER_CUSTOM_DASHBOARDS', 'on')]), allowedNames('dev')), /ROUTER_CUSTOM_DASHBOARDS.*not-allowed/);
+  });
   it('refuses non-string values, NUL, bad identifiers, an empty or missing data object', () => {
     refuse([['API_TOKEN', ['x', 'LD_PRELOAD=y']]], /API_TOKEN.*not-a-string/);
     refuse([['API_TOKEN', null]], /API_TOKEN/);

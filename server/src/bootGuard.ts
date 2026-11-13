@@ -127,7 +127,10 @@ function customDashboardsConfig(env: Record<string, string | undefined>): Config
  * when the flag is on and exactly `off` when it is off; any other value, empty included, is a
  * disagreement (the router cannot import its rules from it either). Absent, nothing is checked.
  */
-function routerFlagRefusal(env: Record<string, string | undefined>, flagOn: boolean): string | null {
+function routerFlagRefusal(
+  env: Record<string, string | undefined>,
+  flagOn: boolean,
+): string | null {
   const router = env.ROUTER_CUSTOM_DASHBOARDS;
   if (router === undefined) return null;
   if (router === (flagOn ? 'on' : 'off')) return null;
@@ -168,7 +171,7 @@ export function customDashboardsRefusal(env: Record<string, string | undefined>)
   if (env.ROUTER_CUSTOM_DASHBOARDS !== undefined) {
     const routerHost = comparableHost(env.ROUTER_DASHBOARD_RUNTIME_HOST ?? '');
     if (!routerHost || routerHost !== comparableHost(new URL(runtime).hostname)) {
-      return 'CUSTOM_DASHBOARDS_ENABLED is on and ROUTER_CUSTOM_DASHBOARDS is set, so ROUTER_DASHBOARD_RUNTIME_HOST must be set to the host of DASHBOARD_RUNTIME_ORIGIN (the router sends that host to the api and puts it in the app\'s frame-src); set both in OpenBao, see docs/openbao-secrets.md.';
+      return "CUSTOM_DASHBOARDS_ENABLED is on and ROUTER_CUSTOM_DASHBOARDS is set, so ROUTER_DASHBOARD_RUNTIME_HOST must be set to the host of DASHBOARD_RUNTIME_ORIGIN (the router sends that host to the api and puts it in the app's frame-src); set both in OpenBao, see docs/openbao-secrets.md.";
     }
   }
   if (!mcpSigningSecretValid(cfg)) {

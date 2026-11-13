@@ -408,7 +408,8 @@ describe('checkBootEnv: the router settings agree with the api (design §10.3, J
     DASHBOARD_RUNTIME_ORIGIN: 'https://runtime.dashboards.example',
     MCP_SIGNING_SECRET: secret,
   };
-  const both = /ROUTER_CUSTOM_DASHBOARDS[\s\S]*CUSTOM_DASHBOARDS_ENABLED|CUSTOM_DASHBOARDS_ENABLED[\s\S]*ROUTER_CUSTOM_DASHBOARDS/;
+  const both =
+    /ROUTER_CUSTOM_DASHBOARDS[\s\S]*CUSTOM_DASHBOARDS_ENABLED|CUSTOM_DASHBOARDS_ENABLED[\s\S]*ROUTER_CUSTOM_DASHBOARDS/;
   const hostBoth = /ROUTER_DASHBOARD_RUNTIME_HOST[\s\S]*DASHBOARD_RUNTIME_ORIGIN/;
 
   it('starts when ROUTER_CUSTOM_DASHBOARDS is absent, flag on or off', () => {
@@ -433,7 +434,11 @@ describe('checkBootEnv: the router settings agree with the api (design §10.3, J
 
   it('refuses ROUTER_CUSTOM_DASHBOARDS on with the flag off, naming both variables', () => {
     for (const flag of [undefined, '', '0', 'no']) {
-      const msg = checkBootEnv({ ...ok, CUSTOM_DASHBOARDS_ENABLED: flag, ROUTER_CUSTOM_DASHBOARDS: 'on' });
+      const msg = checkBootEnv({
+        ...ok,
+        CUSTOM_DASHBOARDS_ENABLED: flag,
+        ROUTER_CUSTOM_DASHBOARDS: 'on',
+      });
       expect(msg, String(flag)).toMatch(both);
     }
   });
@@ -449,15 +454,31 @@ describe('checkBootEnv: the router settings agree with the api (design §10.3, J
 
   it('refuses a value that is neither on nor off (empty, wrong case, padded) as a disagreement', () => {
     for (const v of ['', 'ON', 'Off', 'true', '1', ' on', 'on ']) {
-      for (const env of [ok, { ...on, ROUTER_DASHBOARD_RUNTIME_HOST: 'runtime.dashboards.example' }]) {
-        expect(checkBootEnv({ ...env, ROUTER_CUSTOM_DASHBOARDS: v }), JSON.stringify(v)).toMatch(both);
+      for (const env of [
+        ok,
+        { ...on, ROUTER_DASHBOARD_RUNTIME_HOST: 'runtime.dashboards.example' },
+      ]) {
+        expect(checkBootEnv({ ...env, ROUTER_CUSTOM_DASHBOARDS: v }), JSON.stringify(v)).toMatch(
+          both,
+        );
       }
     }
   });
 
   it('with both on, refuses a missing, empty or different ROUTER_DASHBOARD_RUNTIME_HOST, naming both variables', () => {
-    for (const host of [undefined, '', '  ', 'other.dashboards.example', 'dashboards.example', 'autologger.example']) {
-      const msg = checkBootEnv({ ...on, ROUTER_CUSTOM_DASHBOARDS: 'on', ROUTER_DASHBOARD_RUNTIME_HOST: host });
+    for (const host of [
+      undefined,
+      '',
+      '  ',
+      'other.dashboards.example',
+      'dashboards.example',
+      'autologger.example',
+    ]) {
+      const msg = checkBootEnv({
+        ...on,
+        ROUTER_CUSTOM_DASHBOARDS: 'on',
+        ROUTER_DASHBOARD_RUNTIME_HOST: host,
+      });
       expect(msg, JSON.stringify(host)).toMatch(hostBoth);
       expect(msg).toMatch(/ROUTER_CUSTOM_DASHBOARDS/);
       expect(msg).not.toContain('dashboards.example');
@@ -465,9 +486,17 @@ describe('checkBootEnv: the router settings agree with the api (design §10.3, J
   });
 
   it('compares the runtime host lower-cased with trailing dots stripped', () => {
-    for (const host of ['RUNTIME.Dashboards.EXAMPLE', 'runtime.dashboards.example.', 'Runtime.Dashboards.Example..']) {
+    for (const host of [
+      'RUNTIME.Dashboards.EXAMPLE',
+      'runtime.dashboards.example.',
+      'Runtime.Dashboards.Example..',
+    ]) {
       expect(
-        checkBootEnv({ ...on, ROUTER_CUSTOM_DASHBOARDS: 'on', ROUTER_DASHBOARD_RUNTIME_HOST: host }),
+        checkBootEnv({
+          ...on,
+          ROUTER_CUSTOM_DASHBOARDS: 'on',
+          ROUTER_DASHBOARD_RUNTIME_HOST: host,
+        }),
         host,
       ).toBeNull();
     }
@@ -483,7 +512,11 @@ describe('checkBootEnv: the router settings agree with the api (design §10.3, J
 
   it('does not check the runtime host with the flag off, whatever it holds', () => {
     expect(
-      checkBootEnv({ ...ok, ROUTER_CUSTOM_DASHBOARDS: 'off', ROUTER_DASHBOARD_RUNTIME_HOST: 'x y' }),
+      checkBootEnv({
+        ...ok,
+        ROUTER_CUSTOM_DASHBOARDS: 'off',
+        ROUTER_DASHBOARD_RUNTIME_HOST: 'x y',
+      }),
     ).toBeNull();
   });
 });
