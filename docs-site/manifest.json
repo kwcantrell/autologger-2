@@ -59,6 +59,9 @@
     "local-container-environments": {
       "excluded": "Infrastructure-only: local development and staging environments."
     },
+    "mcp-authorization": {
+      "excluded": "Not user-facing yet: the OAuth server for Claude connectors exists only with the custom dashboards flag on, and has no user-facing screen until Connected apps (a later job)."
+    },
     "media-processing": {
       "pages": [
         "recording-audio.html",
