@@ -9,7 +9,20 @@
 
 @import 'tailwindcss/theme.css' layer(theme);
 @import 'tailwindcss/preflight.css' layer(base);
-@import 'tailwindcss/utilities.css' layer(utilities);
+/*
+ * source('../../..') pins Tailwind's class-candidate scan to the web app root (web/), resolved
+ * relative to THIS file. Without it the scan root is the PostCSS plugin's `base` option, or
+ * `process.cwd()` when that is unset, and neither is stable here:
+ * - Next 16's Turbopack evaluates postcss.config.mjs with an `import.meta.url` of
+ *   `web/web/postcss.config.mjs` (job 014). The `base` derived from it named a missing
+ *   directory, nothing was scanned, and no utility class was emitted, in build or dev.
+ * - `process.cwd()` is whatever the PostCSS runner's cwd is. Turbopack's worker runs in `web/`,
+ *   but Next 15's in-process webpack loader ran in `server/` under the embedded dev server
+ *   (dev-layout-fix), which is why `base` existed.
+ * A path in the stylesheet depends on neither.
+ * Pinned by web/src/shared/theme/tailwindBuild.test.ts (runs a real next build).
+ */
+@import 'tailwindcss/utilities.css' layer(utilities) source('../../..');
 @import 'tw-animate-css';
 
 @theme {
