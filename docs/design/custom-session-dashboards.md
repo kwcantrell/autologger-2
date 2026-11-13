@@ -47,7 +47,7 @@ Each item was checked against the code or a spec on `main` at `261d520c`.
 | --- | --- | --- |
 | Studio role check | `server/src/routers/teams.ts`: `requireTeamRole`, `requireTeamRoleIn`, `OWNER_OR_ADMIN` | Masked `404` for a non-member and `403` for a member without the role. `requireTeamRoleIn` re-checks the role inside the write's transaction with `authGetMembershipRoleForShare`, so a concurrent demotion either waits for the write or fails it. Dashboard writes use the same pair. |
 | Session access check | `server/src/routers/_helpers.ts`: `requireSession`, `canAccessSession`, `requireShowAccess`; `packages/catalog/src/authStore.ts`: `authCanAccessShow`, `authCanAccessShowForShare` | One rule: a manager of the show's studio, or a member with a grant on the show. Every denial is the same masked `404 Session not found`. Every MCP read tool and every web query call uses `requireSession`. |
-| Caller binding | `server/src/middleware/auth.ts` (`authContext`); `server/src/catalogSystem.repo.test.ts` | `.forUser(` may appear only in the auth middleware. A new bearer credential therefore has to be resolved inside `authContext`, as Companion device tokens are, and not in a router. Session-hub calls go through `sessionCaller(c)` (`_helpers.ts`), which is the allowed `userCaller(` site. |
+| Caller binding | `server/src/middleware/auth.ts` (`authContext`); `server/src/autogenerate/principal.ts`; `server/src/catalogSystem.repo.test.ts` (`USER_BINDERS`, `USER_SESSION_CALLERS`) | `.forUser(` may appear only in the files `USER_BINDERS` lists: the auth middleware and the batch worker's `autogenerate/principal.ts`, which binds a batch job's work to its initiator (batch-autogenerate D4). Neither is a router, and a request credential is resolved only in the middleware. A new bearer credential therefore has to be resolved inside `authContext`, as Companion device tokens are, and not in a router. Request-path session-hub calls go through `sessionCaller(c)` (`_helpers.ts`), one of the allowed `userCaller(` sites. |
 | Hashed bearer tokens | `server/src/auth/companionDeviceToken.ts`; `supabase/migrations/20261015000000_companion_devices.sql` | Prefixed random tokens, stored only as hex SHA-256 in a system-only table (`catalog_user` privileges revoked), and looked up in `authContext`. OAuth tokens copy this pattern. |
 | Login sessions and OAuth state | `server/src/auth/identity.ts`: `createLoginSession`, `resolveSessionUser`, `putOauthState`, `takeOauthState`; `packages/ports/src/kvStore.ts` (`take`, `replaceIf`) | The KV store has an atomic one-shot `take`, which suits authorization codes. `resolveSessionUser` reads through `authGetUserById`, which excludes disabled accounts (`disabled_at_utc IS NULL`). |
 | Google sign-in | `server/src/routers/auth.ts`: `GET /auth/google/start`, `GET /auth/google/callback` | The callback sets the `HttpOnly`, `SameSite=Lax`, host-only session cookie and always redirects to `/` (api-contract-freeze "OAuth callback failure redirect", scenario "Success path unchanged"). There is no return-to parameter today. Section 4.4 adds one, only for states issued by the new authorize endpoint. |
@@ -55,8 +55,8 @@ Each item was checked against the code or a spec on `main` at `261d520c`.
 | Existing MCP server | `packages/ai-runtime/src/aiMcpServer.ts` (`AiMcpListener`, `buildSessionMcpServer`); `packages/ai-runtime/src/mcpTools.ts`; `packages/ai-runtime/src/aggregates.ts` | It is loopback-only by design: "NEVER binds a non-loopback address … or folding it onto the public :8787 app". It uses per-turn tokens and binds the session at registration. **This design doesn't reuse the listener.** It reuses its discipline (session bound outside the model's arguments, hub resolved at call time, bounded and truncation-stating results) and the pure functions in `aggregates.ts`. The public `/mcp` endpoint is a new Hono route. |
 | MCP SDK | `@modelcontextprotocol/sdk` 1.32.x (`package-lock.json`), which ships `server/webStandardStreamableHttp.js`; `LATEST_PROTOCOL_VERSION = '2025-11-25'` | The SDK's web-standard Streamable HTTP transport plugs into a Hono handler (Request in, Response out) in stateless mode. Its Express-based auth helpers are not used. |
 | Hono app | `server/src/app.ts` (`wireApp`) | Middleware runs in this order: bindings, `ipAllowlistMiddleware`, `authContext`, and `/api/*` compression. Routers are mounted with `app.route('/', …)`. `onError` maps `ApiError` and others to `{detail}`. |
-| Frontend bridge | `server/src/app.ts` `frontendBridge`, `keepAlreadySentOnHead`; `server/src/node/nextFrontend.ts` | `app.get('*')` hands every unmatched GET, except `/api*` and `/auth*`, to Next.js, so it gets Next's not-found document. Unmatched non-GET requests get Hono's `404`. With the flag off, `/mcp`, `/oauth/*` and `/.well-known/*` therefore keep today's answers. `keepAlreadySentOnHead` (job 014) is untouched, because the new routes are ordinary Hono responses. |
-| Router (split topology) | `docker/Caddyfile` rules 1–6; `docker/scripts/caddy-adapt.baseline.json`; `docker/dev-gate.Caddyfile` | Only `/api` and `/auth` prefixes, non-GET/HEAD methods and trailing-slash paths reach `api:8787`. **Every other GET goes to `web:3000`.** New GET routes need exact-path rules in the file's raw-URI CEL style (the lesson of deferred job 016). |
+| Frontend bridge | `server/src/app.ts` `frontendBridge`, `keepAlreadySentOnHead`; `server/src/node/nextFrontend.ts`; container-deployment "Two images built from one repository" | **The answer depends on the process.** In the single-process server (the dev stack), `app.get('*')` hands every unmatched GET, except `/api*` and `/auth*`, to Next.js, so it gets Next's not-found document. The production `api` image has no `web/.next` and boots API-only; there `frontendBridge` has no frontend and answers every unmatched request with Hono's plain-text `404 Not Found`. Unmatched non-GET requests get Hono's `404` in both. In the split topology the `web:3000` container answers today's GETs for `/mcp`, `/oauth/*` and `/.well-known/*` with Next's not-found HTML, so **routing those GETs to the api would change their answer**. That is why the new router rules exist only when the flag is on (section 10.3). With the flag off, no new route is mounted and no router rule changes, so each topology keeps its own answers. `keepAlreadySentOnHead` (job 014) is untouched, because the new routes are ordinary Hono responses. |
+| Router (split topology) | `docker/Caddyfile` rules 1–6; `docker/scripts/caddy-adapt.baseline.json`; `docker/scripts/check-envs.sh` invariants 10 and 13; `compose.yaml` `router`; `docker/dev-gate.Caddyfile` | Only `/api` and `/auth` prefixes, non-GET/HEAD methods and trailing-slash paths reach `api:8787`. **Every other GET goes to `web:3000`.** New GET routes need exact-path rules in the file's raw-URI CEL style (the lesson of deferred job 016). The file is bind-mounted read-only and adapted when the router starts; it already reads `{$VAR:default}` environment placeholders (`ROUTER_FRONT_GW`, `ROUTER_BACK_GW`). Invariant 13 pins the adapt output with no variables set to the committed baseline, and invariant 10 requires the prod router's resolved `environment` to be empty. |
 | IP allowlist | `server/src/middleware/ipAllowlist.ts` | It applies to every path when `IP_ALLOWLIST` is set. Claude's connector traffic comes from Anthropic's egress range, so an operator using the allowlist has to add that range (section 10). |
 | v2 dashboards | `openspec/specs/ai-v2-dashboards/spec.md`; `server/src/routers/aiV2.ts`; `catalog.session_dashboards`; `web/src/pages/index/components/aiV2/*` | One validated config per session, rendered through the app's own widget components. The Dashboards tab (web-session-console "Workspace tab IA") hosts it. All of this is unchanged. |
 | shadcn set | `web/components.json`; `web/src/shared/components/ui/*.tsx` | The components that exist are the allowlist's starting set (section 7.2). `web/package.json` has no chart library. |
@@ -900,22 +900,56 @@ flag is on. Its messages name variables, never values (web-frontend-platform).
 
 ### 10.3 Router, proxy and allowlist (the operator's part)
 
-- **Caddy (`docker/Caddyfile`).** New exact-path rules, in the file's raw-URI CEL style, send
-  these GET/HEAD paths to `api:8787`:
-  - `/.well-known/oauth-protected-resource`;
-  - `/.well-known/oauth-protected-resource/mcp`;
-  - `/.well-known/oauth-authorization-server`;
-  - `/oauth/authorize`;
-  - `/oauth/authorize/resume`;
-  - `/mcp`.
+- **Caddy (`docker/Caddyfile`): the new rules exist only when the flag is on.** They can't be
+  always present. In the split topology `web:3000` answers today's GETs on these paths with
+  Next's not-found HTML, but the production `api` image is API-only and its frontend bridge
+  answers the same GETs with Hono's plain-text `404 Not Found` (section 2, "Frontend bridge").
+  An always-present rule would change those answers on deployments that never opt in.
+  - **Mechanism.** The Caddyfile defines two snippets, `(custom-dashboards-off)`, which is empty,
+    and `(custom-dashboards-on)`, which holds the new rules. One line, placed after rule 5 and
+    before rule 6, imports one of them:
 
-  A host rule sends every request whose `Host` is the runtime host to `api:8787`. Look-alikes and
-  percent-encoded variants are not matched; the deferred job 016's acceptance criteria are reused.
-  - The rules are present whatever the flag says, because Caddy doesn't read the api's
-    environment.
-  - With the flag off, the api answers these GETs through its frontend bridge with Next's
-    not-found document, which is the same document `web:3000` returns for them today. The
-    router-level change is therefore not observable. The router job proves this side by side.
+    ```
+    import custom-dashboards-{$ROUTER_CUSTOM_DASHBOARDS:off}
+    ```
+
+    Caddy resolves the placeholder from the router container's environment when it adapts the
+    file at start-up, as it already does for `ROUTER_FRONT_GW` and `ROUTER_BACK_GW`. A snippet
+    definition that isn't imported adds nothing to the config.
+  - **The `on` snippet** holds exact-path rules, in the file's raw-URI CEL style, that send these
+    GET/HEAD paths to `api:8787`:
+    - `/.well-known/oauth-protected-resource`;
+    - `/.well-known/oauth-protected-resource/mcp`;
+    - `/.well-known/oauth-authorization-server`;
+    - `/oauth/authorize`;
+    - `/oauth/authorize/resume`;
+    - `/mcp`.
+
+    It also holds a host rule that sends every request whose `Host` is the runtime host to
+    `api:8787`. That host reaches the router through a variable J6 names; `check-envs.sh`
+    requires it to be a bare host name, so a value can't break out of a matcher (as
+    `hostile_ports` does for ports). Look-alikes and percent-encoded variants are not matched;
+    the deferred job 016's acceptance criteria are reused.
+  - **The router variable.** `compose.yaml` sets `ROUTER_CUSTOM_DASHBOARDS:
+    ${ROUTER_CUSTOM_DASHBOARDS:-off}` on both the `router` and the `api` service, so an unset or
+    empty value resolves to `off`. The operator sets it to `on`, in the same OpenBao secret, when
+    they set `CUSTOM_DASHBOARDS_ENABLED`. `check-envs.sh` requires the resolved value to be
+    exactly `on` or `off`. Caddy itself refuses most other values, because it looks for an
+    import file (`File to import not found: custom-dashboards-true`) and won't start, but it
+    accepts a value such as `on x` as `on` with an extra argument, so the check is needed. Invariant 10 changes
+    from "the router's `environment` is empty" to "it holds exactly `ROUTER_CUSTOM_DASHBOARDS`
+    (plus the gateway variables only in non-prod stacks)".
+  - **The two settings can't disagree.** When `ROUTER_CUSTOM_DASHBOARDS` is present in the api's
+    environment (only the split-topology stacks set it), the boot guard refuses to start unless
+    it is `on` exactly when the flag is on, and names both variables. The router depends on a
+    healthy api, so a mismatched pair never serves traffic. The dev single-process stack sets no
+    router variable, so the check doesn't apply there.
+  - **With the flag off the router config is byte-identical to today's.** Adapting the gated
+    Caddyfile with the variable unset, or set to `off`, produces exactly the committed
+    `docker/scripts/caddy-adapt.baseline.json`; with `on`, the only differences are the new rules
+    and the renumbered route groups. This was checked with a prototype of the snippets on the
+    pinned router image while this design was revised (job 022, proof round 1). Invariant 13 keeps
+    its existing baseline; J6 adds a second baseline for `on`.
 - **The runtime host** has to resolve to the same tunnel or proxy as the app, with its own TLS
   certificate. The api serves only `/runtime/v1/*` on that host and answers `404` for everything
   else there, including `/api`, `/mcp` and `/auth`, by checking `Host` before routing. This is
@@ -928,8 +962,10 @@ flag is on. Its messages name variables, never values (web-frontend-platform).
 ### 10.4 What exactly is unchanged when it is off
 
 - **Routes:** none of the routes of section 12.1 is mounted.
-  - `GET` and `HEAD` on `/mcp`, `/oauth/*` and `/.well-known/*` fall through to the frontend
-    bridge (Next's not-found document), as today.
+  - `GET` and `HEAD` on `/mcp`, `/oauth/*` and `/.well-known/*` get today's answer in each
+    topology. In the split topology no new router rule is imported (section 10.3), so they still
+    reach `web:3000` and get Next's not-found document. In the single-process server they fall
+    through to the frontend bridge, as today.
   - `POST`, `PUT` and `DELETE` on them get Hono's `404`, as today.
   - The new `/api/...` routes get the `/api` not-found answer, as any unknown `/api` path does
     today.
@@ -942,8 +978,11 @@ flag is on. Its messages name variables, never values (web-frontend-platform).
   - The Dashboards tab and Settings render as today.
   - The two new list requests each cost one `404` per tab or Settings open. They are client-side
     requests, not a change to any existing route.
+- **Router:** the adapted Caddy config is byte-identical to the committed baseline
+  (section 10.3). The api never sees the GETs that `web:3000` answers today.
 - **Boot:**
-  - Boot needs nothing new.
+  - Boot needs nothing new. `ROUTER_CUSTOM_DASHBOARDS` resolves to `off` when unset, which
+    agrees with the flag being off.
   - The new migrations create **empty** tables, which is not observable through the contract.
   - The sweeper's MCP deletes find nothing.
 - **Unaffected surfaces:** the WebSocket, v2 dashboards, AI chat, the generation features,
@@ -971,7 +1010,10 @@ treated as attacker-controlled from the moment it is saved.
 ## 12. Contract impact
 
 All of this is **additive**. When the flag is off, no existing route, method, JSON shape, status
-code, header, export body or WebSocket message changes (section 10.4). When the flag is on,
+code, header, export body or WebSocket message changes (section 10.4), in the single-process
+server and in the split topology with the API-only `api` image. In the split topology the router
+config is byte-identical to today's, because the new router rules are imported only when
+`ROUTER_CUSTOM_DASHBOARDS` is `on` (section 10.3). When the flag is on,
 exactly two existing behaviors change, listed in section 12.2, and each changes only for
 requests that only the new feature can produce.
 
@@ -1009,9 +1051,9 @@ is unchanged.
 | `ai-v2-dashboards` | "No agent-authored markup is ever rendered" | Scoped: the rule continues to govern v2 dashboards and the app origin, and its "anywhere, by any path" no longer covers code executed inside the custom-dashboards sandbox runtime, which `custom-dashboards` governs. The Purpose line is updated to match. Nothing else in v2 changes. | J7 |
 | `web-session-console` | "Workspace tab IA (single owner)" | The Dashboards tab hosts the custom section above the v2 editor. The six tabs, their order and their labels are unchanged. | J9 |
 | `web-ui-system` | new "Settings manages the user's connected apps", beside "Settings manages the user's Companion devices" | added | J4 |
-| `web-frontend-platform` | the boot-guard requirement (the `PUBLIC_BASE_URL` checks) | the flag-on checks of section 10.1 | J1 |
+| `web-frontend-platform` | the boot-guard requirement (the `PUBLIC_BASE_URL` checks) | the flag-on checks of section 10.1 (J1); the refusal when `ROUTER_CUSTOM_DASHBOARDS` is present and disagrees with the flag (J6, section 10.3) | J1, J6 |
 | `core-ports-architecture` | "Every catalog and session call is bound to a caller" and "Authentication and authorization are distinct seams for every caller" | the `/mcp` bearer as a second credential resolved in the auth middleware; the new system reasons | J2, J5 |
-| `container-deployment`, `local-container-environments` | "Internal router preserves the single-origin disposition matrix", "Deployment behind a TLS-terminating proxy is configured explicitly" | the new exact-path and runtime-host rules; the new variables | J6 |
+| `container-deployment`, `local-container-environments` | "Internal router preserves the single-origin disposition matrix", "Deployment behind a TLS-terminating proxy is configured explicitly" | the new exact-path and runtime-host rules, present only in the `(custom-dashboards-on)` snippet that `ROUTER_CUSTOM_DASHBOARDS=on` imports; the router's environment allowlist (check-envs invariant 10) and the `on` adapt baseline beside the unchanged `off` one (invariant 13); the new variables | J6 |
 | new `mcp-authorization` | the OAuth server, tokens, consent, revocation, cleanup | new capability | J2, J3, J4 |
 | new `mcp-session-data` | `/mcp`, the read tools, paging and associated wiki pages | new capability | J5 |
 | new `custom-dashboards` | the data model, validation, the runtime, the View and the web viewer | new capability | J7, J8, J9 |
@@ -1106,12 +1148,39 @@ passes `scripts/check-change.sh`. Dependencies are merge order.
   route), `core-ports-architecture`.
 
 **J6. Router rules for the new paths and the runtime host.**
-- *Goal:* the Caddy rules of section 10.3, the regenerated adapt baseline, and documentation.
-- *Draft criteria:* deferred job 016's criteria 1–6, extended with `/oauth/authorize/resume`,
-  `/.well-known/oauth-protected-resource` and the runtime-host rule, plus a side-by-side proof
-  that the flag-off answers are unchanged for each path.
+- *Goal:* the flag-gated Caddy snippets and import of section 10.3, the
+  `ROUTER_CUSTOM_DASHBOARDS` variable on the `router` and `api` services, the boot-guard
+  agreement check, the `check-envs.sh` changes, the `on` adapt baseline, and documentation.
+- *Draft criteria:*
+  - Deferred job 016's criteria 1–6, extended with `/oauth/authorize/resume`,
+    `/.well-known/oauth-protected-resource` and the runtime-host rule, hold with
+    `ROUTER_CUSTOM_DASHBOARDS=on`.
+  - `caddy adapt` on the router's pinned image, with the variable unset and with it set to
+    `off`, prints output byte-identical to the **existing, unregenerated**
+    `docker/scripts/caddy-adapt.baseline.json` (check-envs invariant 13). With `on` it matches
+    a new committed `on` baseline.
+  - `check-envs.sh` fails on a router value other than `on` or `off`, on a hostile runtime-host
+    value, and on any other router environment key in prod (invariant 10, with
+    `test_check_envs.sh` cases).
+  - The boot guard refuses to start, naming both variables, when `ROUTER_CUSTOM_DASHBOARDS` is
+    present and disagrees with the flag; it starts when they agree or the variable is absent.
+  - **Flag-off parity on the API-only `api` image, as deployed.** On a stage stack built from
+    the same `docker/Dockerfile` targets as prod (the `api` target, which has no `web/.next` and
+    logs its API-only warning), with the flag and `ROUTER_CUSTOM_DASHBOARDS` both off: for `GET`,
+    `HEAD`, `POST`, `PUT` and `DELETE` on each path of section 10.3 (and the runtime host),
+    the router's answer is identical to the answer recorded on the same stack built from `main`
+    before J6. J6 adds these rows to `docker/scripts/test_router.sh`'s disposition table
+    (status, `Set-Cookie` presence and the compared headers, including `Content-Type`), plus a
+    hash of each body, recorded with `--record` against the `main` stack first; the job's stack
+    must then pass the unchanged table. The GETs must still show Next's HTML not-found document
+    from `web:3000`, not the api's plain-text `404 Not Found`.
+  - With both on, the same GETs reach the api (recorded the same way).
+- *Proof plan:* the verifier re-runs the adapt comparisons and `check-envs.sh` on the pinned
+  image, and re-runs the stage before/after recording against the API-only `api` image. The dev
+  single-process stack is not accepted as flag-off parity evidence for the split topology.
 - *Depends on:* J3, so the paths are final. It may merge before J5.
-- *Specs:* `container-deployment`, `local-container-environments`.
+- *Specs:* `container-deployment`, `local-container-environments`, `web-frontend-platform` (the
+  agreement check).
 
 **J7. Dashboard store, validation and write tools.**
 - *Goal:* the migration for section 6.1 with its policies, the parser and compiler dependency
