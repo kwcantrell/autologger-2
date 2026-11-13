@@ -7,7 +7,7 @@
 // and strings that mention the word don't count.
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
-import ts from 'typescript';
+import ts from '@typescript/typescript6';
 import { describe, expect, it } from 'vitest';
 
 const SRC = __dirname;

@@ -11,7 +11,7 @@
 // `@autologger/ports` interfaces and `!promise`, so this uses the TypeScript type checker over the
 // real program.
 import { join, relative } from 'node:path';
-import ts from 'typescript';
+import ts from '@typescript/typescript6';
 import { describe, expect, it } from 'vitest';
 
 const SERVER = join(__dirname, '..');
