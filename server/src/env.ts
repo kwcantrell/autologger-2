@@ -12,7 +12,10 @@ import { createHash } from 'node:crypto';
 import { accessSync, constants } from 'node:fs';
 import { delimiter, join } from 'node:path';
 import type { Config } from '@autologger/ports';
-import { FRAME_BUS_SECRET_MIN_LENGTH } from '@autologger/storage';
+import {
+  FRAME_BUS_SECRET_MIN_LENGTH,
+  MCP_REFRESH_GRACE_DEFAULT_SECONDS,
+} from '@autologger/storage';
 
 export function sessionCookieName(env: Config): string {
   return (env.SESSION_COOKIE || '').trim() || 'autologger_sid';
@@ -547,8 +550,9 @@ export function mcpAllowedOrigins(env: Config): string[] | null {
   return out;
 }
 
-/** `MCP_REFRESH_GRACE_SECONDS`'s default: ADR 0035 decision 17's 30 s. */
-export const MCP_REFRESH_GRACE_DEFAULT = 30;
+/** `MCP_REFRESH_GRACE_SECONDS`'s default: ADR 0035 decision 17's 30 s, the storage sweeper's own
+ * default, so the two cannot drift. */
+export const MCP_REFRESH_GRACE_DEFAULT = MCP_REFRESH_GRACE_DEFAULT_SECONDS;
 /** `MCP_REFRESH_GRACE_SECONDS`'s largest accepted value (section 13.3 item 14 (b)). */
 export const MCP_REFRESH_GRACE_MAX = 60;
 
