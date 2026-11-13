@@ -19,6 +19,7 @@ import re
 import shutil
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -320,8 +321,9 @@ def test_env(ctx: Context) -> tuple[dict[str, str], str]:
 
 
 def run_commands(ctx: Context, names: list[str]):
+    """Runs the configured commands concurrently; the first failure in `names` order is reported."""
     cmds = ctx.cfg.get("commands") or {}
-    ran, empty, note = [], [], ""
+    todo, empty, note = [], [], ""
     for name in names:
         cmd = (cmds.get(name) or "").strip()
         if not cmd:
@@ -330,11 +332,19 @@ def run_commands(ctx: Context, names: list[str]):
         env = None
         if name == "test":
             env, note = test_env(ctx)
-        r = subprocess.run(cmd, shell=True, cwd=ROOT, capture_output=True, text=True, env=env)
+        todo.append((name, cmd, env))
+
+    def run_one(item):
+        _, cmd, env = item
+        return subprocess.run(cmd, shell=True, cwd=ROOT, capture_output=True, text=True, env=env)
+
+    with ThreadPoolExecutor(max_workers=max(1, len(todo))) as pool:
+        results = list(pool.map(run_one, todo))
+    for (_, cmd, _), r in zip(todo, results):
         if r.returncode != 0:
             tail = "\n".join((r.stdout + r.stderr).strip().splitlines()[-30:])
             return "FAIL", f"`{cmd}` exited {r.returncode}" + (f" ({note})" if note else "") + f":\n{tail}"
-        ran.append(name)
+    ran = [name for name, _, _ in todo]
     if empty and not ran:
         return "WARN", f"no commands configured for {empty} in lifecycle.commands"
     return "PASS", f"ran {ran}" + (f" ({note})" if note else "") + (f"; not configured: {empty}" if empty else "")

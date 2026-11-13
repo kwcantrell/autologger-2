@@ -267,6 +267,54 @@ class OpenspecGate(RepoCase):
         self.assertIn("FAIL  openspec", r.stdout)
 
 
+class CommandsGate(RepoCase):
+    """The `commands` gate runs its configured commands concurrently."""
+
+    def make_cmds(self, **cmds: str) -> Repo:
+        cfg = json.loads(json.dumps(BASE_CONFIG))
+        cfg["lifecycle"]["commands"] = cmds
+        return self.make({"docs/notes.md": "notes\n"}, config=cfg)
+
+    def test_typecheck_and_test_overlap(self):
+        # Each command waits for the other's marker file: only concurrent runs can both finish.
+        rendezvous = lambda mine, other: (
+            f"touch {mine}; for i in $(seq 100); do [ -e {other} ] && exit 0; sleep 0.1; done; exit 1")
+        tmp = tempfile.mkdtemp(prefix="rendezvous-")
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        repo = self.make_cmds(typecheck=rendezvous(f"{tmp}/a", f"{tmp}/b"),
+                              test=rendezvous(f"{tmp}/b", f"{tmp}/a"))
+        r = repo.run("--only", "commands")
+        self.assertExit(r, 0)
+        self.assertEqual(gate_lines(r.stdout), {"commands": "PASS"})
+        self.assertIn("ran ['typecheck', 'test']", r.stdout)
+
+    def test_failing_command_is_named_with_its_output_tail(self):
+        repo = self.make_cmds(typecheck="true", test="echo the-test-output; echo bad >&2; exit 7")
+        r = repo.run("--only", "commands")
+        self.assertExit(r, 1)
+        self.assertEqual(gate_lines(r.stdout), {"commands": "FAIL"})
+        self.assertIn("`echo the-test-output; echo bad >&2; exit 7` exited 7", r.stdout)
+        self.assertIn("the-test-output", r.stdout)
+        self.assertIn("bad", r.stdout)
+
+    def test_a_failure_in_typecheck_fails_the_gate_while_test_passes(self):
+        repo = self.make_cmds(typecheck="echo tsc-error; exit 2", test="true")
+        r = repo.run("--only", "commands")
+        self.assertExit(r, 1)
+        self.assertIn("exited 2", r.stdout)
+        self.assertIn("tsc-error", r.stdout)
+
+    def test_skip_db_tests_and_full_tests_handling_is_unchanged(self):
+        repo = self.make_cmds(typecheck="true",
+                              test='echo "t=[$SKIP_DB_TESTS]"; exit 1')
+        r = repo.run("--only", "commands", GITHUB_EVENT_NAME="pull_request", SKIP_DB_TESTS="0")
+        self.assertIn("t=[1]", r.stdout)  # local run: skipped, an inherited value is dropped
+        self.assertIn("pg/integration skipped: local run", r.stdout)
+        full = repo.run("--only", "commands", FULL_TESTS="1")
+        self.assertIn("t=[]", full.stdout)
+        self.assertIn("full: FULL_TESTS=1", full.stdout)
+
+
 class DbSelection(RepoCase):
     def test_skip_when_no_db_path_changed(self):
         repo = self.make({"docs/notes.md": "notes\n"})

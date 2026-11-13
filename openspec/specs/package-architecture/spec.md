@@ -101,8 +101,8 @@ because a change that wires a new package into the wrong one fails **silently**:
 server's own coverage is explicitly enumerated vitest projects — its two-tier
 unit/integration project setup, including its integration `setupFiles`, SHALL be preserved
 verbatim, and package projects SHALL NOT be added to it — while each package's coverage is
-an entry in the **root manifest's** chained `test` and `typecheck` commands invoking that
-workspace. A package absent from those chains is never tested and never typechecked while
+an entry in the step lists of the root `test` and `typecheck` commands (run concurrently by
+`scripts/run-steps.mjs`) invoking that workspace. A package absent from those chains is never tested and never typechecked while
 every gate reports green.
 
 #### Scenario: No build artifacts
@@ -114,7 +114,7 @@ every gate reports green.
 - **THEN** the root test command fails for each, proving no project is silently skipped; the check is recorded in the apply ledger
 
 #### Scenario: A newly added package joins both root chains
-- **WHEN** a change adds a package and the root manifest's `test` and `typecheck` chains are inspected
+- **WHEN** a change adds a package and the `scripts/run-steps.mjs` `test` and `typecheck` step lists are inspected
 - **THEN** the package appears in both, proven by a deliberately failing test **and** a deliberate type error each failing the corresponding root command — a passing root run is not evidence the package ran
 
 #### Scenario: Integration tier keeps its setup

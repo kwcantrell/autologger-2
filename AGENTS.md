@@ -66,6 +66,11 @@ checkout's sources, so you would test the wrong code.
 | Audit | `npm audit --audit-level=high` |
 | Regenerate `.agents/skills` | `scripts/sync-skills.sh` |
 
+`npm test` and `npm run typecheck` run their steps concurrently through `scripts/run-steps.mjs`
+(each step's output is one labelled block, then a summary of every step). `CHECK_CONCURRENCY=<n>`
+sets how many run at once (default: the machine's available parallelism); `CHECK_CONCURRENCY=1`
+runs them one at a time in the old order. The `commands` gate runs typecheck and test together.
+
 The `hook` stage runs the file gates (`openspec`, `yaml`, `workflows`, `skills-sync`,
 `guide-size`) plus `commands` (typecheck and test). The PR stage adds `tests-with-code` and
 `audit`. Stack commands live under `lifecycle.commands` in `openspec/config.yaml`. Locally the
