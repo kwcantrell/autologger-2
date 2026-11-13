@@ -192,6 +192,31 @@ These live in the forge, not the repo, so the template can't apply them:
   3 consecutive sessions of provider failure per provider kind; there is no per-job budget. (3)
   Partial output whose cleanup the initiator could no longer make (access or account lost) stays
   visible in the session until a later job removes it; it never counts as present.
+- **Public MCP OAuth discovery and registration** (custom session dashboards J2, ADR
+  [0035](decisions/0035-custom-session-dashboards-mcp-app.md) decision 5; threats T3, T7, T8 of
+  `docs/design/custom-session-dashboards.md`). With `CUSTOM_DASHBOARDS_ENABLED` on, three
+  unauthenticated endpoints exist: the two RFC 9728/8414 metadata documents (static JSON built from
+  `PUBLIC_BASE_URL`) and `POST /oauth/register`, open dynamic client registration for public
+  clients. With the flag off they are not there: every method answers as an unmounted path. No
+  secret is issued; a client is only a name and its redirect URIs. **Open redirect and phishing
+  (T7):** a redirect URI must be `https:` or a loopback `http://127.0.0.1`, `localhost` or
+  `[::1]` URL (any port), with no fragment, user info, whitespace or control characters, and later
+  requests match it exactly apart from the loopback port; the client name is 1-100 characters with
+  no control or bidirectional-text characters, stored and shown only as text; no other metadata
+  (`logo_uri`, `client_uri`) is stored or fetched, so registration makes no server-side request.
+  **Abuse:** 10 registrations an hour per IPv4 address or IPv6 `/64`, counted in a catalog table
+  shared by every process (T8), with every attempt counted; at most 10,000 clients; bodies over
+  64 KiB refused; clients never authorized are swept after 24 h. **Storage (T3):** the five
+  `catalog.mcp_*` tables are system-only (`catalog_user` gets `42501`), used only under the reviewed
+  reasons `mcp-oauth` and `mcp-sweep`; tokens will be stored only as SHA-256 hashes, and the
+  sweeper clears a spent refresh token's `successor_sealed` once the 30 s grace window has passed.
+  **Residuals:** anyone can register a client with any name, which the consent page (J3) labels
+  as client-supplied beside the real redirect host. The per-address window counts the address the
+  IP allowlist trusts; with `TRUST_PROXY` on behind a proxy that doesn't overwrite
+  `X-Forwarded-For`, a caller can pick its own bucket and only the 10,000-client cap bounds it.
+  An attacker can fill the cap with throwaway clients for up to 24 h (the sweep), blocking new
+  registrations; the cap is checked in one statement, so concurrent registrations at the cap can
+  pass it by a few. A fixed window allows up to 20 registrations across a window boundary.
 - PUBLIC keeps `CONNECT` on every database and `TEMP` on `postgres`, so `autologger_app` can
   connect to databases where it has no grants and create session-local temp tables. Revoking
   them from PUBLIC would change what GoTrue (`supabase_auth_admin`) gets; slice 6 revisits it.

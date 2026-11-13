@@ -141,8 +141,14 @@ export function parseIpAllowlist(raw: string): Net[] | null {
   return out.length ? out : null;
 }
 
+/** A client address as a version and a numeric value, or null when it doesn't parse. Brackets, a
+ * zone id and an IPv4-mapped IPv6 prefix are removed first, as for the allowlist match. */
+export function parseClientAddress(addr: string): { version: 4 | 6; value: bigint } | null {
+  return parseAddr(unmapV4(normalizeEntry(addr)));
+}
+
 export function ipInAllowlist(addr: string, nets: Net[]): boolean {
-  const parsed = parseAddr(unmapV4(normalizeEntry(addr)));
+  const parsed = parseClientAddress(addr);
   if (parsed === null) return false;
   return nets.some(
     (net) =>
@@ -169,7 +175,9 @@ function effectiveClientIpFrom(input: {
   return input.remoteAddress ?? '';
 }
 
-function effectiveClientIp(c: Context<AppEnv>): string {
+/** The request's client address under the same TRUST_PROXY rule as the allowlist ('' when the
+ * request has no socket, as in `app.request()` tests without TRUST_PROXY). */
+export function effectiveClientIp(c: Context<AppEnv>): string {
   return effectiveClientIpFrom({
     config: c.env.config,
     remoteAddress: c.env.incoming?.socket?.remoteAddress,

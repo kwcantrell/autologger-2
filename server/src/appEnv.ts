@@ -21,6 +21,8 @@ import type {
   CompanionDeviceStore,
   Config,
   LeaseDirectory,
+  McpOAuthStore,
+  McpOAuthSweeper,
   ProviderCredentialStore,
 } from '@autologger/ports';
 import type { MediaBlobStore } from '@autologger/ports/media';
@@ -60,6 +62,11 @@ export interface Ports extends BasePorts {
   /** The blob store's media surface (media-worker D3, D8, D12): the worker's `media/`, the trash,
    * free space and upload staging. The same store as `audio`. */
   mediaBlobs: MediaBlobStore;
+  /** MCP OAuth client registration and rate windows on the system-only `catalog.mcp_*` tables
+   * (custom session dashboards J2; mcp-authorization). Used only with the flag on. */
+  mcpOAuth: McpOAuthStore;
+  /** The MCP OAuth cleanup (design section 4.9), started by main.ts only with the flag on. */
+  mcpOAuthSweeper: McpOAuthSweeper;
 }
 
 /** The per-request env object. Callers MUST pass a fresh env per request and

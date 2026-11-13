@@ -144,6 +144,16 @@ const ALLOWLIST: readonly { file: string; reason: string; why: string }[] = [
     why: "Companion presence rows, every user's, shared by every process; each statement is scoped by client id and user id in SQL (companion-devices D4)",
   },
   {
+    file: 'packages/storage/src/mcpOAuth.ts',
+    reason: 'mcp-oauth',
+    why: 'custom dashboards J2 (mcp-authorization): MCP OAuth client registration and the shared rate-limit windows on the system-only mcp_* tables, before any user is known',
+  },
+  {
+    file: 'packages/storage/src/mcpOAuth.ts',
+    reason: 'mcp-sweep',
+    why: "custom dashboards J2 (mcp-authorization): the once-a-minute MCP OAuth cleanup deletes expired tokens, ended grants and unused clients and clears spent seals, every user's",
+  },
+  {
     file: 'server/src/routers/teams.ts',
     reason: 'team-invite',
     why: 'the invite transaction looks users up by email and adds their memberships',

@@ -18,7 +18,8 @@ import { ProviderKeysSecretError, verifyProviderKeysCheck } from './auth/provide
 import { createWorkerPorts } from './autogenerate/ports';
 import { AutogenerateWorker } from './autogenerate/worker';
 import { bootWarnings, checkBootEnv } from './bootGuard';
-import { maskBootstrapOwnerEmail, runFeatureEmails } from './env';
+import { customDashboardsEnabled, maskBootstrapOwnerEmail, runFeatureEmails } from './env';
+import { startMcpOAuthSweeper } from './mcpOAuthSweep';
 import { startMediaApply } from './mediaApply';
 import { createBindings } from './node/config';
 import { createNextFrontend } from './node/nextFrontend';
@@ -153,6 +154,11 @@ const autogenerateWorker = new AutogenerateWorker(
   }),
 );
 autogenerateWorker.start();
+// custom session dashboards J2 (design 4.9): the MCP OAuth cleanup, once a minute, only with the
+// flag on.
+const mcpSweepTimer = customDashboardsEnabled(bindings.config)
+  ? startMcpOAuthSweeper(bindings.ports.mcpOAuthSweeper)
+  : null;
 const port = Number(process.env.PORT || '8787');
 const hostname = bindings.config.HOST;
 
@@ -221,6 +227,7 @@ for (const sig of ['SIGINT', 'SIGTERM'] as const) {
     clearInterval(purgeTimer);
     clearInterval(leaseSweepTimer);
     clearInterval(mediaSweepTimer);
+    if (mcpSweepTimer) clearInterval(mcpSweepTimer);
     mediaApply.stop();
     // A batch step in flight stops writing at its next fenced write; its lease lapses and another
     // process resumes the job (batch-autogenerate D11).

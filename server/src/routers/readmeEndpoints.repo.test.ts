@@ -110,9 +110,39 @@ const ROUTES: { file: string; method: string; path: string; readme: string; stat
       readme: 'POST /api/teams/{teamId}/autogenerate-jobs/{jobId}/cancel',
       statuses: ['401', '404', '403', '409', '200'],
     },
+    // custom session dashboards J2 (api-contract-freeze "MCP OAuth discovery and registration
+    // routes"): flag-gated.
+    {
+      file: 'server/src/routers/oauth.ts',
+      method: 'get',
+      path: "'/.well-known/oauth-protected-resource',",
+      readme: 'GET /.well-known/oauth-protected-resource',
+      statuses: ['200'],
+    },
+    {
+      file: 'server/src/routers/oauth.ts',
+      method: 'get',
+      path: "'/.well-known/oauth-protected-resource/mcp',",
+      readme: 'GET /.well-known/oauth-protected-resource/mcp',
+      statuses: ['200'],
+    },
+    {
+      file: 'server/src/routers/oauth.ts',
+      method: 'get',
+      path: "'/.well-known/oauth-authorization-server',",
+      readme: 'GET /.well-known/oauth-authorization-server',
+      statuses: ['200'],
+    },
+    {
+      file: 'server/src/routers/oauth.ts',
+      method: 'post',
+      path: "'/oauth/register',",
+      readme: 'POST /oauth/register',
+      statuses: ['201', '400', '429'],
+    },
   ];
 
-describe('README "Endpoints" lists the media-worker and batch autogenerate routes', () => {
+describe('README "Endpoints" lists the media-worker, batch autogenerate and MCP OAuth routes', () => {
   it.each(ROUTES)('$readme is registered and documented', (r) => {
     const src = read(r.file).replace(/\s+/g, ' ').replace(/\( /g, '(');
     expect(src.includes(`.${r.method}(${r.path}`), `${r.file} registers ${r.readme}`).toBe(true);
