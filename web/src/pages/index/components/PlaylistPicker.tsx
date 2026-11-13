@@ -93,7 +93,9 @@ const PlaylistRow = memo(function PlaylistRow({
   );
 });
 
-export function PlaylistPicker({ listing, disabled, onChange }: Props) {
+// Memoized: the modal re-renders on every query, debounce and progress update, and each re-render
+// would otherwise walk all the rows again (up to 5000) for props that did not change.
+export const PlaylistPicker = memo(function PlaylistPicker({ listing, disabled, onChange }: Props) {
   // A new listing replaces the rows and resets the selection to its importable entries.
   const [shownListing, setShownListing] = useState(listing);
   const [selected, setSelected] = useState<Set<number>>(() => importableIndexes(listing));
@@ -226,4 +228,4 @@ export function PlaylistPicker({ listing, disabled, onChange }: Props) {
       </div>
     </div>
   );
-}
+});

@@ -807,10 +807,19 @@ describe('BatchImportModal — Autogenerate after import', () => {
 
   const autogenerateBox = () =>
     screen.queryByRole('checkbox', { name: 'Autogenerate after import' });
+  // Scoped to the modal's actions row (the first in the document; confirm dialogs mount later), so
+  // a 1001-entry listing's row checkboxes stay out of the role and name computation. `waitFor`
+  // calls this on every poll.
   const startButton = () =>
-    screen.getByRole('button', { name: /Start Import|Importing…/ }) as HTMLButtonElement;
+    within(
+      document.querySelector<HTMLElement>('[data-slot="dialog-actions"]') as HTMLElement,
+    ).getByRole('button', { name: /Start Import|Importing…/ }) as HTMLButtonElement;
   const note = () => screen.queryByTestId('batch-import-autogenerate-note')?.textContent ?? null;
-  const tick = (name: string) => fireEvent.click(screen.getByRole('checkbox', { name }));
+  // Every box `tick` names sits in the autogenerate group; scoped for the same reason.
+  const tick = (name: string) =>
+    fireEvent.click(
+      within(screen.getByTestId('batch-import-autogenerate')).getByRole('checkbox', { name }),
+    );
   const stepChecked = (name: string) =>
     within(screen.getByTestId('batch-import-autogenerate'))
       .getByRole('checkbox', { name })
@@ -967,6 +976,8 @@ describe('BatchImportModal — Autogenerate after import', () => {
   });
 
   describe('up-front check (design D6)', () => {
+    afterEach(() => vi.useRealTimers());
+
     it('sends the preview for the show only while armed, debounced; pending disables Start Import', async () => {
       let resolve: ((v: unknown) => void) | undefined;
       previewImpl = () =>
@@ -1103,6 +1114,8 @@ describe('BatchImportModal — Autogenerate after import', () => {
 
     it('more than 1000 checked entries disable Start Import with the cap text', async () => {
       listings = [listing(1001)];
+      // Fake timers only to skip the preview's 400 ms debounce below; they advance with real time.
+      vi.useFakeTimers({ shouldAdvanceTime: true });
       renderWithQueryClient(<BatchImportModal profile={profileAs('owner')} onClose={() => {}} />);
       await loadPlaylist();
       tick('Autogenerate after import');
@@ -1112,7 +1125,13 @@ describe('BatchImportModal — Autogenerate after import', () => {
         ),
       );
       expect(startButton().disabled).toBe(true);
-      fireEvent.click(screen.getByRole('checkbox', { name: /^1001\. / }));
+      // A document-wide role query over 1001 row checkboxes costs ~0.4 s idle and several
+      // seconds under CPU load; query the 1001st row only, still by role and accessible name.
+      const row = document.querySelector('[data-position="1001"]')?.closest('li') as HTMLElement;
+      fireEvent.click(within(row).getByRole('checkbox', { name: /^1001\. / }));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(400);
+      });
       await waitFor(() => expect(startButton().disabled).toBe(false), WAIT);
     });
 
