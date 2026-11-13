@@ -201,15 +201,13 @@ describe('AA contrast floor — source colours over their lightest measured surf
   });
 
   // Fix round 3: the login panel is the flat Card now (was glass); its copy clears AA on it.
-  it.each([
-    'TAGLINE',
-    'FINE_PRINT',
-    'SECTION_LABEL',
-    'BTN_CREATE',
-  ])('login %s clears AA on the login Card', (name) => {
-    const fg = parseColor(textColour(classConst('pages/index/components/LoginPage.tsx', name)));
-    expect(contrast(fg, colour('--card'))).toBeGreaterThanOrEqual(AA);
-  });
+  it.each(['TAGLINE', 'FINE_PRINT', 'SECTION_LABEL', 'BTN_CREATE'])(
+    'login %s clears AA on the login Card',
+    (name) => {
+      const fg = parseColor(textColour(classConst('pages/index/components/LoginPage.tsx', name)));
+      expect(contrast(fg, colour('--card'))).toBeGreaterThanOrEqual(AA);
+    },
+  );
 
   it('event-button row summary and Edit on the Event buttons card', () => {
     // Settings › Event buttons (redesign-show-ignition 9.1): each row's summary is an
@@ -374,18 +372,16 @@ describe('Show Ignition tokens (redesign-show-ignition D1)', () => {
   // web-session-console "Transport state tints the shell": the top bar, rail and strip tint
   // together. The bar takes the rail's own mix (11.3: at 18% it read as untinted beside the
   // 25% rail), and the text on it still clears AA.
-  it.each([
-    'stopped',
-    'rolling',
-    'recording',
-    'playback',
-  ])('the %s top bar takes the rail mix and its text clears AA', (state) => {
-    const scope = blockVars(`[data-transport='${state}']`);
-    expect(scope['--tx-bar']).toBe(`var(--si-tx-${state})`);
-    const bar = colour(scope['--tx-bar'], scope);
-    expect(contrast(colour('--si-fg'), bar)).toBeGreaterThanOrEqual(AA);
-    expect(contrast(colour('--si-muted'), bar)).toBeGreaterThanOrEqual(AA);
-  });
+  it.each(['stopped', 'rolling', 'recording', 'playback'])(
+    'the %s top bar takes the rail mix and its text clears AA',
+    (state) => {
+      const scope = blockVars(`[data-transport='${state}']`);
+      expect(scope['--tx-bar']).toBe(`var(--si-tx-${state})`);
+      const bar = colour(scope['--tx-bar'], scope);
+      expect(contrast(colour('--si-fg'), bar)).toBeGreaterThanOrEqual(AA);
+      expect(contrast(colour('--si-muted'), bar)).toBeGreaterThanOrEqual(AA);
+    },
+  );
 
   it('the live top bar carries the soft glow, as the rail and strip do', () => {
     const live = CSS.match(
@@ -397,14 +393,13 @@ describe('Show Ignition tokens (redesign-show-ignition D1)', () => {
   // Finish review fix round 1: the timeline playhead takes the live colour with the soft glow in
   // every state but stopped, and the hero timecode takes the accent (with the glow) while rolling
   // or recording, at AA on the live transport card.
-  it.each([
-    'playback',
-    'rolling',
-    'recording',
-  ])('the %s playhead is the live accent, not the plain foreground', (state) => {
-    const scope = blockVars(`[data-transport='${state}']`);
-    expect(scope['--tx-playhead']).toBe('var(--tx-live)');
-  });
+  it.each(['playback', 'rolling', 'recording'])(
+    'the %s playhead is the live accent, not the plain foreground',
+    (state) => {
+      const scope = blockVars(`[data-transport='${state}']`);
+      expect(scope['--tx-playhead']).toBe('var(--tx-live)');
+    },
+  );
 
   it('the stopped playhead stays the foreground', () => {
     expect(blockVars(`[data-transport='stopped']`)['--tx-playhead']).toBe('var(--si-fg)');

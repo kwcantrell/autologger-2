@@ -413,14 +413,17 @@ describe('createBindings -- PROVIDER_DEV_MODE (byo-ai-providers D3)', () => {
     ['staging', false],
     ['Development', false],
     [undefined, false],
-  ])('NODE_ENV %s gives PROVIDER_DEV_MODE %s, so production mode is the default', async (nodeEnv, dev) => {
-    const set = testBindings(freshProcEnv({ NODE_ENV: nodeEnv }));
-    try {
-      expect(set.bindings.config.PROVIDER_DEV_MODE).toBe(dev);
-    } finally {
-      await set.close();
-    }
-  });
+  ])(
+    'NODE_ENV %s gives PROVIDER_DEV_MODE %s, so production mode is the default',
+    async (nodeEnv, dev) => {
+      const set = testBindings(freshProcEnv({ NODE_ENV: nodeEnv }));
+      try {
+        expect(set.bindings.config.PROVIDER_DEV_MODE).toBe(dev);
+      } finally {
+        await set.close();
+      }
+    },
+  );
 });
 
 describe('createBindings -- PROVIDER_KEYS_SECRET (byo-ai-providers D2)', () => {

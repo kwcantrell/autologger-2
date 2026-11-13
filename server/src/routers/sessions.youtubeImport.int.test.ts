@@ -411,21 +411,22 @@ describe('post-validation failures — 502, audio unchanged (matrix: download-fa
     // instanceof test below, which drives the same mode.
   ];
 
-  it.each(
-    cases,
-  )('mode=%s → 502 {detail}, audio-segment listing byte-for-byte unchanged', async (mode, expectedDetail) => {
-    const session = (await seededSession()).sessionId;
-    const { binaryPath } = freshBinary({ mode });
-    const testEnv = configuredEnv(binaryPath);
+  it.each(cases)(
+    'mode=%s → 502 {detail}, audio-segment listing byte-for-byte unchanged',
+    async (mode, expectedDetail) => {
+      const session = (await seededSession()).sessionId;
+      const { binaryPath } = freshBinary({ mode });
+      const testEnv = configuredEnv(binaryPath);
 
-    const before = await listSegmentsRaw(session, testEnv);
-    const res = await postImport(session, VALID_BODY, testEnv);
-    expect(res.status).toBe(502);
-    expect(((await res.json()) as { detail: string }).detail).toMatch(expectedDetail);
+      const before = await listSegmentsRaw(session, testEnv);
+      const res = await postImport(session, VALID_BODY, testEnv);
+      expect(res.status).toBe(502);
+      expect(((await res.json()) as { detail: string }).detail).toMatch(expectedDetail);
 
-    const after = await listSegmentsRaw(session, testEnv);
-    expect(after).toBe(before); // byte-for-byte unchanged — no orphan row, not merely "no playable segment"
-  });
+      const after = await listSegmentsRaw(session, testEnv);
+      expect(after).toBe(before); // byte-for-byte unchanged — no orphan row, not merely "no playable segment"
+    },
+  );
 });
 
 // ── Task 3.3: cross-package `instanceof` pin (design D6, spec "Every newly

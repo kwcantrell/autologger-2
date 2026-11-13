@@ -474,18 +474,21 @@ describe('BatchImportModal — YouTube playlist', () => {
   it.each([
     [503, 'YouTube import is unavailable on this deployment.'],
     [400, "Mix and radio lists can't be imported; use a regular playlist link."],
-  ])('a %i shows the server detail beneath the control and loads no playlist', async (status, detail) => {
-    mockedApiFetch.mockImplementation(async (path) => {
-      if (path === 'youtube/playlist-entries') throw new ApiError(status, detail, { detail });
-      throw new Error(`unexpected ${path}`);
-    });
-    renderWithQueryClient(<BatchImportModal profile={profileFixture()} onClose={() => {}} />);
-    await loadPlaylist('https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=RDdQw4w9WgXcQ');
-    const error = await screen.findByTestId('batch-import-playlist-error');
-    expect(error.textContent).toBe(detail);
-    expect(screen.queryByTestId('playlist-picker')).toBeNull();
-    expect(startButton().disabled).toBe(true);
-  });
+  ])(
+    'a %i shows the server detail beneath the control and loads no playlist',
+    async (status, detail) => {
+      mockedApiFetch.mockImplementation(async (path) => {
+        if (path === 'youtube/playlist-entries') throw new ApiError(status, detail, { detail });
+        throw new Error(`unexpected ${path}`);
+      });
+      renderWithQueryClient(<BatchImportModal profile={profileFixture()} onClose={() => {}} />);
+      await loadPlaylist('https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=RDdQw4w9WgXcQ');
+      const error = await screen.findByTestId('batch-import-playlist-error');
+      expect(error.textContent).toBe(detail);
+      expect(screen.queryByTestId('playlist-picker')).toBeNull();
+      expect(startButton().disabled).toBe(true);
+    },
+  );
 
   it('a second link replaces the first playlist; a failed load leaves none', async () => {
     const lists: Array<YoutubePlaylistResponse | Error> = [
@@ -1217,25 +1220,25 @@ describe('BatchImportModal — Autogenerate after import', () => {
       expect(mockedStart).not.toHaveBeenCalled();
     });
 
-    it.each([
-      'running',
-      'queued',
-    ] as const)('a %s job puts the live-job warning first; Start stays enabled and runs the import', async (status) => {
-      jobsImpl = async () => ({ jobs: [job('finished'), job(status)] });
-      await armed();
-      const before = jobListCalls().length;
-      fireEvent.click(startButton());
-      const dialog = await confirmDialog();
-      expect(jobListCalls().length).toBeGreaterThan(before);
-      // First in the confirm's message, before the estimate.
-      const message = within(dialog).getByText(LIVE_WARNING).parentElement;
-      expect(message?.firstElementChild?.textContent).toBe(LIVE_WARNING);
-      expect(message?.textContent?.indexOf('Import 2 videos')).toBeGreaterThan(0);
-      const start = within(dialog).getByRole('button', { name: 'Start' }) as HTMLButtonElement;
-      expect(start.disabled).toBe(false);
-      fireEvent.click(start);
-      await screen.findByText('Completed First video 1');
-    });
+    it.each(['running', 'queued'] as const)(
+      'a %s job puts the live-job warning first; Start stays enabled and runs the import',
+      async (status) => {
+        jobsImpl = async () => ({ jobs: [job('finished'), job(status)] });
+        await armed();
+        const before = jobListCalls().length;
+        fireEvent.click(startButton());
+        const dialog = await confirmDialog();
+        expect(jobListCalls().length).toBeGreaterThan(before);
+        // First in the confirm's message, before the estimate.
+        const message = within(dialog).getByText(LIVE_WARNING).parentElement;
+        expect(message?.firstElementChild?.textContent).toBe(LIVE_WARNING);
+        expect(message?.textContent?.indexOf('Import 2 videos')).toBeGreaterThan(0);
+        const start = within(dialog).getByRole('button', { name: 'Start' }) as HTMLButtonElement;
+        expect(start.disabled).toBe(false);
+        fireEvent.click(start);
+        await screen.findByText('Completed First video 1');
+      },
+    );
 
     it.each([
       [

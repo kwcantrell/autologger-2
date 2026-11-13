@@ -107,22 +107,21 @@ describe('CategoryButtonStrip 1–9 hotkeys', () => {
     }
   });
 
-  it.each([
-    'dialog',
-    'alertdialog',
-    'menu',
-  ])('ignores digits while any [role="%s"] is open', (role) => {
-    renderStrip();
-    const dialog = document.createElement('div');
-    dialog.setAttribute('role', role);
-    document.body.appendChild(dialog);
-    try {
-      fireEvent.keyDown(document.body, { key: '2' });
-      expect(mutateAsync).not.toHaveBeenCalled();
-    } finally {
-      dialog.remove();
-    }
-  });
+  it.each(['dialog', 'alertdialog', 'menu'])(
+    'ignores digits while any [role="%s"] is open',
+    (role) => {
+      renderStrip();
+      const dialog = document.createElement('div');
+      dialog.setAttribute('role', role);
+      document.body.appendChild(dialog);
+      try {
+        fireEvent.keyDown(document.body, { key: '2' });
+        expect(mutateAsync).not.toHaveBeenCalled();
+      } finally {
+        dialog.remove();
+      }
+    },
+  );
 
   it('ignores digits with Ctrl, Meta, or Alt held', () => {
     renderStrip();

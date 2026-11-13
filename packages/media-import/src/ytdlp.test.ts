@@ -281,21 +281,22 @@ describe('fetchYoutubeAudio — bound enforcement', () => {
     ['download-fail', 'Failed to download'],
   ];
 
-  it.each(
-    cases,
-  )('mode=%s rejects with YtDlpError (%s) and produces no usable result', async (mode, expectedSubstring) => {
-    const tempDir = makeTempDir();
-    const binaryPath = makeBinary(tempDir);
-    writeStubControl(tempDir, { mode });
+  it.each(cases)(
+    'mode=%s rejects with YtDlpError (%s) and produces no usable result',
+    async (mode, expectedSubstring) => {
+      const tempDir = makeTempDir();
+      const binaryPath = makeBinary(tempDir);
+      writeStubControl(tempDir, { mode });
 
-    const promise = fetchYoutubeAudio({ url: 'https://youtu.be/abc123', tempDir, binaryPath });
+      const promise = fetchYoutubeAudio({ url: 'https://youtu.be/abc123', tempDir, binaryPath });
 
-    await expect(promise).rejects.toBeInstanceOf(YtDlpError);
-    await expect(promise).rejects.toThrow(expectedSubstring);
-    // A supported-container audio.m4a is never left behind for any bound or
-    // format rejection — nothing a caller could ever pick up as a blob.
-    expect(existsSync(join(tempDir, 'audio.m4a'))).toBe(false);
-  });
+      await expect(promise).rejects.toBeInstanceOf(YtDlpError);
+      await expect(promise).rejects.toThrow(expectedSubstring);
+      // A supported-container audio.m4a is never left behind for any bound or
+      // format rejection — nothing a caller could ever pick up as a blob.
+      expect(existsSync(join(tempDir, 'audio.m4a'))).toBe(false);
+    },
+  );
 
   it('the 4-hour cap boundary matches MAX_DURATION_SECONDS', () => {
     expect(MAX_DURATION_SECONDS).toBe(4 * 60 * 60);
@@ -304,22 +305,23 @@ describe('fetchYoutubeAudio — bound enforcement', () => {
   // Task 9.2 / design D10: a zero-length take must never be produced — a
   // non-positive reported duration is rejected at the metadata-probe step,
   // same as live/null/over-4h, and the download spawn never runs.
-  it.each([
-    0, -5,
-  ])('rejects a non-positive duration (%i) with YtDlpError, no download spawn', async (duration) => {
-    const tempDir = makeTempDir();
-    const binaryPath = makeBinary(tempDir);
-    writeStubControl(tempDir, { duration });
+  it.each([0, -5])(
+    'rejects a non-positive duration (%i) with YtDlpError, no download spawn',
+    async (duration) => {
+      const tempDir = makeTempDir();
+      const binaryPath = makeBinary(tempDir);
+      writeStubControl(tempDir, { duration });
 
-    const promise = fetchYoutubeAudio({ url: 'https://youtu.be/abc123', tempDir, binaryPath });
+      const promise = fetchYoutubeAudio({ url: 'https://youtu.be/abc123', tempDir, binaryPath });
 
-    await expect(promise).rejects.toBeInstanceOf(YtDlpError);
-    await expect(promise).rejects.toThrow('non-positive duration');
-    expect(existsSync(join(tempDir, 'audio.m4a'))).toBe(false);
-    // Only the probe ran — the download step is never reached once the
-    // probe itself rejects the duration.
-    expect(readArgvLog(tempDir)).toHaveLength(1);
-  });
+      await expect(promise).rejects.toBeInstanceOf(YtDlpError);
+      await expect(promise).rejects.toThrow('non-positive duration');
+      expect(existsSync(join(tempDir, 'audio.m4a'))).toBe(false);
+      // Only the probe ran — the download step is never reached once the
+      // probe itself rejects the duration.
+      expect(readArgvLog(tempDir)).toHaveLength(1);
+    },
+  );
 });
 
 // ── Hang timeout: a stuck subprocess is killed, not awaited forever ────────

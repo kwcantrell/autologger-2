@@ -177,31 +177,31 @@ describe('ConfirmDialog on mobile (bottom sheet)', () => {
 });
 
 describe('ConfirmDialog makes exactly one decision per prompt', () => {
-  it.each([
-    false,
-    true,
-  ])('accept calls onConfirm once and never onCancel (mobile=%s)', async (mobile) => {
-    setMobile(mobile);
-    let confirms = 0;
-    let cancels = 0;
-    renderStrict(
-      <ConfirmDialog
-        open
-        title="Add synthetic stop?"
-        message="m"
-        confirmLabel="Add synthetic stop"
-        onConfirm={() => {
-          confirms += 1;
-        }}
-        onCancel={() => {
-          cancels += 1;
-        }}
-      />,
-    );
-    fireEvent.click(await screen.findByRole('button', { name: 'Add synthetic stop' }));
-    await act(async () => {});
-    expect([confirms, cancels]).toEqual([1, 0]);
-  });
+  it.each([false, true])(
+    'accept calls onConfirm once and never onCancel (mobile=%s)',
+    async (mobile) => {
+      setMobile(mobile);
+      let confirms = 0;
+      let cancels = 0;
+      renderStrict(
+        <ConfirmDialog
+          open
+          title="Add synthetic stop?"
+          message="m"
+          confirmLabel="Add synthetic stop"
+          onConfirm={() => {
+            confirms += 1;
+          }}
+          onCancel={() => {
+            cancels += 1;
+          }}
+        />,
+      );
+      fireEvent.click(await screen.findByRole('button', { name: 'Add synthetic stop' }));
+      await act(async () => {});
+      expect([confirms, cancels]).toEqual([1, 0]);
+    },
+  );
 
   it('cancel calls onCancel once (desktop)', async () => {
     setMobile(false);
@@ -224,19 +224,19 @@ describe('ConfirmDialog makes exactly one decision per prompt', () => {
 // shadcn-port-modals D7: both paths put their actions in the shared dialog-actions row, with the
 // 44px phone floor.
 describe('ConfirmDialog actions row', () => {
-  it.each([
-    false,
-    true,
-  ])('mobile=%s: Cancel and Delete sit in [data-slot=dialog-actions]', async (mobile) => {
-    setMobile(mobile);
-    renderStrict(<DangerProbe onResult={() => {}} />);
-    fireEvent.click(screen.getByText('open'));
-    const del = await screen.findByRole('button', { name: 'Delete' });
-    const row = del.closest('[data-slot="dialog-actions"]') as HTMLElement;
-    expect(row).not.toBeNull();
-    expect(row.querySelectorAll('button')).toHaveLength(2);
-    expect(del.className).toContain('max-md:min-h-11');
-  });
+  it.each([false, true])(
+    'mobile=%s: Cancel and Delete sit in [data-slot=dialog-actions]',
+    async (mobile) => {
+      setMobile(mobile);
+      renderStrict(<DangerProbe onResult={() => {}} />);
+      fireEvent.click(screen.getByText('open'));
+      const del = await screen.findByRole('button', { name: 'Delete' });
+      const row = del.closest('[data-slot="dialog-actions"]') as HTMLElement;
+      expect(row).not.toBeNull();
+      expect(row.querySelectorAll('button')).toHaveLength(2);
+      expect(del.className).toContain('max-md:min-h-11');
+    },
+  );
 });
 
 // session-edit-conflicts D7: a three-way decision. `choose()` tells a deliberate Cancel apart from
@@ -267,30 +267,30 @@ function ChooseProbe({ onResult }: { onResult: (label: string, value: Choice) =>
 }
 
 describe('useConfirm().choose (D7)', () => {
-  it.each([
-    false,
-    true,
-  ])('mobile=%s: confirm, cancel and Escape resolve confirm, cancel and dismiss', async (mobile) => {
-    setMobile(mobile);
-    const results: Array<[string, Choice]> = [];
-    renderStrict(<ChooseProbe onResult={(label, v) => results.push([label, v])} />);
+  it.each([false, true])(
+    'mobile=%s: confirm, cancel and Escape resolve confirm, cancel and dismiss',
+    async (mobile) => {
+      setMobile(mobile);
+      const results: Array<[string, Choice]> = [];
+      renderStrict(<ChooseProbe onResult={(label, v) => results.push([label, v])} />);
 
-    fireEvent.click(screen.getByText('choose-first'));
-    fireEvent.click(await screen.findByRole('button', { name: 'Overwrite' }));
-    await waitFor(() => expect(results).toEqual([['first', 'confirm']]));
+      fireEvent.click(screen.getByText('choose-first'));
+      fireEvent.click(await screen.findByRole('button', { name: 'Overwrite' }));
+      await waitFor(() => expect(results).toEqual([['first', 'confirm']]));
 
-    fireEvent.click(screen.getByText('choose-first'));
-    fireEvent.click(await screen.findByRole('button', { name: 'Keep theirs' }));
-    await waitFor(() => expect(results.at(-1)).toEqual(['first', 'cancel']));
+      fireEvent.click(screen.getByText('choose-first'));
+      fireEvent.click(await screen.findByRole('button', { name: 'Keep theirs' }));
+      await waitFor(() => expect(results.at(-1)).toEqual(['first', 'cancel']));
 
-    fireEvent.click(screen.getByText('choose-first'));
-    const dialog = await screen.findByRole(mobile ? 'dialog' : 'alertdialog', {
-      name: 'Row changed first',
-    });
-    fireEvent.keyDown(dialog, { key: 'Escape' });
-    await waitFor(() => expect(results.at(-1)).toEqual(['first', 'dismiss']));
-    expect(results).toHaveLength(3);
-  });
+      fireEvent.click(screen.getByText('choose-first'));
+      const dialog = await screen.findByRole(mobile ? 'dialog' : 'alertdialog', {
+        name: 'Row changed first',
+      });
+      fireEvent.keyDown(dialog, { key: 'Escape' });
+      await waitFor(() => expect(results.at(-1)).toEqual(['first', 'dismiss']));
+      expect(results).toHaveLength(3);
+    },
+  );
 
   it('an overlay click resolves dismiss (desktop)', async () => {
     setMobile(false);
@@ -336,48 +336,48 @@ describe('useConfirm().choose (D7)', () => {
 });
 
 describe('ConfirmDialog onDismiss (D7)', () => {
-  it.each([
-    false,
-    true,
-  ])('mobile=%s: Escape calls onDismiss, not onCancel; the Cancel button still calls onCancel', async (mobile) => {
-    setMobile(mobile);
-    const calls: string[] = [];
-    const { rerender } = renderStrict(
-      <ConfirmDialog
-        open
-        title="t"
-        message="m"
-        onConfirm={() => calls.push('confirm')}
-        onCancel={() => calls.push('cancel')}
-        onDismiss={() => calls.push('dismiss')}
-      />,
-    );
-    const dialog = await screen.findByRole(mobile ? 'dialog' : 'alertdialog', { name: 't' });
-    fireEvent.keyDown(dialog, { key: 'Escape' });
-    await waitFor(() => expect(calls).toEqual(['dismiss']));
+  it.each([false, true])(
+    'mobile=%s: Escape calls onDismiss, not onCancel; the Cancel button still calls onCancel',
+    async (mobile) => {
+      setMobile(mobile);
+      const calls: string[] = [];
+      const { rerender } = renderStrict(
+        <ConfirmDialog
+          open
+          title="t"
+          message="m"
+          onConfirm={() => calls.push('confirm')}
+          onCancel={() => calls.push('cancel')}
+          onDismiss={() => calls.push('dismiss')}
+        />,
+      );
+      const dialog = await screen.findByRole(mobile ? 'dialog' : 'alertdialog', { name: 't' });
+      fireEvent.keyDown(dialog, { key: 'Escape' });
+      await waitFor(() => expect(calls).toEqual(['dismiss']));
 
-    rerender(
-      <ConfirmDialog
-        open={false}
-        title="t"
-        message="m"
-        onConfirm={() => calls.push('confirm')}
-        onCancel={() => calls.push('cancel')}
-        onDismiss={() => calls.push('dismiss')}
-      />,
-    );
-    rerender(
-      <ConfirmDialog
-        open
-        title="t"
-        message="m"
-        onConfirm={() => calls.push('confirm')}
-        onCancel={() => calls.push('cancel')}
-        onDismiss={() => calls.push('dismiss')}
-      />,
-    );
-    fireEvent.click(await screen.findByRole('button', { name: 'Cancel' }));
-    await act(async () => {});
-    expect(calls).toEqual(['dismiss', 'cancel']);
-  });
+      rerender(
+        <ConfirmDialog
+          open={false}
+          title="t"
+          message="m"
+          onConfirm={() => calls.push('confirm')}
+          onCancel={() => calls.push('cancel')}
+          onDismiss={() => calls.push('dismiss')}
+        />,
+      );
+      rerender(
+        <ConfirmDialog
+          open
+          title="t"
+          message="m"
+          onConfirm={() => calls.push('confirm')}
+          onCancel={() => calls.push('cancel')}
+          onDismiss={() => calls.push('dismiss')}
+        />,
+      );
+      fireEvent.click(await screen.findByRole('button', { name: 'Cancel' }));
+      await act(async () => {});
+      expect(calls).toEqual(['dismiss', 'cancel']);
+    },
+  );
 });

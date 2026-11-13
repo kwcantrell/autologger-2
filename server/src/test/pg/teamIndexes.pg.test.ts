@@ -12,19 +12,18 @@ afterEach(async () => {
 });
 
 describe('team-scoped indexes', () => {
-  it.each([
-    'user_studio_memberships',
-    'shows',
-    'team_invites',
-  ])('catalog.%s has an index whose first column is studio_id', async (table) => {
-    const db = await createTestDatabase();
-    const sql = postgres({ ...db.admin, max: 1, onnotice: () => {} });
-    open.push(sql);
-    const rows = await sql`
+  it.each(['user_studio_memberships', 'shows', 'team_invites'])(
+    'catalog.%s has an index whose first column is studio_id',
+    async (table) => {
+      const db = await createTestDatabase();
+      const sql = postgres({ ...db.admin, max: 1, onnotice: () => {} });
+      open.push(sql);
+      const rows = await sql`
         select i.indexrelid::regclass::text as name
           from pg_index i
           join pg_attribute a on a.attrelid = i.indrelid and a.attnum = i.indkey[0]
          where i.indrelid = ${`catalog.${table}`}::regclass and a.attname = 'studio_id'`;
-    expect(rows.length, `indexes led by studio_id on ${table}`).toBeGreaterThan(0);
-  });
+      expect(rows.length, `indexes led by studio_id on ${table}`).toBeGreaterThan(0);
+    },
+  );
 });

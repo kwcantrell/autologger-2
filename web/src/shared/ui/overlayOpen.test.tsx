@@ -19,14 +19,13 @@ describe('isOverlayOpen', () => {
     expect(isOverlayOpen()).toBe(false);
   });
 
-  it.each([
-    'dialog',
-    'alertdialog',
-    'menu',
-  ])('is true while a role="%s" element is present', (role) => {
-    add(role);
-    expect(isOverlayOpen()).toBe(true);
-  });
+  it.each(['dialog', 'alertdialog', 'menu'])(
+    'is true while a role="%s" element is present',
+    (role) => {
+      add(role);
+      expect(isOverlayOpen()).toBe(true);
+    },
+  );
 
   it('ignores unrelated roles (menuitem buttons, listbox, tooltip)', () => {
     for (const role of ['menuitem', 'listbox', 'tooltip', 'status']) add(role);

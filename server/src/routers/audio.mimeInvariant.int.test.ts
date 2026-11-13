@@ -40,20 +40,18 @@ describe('audio segment mime normalization', () => {
   // `.type`, passed straight through by AudioRecorder.tsx) and the import
   // paths send. A normalization that rewrote any of these would be a
   // regression, not a fix.
-  it.each([
-    'audio/webm;codecs=opus',
-    'audio/ogg;codecs=opus',
-    'audio/mp4',
-    'audio/wav',
-  ])('stores and serves the producer mime %s unchanged', async (mime) => {
-    const session = (await seededSession()).sessionId;
-    const seg = await upload(session, mime);
-    expect(seg.mime_type).toBe(mime);
+  it.each(['audio/webm;codecs=opus', 'audio/ogg;codecs=opus', 'audio/mp4', 'audio/wav'])(
+    'stores and serves the producer mime %s unchanged',
+    async (mime) => {
+      const session = (await seededSession()).sessionId;
+      const seg = await upload(session, mime);
+      expect(seg.mime_type).toBe(mime);
 
-    const res = await app.request(seg.url, { method: 'GET' }, { ...env });
-    expect(res.status).toBe(200);
-    expect(res.headers.get('content-type')).toBe(mime);
-  });
+      const res = await app.request(seg.url, { method: 'GET' }, { ...env });
+      expect(res.status).toBe(200);
+      expect(res.headers.get('content-type')).toBe(mime);
+    },
+  );
 
   // The regression this file's second half exists for: the batch importer
   // (`web/…/batchImport/`) admits `.mp4`/`.webm`, uploads a single-file group
@@ -61,33 +59,31 @@ describe('audio segment mime normalization', () => {
   // `video/mp4` for a .mp4. An audio-only allowlist clamped those to
   // `audio/webm`, which Safari (strict about media mimes) refuses to play,
   // and bought nothing: `video/*` never matched the compressible filter.
-  it.each([
-    'video/mp4',
-    'video/webm',
-    'application/ogg',
-  ])('stores and serves the batch-import container mime %s unchanged', async (mime) => {
-    const session = (await seededSession()).sessionId;
-    const seg = await upload(session, mime);
-    expect(seg.mime_type).toBe(mime);
+  it.each(['video/mp4', 'video/webm', 'application/ogg'])(
+    'stores and serves the batch-import container mime %s unchanged',
+    async (mime) => {
+      const session = (await seededSession()).sessionId;
+      const seg = await upload(session, mime);
+      expect(seg.mime_type).toBe(mime);
 
-    const res = await app.request(seg.url, { method: 'GET' }, { ...env });
-    expect(res.status).toBe(200);
-    expect(res.headers.get('content-type')).toBe(mime);
-  });
+      const res = await app.request(seg.url, { method: 'GET' }, { ...env });
+      expect(res.status).toBe(200);
+      expect(res.headers.get('content-type')).toBe(mime);
+    },
+  );
 
-  it.each([
-    'text/plain',
-    'text/plain;charset=UTF-8',
-    'image/svg+xml',
-  ])('degrades the compressible content-type %s to audio/webm rather than rejecting the upload', async (mime) => {
-    const session = (await seededSession()).sessionId;
-    const seg = await upload(session, mime);
-    expect(seg.mime_type).toBe('audio/webm');
+  it.each(['text/plain', 'text/plain;charset=UTF-8', 'image/svg+xml'])(
+    'degrades the compressible content-type %s to audio/webm rather than rejecting the upload',
+    async (mime) => {
+      const session = (await seededSession()).sessionId;
+      const seg = await upload(session, mime);
+      expect(seg.mime_type).toBe('audio/webm');
 
-    const res = await app.request(seg.url, { method: 'GET' }, { ...env });
-    expect(res.status).toBe(200);
-    expect(res.headers.get('content-type')).toBe('audio/webm');
-  });
+      const res = await app.request(seg.url, { method: 'GET' }, { ...env });
+      expect(res.status).toBe(200);
+      expect(res.headers.get('content-type')).toBe('audio/webm');
+    },
+  );
 
   it('keeps the pre-existing audio/webm default when no content-type is sent', async () => {
     const session = (await seededSession()).sessionId;

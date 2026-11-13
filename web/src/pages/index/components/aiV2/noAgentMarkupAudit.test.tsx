@@ -99,16 +99,17 @@ function maliciousDataFor(type: WidgetType): CatalogWidgetData {
 }
 
 describe('CatalogWidget — every catalog type, every free-text field, malicious payload', () => {
-  it.each(
-    WIDGET_TYPES,
-  )('%s never interpolates agent/config content into markup/href/src', (type) => {
-    const { container } = renderStrict(
-      <CatalogWidget title={PAYLOAD} data={maliciousDataFor(type)} />,
-    );
-    assertNoInjection(container);
-    // Title always renders as literal text (WidgetChrome's contract).
-    expect(screen.getAllByText(PAYLOAD, { exact: false }).length).toBeGreaterThan(0);
-  });
+  it.each(WIDGET_TYPES)(
+    '%s never interpolates agent/config content into markup/href/src',
+    (type) => {
+      const { container } = renderStrict(
+        <CatalogWidget title={PAYLOAD} data={maliciousDataFor(type)} />,
+      );
+      assertNoInjection(container);
+      // Title always renders as literal text (WidgetChrome's contract).
+      expect(screen.getAllByText(PAYLOAD, { exact: false }).length).toBeGreaterThan(0);
+    },
+  );
 });
 
 describe("DashboardEditor's editing UI — malicious widget title never becomes markup", () => {

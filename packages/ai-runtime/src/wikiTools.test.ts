@@ -928,19 +928,19 @@ describe('propose_page: carried-forward citations of another session (D4 step 4)
     expect(res.text).toContain('cite:S1@120 "we never said that": not found');
   });
 
-  it.each([
-    'pendingFor',
-    'sessionWords',
-  ] as const)('a thrown %s returns "Tool failed."', async (m) => {
-    const { port } = fakePort({
-      pages: [livePage({ pendingSuggestionId: 'sg1' })],
-      pending: [pendingSuggestion({ bodyMd: '[x y](cite:S0@100)' })],
-      sessions: { S0: S0_WORDS },
-      throwOn: m,
-    });
-    const res = await wikiTools(port).call('propose_page', toPage('[x y](cite:S0@100)'));
-    expect(res).toEqual({ text: TOOL_FAILED_TEXT, isError: true });
-  });
+  it.each(['pendingFor', 'sessionWords'] as const)(
+    'a thrown %s returns "Tool failed."',
+    async (m) => {
+      const { port } = fakePort({
+        pages: [livePage({ pendingSuggestionId: 'sg1' })],
+        pending: [pendingSuggestion({ bodyMd: '[x y](cite:S0@100)' })],
+        sessions: { S0: S0_WORDS },
+        throwOn: m,
+      });
+      const res = await wikiTools(port).call('propose_page', toPage('[x y](cite:S0@100)'));
+      expect(res).toEqual({ text: TOOL_FAILED_TEXT, isError: true });
+    },
+  );
 });
 
 describe('a thrown port error returns "Tool failed."', () => {

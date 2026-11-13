@@ -17,21 +17,12 @@ function folderFile(name: string, relPath: string): File {
 }
 
 describe('isSupportedAudioFileName', () => {
-  it.each([
-    'mp3',
-    'MP3',
-    'wav',
-    'aiff',
-    'aif',
-    'm4a',
-    'mp4',
-    'ogg',
-    'webm',
-    'flac',
-    'FLAC',
-  ])('accepts .%s', (ext) => {
-    expect(isSupportedAudioFileName(`clip.${ext}`)).toBe(true);
-  });
+  it.each(['mp3', 'MP3', 'wav', 'aiff', 'aif', 'm4a', 'mp4', 'ogg', 'webm', 'flac', 'FLAC'])(
+    'accepts .%s',
+    (ext) => {
+      expect(isSupportedAudioFileName(`clip.${ext}`)).toBe(true);
+    },
+  );
 
   it('rejects non-audio extensions', () => {
     expect(isSupportedAudioFileName('notes.txt')).toBe(false);

@@ -161,14 +161,14 @@ describe('phone feed bounds (fix round 3)', () => {
   const here = path.dirname(fileURLToPath(import.meta.url));
   const src = (f: string) => fs.readFileSync(path.join(here, f), 'utf8');
 
-  it.each([
-    'TranscribeFeed.tsx',
-    'TopicsFeed.tsx',
-  ])('%s does not cap its sheet on phones (the viewport carries the cap)', (file) => {
-    const modifier = src(file).match(/modifier="([^"]*)"/)?.[1] ?? '';
-    expect(modifier).toMatch(/min-h-0/);
-    expect(modifier).not.toMatch(/max-md:max-h-/);
-  });
+  it.each(['TranscribeFeed.tsx', 'TopicsFeed.tsx'])(
+    '%s does not cap its sheet on phones (the viewport carries the cap)',
+    (file) => {
+      const modifier = src(file).match(/modifier="([^"]*)"/)?.[1] ?? '';
+      expect(modifier).toMatch(/min-h-0/);
+      expect(modifier).not.toMatch(/max-md:max-h-/);
+    },
+  );
 
   it('the shared scroll viewport carries the 70dvh phone cap', () => {
     expect(src('FeedTable.tsx')).toMatch(/viewportClassName="[^"]*max-md:max-h-\[70dvh\]/);

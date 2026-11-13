@@ -67,24 +67,25 @@ describe('silent run leases on catalog.session_leases (session-run-leases D2)', 
   });
   afterEach(() => vi.useRealTimers());
 
-  it.each(
-    KINDS,
-  )('%s: claim, re-claim and release leave the revision, broadcast nothing and arm no alarm', async (kind) => {
-    const { A, a, alarms, broadcasts, leases, revision } = await setup();
-    const r = await revision();
-    const t0 = Date.now();
-    expect(await A.run((s) => s.lease.claimRunLease(kind, 'srv:x:1'))).toBe(true);
-    expect(await leases()).toEqual([row(kind, 'srv:x:1', a, t0, t0 + TTL, t0)]);
-    vi.advanceTimersByTime(10_000);
-    const t1 = Date.now();
-    expect(await A.run((s) => s.lease.claimRunLease(kind, 'srv:x:1'))).toBe(true);
-    expect(await leases()).toEqual([row(kind, 'srv:x:1', a, t1, t1 + TTL, t0)]);
-    await A.run((s) => s.lease.releaseRunLease(kind, 'srv:x:1'));
-    expect(await leases()).toEqual([]);
-    expect(await revision()).toBe(r);
-    expect(broadcasts).toEqual([]);
-    expect(alarms).toEqual([]);
-  });
+  it.each(KINDS)(
+    '%s: claim, re-claim and release leave the revision, broadcast nothing and arm no alarm',
+    async (kind) => {
+      const { A, a, alarms, broadcasts, leases, revision } = await setup();
+      const r = await revision();
+      const t0 = Date.now();
+      expect(await A.run((s) => s.lease.claimRunLease(kind, 'srv:x:1'))).toBe(true);
+      expect(await leases()).toEqual([row(kind, 'srv:x:1', a, t0, t0 + TTL, t0)]);
+      vi.advanceTimersByTime(10_000);
+      const t1 = Date.now();
+      expect(await A.run((s) => s.lease.claimRunLease(kind, 'srv:x:1'))).toBe(true);
+      expect(await leases()).toEqual([row(kind, 'srv:x:1', a, t1, t1 + TTL, t0)]);
+      await A.run((s) => s.lease.releaseRunLease(kind, 'srv:x:1'));
+      expect(await leases()).toEqual([]);
+      expect(await revision()).toBe(r);
+      expect(broadcasts).toEqual([]);
+      expect(alarms).toEqual([]);
+    },
+  );
 
   it('another holder is refused while the lease is live, and takes it over once it expired', async () => {
     const { A, B, a, b, alarms, broadcasts, leases, revision } = await setup();

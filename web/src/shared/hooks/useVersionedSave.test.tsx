@@ -428,83 +428,86 @@ describe('useVersionedSave: per-row chain (D4)', () => {
   it.each([
     ['Keep theirs', 'keptTheirs'],
     ['Escape', 'dismissed'],
-  ] as const)('after %s, saves still queued on that row settle %s and send nothing', async (action, kind) => {
-    const h = mount();
-    const theirs = { id: 'r1', version: 2, text: 'theirs' };
-    const first = deferred<string>();
-    const send1 = vi.fn((_g: VersionGuard) => first.promise);
-    const send2 = vi.fn(async (_g: VersionGuard) => 'two');
-    const send3 = vi.fn(async (_g: VersionGuard) => 'three');
-    const queuedHandlers = { onSaved: vi.fn(), onKeptTheirs: vi.fn(), onDismissed: vi.fn() };
-    const firstHandlers = { onKeptTheirs: vi.fn(), onDismissed: vi.fn() };
-    const outs: Array<ReturnType<typeof track<string, Row>>> = [];
-    await act(async () => {
-      outs.push(
-        track(
-          h.api().run<string, Row>({
-            rowKey: 'r1',
-            baseVersion: () => 1,
-            send: send1,
-            conflictOf,
-            prompt: editPrompt('a'),
-            ...firstHandlers,
-          }),
-        ),
-      );
-      for (const send of [send2, send3]) {
+  ] as const)(
+    'after %s, saves still queued on that row settle %s and send nothing',
+    async (action, kind) => {
+      const h = mount();
+      const theirs = { id: 'r1', version: 2, text: 'theirs' };
+      const first = deferred<string>();
+      const send1 = vi.fn((_g: VersionGuard) => first.promise);
+      const send2 = vi.fn(async (_g: VersionGuard) => 'two');
+      const send3 = vi.fn(async (_g: VersionGuard) => 'three');
+      const queuedHandlers = { onSaved: vi.fn(), onKeptTheirs: vi.fn(), onDismissed: vi.fn() };
+      const firstHandlers = { onKeptTheirs: vi.fn(), onDismissed: vi.fn() };
+      const outs: Array<ReturnType<typeof track<string, Row>>> = [];
+      await act(async () => {
         outs.push(
           track(
             h.api().run<string, Row>({
               rowKey: 'r1',
               baseVersion: () => 1,
-              send,
+              send: send1,
               conflictOf,
-              prompt: editPrompt('b'),
-              ...queuedHandlers,
+              prompt: editPrompt('a'),
+              ...firstHandlers,
             }),
           ),
         );
-      }
-    });
-    await act(async () => {
-      first.reject(conflict(theirs));
-    });
-    if (action === 'Keep theirs') await click('Keep theirs');
-    else await pressEscape();
-    await flush();
+        for (const send of [send2, send3]) {
+          outs.push(
+            track(
+              h.api().run<string, Row>({
+                rowKey: 'r1',
+                baseVersion: () => 1,
+                send,
+                conflictOf,
+                prompt: editPrompt('b'),
+                ...queuedHandlers,
+              }),
+            ),
+          );
+        }
+      });
+      await act(async () => {
+        first.reject(conflict(theirs));
+      });
+      if (action === 'Keep theirs') await click('Keep theirs');
+      else await pressEscape();
+      await flush();
 
-    const expected = { kind, current: theirs };
-    expect(outs.map((o) => o.outcome)).toEqual([expected, expected, expected]);
-    expect(send2).not.toHaveBeenCalled();
-    expect(send3).not.toHaveBeenCalled();
-    // The first decision's handler ran once; the queued saves run no handler of their own.
-    expect(
-      kind === 'keptTheirs' ? firstHandlers.onKeptTheirs : firstHandlers.onDismissed,
-    ).toHaveBeenCalledTimes(1);
-    expect(queuedHandlers.onSaved).not.toHaveBeenCalled();
-    expect(queuedHandlers.onKeptTheirs).not.toHaveBeenCalled();
-    expect(queuedHandlers.onDismissed).not.toHaveBeenCalled();
-    expect(dialog()).toBeNull();
-    expect(h.api().isBusy('r1')).toBe(false);
+      const expected = { kind, current: theirs };
+      expect(outs.map((o) => o.outcome)).toEqual([expected, expected, expected]);
+      expect(send2).not.toHaveBeenCalled();
+      expect(send3).not.toHaveBeenCalled();
+      // The first decision's handler ran once; the queued saves run no handler of their own.
+      expect(
+        kind === 'keptTheirs' ? firstHandlers.onKeptTheirs : firstHandlers.onDismissed,
+      ).toHaveBeenCalledTimes(1);
+      expect(queuedHandlers.onSaved).not.toHaveBeenCalled();
+      expect(queuedHandlers.onKeptTheirs).not.toHaveBeenCalled();
+      expect(queuedHandlers.onDismissed).not.toHaveBeenCalled();
+      expect(dialog()).toBeNull();
+      expect(h.api().isBusy('r1')).toBe(false);
 
-    // A save started after the decision is not covered by it: it sends normally.
-    const send4 = vi.fn(async (_g: VersionGuard) => 'four');
-    let out4!: ReturnType<typeof track<string, Row>>;
-    await act(async () => {
-      out4 = track(
-        h.api().run<string, Row>({
-          rowKey: 'r1',
-          baseVersion: () => 2,
-          send: send4,
-          conflictOf,
-          prompt: editPrompt('c'),
-        }),
-      );
-    });
-    await flush();
-    expect(out4.outcome).toEqual({ kind: 'saved', result: 'four' });
-    expect(send4.mock.calls).toEqual([[{ version: 2 }]]);
-  });
+      // A save started after the decision is not covered by it: it sends normally.
+      const send4 = vi.fn(async (_g: VersionGuard) => 'four');
+      let out4!: ReturnType<typeof track<string, Row>>;
+      await act(async () => {
+        out4 = track(
+          h.api().run<string, Row>({
+            rowKey: 'r1',
+            baseVersion: () => 2,
+            send: send4,
+            conflictOf,
+            prompt: editPrompt('c'),
+          }),
+        );
+      });
+      await flush();
+      expect(out4.outcome).toEqual({ kind: 'saved', result: 'four' });
+      expect(send4.mock.calls).toEqual([[{ version: 2 }]]);
+    },
+  );
 
   it('isBusy(rowKey) is true while a save is in flight or queued for that row', async () => {
     const h = mount();

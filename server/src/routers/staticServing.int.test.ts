@@ -74,19 +74,17 @@ describe('frontend bridge dispatch — GET-only catch-all (design D1, spec "Next
     expect(stub.handle).not.toHaveBeenCalled();
   });
 
-  it.each([
-    '/api/definitely-not-a-route',
-    '/auth/nope',
-    '/api',
-    '/auth',
-  ])('unmatched GET %s 404s from Hono without invoking the bridge (spec "API routes never reach the frontend bridge")', async (path) => {
-    // Signed in, so an unmatched /api path reaches Hono's 404 rather than the login gate's 401
-    // (require-login: login is always required; either way the bridge is never invoked).
-    const { cookie } = await defaultUser();
-    const res = await app.request(path, { headers: { cookie } }, envWithIO());
-    expect(res.status).toBe(404);
-    expect(stub.handle).not.toHaveBeenCalled();
-  });
+  it.each(['/api/definitely-not-a-route', '/auth/nope', '/api', '/auth'])(
+    'unmatched GET %s 404s from Hono without invoking the bridge (spec "API routes never reach the frontend bridge")',
+    async (path) => {
+      // Signed in, so an unmatched /api path reaches Hono's 404 rather than the login gate's 401
+      // (require-login: login is always required; either way the bridge is never invoked).
+      const { cookie } = await defaultUser();
+      const res = await app.request(path, { headers: { cookie } }, envWithIO());
+      expect(res.status).toBe(404);
+      expect(stub.handle).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([
     '/',
@@ -132,18 +130,17 @@ describe('frontend bridge dispatch — GET-only catch-all (design D1, spec "Next
     expect(stub.handle).not.toHaveBeenCalled();
   });
 
-  it.each([
-    '/teams/',
-    '/sessions/abc/',
-    '/admin/users/',
-  ])('trailing slash %s 404s without invoking the bridge', async (path) => {
-    // Signed in, so an unmatched /api path reaches Hono's 404 rather than the login gate's 401
-    // (require-login: login is always required; either way the bridge is never invoked).
-    const { cookie } = await defaultUser();
-    const res = await app.request(path, { headers: { cookie } }, envWithIO());
-    expect(res.status).toBe(404);
-    expect(stub.handle).not.toHaveBeenCalled();
-  });
+  it.each(['/teams/', '/sessions/abc/', '/admin/users/'])(
+    'trailing slash %s 404s without invoking the bridge',
+    async (path) => {
+      // Signed in, so an unmatched /api path reaches Hono's 404 rather than the login gate's 401
+      // (require-login: login is always required; either way the bridge is never invoked).
+      const { cookie } = await defaultUser();
+      const res = await app.request(path, { headers: { cookie } }, envWithIO());
+      expect(res.status).toBe(404);
+      expect(stub.handle).not.toHaveBeenCalled();
+    },
+  );
 
   it('GET / (root) is not treated as a trailing-slash path', async () => {
     const res = await app.request('/', {}, envWithIO());
@@ -254,16 +251,15 @@ describe('frontend bridge — the /search shell route (catalog-search)', () => {
 
   afterEach(() => stub.handle.mockClear());
 
-  it.each([
-    '/search',
-    '/search?q=x',
-    '/search?q=budget&show_id=nope&limit=99',
-  ])('bridges anonymous GET %s with no Set-Cookie', async (path) => {
-    const res = await app.request(path, {}, envWithIO());
-    expect(stub.handle).toHaveBeenCalledTimes(1);
-    expect(res.headers.get('x-hono-already-sent')).toBe('true');
-    expect(res.headers.get('set-cookie')).toBeNull();
-  });
+  it.each(['/search', '/search?q=x', '/search?q=budget&show_id=nope&limit=99'])(
+    'bridges anonymous GET %s with no Set-Cookie',
+    async (path) => {
+      const res = await app.request(path, {}, envWithIO());
+      expect(stub.handle).toHaveBeenCalledTimes(1);
+      expect(res.headers.get('x-hono-already-sent')).toBe('true');
+      expect(res.headers.get('set-cookie')).toBeNull();
+    },
+  );
 
   it('bridges a signed-in GET /search?q=x with no Set-Cookie', async () => {
     const { cookie } = await defaultUser();
@@ -292,16 +288,15 @@ describe('frontend bridge — the /wiki shell routes (show-wiki)', () => {
 
   afterEach(() => stub.handle.mockClear());
 
-  it.each([
-    '/wiki',
-    '/wiki/abc',
-    '/wiki?x=1',
-  ])('bridges anonymous GET %s with no Set-Cookie', async (path) => {
-    const res = await app.request(path, {}, envWithIO());
-    expect(stub.handle).toHaveBeenCalledTimes(1);
-    expect(res.headers.get('x-hono-already-sent')).toBe('true');
-    expect(res.headers.get('set-cookie')).toBeNull();
-  });
+  it.each(['/wiki', '/wiki/abc', '/wiki?x=1'])(
+    'bridges anonymous GET %s with no Set-Cookie',
+    async (path) => {
+      const res = await app.request(path, {}, envWithIO());
+      expect(stub.handle).toHaveBeenCalledTimes(1);
+      expect(res.headers.get('x-hono-already-sent')).toBe('true');
+      expect(res.headers.get('set-cookie')).toBeNull();
+    },
+  );
 
   it.each(['/wiki/', '/wiki/abc/'])('GET %s 404s without invoking the bridge', async (path) => {
     const { cookie } = await defaultUser();

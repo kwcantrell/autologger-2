@@ -994,98 +994,101 @@ describe('the app role (design D3)', () => {
     // delete, no membership or invite insert); its unqualified-name reads and writes run in
     // catalogPolicies.pg.test.ts's matrix.
     'system',
-  ] as const)('as catalog_%s, reads and writes every catalog table by unqualified name (catalog-roles D12)', async (role) => {
-    const db = await createTestDatabase();
-    const sql = connect(db[role]);
-    expect((await sql`select current_user as u`)[0]?.u).toBe(`catalog_${role}`);
-    const t = '2026-10-01T00:00:00.000Z';
-    await sql`insert into users (id, google_sub, email, created_at_utc) values ('u', 'g', 'e', ${t})`;
-    await sql`insert into user_studio_memberships (user_id, studio_id) values ('u', 'st')`;
-    await sql`insert into user_prefs (user_id) values ('u')`;
-    await sql`insert into studio_definitions (id, display_name, created_at_utc) values ('st', 'S', ${t})`;
-    await sql`insert into shows (id, studio_id, name, show_code, created_at_utc)
+  ] as const)(
+    'as catalog_%s, reads and writes every catalog table by unqualified name (catalog-roles D12)',
+    async (role) => {
+      const db = await createTestDatabase();
+      const sql = connect(db[role]);
+      expect((await sql`select current_user as u`)[0]?.u).toBe(`catalog_${role}`);
+      const t = '2026-10-01T00:00:00.000Z';
+      await sql`insert into users (id, google_sub, email, created_at_utc) values ('u', 'g', 'e', ${t})`;
+      await sql`insert into user_studio_memberships (user_id, studio_id) values ('u', 'st')`;
+      await sql`insert into user_prefs (user_id) values ('u')`;
+      await sql`insert into studio_definitions (id, display_name, created_at_utc) values ('st', 'S', ${t})`;
+      await sql`insert into shows (id, studio_id, name, show_code, created_at_utc)
               values ('sh', 'st', 'N', 'C', ${t})`;
-    await sql`insert into app_settings (key, value) values ('k', 'v')`;
-    await sql`insert into sessions (id, show_id) values ('se', 'sh')`;
-    await sql`insert into kv (key, value) values ('k', 'v')`;
-    await sql`insert into team_invites (studio_id, email_norm, invited_by_user_id, invited_at_utc)
+      await sql`insert into app_settings (key, value) values ('k', 'v')`;
+      await sql`insert into sessions (id, show_id) values ('se', 'sh')`;
+      await sql`insert into kv (key, value) values ('k', 'v')`;
+      await sql`insert into team_invites (studio_id, email_norm, invited_by_user_id, invited_at_utc)
               values ('st', 'e', 'u', ${t})`;
-    await sql`insert into show_grants (user_id, show_id, granted_at_utc) values ('u', 'sh', ${t})`;
-    // session-tables D1: one row in each session table.
-    await sql`insert into session_events (session_id, id, wall_time_utc, frame_rate, category, message)
+      await sql`insert into show_grants (user_id, show_id, granted_at_utc) values ('u', 'sh', ${t})`;
+      // session-tables D1: one row in each session table.
+      await sql`insert into session_events (session_id, id, wall_time_utc, frame_rate, category, message)
               values ('se', 'e', ${t}, 24, 'c', 'm')`;
-    await sql`insert into session_transport (session_id) values ('se')`;
-    await sql`insert into session_audio_segments (session_id, id, ordinal, mime_type, r2_key, created_at_utc)
+      await sql`insert into session_transport (session_id) values ('se')`;
+      await sql`insert into session_audio_segments (session_id, id, ordinal, mime_type, r2_key, created_at_utc)
               values ('se', 'a', 1, 'audio/webm', 'k', ${t})`;
-    await sql`insert into session_transcript_words (session_id, id, ordinal, created_at_utc)
+      await sql`insert into session_transcript_words (session_id, id, ordinal, created_at_utc)
               values ('se', 'w', 0, ${t})`;
-    await sql`insert into session_topics (session_id, id, ordinal, created_at_utc)
+      await sql`insert into session_topics (session_id, id, ordinal, created_at_utc)
               values ('se', 'tp', 0, ${t})`;
-    await sql`insert into session_transcript_paragraphs (session_id, id, ordinal, created_at_utc)
+      await sql`insert into session_transcript_paragraphs (session_id, id, ordinal, created_at_utc)
               values ('se', 'p', 0, ${t})`;
-    await sql`insert into session_transcript_sentiment (session_id, id, ordinal, created_at_utc)
+      await sql`insert into session_transcript_sentiment (session_id, id, ordinal, created_at_utc)
               values ('se', 's', 0, ${t})`;
-    await sql`insert into session_dashboards (session_id, id, config_json, created_at_utc, updated_at_utc)
+      await sql`insert into session_dashboards (session_id, id, config_json, created_at_utc, updated_at_utc)
               values ('se', 'd', '{}', ${t}, ${t})`;
-    await sql`insert into session_meta (session_id, key, value) values ('se', 'k', 'v')`;
-    await sql`insert into session_overwrites (session_id, id, table_name, row_id, user_id, at_utc,
+      await sql`insert into session_meta (session_id, key, value) values ('se', 'k', 'v')`;
+      await sql`insert into session_overwrites (session_id, id, table_name, row_id, user_id, at_utc,
                 replaced_version, before_json) values ('se', 'o', 'session_events', 'e', 'u', ${t}, 1, '{}')`;
-    await sql`insert into session_leases (session_id, kind, holder_client_id, holder_user_id,
+      await sql`insert into session_leases (session_id, kind, holder_client_id, holder_user_id,
                 heartbeat_at_ms, expires_at_ms) values ('se', 'recording', 'c', 'u', 1, 2)`;
-    // companion-devices D1.
-    await sql`insert into companion_devices (id, user_id, name, token_hash, created_at_utc)
+      // companion-devices D1.
+      await sql`insert into companion_devices (id, user_id, name, token_hash, created_at_utc)
               values ('d', 'u', 'n', 'h', ${t})`;
-    await sql`insert into companion_presence (client_id, user_id, session_id, visible, is_playing,
+      await sql`insert into companion_presence (client_id, user_id, session_id, visible, is_playing,
                 updated_at_ms) values ('c', 'u', 'se', true, false, 1)`;
-    // byo-ai-providers D1.
-    await sql`insert into user_provider_credentials (user_id, kind, provider, model, key_nonce,
+      // byo-ai-providers D1.
+      await sql`insert into user_provider_credentials (user_id, kind, provider, model, key_nonce,
                 key_ciphertext, key_tag, key_version, key_last4, created_at_utc, updated_at_utc)
               values ('u', 'stt', 'deepgram', 'nova-3', '\\x00', '\\x01', '\\x02', 1, 'abcd', ${t}, ${t})`;
-    await sql`insert into provider_key_check (id, check_value, created_at_utc) values (1, 'c', ${t})`;
-    await sql`insert into provider_test_windows (user_id, window_start_ms, test_count) values ('u', 1, 1)`;
-    // catalog-search D4: a chunk row in a bucket no word of `se` falls in, so no rebuild touches it.
-    await sql`insert into session_transcript_chunks (session_id, bucket, text) values ('se', 9, 't')`;
-    // show-wiki D1, D2: a session page with an alias and its first revision.
-    await sql`insert into wiki_pages (id, show_id, kind, title, body_md, session_id, revision,
+      await sql`insert into provider_key_check (id, check_value, created_at_utc) values (1, 'c', ${t})`;
+      await sql`insert into provider_test_windows (user_id, window_start_ms, test_count) values ('u', 1, 1)`;
+      // catalog-search D4: a chunk row in a bucket no word of `se` falls in, so no rebuild touches it.
+      await sql`insert into session_transcript_chunks (session_id, bucket, text) values ('se', 9, 't')`;
+      // show-wiki D1, D2: a session page with an alias and its first revision.
+      await sql`insert into wiki_pages (id, show_id, kind, title, body_md, session_id, revision,
                 created_by, created_by_name, created_at_utc, updated_by, updated_by_name,
                 updated_at_utc)
               values ('wp', 'sh', 'session', 'W', '', 'se', 1, 'u', 'U', ${t}, 'u', 'U', ${t})`;
-    await sql`insert into wiki_aliases (page_id, show_id, alias) values ('wp', 'sh', 'a')`;
-    await sql`insert into wiki_revisions (page_id, revision, title, kind, body_md, aliases_json,
+      await sql`insert into wiki_aliases (page_id, show_id, alias) values ('wp', 'sh', 'a')`;
+      await sql`insert into wiki_revisions (page_id, revision, title, kind, body_md, aliases_json,
                 author_user_id, author_name, at_utc) values ('wp', 1, 'W', 'session', '', '[]', 'u', 'U', ${t})`;
-    // show-wiki-ai D1: a pending suggestion for that page.
-    await sql`insert into wiki_suggestions (id, show_id, session_id, run_id, page_id, base_revision,
+      // show-wiki-ai D1: a pending suggestion for that page.
+      await sql`insert into wiki_suggestions (id, show_id, session_id, run_id, page_id, base_revision,
                 kind, title, body_md, aliases_json, rationale, status, created_by, created_by_name,
                 created_at_utc)
               values ('ws', 'sh', 'se', 'r', 'wp', 1, 'session', 'W', '', '[]', '', 'pending', 'u',
                 'U', ${t})`;
-    // media-worker D2, D12, D7.
-    await sql`insert into media_jobs (id, kind, session_id, target, input_bytes, run_after_ms,
+      // media-worker D2, D12, D7.
+      await sql`insert into media_jobs (id, kind, session_id, target, input_bytes, run_after_ms,
                 created_at_ms, updated_at_ms) values ('j', 'ingest', 'se', 'a', 1, 1, 1, 1)`;
-    await sql`insert into media_uploads (id, session_id, created_by_user_id, content_type,
+      await sql`insert into media_uploads (id, session_id, created_by_user_id, content_type,
                 size_bytes, part_size, parts_total, part_sha256_json, expires_at_ms, created_at_ms)
               values ('up', 'se', 'u', 'audio/wav', 1, 1, 1, '[]', 1, 1)`;
-    await sql`insert into session_audio_seams (session_id, recording_ordinal, started_at_utc,
+      await sql`insert into session_audio_seams (session_id, recording_ordinal, started_at_utc,
                 segment_id, source_key) values ('se', 1, ${t}, 'a', 'k')`;
-    // batch-autogenerate D1.
-    await sql`insert into autogenerate_jobs (id, team_id, initiator_user_id, initiator_name, scope,
+      // batch-autogenerate D1.
+      await sql`insert into autogenerate_jobs (id, team_id, initiator_user_id, initiator_name, scope,
                 steps, wiki_mode, session_count, created_at_ms, updated_at_ms)
               values ('aj', 'st', 'u', 'U', 'shows', 'wiki', 'accept', 1, 1, 1)`;
-    await sql`insert into autogenerate_items (job_id, session_id, step, ordinal, step_order)
+      await sql`insert into autogenerate_items (job_id, session_id, step, ordinal, step_order)
               values ('aj', 'se', 'wiki', 0, 3)`;
-    // closed-signups D2: only postgres writes an approval; catalog_system reads and deletes it.
-    await connect(db.admin)`select catalog.approve_account('e@example.com')`;
-    for (const table of TABLES) {
-      const n = await sql.unsafe(`select count(*)::int as n from ${table}`);
-      expect(n[0]?.n, table).toBeGreaterThan(0);
-      const target = KEY_COLUMN[table];
-      const update = sql.unsafe(`update ${table} set ${target} = ${target}`);
-      if (table === 'account_approvals')
-        await expect(update).rejects.toMatchObject({ code: '42501' });
-      else await update;
-    }
-    for (const table of [...TABLES].reverse()) await sql.unsafe(`delete from ${table}`);
-  });
+      // closed-signups D2: only postgres writes an approval; catalog_system reads and deletes it.
+      await connect(db.admin)`select catalog.approve_account('e@example.com')`;
+      for (const table of TABLES) {
+        const n = await sql.unsafe(`select count(*)::int as n from ${table}`);
+        expect(n[0]?.n, table).toBeGreaterThan(0);
+        const target = KEY_COLUMN[table];
+        const update = sql.unsafe(`update ${table} set ${target} = ${target}`);
+        if (table === 'account_approvals')
+          await expect(update).rejects.toMatchObject({ code: '42501' });
+        else await update;
+      }
+      for (const table of [...TABLES].reverse()) await sql.unsafe(`delete from ${table}`);
+    },
+  );
 
   it('cannot change the schema, switch roles or read other schemas', async () => {
     const db = await createTestDatabase();
@@ -1408,14 +1411,14 @@ describe('row-level security on every catalog table (catalog-roles D1, D2; catal
 
   // catalog-policies D2: only catalog_system keeps allow-all policies; catalog_user's rules are
   // catalogPolicies.pg.test.ts's.
-  it.each([
-    'system',
-  ] as const)('as catalog_%s, the allow-all policies change nothing on rows naming another user', async (role) => {
-    const db = await createTestDatabase();
-    const admin = connect(db.admin);
-    const t = '2026-10-06T00:00:00.000Z';
-    // Rows naming `other`, written by the table owner (which bypasses RLS).
-    await admin.unsafe(`
+  it.each(['system'] as const)(
+    'as catalog_%s, the allow-all policies change nothing on rows naming another user',
+    async (role) => {
+      const db = await createTestDatabase();
+      const admin = connect(db.admin);
+      const t = '2026-10-06T00:00:00.000Z';
+      // Rows naming `other`, written by the table owner (which bypasses RLS).
+      await admin.unsafe(`
         insert into catalog.users (id, google_sub, email, created_at_utc) values ('other', 'g-o', 'o@example.com', '${t}');
         insert into catalog.user_studio_memberships (user_id, studio_id) values ('other', 'st-o');
         insert into catalog.user_prefs (user_id) values ('other');
@@ -1430,37 +1433,38 @@ describe('row-level security on every catalog table (catalog-roles D1, D2; catal
         insert into catalog.autogenerate_jobs (id, team_id, initiator_user_id, initiator_name, scope, steps, wiki_mode, session_count, created_at_ms, updated_at_ms) values ('aj-o', 'st-o', 'other', 'O', 'shows', 'wiki', 'accept', 1, 1, 1);
         insert into catalog.autogenerate_items (job_id, session_id, step, ordinal, step_order) values ('aj-o', 'se-o', 'wiki', 0, 3);
       `);
-    const counts: Record<string, number> = {};
-    for (const table of TABLES) {
-      const n = await admin.unsafe(`select count(*)::int as n from catalog.${table}`);
-      counts[table] = n[0]?.n as number;
-    }
-    const sql = connect(db.app);
-    await sql.begin(async (tx) => {
-      await tx`select set_config('role', ${`catalog_${role}`}, true),
-                        set_config('app.user_id', '', true)`;
-      expect((await tx`select current_user as u`)[0]?.u).toBe(`catalog_${role}`);
+      const counts: Record<string, number> = {};
       for (const table of TABLES) {
-        const sel = await tx.unsafe(`select count(*)::int as n from ${table}`);
-        expect(sel[0]?.n, `select ${table}`).toBe(counts[table]);
-        // closed-signups D2: catalog_system holds no update on account_approvals (its 42501:
-        // accountApprovals.pg.test.ts).
-        if (table === 'account_approvals') continue;
-        const key = KEY_COLUMN[table];
-        const upd = await tx.unsafe(`update ${table} set ${key} = ${key}`);
-        expect(upd.count, `update ${table}`).toBe(counts[table]);
+        const n = await admin.unsafe(`select count(*)::int as n from catalog.${table}`);
+        counts[table] = n[0]?.n as number;
       }
-      await tx`insert into users (id, google_sub, email, created_at_utc)
+      const sql = connect(db.app);
+      await sql.begin(async (tx) => {
+        await tx`select set_config('role', ${`catalog_${role}`}, true),
+                        set_config('app.user_id', '', true)`;
+        expect((await tx`select current_user as u`)[0]?.u).toBe(`catalog_${role}`);
+        for (const table of TABLES) {
+          const sel = await tx.unsafe(`select count(*)::int as n from ${table}`);
+          expect(sel[0]?.n, `select ${table}`).toBe(counts[table]);
+          // closed-signups D2: catalog_system holds no update on account_approvals (its 42501:
+          // accountApprovals.pg.test.ts).
+          if (table === 'account_approvals') continue;
+          const key = KEY_COLUMN[table];
+          const upd = await tx.unsafe(`update ${table} set ${key} = ${key}`);
+          expect(upd.count, `update ${table}`).toBe(counts[table]);
+        }
+        await tx`insert into users (id, google_sub, email, created_at_utc)
                  values ('u-1', 'g-1', 'u1@example.com', ${t})`;
-      await tx`insert into show_grants (user_id, show_id, granted_at_utc) values ('u-1', 'sh-o', ${t})`;
-      expect((await tx`select count(*)::int as n from users`)[0]?.n).toBe(counts.users + 1);
-      for (const table of [...TABLES].reverse()) {
-        const del = await tx.unsafe(`delete from ${table}`);
-        const extra = table === 'users' || table === 'show_grants' ? 1 : 0;
-        expect(del.count, `delete ${table}`).toBe(counts[table] + extra);
-      }
-    });
-  });
+        await tx`insert into show_grants (user_id, show_id, granted_at_utc) values ('u-1', 'sh-o', ${t})`;
+        expect((await tx`select count(*)::int as n from users`)[0]?.n).toBe(counts.users + 1);
+        for (const table of [...TABLES].reverse()) {
+          const del = await tx.unsafe(`delete from ${table}`);
+          const extra = table === 'users' || table === 'show_grants' ? 1 : 0;
+          expect(del.count, `delete ${table}`).toBe(counts[table] + extra);
+        }
+      });
+    },
+  );
 });
 
 describe('the session tables migration (session-tables D1)', () => {

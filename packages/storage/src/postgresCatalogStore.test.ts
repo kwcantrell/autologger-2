@@ -482,34 +482,37 @@ describe('PostgresCatalogDb: bindings (catalog-roles D4)', () => {
   it.each([
     ['user', (db: PostgresCatalogDb) => db.bindUser('u-1'), ['catalog_user', 'u-1']],
     ['system', (db: PostgresCatalogDb) => db.bindSystem('test'), ['catalog_system', '']],
-  ] as const)('a %s-bound transaction pipelines BEGIN and the preamble, and re-applies it on a retry', async (_kind, bind, binds) => {
-    let bodyRuns = 0;
-    const f = held((_c, text) => {
-      if (text === BODY) return ++bodyRuns === 1 ? serverError('40001') : undefined;
-      return 'hold';
-    });
-    const db = rolesDb(f, { random: () => 0, sleep: async () => {} });
-    const p = bind(db).tx(async (t) => t.run('UPDATE t SET v = ?', 1));
-    await tick();
-    // Both issued before either reply arrived.
-    expect(f.texts(1)).toEqual(['BEGIN ISOLATION LEVEL SERIALIZABLE', PREAMBLE]);
-    expect(f.calls.find((c) => c.text === PREAMBLE)?.binds).toEqual(binds);
-    await f.drainAll();
-    expect(await prompt(p)).toEqual({ changes: 1 });
-    const tx = f.calls.filter((c) => c.client !== 0);
-    expect(tx.map((c) => c.text)).toEqual([
-      'BEGIN ISOLATION LEVEL SERIALIZABLE',
-      PREAMBLE,
-      BODY,
-      'ROLLBACK',
-      'BEGIN ISOLATION LEVEL SERIALIZABLE',
-      PREAMBLE,
-      BODY,
-      'COMMIT',
-    ]);
-    expect(tx.filter((c) => c.text === PREAMBLE).map((c) => c.binds)).toEqual([binds, binds]);
-    await db.close();
-  });
+  ] as const)(
+    'a %s-bound transaction pipelines BEGIN and the preamble, and re-applies it on a retry',
+    async (_kind, bind, binds) => {
+      let bodyRuns = 0;
+      const f = held((_c, text) => {
+        if (text === BODY) return ++bodyRuns === 1 ? serverError('40001') : undefined;
+        return 'hold';
+      });
+      const db = rolesDb(f, { random: () => 0, sleep: async () => {} });
+      const p = bind(db).tx(async (t) => t.run('UPDATE t SET v = ?', 1));
+      await tick();
+      // Both issued before either reply arrived.
+      expect(f.texts(1)).toEqual(['BEGIN ISOLATION LEVEL SERIALIZABLE', PREAMBLE]);
+      expect(f.calls.find((c) => c.text === PREAMBLE)?.binds).toEqual(binds);
+      await f.drainAll();
+      expect(await prompt(p)).toEqual({ changes: 1 });
+      const tx = f.calls.filter((c) => c.client !== 0);
+      expect(tx.map((c) => c.text)).toEqual([
+        'BEGIN ISOLATION LEVEL SERIALIZABLE',
+        PREAMBLE,
+        BODY,
+        'ROLLBACK',
+        'BEGIN ISOLATION LEVEL SERIALIZABLE',
+        PREAMBLE,
+        BODY,
+        'COMMIT',
+      ]);
+      expect(tx.filter((c) => c.text === PREAMBLE).map((c) => c.binds)).toEqual([binds, binds]);
+      await db.close();
+    },
+  );
 });
 
 describe('PostgresCatalogDb: the short root transaction (catalog-roles D5)', () => {
