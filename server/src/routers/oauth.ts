@@ -22,13 +22,9 @@ import {
   newMcpClientId,
   parseClientMetadata,
 } from '../auth/mcpClientRegistration';
-import {
-  authorizationServerMetadata,
-  protectedResourceMetadata,
-  rateLimitSource,
-} from '../auth/mcpOAuthMetadata';
+import { authorizationServerMetadata, protectedResourceMetadata } from '../auth/mcpOAuthMetadata';
 import { customDashboardsEnabled } from '../env';
-import { effectiveClientIp } from '../middleware/ipAllowlist';
+import { effectiveClientIp, rateLimitSource } from '../middleware/ipAllowlist';
 
 export const oauthRouter = new Hono<AppEnv>();
 

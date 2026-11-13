@@ -147,6 +147,23 @@ export function parseClientAddress(addr: string): { version: 4 | 6; value: bigin
   return parseAddr(unmapV4(normalizeEntry(addr)));
 }
 
+/**
+ * The source a per-address limit counts (custom dashboards design section 4.3): an IPv4 address alone (an IPv4-mapped IPv6
+ * address counts as its IPv4 address), an IPv6 address by its /64 prefix, written
+ * `a:b:c:d::/64`. An address that doesn't parse (none at all, in a test without a socket) counts
+ * as `unknown`.
+ */
+export function rateLimitSource(addr: string): string {
+  const parsed = parseClientAddress(addr);
+  if (parsed === null) return 'unknown';
+  if (parsed.version === 4) {
+    const v = parsed.value;
+    return [24n, 16n, 8n, 0n].map((s) => ((v >> s) & 0xffn).toString()).join('.');
+  }
+  const prefix = parsed.value >> 64n;
+  const groups = [48n, 32n, 16n, 0n].map((s) => ((prefix >> s) & 0xffffn).toString(16));
+  return `${groups.join(':')}::/64`;
+}
 export function ipInAllowlist(addr: string, nets: Net[]): boolean {
   const parsed = parseClientAddress(addr);
   if (parsed === null) return false;
