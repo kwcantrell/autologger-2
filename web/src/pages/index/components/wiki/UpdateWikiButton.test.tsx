@@ -50,10 +50,15 @@ function renderButton() {
 
 const button = () => screen.getByRole('button', { name: /Update wiki|Updating wiki…/ });
 
-afterEach(() => {
+// sonner unmounts a dismissed toast 200 ms later, on a `setTimeout` that neither unmounting the
+// host nor jsdom's teardown cancels. After the file's last test that timer could fire once
+// `window` is gone, and React's `setState` then threw "window is not defined" as an unhandled
+// error. Waiting here until every toast has left the DOM runs that timer while jsdom is alive.
+afterEach(async () => {
   act(() => {
     sonnerToast.dismiss();
   });
+  await waitFor(() => expect(document.querySelector('[data-sonner-toast]')).toBeNull());
   vi.unstubAllGlobals();
   setNavigationImplForTesting(null);
 });
