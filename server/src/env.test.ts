@@ -24,6 +24,7 @@ import {
   generateSdkLimits,
   maskBootstrapOwnerEmail,
   mcpAllowedOrigins,
+  mcpRefreshGraceSeconds,
   mcpSigningSecret,
   mcpSigningSecretValid,
   newUserAllTeamsEnabled,
@@ -656,6 +657,28 @@ describe('custom session dashboards settings (ADR 0035, design §10.1)', () => {
       expect(mcpAllowedOrigins(E({ MCP_ALLOWED_ORIGINS: `https://ok.example,${bad}` })), bad).toBe(
         null,
       );
+    }
+  });
+
+  it('mcpRefreshGraceSeconds: unset or empty is 30, else a whole number from 0 to 60 (J3)', () => {
+    expect(mcpRefreshGraceSeconds(E({}))).toBe(30);
+    for (const v of ['', ' ', '  \t']) {
+      expect(mcpRefreshGraceSeconds(E({ MCP_REFRESH_GRACE_SECONDS: v })), JSON.stringify(v)).toBe(
+        30,
+      );
+    }
+    for (const [v, n] of [
+      ['0', 0],
+      ['1', 1],
+      ['30', 30],
+      [' 45 ', 45],
+      ['60', 60],
+      ['05', 5],
+    ] as const) {
+      expect(mcpRefreshGraceSeconds(E({ MCP_REFRESH_GRACE_SECONDS: v })), v).toBe(n);
+    }
+    for (const v of ['61', '100', '-1', '+5', '5.0', '1e1', '0x1e', 'thirty', '3 0', '060']) {
+      expect(mcpRefreshGraceSeconds(E({ MCP_REFRESH_GRACE_SECONDS: v })), v).toBeNull();
     }
   });
 

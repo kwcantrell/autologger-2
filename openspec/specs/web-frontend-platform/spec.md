@@ -304,7 +304,7 @@ a `server/.env` file.
 Custom session dashboards (ADR 0035) are opt-in with `CUSTOM_DASHBOARDS_ENABLED`: `1`, `true` or
 `yes`, case-insensitively after trimming, as `AI_V2_ENABLED`; unset, empty or any other value is
 off. With the flag off the server SHALL NOT check or act on `DASHBOARD_RUNTIME_ORIGIN`,
-`MCP_SIGNING_SECRET` or `MCP_ALLOWED_ORIGINS`, and SHALL boot or refuse exactly as it would
+`MCP_SIGNING_SECRET`, `MCP_ALLOWED_ORIGINS` or `MCP_REFRESH_GRACE_SECONDS`, and SHALL boot or refuse exactly as it would
 without them, whatever they hold. With the flag on, in every stack, it SHALL also refuse to boot
 when `PUBLIC_BASE_URL` is not an `https:` origin with no path, query or fragment (trailing
 slashes are ignored, as everywhere `PUBLIC_BASE_URL` is read; a port is allowed); when
@@ -316,8 +316,10 @@ dropping trailing dots from either (so `https://app.example.com.` as `PUBLIC_BAS
 `https://app.example.com`); when `MCP_SIGNING_SECRET`,
 trimmed, is shorter than 32 characters; and when any comma-separated `MCP_ALLOWED_ORIGINS` entry,
 trimmed, is not an exact `https:` origin with a host (a wildcard, path, query, fragment, user
-info or `http:` origin is refused; an explicit port is allowed; blank entries are skipped).
-Accepted `MCP_ALLOWED_ORIGINS` entries are kept in serialized form (`new URL(x).origin`). Each
+info or `http:` origin is refused; an explicit port is allowed; blank entries are skipped); and
+when `MCP_REFRESH_GRACE_SECONDS`, trimmed, is neither empty nor a decimal integer of one or two
+digits from `0` to `60` (unset or empty means the default, 30 seconds; `0` turns the refresh
+grace window off). Accepted `MCP_ALLOWED_ORIGINS` entries are kept in serialized form (`new URL(x).origin`). Each
 message names the variable and prints no value. With the flag on, a server that boots SHALL log
 a warning, naming variables and no value, when the host of `DASHBOARD_RUNTIME_ORIGIN` is on the
 same site as `PUBLIC_BASE_URL`'s (the same last two DNS labels), recommending a separate
@@ -394,7 +396,8 @@ the egress range to add and not the range itself.
 
 #### Scenario: Custom dashboards off ignores their settings
 - **WHEN** the server boots with `CUSTOM_DASHBOARDS_ENABLED` unset, `0` or `off`, and
-  `DASHBOARD_RUNTIME_ORIGIN`, `MCP_SIGNING_SECRET` and `MCP_ALLOWED_ORIGINS` set to invalid values
+  `DASHBOARD_RUNTIME_ORIGIN`, `MCP_SIGNING_SECRET`, `MCP_ALLOWED_ORIGINS` and
+  `MCP_REFRESH_GRACE_SECONDS` set to invalid values
 - **THEN** it boots or refuses exactly as it would without them, and logs no custom-dashboards
   warning
 
@@ -418,6 +421,12 @@ the egress range to add and not the range itself.
 - **WHEN** the server starts with `CUSTOM_DASHBOARDS_ENABLED=1` and an `MCP_ALLOWED_ORIGINS`
   entry of `https://*.example.com`, `https://example.com/path` or `http://example.com`
 - **THEN** it exits non-zero naming `MCP_ALLOWED_ORIGINS` and prints no environment value
+
+#### Scenario: Custom dashboards on with an invalid refresh grace window refuses boot
+- **WHEN** the server starts with `CUSTOM_DASHBOARDS_ENABLED=1` and `MCP_REFRESH_GRACE_SECONDS`
+  set to `61`, `-1`, `5.5` or `thirty`
+- **THEN** it exits non-zero naming `MCP_REFRESH_GRACE_SECONDS` and prints no environment value,
+  while unset, empty, `0`, `30` and `60` each boot
 
 #### Scenario: Custom dashboards on warns about a same-site runtime and an IP allowlist
 - **WHEN** the server boots with `CUSTOM_DASHBOARDS_ENABLED=1`,

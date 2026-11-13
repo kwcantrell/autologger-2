@@ -285,6 +285,7 @@ export function createBindings(
       DASHBOARD_RUNTIME_ORIGIN: procEnv.DASHBOARD_RUNTIME_ORIGIN || '',
       MCP_SIGNING_SECRET: procEnv.MCP_SIGNING_SECRET || '',
       MCP_ALLOWED_ORIGINS: procEnv.MCP_ALLOWED_ORIGINS || '',
+      MCP_REFRESH_GRACE_SECONDS: procEnv.MCP_REFRESH_GRACE_SECONDS || '',
       // Resolved ONCE here at startup (design D2) — filesystem/PATH I/O has
       // no business running per request. ytDlpConfigured(env) reads this.
       YTDLP_RESOLVED_PATH: resolveYtDlpPath(procEnv),

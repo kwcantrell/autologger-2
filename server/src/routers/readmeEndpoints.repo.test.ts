@@ -140,6 +140,43 @@ const ROUTES: { file: string; method: string; path: string; readme: string; stat
       readme: 'POST /oauth/register',
       statuses: ['201', '400', '429'],
     },
+    // custom session dashboards J3 (api-contract-freeze "MCP OAuth authorization, token and
+    // revocation routes"): flag-gated.
+    {
+      file: 'server/src/routers/oauth.ts',
+      method: 'get',
+      path: "'/oauth/authorize',",
+      readme: 'GET /oauth/authorize',
+      statuses: ['200', '302', '400'],
+    },
+    {
+      file: 'server/src/routers/oauth.ts',
+      method: 'get',
+      path: "'/oauth/authorize/resume',",
+      readme: 'GET /oauth/authorize/resume?request=<id>',
+      statuses: ['200', '400'],
+    },
+    {
+      file: 'server/src/routers/oauth.ts',
+      method: 'post',
+      path: "'/oauth/authorize',",
+      readme: 'POST /oauth/authorize',
+      statuses: ['200', '400'],
+    },
+    {
+      file: 'server/src/routers/oauth.ts',
+      method: 'post',
+      path: "'/oauth/token',",
+      readme: 'POST /oauth/token',
+      statuses: ['200', '400', '429'],
+    },
+    {
+      file: 'server/src/routers/oauth.ts',
+      method: 'post',
+      path: "'/oauth/revoke',",
+      readme: 'POST /oauth/revoke',
+      statuses: ['200', '400'],
+    },
   ];
 
 describe('README "Endpoints" lists the media-worker, batch autogenerate and MCP OAuth routes', () => {

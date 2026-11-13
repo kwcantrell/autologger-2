@@ -1,6 +1,6 @@
 // The MCP OAuth cleanup loop (design section 4.9): each tick sweeps with the 30 s default grace
-// window, and a failure only warns, by error kind.
-import type { McpOAuthSweeper } from '@autologger/ports';
+// window unless MCP_REFRESH_GRACE_SECONDS sets another, and a failure only warns, by error kind.
+import type { Config, McpOAuthSweeper } from '@autologger/ports';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { startMcpOAuthSweeper, sweepMcpOAuthOnce } from './mcpOAuthSweep';
 
@@ -40,13 +40,32 @@ describe('MCP OAuth sweep loop', () => {
   it('runs once a minute', async () => {
     vi.useFakeTimers();
     const sweepOnce = vi.fn(async () => RESULT);
-    const timer = startMcpOAuthSweeper({ sweepOnce }, vi.fn());
+    const timer = startMcpOAuthSweeper({ sweepOnce }, {} as Config, vi.fn());
     await vi.advanceTimersByTimeAsync(59_999);
     expect(sweepOnce).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
     expect(sweepOnce).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(60_000);
     expect(sweepOnce).toHaveBeenCalledTimes(2);
+    expect(sweepOnce).toHaveBeenLastCalledWith(30);
     clearInterval(timer);
+  });
+
+  it('reads the grace window from MCP_REFRESH_GRACE_SECONDS (J3)', async () => {
+    vi.useFakeTimers();
+    for (const [value, want] of [
+      ['7', 7],
+      ['0', 0],
+      ['60', 60],
+      ['', 30],
+      [undefined, 30],
+    ] as const) {
+      const sweepOnce = vi.fn(async () => RESULT);
+      const config = { MCP_REFRESH_GRACE_SECONDS: value } as Config;
+      const timer = startMcpOAuthSweeper({ sweepOnce }, config, vi.fn());
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(sweepOnce, String(value)).toHaveBeenCalledWith(want);
+      clearInterval(timer);
+    }
   });
 });

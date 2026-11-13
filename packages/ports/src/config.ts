@@ -133,6 +133,9 @@ export interface Config {
   /** Extra `Origin` values accepted on `/mcp` beyond `https://claude.ai`: a comma-separated list
    * of exact `https:` origins. */
   MCP_ALLOWED_ORIGINS?: string;
+  /** The refresh-token grace window in whole seconds, `0` to `60`; unset or empty means 30, and
+   * `0` turns it off (ADR 0035 decision 17, design §10.1). Read only with the flag on. */
+  MCP_REFRESH_GRACE_SECONDS?: string;
   /** YouTube audio import (youtube-audio-import, design D2). NOT a raw env
    * string like the fields above — it's the absolute yt-dlp binary path
    * resolved ONCE at startup (`resolveYtDlpPath` in env.ts, called from the

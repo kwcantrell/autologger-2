@@ -547,6 +547,24 @@ export function mcpAllowedOrigins(env: Config): string[] | null {
   return out;
 }
 
+/** `MCP_REFRESH_GRACE_SECONDS`'s default: ADR 0035 decision 17's 30 s. */
+export const MCP_REFRESH_GRACE_DEFAULT = 30;
+/** `MCP_REFRESH_GRACE_SECONDS`'s largest accepted value (section 13.3 item 14 (b)). */
+export const MCP_REFRESH_GRACE_MAX = 60;
+
+/**
+ * The refresh grace window in whole seconds (design §10.1): unset, empty or blank means 30;
+ * otherwise a decimal integer from 0 to 60 (`0` turns the window off). Null for any other value,
+ * which the boot guard refuses while the flag is on.
+ */
+export function mcpRefreshGraceSeconds(env: Config): number | null {
+  const v = (env.MCP_REFRESH_GRACE_SECONDS ?? '').trim();
+  if (v === '') return MCP_REFRESH_GRACE_DEFAULT;
+  if (!/^[0-9]{1,2}$/.test(v)) return null;
+  const n = Number(v);
+  return n <= MCP_REFRESH_GRACE_MAX ? n : null;
+}
+
 /** Whether two `URL.hostname` values name the same host, ignoring trailing dots on either side
  * (`app.example.com.` is the fully qualified spelling of `app.example.com`). */
 export function sameHost(a: string, b: string): boolean {

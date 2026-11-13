@@ -92,11 +92,23 @@ request/provider-derived values are normative in the change's design and tests, 
 this contract.
 
 The success path SHALL remain byte-identical in behavior: set the session cookie and
-`302` to `/` with no query parameters. Before any account is created or changed, the verified
+`302` to `/` with no query parameters. The one exception is a sign-in that
+`GET /oauth/authorize` started (custom session dashboards J3; `mcp-authorization`
+"Authorization requests"): when `CUSTOM_DASHBOARDS_ENABLED` is on and the consumed state's
+stored value is `mcp:<id>`, with `<id>` a 22-character base64url request id, the success path
+SHALL set the same session cookie and `302` to `/oauth/authorize/resume?request=<id>` instead
+of `/`. Only that endpoint writes such a state, and only with the flag on. Every failure class
+keeps its `/?login_error=<code>` redirect, whatever the state's value, and every other state
+(the web sign-in's `1`, or an `mcp:` value with the flag off or a malformed id) redirects to `/`. Before any account is created or changed, the verified
 Google ID token SHALL be exchanged with Supabase Auth, and the account's id SHALL be the
 Supabase Auth user id. While sign-ups are closed, the closed sign-up check (api-contract-freeze
 "Closed sign-up redirect") SHALL run before the exchange; it only reads (the account by the
 verified `sub`, the approval by email), so a refused sign-in never reaches Supabase Auth.
+
+#### Scenario: A sign-in started by an MCP authorization resumes it
+- **WHEN** the flag is on and a callback succeeds for a state stored as `mcp:<id>`
+- **THEN** the server sets the session cookie and responds `302` with
+  `Location: /oauth/authorize/resume?request=<id>`; with a `1` state it responds `302 /` as before
 
 #### Scenario: User cancels at Google
 - **WHEN** Google redirects to `/auth/google/callback?error=access_denied`
@@ -3581,3 +3593,29 @@ header changes, whatever the flag.
 - **WHEN** the flag is on and `GET /.well-known/oauth-authorization-server` is sent with no
   credentials
 - **THEN** it answers `200` with the authorization-server metadata
+
+### Requirement: MCP OAuth authorization, token and revocation routes
+These routes are additive and flag-gated (ADR 0035 decisions 5, 16 and 17; custom session
+dashboards J3). They SHALL exist only while `CUSTOM_DASHBOARDS_ENABLED` is on, and SHALL be listed
+in the README endpoint table as flag-gated. Their behavior is specified in `mcp-authorization`:
+
+- `GET /oauth/authorize` → `200` consent HTML, `302` to Google sign-in, `302` to the validated
+  `redirect_uri` with an error, or `400` HTML;
+- `GET /oauth/authorize/resume?request=<id>` → `200` consent HTML or `400` HTML;
+- `POST /oauth/authorize` → `200` HTML returning to the client, or `400` HTML;
+- `POST /oauth/token` → `200 {access_token, token_type, expires_in, refresh_token, scope}`,
+  `400 {error}`, or `429 {detail}` with `Retry-After`;
+- `POST /oauth/revoke` → `200` with no body, or `400 {error: "invalid_request"}`.
+
+The authorize and consent routes read the session cookie; none of these routes reads a Bearer or
+sets a cookie. With the flag off, every method on these paths SHALL answer exactly what it
+answered before they existed: `GET` and `HEAD` reach the frontend bridge, and other methods get
+Hono's `404`. No existing route, status, body or header changes, except the Google callback's
+success redirect for an `mcp:` state (requirement "OAuth callback failure redirect").
+
+#### Scenario: Absent when off
+- **WHEN** the flag is off and `GET /oauth/authorize`, `POST /oauth/authorize`,
+  `POST /oauth/token` and `POST /oauth/revoke` are sent to the API-only server, with a session
+  cookie
+- **THEN** each answers Hono's plain `404 Not Found`, identical to an unmounted path, and nothing
+  is stored

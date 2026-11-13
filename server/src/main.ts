@@ -155,9 +155,9 @@ const autogenerateWorker = new AutogenerateWorker(
 );
 autogenerateWorker.start();
 // custom session dashboards J2 (design 4.9): the MCP OAuth cleanup, once a minute, only with the
-// flag on.
+// flag on, clearing seals after the MCP_REFRESH_GRACE_SECONDS window (J3).
 const mcpSweepTimer = customDashboardsEnabled(bindings.config)
-  ? startMcpOAuthSweeper(bindings.ports.mcpOAuthSweeper)
+  ? startMcpOAuthSweeper(bindings.ports.mcpOAuthSweeper, bindings.config)
   : null;
 const port = Number(process.env.PORT || '8787');
 const hostname = bindings.config.HOST;
