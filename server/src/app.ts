@@ -9,7 +9,7 @@ import {
   SessionAccessDeniedError,
 } from '@autologger/storage';
 import { RESPONSE_ALREADY_SENT } from '@hono/node-server/utils/response';
-import type { Hono, MiddlewareHandler } from 'hono';
+import type { Handler, Hono, MiddlewareHandler } from 'hono';
 import { compress } from 'hono/compress';
 import type { UpgradeWebSocket } from 'hono/ws';
 import { ZodError } from 'zod';
@@ -173,6 +173,101 @@ function redactDatabaseError(err: unknown): unknown[] {
   return [{ name: e.name, code, constraint_name, table_name }];
 }
 
+/** The frontend bridge's catch-all handler, mounted by `wireApp` as `app.get('*', …)` (see the
+ * comment there). Exported so a unit test can serve it, with no bindings, on a real socket (job
+ * 014: `HEAD /` through the bridge). */
+export function frontendBridge(frontend: FrontendBridge | undefined): Handler<AppEnv> {
+  return async (c) => {
+    // Trailing-slash paths (except `/` itself) are never bridged — owner
+    // ruling 2026-08-13 (apply-time amendment, task 2.3 measurement): Next
+    // 15.5.23 normalizes trailing slashes for catch-all route matching
+    // regardless of `skipTrailingSlashRedirect`, so this is enforced here,
+    // in front of the framework, to keep the pinned `404` (spec "Trailing
+    // slash stays 404").
+    const path = c.req.path;
+    if (path !== '/' && path.endsWith('/')) return c.notFound();
+
+    // `/api/*` and `/auth/*` never reach the frontend bridge (spec "API
+    // routes never reach the frontend bridge") — mounted routes under those
+    // prefixes are matched above and never fall through to this catch-all,
+    // but an UNMATCHED path under either prefix (e.g. a typo'd endpoint)
+    // would otherwise still hit this `app.get('*')` and get answered by
+    // Next's not-found document instead of Hono's own 404. Guard explicitly
+    // so the closed API/auth surface never leaks a frontend-authored
+    // response, matching pre-change `serveStatic` behavior.
+    if (
+      path === '/api' ||
+      path === '/auth' ||
+      path.startsWith('/api/') ||
+      path.startsWith('/auth/')
+    ) {
+      return c.notFound();
+    }
+
+    // Absent frontend (HTTP-test callers, or a deliberately API-only boot)
+    // → Hono's own 404, same as an asset miss (spec "API-only fallback
+    // mode").
+    if (!frontend) return c.notFound();
+
+    // Absent `outgoing` (the @hono/node-ws upgrade replay, and plain
+    // `app.request()` tests, construct envs with no writable raw response —
+    // design D1 "Bridge guards") → Hono's own 404 rather than invoking the
+    // frontend (spec "Bridge without a writable response object"). Checked
+    // BEFORE calling handle(), never after.
+    const { incoming, outgoing } = c.env;
+    if (!incoming || !outgoing) return c.notFound();
+
+    try {
+      await frontend.handle(incoming, outgoing);
+    } catch (err) {
+      // The frontend already owns writing this response. If it started
+      // (headers sent) before rejecting, composing a second response via
+      // Hono's onError would corrupt the connection — log and return the
+      // sentinel instead. Only rethrow when nothing has been written yet,
+      // so onError's normal 500 path still applies (design D1 "Bridge
+      // guards" (c)).
+      if (outgoing.headersSent) {
+        console.error('frontend bridge: handle() rejected after headers were sent', err);
+        return RESPONSE_ALREADY_SENT;
+      }
+      throw err;
+    }
+    return RESPONSE_ALREADY_SENT;
+  };
+}
+
+/** The marker header `RESPONSE_ALREADY_SENT` carries (`x-hono-already-sent: true` in
+ * @hono/node-server 2.x). Read from the sentinel itself, because the constant is not exported. */
+const [ALREADY_SENT_MARKER] = [...RESPONSE_ALREADY_SENT.headers.keys()] as [string];
+
+/** Wraps `app.fetch` for `serve()` (main.ts) so a `HEAD` the frontend bridge answered is not
+ * written twice (job 014, proof round 3 F2).
+ *
+ * Hono answers `HEAD` through the `GET` handler and returns `new Response(null, getResponse)`
+ * (hono `hono-base.js`, `#dispatch`), so for `HEAD` the adapter never sees the bridge's
+ * `RESPONSE_ALREADY_SENT` object, only a copy that carries its marker header. @hono/node-server
+ * 1.x treated that null-body copy as an uncached response, whose writer skips any response with
+ * the marker. 2.x caches null-body responses (`Response` constructor, `body == null`) and writes
+ * them through `responseViaCache`, which does not check the marker: it calls `writeHead` on the
+ * response Next already ended, throws `ERR_HTTP_HEADERS_SENT`, and the listener logs it and
+ * destroys the socket. The client already has its full response by then.
+ *
+ * Swapping the copy back for the sentinel itself sends it down the writer that honors the
+ * marker, which is what `GET` gets. Every other response is returned untouched. */
+export function keepAlreadySentOnHead<E>(
+  fetch: (request: Request, env: E) => Response | Promise<Response>,
+): (request: Request, env: E) => Response | Promise<Response> {
+  const restore = (res: Response): Response =>
+    res !== RESPONSE_ALREADY_SENT && res.headers.has(ALREADY_SENT_MARKER)
+      ? RESPONSE_ALREADY_SENT
+      : res;
+  return (request, env) => {
+    const res = fetch(request, env);
+    if (request.method !== 'HEAD') return res;
+    return res instanceof Promise ? res.then(restore) : restore(res);
+  };
+}
+
 export function wireApp(
   app: Hono<AppEnv>,
   upgradeWebSocket: UpgradeWebSocket,
@@ -297,63 +392,7 @@ export function wireApp(
   // to leave them (spec "Non-GET unmatched requests keep the server's
   // 404"). Runs after ipAllowlist/authContext above, so page/asset requests
   // keep exactly the middleware coverage they have today.
-  app.get('*', async (c) => {
-    // Trailing-slash paths (except `/` itself) are never bridged — owner
-    // ruling 2026-08-13 (apply-time amendment, task 2.3 measurement): Next
-    // 15.5.23 normalizes trailing slashes for catch-all route matching
-    // regardless of `skipTrailingSlashRedirect`, so this is enforced here,
-    // in front of the framework, to keep the pinned `404` (spec "Trailing
-    // slash stays 404").
-    const path = c.req.path;
-    if (path !== '/' && path.endsWith('/')) return c.notFound();
-
-    // `/api/*` and `/auth/*` never reach the frontend bridge (spec "API
-    // routes never reach the frontend bridge") — mounted routes under those
-    // prefixes are matched above and never fall through to this catch-all,
-    // but an UNMATCHED path under either prefix (e.g. a typo'd endpoint)
-    // would otherwise still hit this `app.get('*')` and get answered by
-    // Next's not-found document instead of Hono's own 404. Guard explicitly
-    // so the closed API/auth surface never leaks a frontend-authored
-    // response, matching pre-change `serveStatic` behavior.
-    if (
-      path === '/api' ||
-      path === '/auth' ||
-      path.startsWith('/api/') ||
-      path.startsWith('/auth/')
-    ) {
-      return c.notFound();
-    }
-
-    // Absent frontend (HTTP-test callers, or a deliberately API-only boot)
-    // → Hono's own 404, same as an asset miss (spec "API-only fallback
-    // mode").
-    if (!opts.frontend) return c.notFound();
-
-    // Absent `outgoing` (the @hono/node-ws upgrade replay, and plain
-    // `app.request()` tests, construct envs with no writable raw response —
-    // design D1 "Bridge guards") → Hono's own 404 rather than invoking the
-    // frontend (spec "Bridge without a writable response object"). Checked
-    // BEFORE calling handle(), never after.
-    const { incoming, outgoing } = c.env;
-    if (!incoming || !outgoing) return c.notFound();
-
-    try {
-      await opts.frontend.handle(incoming, outgoing);
-    } catch (err) {
-      // The frontend already owns writing this response. If it started
-      // (headers sent) before rejecting, composing a second response via
-      // Hono's onError would corrupt the connection — log and return the
-      // sentinel instead. Only rethrow when nothing has been written yet,
-      // so onError's normal 500 path still applies (design D1 "Bridge
-      // guards" (c)).
-      if (outgoing.headersSent) {
-        console.error('frontend bridge: handle() rejected after headers were sent', err);
-        return RESPONSE_ALREADY_SENT;
-      }
-      throw err;
-    }
-    return RESPONSE_ALREADY_SENT;
-  });
+  app.get('*', frontendBridge(opts.frontend));
 
   return app;
 }

@@ -12,7 +12,7 @@ import { mediaUploads } from '@autologger/storage/mediaUploads';
 import { serve } from '@hono/node-server';
 import { createNodeWebSocket } from '@hono/node-ws';
 import { Hono } from 'hono';
-import { wireApp } from './app';
+import { keepAlreadySentOnHead, wireApp } from './app';
 import type { AppEnv } from './appEnv';
 import { ProviderKeysSecretError, verifyProviderKeysCheck } from './auth/providerKeyCrypto';
 import { createWorkerPorts } from './autogenerate/ports';
@@ -198,7 +198,9 @@ bindings.ports.sessions.startSweeper();
 // the installed @hono/node-ws).
 const honoUpgradeHandler = captureHonoUpgradeHandler(injectWebSocket);
 
-const server = serve({ fetch: app.fetch, port, hostname }, (info) =>
+// `keepAlreadySentOnHead`: a `HEAD` the frontend bridge answered must not be written twice under
+// @hono/node-server 2.x (see its doc comment in app.ts).
+const server = serve({ fetch: keepAlreadySentOnHead(app.fetch), port, hostname }, (info) =>
   console.log(`AutoLogger (Node) listening on http://${hostname}:${info.port}`),
 );
 installUpgradeDispatcher({
