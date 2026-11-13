@@ -42,6 +42,9 @@ const AS = {
   authorization_response_iss_parameter_supported: true,
 };
 
+/** A JSON response body as a plain object. */
+const bodyOf = async (res: Response) => (await res.json()) as Record<string, unknown>;
+
 let ipCounter = 0;
 /** A fresh IPv4 address per call, so tests don't share a window. */
 const freshIp = () => {
@@ -73,26 +76,26 @@ describe('discovery metadata with the flag on (design 4.2)', () => {
       const res = await anonApp.request(path, {}, envWith(ON));
       expect(res.status).toBe(200);
       expect(res.headers.get('content-type')).toContain('application/json');
-      expect(await res.json()).toStrictEqual(PRM);
+      expect(await bodyOf(res)).toStrictEqual(PRM);
     },
   );
 
   it('GET /.well-known/oauth-authorization-server answers the AS document exactly', async () => {
     const res = await anonApp.request('/.well-known/oauth-authorization-server', {}, envWith(ON));
     expect(res.status).toBe(200);
-    expect(await res.json()).toStrictEqual(AS);
+    expect(await bodyOf(res)).toStrictEqual(AS);
   });
 
   it('builds every URL from PUBLIC_BASE_URL without its trailing slash', async () => {
     const env = envWith({ ...ON, PUBLIC_BASE_URL: 'https://logs.example.net/' });
-    const prm = await (
-      await anonApp.request('/.well-known/oauth-protected-resource', {}, env)
-    ).json();
+    const prm = await bodyOf(
+      await anonApp.request('/.well-known/oauth-protected-resource', {}, env),
+    );
     expect(prm.resource).toBe('https://logs.example.net/mcp');
     expect(prm.authorization_servers).toEqual(['https://logs.example.net']);
-    const as = await (
-      await anonApp.request('/.well-known/oauth-authorization-server', {}, env)
-    ).json();
+    const as = await bodyOf(
+      await anonApp.request('/.well-known/oauth-authorization-server', {}, env),
+    );
     expect(as.issuer).toBe('https://logs.example.net');
     expect(as.registration_endpoint).toBe('https://logs.example.net/oauth/register');
   });
@@ -124,7 +127,7 @@ describe('POST /oauth/register with the flag on (design 4.3)', () => {
     expect(res.status).toBe(201);
     expect(res.headers.get('cache-control')).toBe('no-store');
     expect(res.headers.get('referrer-policy')).toBe('no-referrer');
-    const body = await res.json();
+    const body = await bodyOf(res);
     expect(Object.keys(body).sort()).toEqual(
       [
         'client_id',
@@ -169,7 +172,7 @@ describe('POST /oauth/register with the flag on (design 4.3)', () => {
       freshIp(),
     );
     expect(res.status).toBe(201);
-    expect((await res.json()).application_type).toBe('native');
+    expect((await bodyOf(res)).application_type).toBe('native');
   });
 
   it.each([
@@ -185,7 +188,7 @@ describe('POST /oauth/register with the flag on (design 4.3)', () => {
     const res = await register(body, freshIp());
     expect(res.status).toBe(400);
     expect(res.headers.get('cache-control')).toBe('no-store');
-    const json = await res.json();
+    const json = await bodyOf(res);
     expect(Object.keys(json).sort()).toEqual(['error', 'error_description']);
     expect(json.error).toBe('invalid_redirect_uri');
     expect(await clientRows()).toEqual([]);
@@ -220,14 +223,14 @@ describe('POST /oauth/register with the flag on (design 4.3)', () => {
   ])('%s: 400 invalid_client_metadata, nothing stored', async (_l, body) => {
     const res = await register(body, freshIp());
     expect(res.status).toBe(400);
-    expect((await res.json()).error).toBe('invalid_client_metadata');
+    expect((await bodyOf(res)).error).toBe('invalid_client_metadata');
     expect(await clientRows()).toEqual([]);
   });
 
   it('a body that is not JSON, or is over 64 KiB, is 400 invalid_client_metadata', async () => {
     const bad = await register(undefined, freshIp(), envWith(ON), '{not json');
     expect(bad.status).toBe(400);
-    expect((await bad.json()).error).toBe('invalid_client_metadata');
+    expect((await bodyOf(bad)).error).toBe('invalid_client_metadata');
     const big = JSON.stringify({
       client_name: 'x',
       redirect_uris: [CALLBACK],
@@ -235,7 +238,7 @@ describe('POST /oauth/register with the flag on (design 4.3)', () => {
     });
     const huge = await register(undefined, freshIp(), envWith(ON), big);
     expect(huge.status).toBe(400);
-    expect((await huge.json()).error).toBe('invalid_client_metadata');
+    expect((await bodyOf(huge)).error).toBe('invalid_client_metadata');
     expect(await clientRows()).toEqual([]);
   });
 
@@ -249,7 +252,7 @@ describe('POST /oauth/register with the flag on (design 4.3)', () => {
     expect(seconds).toBeGreaterThanOrEqual(1);
     expect(seconds).toBeLessThanOrEqual(3600);
     expect(res.headers.get('cache-control')).toBe('no-store');
-    expect(await res.json()).toEqual({ detail: `Rate limit exceeded; retry in ${seconds} s.` });
+    expect(await bodyOf(res)).toEqual({ detail: `Rate limit exceeded; retry in ${seconds} s.` });
     expect(await clientRows()).toHaveLength(10);
     expect((await register(ok, freshIp())).status).toBe(201);
   });
@@ -308,7 +311,7 @@ describe('POST /oauth/register with the flag on (design 4.3)', () => {
     const res = await register(ok, freshIp());
     expect(res.status).toBe(429);
     expect(res.headers.get('retry-after')).toBeNull();
-    expect(await res.json()).toEqual({ detail: 'Too many registered clients; try again later.' });
+    expect(await bodyOf(res)).toEqual({ detail: 'Too many registered clients; try again later.' });
     const n = await testDb().first<{ n: number }>('SELECT count(*)::int AS n FROM mcp_clients');
     expect(n?.n).toBe(10_000);
   });
