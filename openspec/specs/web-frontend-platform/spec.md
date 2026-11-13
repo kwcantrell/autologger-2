@@ -296,7 +296,27 @@ reports `auth.oauth_configured: true`. In every stack, it SHALL also refuse to b
 the teams that have no owner (team-management, "Bootstrap owner"), and when it contains any
 non-ASCII character, because the claim matches exact ASCII only; each message names the variable
 and prints no value. A server that boots SHALL log a masked form of the value so the operator
-can check it: the domain and a short hash of the normalized address, never the local part. `npm run dev` SHALL apply the same checks before starting its file watcher, so a
+can check it: the domain and a short hash of the normalized address, never the local part.
+
+Custom session dashboards (ADR 0035) are opt-in with `CUSTOM_DASHBOARDS_ENABLED`: `1`, `true` or
+`yes`, case-insensitively after trimming, as `AI_V2_ENABLED`; unset, empty or any other value is
+off. With the flag off the server SHALL NOT read or check `DASHBOARD_RUNTIME_ORIGIN`,
+`MCP_SIGNING_SECRET` or `MCP_ALLOWED_ORIGINS`, and SHALL boot or refuse exactly as it would
+without them, whatever they hold. With the flag on, in every stack, it SHALL also refuse to boot
+when `PUBLIC_BASE_URL` is not an `https:` origin with no path, query or fragment (trailing
+slashes are ignored, as everywhere `PUBLIC_BASE_URL` is read; a port is allowed); when
+`DASHBOARD_RUNTIME_ORIGIN` is unset or not an `https:` origin with a host and no path (not even
+`/`), query, fragment, user info, wildcard or explicit port (`:443` included); when the host of
+`DASHBOARD_RUNTIME_ORIGIN` equals the host of `PUBLIC_BASE_URL`; when `MCP_SIGNING_SECRET`,
+trimmed, is shorter than 32 characters; and when any comma-separated `MCP_ALLOWED_ORIGINS` entry,
+trimmed, is not an exact `https:` origin with a host (a wildcard, path, query, fragment, user
+info or `http:` origin is refused; an explicit port is allowed; blank entries are skipped).
+Accepted `MCP_ALLOWED_ORIGINS` entries are kept in serialized form (`new URL(x).origin`). Each
+message names the variable and prints no value. With the flag on, a server that boots SHALL log
+a warning, naming variables and no value, when the host of `DASHBOARD_RUNTIME_ORIGIN` is on the
+same site as `PUBLIC_BASE_URL`'s (the same last two DNS labels), recommending a separate
+registrable domain, and when `IP_ALLOWLIST` is set, naming Claude's connector documentation for
+the egress range to add and not the range itself. `npm run dev` SHALL apply the same checks before starting its file watcher, so a
 refused run exits instead of waiting for changes. No package script SHALL read a `server/.env`
 file.
 
@@ -367,6 +387,39 @@ file.
 - **WHEN** the server boots with `BOOTSTRAP_OWNER_EMAIL=Owner@Example.com`
 - **THEN** its startup log names `example.com` and a short hash of `owner@example.com`, and
   contains neither `owner` nor `Owner` as the local part
+
+#### Scenario: Custom dashboards off ignores their settings
+- **WHEN** the server boots with `CUSTOM_DASHBOARDS_ENABLED` unset, `0` or `off`, and
+  `DASHBOARD_RUNTIME_ORIGIN`, `MCP_SIGNING_SECRET` and `MCP_ALLOWED_ORIGINS` set to invalid values
+- **THEN** it boots or refuses exactly as it would without them, and logs no custom-dashboards
+  warning
+
+#### Scenario: Custom dashboards on with an http PUBLIC_BASE_URL refuses boot
+- **WHEN** the server starts with `CUSTOM_DASHBOARDS_ENABLED=1` and
+  `PUBLIC_BASE_URL=http://localhost:8787`
+- **THEN** it exits non-zero naming `PUBLIC_BASE_URL` and prints no environment value
+
+#### Scenario: Custom dashboards on with an unusable runtime origin refuses boot
+- **WHEN** the server starts with `CUSTOM_DASHBOARDS_ENABLED=1` and `DASHBOARD_RUNTIME_ORIGIN`
+  unset, with a path, with an explicit port, or with the same host as `PUBLIC_BASE_URL`
+- **THEN** it exits non-zero naming `DASHBOARD_RUNTIME_ORIGIN` and prints no environment value
+
+#### Scenario: Custom dashboards on with a short signing secret refuses boot
+- **WHEN** the server starts with `CUSTOM_DASHBOARDS_ENABLED=1` and a 31-character
+  `MCP_SIGNING_SECRET`
+- **THEN** it exits non-zero naming `MCP_SIGNING_SECRET` and prints no environment value
+
+#### Scenario: Custom dashboards on with a loose allowed origin refuses boot
+- **WHEN** the server starts with `CUSTOM_DASHBOARDS_ENABLED=1` and an `MCP_ALLOWED_ORIGINS`
+  entry of `https://*.example.com`, `https://example.com/path` or `http://example.com`
+- **THEN** it exits non-zero naming `MCP_ALLOWED_ORIGINS` and prints no environment value
+
+#### Scenario: Custom dashboards on warns about a same-site runtime and an IP allowlist
+- **WHEN** the server boots with `CUSTOM_DASHBOARDS_ENABLED=1`,
+  `PUBLIC_BASE_URL=https://app.example.com`,
+  `DASHBOARD_RUNTIME_ORIGIN=https://runtime.example.com` and `IP_ALLOWLIST` set
+- **THEN** it logs a warning recommending a separate registrable domain and a warning naming
+  Claude's connector documentation, neither containing an environment value
 
 #### Scenario: No package script reads server/.env
 - **WHEN** every `package.json` script in the repository is inspected

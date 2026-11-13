@@ -4,7 +4,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { checkBootEnv, STACKS } from './bootGuard';
+import { bootWarnings, checkBootEnv, STACKS } from './bootGuard';
 
 const ok = {
   AUTOLOGGER_STACK: 'dev',
@@ -176,5 +176,232 @@ describe('checkBootEnv', () => {
       (src.match(/const ENVS = (\[[^\]]*\]);/)?.[1] ?? '[]').replace(/'/g, '"'),
     );
     expect([...STACKS].sort()).toEqual([...envs].sort());
+  });
+});
+
+// Custom session dashboards (ADR 0035, design §10.1): with the flag on, an unsafe setup is
+// refused, naming the variable and never its value; with it off, nothing changes.
+describe('checkBootEnv with CUSTOM_DASHBOARDS_ENABLED', () => {
+  const secret = 'mcp-signing-secret-value-0123456789abcdef';
+  const on = {
+    ...ok,
+    CUSTOM_DASHBOARDS_ENABLED: '1',
+    DASHBOARD_RUNTIME_ORIGIN: 'https://runtime.dashboards.example',
+    MCP_SIGNING_SECRET: secret,
+    MCP_ALLOWED_ORIGINS: 'https://claude.example, https://desktop.example:8443',
+  };
+  /** A refusal that names `name`, and contains none of the given values. */
+  const refusedNaming = (
+    env: Record<string, string | undefined>,
+    name: RegExp,
+    values: Array<string | undefined>,
+  ) => {
+    const msg = checkBootEnv(env);
+    expect(msg, JSON.stringify(env)).toMatch(name);
+    for (const v of values) if (v?.trim()) expect(msg).not.toContain(v.trim());
+    expect(msg).not.toContain(secret);
+  };
+
+  it('boots a valid flag-on setup, with the flag spelled any accepted way', () => {
+    for (const v of ['1', 'true', 'yes', ' TRUE ', 'Yes']) {
+      expect(checkBootEnv({ ...on, CUSTOM_DASHBOARDS_ENABLED: v }), v).toBeNull();
+    }
+    expect(checkBootEnv({ ...on, MCP_ALLOWED_ORIGINS: undefined })).toBeNull();
+    expect(checkBootEnv({ ...on, MCP_ALLOWED_ORIGINS: '' })).toBeNull();
+    expect(checkBootEnv({ ...on, PUBLIC_BASE_URL: 'https://autologger.example/' })).toBeNull();
+    expect(checkBootEnv({ ...on, PUBLIC_BASE_URL: 'https://autologger.example:8443' })).toBeNull();
+  });
+
+  it('refuses a PUBLIC_BASE_URL that is not an https: origin, naming it and no value', () => {
+    for (const v of [
+      'http://autologger.example',
+      'http://localhost:8787',
+      'https://autologger.example/app',
+      'https://autologger.example?x=1',
+      'https://autologger.example#frag',
+      'https://user@autologger.example',
+      'not a url',
+    ]) {
+      refusedNaming({ ...on, PUBLIC_BASE_URL: v }, /PUBLIC_BASE_URL must be an https: origin/, [v]);
+    }
+  });
+
+  it('refuses a missing or invalid DASHBOARD_RUNTIME_ORIGIN, naming it and no value', () => {
+    for (const v of [
+      undefined,
+      '',
+      '   ',
+      'runtime.dashboards.example',
+      'http://runtime.dashboards.example',
+      'https://',
+      'https://*.dashboards.example',
+      'https://user@runtime.dashboards.example',
+      'https://runtime.dashboards.example?x=1',
+      'https://runtime.dashboards.example#x',
+    ]) {
+      refusedNaming(
+        { ...on, DASHBOARD_RUNTIME_ORIGIN: v },
+        /DASHBOARD_RUNTIME_ORIGIN must be set to an https: origin/,
+        [v],
+      );
+    }
+  });
+
+  it('refuses a DASHBOARD_RUNTIME_ORIGIN with a path, naming it and no value', () => {
+    for (const v of [
+      'https://runtime.dashboards.example/',
+      'https://runtime.dashboards.example/runtime/v1',
+    ]) {
+      refusedNaming(
+        { ...on, DASHBOARD_RUNTIME_ORIGIN: v },
+        /DASHBOARD_RUNTIME_ORIGIN must be set to an https: origin with no path/,
+        [v],
+      );
+    }
+  });
+
+  it('refuses a DASHBOARD_RUNTIME_ORIGIN with an explicit port, :443 included, naming it', () => {
+    for (const v of [
+      'https://runtime.dashboards.example:8443',
+      'https://runtime.dashboards.example:443',
+      'https://[2001:db8::1]:8443',
+    ]) {
+      refusedNaming(
+        { ...on, DASHBOARD_RUNTIME_ORIGIN: v },
+        /DASHBOARD_RUNTIME_ORIGIN must be set to an https: origin with no path and no explicit port/,
+        [v],
+      );
+    }
+  });
+
+  it('refuses a DASHBOARD_RUNTIME_ORIGIN on the same host as PUBLIC_BASE_URL, naming both', () => {
+    for (const [app, runtime] of [
+      ['https://autologger.example', 'https://autologger.example'],
+      ['https://autologger.example:8443', 'https://AUTOLOGGER.example'],
+      ['https://autologger.example/', 'https://autologger.example'],
+    ] as const) {
+      refusedNaming(
+        { ...on, PUBLIC_BASE_URL: app, DASHBOARD_RUNTIME_ORIGIN: runtime },
+        /DASHBOARD_RUNTIME_ORIGIN must have a host other than PUBLIC_BASE_URL/,
+        [app, runtime, 'autologger.example'],
+      );
+    }
+  });
+
+  it('refuses a missing or short MCP_SIGNING_SECRET, naming it and no value', () => {
+    for (const v of [undefined, '', 'short-secret-value', 'x'.repeat(31), ` ${'y'.repeat(31)} `]) {
+      refusedNaming(
+        { ...on, MCP_SIGNING_SECRET: v },
+        /MCP_SIGNING_SECRET must be set to at least 32 characters/,
+        [v],
+      );
+    }
+    expect(checkBootEnv({ ...on, MCP_SIGNING_SECRET: 'z'.repeat(32) })).toBeNull();
+  });
+
+  it('refuses an MCP_ALLOWED_ORIGINS entry that is not an exact https: origin, naming it', () => {
+    for (const bad of [
+      '*',
+      'https://*.allowed-bad.example',
+      'http://allowed-bad.example',
+      'https://allowed-bad.example/',
+      'https://allowed-bad.example/path',
+      'https://allowed-bad.example?q=1',
+      'https://allowed-bad.example#f',
+      'https://user:pw@allowed-bad.example',
+      'allowed-bad.example',
+      'https://',
+    ]) {
+      refusedNaming(
+        { ...on, MCP_ALLOWED_ORIGINS: `https://claude.example, ${bad}` },
+        /every MCP_ALLOWED_ORIGINS entry must be an exact https: origin/,
+        [bad, 'allowed-bad', 'claude.example'],
+      );
+    }
+  });
+
+  it('accepts MCP_ALLOWED_ORIGINS entries with ports, padding and blank entries', () => {
+    for (const v of [
+      'https://claude.example',
+      ' https://claude.example , https://desktop.example:8443 ',
+      'https://claude.example,,',
+      'HTTPS://Claude.Example',
+      'https://[2001:db8::1]:8443',
+    ]) {
+      expect(checkBootEnv({ ...on, MCP_ALLOWED_ORIGINS: v }), v).toBeNull();
+    }
+  });
+
+  it('with the flag off, boots exactly as before whatever the four settings hold', () => {
+    const invalid = {
+      PUBLIC_BASE_URL: 'http://localhost:8787',
+      DASHBOARD_RUNTIME_ORIGIN: 'http://localhost:8787/path',
+      MCP_SIGNING_SECRET: 'short',
+      MCP_ALLOWED_ORIGINS: '*, http://x.example/path',
+      IP_ALLOWLIST: '10.0.0.0/8',
+    };
+    for (const flag of [undefined, '', '0', 'false', 'no', 'off', 'on', 'enabled', '2', ' ']) {
+      const env = { ...ok, ...invalid, CUSTOM_DASHBOARDS_ENABLED: flag };
+      expect(checkBootEnv(env), JSON.stringify(flag)).toBeNull();
+      expect(bootWarnings(env), JSON.stringify(flag)).toEqual([]);
+      // The refusals that existed before still come first, unchanged.
+      expect(checkBootEnv({ ...env, GOOGLE_CLIENT_ID: '' })).toBe(
+        checkBootEnv({ ...ok, GOOGLE_CLIENT_ID: '' }),
+      );
+    }
+    // Without the new settings at all, the same.
+    expect(checkBootEnv({ ...ok, CUSTOM_DASHBOARDS_ENABLED: 'no' })).toBeNull();
+  });
+});
+
+describe('bootWarnings (custom session dashboards, design §10.1 and §10.3)', () => {
+  const on = {
+    ...ok,
+    CUSTOM_DASHBOARDS_ENABLED: 'true',
+    DASHBOARD_RUNTIME_ORIGIN: 'https://runtime.dashboards-other.example',
+    MCP_SIGNING_SECRET: 'mcp-signing-secret-value-0123456789abcdef',
+  };
+  const noValues = (warnings: string[], values: string[]) => {
+    for (const w of warnings) for (const v of values) expect(w).not.toContain(v);
+  };
+
+  it('warns about nothing for a separate-site runtime and no IP_ALLOWLIST', () => {
+    expect(checkBootEnv(on)).toBeNull();
+    expect(bootWarnings(on)).toEqual([]);
+    expect(bootWarnings({ ...on, IP_ALLOWLIST: '  ' })).toEqual([]);
+  });
+
+  it('warns when the runtime origin is on the same site as the app, naming variables only', () => {
+    for (const runtime of [
+      'https://runtime.autologger.example',
+      'https://dash.autologger.example',
+      'https://a.b.autologger.example',
+    ]) {
+      const env = { ...on, DASHBOARD_RUNTIME_ORIGIN: runtime };
+      expect(checkBootEnv(env), runtime).toBeNull();
+      const w = bootWarnings(env);
+      expect(w, runtime).toHaveLength(1);
+      expect(w[0]).toMatch(/DASHBOARD_RUNTIME_ORIGIN is on the same site as PUBLIC_BASE_URL/);
+      expect(w[0]).toMatch(/separate registrable domain/);
+      noValues(w, [runtime, 'autologger.example', 'runtime.', 'dash.']);
+    }
+  });
+
+  it('warns when IP_ALLOWLIST is set, naming the documentation and not the range or the value', () => {
+    const env = { ...on, IP_ALLOWLIST: '203.0.113.0/24' };
+    const w = bootWarnings(env);
+    expect(w).toHaveLength(1);
+    expect(w[0]).toMatch(/IP_ALLOWLIST is set/);
+    expect(w[0]).toMatch(/connector documentation/);
+    noValues(w, ['203.0.113', '160.79.104.0/21']);
+  });
+
+  it('gives both warnings together', () => {
+    const w = bootWarnings({
+      ...on,
+      DASHBOARD_RUNTIME_ORIGIN: 'https://runtime.autologger.example',
+      IP_ALLOWLIST: '203.0.113.0/24',
+    });
+    expect(w).toHaveLength(2);
   });
 });

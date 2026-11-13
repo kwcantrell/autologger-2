@@ -469,3 +469,83 @@ export function adminMeta(env: Config): Record<string, boolean> {
     restart_needs_token: adminTokenConfigured(env),
   };
 }
+
+// ── Custom session dashboards (ADR 0035, design §10.1) ──────────────────────
+
+/** Opt-in flag (ADR 0035 decision 13): `1`, `true` or `yes`, case-insensitively after trimming,
+ * as `AI_V2_ENABLED`. Unset, empty or anything else is off, and with it off nothing below is
+ * read or checked. */
+export function customDashboardsEnabled(env: Config): boolean {
+  return ['1', 'true', 'yes'].includes((env.CUSTOM_DASHBOARDS_ENABLED || '').trim().toLowerCase());
+}
+
+/** The minimum `MCP_SIGNING_SECRET` length, as `FRAME_BUS_SECRET`'s. */
+export const MCP_SIGNING_SECRET_MIN_LENGTH = 32;
+
+/**
+ * An exact `https:` origin, or null. The trimmed value must be `https://` and an authority only:
+ * no path (not even `/`), query, fragment, user info or `*` wildcard, and it must parse with a
+ * host. With `allowPort` false an explicit port (`:443` included) is refused too. Returns the
+ * serialized form, `new URL(x).origin`.
+ */
+export function exactHttpsOrigin(raw: string, opts: { allowPort: boolean }): string | null {
+  const v = raw.trim();
+  const m = /^https:\/\/([^/?#@*\\\s]+)$/i.exec(v);
+  if (!m) return null;
+  // The authority ends in a port when its last `:` comes after any IPv6 literal's `]`.
+  const authority = m[1] as string;
+  if (!opts.allowPort && authority.lastIndexOf(':') > authority.lastIndexOf(']')) return null;
+  let url: URL;
+  try {
+    url = new URL(v);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== 'https:' || !url.hostname || url.username || url.password) return null;
+  return url.origin;
+}
+
+/** `DASHBOARD_RUNTIME_ORIGIN` serialized, or null when unset or not an `https:` origin with no
+ * path and no explicit port. The boot guard also refuses a host equal to `PUBLIC_BASE_URL`'s. */
+export function dashboardRuntimeOrigin(env: Config): string | null {
+  return exactHttpsOrigin(env.DASHBOARD_RUNTIME_ORIGIN || '', { allowPort: false });
+}
+
+/** `MCP_SIGNING_SECRET`, trimmed; '' when unset. Server-only: never logged. */
+export function mcpSigningSecret(env: Config): string {
+  return (env.MCP_SIGNING_SECRET || '').trim();
+}
+
+/** Whether `MCP_SIGNING_SECRET` is at least 32 characters after trimming. */
+export function mcpSigningSecretValid(env: Config): boolean {
+  return mcpSigningSecret(env).length >= MCP_SIGNING_SECRET_MIN_LENGTH;
+}
+
+/**
+ * The extra `Origin` values accepted on `/mcp` beyond `https://claude.ai`: `MCP_ALLOWED_ORIGINS`
+ * split on commas, each trimmed and stored as `new URL(x).origin`, blank entries skipped, without
+ * duplicates. Null when any entry isn't an exact `https:` origin (an explicit port is allowed).
+ */
+export function mcpAllowedOrigins(env: Config): string[] | null {
+  const out: string[] = [];
+  for (const raw of (env.MCP_ALLOWED_ORIGINS || '').split(',')) {
+    if (!raw.trim()) continue;
+    const origin = exactHttpsOrigin(raw, { allowPort: true });
+    if (origin === null) return null;
+    if (!out.includes(origin)) out.push(origin);
+  }
+  return out;
+}
+
+/** A rough registrable domain: the last two DNS labels, or the whole host for an IP literal or a
+ * one-label name. No public-suffix list is bundled, so hosts under a multi-label suffix such as
+ * `co.uk` compare as the same site; that errs towards warning. */
+function roughSite(host: string): string {
+  if (host.startsWith('[') || /^[0-9.]+$/.test(host)) return host;
+  return host.split('.').filter(Boolean).slice(-2).join('.');
+}
+
+/** Whether two host names (lower-case, as `URL.hostname`) are on the same site. */
+export function sameSite(a: string, b: string): boolean {
+  return roughSite(a) === roughSite(b);
+}

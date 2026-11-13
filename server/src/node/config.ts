@@ -273,6 +273,12 @@ export function createBindings(
       AI_V2_API_KEY: procEnv.AI_V2_API_KEY || '',
       AI_V2_MAX_BUDGET_USD: procEnv.AI_V2_MAX_BUDGET_USD || '',
       SHEETS_LOG_IMPORT_ENABLED: procEnv.SHEETS_LOG_IMPORT_ENABLED || '',
+      // ADR 0035, design §10.1: custom session dashboards, off unless the flag is set. The boot
+      // guard checks the other three only when it is on.
+      CUSTOM_DASHBOARDS_ENABLED: procEnv.CUSTOM_DASHBOARDS_ENABLED || '',
+      DASHBOARD_RUNTIME_ORIGIN: procEnv.DASHBOARD_RUNTIME_ORIGIN || '',
+      MCP_SIGNING_SECRET: procEnv.MCP_SIGNING_SECRET || '',
+      MCP_ALLOWED_ORIGINS: procEnv.MCP_ALLOWED_ORIGINS || '',
       // Resolved ONCE here at startup (design D2) — filesystem/PATH I/O has
       // no business running per request. ytDlpConfigured(env) reads this.
       YTDLP_RESOLVED_PATH: resolveYtDlpPath(procEnv),

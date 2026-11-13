@@ -14,6 +14,8 @@ import {
   bootstrapOwnerEmail,
   claudeCliAllowed,
   cookieSecureForRequest,
+  customDashboardsEnabled,
+  dashboardRuntimeOrigin,
   eventGenerateMaxBudgetUsd,
   eventGenerateMaxCreatedEvents,
   eventGenerateMaxInstructionBytes,
@@ -21,6 +23,9 @@ import {
   eventGenerateTimeoutSec,
   generateSdkLimits,
   maskBootstrapOwnerEmail,
+  mcpAllowedOrigins,
+  mcpSigningSecret,
+  mcpSigningSecretValid,
   newUserAllTeamsEnabled,
   oauthConfigured,
   parseAiProvider,
@@ -28,6 +33,7 @@ import {
   resolveYtDlpPath,
   runFeatureAllowed,
   runFeatureEmails,
+  sameSite,
   sessionCookieName,
   sessionTtlDays,
   signupsClosed,
@@ -566,5 +572,83 @@ describe('aiV2CredentialsRefused', () => {
     for (const h of ['127.0.0.1', '::1', 'localhost']) {
       expect(aiV2CredentialsRefused({ ...base, HOST: h })).toBe(false);
     }
+  });
+});
+
+describe('custom session dashboards settings (ADR 0035, design §10.1)', () => {
+  it('CUSTOM_DASHBOARDS_ENABLED parses as AI_V2_ENABLED: 1, true or yes, trimmed, any case', () => {
+    for (const v of ['1', 'true', 'yes', 'TRUE', ' Yes ', '\ttrue\n']) {
+      expect(customDashboardsEnabled(E({ CUSTOM_DASHBOARDS_ENABLED: v })), v).toBe(true);
+    }
+    for (const v of [undefined, null, '', ' ', '0', 'false', 'no', 'on', 'enabled', 'y', '2']) {
+      expect(customDashboardsEnabled(E({ CUSTOM_DASHBOARDS_ENABLED: v })), String(v)).toBe(false);
+    }
+  });
+
+  it('dashboardRuntimeOrigin is the serialized https: origin, or null', () => {
+    expect(dashboardRuntimeOrigin(E({}))).toBeNull();
+    expect(dashboardRuntimeOrigin(E({ DASHBOARD_RUNTIME_ORIGIN: ' https://Run.Example ' }))).toBe(
+      'https://run.example',
+    );
+    for (const v of [
+      'http://run.example',
+      'https://run.example/',
+      'https://run.example/x',
+      'https://run.example:443',
+      'https://run.example:8443',
+      'https://u@run.example',
+      'https://*.example',
+      'https://run.example?x',
+      'https://run.example#x',
+      'https://',
+    ]) {
+      expect(dashboardRuntimeOrigin(E({ DASHBOARD_RUNTIME_ORIGIN: v })), v).toBeNull();
+    }
+  });
+
+  it('mcpSigningSecret is trimmed and valid from 32 characters', () => {
+    expect(mcpSigningSecret(E({}))).toBe('');
+    expect(mcpSigningSecret(E({ MCP_SIGNING_SECRET: ' abc ' }))).toBe('abc');
+    expect(mcpSigningSecretValid(E({ MCP_SIGNING_SECRET: 'a'.repeat(31) }))).toBe(false);
+    expect(mcpSigningSecretValid(E({ MCP_SIGNING_SECRET: ` ${'a'.repeat(31)} ` }))).toBe(false);
+    expect(mcpSigningSecretValid(E({ MCP_SIGNING_SECRET: 'a'.repeat(32) }))).toBe(true);
+  });
+
+  it('mcpAllowedOrigins trims and serializes entries, keeps ports, skips blanks and duplicates', () => {
+    expect(mcpAllowedOrigins(E({}))).toEqual([]);
+    expect(
+      mcpAllowedOrigins(
+        E({
+          MCP_ALLOWED_ORIGINS:
+            ' HTTPS://A.Example , https://b.example:8443,, https://a.example, https://c.example:443',
+        }),
+      ),
+    ).toEqual(['https://a.example', 'https://b.example:8443', 'https://c.example']);
+  });
+
+  it('mcpAllowedOrigins is null when any entry is not an exact https: origin', () => {
+    for (const bad of [
+      '*',
+      'https://*.example',
+      'http://a.example',
+      'https://a.example/',
+      'https://a.example/p',
+      'https://a.example?q',
+      'https://a.example#f',
+      'https://u:p@a.example',
+      'a.example',
+    ]) {
+      expect(mcpAllowedOrigins(E({ MCP_ALLOWED_ORIGINS: `https://ok.example,${bad}` })), bad).toBe(
+        null,
+      );
+    }
+  });
+
+  it('sameSite compares the last two labels, and whole IP literals', () => {
+    expect(sameSite('app.example.com', 'run.example.com')).toBe(true);
+    expect(sameSite('example.com', 'run.example.com')).toBe(true);
+    expect(sameSite('app.example.com', 'run.example.net')).toBe(false);
+    expect(sameSite('10.0.0.1', '10.0.0.2')).toBe(false);
+    expect(sameSite('[::1]', '[::2]')).toBe(false);
   });
 });
