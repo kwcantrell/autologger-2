@@ -326,6 +326,38 @@ same site as `PUBLIC_BASE_URL`'s (the same last two DNS labels), recommending a 
 registrable domain, and when `IP_ALLOWLIST` is set, naming Claude's connector documentation for
 the egress range to add and not the range itself.
 
+In the split topology compose passes the router's two settings to the api, so the boot guard
+(J6, design section 10.3) SHALL also check their agreement:
+- when `ROUTER_CUSTOM_DASHBOARDS` is present in the api's environment, in any stack and whether
+  the flag is on or off, the server SHALL refuse to boot unless it is exactly `on` when the flag
+  is on and exactly `off` when the flag is off (any other value, an empty one included, counts as
+  a disagreement), naming `ROUTER_CUSTOM_DASHBOARDS` and `CUSTOM_DASHBOARDS_ENABLED`;
+- when the flag is on and `ROUTER_CUSTOM_DASHBOARDS` is present, it SHALL also refuse unless
+  `ROUTER_DASHBOARD_RUNTIME_HOST` is set and equals the host of `DASHBOARD_RUNTIME_ORIGIN`, both
+  compared lower-cased with trailing dots stripped, naming `ROUTER_DASHBOARD_RUNTIME_HOST` and
+  `DASHBOARD_RUNTIME_ORIGIN`;
+- when `ROUTER_CUSTOM_DASHBOARDS` is absent (the dev single-process stack and a host without a
+  router), neither check applies, and `ROUTER_DASHBOARD_RUNTIME_HOST` is not read.
+
+The messages name variables and print no value.
+
+#### Scenario: Router and flag disagree
+- **WHEN** the server starts with `ROUTER_CUSTOM_DASHBOARDS=on` and the flag off, or with
+  `ROUTER_CUSTOM_DASHBOARDS=off` and the flag on
+- **THEN** it exits non-zero naming `ROUTER_CUSTOM_DASHBOARDS` and `CUSTOM_DASHBOARDS_ENABLED`
+
+#### Scenario: Router runtime host differs from the runtime origin
+- **WHEN** the server starts with the flag on, `ROUTER_CUSTOM_DASHBOARDS=on`, and
+  `ROUTER_DASHBOARD_RUNTIME_HOST` unset, empty or a host other than the host of
+  `DASHBOARD_RUNTIME_ORIGIN`
+- **THEN** it exits non-zero naming `ROUTER_DASHBOARD_RUNTIME_HOST` and
+  `DASHBOARD_RUNTIME_ORIGIN`
+
+#### Scenario: Router settings agree or are absent
+- **WHEN** the server starts with both settings on and the runtime host equal to the origin's
+  host (ignoring case and trailing dots), or both off, or with `ROUTER_CUSTOM_DASHBOARDS` absent
+- **THEN** it boots
+
 #### Scenario: Host boot is refused
 - **WHEN** `npm run dev` is run on the host, outside any compose stack
 - **THEN** it exits non-zero naming `make dev-up`, nothing listens on :8787, and no data

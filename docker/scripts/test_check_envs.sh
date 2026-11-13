@@ -5,7 +5,8 @@
 # (gotrue-sign-in task 2.1), and the stage public mode (stage-public-https, invariant 7), and the
 # blob volume (shared-blob-volume task 6.1, invariants 4, 6 and 7), and the retired Supabase
 # services, networks and keys (drop-unused-supabase-services D4, invariants 3, 4, 6 and 16), and the
-# media worker (media-worker task W.6, invariants 6, 7 and 16).
+# media worker (media-worker task W.6, invariants 6, 7 and 16), and the router's custom-dashboards
+# settings (invariants 10 and 13, J6).
 # Each case copies the working tree (tracked + untracked, git-ignored files excluded, so no env file or data directory is copied) to a scratch dir,
 # applies one mutation, runs the check there and asserts the outcome.
 #
@@ -398,6 +399,63 @@ expect "a stage worker image that ignores STAGE_MEDIA_IMAGE is caught" "$d" fail
 d=$SCRATCH/mwprodlatest; snapshot "$d"
 sed -i 's#^    image: ghcr.io/kwcantrell/autologger-media-worker:${MEDIA_TAG:?.*}$#    image: ghcr.io/kwcantrell/autologger-media-worker:latest#' "$d/compose.yaml"
 expect "a prod worker image not pinned by MEDIA_TAG is caught" "$d" fail "invariant 7] prod: media-worker"
+
+# ---- custom session dashboards, router settings (invariants 10 and 13; design section 10.3, J6)
+# The router's environment is exactly ROUTER_CUSTOM_DASHBOARDS and ROUTER_DASHBOARD_RUNTIME_HOST,
+# both well-formed and equal to the api's; the Caddyfile adapts byte-identically with the flag off.
+RTR='/^  router:$/,/^  web:$/'
+APIS='/^  api:$/,/^  media-worker:$/'
+d=$SCRATCH/rtextra; snapshot "$d"
+sed -i "$RTR"'s/^      ROUTER_DASHBOARD_RUNTIME_HOST: .*$/&\n      SNEAKY_KEY: x/' "$d/compose.yaml"
+expect "an extra key in the prod router environment is caught" "$d" fail "invariant 10] prod: the router's environment is not exactly"
+expect "an extra key in the stage router environment is caught" "$d" fail "invariant 10] stage: the router's environment is not exactly"
+
+d=$SCRATCH/rtmissing; snapshot "$d"
+sed -i "$RTR"'{/^      ROUTER_DASHBOARD_RUNTIME_HOST: /d}' "$d/compose.yaml"
+expect "a router without ROUTER_DASHBOARD_RUNTIME_HOST is caught" "$d" fail "invariant 10] prod: the router's environment is not exactly"
+
+d=$SCRATCH/rtgw; snapshot "$d"
+sed -i "$RTR"'s/^      ROUTER_DASHBOARD_RUNTIME_HOST: .*$/&\n      ROUTER_FRONT_GW: 172.28.10.1/' "$d/compose.yaml"
+expect "a gateway variable in the prod router environment is caught" "$d" fail "invariant 10] prod"
+
+d=$SCRATCH/rtvalue; snapshot "$d"
+sed -i 's/^      ROUTER_CUSTOM_DASHBOARDS: ${ROUTER_CUSTOM_DASHBOARDS:-off}$/      ROUTER_CUSTOM_DASHBOARDS: ${ROUTER_CUSTOM_DASHBOARDS:-true}/' "$d/compose.yaml"
+expect "a ROUTER_CUSTOM_DASHBOARDS value other than on or off is caught" "$d" fail "invariant 10] prod: ROUTER_CUSTOM_DASHBOARDS is not exactly on or off"
+
+for hv in 'https://x.example.invalid' 'x.example.invalid:8443' 'x.example.invalid/p' 'Upper.example.invalid' '*.example.invalid' 'x.example.invalid.'; do
+  d=$SCRATCH/rthost; rm -rf "$d"; snapshot "$d"
+  sed -i "s#^      ROUTER_DASHBOARD_RUNTIME_HOST: \${ROUTER_DASHBOARD_RUNTIME_HOST:-}\$#      ROUTER_DASHBOARD_RUNTIME_HOST: \${ROUTER_DASHBOARD_RUNTIME_HOST:-$hv}#" "$d/compose.yaml"
+  expect "a router runtime host of [$hv] is caught" "$d" fail "invariant 10] prod: ROUTER_DASHBOARD_RUNTIME_HOST is not empty or a bare"
+done
+
+d=$SCRATCH/rtonempty; snapshot "$d"
+sed -i 's/^      ROUTER_CUSTOM_DASHBOARDS: ${ROUTER_CUSTOM_DASHBOARDS:-off}$/      ROUTER_CUSTOM_DASHBOARDS: ${ROUTER_CUSTOM_DASHBOARDS:-on}/' "$d/compose.yaml"
+expect "the router on with an empty runtime host is caught" "$d" fail "invariant 10] prod: ROUTER_CUSTOM_DASHBOARDS is on with an empty"
+
+d=$SCRATCH/rtdiffflag; snapshot "$d"
+sed -i "$APIS"'s/^      ROUTER_CUSTOM_DASHBOARDS: ${ROUTER_CUSTOM_DASHBOARDS:-off}$/      ROUTER_CUSTOM_DASHBOARDS: ${ROUTER_CUSTOM_DASHBOARDS:-on}/' "$d/compose.yaml"
+expect "an api ROUTER_CUSTOM_DASHBOARDS that differs from the router's is caught" "$d" fail "invariant 10] prod: the router's and the api's"
+
+d=$SCRATCH/rtdiffhost; snapshot "$d"
+sed -i "$APIS"'s/^      ROUTER_DASHBOARD_RUNTIME_HOST: ${ROUTER_DASHBOARD_RUNTIME_HOST:-}$/      ROUTER_DASHBOARD_RUNTIME_HOST: ${ROUTER_DASHBOARD_RUNTIME_HOST:-other.example.invalid}/' "$d/compose.yaml"
+expect "an api runtime host that differs from the router's is caught" "$d" fail "invariant 10] prod: the router's and the api's"
+
+d=$SCRATCH/rtorigin; snapshot "$d"
+# The fixture's api DASHBOARD_RUNTIME_ORIGIN names another host than the router's runtime host.
+sed -i 's#^DASHBOARD_RUNTIME_ORIGIN=https://$RT_HOST"$#DASHBOARD_RUNTIME_ORIGIN=https://other.example.invalid"#' "$d/docker/scripts/check-envs.sh"
+expect "a runtime host that differs from the host of DASHBOARD_RUNTIME_ORIGIN is caught" "$d" fail "invariant 10] prod: ROUTER_DASHBOARD_RUNTIME_HOST is not the host of the api's DASHBOARD_RUNTIME_ORIGIN"
+
+d=$SCRATCH/rtoffsnippet; snapshot "$d"
+sed -i 's/^(custom-dashboards-off) {$/(custom-dashboards-off) {\n\theader X-Leak 1/' "$d/docker/Caddyfile"
+expect "a non-empty off snippet (adapt differs from the unregenerated baseline) is caught" "$d" fail "invariant 13] prod: docker/Caddyfile adapted with ROUTER_CUSTOM_DASHBOARDS off differs"
+
+d=$SCRATCH/rtonbaseline; snapshot "$d"
+sed -i 's/frame-src/frame-srcX/' "$d/docker/scripts/caddy-adapt.on.baseline.json"
+expect "an on adapt that differs from the committed on baseline is caught" "$d" fail "invariant 13] prod: docker/Caddyfile adapted with ROUTER_CUSTOM_DASHBOARDS on differs"
+
+d=$SCRATCH/rtimport; snapshot "$d"
+sed -i 's/^\timport custom-dashboards-{$ROUTER_CUSTOM_DASHBOARDS:off}$/\timport custom-dashboards-on/' "$d/docker/Caddyfile"
+expect "an unconditional import of the on snippet is caught" "$d" fail "invariant 13] prod: docker/Caddyfile adapted with ROUTER_CUSTOM_DASHBOARDS unset differs"
 
 echo "test_check_envs: $PASS passed, $FAILED failed"
 [ "$FAILED" -eq 0 ]

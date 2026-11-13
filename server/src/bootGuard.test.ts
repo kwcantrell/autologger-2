@@ -400,6 +400,127 @@ describe('checkBootEnv with CUSTOM_DASHBOARDS_ENABLED', () => {
   });
 });
 
+describe('checkBootEnv: the router settings agree with the api (design §10.3, J6)', () => {
+  const secret = 'mcp-signing-secret-value-0123456789abcdef';
+  const on = {
+    ...ok,
+    CUSTOM_DASHBOARDS_ENABLED: '1',
+    DASHBOARD_RUNTIME_ORIGIN: 'https://runtime.dashboards.example',
+    MCP_SIGNING_SECRET: secret,
+  };
+  const both =
+    /ROUTER_CUSTOM_DASHBOARDS[\s\S]*CUSTOM_DASHBOARDS_ENABLED|CUSTOM_DASHBOARDS_ENABLED[\s\S]*ROUTER_CUSTOM_DASHBOARDS/;
+  const hostBoth = /ROUTER_DASHBOARD_RUNTIME_HOST[\s\S]*DASHBOARD_RUNTIME_ORIGIN/;
+
+  it('starts when ROUTER_CUSTOM_DASHBOARDS is absent, flag on or off', () => {
+    expect(checkBootEnv({ ...on })).toBeNull();
+    expect(checkBootEnv({ ...ok })).toBeNull();
+    expect(checkBootEnv({ ...on, ROUTER_DASHBOARD_RUNTIME_HOST: 'other.example' })).toBeNull();
+  });
+
+  it('starts when the values agree, both off and both on', () => {
+    expect(checkBootEnv({ ...ok, ROUTER_CUSTOM_DASHBOARDS: 'off' })).toBeNull();
+    expect(
+      checkBootEnv({ ...ok, ROUTER_CUSTOM_DASHBOARDS: 'off', ROUTER_DASHBOARD_RUNTIME_HOST: '' }),
+    ).toBeNull();
+    expect(
+      checkBootEnv({
+        ...on,
+        ROUTER_CUSTOM_DASHBOARDS: 'on',
+        ROUTER_DASHBOARD_RUNTIME_HOST: 'runtime.dashboards.example',
+      }),
+    ).toBeNull();
+  });
+
+  it('refuses ROUTER_CUSTOM_DASHBOARDS on with the flag off, naming both variables', () => {
+    for (const flag of [undefined, '', '0', 'no']) {
+      const msg = checkBootEnv({
+        ...ok,
+        CUSTOM_DASHBOARDS_ENABLED: flag,
+        ROUTER_CUSTOM_DASHBOARDS: 'on',
+      });
+      expect(msg, String(flag)).toMatch(both);
+    }
+  });
+
+  it('refuses ROUTER_CUSTOM_DASHBOARDS off with the flag on, naming both variables', () => {
+    const msg = checkBootEnv({
+      ...on,
+      ROUTER_CUSTOM_DASHBOARDS: 'off',
+      ROUTER_DASHBOARD_RUNTIME_HOST: 'runtime.dashboards.example',
+    });
+    expect(msg).toMatch(both);
+  });
+
+  it('refuses a value that is neither on nor off (empty, wrong case, padded) as a disagreement', () => {
+    for (const v of ['', 'ON', 'Off', 'true', '1', ' on', 'on ']) {
+      for (const env of [
+        ok,
+        { ...on, ROUTER_DASHBOARD_RUNTIME_HOST: 'runtime.dashboards.example' },
+      ]) {
+        expect(checkBootEnv({ ...env, ROUTER_CUSTOM_DASHBOARDS: v }), JSON.stringify(v)).toMatch(
+          both,
+        );
+      }
+    }
+  });
+
+  it('with both on, refuses a missing, empty or different ROUTER_DASHBOARD_RUNTIME_HOST, naming both variables', () => {
+    for (const host of [
+      undefined,
+      '',
+      '  ',
+      'other.dashboards.example',
+      'dashboards.example',
+      'autologger.example',
+    ]) {
+      const msg = checkBootEnv({
+        ...on,
+        ROUTER_CUSTOM_DASHBOARDS: 'on',
+        ROUTER_DASHBOARD_RUNTIME_HOST: host,
+      });
+      expect(msg, JSON.stringify(host)).toMatch(hostBoth);
+      expect(msg).toMatch(/ROUTER_CUSTOM_DASHBOARDS/);
+      expect(msg).not.toContain('dashboards.example');
+    }
+  });
+
+  it('compares the runtime host lower-cased with trailing dots stripped', () => {
+    for (const host of [
+      'RUNTIME.Dashboards.EXAMPLE',
+      'runtime.dashboards.example.',
+      'Runtime.Dashboards.Example..',
+    ]) {
+      expect(
+        checkBootEnv({
+          ...on,
+          ROUTER_CUSTOM_DASHBOARDS: 'on',
+          ROUTER_DASHBOARD_RUNTIME_HOST: host,
+        }),
+        host,
+      ).toBeNull();
+    }
+    expect(
+      checkBootEnv({
+        ...on,
+        DASHBOARD_RUNTIME_ORIGIN: 'https://Runtime.Dashboards.EXAMPLE',
+        ROUTER_CUSTOM_DASHBOARDS: 'on',
+        ROUTER_DASHBOARD_RUNTIME_HOST: 'runtime.dashboards.example',
+      }),
+    ).toBeNull();
+  });
+
+  it('does not check the runtime host with the flag off, whatever it holds', () => {
+    expect(
+      checkBootEnv({
+        ...ok,
+        ROUTER_CUSTOM_DASHBOARDS: 'off',
+        ROUTER_DASHBOARD_RUNTIME_HOST: 'x y',
+      }),
+    ).toBeNull();
+  });
+});
+
 describe('bootWarnings (custom session dashboards, design §10.1 and §10.3)', () => {
   const on = {
     ...ok,

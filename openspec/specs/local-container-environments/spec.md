@@ -522,6 +522,12 @@ Wherever either is set, its value SHALL be a single dotted IPv4 address.
 - **THEN** the adapted JSON equals the committed baseline (`make check` invariant 13), and
   `docker/scripts/test_router.sh stage` passes
 
+#### Scenario: The router setting off leaves the router config unchanged
+- **WHEN** the Caddyfile is adapted on the router's pinned image with `ROUTER_CUSTOM_DASHBOARDS`
+  unset, and again with it `off`
+- **THEN** both outputs equal the committed baseline byte for byte, and with it `on` the output
+  equals the committed `on` baseline
+
 ### Requirement: Prod targets are explicit and bound to committed content
 `prod-push` and `prod-up` SHALL refuse to run unless both hold:
 - `git status --porcelain` is empty (this covers untracked, non-ignored files);
@@ -827,10 +833,23 @@ It SHALL fail, naming the violated invariant, when any of the following holds:
 8. Stage mounts a host path under the home directory.
 9. A compose file resolves, without `-p`, to a project name other than its declared one.
 10. A router gateway variable is set in `compose.yaml`, or is set anywhere to a value that
-    is not a single dotted IPv4 address.
+    is not a single dotted IPv4 address; or, in stage or prod:
+    - the router's resolved environment is not exactly `ROUTER_CUSTOM_DASHBOARDS` and
+      `ROUTER_DASHBOARD_RUNTIME_HOST` (plus the two gateway variables, in stage only);
+    - `ROUTER_CUSTOM_DASHBOARDS` is anything but `on` or `off`;
+    - `ROUTER_DASHBOARD_RUNTIME_HOST` is neither empty nor a bare lower-case host name (a scheme,
+      port, path, space, brace, quote, wildcard, trailing dot or upper-case letter fails it);
+    - `ROUTER_CUSTOM_DASHBOARDS` is `on` and `ROUTER_DASHBOARD_RUNTIME_HOST` is empty;
+    - the router's and the api's values of either variable differ; or
+    - with `ROUTER_CUSTOM_DASHBOARDS` on, the host of the api's `DASHBOARD_RUNTIME_ORIGIN` differs
+      from `ROUTER_DASHBOARD_RUNTIME_HOST`.
+
+    The check resolves each project with its default values and again with an `on` fixture.
 11. `docker/.env` exists.
 12. The companion ignore file does not begin with an exclude-all line.
-13. The Caddyfile adapted with no gateway variables differs from the committed baseline.
+13. The Caddyfile adapted with no gateway variables differs from the committed baseline, with
+    `ROUTER_CUSTOM_DASHBOARDS` unset or `off` (the same, unregenerated baseline), or with it `on`
+    and a fixture runtime host (`docker/scripts/caddy-adapt.on.baseline.json`).
 14. Any service in the dev, stage, or prod project has an `env_file`.
 15. The key names listed in the shared allowlist file differ from the null-passthrough names
     of the resolved prod `api` or dev `app`, excluding keys that service pins with a literal.
@@ -1076,7 +1095,10 @@ ignored by git, and the tracked templates SHALL NOT be.
 - listed in the shared allowlist file, which lists the keys containers may receive; or
 - one of that environment's fixed compose-interpolation keys: `DEV_PORT` and
   `DEV_COMPANION_PORT` for dev, `STAGE_PORT` for stage, and `ROUTER_PORT`, `WEB_TAG`, `API_TAG`,
-  and `PUBLIC_BASE_URL` for prod; or
+  and `PUBLIC_BASE_URL` for prod; and, for stage and prod, the router's custom-dashboards
+  settings `ROUTER_CUSTOM_DASHBOARDS` (`on`, `off` or empty) and `ROUTER_DASHBOARD_RUNTIME_HOST`
+  (empty or a bare lower-case host name), which compose passes to both the router and the api;
+  or
 - one of the Supabase keys `POSTGRES_PASSWORD`, `SUPABASE_ROLES_PASSWORD`, `APP_DB_PASSWORD`
   and `JWT_SECRET`, in every environment. These are interpolation keys that only the services
   allowed for them in invariant 16 receive, and they SHALL NOT be listed in the shared allowlist

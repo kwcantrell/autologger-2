@@ -4,8 +4,10 @@
 // The stacks set AUTOLOGGER_STACK (docker/secrets-env.yaml), an absolute DATA_DIR, an absolute
 // BLOB_DIR outside it (shared-blob-volume D1) and the catalog's PG* settings (catalog-on-postgres
 // D2); a host run has none. With CUSTOM_DASHBOARDS_ENABLED on, the custom-dashboards settings are
-// checked too (ADR 0035, design §10.1); off, they are never read. Messages name variables only,
-// never their values.
+// checked too (ADR 0035, design §10.1); off, they are never read. In the split topology the
+// router's ROUTER_CUSTOM_DASHBOARDS / ROUTER_DASHBOARD_RUNTIME_HOST must agree with the api's
+// (design §10.3, J6): compose passes them to both, so a mismatch is refused here. Messages name
+// variables only, never their values.
 
 import { isAbsolute, resolve, sep } from 'node:path';
 import type { Config } from '@autologger/ports';
@@ -120,12 +122,35 @@ function customDashboardsConfig(env: Record<string, string | undefined>): Config
 }
 
 /**
- * Design §10.1: with `CUSTOM_DASHBOARDS_ENABLED` on, refuse an unsafe setup; with it off, read
- * nothing. A refusal message naming the variable and no value, or null.
+ * Design §10.3: the router's `ROUTER_CUSTOM_DASHBOARDS` is present in the api's environment only
+ * in the split topology (compose passes it to both services). Present, it must be exactly `on`
+ * when the flag is on and exactly `off` when it is off; any other value, empty included, is a
+ * disagreement (the router cannot import its rules from it either). Absent, nothing is checked.
+ */
+function routerFlagRefusal(
+  env: Record<string, string | undefined>,
+  flagOn: boolean,
+): string | null {
+  const router = env.ROUTER_CUSTOM_DASHBOARDS;
+  if (router === undefined) return null;
+  if (router === (flagOn ? 'on' : 'off')) return null;
+  return `ROUTER_CUSTOM_DASHBOARDS (the router's setting) must be on exactly when CUSTOM_DASHBOARDS_ENABLED is on, and off exactly when it is off; with CUSTOM_DASHBOARDS_ENABLED ${flagOn ? 'on' : 'off'} it must be ${flagOn ? 'on' : 'off'}. Set both in OpenBao, see docs/openbao-secrets.md.`;
+}
+
+/** A host name for comparison: lower-cased, trailing dots stripped. */
+const comparableHost = (h: string): string => h.toLowerCase().replace(/\.+$/, '');
+
+/**
+ * Design §10.1 and §10.3: with `CUSTOM_DASHBOARDS_ENABLED` on, refuse an unsafe setup; with it
+ * off, read nothing but the router's on/off value (when present it must say `off`). A refusal
+ * message naming the variable and no value, or null.
  */
 export function customDashboardsRefusal(env: Record<string, string | undefined>): string | null {
   const cfg = customDashboardsConfig(env);
-  if (!customDashboardsEnabled(cfg)) return null;
+  const flagOn = customDashboardsEnabled(cfg);
+  const routerRefusal = routerFlagRefusal(env, flagOn);
+  if (routerRefusal) return routerRefusal;
+  if (!flagOn) return null;
   const app = exactHttpsOrigin(publicBaseUrl(cfg), { allowPort: true });
   if (app === null) {
     return "CUSTOM_DASHBOARDS_ENABLED is on, so PUBLIC_BASE_URL must be an https: origin with no path, query or fragment (the dev stack's http://localhost setup cannot turn it on); fix it in OpenBao, see docs/openbao-secrets.md.";
@@ -138,6 +163,16 @@ export function customDashboardsRefusal(env: Record<string, string | undefined>)
   // above ahead of this one: moved below it, a bad value would throw instead of being refused.
   if (sameHost(new URL(runtime).hostname, new URL(app).hostname)) {
     return "CUSTOM_DASHBOARDS_ENABLED is on, so DASHBOARD_RUNTIME_ORIGIN must have a host other than PUBLIC_BASE_URL's (the dashboard runtime needs its own origin); fix it in OpenBao, see docs/openbao-secrets.md.";
+  }
+  // Design §10.3: in the split topology (the router's setting is present) the router's runtime
+  // host rule and its `frame-src` header come from ROUTER_DASHBOARD_RUNTIME_HOST, so it must be
+  // the runtime origin's host. Unset or different, runtime-host requests would reach web:3000 and
+  // the app's `frame-src` would name the wrong origin.
+  if (env.ROUTER_CUSTOM_DASHBOARDS !== undefined) {
+    const routerHost = comparableHost(env.ROUTER_DASHBOARD_RUNTIME_HOST ?? '');
+    if (!routerHost || routerHost !== comparableHost(new URL(runtime).hostname)) {
+      return "CUSTOM_DASHBOARDS_ENABLED is on and ROUTER_CUSTOM_DASHBOARDS is set, so ROUTER_DASHBOARD_RUNTIME_HOST must be set to the host of DASHBOARD_RUNTIME_ORIGIN (the router sends that host to the api and puts it in the app's frame-src); set both in OpenBao, see docs/openbao-secrets.md.";
+    }
   }
   if (!mcpSigningSecretValid(cfg)) {
     return `CUSTOM_DASHBOARDS_ENABLED is on, so MCP_SIGNING_SECRET must be set to at least ${MCP_SIGNING_SECRET_MIN_LENGTH} characters; set it in OpenBao, see docs/openbao-secrets.md.`;

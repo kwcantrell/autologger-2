@@ -31,6 +31,21 @@
 #     sees them, hence rule 1.
 #   - Upgrade dispatch: server/src/upgradeDispatch.ts routes on the UNDECODED WHATWG pathname:
 #     only literal /api (or /api/...) is admitted; everything else is destroyed (no response).
+#
+# Custom session dashboards (design docs/design/custom-session-dashboards.md section 10.3, J6).
+# The extra rules live in two snippets and ONE line, placed after rule 5 and before rule 6, imports
+# the one named by ROUTER_CUSTOM_DASHBOARDS (`on` or `off`; unset or empty means `off`):
+#   * `off` is EMPTY, so with the setting off (or unset) the adapted config is byte-identical to
+#     docker/scripts/caddy-adapt.baseline.json (check-envs invariant 13). Do not add anything to it.
+#   * `on` sends the OAuth, MCP and runtime-host paths to the api. They cannot be always present:
+#     the production `api` image is API-only and answers an unmatched GET with a plain-text 404,
+#     while `web:3000` answers today's GETs on those paths with Next's HTML not-found page, so an
+#     always-present rule would change deployments that never opt in. With `on` the adapted config
+#     matches docker/scripts/caddy-adapt.on.baseline.json (invariant 13, fixture runtime host).
+#   * ROUTER_DASHBOARD_RUNTIME_HOST is read only by the `on` snippet. docker/scripts/check-envs.sh
+#     requires it to be a bare host name equal to the api's DASHBOARD_RUNTIME_ORIGIN host, and
+#     server/src/bootGuard.ts refuses to boot on a mismatch, so a value cannot break out of a
+#     matcher or a header value. Both settings must equal the api's.
 
 {
 	auto_https off
@@ -53,6 +68,48 @@
 		trusted_proxies static {$ROUTER_FRONT_GW:172.28.10.1} {$ROUTER_BACK_GW:172.28.11.1}
 		trusted_proxies_strict
 	}
+}
+
+# ---- Custom session dashboards: the two snippets (see the header; imported before rule 6) -------
+(custom-dashboards-off) {
+}
+
+(custom-dashboards-on) {
+	# The runtime host: every request for it goes to the api, which serves /runtime/v1/* there and
+	# answers 404 for everything else, by checking Host before routing. Case-insensitive Host
+	# match; the port is ignored by Caddy's host matcher.
+	@dashboardRuntimeHost host {$ROUTER_DASHBOARD_RUNTIME_HOST}
+	handle @dashboardRuntimeHost {
+		reverse_proxy api:8787 {
+			header_up X-Forwarded-For {client_ip}
+			transport http {
+				compression off
+			}
+		}
+	}
+
+	# Exact raw-URI paths (query allowed, nothing after the path), GET and HEAD only: look-alikes
+	# (/mcpx, /mcp/x, /oauthx) and percent-encoded spellings (/%6Dcp) stay with web, as the
+	# server's own routing agrees. Other methods and trailing-slash paths already reach the api
+	# through rules 4 and 5.
+	@dashboardPaths {
+		method GET HEAD
+		expression `{http.request.uri}.matches("^/(\\.well-known/oauth-(protected-resource(/mcp)?|authorization-server)|oauth/authorize(/resume)?|mcp)(\\?|$)")`
+	}
+	handle @dashboardPaths {
+		reverse_proxy api:8787 {
+			header_up X-Forwarded-For {client_ip}
+			transport http {
+				compression off
+			}
+		}
+	}
+
+	# The app's frame-src policy (design section 9.2), on every response for a host that is not the
+	# runtime host. `?` sets it only when the upstream sent no Content-Security-Policy, so web's
+	# documents get it and the api's own policies (the OAuth pages) are kept.
+	@dashboardAppHost not host {$ROUTER_DASHBOARD_RUNTIME_HOST}
+	header @dashboardAppHost ?Content-Security-Policy "frame-src https://{$ROUTER_DASHBOARD_RUNTIME_HOST}/runtime/v1/frame.html"
 }
 
 :8080 {
@@ -131,6 +188,9 @@
 			}
 		}
 	}
+
+	# ---- Custom dashboards: `on` or `off` snippet (after rule 5, before rule 6) -------------------
+	import custom-dashboards-{$ROUTER_CUSTOM_DASHBOARDS:off}
 
 	# ---- Rule 6: everything else -> web ----------------------------------------------------------
 	handle {

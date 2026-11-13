@@ -5,7 +5,17 @@
 # run by hand, CI has no docker:
 #
 #   COMPANION_DEVICE_TOKEN=… sh docker/scripts/test_router.sh stage
-#   sh docker/scripts/test_router.sh stage --record   # print the current disposition table
+#   sh docker/scripts/test_router.sh stage --record   # print the current disposition tables
+#
+# Custom session dashboards (design section 10.3, J6): the router's mode (ROUTER_CUSTOM_DASHBOARDS
+# `on` or `off`, and ROUTER_DASHBOARD_RUNTIME_HOST) is read from the running router container, and
+# the `dashboards` disposition rows (GET HEAD POST PUT DELETE on each path of section 10.3 and on
+# the runtime host: status, Set-Cookie presence, the compared headers incl. Content-Type, and a
+# body hash) are checked against the table for that mode. Record the `off` table on a stack built
+# from main first, then run this script unchanged on the stack built from the job. A stack with a
+# non-default compose project (a proof stack beside another) sets ROUTER_TEST_PROJECT, and
+# ROUTER_TEST_WEB / ROUTER_TEST_API when its container names differ from `<project>-web-1` and
+# `<project>-api`.
 #
 # COMPANION_DEVICE_TOKEN is a Companion device token the operator created in that stack's
 # Settings -> Companion devices (companion-devices D9 category 12; API_TOKEN is ignored since 9d).
@@ -14,22 +24,29 @@
 set -eu
 ENV=${1:?usage: test_router.sh stage|prod [--record]}
 case $ENV in stage) P=autologger-stage ;; prod) P=autologger ;; *) echo "stage or prod" >&2; exit 2 ;; esac
+P=${ROUTER_TEST_PROJECT:-$P}
 PORT=${ROUTER_TEST_PORT:-$(docker port "$P-router-1" 8080/tcp | sed -n 's/^127\.0\.0\.1://p' | head -1)}
 [ -n "$PORT" ] || { echo "no router port for $P" >&2; exit 2; }
 LAN=$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -vE '^(127\.|172\.|$)' | head -1 || true)
-WEB=$P-web-1
+WEB=${ROUTER_TEST_WEB:-$P-web-1}
+API=${ROUTER_TEST_API:-$P-api}
+# The router's mode and runtime host, as the running container was started with them.
+ROUTER_ENV=$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$P-router-1")
+ROUTER_MODE=$(printf '%s\n' "$ROUTER_ENV" | sed -n 's/^ROUTER_CUSTOM_DASHBOARDS=//p' | head -1)
+RT_HOST=$(printf '%s\n' "$ROUTER_ENV" | sed -n 's/^ROUTER_DASHBOARD_RUNTIME_HOST=//p' | head -1)
 [ -n "${2:-}" ] || [ -n "${COMPANION_DEVICE_TOKEN:-}" ] || {
   echo "set COMPANION_DEVICE_TOKEN to a device token from the $ENV stack's Settings -> Companion devices" >&2
   exit 2
 }
 export COMPANION_DEVICE_TOKEN="${COMPANION_DEVICE_TOKEN:-}"
-PORT="$PORT" LAN="$LAN" WEB="$WEB" RECORD="${2:-}" \
+PORT="$PORT" LAN="$LAN" WEB="$WEB" API="$API" ROUTER_MODE="${ROUTER_MODE:-off}" RT_HOST="$RT_HOST" RECORD="${2:-}" \
   exec node --input-type=module - <<'EOF'
 import net from 'node:net';
 import { randomBytes } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 
-const { PORT, LAN, WEB, RECORD, COMPANION_DEVICE_TOKEN } = process.env;
+const { PORT, LAN, WEB, API, ROUTER_MODE, RT_HOST, RECORD, COMPANION_DEVICE_TOKEN } = process.env;
 const port = Number(PORT);
 let pass = 0;
 let fail = 0;
@@ -52,8 +69,8 @@ function raw(text, host = '127.0.0.1', ms = 4000) {
     s.setTimeout(ms, () => s.destroy());
   });
 }
-const req = (method, path, headers = {}, body = '') =>
-  [`${method} ${path} HTTP/1.1`, `Host: 127.0.0.1:${port}`, 'Connection: close',
+const req = (method, path, headers = {}, body = '', host = `127.0.0.1:${port}`) =>
+  [`${method} ${path} HTTP/1.1`, `Host: ${host}`, 'Connection: close',
     ...Object.entries(headers).map(([k, v]) => `${k}: ${v}`),
     ...(body ? [`Content-Length: ${Buffer.byteLength(body)}`] : []), '', body].join('\r\n');
 function parse(r) {
@@ -71,7 +88,7 @@ function parse(r) {
   }
   return { status, h, cookies, body: rest.join('\r\n\r\n'), head };
 }
-const http = async (method, path, headers, body) => parse(await raw(req(method, path, headers, body)));
+const http = async (method, path, headers, body, host) => parse(await raw(req(method, path, headers, body, host)));
 const bearer = { Authorization: `Bearer ${COMPANION_DEVICE_TOKEN}` };
 
 // ---- Shell served by web
@@ -137,11 +154,189 @@ for (const [m, p, hd, body] of ROWS) {
   if (RECORD) console.log(`  ${JSON.stringify(key)}: ${JSON.stringify(got)},`);
   else check(`disposition ${key}`, EXPECTED[key] === got, EXPECTED[key] === got ? undefined : got);
 }
+
+// ---- Custom session dashboards (design section 10.3, J6). The mode is the router container's own
+// ROUTER_CUSTOM_DASHBOARDS; the rows are recorded per mode with --record. `off` is recorded on a
+// stack built from main (before J6) and must pass unchanged on the job's stack; `on` is recorded
+// on the job's stack with both settings on.
+const DASH_ON = ROUTER_MODE === 'on';
+const RUNTIME = RT_HOST || 'runtime.parity.invalid'; // only a Host header; no DNS involved
+const DASH_PATHS = ['/.well-known/oauth-protected-resource', '/.well-known/oauth-protected-resource/mcp',
+  '/.well-known/oauth-authorization-server', '/oauth/authorize', '/oauth/authorize/resume', '/mcp'];
+const RT_PATHS = ['/runtime/v1/frame.html', '/runtime/v1/assets/x.js', '/api/profile']; // not '/': the shell body varies per request
+const DASH_ROWS = [];
+for (const m of ['GET', 'HEAD', 'POST', 'PUT', 'DELETE']) {
+  for (const p of DASH_PATHS) DASH_ROWS.push([m, p, false]);
+  for (const p of RT_PATHS) DASH_ROWS.push([m, p, true]);
+}
+// status | cookie | compared headers | sha256 of the body (first 16 hex; `-` for an empty body)
+const bodyHash = (b) => (b.length ? createHash('sha256').update(b, 'latin1').digest('hex').slice(0, 16) : '-');
+const dashSummary = (r) => `${summary(r)} | ${bodyHash(r.body)}`;
+const DASH_EXPECTED = {
+  off: {
+// Recorded with --record on a split-topology stack built from main (commit 67f771b1, the `web` and
+// `api` targets of docker/Dockerfile; the api image is API-only), router with the setting unset,
+// before J6. The job's own stack must pass this table unchanged. The same `web` image served
+// both stacks, so Next's not-found body hash is comparable.
+    "GET /.well-known/oauth-protected-resource": "404 | - | - | - | text/html; charset=utf-8 | - | rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch, Accept-Encoding | private, no-cache, no-store, max-age=0, must-revalidate | 60978693dda410ee",
+    "GET /.well-known/oauth-protected-resource/mcp": "404 | - | - | - | text/html; charset=utf-8 | - | rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch, Accept-Encoding | private, no-cache, no-store, max-age=0, must-revalidate | 6fdec64753a98355",
+    "GET /.well-known/oauth-authorization-server": "404 | - | - | - | text/html; charset=utf-8 | - | rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch, Accept-Encoding | private, no-cache, no-store, max-age=0, must-revalidate | 1addac9b4e6d64a7",
+    "GET /oauth/authorize": "404 | - | - | - | text/html; charset=utf-8 | - | rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch, Accept-Encoding | private, no-cache, no-store, max-age=0, must-revalidate | b559c45755b208ef",
+    "GET /oauth/authorize/resume": "404 | - | - | - | text/html; charset=utf-8 | - | rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch, Accept-Encoding | private, no-cache, no-store, max-age=0, must-revalidate | 1243e2fbe19213c8",
+    "GET /mcp": "404 | - | - | - | text/html; charset=utf-8 | - | rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch, Accept-Encoding | private, no-cache, no-store, max-age=0, must-revalidate | c343073f7c6dcc36",
+    "GET [runtime host] /runtime/v1/frame.html": "404 | - | - | - | text/html; charset=utf-8 | - | rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch, Accept-Encoding | private, no-cache, no-store, max-age=0, must-revalidate | b0a9481f6dae78be",
+    "GET [runtime host] /runtime/v1/assets/x.js": "404 | - | - | - | text/html; charset=utf-8 | - | rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch, Accept-Encoding | private, no-cache, no-store, max-age=0, must-revalidate | 6b6c7ef60ed11fe1",
+    "GET [runtime host] /api/profile": "200 | - | - | - | application/json | - | Accept-Encoding | - | 8dc89bf93caf8d20",
+    "HEAD /.well-known/oauth-protected-resource": "404 | - | - | - | text/html; charset=utf-8 | - | rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch, Accept-Encoding | private, no-cache, no-store, max-age=0, must-revalidate | -",
+    "HEAD /.well-known/oauth-protected-resource/mcp": "404 | - | - | - | text/html; charset=utf-8 | - | rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch, Accept-Encoding | private, no-cache, no-store, max-age=0, must-revalidate | -",
+    "HEAD /.well-known/oauth-authorization-server": "404 | - | - | - | text/html; charset=utf-8 | - | rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch, Accept-Encoding | private, no-cache, no-store, max-age=0, must-revalidate | -",
+    "HEAD /oauth/authorize": "404 | - | - | - | text/html; charset=utf-8 | - | rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch, Accept-Encoding | private, no-cache, no-store, max-age=0, must-revalidate | -",
+    "HEAD /oauth/authorize/resume": "404 | - | - | - | text/html; charset=utf-8 | - | rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch, Accept-Encoding | private, no-cache, no-store, max-age=0, must-revalidate | -",
+    "HEAD /mcp": "404 | - | - | - | text/html; charset=utf-8 | - | rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch, Accept-Encoding | private, no-cache, no-store, max-age=0, must-revalidate | -",
+    "HEAD [runtime host] /runtime/v1/frame.html": "404 | - | - | - | text/html; charset=utf-8 | - | rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch, Accept-Encoding | private, no-cache, no-store, max-age=0, must-revalidate | -",
+    "HEAD [runtime host] /runtime/v1/assets/x.js": "404 | - | - | - | text/html; charset=utf-8 | - | rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch, Accept-Encoding | private, no-cache, no-store, max-age=0, must-revalidate | -",
+    "HEAD [runtime host] /api/profile": "200 | - | - | - | application/json | - | Accept-Encoding | - | -",
+    "POST /.well-known/oauth-protected-resource": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "POST /.well-known/oauth-protected-resource/mcp": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "POST /.well-known/oauth-authorization-server": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "POST /oauth/authorize": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "POST /oauth/authorize/resume": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "POST /mcp": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "POST [runtime host] /runtime/v1/frame.html": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "POST [runtime host] /runtime/v1/assets/x.js": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "POST [runtime host] /api/profile": "401 | - | - | - | application/json | - | - | - | 7355b61d35e034bc",
+    "PUT /.well-known/oauth-protected-resource": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "PUT /.well-known/oauth-protected-resource/mcp": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "PUT /.well-known/oauth-authorization-server": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "PUT /oauth/authorize": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "PUT /oauth/authorize/resume": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "PUT /mcp": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "PUT [runtime host] /runtime/v1/frame.html": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "PUT [runtime host] /runtime/v1/assets/x.js": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "PUT [runtime host] /api/profile": "401 | - | - | - | application/json | - | - | - | 7355b61d35e034bc",
+    "DELETE /.well-known/oauth-protected-resource": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "DELETE /.well-known/oauth-protected-resource/mcp": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "DELETE /.well-known/oauth-authorization-server": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "DELETE /oauth/authorize": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "DELETE /oauth/authorize/resume": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "DELETE /mcp": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "DELETE [runtime host] /runtime/v1/frame.html": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "DELETE [runtime host] /runtime/v1/assets/x.js": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "DELETE [runtime host] /api/profile": "401 | - | - | - | application/json | - | - | - | 7355b61d35e034bc",
+  },
+  on: {
+// Recorded with --record on the job's stack (same web image, api image built from the J6 commit)
+// with ROUTER_CUSTOM_DASHBOARDS=on, the runtime host set, and the api's flag on. The routes behind
+// the new paths are whatever the api has mounted at that commit; re-record when a later job (J5, J8)
+// changes an answer, and say so in that job.
+    "GET /.well-known/oauth-protected-resource": "200 | - | - | - | application/json | - | - | - | 83079eff7bf393e0",
+    "GET /.well-known/oauth-protected-resource/mcp": "200 | - | - | - | application/json | - | - | - | 83079eff7bf393e0",
+    "GET /.well-known/oauth-authorization-server": "200 | - | - | - | application/json | - | - | - | 1ae7f7c20e6effbc",
+    "GET /oauth/authorize": "400 | - | - | - | text/html; charset=UTF-8 | - | - | no-store | 80ddb0ba713e499f",
+    "GET /oauth/authorize/resume": "400 | - | - | - | text/html; charset=UTF-8 | - | - | no-store | 1176e7f682f20652",
+    "GET /mcp": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "GET [runtime host] /runtime/v1/frame.html": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "GET [runtime host] /runtime/v1/assets/x.js": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "GET [runtime host] /api/profile": "200 | - | - | - | application/json | - | Accept-Encoding | - | 8dc89bf93caf8d20",
+    "HEAD /.well-known/oauth-protected-resource": "200 | - | - | - | application/json | - | - | - | -",
+    "HEAD /.well-known/oauth-protected-resource/mcp": "200 | - | - | - | application/json | - | - | - | -",
+    "HEAD /.well-known/oauth-authorization-server": "200 | - | - | - | application/json | - | - | - | -",
+    "HEAD /oauth/authorize": "400 | - | - | - | text/html; charset=UTF-8 | - | - | no-store | -",
+    "HEAD /oauth/authorize/resume": "400 | - | - | - | text/html; charset=UTF-8 | - | - | no-store | -",
+    "HEAD /mcp": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | -",
+    "HEAD [runtime host] /runtime/v1/frame.html": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | -",
+    "HEAD [runtime host] /runtime/v1/assets/x.js": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | -",
+    "HEAD [runtime host] /api/profile": "200 | - | - | - | application/json | - | Accept-Encoding | - | -",
+    "POST /.well-known/oauth-protected-resource": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "POST /.well-known/oauth-protected-resource/mcp": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "POST /.well-known/oauth-authorization-server": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "POST /oauth/authorize": "400 | - | - | - | text/html; charset=UTF-8 | - | - | no-store | 4909666fb2d534cd",
+    "POST /oauth/authorize/resume": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "POST /mcp": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "POST [runtime host] /runtime/v1/frame.html": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "POST [runtime host] /runtime/v1/assets/x.js": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "POST [runtime host] /api/profile": "401 | - | - | - | application/json | - | - | - | 7355b61d35e034bc",
+    "PUT /.well-known/oauth-protected-resource": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "PUT /.well-known/oauth-protected-resource/mcp": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "PUT /.well-known/oauth-authorization-server": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "PUT /oauth/authorize": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "PUT /oauth/authorize/resume": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "PUT /mcp": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "PUT [runtime host] /runtime/v1/frame.html": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "PUT [runtime host] /runtime/v1/assets/x.js": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "PUT [runtime host] /api/profile": "401 | - | - | - | application/json | - | - | - | 7355b61d35e034bc",
+    "DELETE /.well-known/oauth-protected-resource": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "DELETE /.well-known/oauth-protected-resource/mcp": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "DELETE /.well-known/oauth-authorization-server": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "DELETE /oauth/authorize": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "DELETE /oauth/authorize/resume": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "DELETE /mcp": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "DELETE [runtime host] /runtime/v1/frame.html": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "DELETE [runtime host] /runtime/v1/assets/x.js": "404 | - | - | - | text/plain; charset=UTF-8 | - | - | - | 7d04f7431bbfa41a",
+    "DELETE [runtime host] /api/profile": "401 | - | - | - | application/json | - | - | - | 7355b61d35e034bc",
+  },
+};
+const dashKey = (m, p, rt) => `${m} ${rt ? '[runtime host] ' : ''}${p}`;
+const dashGot = {};
+for (const [m, p, rt] of DASH_ROWS) {
+  const hd = m === 'POST' || m === 'PUT' ? { 'Content-Type': 'application/json' } : {};
+  const r = await http(m, p, hd, m === 'POST' || m === 'PUT' ? '{}' : '', rt ? RUNTIME : undefined);
+  dashGot[dashKey(m, p, rt)] = { sum: dashSummary(r), r };
+}
+if (RECORD) {
+  console.log(`  // dashboards mode ${DASH_ON ? 'on' : 'off'} (paste into DASH_EXPECTED.${DASH_ON ? 'on' : 'off'})`);
+  for (const [k, v] of Object.entries(dashGot)) console.log(`    ${JSON.stringify(k)}: ${JSON.stringify(v.sum)},`);
+} else {
+  const want = DASH_EXPECTED[DASH_ON ? 'on' : 'off'];
+  for (const [k, v] of Object.entries(dashGot)) {
+    check(`dashboards (${DASH_ON ? 'on' : 'off'}) ${k}`, want[k] === v.sum, want[k] === v.sum ? undefined : v.sum);
+  }
+}
 if (RECORD) process.exit(0);
 const shell = (await http('GET', '/teams')).body;
 const chunk = shell.match(/\/_next\/static\/[^"'\s\\]+\.js/)?.[0];
 const c = chunk ? await http('GET', chunk) : { status: 0, h: {} };
 check('GET /_next/static/<chunk> from the shell -> 200 immutable', c.status === 200 && /immutable/.test(c.h['cache-control'] ?? ''), `${c.status} ${c.h['cache-control'] ?? '-'}`);
+
+// ---- Custom dashboards: which upstream answered, and the frame-src policy
+// Next's answers (the shell and its not-found page) are HTML with a `Vary: rsc, ...` header; the
+// API-only api image answers plain text (or JSON) and never sets it.
+const fromWeb = (r) => (r.h['content-type'] ?? '').includes('text/html') && /(^|,\s*)rsc(,|$)/.test(r.h.vary ?? '');
+const csp = (r) => r.h['content-security-policy'];
+const FRAME_SRC = `frame-src https://${RT_HOST}/runtime/v1/frame.html`;
+for (const p of DASH_PATHS) {
+  const r = dashGot[dashKey('GET', p, false)].r;
+  if (DASH_ON) check(`dashboards on: GET ${p} reaches the api, not web:3000`, !fromWeb(r), `${r.status} ${r.h['content-type'] ?? '-'}`);
+  else check(`dashboards off: GET ${p} is still Next's HTML not-found page from web:3000, not the api's plain-text 404`, fromWeb(r) && r.status === 404 && !/^Not Found$/.test(r.body), `${r.status} ${r.h['content-type'] ?? '-'}`);
+}
+if (DASH_ON) {
+  const rt = dashGot[dashKey('GET', '/runtime/v1/frame.html', true)].r;
+  check('dashboards on: GET https://<runtime host>/runtime/v1/frame.html reaches the api, not web:3000', RT_HOST !== '' && !fromWeb(rt), `${rt.status} ${rt.h['content-type'] ?? '-'}`);
+  for (const p of ['/', '/teams', '/nope', '/sessions/abc']) {
+    const r = await http('GET', p);
+    check(`dashboards on: web document GET ${p} carries exactly the frame-src policy`, csp(r) === FRAME_SRC, csp(r) ?? 'none');
+  }
+  const h = await http('HEAD', '/teams');
+  check('dashboards on: HEAD /teams carries exactly the frame-src policy', csp(h) === FRAME_SRC, csp(h) ?? 'none');
+  // The api's own policy (the OAuth pages) is kept, not replaced or doubled: compare with the api's answer.
+  const direct = execFileSync('docker', ['exec', API, 'node', '-e',
+    "fetch('http://127.0.0.1:8787/oauth/authorize').then((r)=>process.stdout.write(r.headers.get('content-security-policy')??''))"], { encoding: 'utf8' });
+  const oa = await http('GET', '/oauth/authorize');
+  check('dashboards on: a response that already has a Content-Security-Policy keeps it unchanged', direct !== '' && csp(oa) === direct && csp(oa) !== FRAME_SRC, csp(oa) ?? 'none');
+  const rtAny = await http('GET', '/runtime/v1/frame.html', {}, '', RT_HOST);
+  check('dashboards on: a runtime-host response does not get the app policy', csp(rtAny) !== FRAME_SRC, csp(rtAny) ?? 'none');
+  const rtOther = await http('GET', '/anything', {}, '', RT_HOST.toUpperCase());
+  check('dashboards on: the runtime host matches case-insensitively and gets no app policy', csp(rtOther) !== FRAME_SRC && !fromWeb(rtOther), `${rtOther.status}`);
+  const look = await http('GET', '/mcpx');
+  check('dashboards on: look-alike GET /mcpx still goes to web', fromWeb(look), `${look.status}`);
+  const enc = await http('GET', '/%6Dcp');
+  check('dashboards on: percent-encoded GET /%6Dcp does not match the new rule (web)', fromWeb(enc), `${enc.status}`);
+} else {
+  for (const [p, host] of [['/', undefined], ['/teams', undefined], ['/nope', undefined], ['/mcp', undefined], ['/oauth/authorize', undefined], ['/api/profile', undefined], ['/runtime/v1/frame.html', RUNTIME]]) {
+    const r = await http('GET', p, {}, '', host);
+    check(`dashboards off: GET ${p}${host ? ' (runtime host)' : ''} gains no Content-Security-Policy`, csp(r) === undefined, csp(r) ?? 'none');
+  }
+}
 
 // ---- Stray upgrades write nothing; the session WebSocket path is still proxied
 const upgrade = (path, extra = {}, proto = 'websocket') => [`GET ${path} HTTP/1.1`, `Host: 127.0.0.1:${port}`, 'Connection: Upgrade', `Upgrade: ${proto}`,

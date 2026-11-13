@@ -43,6 +43,12 @@ services:
     volumes:
       - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
     networks: [front, back]
+    # Custom session dashboards (ADR 0035, design section 10.3). `on` imports the flag-gated rules
+    # of docker/Caddyfile; unset or empty resolves to `off`, which leaves the router unchanged.
+    # The api gets the same two values so its boot guard can refuse a disagreement.
+    environment:
+      ROUTER_CUSTOM_DASHBOARDS: ${ROUTER_CUSTOM_DASHBOARDS:-off}
+      ROUTER_DASHBOARD_RUNTIME_HOST: ${ROUTER_DASHBOARD_RUNTIME_HOST:-}
     depends_on:
       web: { condition: service_healthy }
       api: { condition: service_healthy }
@@ -105,6 +111,9 @@ services:
       TRUST_PROXY: "1"
       COOKIE_SECURE: "1"
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:?set PUBLIC_BASE_URL in the OpenBao prod secret to the public https origin}
+      # Must equal the router's (design section 10.3); the boot guard compares them with the flag.
+      ROUTER_CUSTOM_DASHBOARDS: ${ROUTER_CUSTOM_DASHBOARDS:-off}
+      ROUTER_DASHBOARD_RUNTIME_HOST: ${ROUTER_DASHBOARD_RUNTIME_HOST:-}
       # The catalog's Postgres client (catalog-pg-schema D5): reached over the two-member `catalog`
       # network as the least-privilege autologger_app role. Not in the shared allowlist.
       PGHOST: db

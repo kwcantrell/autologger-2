@@ -27,6 +27,7 @@ cd "$ROOT"
 # The caller's shell must not influence the result: every interpolated variable falls back to
 # its compose default, and the placeholder env files below supply any non-default value.
 unset DEV_PORT DEV_COMPANION_PORT STAGE_PORT ROUTER_PORT ROUTER_FRONT_GW ROUTER_BACK_GW \
+  ROUTER_CUSTOM_DASHBOARDS ROUTER_DASHBOARD_RUNTIME_HOST DASHBOARD_RUNTIME_ORIGIN \
   STAGE_WEB_IMAGE STAGE_API_IMAGE STAGE_MEDIA_IMAGE STAGE_PUBLIC_BASE_URL STAGE_COOKIE_SECURE STAGE_IMAGE_TAG \
   WEB_TAG API_TAG MEDIA_TAG PUBLIC_BASE_URL HOST TRUST_PROXY \
   IP_ALLOWLIST DATA_DIR BLOB_DIR PORT 2>/dev/null || true
@@ -128,6 +129,14 @@ STAGE_PUBLIC_BASE_URL=https://stage.example.invalid
 STAGE_COOKIE_SECURE=1
 EOF
 printf 'WEB_TAG=0000000000aa\nAPI_TAG=0000000000aa\nMEDIA_TAG=0000000000aa\nPUBLIC_BASE_URL=https://example.invalid\n' >"$TMP/prod.env"
+# Custom session dashboards (design section 10.3, J6): the router flag on, with a fixture runtime host
+# that also is the host of the api's DASHBOARD_RUNTIME_ORIGIN (an allowlist key the env file feeds).
+RT_HOST=dashboards.example.invalid
+RT_ON="ROUTER_CUSTOM_DASHBOARDS=on
+ROUTER_DASHBOARD_RUNTIME_HOST=$RT_HOST
+DASHBOARD_RUNTIME_ORIGIN=https://$RT_HOST"
+{ cat "$TMP/prod.env"; printf '%s\n' "$RT_ON"; } >"$TMP/prod-on.env"
+{ printf 'STAGE_PORT=18788\n'; printf '%s\n' "$RT_ON"; } >"$TMP/stage-on.env"
 
 # ---------------------------------------------------------------- shared assertions -----------
 # Invariant 1 (any project): every published port is on the literal 127.0.0.1.
@@ -203,6 +212,58 @@ IPV4='^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\\.){3}(25[0-5]|2[0-4][0-9]
 check_gw_values() { # json label
   jq_ok 10 "$2: ROUTER_FRONT_GW/ROUTER_BACK_GW is set to something other than a single non-empty dotted IPv4 (or 0.0.0.0)" "$1" \
     "[.services[]|(.environment//{})|to_entries[]|select(.key|test(\"^ROUTER_(FRONT|BACK)_GW\$\"))|.value]|all(type==\"string\" and test(\"$IPV4\") and .!=\"0.0.0.0\")"
+}
+
+# Invariant 10 (stage, prod; custom session dashboards, design section 10.3, J6): the router's
+# environment is exactly ROUTER_CUSTOM_DASHBOARDS and ROUTER_DASHBOARD_RUNTIME_HOST (plus the
+# gateway variables, non-prod stacks only), and the two settings are well-formed and agree with the
+# api's. RT_VALID is the whole value rule in one expression, for the hostile-value loop below.
+RT_HOST_RE='^([a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*)?$'
+RT_VALID='.services.router.environment as $r | .services.api.environment as $a
+  | ($r.ROUTER_CUSTOM_DASHBOARDS=="on" or $r.ROUTER_CUSTOM_DASHBOARDS=="off")
+    and ($r.ROUTER_DASHBOARD_RUNTIME_HOST|type=="string" and test($re))
+    and ($r.ROUTER_CUSTOM_DASHBOARDS!="on" or $r.ROUTER_DASHBOARD_RUNTIME_HOST!="")
+    and $a.ROUTER_CUSTOM_DASHBOARDS==$r.ROUTER_CUSTOM_DASHBOARDS
+    and $a.ROUTER_DASHBOARD_RUNTIME_HOST==$r.ROUTER_DASHBOARD_RUNTIME_HOST
+    and ($r.ROUTER_CUSTOM_DASHBOARDS!="on"
+         or (($a.DASHBOARD_RUNTIME_ORIGIN//"")|capture("^https://(?<h>[^/:?#@*]+)$")|.h)==$r.ROUTER_DASHBOARD_RUNTIME_HOST)'
+check_router_dashboards() { # json label gateway-vars-allowed(0|1)
+  if [ "$3" = 1 ]; then _rk='(.services.router.environment//{})|keys|map(select(test("^ROUTER_(FRONT|BACK)_GW$")|not))|sort'
+  else _rk='(.services.router.environment//{})|keys|sort'; fi
+  jq_ok 10 "$2: the router's environment is not exactly ROUTER_CUSTOM_DASHBOARDS and ROUTER_DASHBOARD_RUNTIME_HOST (other keys, or one missing)" "$1" \
+    "($_rk)==[\"ROUTER_CUSTOM_DASHBOARDS\",\"ROUTER_DASHBOARD_RUNTIME_HOST\"]"
+  jq_ok 10 "$2: ROUTER_CUSTOM_DASHBOARDS is not exactly on or off" "$1" \
+    '.services.router.environment.ROUTER_CUSTOM_DASHBOARDS|.=="on" or .=="off"'
+  jq_ok 10 "$2: ROUTER_DASHBOARD_RUNTIME_HOST is not empty or a bare lower-case host name" "$1" \
+    '.services.router.environment.ROUTER_DASHBOARD_RUNTIME_HOST|type=="string" and test($re)' --arg re "$RT_HOST_RE"
+  jq_ok 10 "$2: ROUTER_CUSTOM_DASHBOARDS is on with an empty ROUTER_DASHBOARD_RUNTIME_HOST" "$1" \
+    '.services.router.environment|.ROUTER_CUSTOM_DASHBOARDS!="on" or (.ROUTER_DASHBOARD_RUNTIME_HOST//"")!=""'
+  jq_ok 10 "$2: the router's and the api's ROUTER_CUSTOM_DASHBOARDS / ROUTER_DASHBOARD_RUNTIME_HOST values differ" "$1" \
+    '.services.router.environment as $r | .services.api.environment as $a
+     | $a.ROUTER_CUSTOM_DASHBOARDS==$r.ROUTER_CUSTOM_DASHBOARDS and $a.ROUTER_DASHBOARD_RUNTIME_HOST==$r.ROUTER_DASHBOARD_RUNTIME_HOST'
+  jq_ok 10 "$2: ROUTER_DASHBOARD_RUNTIME_HOST is not the host of the api's DASHBOARD_RUNTIME_ORIGIN" "$1" \
+    '.services.router.environment as $r | .services.api.environment as $a
+     | $r.ROUTER_CUSTOM_DASHBOARDS!="on"
+       or ((($a.DASHBOARD_RUNTIME_ORIGIN//"")|capture("^https://(?<h>[^/:?#@*]+)$")?|.h)==$r.ROUTER_DASHBOARD_RUNTIME_HOST)'
+}
+
+# Hostile router-setting values: whatever compose accepts must still fail the RT_VALID rule, so
+# a value cannot reach a Caddy matcher or the frame-src header value.
+hostile_router() { # label fn envfile-with-RT_ON
+  _hl=$1; _hf=$2
+  for kv in 'ROUTER_CUSTOM_DASHBOARDS=true' 'ROUTER_CUSTOM_DASHBOARDS=ON' 'ROUTER_CUSTOM_DASHBOARDS=on x' \
+    "ROUTER_DASHBOARD_RUNTIME_HOST=https://$RT_HOST" "ROUTER_DASHBOARD_RUNTIME_HOST=$RT_HOST:8443" "ROUTER_DASHBOARD_RUNTIME_HOST=$RT_HOST/x" \
+    "ROUTER_DASHBOARD_RUNTIME_HOST=$RT_HOST x" "ROUTER_DASHBOARD_RUNTIME_HOST=$RT_HOST}" "ROUTER_DASHBOARD_RUNTIME_HOST=$RT_HOST\"" \
+    "ROUTER_DASHBOARD_RUNTIME_HOST=*.$RT_HOST" "ROUTER_DASHBOARD_RUNTIME_HOST=$RT_HOST." 'ROUTER_DASHBOARD_RUNTIME_HOST=Dashboards.Example.Invalid' \
+    'ROUTER_DASHBOARD_RUNTIME_HOST=' 'ROUTER_DASHBOARD_RUNTIME_HOST=a" || true || "b'; do
+    { printf '%s\n' "$RT_ON" | grep -v "^${kv%%=*}="; printf '%s\n' "$kv"; } >"$TMP/hostile-rt.env"
+    [ "$_hl" = prod ] && { cat "$TMP/prod.env" "$TMP/hostile-rt.env" >"$TMP/hostile-rt2.env"; } || { printf 'STAGE_PORT=18788\n'; cat "$TMP/hostile-rt.env"; } >"$TMP/hostile-rt2.env"
+    if "$_hf" "$TMP/hostile-rt2.env" --profile '*' config --no-env-resolution --format json >"$TMP/hostile-rt.json" 2>/dev/null; then
+      if jq -e --arg re "$RT_HOST_RE" "$RT_VALID" "$TMP/hostile-rt.json" >/dev/null 2>&1; then
+        fail 10 "$_hl: hostile router setting [$kv] was accepted by the router-dashboards rule"
+      fi
+    fi
+  done
 }
 
 # Invariant 16 (dev, stage, prod; supabase-db D1-D4, supabase-services D1-D4, catalog-pg-schema D5,
@@ -439,7 +500,10 @@ check_stage() {
   resolve "$TMP/stage-raw.json" "stage (raw, --no-interpolate)" compose_stage "$TMP/stage-custom.env" --no-interpolate || return 0
   resolve "$TMP/stage-p.json" "stage (registry images, public https origin)" compose_stage "$TMP/stage-public.env" || return 0
   resolve "$TMP/prod-d.json" "prod (defaults, for the STAGE_PORT != ROUTER_PORT compare)" compose_prod "$TMP/prod.env" || return 0
+  resolve "$TMP/stage-on.json" "stage (router custom dashboards on)" compose_stage "$TMP/stage-on.env" || return 0
   S=$TMP/stage.json; SC=$TMP/stage-c.json; SR=$TMP/stage-raw.json; SP=$TMP/stage-p.json
+  for f in "$S" "$SC" "$SP" "$TMP/stage-on.json"; do check_router_dashboards "$f" stage 1; done  # 10
+  hostile_router stage compose_stage
 
   check_name "$S" stage autologger-stage                               # 9
   check_no_host_priv "$S" stage                                        # 6
@@ -519,27 +583,42 @@ check_prod() {
   check_blob_volume "$f" prod                                          # 7
   check_gw_values "$f" prod                                            # 10
   check_no_env_file "$f" prod                                          # 14
-  jq_ok 10 "prod: compose.yaml must never set ROUTER_FRONT_GW/ROUTER_BACK_GW: the resolved router environment is not empty" "$f" \
-    '.services.router.environment==null'
+  # 10: the router's environment is exactly the two custom-dashboards settings (design section
+  # 10.3, J6), so the gateway variables are still absent; see check_router_dashboards.
+  resolve "$TMP/prod-on.json" "prod (router custom dashboards on)" compose_prod "$TMP/prod-on.env" || return 0
+  check_router_dashboards "$f" prod 0
+  check_router_dashboards "$TMP/prod-on.json" prod 0
+  hostile_router prod compose_prod
   if grep -Eq 'ROUTER_(FRONT|BACK)_GW' compose.yaml; then
     fail 10 "prod: compose.yaml names ROUTER_FRONT_GW/ROUTER_BACK_GW"
   fi
 
   # 13: the Caddyfile adapted with NO gateway variables equals the committed baseline. Exact
   # command of task 3.1 (--pretty, stdout only, stderr discarded, no -e flags), on the router's
-  # own digest-pinned image.
+  # own digest-pinned image. With ROUTER_CUSTOM_DASHBOARDS unset or `off` (J6, design section 10.3)
+  # the output must still equal that same, never-regenerated baseline; `on`, with the fixture
+  # runtime host, must equal docker/scripts/caddy-adapt.on.baseline.json.
   img=$(jq -r '.services.router.image' "$TMP/prod.json")
   case "$img" in
     *@sha256:*) ;;
     *) fail 13 "prod: router image is not digest-pinned ($img)" ;;
   esac
-  if docker run --rm -v "$ROOT/docker/Caddyfile:/etc/caddy/Caddyfile:ro" "$img" \
-       caddy adapt --config /etc/caddy/Caddyfile --pretty 2>/dev/null >"$TMP/adapt.json"; then
-    cmp -s "$TMP/adapt.json" docker/scripts/caddy-adapt.baseline.json ||
-      fail 13 "prod: docker/Caddyfile adapted with no ROUTER_* variables differs from docker/scripts/caddy-adapt.baseline.json"
-  else
-    fail 13 "prod: 'caddy adapt' failed (docker run of $img)"
-  fi
+  for mode in unset off on; do
+    case "$mode" in
+      unset) set -- ;;
+      off) set -- -e ROUTER_CUSTOM_DASHBOARDS=off ;;
+      on) set -- -e ROUTER_CUSTOM_DASHBOARDS=on -e "ROUTER_DASHBOARD_RUNTIME_HOST=$RT_HOST" ;;
+    esac
+    base=docker/scripts/caddy-adapt.baseline.json
+    [ "$mode" = on ] && base=docker/scripts/caddy-adapt.on.baseline.json
+    if docker run --rm "$@" -v "$ROOT/docker/Caddyfile:/etc/caddy/Caddyfile:ro" "$img" \
+         caddy adapt --config /etc/caddy/Caddyfile --pretty 2>/dev/null >"$TMP/adapt-$mode.json"; then
+      cmp -s "$TMP/adapt-$mode.json" "$base" ||
+        fail 13 "prod: docker/Caddyfile adapted with ROUTER_CUSTOM_DASHBOARDS $mode differs from $base"
+    else
+      fail 13 "prod: 'caddy adapt' failed with ROUTER_CUSTOM_DASHBOARDS $mode (docker run of $img)"
+    fi
+  done
 }
 
 # ---------------------------------------------------------------- global ---------------------
