@@ -166,13 +166,15 @@ verified `sub`, the approval by email), so a refused sign-in never reaches Supab
   cookie, does not call Supabase Auth, and creates or changes no account
 
 ### Requirement: Null-body responses carry no Content-Type
-A response the server sends with no body, namely every `204` (for example
-`DELETE /api/companion-devices/:id`) and every redirect the app issues (for example the
-`302`s from `GET /auth/google/callback`), SHALL carry no `Content-Type` header. Status
-codes, `Location` and every other header on these responses are unchanged. This amends the
-frozen contract: on `@hono/node-server` 1.x these responses carried
-`Content-Type: text/plain; charset=UTF-8`, which the adapter added by default; 2.x does not,
-and the change was accepted by a human decision (factory job 009).
+A response the server sends with no body SHALL carry no `Content-Type` header. That covers
+every `204` (for example `DELETE /api/companion-devices/:id`), every redirect the app issues
+(for example the `302`s from `GET /auth/google/callback`), and the `400` the HTTP adapter
+itself sends for a malformed request: an invalid `Host` header (for example `exa mple`), an
+`OPTIONS *` request, or a backslash in the request path. Status codes, `Location` and every
+other header on these responses are unchanged. This amends the frozen contract: on
+`@hono/node-server` 1.x these responses carried `Content-Type: text/plain; charset=UTF-8`,
+which the adapter added by default; 2.x does not, and the change was accepted by human
+decisions (factory job 009).
 
 #### Scenario: A 204 route sends no Content-Type
 - **WHEN** a signed-in user revokes one of their Companion devices with
@@ -183,6 +185,34 @@ and the change was accepted by a human decision (factory job 009).
 - **WHEN** Google redirects to `/auth/google/callback?error=x`
 - **THEN** the server responds `302` with `Location: /?login_error=provider_error`, an
   empty body, and no `Content-Type` header
+
+#### Scenario: A malformed request gets a 400 with no Content-Type
+- **WHEN** a client sends a request with `Host: exa mple`, or `OPTIONS * HTTP/1.1`, or a
+  request target containing a backslash such as `GET /api\studio`
+- **THEN** the server responds `400` with an empty body and no `Content-Type` header
+
+### Requirement: Host names are matched case-insensitively
+The server SHALL accept a `Host` header whose host name has uppercase letters, with or
+without a port (for example `LOCALHOST:8787` or `Example.COM:443`), and route the request
+exactly as it routes the same host in lowercase: same status, headers and body, with each
+route's own auth checks applied unchanged. A `Host` header that is not a valid host (for
+example `exa mple`) SHALL still be rejected with `400`. This amends the frozen contract: on
+`@hono/node-server` 1.x an uppercase host with a port got `400`, because the adapter compared
+host names case-sensitively; 2.x lowercases the host first, and the change was accepted by a
+human decision (factory job 009).
+
+#### Scenario: Uppercase host with a port routes like lowercase
+- **WHEN** a signed-in user sends `GET /api/studio` with `Host: LOCALHOST:<port>`
+- **THEN** the response has the same status (`200`) and JSON body as the same request with
+  `Host: localhost:<port>`
+
+#### Scenario: Uppercase host keeps the route's auth check
+- **WHEN** a client with no session sends `GET /api/studio` with `Host: LOCALHOST:<port>`
+- **THEN** the server responds `401`, as it does for the lowercase host
+
+#### Scenario: Invalid host is still rejected
+- **WHEN** a client sends `GET /api/studio` with `Host: exa mple`
+- **THEN** the server responds `400`
 
 ### Requirement: Session deep-link HTML route
 `GET /sessions/:id`, where `:id` is a single non-empty path segment, SHALL respond
