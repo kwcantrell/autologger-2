@@ -33,6 +33,7 @@ import {
   resolveYtDlpPath,
   runFeatureAllowed,
   runFeatureEmails,
+  sameHost,
   sameSite,
   sessionCookieName,
   sessionTtlDays,
@@ -606,6 +607,20 @@ describe('custom session dashboards settings (ADR 0035, design §10.1)', () => {
     }
   });
 
+  it('dashboardRuntimeOrigin refuses a trailing dot or an empty label in the host', () => {
+    for (const v of [
+      'https://run.example.',
+      'https://run.example..',
+      'https://run..example',
+      'https://.run.example',
+    ]) {
+      expect(dashboardRuntimeOrigin(E({ DASHBOARD_RUNTIME_ORIGIN: v })), v).toBeNull();
+    }
+    expect(dashboardRuntimeOrigin(E({ DASHBOARD_RUNTIME_ORIGIN: 'https://[::1]' }))).toBe(
+      'https://[::1]',
+    );
+  });
+
   it('mcpSigningSecret is trimmed and valid from 32 characters', () => {
     expect(mcpSigningSecret(E({}))).toBe('');
     expect(mcpSigningSecret(E({ MCP_SIGNING_SECRET: ' abc ' }))).toBe('abc');
@@ -650,5 +665,15 @@ describe('custom session dashboards settings (ADR 0035, design §10.1)', () => {
     expect(sameSite('app.example.com', 'run.example.net')).toBe(false);
     expect(sameSite('10.0.0.1', '10.0.0.2')).toBe(false);
     expect(sameSite('[::1]', '[::2]')).toBe(false);
+  });
+
+  it('sameHost treats hosts that differ only by trailing dots as the same, either way', () => {
+    expect(sameHost('app.example.com', 'app.example.com')).toBe(true);
+    expect(sameHost('app.example.com.', 'app.example.com')).toBe(true);
+    expect(sameHost('app.example.com', 'app.example.com.')).toBe(true);
+    expect(sameHost('app.example.com..', 'app.example.com')).toBe(true);
+    expect(sameHost('app.example.com', 'app.example.com..')).toBe(true);
+    expect(sameHost('app.example.com', 'run.example.com')).toBe(false);
+    expect(sameHost('app.example.com.', 'app.example.co')).toBe(false);
   });
 });

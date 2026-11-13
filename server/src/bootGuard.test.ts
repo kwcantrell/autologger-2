@@ -288,6 +288,35 @@ describe('checkBootEnv with CUSTOM_DASHBOARDS_ENABLED', () => {
     }
   });
 
+  it('refuses a DASHBOARD_RUNTIME_ORIGIN host with a trailing dot or empty label, naming it', () => {
+    for (const runtime of [
+      'https://autologger.example.',
+      'https://autologger.example..',
+      'https://runtime..example',
+      'https://.runtime.example',
+    ]) {
+      refusedNaming(
+        { ...on, PUBLIC_BASE_URL: 'https://autologger.example', DASHBOARD_RUNTIME_ORIGIN: runtime },
+        /DASHBOARD_RUNTIME_ORIGIN must be set to an https: origin .* no trailing dot or empty label/,
+        [runtime, 'autologger.example', 'runtime.example'],
+      );
+    }
+  });
+
+  it('refuses a runtime host equal to PUBLIC_BASE_URL with a trailing dot, naming both', () => {
+    for (const app of [
+      'https://autologger.example.',
+      'https://autologger.example..',
+      'https://autologger.example.:8443/',
+    ]) {
+      refusedNaming(
+        { ...on, PUBLIC_BASE_URL: app, DASHBOARD_RUNTIME_ORIGIN: 'https://autologger.example' },
+        /DASHBOARD_RUNTIME_ORIGIN must have a host other than PUBLIC_BASE_URL/,
+        [app, 'autologger.example'],
+      );
+    }
+  });
+
   it('refuses a missing or short MCP_SIGNING_SECRET, naming it and no value', () => {
     for (const v of [undefined, '', 'short-secret-value', 'x'.repeat(31), ` ${'y'.repeat(31)} `]) {
       refusedNaming(

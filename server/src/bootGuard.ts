@@ -17,6 +17,7 @@ import {
   mcpAllowedOrigins,
   mcpSigningSecretValid,
   publicBaseUrl,
+  sameHost,
   sameSite,
   signupsMode,
 } from './env';
@@ -128,9 +129,11 @@ export function customDashboardsRefusal(env: Record<string, string | undefined>)
   }
   const runtime = dashboardRuntimeOrigin(cfg);
   if (runtime === null) {
-    return 'CUSTOM_DASHBOARDS_ENABLED is on, so DASHBOARD_RUNTIME_ORIGIN must be set to an https: origin with no path and no explicit port; fix it in OpenBao, see docs/openbao-secrets.md.';
+    return 'CUSTOM_DASHBOARDS_ENABLED is on, so DASHBOARD_RUNTIME_ORIGIN must be set to an https: origin with no path and no explicit port, whose host has no trailing dot or empty label; fix it in OpenBao, see docs/openbao-secrets.md.';
   }
-  if (new URL(runtime).hostname === new URL(app).hostname) {
+  // `app` and `runtime` are both non-null here, so `new URL()` cannot throw. Keep the two checks
+  // above ahead of this one: moved below it, a bad value would throw instead of being refused.
+  if (sameHost(new URL(runtime).hostname, new URL(app).hostname)) {
     return "CUSTOM_DASHBOARDS_ENABLED is on, so DASHBOARD_RUNTIME_ORIGIN must have a host other than PUBLIC_BASE_URL's (the dashboard runtime needs its own origin); fix it in OpenBao, see docs/openbao-secrets.md.";
   }
   if (!mcpSigningSecretValid(cfg)) {
@@ -153,10 +156,11 @@ export function bootWarnings(env: Record<string, string | undefined>): string[] 
   const out: string[] = [];
   const app = exactHttpsOrigin(publicBaseUrl(cfg), { allowPort: true });
   const runtime = dashboardRuntimeOrigin(cfg);
+  // Both `new URL()` calls below sit behind the null checks, so they cannot throw.
   if (app !== null && runtime !== null) {
     const appHost = new URL(app).hostname;
     const runtimeHost = new URL(runtime).hostname;
-    if (appHost !== runtimeHost && sameSite(appHost, runtimeHost)) {
+    if (!sameHost(appHost, runtimeHost) && sameSite(appHost, runtimeHost)) {
       out.push(
         'DASHBOARD_RUNTIME_ORIGIN is on the same site as PUBLIC_BASE_URL: a separate registrable domain is recommended for the dashboard runtime (docs/design/custom-session-dashboards.md section 9.2).',
       );

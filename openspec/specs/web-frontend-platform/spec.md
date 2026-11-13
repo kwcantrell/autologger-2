@@ -296,18 +296,24 @@ reports `auth.oauth_configured: true`. In every stack, it SHALL also refuse to b
 the teams that have no owner (team-management, "Bootstrap owner"), and when it contains any
 non-ASCII character, because the claim matches exact ASCII only; each message names the variable
 and prints no value. A server that boots SHALL log a masked form of the value so the operator
-can check it: the domain and a short hash of the normalized address, never the local part.
+can check it: the domain and a short hash of the normalized address, never the local part. `npm run dev` SHALL apply the same refusals, including the
+custom-dashboards refusals below, before starting its file watcher, so a refused run exits
+instead of waiting for changes; it does not log the boot warnings. No package script SHALL read
+a `server/.env` file.
 
 Custom session dashboards (ADR 0035) are opt-in with `CUSTOM_DASHBOARDS_ENABLED`: `1`, `true` or
 `yes`, case-insensitively after trimming, as `AI_V2_ENABLED`; unset, empty or any other value is
-off. With the flag off the server SHALL NOT read or check `DASHBOARD_RUNTIME_ORIGIN`,
+off. With the flag off the server SHALL NOT check or act on `DASHBOARD_RUNTIME_ORIGIN`,
 `MCP_SIGNING_SECRET` or `MCP_ALLOWED_ORIGINS`, and SHALL boot or refuse exactly as it would
 without them, whatever they hold. With the flag on, in every stack, it SHALL also refuse to boot
 when `PUBLIC_BASE_URL` is not an `https:` origin with no path, query or fragment (trailing
 slashes are ignored, as everywhere `PUBLIC_BASE_URL` is read; a port is allowed); when
 `DASHBOARD_RUNTIME_ORIGIN` is unset or not an `https:` origin with a host and no path (not even
-`/`), query, fragment, user info, wildcard or explicit port (`:443` included); when the host of
-`DASHBOARD_RUNTIME_ORIGIN` equals the host of `PUBLIC_BASE_URL`; when `MCP_SIGNING_SECRET`,
+`/`), query, fragment, user info, wildcard or explicit port (`:443` included), or whose host ends
+in `.` or has an empty label (`app.example.com.`, `app.example.com..`, `a..example.com`); when
+the host of `DASHBOARD_RUNTIME_ORIGIN` equals the host of `PUBLIC_BASE_URL`, compared after
+dropping trailing dots from either (so `https://app.example.com.` as `PUBLIC_BASE_URL` matches
+`https://app.example.com`); when `MCP_SIGNING_SECRET`,
 trimmed, is shorter than 32 characters; and when any comma-separated `MCP_ALLOWED_ORIGINS` entry,
 trimmed, is not an exact `https:` origin with a host (a wildcard, path, query, fragment, user
 info or `http:` origin is refused; an explicit port is allowed; blank entries are skipped).
@@ -316,9 +322,7 @@ message names the variable and prints no value. With the flag on, a server that 
 a warning, naming variables and no value, when the host of `DASHBOARD_RUNTIME_ORIGIN` is on the
 same site as `PUBLIC_BASE_URL`'s (the same last two DNS labels), recommending a separate
 registrable domain, and when `IP_ALLOWLIST` is set, naming Claude's connector documentation for
-the egress range to add and not the range itself. `npm run dev` SHALL apply the same checks before starting its file watcher, so a
-refused run exits instead of waiting for changes. No package script SHALL read a `server/.env`
-file.
+the egress range to add and not the range itself.
 
 #### Scenario: Host boot is refused
 - **WHEN** `npm run dev` is run on the host, outside any compose stack
@@ -401,7 +405,8 @@ file.
 
 #### Scenario: Custom dashboards on with an unusable runtime origin refuses boot
 - **WHEN** the server starts with `CUSTOM_DASHBOARDS_ENABLED=1` and `DASHBOARD_RUNTIME_ORIGIN`
-  unset, with a path, with an explicit port, or with the same host as `PUBLIC_BASE_URL`
+  unset, with a path, with an explicit port, with a trailing dot or empty label in its host, or
+  with the same host as `PUBLIC_BASE_URL` (ignoring trailing dots on either)
 - **THEN** it exits non-zero naming `DASHBOARD_RUNTIME_ORIGIN` and prints no environment value
 
 #### Scenario: Custom dashboards on with a short signing secret refuses boot

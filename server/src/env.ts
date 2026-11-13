@@ -12,6 +12,7 @@ import { createHash } from 'node:crypto';
 import { accessSync, constants } from 'node:fs';
 import { delimiter, join } from 'node:path';
 import type { Config } from '@autologger/ports';
+import { FRAME_BUS_SECRET_MIN_LENGTH } from '@autologger/storage';
 
 export function sessionCookieName(env: Config): string {
   return (env.SESSION_COOKIE || '').trim() || 'autologger_sid';
@@ -479,16 +480,21 @@ export function customDashboardsEnabled(env: Config): boolean {
   return ['1', 'true', 'yes'].includes((env.CUSTOM_DASHBOARDS_ENABLED || '').trim().toLowerCase());
 }
 
-/** The minimum `MCP_SIGNING_SECRET` length, as `FRAME_BUS_SECRET`'s. */
-export const MCP_SIGNING_SECRET_MIN_LENGTH = 32;
+/** The minimum `MCP_SIGNING_SECRET` length: the same 32 as `FRAME_BUS_SECRET`'s (design §10.1). */
+export const MCP_SIGNING_SECRET_MIN_LENGTH = FRAME_BUS_SECRET_MIN_LENGTH;
 
 /**
  * An exact `https:` origin, or null. The trimmed value must be `https://` and an authority only:
  * no path (not even `/`), query, fragment, user info or `*` wildcard, and it must parse with a
- * host. With `allowPort` false an explicit port (`:443` included) is refused too. Returns the
- * serialized form, `new URL(x).origin`.
+ * host. With `allowPort` false an explicit port (`:443` included) is refused too. With `bareHost`
+ * true a DNS host with a trailing dot or any empty label (`app.example.com.`, `a..example.com`) is
+ * refused too: the URL parser keeps the dot, so such a host would compare unequal to the same name
+ * without it. Returns the serialized form, `new URL(x).origin`.
  */
-export function exactHttpsOrigin(raw: string, opts: { allowPort: boolean }): string | null {
+export function exactHttpsOrigin(
+  raw: string,
+  opts: { allowPort: boolean; bareHost?: boolean },
+): string | null {
   const v = raw.trim();
   const m = /^https:\/\/([^/?#@*\\\s]+)$/i.exec(v);
   if (!m) return null;
@@ -502,13 +508,17 @@ export function exactHttpsOrigin(raw: string, opts: { allowPort: boolean }): str
     return null;
   }
   if (url.protocol !== 'https:' || !url.hostname || url.username || url.password) return null;
+  if (opts.bareHost && !url.hostname.startsWith('[') && url.hostname.split('.').includes('')) {
+    return null;
+  }
   return url.origin;
 }
 
 /** `DASHBOARD_RUNTIME_ORIGIN` serialized, or null when unset or not an `https:` origin with no
- * path and no explicit port. The boot guard also refuses a host equal to `PUBLIC_BASE_URL`'s. */
+ * path, no explicit port and a bare host (no trailing dot or empty label). The boot guard also
+ * refuses a host equal to `PUBLIC_BASE_URL`'s. */
 export function dashboardRuntimeOrigin(env: Config): string | null {
-  return exactHttpsOrigin(env.DASHBOARD_RUNTIME_ORIGIN || '', { allowPort: false });
+  return exactHttpsOrigin(env.DASHBOARD_RUNTIME_ORIGIN || '', { allowPort: false, bareHost: true });
 }
 
 /** `MCP_SIGNING_SECRET`, trimmed; '' when unset. Server-only: never logged. */
@@ -535,6 +545,12 @@ export function mcpAllowedOrigins(env: Config): string[] | null {
     if (!out.includes(origin)) out.push(origin);
   }
   return out;
+}
+
+/** Whether two `URL.hostname` values name the same host, ignoring trailing dots on either side
+ * (`app.example.com.` is the fully qualified spelling of `app.example.com`). */
+export function sameHost(a: string, b: string): boolean {
+  return a.replace(/\.+$/, '') === b.replace(/\.+$/, '');
 }
 
 /** A rough registrable domain: the last two DNS labels, or the whole host for an IP literal or a
