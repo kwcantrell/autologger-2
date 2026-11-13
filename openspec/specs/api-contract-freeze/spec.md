@@ -231,7 +231,14 @@ not HTML — and MAY vary across deployments via build identifiers; neither vari
 correlate with session state.) Authentication happens client-side through the existing
 `GET /api/profile` surface, and session resolution through the `GET /api/sessions/:id`
 detail endpoint; the HTML route itself adds no JSON surface, sets no cookies, and takes
-no query-parameter semantics.
+no query-parameter semantics of its own. The one framework-defined parameter is the flight
+request's `_rsc` cache-busting query: an RSC flight request (`RSC: 1`) whose `_rsc` is missing
+or does not match the framework's hash of its router headers SHALL get a `307` to the same
+path with the expected `_rsc` (for a request with no router headers, `Location:
+/sessions/<id>?_rsc`), with no body, `Content-Type`, `Vary` or `Cache-Control`, instead of the
+payload. This is Next 16's RSC request validation, kept on by a human decision (2026-11-13,
+job 014); before Next 16 such a request got `200 text/x-component`. The redirect does not
+depend on session state.
 
 Paths outside the frozen inventory — including `/sessions` (no id),
 `/sessions/<id>/<more>` (nested segments), and trailing-slash variants of inventory

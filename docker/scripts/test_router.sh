@@ -101,6 +101,11 @@ const EXPECTED = {
 // 2026-10-06 (remove-admin-users-page D5): the two /admin/users rows were deliberately changed from
 // the retired page's `200 … s-maxage=31536000` to the not-found disposition /admin/logs already
 // records (verified byte-identical on a scratch `next start` by the change's panel).
+// 2026-11-13 (Next 16 upgrade, job 014; human decision): GET /teams (RSC) was deliberately changed
+// from `200 text/x-component` to Next 16's RSC request validation redirect. The request sends
+// `RSC: 1` with no router-state headers and no `_rsc` query, so Next answers `307` to the same
+// path with an empty `_rsc` and no Content-Type, Vary or Cache-Control. Recorded against the
+// `web` image built from the job branch, not through a stage router.
   "GET /": "200 | - | - | - | text/html; charset=utf-8 | - | rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch, Accept-Encoding | private, no-cache, no-store, max-age=0, must-revalidate",
   "HEAD /": "200 | - | - | - | text/html; charset=utf-8 | - | rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch, Accept-Encoding | private, no-cache, no-store, max-age=0, must-revalidate",
   "GET /teams": "200 | - | - | - | text/html; charset=utf-8 | - | rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch, Accept-Encoding | private, no-cache, no-store, max-age=0, must-revalidate",
@@ -111,7 +116,7 @@ const EXPECTED = {
   "HEAD /admin/users": "404 | - | - | - | text/html; charset=utf-8 | - | rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch, Accept-Encoding | private, no-cache, no-store, max-age=0, must-revalidate",
   "GET /admin/logs": "404 | - | - | - | text/html; charset=utf-8 | - | rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch, Accept-Encoding | private, no-cache, no-store, max-age=0, must-revalidate",
   "HEAD /admin/logs": "404 | - | - | - | text/html; charset=utf-8 | - | rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch, Accept-Encoding | private, no-cache, no-store, max-age=0, must-revalidate",
-  "GET /teams (RSC)": "200 | - | - | - | text/x-component | - | rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch, Accept-Encoding | private, no-cache, no-store, max-age=0, must-revalidate",
+  "GET /teams (RSC)": "307 | - | - | /teams?_rsc | - | - | - | -",
   "GET /static/fonts/inter-latin-var.woff2": "200 | - | - | - | font/woff2 | - | - | public, max-age=0",
   "GET /static/fonts/league-gothic-latin.woff2": "200 | - | - | - | font/woff2 | - | - | public, max-age=0",
   "GET /_next/image?url=/static/logo-autologger-app.png&w=64&q=75": "404 | - | - | - | text/html; charset=utf-8 | - | rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch, Accept-Encoding | private, no-cache, no-store, max-age=0, must-revalidate",

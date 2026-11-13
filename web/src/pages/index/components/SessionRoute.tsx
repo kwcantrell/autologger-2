@@ -178,8 +178,8 @@ export function SessionRoute({ sessionId, ytImportPending, onNewSession }: Sessi
   // workspace is the app's largest chunk, and its `lazy()` below only starts
   // fetching once `useSession` has resolved — so a cold deep link paid two
   // serial round trips (resolve, then download) behind one loading frame. This
-  // starts the download on route entry instead; webpack de-dupes the module
-  // request, so the `lazy()` below resolves off this same in-flight load rather
+  // starts the download on route entry instead; the bundler runtime (Turbopack
+  // since Next 16, webpack before) de-dupes the in-flight chunk load, so the `lazy()` below resolves off this same in-flight load rather
   // than issuing a second one.
   //
   // Deliberate trade-off: an id that resolves to 404/archived warms a chunk it

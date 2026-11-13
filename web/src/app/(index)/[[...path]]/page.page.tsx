@@ -44,7 +44,7 @@ import { IndexIsland } from '../IndexIsland';
 export const dynamic = 'force-dynamic';
 
 interface IndexShellPageProps {
-  // Next 15: `params` is a Promise. The optional catch-all's segment list
+  // Next 15 and 16: `params` is a Promise. The optional catch-all's segment list
   // is `undefined` for `/`, otherwise the array of raw, still
   // percent-ENCODED segments -- see `isShellSegments`'s doc comment for why
   // this validator never decodes-and-re-splits an entry.

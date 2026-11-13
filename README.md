@@ -2726,7 +2726,7 @@ removal those roles already have none. Then remove the retired keys from OpenBao
 
 ## Frontend (web/ workspace)
 
-The React frontend lives in `web/` (Next.js 15 App Router + React 19, Tailwind v4) and is
+The React frontend lives in `web/` (Next.js 16 App Router + React 19, Tailwind v4) and is
 canonical for this app. `next build` (in the image builds) emits `web/.next/`; the server
 bridges unmatched GET requests to Next (`server/src/node/nextFrontend.ts`, mounted from a Hono
 catch-all — `frontend.handle(...)`) rather than serving prebuilt static files. `GET /`,
@@ -2854,12 +2854,12 @@ Browse `http://127.0.0.1:8787/`. Deep links (`/sessions/<id>`, `/teams`) work
 natively — the Next App Router catch-all renders the shell for every router-known path, so no
 dev-only shell middleware is needed (the retired `web/vite.config.ts`'s `sessionDeepLinkDevShell`
 plugin and its `/api`+`/auth` proxy are gone; dev and prod now share one origin and one port).
-Editing a web-source file triggers Next's webpack-pipeline dev HMR (Turbopack is unavailable
-under a custom server) with no server restart; editing a server-source file restarts the `tsx
+Editing a web-source file triggers Next's Turbopack dev HMR (Next 16's default bundler, which
+the embedded custom server also uses) with no server restart; editing a server-source file restarts the `tsx
 watch` process, which re-`prepare()`s Next (amortized by the on-disk `.next` cache — `tsx watch`
 excludes `web/**` so Next's own build-output churn under `web/.next/**` can't trigger spurious
 restarts). The session WebSocket (`/api/sessions/:id/ws`) and Next's dev HMR socket
-(`/_next/webpack-hmr`) coexist on the same upgrade path, dispatched by path prefix
+(`/_next/hmr`) coexist on the same upgrade path, dispatched by path prefix
 (`server/src/upgradeDispatch.ts`).
 
 **`web/next.config.ts` edits need a manual restart** — Next reads its config only at

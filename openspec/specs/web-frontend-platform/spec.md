@@ -50,6 +50,24 @@ and the framework's flight/RSC variants of the shell routes. The image optimizer
 (`/_next/image`) SHALL NOT be served (`images.unoptimized`), and the framework's
 `X-Powered-By` header and build/dev telemetry egress SHALL be disabled.
 
+Flight/RSC requests (`RSC: 1`) SHALL keep the framework's RSC request validation, Next 16's
+default: `web/next.config.ts` SHALL NOT set `experimental.validateRSCRequestHeaders: false`. A
+flight request is answered with the `text/x-component` payload only when its `_rsc` query matches
+the hash the framework derives from the request's router headers. A flight request without that
+query, or with a wrong value, SHALL get a `307` to the same path carrying the expected `_rsc`
+value, with no body, `Content-Type`, `Vary` or `Cache-Control`. This keeps a cache that keys on
+the URL and ignores `Vary` from storing a flight payload under a document URL. Next 15 answered
+such a request `200 text/x-component`; the change was a deliberate decision with the Next 16
+upgrade (job 014, 2026-11-13).
+
+#### Scenario: A flight request without the cache-busting query is redirected
+- **WHEN** `GET /teams` is requested in production with `RSC: 1`, no router-state headers and
+  no `_rsc` query
+- **THEN** the response is `307` with `Location: /teams?_rsc`, sets no cookie, and carries no
+  `Content-Type`, `Vary` or `Cache-Control`
+- **AND** the same request to `/teams?_rsc` is answered `200` with `Content-Type:
+  text/x-component`
+
 #### Scenario: API routes never reach the frontend bridge
 - **WHEN** any `/api/*` or `/auth/*` request is handled
 - **THEN** it is answered by the mounted Hono router, and the frontend bridge is not
@@ -195,12 +213,20 @@ theme/body attributes, stylesheet and font references, and a static loading skel
 rather than an empty mount node, and the not-found page SHALL be statically rendered.
 The skeleton SHALL contain no user- or session-derived data.
 
+The not-found page SHALL render inside the index layout's document and SHALL NOT render an
+`<html>` or `<body>` of its own. Under Next 16 the page renders in that layout's not-found
+boundary, inside the layout's `<body>`, and so also picks up the app's global stylesheet; a
+second document nested there is invalid markup, which React reports as errors in development.
+
 The document for the **router-known paths** SHALL additionally emit `<link rel="preload"
 as="font" type="font/woff2" crossorigin>` for the three font faces on the critical path — the
 Barlow latin subset at weights 400 and 600 (the UI face's body and emphasis weights) and the
 League Gothic latin subset the loading skeleton itself renders in. Because that layout has no `<head>` element and Next's
 `metadata` export has no preload API, the links are rendered in the body and hoisted to the
-document head by React 19 — the supported route.
+document head by React 19 — the supported route. The preloads SHALL appear only in the HTML,
+never as a `Link` response header: the React that Next 16 bundles would also copy them into a
+`Link` header, which Next 15 never sent, so `reactMaxHeadersLength: 0` in `web/next.config.ts`
+keeps the shell's and the not-found page's response headers as they were.
 
 Two properties of those preloads are load-bearing:
 
@@ -218,6 +244,18 @@ Two properties of those preloads are load-bearing:
 - **WHEN** `GET /` is fetched without executing JavaScript
 - **THEN** the response HTML contains the layout chrome and loading skeleton markup, not
   an empty root element
+
+#### Scenario: Shell and not-found responses carry no Link header
+- **WHEN** `GET /` or `GET` of an unknown path is fetched
+- **THEN** the response has no `Link` header, and the font preloads are present only as
+  `<link>` elements in the document
+
+#### Scenario: The not-found page is one document
+- **WHEN** `GET` of an unknown path (e.g. `/does-not-exist`, `/sessions/a/b`) is fetched, in
+  production or in development
+- **THEN** the response is `404`, and the page tree it carries has exactly one `<html>` and one
+  `<body>`, the index layout's, with the not-found content inside them
+- **AND** in development, rendering it logs no React error
 
 #### Scenario: Critical fonts are preloaded with matching URLs
 - **WHEN** `GET /` is fetched without executing JavaScript
@@ -361,7 +399,8 @@ than stylistic: under the App Router, `next/dynamic` resolves to an implementati
 react-loadable implementation that has all three. A warming or retry layer built on those APIs
 would therefore pass its tests and be `undefined` in production. Plain `React.lazy` behaves
 identically in both tiers, and warming is a bare `import()` of the same module-scope loader,
-which webpack de-dupes against the `lazy()`'s own request.
+which the bundler runtime (Turbopack since Next 16; webpack under Next 15) de-dupes against the
+`lazy()`'s own request.
 
 Every boundary SHALL be wrapped in a **chunk-load error boundary**, because the island has no
 error boundary above it (the `pageExtensions` pin means there is no `error.page.tsx`), so a
@@ -397,7 +436,10 @@ with the same instrument as evidence for that change): the homepage **island chu
 blind to this change, because every boundary lives inside the already-dynamic island chunk, so the
 island's own chunk set — read from `react-loadable-manifest` — is the only valid instrument, and
 the figures above are that instrument's. A number quoted from the First Load JS table is not
-evidence about this requirement.
+evidence about this requirement. Next 16's `next build` no longer prints a First Load JS table.
+The figures above were measured under Next 15 with webpack; Next 16 builds with Turbopack, which
+chunks the island differently, so a measurement taken under Next 16 starts a new baseline and is
+not comparable with them.
 
 Stated as **total homepage-critical JS** — the page/layout shell plus the island set — the same
 pair reads 936,699 B → 573,544 B. That is a different quantity, and it moves only because the

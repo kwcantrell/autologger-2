@@ -1,25 +1,13 @@
-import { dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
-
-// `base` pins Tailwind v4's automatic source detection (the scan that decides
-// which utility classes get emitted) to THIS directory — the web app root —
-// instead of the plugin's default of `process.cwd()` (verified against the
-// installed @tailwindcss/postcss dist: `e.base ?? process.cwd()`;
-// dev-layout-fix, nextjs-frontend-migration).
-//
-// Why cwd is wrong here: `next build` runs with cwd `web/` (npm -w web), but
-// the DEV server embeds next({ dev: true }) inside the backend process, whose
-// cwd is `server/` (`npm run dev -w server`). With the default, dev scanned
-// `server/` for class candidates, found none of the app's utility classes,
-// and emitted a utilities layer missing everything `web/src/**` uses —
-// rendering every utility-styled component unstyled in dev while prod stayed
-// pixel-perfect. For prod builds `base` equals what cwd already was, so prod
-// output is byte-unchanged (visual suites stay zero-diff).
+// Tailwind v4's class-candidate scan root is declared in the stylesheet, not here:
+// `@import 'tailwindcss/utilities.css' ... source('../../..')` in
+// src/shared/theme/tailwind.css (job 014), which explains why. This config used to pass the
+// plugin a `base` derived from `import.meta.url`. Under Next 16, Turbopack evaluates this file with
+// an `import.meta.url` of `web/web/postcss.config.mjs`, so that `base` named a missing directory
+// and no utility class was emitted. With a `source()` root in the stylesheet, the plugin uses
+// `base` only as a cache key, so the option is gone.
 const config = {
   plugins: {
-    '@tailwindcss/postcss': {
-      base: dirname(fileURLToPath(import.meta.url)),
-    },
+    '@tailwindcss/postcss': {},
   },
 };
 

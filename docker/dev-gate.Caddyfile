@@ -62,7 +62,7 @@
 		abort
 	}
 
-	# WebSocket upgrades (Next HMR /_next/webpack-hmr, the session WS) pass through natively.
+	# WebSocket upgrades (Next HMR /_next/hmr, the session WS) pass through natively.
 	# Host is forwarded unchanged. compression off matches the prod router (no transparent
 	# gzip added or removed).
 	handle {

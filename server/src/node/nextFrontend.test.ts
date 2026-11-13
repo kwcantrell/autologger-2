@@ -207,3 +207,76 @@ describe('real `next` package CJS export shape (regression guard, task 3.3)', ()
     expect(typeof mod).toBe('function');
   });
 });
+
+describe('real `next` package custom-server internals this module depends on (Next 16 upgrade, job 014)', () => {
+  // These pin the undocumented NextCustomServer behaviors nextFrontend.ts is built on, against the
+  // INSTALLED `next`, so a framework upgrade that moves them fails here instead of in a browser.
+  // None of them boots Next: the custom server is constructed but never `prepare()`d.
+  // `require('next')` with no `webpack`/`turbopack` option sets `process.env.TURBOPACK` (Next 16's
+  // bundler auto-selection), so each test restores it.
+  const nodeRequire = createRequire(import.meta.url);
+  let savedTurbopack: string | undefined;
+  let hadTurbopack = false;
+  afterEach(() => {
+    if (hadTurbopack) process.env.TURBOPACK = savedTurbopack;
+    else delete process.env.TURBOPACK;
+  });
+  function realFactory(): NextFactory {
+    hadTurbopack = 'TURBOPACK' in process.env;
+    savedTurbopack = process.env.TURBOPACK;
+    return nodeRequire('next') as NextFactory;
+  }
+
+  it('the installed next is a 16.x release at or above 16.2.11', () => {
+    const { version } = nodeRequire('next/package.json') as { version: string };
+    const [major, minor, patch] = version.split('.').map((n) => Number.parseInt(n, 10));
+    expect(major).toBe(16);
+    expect(minor > 2 || (minor === 2 && patch >= 11)).toBe(true);
+  });
+
+  it('`upgradeHandler` is a property GETTER on the custom server, distinct from the getUpgradeHandler() method', () => {
+    const app = realFactory()({ dev: false, dir: freshDir(), httpServer: { on() {} } });
+    const proto = Object.getPrototypeOf(app);
+    const desc = Object.getOwnPropertyDescriptor(proto, 'upgradeHandler');
+    expect(typeof desc?.get).toBe('function');
+    expect(desc?.value).toBeUndefined();
+    expect(typeof proto.getUpgradeHandler).toBe('function');
+    // Valid only after prepare(), as NextAppLike documents.
+    expect(() => (app as unknown as { upgradeHandler: unknown }).upgradeHandler).toThrow(
+      /prepare\(\) must be called/,
+    );
+  });
+
+  it('getRequestHandler()’s first call self-attaches an "upgrade" listener to the `httpServer` option, never to req.socket.server', async () => {
+    const stubEvents: string[] = [];
+    const realServerEvents: string[] = [];
+    const app = realFactory()({
+      dev: false,
+      dir: freshDir(),
+      httpServer: { on: (event: string) => stubEvents.push(event) },
+    });
+    const handler = app.getRequestHandler();
+    const req = {
+      url: '/',
+      headers: {},
+      socket: { server: { on: (event: string) => realServerEvents.push(event) } },
+    };
+    // Unprepared, so the request itself fails after the self-attach; only the attach matters here.
+    await expect(handler(req as never, {} as never)).rejects.toThrow(/prepare\(\) must be called/);
+    expect(stubEvents).toEqual(['upgrade']);
+    expect(realServerEvents).toEqual([]);
+  });
+
+  it('without the `httpServer` option the self-attach falls back to req.socket.server (why noOpUpgradeServer exists)', async () => {
+    const realServerEvents: string[] = [];
+    const app = realFactory()({ dev: false, dir: freshDir() });
+    const handler = app.getRequestHandler();
+    const req = {
+      url: '/',
+      headers: {},
+      socket: { server: { on: (event: string) => realServerEvents.push(event) } },
+    };
+    await expect(handler(req as never, {} as never)).rejects.toThrow(/prepare\(\) must be called/);
+    expect(realServerEvents).toEqual(['upgrade']);
+  });
+});

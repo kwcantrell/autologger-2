@@ -51,7 +51,9 @@ RUN --mount=type=cache,target=/root/.npm \
 # ---------------------------------------------------------------------------------------------
 FROM deps AS web-build
 ENV NEXT_TELEMETRY_DISABLED=1
-COPY web/next.config.ts web/tsconfig.json web/postcss.config.mjs web/next-env.d.ts web/
+# tsconfig.node.json: Next 16's build-time type check follows tsconfig.json's project `references`
+# and fails (TS6053) when the referenced file is missing; Next 15's did not.
+COPY web/next.config.ts web/tsconfig.json web/tsconfig.node.json web/postcss.config.mjs web/next-env.d.ts web/
 COPY web/public web/public
 COPY web/src web/src
 RUN cd web && npx next build
