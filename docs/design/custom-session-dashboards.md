@@ -1291,6 +1291,14 @@ ADR 0035 moves to Accepted when J1 merges.
 10. **A single OAuth scope, `dashboards` (section 4.1).** One scope covers the read and write
     tools, and roles decide what a token can do. This is a design choice the approver should
     confirm.
+11. **Consent on every authorization (section 4.4).** Today the design shows the consent page
+    on every authorization, with no silent re-approval, and doesn't remember a decision per
+    client. Its reason is that DCR gives every connection a new client, and asking each time
+    blunts consent phishing (T7). The alternative is to remember an approval per user and
+    client, and skip the page on a repeat authorization from the same client with the same
+    scope and redirect URI until the user revokes it in Connected apps. That means one click
+    fewer on reconnects, but a stored approval a hostile client could reuse silently. This is a
+    design choice the approver should confirm.
 
 ### 13.4 Assumptions to re-check at build time
 
