@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import ts from 'typescript';
+import ts from '@typescript/typescript6';
 import { afterEach, describe, expect, it } from 'vitest';
 
 // --- Import-direction boundary guard (web-coordination-seam, task 5.3; gate
