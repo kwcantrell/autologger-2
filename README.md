@@ -2536,8 +2536,10 @@ Notes:
   16622/16623** are hard-bound on all interfaces in 5.1.3 and stay reachable from the host via
   the container IP (not from the LAN), ungated. Accepted, low impact: presses reach only the dev
   `/api/companion/*` endpoints, with no spend and no secrets.
-- Companion sends **Sentry error reports by default**. Only its user-config key
-  `detailed_data_collection` controls that; it is not seeded here.
+- Companion sends **Sentry error reports by default**. In 5.1.3 only the `SENTRY_DISABLE`
+  environment variable turns that off; it is not set here. Its user-config key
+  `detailed_data_collection` (on by default, not seeded here) controls the separate usage
+  statistics, not Sentry.
 - The Companion build prints a build-context listing (`context-audit`) only on **uncached**
   builds; the build fails if a file outside the allowlist enters the context.
 
