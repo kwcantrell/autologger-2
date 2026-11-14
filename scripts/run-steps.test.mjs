@@ -95,8 +95,9 @@ test('CHECK_CONCURRENCY=1 runs steps one at a time in declared order', () => {
     assert.match(serial.out, /concurrency 1\)/);
   });
   withTmp((tmp) => {
-    // `slow` cannot finish until `fast` has run, so with 2 slots `fast` reports first.
-    const slow = { name: 'slow first', cmd: `for i in $(seq 100); do [ -e ${tmp}/fast ] && exit 0; sleep 0.1; done; exit 1` };
+    // `slow` cannot finish until `fast` has run (plus a 1s margin for a loaded host), so with 2 slots
+    // `fast` reports first.
+    const slow = { name: 'slow first', cmd: `for i in $(seq 100); do [ -e ${tmp}/fast ] && sleep 1 && exit 0; sleep 0.1; done; exit 1` };
     const fast = { name: 'fast second', cmd: `touch ${tmp}/fast; echo fast` };
     const parallel = run([slow, fast], { CHECK_CONCURRENCY: '2' });
     assert.equal(parallel.code, 0, parallel.out);
