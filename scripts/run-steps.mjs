@@ -133,7 +133,8 @@ export function failureExcerpt(name, out) {
     .map((l) => l.trimEnd())
     .filter((l) => l !== '' && !NPM_TRAILER.test(l));
   const matches = [...new Set(lines.filter((l) => FAILURE_LINE.test(l)))];
-  const shown = matches.slice(0, EXCERPT_MATCHES);
+  // The last ones: test runners summarise their failures at the end of their output.
+  const shown = matches.slice(-EXCERPT_MATCHES);
   const parts = [];
   if (shown.length) parts.push(`--- ${name} (failure lines) ---`, ...shown);
   parts.push(`--- ${name} (last lines) ---`, ...lines.slice(-EXCERPT_TAIL));

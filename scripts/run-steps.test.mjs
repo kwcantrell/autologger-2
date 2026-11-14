@@ -205,3 +205,10 @@ test('the excerpt strips colour codes', () => {
   const ex = failureExcerpt('c', '\x1b[31m FAIL \x1b[39m src/a.test.ts > b\n');
   assert.match(ex, /^ FAIL {2}src\/a\.test\.ts > b$/m);
 });
+
+test('logged errors from passing tests do not crowd out the failure summary', () => {
+  const logs = Array.from({ length: 20 }, (_, i) => `stderr | logged Error number ${i}`).join('\n');
+  const ex = failureExcerpt('test server', `${logs}\n${VITEST_UNDER_NPM}`);
+  assert.match(ex, /FAIL {2}src\/upload\.test\.ts > uploads > slow upload finishes/);
+  assert.match(ex, /Error: Test timed out in 5000ms\./);
+});
