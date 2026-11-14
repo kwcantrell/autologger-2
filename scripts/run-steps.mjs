@@ -4,14 +4,22 @@
 //   node scripts/run-steps.mjs --steps steps.json # [{ "name": "...", "cmd": "..." }, ...]
 // Each step's output is printed as one block when the step ends (never interleaved), then a
 // summary lists every step in declared order with its duration and pass/fail. Exit code is 0 only
-// when every step passed. CHECK_CONCURRENCY sets how many steps run at once (default: the
-// machine's available parallelism); 1 runs them one at a time in declared order.
+// when every step passed. CHECK_CONCURRENCY sets how many steps run at once (default: a quarter
+// of the machine's cores, at least 1); 1 runs them one at a time in declared order.
 import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { availableParallelism } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+const DEFAULT_CORE_DIVISOR = 4;
+// A failed step's excerpt: its failure lines (vitest, node --test, unittest, tsc), then its last
+// lines without npm's trailer. scripts/lib/check_change.py COMMAND_TAIL_LINES must fit a few.
+const EXCERPT_MATCHES = 12;
+const EXCERPT_TAIL = 8;
+const FAILURE_LINE = /^\s*(FAIL|ERROR|not ok)\b|^\s*[×✗]\s|\b\w*Error\b|\berror TS\d+|timed out/;
+const NPM_TRAILER = /^npm (error|ERR!)/;
+const ANSI = /\x1b\[[0-9;]*m/g;
 const ws = (name) => `npm run test -w ${name}`;
 const WORKSPACES = [
   'server',
@@ -55,7 +63,12 @@ export const SUITES = {
 
 export function concurrencyFrom(env = process.env) {
   const n = Number.parseInt(env.CHECK_CONCURRENCY ?? '', 10);
-  return Number.isFinite(n) && n >= 1 ? n : availableParallelism();
+  return Number.isFinite(n) && n >= 1 ? n : defaultConcurrency();
+}
+
+/** A quarter of the cores, never below 1: each step already starts its own workers. */
+export function defaultConcurrency(cores = availableParallelism()) {
+  return Math.max(1, Math.floor(cores / DEFAULT_CORE_DIVISOR));
 }
 
 function runOne(step, cwd) {
@@ -97,6 +110,11 @@ export async function runSteps(steps, { concurrency, cwd = process.cwd(), log = 
       `${r.code === 0 ? 'PASS' : 'FAIL'}  ${r.step.name.padEnd(width)}  ${(r.ms / 1000).toFixed(1)}s`,
   );
   const failed = results.filter((r) => r.code !== 0);
+  if (failed.length) {
+    // Repeated just before the summary so a tail of the log still names the failing tests.
+    const excerpts = failed.map((r) => failureExcerpt(r.step.name, r.out));
+    log(`===== failed step output =====\n${excerpts.join('\n')}\n`);
+  }
   log(
     `===== summary (concurrency ${concurrency}) =====\n${lines.join('\n')}\n${
       failed.length
@@ -105,6 +123,22 @@ export async function runSteps(steps, { concurrency, cwd = process.cwd(), log = 
     }`,
   );
   return failed.length === 0;
+}
+
+/** The lines of a failed step's output that name what failed, then its last lines. */
+export function failureExcerpt(name, out) {
+  const lines = out
+    .replace(ANSI, '')
+    .split('\n')
+    .map((l) => l.trimEnd())
+    .filter((l) => l !== '' && !NPM_TRAILER.test(l));
+  const matches = [...new Set(lines.filter((l) => FAILURE_LINE.test(l)))];
+  // The last ones: test runners summarise their failures at the end of their output.
+  const shown = matches.slice(-EXCERPT_MATCHES);
+  const parts = [];
+  if (shown.length) parts.push(`--- ${name} (failure lines) ---`, ...shown);
+  parts.push(`--- ${name} (last lines) ---`, ...lines.slice(-EXCERPT_TAIL));
+  return parts.join('\n');
 }
 
 async function main(argv) {

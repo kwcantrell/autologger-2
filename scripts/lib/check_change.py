@@ -320,6 +320,11 @@ def test_env(ctx: Context) -> tuple[dict[str, str], str]:
     return env, f"full: {reason}"
 
 
+# Enough for scripts/run-steps.mjs's failed-step excerpts (up to 22 lines each, see EXCERPT_MATCHES
+# and EXCERPT_TAIL there) for three failing steps, plus its summary of every step.
+COMMAND_TAIL_LINES = 100
+
+
 def run_commands(ctx: Context, names: list[str]):
     """Runs the configured commands concurrently; the first failure in `names` order is reported."""
     cmds = ctx.cfg.get("commands") or {}
@@ -342,7 +347,7 @@ def run_commands(ctx: Context, names: list[str]):
         results = list(pool.map(run_one, todo))
     for (_, cmd, _), r in zip(todo, results):
         if r.returncode != 0:
-            tail = "\n".join((r.stdout + r.stderr).strip().splitlines()[-30:])
+            tail = "\n".join((r.stdout + r.stderr).strip().splitlines()[-COMMAND_TAIL_LINES:])
             return "FAIL", f"`{cmd}` exited {r.returncode}" + (f" ({note})" if note else "") + f":\n{tail}"
     ran = [name for name, _, _ in todo]
     if empty and not ran:

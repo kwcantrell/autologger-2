@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { concurrencyFrom, defaultConcurrency, failureExcerpt } from './run-steps.mjs';
 
 const RUNNER = fileURLToPath(new URL('./run-steps.mjs', import.meta.url));
 
@@ -94,11 +95,120 @@ test('CHECK_CONCURRENCY=1 runs steps one at a time in declared order', () => {
     assert.match(serial.out, /concurrency 1\)/);
   });
   withTmp((tmp) => {
-    // `slow` cannot finish until `fast` has run, so with 2 slots `fast` reports first.
-    const slow = { name: 'slow first', cmd: `for i in $(seq 100); do [ -e ${tmp}/fast ] && exit 0; sleep 0.1; done; exit 1` };
+    // `slow` cannot finish until `fast` has run (plus a 1s margin for a loaded host), so with 2 slots
+    // `fast` reports first.
+    const slow = { name: 'slow first', cmd: `for i in $(seq 100); do [ -e ${tmp}/fast ] && sleep 1 && exit 0; sleep 0.1; done; exit 1` };
     const fast = { name: 'fast second', cmd: `touch ${tmp}/fast; echo fast` };
     const parallel = run([slow, fast], { CHECK_CONCURRENCY: '2' });
     assert.equal(parallel.code, 0, parallel.out);
     assert.ok(parallel.out.indexOf('===== fast second') < parallel.out.indexOf('===== slow first'));
   });
+});
+
+test('default concurrency is a quarter of the cores and never below 1', () => {
+  assert.equal(defaultConcurrency(20), 5);
+  assert.equal(defaultConcurrency(8), 2);
+  assert.equal(defaultConcurrency(4), 1);
+  assert.equal(defaultConcurrency(2), 1);
+  assert.equal(defaultConcurrency(1), 1);
+  assert.ok(defaultConcurrency() >= 1);
+});
+
+test('CHECK_CONCURRENCY overrides the default; junk falls back to it', () => {
+  assert.equal(concurrencyFrom({ CHECK_CONCURRENCY: '7' }), 7);
+  assert.equal(concurrencyFrom({ CHECK_CONCURRENCY: '1' }), 1);
+  assert.equal(concurrencyFrom({ CHECK_CONCURRENCY: '0' }), defaultConcurrency());
+  assert.equal(concurrencyFrom({ CHECK_CONCURRENCY: 'x' }), defaultConcurrency());
+  assert.equal(concurrencyFrom({}), defaultConcurrency());
+});
+
+test('failed step output is repeated just before the summary', () => {
+  const noisy = 'for i in $(seq 40); do echo noise$i; done; echo FAIL-test-name; exit 1';
+  const r = run([{ name: 'broken', cmd: noisy }, echo('ok', 'fine')]);
+  const tail = r.out.slice(r.out.indexOf('===== failed step output'));
+  assert.match(tail, /--- broken \(last lines\) ---\n(.*\n)*FAIL-test-name\n/);
+  assert.ok(tail.indexOf('FAIL-test-name') < tail.indexOf('===== summary'));
+});
+
+// What `npm run test -w server` prints when one vitest test times out (vitest 4, piped).
+const VITEST_UNDER_NPM = `
+> test
+> vitest run
+
+ RUN  v4.1.12 /repo/server
+
+ ❯ src/upload.test.ts (3 tests | 1 failed) 5054ms
+   × slow upload finishes 5003ms
+ ✓ src/other.test.ts (12 tests) 40ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/upload.test.ts > uploads > slow upload finishes
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ src/upload.test.ts:4:1
+      2| test('ok one', () => { expect(1).toBe(1); });
+      3| test('ok two', () => { expect(2).toBe(2); });
+      4| test('slow upload finishes', async () => {
+       | ^
+      5|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 1 passed (2)
+      Tests  1 failed | 14 passed (15)
+   Start at  13:46:37
+   Duration  5.2s (transform 14ms, setup 0ms, import 22ms, tests 5.1s, environment 0ms)
+
+npm error Lifecycle script \`test\` failed with error:
+npm error code 1
+npm error path /repo/server
+npm error workspace server
+npm error location /repo/server
+npm error command failed
+npm error command sh -c vitest run
+`;
+
+test('the excerpt of a failing vitest-under-npm step names the test and its error', () => {
+  const ex = failureExcerpt('test server', VITEST_UNDER_NPM);
+  assert.match(ex, /FAIL {2}src\/upload\.test\.ts > uploads > slow upload finishes/);
+  assert.match(ex, /Error: Test timed out in 5000ms\./);
+  assert.match(ex, /× slow upload finishes/);
+  assert.match(ex, /Tests {2}1 failed \| 14 passed/);
+  assert.doesNotMatch(ex, /npm error/);
+  assert.doesNotMatch(ex, /✓ src\/other/);
+});
+
+test('the runner prints the failing vitest test before its summary', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'run-steps-'));
+  try {
+    writeFileSync(join(dir, 'out.txt'), VITEST_UNDER_NPM);
+    const r = runIn(dir, [{ name: 'test server', cmd: `cat ${join(dir, 'out.txt')}; exit 1` }], {});
+    const tail = r.out.slice(r.out.indexOf('===== failed step output'));
+    const name = tail.indexOf('FAIL  src/upload.test.ts > uploads > slow upload finishes');
+    assert.ok(name > 0);
+    assert.ok(name < tail.indexOf('===== summary'));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('the excerpt keeps only the last lines when nothing looks like a failure', () => {
+  const out = `${Array.from({ length: 30 }, (_, i) => `line${i}`).join('\n')}\n`;
+  const ex = failureExcerpt('quiet', out);
+  const last = Array.from({ length: 8 }, (_, i) => `line${22 + i}`);
+  assert.equal(ex, ['--- quiet (last lines) ---', ...last].join('\n'));
+});
+
+test('the excerpt strips colour codes', () => {
+  const ex = failureExcerpt('c', '\x1b[31m FAIL \x1b[39m src/a.test.ts > b\n');
+  assert.match(ex, /^ FAIL {2}src\/a\.test\.ts > b$/m);
+});
+
+test('logged errors from passing tests do not crowd out the failure summary', () => {
+  const logs = Array.from({ length: 20 }, (_, i) => `stderr | logged Error number ${i}`).join('\n');
+  const ex = failureExcerpt('test server', `${logs}\n${VITEST_UNDER_NPM}`);
+  assert.match(ex, /FAIL {2}src\/upload\.test\.ts > uploads > slow upload finishes/);
+  assert.match(ex, /Error: Test timed out in 5000ms\./);
 });
