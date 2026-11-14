@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { concurrencyFrom, defaultConcurrency } from './run-steps.mjs';
+import { concurrencyFrom, defaultConcurrency, failureExcerpt } from './run-steps.mjs';
 
 const RUNNER = fileURLToPath(new URL('./run-steps.mjs', import.meta.url));
 
@@ -128,4 +128,80 @@ test('failed step output is repeated just before the summary', () => {
   const tail = r.out.slice(r.out.indexOf('===== failed step output'));
   assert.match(tail, /--- broken \(last lines\) ---\n(.*\n)*FAIL-test-name\n/);
   assert.ok(tail.indexOf('FAIL-test-name') < tail.indexOf('===== summary'));
+});
+
+// What `npm run test -w server` prints when one vitest test times out (vitest 4, piped).
+const VITEST_UNDER_NPM = `
+> test
+> vitest run
+
+ RUN  v4.1.12 /repo/server
+
+ ❯ src/upload.test.ts (3 tests | 1 failed) 5054ms
+   × slow upload finishes 5003ms
+ ✓ src/other.test.ts (12 tests) 40ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/upload.test.ts > uploads > slow upload finishes
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ src/upload.test.ts:4:1
+      2| test('ok one', () => { expect(1).toBe(1); });
+      3| test('ok two', () => { expect(2).toBe(2); });
+      4| test('slow upload finishes', async () => {
+       | ^
+      5|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 1 passed (2)
+      Tests  1 failed | 14 passed (15)
+   Start at  13:46:37
+   Duration  5.2s (transform 14ms, setup 0ms, import 22ms, tests 5.1s, environment 0ms)
+
+npm error Lifecycle script \`test\` failed with error:
+npm error code 1
+npm error path /repo/server
+npm error workspace server
+npm error location /repo/server
+npm error command failed
+npm error command sh -c vitest run
+`;
+
+test('the excerpt of a failing vitest-under-npm step names the test and its error', () => {
+  const ex = failureExcerpt('test server', VITEST_UNDER_NPM);
+  assert.match(ex, /FAIL {2}src\/upload\.test\.ts > uploads > slow upload finishes/);
+  assert.match(ex, /Error: Test timed out in 5000ms\./);
+  assert.match(ex, /× slow upload finishes/);
+  assert.match(ex, /Tests {2}1 failed \| 14 passed/);
+  assert.doesNotMatch(ex, /npm error/);
+  assert.doesNotMatch(ex, /✓ src\/other/);
+});
+
+test('the runner prints the failing vitest test before its summary', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'run-steps-'));
+  try {
+    writeFileSync(join(dir, 'out.txt'), VITEST_UNDER_NPM);
+    const r = runIn(dir, [{ name: 'test server', cmd: `cat ${join(dir, 'out.txt')}; exit 1` }], {});
+    const tail = r.out.slice(r.out.indexOf('===== failed step output'));
+    const name = tail.indexOf('FAIL  src/upload.test.ts > uploads > slow upload finishes');
+    assert.ok(name > 0);
+    assert.ok(name < tail.indexOf('===== summary'));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('the excerpt keeps only the last lines when nothing looks like a failure', () => {
+  const out = `${Array.from({ length: 30 }, (_, i) => `line${i}`).join('\n')}\n`;
+  const ex = failureExcerpt('quiet', out);
+  const last = Array.from({ length: 8 }, (_, i) => `line${22 + i}`);
+  assert.equal(ex, ['--- quiet (last lines) ---', ...last].join('\n'));
+});
+
+test('the excerpt strips colour codes', () => {
+  const ex = failureExcerpt('c', '\x1b[31m FAIL \x1b[39m src/a.test.ts > b\n');
+  assert.match(ex, /^ FAIL {2}src\/a\.test\.ts > b$/m);
 });

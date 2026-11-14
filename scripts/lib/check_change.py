@@ -320,8 +320,9 @@ def test_env(ctx: Context) -> tuple[dict[str, str], str]:
     return env, f"full: {reason}"
 
 
-# Enough for the runner's failed-step excerpts plus its summary of every step.
-COMMAND_TAIL_LINES = 60
+# Enough for scripts/run-steps.mjs's failed-step excerpts (up to 22 lines each, see EXCERPT_MATCHES
+# and EXCERPT_TAIL there) for three failing steps, plus its summary of every step.
+COMMAND_TAIL_LINES = 100
 
 
 def run_commands(ctx: Context, names: list[str]):

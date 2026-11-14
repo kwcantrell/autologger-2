@@ -298,20 +298,24 @@ class CommandsGate(RepoCase):
         self.assertIn("bad", r.stdout)
 
     def test_runner_failure_message_names_the_failing_test_not_just_the_step(self):
-        # Mimics `npm test`: a noisy failing step, then a long summary of every step.
-        steps = [{"name": f"step{i}", "cmd": "true"} for i in range(20)]
-        steps.append({"name": "test server", "cmd": "seq 50; echo FAIL src/foo.test.ts timed out; exit 1"})
+        # Mimics `npm test`: a vitest workspace step fails under npm, other steps print their own
+        # output after it, then the summary of every step.
         tmp = tempfile.mkdtemp(prefix="steps-")
         self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        with open(f"{tmp}/vitest.txt", "w") as f:
+            f.write(VITEST_TIMEOUT_UNDER_NPM)
+        steps = [{"name": "test server", "cmd": f"cat {tmp}/vitest.txt; exit 1"}]
+        steps += [{"name": f"step{i}", "cmd": "seq 20"} for i in range(15)]
         steps_file = f"{tmp}/steps.json"
         with open(steps_file, "w") as f:
             json.dump(steps, f)
         runner = Path(__file__).resolve().parents[1] / "run-steps.mjs"
         repo = self.make_cmds(typecheck="true", test=f"node {runner} --steps {steps_file}")
-        r = repo.run("--only", "commands")
+        r = repo.run("--only", "commands", CHECK_CONCURRENCY="1")  # the failing block prints first
         self.assertExit(r, 1)
         self.assertIn("test server", r.stdout)
-        self.assertIn("FAIL src/foo.test.ts timed out", r.stdout)
+        self.assertIn("FAIL  src/upload.test.ts > uploads > slow upload finishes", r.stdout)
+        self.assertIn("Error: Test timed out in 5000ms.", r.stdout)
 
     def test_a_failure_in_typecheck_fails_the_gate_while_test_passes(self):
         repo = self.make_cmds(typecheck="echo tsc-error; exit 2", test="true")
@@ -329,6 +333,46 @@ class CommandsGate(RepoCase):
         full = repo.run("--only", "commands", FULL_TESTS="1")
         self.assertIn("t=[]", full.stdout)
         self.assertIn("full: FULL_TESTS=1", full.stdout)
+
+
+# What `npm run test -w server` prints when one vitest test times out (vitest 4, piped).
+VITEST_TIMEOUT_UNDER_NPM = """
+> test
+> vitest run
+
+ RUN  v4.1.12 /repo/server
+
+ ❯ src/upload.test.ts (3 tests | 1 failed) 5054ms
+   × slow upload finishes 5003ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/upload.test.ts > uploads > slow upload finishes
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ src/upload.test.ts:4:1
+      2| test('ok one', () => { expect(1).toBe(1); });
+      3| test('ok two', () => { expect(2).toBe(2); });
+      4| test('slow upload finishes', async () => {
+       | ^
+      5|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 2 passed (3)
+   Start at  13:46:37
+   Duration  5.2s (transform 14ms, setup 0ms, import 22ms, tests 5.1s, environment 0ms)
+
+npm error Lifecycle script `test` failed with error:
+npm error code 1
+npm error path /repo/server
+npm error workspace server
+npm error location /repo/server
+npm error command failed
+npm error command sh -c vitest run
+"""
 
 
 class DbSelection(RepoCase):
