@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { concurrencyFrom, defaultConcurrency } from './run-steps.mjs';
 
 const RUNNER = fileURLToPath(new URL('./run-steps.mjs', import.meta.url));
 
@@ -101,4 +102,29 @@ test('CHECK_CONCURRENCY=1 runs steps one at a time in declared order', () => {
     assert.equal(parallel.code, 0, parallel.out);
     assert.ok(parallel.out.indexOf('===== fast second') < parallel.out.indexOf('===== slow first'));
   });
+});
+
+test('default concurrency is a quarter of the cores and never below 1', () => {
+  assert.equal(defaultConcurrency(20), 5);
+  assert.equal(defaultConcurrency(8), 2);
+  assert.equal(defaultConcurrency(4), 1);
+  assert.equal(defaultConcurrency(2), 1);
+  assert.equal(defaultConcurrency(1), 1);
+  assert.ok(defaultConcurrency() >= 1);
+});
+
+test('CHECK_CONCURRENCY overrides the default; junk falls back to it', () => {
+  assert.equal(concurrencyFrom({ CHECK_CONCURRENCY: '7' }), 7);
+  assert.equal(concurrencyFrom({ CHECK_CONCURRENCY: '1' }), 1);
+  assert.equal(concurrencyFrom({ CHECK_CONCURRENCY: '0' }), defaultConcurrency());
+  assert.equal(concurrencyFrom({ CHECK_CONCURRENCY: 'x' }), defaultConcurrency());
+  assert.equal(concurrencyFrom({}), defaultConcurrency());
+});
+
+test('failed step output is repeated just before the summary', () => {
+  const noisy = 'for i in $(seq 40); do echo noise$i; done; echo FAIL-test-name; exit 1';
+  const r = run([{ name: 'broken', cmd: noisy }, echo('ok', 'fine')]);
+  const tail = r.out.slice(r.out.indexOf('===== failed step output'));
+  assert.match(tail, /--- broken \(last lines\) ---\n(.*\n)*FAIL-test-name\n/);
+  assert.ok(tail.indexOf('FAIL-test-name') < tail.indexOf('===== summary'));
 });

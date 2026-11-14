@@ -297,6 +297,22 @@ class CommandsGate(RepoCase):
         self.assertIn("the-test-output", r.stdout)
         self.assertIn("bad", r.stdout)
 
+    def test_runner_failure_message_names_the_failing_test_not_just_the_step(self):
+        # Mimics `npm test`: a noisy failing step, then a long summary of every step.
+        steps = [{"name": f"step{i}", "cmd": "true"} for i in range(20)]
+        steps.append({"name": "test server", "cmd": "seq 50; echo FAIL src/foo.test.ts timed out; exit 1"})
+        tmp = tempfile.mkdtemp(prefix="steps-")
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        steps_file = f"{tmp}/steps.json"
+        with open(steps_file, "w") as f:
+            json.dump(steps, f)
+        runner = Path(__file__).resolve().parents[1] / "run-steps.mjs"
+        repo = self.make_cmds(typecheck="true", test=f"node {runner} --steps {steps_file}")
+        r = repo.run("--only", "commands")
+        self.assertExit(r, 1)
+        self.assertIn("test server", r.stdout)
+        self.assertIn("FAIL src/foo.test.ts timed out", r.stdout)
+
     def test_a_failure_in_typecheck_fails_the_gate_while_test_passes(self):
         repo = self.make_cmds(typecheck="echo tsc-error; exit 2", test="true")
         r = repo.run("--only", "commands")

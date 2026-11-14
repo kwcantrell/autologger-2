@@ -4,14 +4,16 @@
 //   node scripts/run-steps.mjs --steps steps.json # [{ "name": "...", "cmd": "..." }, ...]
 // Each step's output is printed as one block when the step ends (never interleaved), then a
 // summary lists every step in declared order with its duration and pass/fail. Exit code is 0 only
-// when every step passed. CHECK_CONCURRENCY sets how many steps run at once (default: the
-// machine's available parallelism); 1 runs them one at a time in declared order.
+// when every step passed. CHECK_CONCURRENCY sets how many steps run at once (default: a quarter of the
+// machine's cores, at least 1); 1 runs them one at a time in declared order.
 import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { availableParallelism } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+const DEFAULT_CORE_DIVISOR = 4;
+const EXCERPT_LINES = 15;
 const ws = (name) => `npm run test -w ${name}`;
 const WORKSPACES = [
   'server',
@@ -55,7 +57,12 @@ export const SUITES = {
 
 export function concurrencyFrom(env = process.env) {
   const n = Number.parseInt(env.CHECK_CONCURRENCY ?? '', 10);
-  return Number.isFinite(n) && n >= 1 ? n : availableParallelism();
+  return Number.isFinite(n) && n >= 1 ? n : defaultConcurrency();
+}
+
+/** A quarter of the cores, never below 1: each step already starts its own workers. */
+export function defaultConcurrency(cores = availableParallelism()) {
+  return Math.max(1, Math.floor(cores / DEFAULT_CORE_DIVISOR));
 }
 
 function runOne(step, cwd) {
@@ -97,6 +104,13 @@ export async function runSteps(steps, { concurrency, cwd = process.cwd(), log = 
       `${r.code === 0 ? 'PASS' : 'FAIL'}  ${r.step.name.padEnd(width)}  ${(r.ms / 1000).toFixed(1)}s`,
   );
   const failed = results.filter((r) => r.code !== 0);
+  if (failed.length) {
+    // Repeated just before the summary so a tail of the log still names the failing tests.
+    const excerpts = failed.map(
+      (r) => `--- ${r.step.name} (last lines) ---\n${r.out.trimEnd().split('\n').slice(-EXCERPT_LINES).join('\n')}`,
+    );
+    log(`===== failed step output =====\n${excerpts.join('\n')}\n`);
+  }
   log(
     `===== summary (concurrency ${concurrency}) =====\n${lines.join('\n')}\n${
       failed.length
