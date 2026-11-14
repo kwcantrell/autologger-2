@@ -56,7 +56,7 @@ checkout's sources, so you would test the wrong code.
 | Task | Command |
 | --- | --- |
 | Gates to pass before you finish (pre-push runs these) | `scripts/check-change.sh --stage hook` |
-| All gates (what CI's `gates` job runs on a PR) | `scripts/check-change.sh` |
+| All gates (what CI's `gates` job runs on a PR, with test steps one at a time via `CHECK_CONCURRENCY=1`) | `scripts/check-change.sh` |
 | One gate | `scripts/check-change.sh --only openspec,skills-sync` |
 | Which DB tests CI would run for this diff | `scripts/check-change.sh --db-selection` |
 | Validate specs | `openspec validate --specs --strict` |
